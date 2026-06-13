@@ -1,6 +1,5 @@
 #![allow(dead_code, unused_imports, unused_macros)]
 
-pub mod audio;
 pub mod matmul;
 pub mod proptest;
 

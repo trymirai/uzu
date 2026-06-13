@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 pub mod assert;
+pub mod audio;
 pub mod env_vars;
 pub mod helpers;
 pub mod metrics;
