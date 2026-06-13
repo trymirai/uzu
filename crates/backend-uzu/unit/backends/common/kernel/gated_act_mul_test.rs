@@ -12,11 +12,9 @@ use crate::{
         },
         cpu::Cpu,
     },
-    common::{
-        assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
-    },
+    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
     data_type::DataType,
+    tests::assert::assert_eq_float,
 };
 
 struct InterleavedInput<T: ArrayElement + Float> {

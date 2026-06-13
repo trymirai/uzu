@@ -9,8 +9,9 @@ use crate::{
         common::{Backend, Encoder, Kernels, kernel::MoeFinalizeKernel},
         cpu::Cpu,
     },
-    common::{assert::assert_eq_float, helpers::create_context},
+    common::helpers::create_context,
     data_type::DataType,
+    tests::assert::assert_eq_float,
 };
 
 struct Input<T: ArrayElement + Float> {

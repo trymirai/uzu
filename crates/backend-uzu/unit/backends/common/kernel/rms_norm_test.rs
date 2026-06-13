@@ -14,8 +14,8 @@ use crate::{
         common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
     data_type::DataType,
+    tests::assert::assert_eq_float,
 };
 
 static BOOL_ALL: &[bool] = &[true, false];

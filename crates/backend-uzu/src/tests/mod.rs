@@ -1,6 +1,7 @@
 #![cfg(test)]
 #![allow(dead_code)]
 
+pub mod assert;
 pub mod env_vars;
 pub mod perf;
 pub mod util;

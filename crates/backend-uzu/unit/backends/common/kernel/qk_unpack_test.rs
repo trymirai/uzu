@@ -10,7 +10,7 @@ use crate::{
         common::{Backend, Context, Encoder, Kernels, kernel::QkUnpackKernel},
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
+    tests::assert::assert_eq_float,
 };
 
 fn run<T: ArrayElement + Float + Debug + Display, B: Backend>(

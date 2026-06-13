@@ -10,8 +10,8 @@ use crate::{
         common::{Allocation, Backend, Context, Encoder, Kernels, kernel::QKVNormKernel},
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
     data_type::DataType,
+    tests::assert::assert_eq_float,
 };
 
 struct Input<InputT: ArrayElement + Float, ScaleT: ArrayElement + Float, OutputT: ArrayElement + Float> {

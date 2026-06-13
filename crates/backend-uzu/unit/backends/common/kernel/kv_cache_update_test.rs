@@ -10,7 +10,7 @@ use crate::{
         common::{Backend, Context, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
+    tests::assert::assert_eq_float,
 };
 
 struct Input<T: ArrayElement + Float> {

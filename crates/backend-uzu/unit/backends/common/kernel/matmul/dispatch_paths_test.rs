@@ -16,10 +16,8 @@ use crate::{
         },
         metal::{GemmDispatchPath, Metal, MetalContext},
     },
-    common::{
-        assert::assert_eq_float,
-        matmul::{Case, all_correctness_shapes, cpu_reference, deterministic_input, run_metal},
-    },
+    common::matmul::{Case, all_correctness_shapes, cpu_reference, deterministic_input, run_metal},
+    tests::assert::assert_eq_float,
 };
 
 fn gemm_paths_for_hw(context: &MetalContext) -> Vec<GemmDispatchPath> {
