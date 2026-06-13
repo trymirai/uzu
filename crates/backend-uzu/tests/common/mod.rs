@@ -2,7 +2,6 @@
 
 pub mod audio;
 pub mod matmul;
-pub mod metrics;
 pub mod path;
 pub mod proptest;
 

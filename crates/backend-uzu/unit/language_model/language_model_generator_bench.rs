@@ -8,9 +8,10 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use proc_macros::uzu_bench;
 
 use crate::{
-    common::{metrics::wait_gpu_cooldown, path::get_test_model_path},
+    common::path::get_test_model_path,
     config::model::language_model::LanguageModelConfig,
     language_model::{LanguageModelGenerator, language_model_generator::RunModelResult},
+    tests::metrics::wait_gpu_cooldown,
     trie::{TrieCreationConfig, TrieNode},
 };
 
