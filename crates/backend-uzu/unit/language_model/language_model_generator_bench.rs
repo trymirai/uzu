@@ -6,11 +6,11 @@ use backend_uzu::{
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
 use proc_macros::uzu_bench;
+use test_runner::{for_each_non_cpu_backend, metrics::wait_gpu_cooldown, path::get_test_model_path};
 
 use crate::{
     config::model::language_model::LanguageModelConfig,
     language_model::{LanguageModelGenerator, language_model_generator::RunModelResult},
-    tests::{for_each_non_cpu_backend, metrics::wait_gpu_cooldown, path::get_test_model_path},
     trie::{TrieCreationConfig, TrieNode},
 };
 

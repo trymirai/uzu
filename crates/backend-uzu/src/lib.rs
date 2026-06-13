@@ -1,5 +1,9 @@
 #![cfg_attr(test, feature(custom_test_frameworks, test))]
-#![cfg_attr(test, test_runner(crate::tests::uzu_harness))]
+#![cfg_attr(test, test_runner(test_runner::uzu_harness))]
+
+// needed for tests to resolve `backend_uzu::` imports
+#[cfg(test)]
+extern crate self as backend_uzu;
 
 mod array;
 mod audio;

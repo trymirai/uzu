@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use proc_macros::uzu_test;
 use shoji::types::basic::Feature;
+use test_runner::path::get_test_model_path;
 use test_tag::tag;
 use tokenizers::Tokenizer;
 
@@ -13,7 +14,6 @@ use crate::{
         types::{Input, Message, Output},
     },
     speculators::{fixed_token_speculator::FixedTokensSpeculator, prompt_lookup_speculator::PromptLookupSpeculator},
-    tests::path::get_test_model_path,
 };
 
 fn build_decoding_config() -> DecodingConfig {

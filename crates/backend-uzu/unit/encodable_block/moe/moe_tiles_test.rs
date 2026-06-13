@@ -1,5 +1,6 @@
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     backends::common::{
@@ -7,11 +8,8 @@ use crate::{
         kernel::{MoeTileCountsKernel, MoeTileScanKernel},
     },
     encodable_block::mlp::moe::tests::{cpu_tile_counts, cpu_tile_scan},
-    tests::{
-        for_each_non_cpu_backend,
-        helpers::{
-            alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
-        },
+    tests::helpers::{
+        alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
     },
 };
 

@@ -3,14 +3,12 @@ use std::fmt::Debug;
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_backend;
 
 use crate::{
     array::ArrayElement,
     backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorCopyKernel},
-    tests::{
-        for_each_backend,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
-    },
+    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
 
 struct Input<T: ArrayElement + Float> {

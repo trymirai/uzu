@@ -30,10 +30,10 @@ pub fn uzu_test(
 
         #[test_case]
         #[allow(non_upper_case_globals)]
-        const #const_name: crate::tests::UzuTest =
-            crate::tests::UzuTest::Test(&crate::tests::test::TestDescAndFn {
-                desc: crate::tests::test::TestDesc {
-                    name: crate::tests::test::StaticTestName(concat!(
+        const #const_name: test_runner::UzuTest =
+            test_runner::UzuTest::Test(&test_runner::test::TestDescAndFn {
+                desc: test_runner::test::TestDesc {
+                    name: test_runner::test::StaticTestName(concat!(
                         module_path!(),
                         "::",
                         stringify!(#name),
@@ -45,13 +45,13 @@ pub fn uzu_test(
                     start_col: column!() as usize,
                     end_line: line!() as usize,
                     end_col: column!() as usize,
-                    should_panic: crate::tests::test::ShouldPanic::No,
+                    should_panic: test_runner::test::ShouldPanic::No,
                     compile_fail: false,
                     no_run: false,
-                    test_type: crate::tests::test::TestType::Unknown,
+                    test_type: test_runner::test::TestType::Unknown,
                 },
-                testfn: crate::tests::test::StaticTestFn(|| {
-                    crate::tests::test::assert_test_result(#name())
+                testfn: test_runner::test::StaticTestFn(|| {
+                    test_runner::test::assert_test_result(#name())
                 }),
             });
     }
@@ -72,7 +72,7 @@ pub fn uzu_bench(
 
         #[test_case]
         #[allow(non_upper_case_globals)]
-        const #const_name: crate::tests::UzuTest = crate::tests::UzuTest::Bench(&|| {
+        const #const_name: test_runner::UzuTest = test_runner::UzuTest::Bench(&|| {
             let mut criterion = ::criterion::Criterion::default().configure_from_args();
             #name(&mut criterion);
         });

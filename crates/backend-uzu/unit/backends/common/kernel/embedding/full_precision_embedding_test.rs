@@ -3,11 +3,11 @@ use std::fmt::Debug;
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::common::{Backend, Context, Encoder, Kernels, kernel::FullPrecisionEmbeddingLookupKernel},
-    tests::for_each_backend,
 };
 
 struct Input<T: ArrayElement + Float> {

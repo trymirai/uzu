@@ -582,7 +582,7 @@ fn test_delta_net_prefill_prep() {
 #[uzu_test]
 #[ignore]
 fn bench_delta_net_prefill() {
-    use crate::tests::perf::run_perf_with_warmup;
+    use test_runner::perf::run_perf_with_warmup;
 
     let num_v_heads = 48usize;
     let num_k_heads = 16usize;

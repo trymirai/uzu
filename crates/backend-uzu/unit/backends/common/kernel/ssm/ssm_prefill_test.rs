@@ -3,6 +3,7 @@ use std::fmt::{Debug, Display};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -14,7 +15,7 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::{assert::assert_eq_float, for_each_non_cpu_backend},
+    tests::assert::assert_eq_float,
 };
 
 struct Input<T: ArrayElement + Float> {

@@ -1,6 +1,4 @@
-pub extern crate test;
-
-use crate::tests::util::enable_benchmark_gpu_capture_if_requested;
+use crate::util::enable_benchmark_gpu_capture_if_requested;
 
 pub enum UzuTest {
     Bench(&'static dyn Fn()),

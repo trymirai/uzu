@@ -1,4 +1,4 @@
 #![feature(custom_test_frameworks, test)]
-#![test_runner(crate::tests::uzu_harness)]
+#![test_runner(test_runner::uzu_harness)]
 
 mod session;

@@ -10,9 +10,9 @@ fn get_version() -> &'static str {
 pub fn get_test_model_path() -> PathBuf {
     let model_dir = std::env::var("TEST_MODEL").unwrap_or_else(|_| MODEL_DIR_NAME.to_string());
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("workspace")
+        .join("../../../..")
+        .join("../../../..")
+        .join("../../../workspace")
         .join("models")
         .join(get_version())
         .join(model_dir);

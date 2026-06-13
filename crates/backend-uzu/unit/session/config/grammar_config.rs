@@ -5,6 +5,7 @@ use std::sync::Arc;
 use proc_macros::uzu_test;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use test_runner::path::get_test_model_path;
 use test_tag::tag;
 
 use crate::{
@@ -15,7 +16,6 @@ use crate::{
         types::Input,
     },
     speculators::repeat_speculator::RepeatSpeculator,
-    tests::path::get_test_model_path,
 };
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

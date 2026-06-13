@@ -1,10 +1,12 @@
 use std::{mem::size_of, rc::Rc};
 
-use backend_uzu::backends::common::{
-    Allocation, AllocationType, AsBufferRangeMut, Backend, Context, DenseBuffer, Encoder, SparseBuffer, SparseBufferExt,
+use crate::{
+    array::ArrayElement,
+    backends::common::{
+        Allocation, AllocationType, AsBufferRangeMut, Backend, Context, DenseBuffer, Encoder, SparseBuffer,
+        SparseBufferExt,
+    },
 };
-
-use crate::array::ArrayElement;
 
 pub fn allocation_size_bytes<T>(elements_count: usize) -> usize {
     elements_count * size_of::<T>()

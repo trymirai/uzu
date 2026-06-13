@@ -1,5 +1,6 @@
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use test_runner::{for_each_backend, for_each_non_cpu_backend};
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -7,7 +8,6 @@ use crate::{
         common::{Backend, Context, Encoder, Kernels, kernel::MoeCountsOffsetsFusedKernel},
         cpu::Cpu,
     },
-    tests::{for_each_backend, for_each_non_cpu_backend},
 };
 
 fn gen_random_topk_ids(

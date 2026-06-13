@@ -1,5 +1,6 @@
 use half::bf16;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     backends::{
@@ -16,7 +17,6 @@ use crate::{
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        for_each_non_cpu_backend,
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
     },
 };

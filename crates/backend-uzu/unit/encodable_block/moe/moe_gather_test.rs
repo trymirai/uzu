@@ -2,6 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use test_runner::for_each_non_cpu_backend;
 
 use super::MoeGather;
 use crate::{
@@ -12,7 +13,6 @@ use crate::{
     },
     tests::{
         assert::assert_eq_float,
-        for_each_non_cpu_backend,
         helpers::{alloc_allocation_with_data, allocation_to_vec, create_context},
     },
 };

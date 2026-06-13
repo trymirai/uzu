@@ -7,6 +7,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -15,7 +16,7 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::{assert::assert_eq_float, for_each_non_cpu_backend},
+    tests::assert::assert_eq_float,
 };
 
 static BOOL_ALL: &[bool] = &[true, false];
