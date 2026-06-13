@@ -2,7 +2,9 @@
 
 use std::time::Instant;
 
-use backend_uzu::{
+use proc_macros::uzu_test;
+
+use crate::{
     array::{Array, ArrayContextExt},
     backends::{
         common::{
@@ -19,7 +21,6 @@ use backend_uzu::{
     },
     data_type::DataType,
 };
-use proc_macros::uzu_test;
 
 type Ctx = <Metal as Backend>::Context;
 

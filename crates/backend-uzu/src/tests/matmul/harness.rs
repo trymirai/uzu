@@ -1,10 +1,13 @@
+use num_traits::Float;
+
+use super::Shape;
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::{GemmDispatchPath, Metal, MetalContext};
-use backend_uzu::{
+use crate::backends::metal::{GemmDispatchPath, Metal, MetalContext};
+use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
-            Allocation, AllocationType, AsBufferRangeRef, Backend, Buffer, Context, Encoder,
+            AllocationType, Backend, Context, Encoder,
             kernel::{
                 Kernels,
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -12,12 +15,7 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
-};
-use num_traits::Float;
-
-use super::{
-    super::helpers::{alloc_allocation_with_data, allocation_to_vec},
-    Shape,
+    tests::helpers::{alloc_allocation_with_data, allocation_to_vec},
 };
 
 #[cfg(metal_backend)]

@@ -9,6 +9,7 @@
 use half::bf16;
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use test_runner::for_each_non_cpu_backend;
 
 use super::{
     MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock, cpu_tile_counts,
@@ -19,11 +20,11 @@ use crate::{
         Encoder,
         gpu_types::{ActivationType, activation_silu_alpha},
     },
-    common::{
+    data_type::DataType,
+    tests::{
         assert::assert_eq_float,
         helpers::{alloc_allocation_with_data, allocation_prefix_to_vec, create_context},
     },
-    data_type::DataType,
 };
 
 /// Test data for MoE experts

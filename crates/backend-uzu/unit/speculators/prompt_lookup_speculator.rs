@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 
 use proc_macros::uzu_test;
+use test_runner::path::get_test_model_path;
 use tokenizers::Tokenizer;
 
-use crate::{
-    common::path::get_test_model_path,
-    speculators::{prompt_lookup_speculator::PromptLookupSpeculator, speculator::Speculator},
-};
+use crate::speculators::{prompt_lookup_speculator::PromptLookupSpeculator, speculator::Speculator};
 
 fn load_tokenizer() -> Tokenizer {
     let tokenizer_path = get_test_model_path().join("tokenizer.json");

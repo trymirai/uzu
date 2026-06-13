@@ -3,6 +3,7 @@ use std::fmt::{Debug, Display};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -10,7 +11,7 @@ use crate::{
         common::{Backend, Context, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
+    tests::assert::assert_eq_float,
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -58,7 +59,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (crate::common::helpers::allocation_to_vec(&keys), crate::common::helpers::allocation_to_vec(&values))
+    (crate::tests::helpers::allocation_to_vec(&keys), crate::tests::helpers::allocation_to_vec(&values))
 }
 
 /// Single swap between two different positions.

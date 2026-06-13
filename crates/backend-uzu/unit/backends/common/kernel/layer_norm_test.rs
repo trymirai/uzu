@@ -3,6 +3,7 @@ use std::fmt::{Debug, Display};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -10,8 +11,8 @@ use crate::{
         common::{Backend, Context, Encoder, Kernels, kernel::LayerNormKernel},
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
     data_type::DataType,
+    tests::assert::assert_eq_float,
 };
 
 static BOOL_ALL: &[bool] = &[true, false];
@@ -150,7 +151,7 @@ fn get_output<
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::common::helpers::allocation_to_vec(&output)
+    crate::tests::helpers::allocation_to_vec(&output)
 }
 
 fn test_internal<

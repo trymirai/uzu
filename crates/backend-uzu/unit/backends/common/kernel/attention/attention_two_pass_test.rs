@@ -3,18 +3,19 @@ use std::fmt::{Debug, Display};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            Allocation, Backend, Context, Encoder, Kernels,
             kernel::{AttentionTwoPass1Kernel, AttentionTwoPass2Kernel},
         },
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
     data_type::DataType,
+    tests::assert::assert_eq_float,
 };
 
 const TOTAL_BLOCKS_COUNT: u32 = 32;
@@ -130,17 +131,17 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
         input.scale,
         input.num_heads,
         input.suffix_length,
-        None::<&backend_uzu::backends::common::Allocation<B>>,
+        None::<&Allocation<B>>,
         None,
-        None::<&backend_uzu::backends::common::Allocation<B>>,
+        None::<&Allocation<B>>,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     FirstPassOutput {
-        partials: crate::common::helpers::allocation_to_vec(&partials),
-        sums: crate::common::helpers::allocation_to_vec(&sums),
-        maxs: crate::common::helpers::allocation_to_vec(&maxs),
+        partials: crate::tests::helpers::allocation_to_vec(&partials),
+        sums: crate::tests::helpers::allocation_to_vec(&sums),
+        maxs: crate::tests::helpers::allocation_to_vec(&maxs),
     }
 }
 
@@ -217,7 +218,7 @@ fn get_second_pass_output<T: ArrayElement + Float, B: Backend>(input: &SecondPas
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::common::helpers::allocation_to_vec(&output)
+    crate::tests::helpers::allocation_to_vec(&output)
 }
 
 // --- First pass tests ---

@@ -2,11 +2,12 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use itertools::iproduct;
 use proc_macros::uzu_bench;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
+use test_runner::for_each_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
-    common::type_short_name,
+    tests::util::type_short_name,
 };
 
 fn get_rms_norm_data(

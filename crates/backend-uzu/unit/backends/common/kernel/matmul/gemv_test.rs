@@ -4,6 +4,7 @@ use half::bf16;
 use num_traits::Float;
 use proc_macros::uzu_test;
 use rstest::rstest;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -17,7 +18,7 @@ use crate::{
         },
         cpu::Cpu,
     },
-    common::{
+    tests::{
         assert::assert_eq_float,
         helpers::{alloc_allocation_with_data, allocation_to_vec},
     },
