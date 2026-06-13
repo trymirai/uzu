@@ -8,7 +8,7 @@ use test_runner::for_each_non_cpu_backend;
 use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::SSDUpdateKernel},
+        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::SSDUpdateKernel},
         cpu::Cpu,
     },
     data_type::DataType,
@@ -116,7 +116,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             c_array.allocation(),
             d_array.allocation(),
             z_array.allocation(),
-            None::<&backend_uzu::backends::common::Allocation<B>>,
+            None::<&Allocation<B>>,
             &mut y,
             &mut next_state,
             (h / g) as u32,

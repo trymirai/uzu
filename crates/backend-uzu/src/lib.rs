@@ -1,10 +1,6 @@
 #![cfg_attr(test, feature(custom_test_frameworks, test))]
 #![cfg_attr(test, test_runner(test_runner::uzu_harness))]
 
-// needed for tests to resolve `backend_uzu::` imports
-#[cfg(test)]
-extern crate self as backend_uzu;
-
 mod array;
 mod audio;
 mod classifier;
@@ -24,5 +20,8 @@ pub mod session;
 
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
 
+// needed for tests to resolve `backend_uzu::` imports
+#[cfg(test)]
+extern crate self as backend_uzu;
 #[cfg(test)]
 pub mod tests;

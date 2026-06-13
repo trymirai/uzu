@@ -9,7 +9,7 @@ use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            Allocation, Backend, Context, Encoder, Kernels,
             kernel::{AttentionTwoPass1Kernel, AttentionTwoPass2Kernel},
         },
         cpu::Cpu,
@@ -131,9 +131,9 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
         input.scale,
         input.num_heads,
         input.suffix_length,
-        None::<&backend_uzu::backends::common::Allocation<B>>,
+        None::<&Allocation<B>>,
         None,
-        None::<&backend_uzu::backends::common::Allocation<B>>,
+        None::<&Allocation<B>>,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();

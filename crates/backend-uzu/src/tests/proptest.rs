@@ -1,15 +1,16 @@
 use std::rc::Rc;
 
+use proptest::prelude::*;
+
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::Metal;
-use backend_uzu::{
+use crate::backends::metal::Metal;
+use crate::{
     backends::{
         common::{Backend, Context},
         cpu::Cpu,
     },
     data_type::DataType,
 };
-use proptest::prelude::*;
 
 pub fn kernel_data_type() -> impl Strategy<Value = DataType> {
     prop_oneof![Just(DataType::BF16), Just(DataType::F32)]

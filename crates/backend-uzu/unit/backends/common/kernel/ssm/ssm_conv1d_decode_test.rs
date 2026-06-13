@@ -8,7 +8,9 @@ use test_runner::for_each_non_cpu_backend;
 use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
-        common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dDecodeKernel},
+        common::{
+            Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dDecodeKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -117,7 +119,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             x_array.allocation(),
             w_array.allocation(),
             b_array.as_ref().map(|bias| bias.allocation()),
-            None::<&backend_uzu::backends::common::Allocation<B>>,
+            None::<&Allocation<B>>,
             &mut x_out,
             &mut b_out,
             &mut c_out,

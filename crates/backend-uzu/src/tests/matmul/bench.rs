@@ -5,9 +5,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use backend_uzu::backends::common::{Backend, Context, Encoder};
 use criterion::Bencher;
 use test_runner::env_vars;
+
+use crate::backends::common::{Backend, Context, Encoder};
 
 static CAPTURE_TAKEN: AtomicBool = AtomicBool::new(false);
 

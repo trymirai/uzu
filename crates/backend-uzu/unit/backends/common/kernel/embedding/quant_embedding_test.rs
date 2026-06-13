@@ -9,7 +9,7 @@ use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            Allocation, Backend, Context, Encoder, Kernels,
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::QuantizedEmbeddingLookupKernel,
         },
@@ -236,7 +236,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         zero_points_array.as_ref().map(|array| array.allocation()),
         biases_array.as_ref().map(|array| array.allocation()),
         &mut output,
-        None::<&backend_uzu::backends::common::Allocation<B>>,
+        None::<&Allocation<B>>,
         input.batch_size,
         input.vocab_size,
         input.model_dim,
