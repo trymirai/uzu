@@ -86,6 +86,7 @@ minijinja-contrib = { version = "2.17.0", features = ["pycompat"] }
 clap = { version = "4.6", features = ["derive"] }
 rand = "0.10"
 rand_distr = "0.6.0"
+rayon = "1.12.0"
 sysinfo = "0.38"
 itertools = "0.14"
 schemars = { version = "1.2", features = ["derive"] }

@@ -33,6 +33,7 @@ libm.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
 rand.workspace = true
+rayon.workspace = true
 sysinfo.workspace = true
 itertools.workspace = true
 schemars.workspace = true

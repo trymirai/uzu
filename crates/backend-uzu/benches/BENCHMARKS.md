@@ -1,9 +1,10 @@
 # Kernel Benchmarks
 
-Criterion-based microbenchmarks for Metal kernels. Runs on macOS (native)
-and on iPhone (via `cargo-dinghy`). Results from both are consolidated
-under a single `target/criterion/<label>/` tree so you can compare
-baselines side by side.
+Criterion-based microbenchmarks for backend kernels. CPU benchmarks run on
+any host supported by the Rust target. Metal benchmarks run on macOS
+(native) and on iPhone (via `cargo-dinghy`). Results are consolidated under
+a single `target/criterion/<label>/` tree so you can compare baselines side
+by side.
 
 ## Prerequisites
 
@@ -36,10 +37,15 @@ The Cargo bench target is `main`. Its source lives at
 | `Metal/Kernel/Qwen3Layers/...`          | `Metal/Kernel/Qwen3Layers`          |
 | `Metal/Kernel/RMSNorm`                  | `Metal/Kernel/RMSNorm`              |
 | `Metal/Kernel/Sampling/Argmax`          | `Metal/Kernel/Sampling/Argmax`      |
+| `Cpu/Kernel/Matmul/FullPrecision`       | `Cpu/Kernel/Matmul/FullPrecision`   |
+| `Cpu/Kernel/Matmul/Quantized/...`       | `Cpu/Kernel/Matmul/Quantized`       |
+| `Cpu/Kernel/RMSNorm`                    | `Cpu/Kernel/RMSNorm`                |
 | `ChatSession run`                       | `ChatSession run`                   |
 | `Forward pass`                          | `Forward pass`                      |
 
 The prefix `Metal/Kernel/Matmul` runs both `GEMM` and `GEMM_MXU` in one pass.
+The prefix `Cpu/Kernel` runs all model-free CPU kernel benchmarks added for
+CPU backend baselining.
 The session and language-model groups require the test model path configured by
 the test helpers.
 
@@ -49,7 +55,52 @@ Every run writes into `target/criterion/<label>/…`, where `<label>` is a
 free-form name you choose (e.g. `m2_max`, `a19`). The Criterion baseline
 you saved lives at `target/criterion/<label>/<benchmark-path>/<baseline-name>/`.
 
-## Running on macOS
+## Running CPU Benchmarks
+
+From the repo root. Use `--no-default-features` to keep the run CPU-only and
+avoid building or running Metal benchmarks. Use an **absolute**
+`CRITERION_HOME` so it doesn't resolve relative to the package dir:
+
+```bash
+CRITERION_HOME="$PWD/target/criterion/cpu" cargo bench \
+  -p backend-uzu \
+  --no-default-features \
+  --bench main -- "Cpu/Kernel" \
+  --save-baseline cpu_baseline
+```
+
+For a shorter first pass, run one group:
+
+```bash
+CRITERION_HOME="$PWD/target/criterion/cpu" cargo bench \
+  -p backend-uzu \
+  --no-default-features \
+  --bench main -- "Cpu/Kernel/Matmul/FullPrecision" \
+  --save-baseline cpu_matmul_baseline
+```
+
+After making CPU changes, compare against the saved baseline:
+
+```bash
+CRITERION_HOME="$PWD/target/criterion/cpu" cargo bench \
+  -p backend-uzu \
+  --no-default-features \
+  --bench main -- "Cpu/Kernel" \
+  --baseline cpu_baseline
+```
+
+If you also want to keep that post-change run as a named baseline, run a
+separate save pass:
+
+```bash
+CRITERION_HOME="$PWD/target/criterion/cpu" cargo bench \
+  -p backend-uzu \
+  --no-default-features \
+  --bench main -- "Cpu/Kernel" \
+  --save-baseline cpu_rayon
+```
+
+## Running Metal Benchmarks On macOS
 
 From the repo root. Use an **absolute** `CRITERION_HOME` so it doesn't
 resolve relative to the package dir:

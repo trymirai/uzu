@@ -7,4 +7,5 @@ mod common;
 #[path = "../src/tests/mod.rs"]
 mod tests;
 
+mod cpu;
 mod session;

@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+
 use super::reference::{WeightData, read_f32, write_f32};
 use crate::{
     backends::{
@@ -14,6 +16,8 @@ use crate::{
     data_type::DataType,
     utils::pointers::{SendPtr, SendPtrMut},
 };
+
+const PARALLEL_MATMUL_MIN_OPS: usize = 256 * 1024;
 
 pub struct MatmulCpuKernel {
     weights_data_type: DataType,
@@ -121,84 +125,89 @@ impl MatmulKernel for MatmulCpuKernel {
                 } => None,
             };
 
-            unsafe {
-                for row in 0..m_u {
-                    for col in 0..n_u {
-                        let mut accumulator = 0.0f32;
-                        for inner in 0..k_u {
-                            let a_value = read_f32(a_ptr.as_ptr(), input_data_type, row * k_u + inner);
-                            let b_value = match &weight_data {
-                                WeightData::FullPrecision {
-                                    ptr,
-                                    leading_dimension,
-                                    transpose,
-                                } => {
-                                    let index = if *transpose {
-                                        col * leading_dimension + inner
-                                    } else {
-                                        inner * leading_dimension + col
-                                    };
-                                    read_f32(ptr.as_ptr(), weights_data_type, index)
-                                },
-                                WeightData::Quantized {
-                                    weights,
-                                    scales,
-                                    zero_points,
-                                    biases,
-                                    bits,
-                                    group_size,
-                                } => {
-                                    let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
-                                    let weight_linear_index = col * k_u + inner;
-                                    let quantized_value = if *bits == 4 {
-                                        let word_index = weight_linear_index / pack_factor;
-                                        let bit_offset = (weight_linear_index % pack_factor) * 4;
-                                        let w = weights.as_ptr() as *const u32;
-                                        ((w.add(word_index).read_unaligned() >> bit_offset) & 0xF) as f32
-                                    } else {
-                                        let word_index = weight_linear_index / pack_factor;
-                                        let bit_offset = (weight_linear_index % pack_factor) * 8;
-                                        let w = weights.as_ptr() as *const u32;
-                                        ((w.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as f32
-                                    };
-                                    let group_index = inner / group_size;
-                                    let scale =
-                                        read_f32(scales.as_ptr(), weights_data_type, col * num_groups_k + group_index);
-                                    let bias_term = if let Some(zp) = zero_points {
-                                        let zero_point = if *bits == 4 {
-                                            let byte_index = col * zero_point_stride + (group_index >> 1);
-                                            let byte_value = *zp.as_ptr().add(byte_index);
-                                            if (group_index & 1) == 0 {
-                                                (byte_value & 0x0F) as f32
-                                            } else {
-                                                ((byte_value >> 4) & 0x0F) as f32
-                                            }
-                                        } else {
-                                            *zp.as_ptr().add(col * zero_point_stride + group_index) as f32
-                                        };
-                                        -scale * zero_point
-                                    } else if let Some(b) = biases {
-                                        read_f32(b.as_ptr(), weights_data_type, col * num_groups_k + group_index)
-                                    } else {
-                                        let midpoint = (1u32 << (bits - 1)) as f32;
-                                        -scale * midpoint
-                                    };
-                                    scale * quantized_value + bias_term
-                                },
+            let output_cells = m_u * n_u;
+            let matmul_cell = |output_index: usize| unsafe {
+                let row = output_index / n_u;
+                let col = output_index % n_u;
+                let mut accumulator = 0.0f32;
+                for inner in 0..k_u {
+                    let a_value = read_f32(a_ptr.as_ptr(), input_data_type, row * k_u + inner);
+                    let b_value = match &weight_data {
+                        WeightData::FullPrecision {
+                            ptr,
+                            leading_dimension,
+                            transpose,
+                        } => {
+                            let index = if *transpose {
+                                col * leading_dimension + inner
+                            } else {
+                                inner * leading_dimension + col
                             };
-                            accumulator += a_value * b_value;
-                        }
+                            read_f32(ptr.as_ptr(), weights_data_type, index)
+                        },
+                        WeightData::Quantized {
+                            weights,
+                            scales,
+                            zero_points,
+                            biases,
+                            bits,
+                            group_size,
+                        } => {
+                            let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
+                            let weight_linear_index = col * k_u + inner;
+                            let quantized_value = if *bits == 4 {
+                                let word_index = weight_linear_index / pack_factor;
+                                let bit_offset = (weight_linear_index % pack_factor) * 4;
+                                let w = weights.as_ptr() as *const u32;
+                                ((w.add(word_index).read_unaligned() >> bit_offset) & 0xF) as f32
+                            } else {
+                                let word_index = weight_linear_index / pack_factor;
+                                let bit_offset = (weight_linear_index % pack_factor) * 8;
+                                let w = weights.as_ptr() as *const u32;
+                                ((w.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as f32
+                            };
+                            let group_index = inner / group_size;
+                            let scale = read_f32(scales.as_ptr(), weights_data_type, col * num_groups_k + group_index);
+                            let bias_term = if let Some(zp) = zero_points {
+                                let zero_point = if *bits == 4 {
+                                    let byte_index = col * zero_point_stride + (group_index >> 1);
+                                    let byte_value = *zp.as_ptr().add(byte_index);
+                                    if (group_index & 1) == 0 {
+                                        (byte_value & 0x0F) as f32
+                                    } else {
+                                        ((byte_value >> 4) & 0x0F) as f32
+                                    }
+                                } else {
+                                    *zp.as_ptr().add(col * zero_point_stride + group_index) as f32
+                                };
+                                -scale * zero_point
+                            } else if let Some(b) = biases {
+                                read_f32(b.as_ptr(), weights_data_type, col * num_groups_k + group_index)
+                            } else {
+                                let midpoint = (1u32 << (bits - 1)) as f32;
+                                -scale * midpoint
+                            };
+                            scale * quantized_value + bias_term
+                        },
+                    };
+                    accumulator += a_value * b_value;
+                }
 
-                        let output_index = row * n_u + col;
-                        let mut value = output_scale * accumulator;
-                        if accumulate {
-                            value += read_f32(d_ptr.as_ptr(), output_data_type, output_index);
-                        }
-                        if let Some(bias) = bias_ptr {
-                            value += read_f32(bias.as_ptr(), weights_data_type, col);
-                        }
-                        write_f32(d_ptr.as_ptr(), output_data_type, output_index, value);
-                    }
+                let mut value = output_scale * accumulator;
+                if accumulate {
+                    value += read_f32(d_ptr.as_ptr(), output_data_type, output_index);
+                }
+                if let Some(bias) = bias_ptr {
+                    value += read_f32(bias.as_ptr(), weights_data_type, col);
+                }
+                write_f32(d_ptr.as_ptr(), output_data_type, output_index, value);
+            };
+
+            if output_cells.saturating_mul(k_u) >= PARALLEL_MATMUL_MIN_OPS {
+                (0..output_cells).into_par_iter().for_each(matmul_cell);
+            } else {
+                for output_index in 0..output_cells {
+                    matmul_cell(output_index);
                 }
             }
         });
