@@ -6,7 +6,7 @@ mod tts_run_config;
 mod tts_session_options;
 
 pub use decoding_config::DecodingConfig;
-pub use grammar_config::GrammarConfig;
+pub use grammar_config::{GrammarConfig, StructuredOutput};
 pub use run_config::RunConfig;
 pub use speculator_config::SpeculatorConfig;
 pub use tts_run_config::{TtsChunkPolicy, TtsNonStreamingMode, TtsRunConfig, TtsRunConfigError};
