@@ -5,7 +5,7 @@ use proc_macros::uzu_test;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
-use xgrammar::{DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
+use xgrammar::{DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo, c_void};
 
 use crate::{
     array::Array,
@@ -71,17 +71,19 @@ fn person_schema_metal_bitmask() {
     let metal_bitmask = unsafe { Array::<Metal>::from_allocation(allocation, 0, &shape, DataType::I32) };
 
     let mut shape_i64 = [buffer_size as i64];
-    let mut bitmask_tensor = DLTensor {
-        data: metal_bitmask.cpu_ptr().as_ptr(),
-        device: DLDevice {
-            device_type: DLDeviceType::kDLCPU,
-            device_id,
-        },
-        ndim: 1,
-        dtype: DataType::I32.into(),
-        shape: shape_i64.as_mut_ptr(),
-        strides: core::ptr::null_mut(),
-        byte_offset: 0,
+    let mut bitmask_tensor = unsafe {
+        DLTensor::new(
+            metal_bitmask.cpu_ptr().as_ptr() as *mut c_void,
+            DLDevice {
+                device_type: DLDeviceType::kDLCPU,
+                device_id,
+            },
+            1,
+            DataType::I32.into(),
+            shape_i64.as_mut_ptr(),
+            core::ptr::null_mut(),
+            0,
+        )
     };
 
     let _ok = matcher.fill_next_token_bitmask(&mut bitmask_tensor, 0, false);
