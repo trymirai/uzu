@@ -55,6 +55,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
     threadgroup float bias_gate[PASSA_BN],
     // 0=GELU(up), 1=SiLU(up), 2=SwiGLU(gate)*up, 3=GEGLU(gate)*up
     const uint gating_sel SPECIALIZE,
+    const bool has_up_biases SPECIALIZE,
     const uint n_tile_idx GROUPS(INDIRECT),
     const uint row_tile_idx GROUPS(INDIRECT),
     const uint local_tid_x THREADS(128),
@@ -246,9 +247,10 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
   // Note: bias layout is [up | gate] in contiguous FF chunks.
   for (uint c_local = lin; c_local < Bn; c_local += threads_total) {
     const uint c_global = col_tg_off + c_local;
-    bias_up[c_local] = (c_global < d_ff) ? float(up_biases[bias_base + c_global]) : 0.0f;
+    bias_up[c_local] = (has_up_biases && c_global < d_ff) ? float(up_biases[bias_base + c_global]) : 0.0f;
     if (gating_sel > 1u) {
-      bias_gate[c_local] = (c_global < d_ff) ? float(up_biases[bias_base + d_ff + c_global]) : 0.0f;
+      bias_gate[c_local] =
+          (has_up_biases && c_global < d_ff) ? float(up_biases[bias_base + d_ff + c_global]) : 0.0f;
     }
   }
 
@@ -350,6 +352,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
     threadgroup float Hs[PASSB_BM * (PASSB_BK + PASSB_TG_PAD)],
     threadgroup T Wk[PASSB_BN * (PASSB_BK + PASSB_TG_PAD)],
     threadgroup float bias_tile[PASSB_BN],
+    const bool has_down_biases SPECIALIZE,
     const ThreadContext thread_context,
     const uint n_tile_idx GROUPS(INDIRECT),
     const uint row_tile_idx GROUPS(INDIRECT),
@@ -496,7 +499,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
   // ---- Bias tile (cooperative load) ----
   for (uint c_local = lin; c_local < Bn; c_local += TGP_SIZE) {
     const uint c_global = col_tg_off + c_local;
-    bias_tile[c_local] = (c_global < d_model) ? float(down_biases[bias_base + c_global]) : 0.0f;
+    bias_tile[c_local] = (has_down_biases && c_global < d_model) ? float(down_biases[bias_base + c_global]) : 0.0f;
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);

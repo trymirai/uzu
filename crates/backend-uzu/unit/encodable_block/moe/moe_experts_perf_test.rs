@@ -69,7 +69,8 @@ fn run_decode_case<B: Backend>(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(ctx, DataType::BF16, 2).expect("experts decode kernel");
+    let experts_kernel =
+        MoeExpertsTwoPassDecodeBlock::<B>::new(ctx, DataType::BF16, 2, true, true).expect("experts decode kernel");
 
     let x_perm_buf = alloc_allocation_with_data::<B, bf16>(ctx, &x_perm);
     let offsets_buf = alloc_allocation_with_data::<B, u32>(ctx, &offsets);
@@ -190,7 +191,7 @@ fn run_two_pass_prefill_case<B: Backend>(
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
     let experts_kernel =
-        MoeExpertsTwoPassPrefillBlock::<B>::new(ctx, DataType::BF16, 2).expect("experts prefill kernel");
+        MoeExpertsTwoPassPrefillBlock::<B>::new(ctx, DataType::BF16, 2, true, true).expect("experts prefill kernel");
 
     let x_perm_buf = alloc_allocation_with_data::<B, bf16>(ctx, &x_perm);
     let offsets_buf = alloc_allocation_with_data::<B, u32>(ctx, &offsets);

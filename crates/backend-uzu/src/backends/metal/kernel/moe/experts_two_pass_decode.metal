@@ -27,6 +27,7 @@ PUBLIC KERNEL(MoeExpertsDecodePassA)(
     constant float& silu_alpha,
     device const uint* tile_map,
     const uint gating_sel SPECIALIZE,
+    const bool has_up_biases SPECIALIZE,
     const ThreadContext thread_context,
     const uint tile_idx GROUPS(INDIRECT),
     const uint tid THREADS(128)
@@ -101,14 +102,14 @@ PUBLIC KERNEL(MoeExpertsDecodePassA)(
 
   // Lane 0 applies activation and writes result
   if (thread_context.simd_lane_id == 0) {
-    float up_val = acc_up + float(up_biases[bias_base + h_idx]);
+    float up_val = acc_up + (has_up_biases ? float(up_biases[bias_base + h_idx]) : 0.0f);
     up_val = clamp(up_val, up_clip_min, up_clip_max);
 
     float activated;
     if (gating_sel <= 1) {
       activated = (gating_sel == 0) ? activate_gelu(up_val) : activate_silu_alpha(up_val, silu_alpha);
     } else {
-      float gate_val = acc_gate + float(up_biases[bias_base + d_ff + h_idx]);
+      float gate_val = acc_gate + (has_up_biases ? float(up_biases[bias_base + d_ff + h_idx]) : 0.0f);
       gate_val = clamp(gate_val, gate_clip_min, gate_clip_max);
       float gate_act = (gating_sel == 2) ? activate_silu_alpha(gate_val, silu_alpha) : activate_gelu(gate_val);
       activated = gate_act * up_val;
@@ -137,6 +138,7 @@ PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
     constant uint& d_model,
     constant uint& d_ff,
     constant uint& e,
+    const bool has_down_biases SPECIALIZE,
     const ThreadContext thread_context,
     const uint tgpig_x GROUPS(d_model.div_ceil(SIMDGROUPS_PER_TG)),
     const uint tgpig_y GROUPS(total_rows),
@@ -219,8 +221,10 @@ PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
 
   // Lane 0 writes result
   if (thread_context.simd_lane_id == 0) {
-    const ulong bias_idx = (ulong)expert_idx * (ulong)d_model + (ulong)my_col;
-    result += AccumT(down_biases[bias_idx]);
+    if (has_down_biases) {
+      const ulong bias_idx = (ulong)expert_idx * (ulong)d_model + (ulong)my_col;
+      result += AccumT(down_biases[bias_idx]);
+    }
 
     const ulong out_idx = (ulong)row_idx * (ulong)d_model + (ulong)my_col;
     y_out[out_idx] = T(result);

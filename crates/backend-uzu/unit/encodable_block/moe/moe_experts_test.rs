@@ -368,7 +368,7 @@ fn test_two_pass_decode_correctness() {
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
 
-        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, gating_code)
+        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, gating_code, true, true)
             .expect("MoeExpertsTwoPassDecodeKernel::new");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
 
@@ -492,7 +492,8 @@ fn test_two_pass_decode_multi_token() {
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
 
-        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, gating_code).expect("kernel");
+        let experts_kernel =
+            MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, gating_code, true, true).expect("kernel");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         let y_partial_buf = experts_kernel
             .encode(
@@ -577,7 +578,7 @@ fn test_two_pass_prefill_correctness() {
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
 
         let experts_kernel =
-            MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx, DataType::BF16, gating_code).expect("kernel");
+            MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx, DataType::BF16, gating_code, true, true).expect("kernel");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         let args = MoeExpertsTwoPassArguments {
             x_perm: &x_perm_buf,
@@ -604,6 +605,173 @@ fn test_two_pass_prefill_correctness() {
 
         assert_eq_float(&y_expected, &y_gpu, 0.02, "2-pass prefill");
         eprintln!("[2-pass prefill] ✓ PASSED");
+        drop(y_partial_buf);
+        drop(completed);
+    });
+}
+
+#[uzu_test]
+fn test_two_pass_decode_biasless_correctness() {
+    for_each_non_cpu_backend!(|B| {
+        for (seed, t, k, d_model, d_ff, e, label) in [
+            (0xB1A5DEC0, 2usize, 2usize, 256usize, 512usize, 8usize, "2-pass decode biasless"),
+            (0xB1A5DEC1, 1, 8, 2816, 704, 8, "2-pass decode biasless Gemma 4 dimensions"),
+        ] {
+            let ctx = create_context::<B>();
+            let mut rng = StdRng::seed_from_u64(seed);
+
+            let sum_k = t * k;
+            let gating_code = 3u32;
+            let silu_alpha = 1.0f32;
+
+            let mut data = MoeTestData::generate(&mut rng, t, k, d_model, d_ff, e);
+            data.up_biases.fill(bf16::from_f32(0.0));
+            data.down_biases.fill(bf16::from_f32(0.0));
+            let scatter = scatter_by_expert(&data.x, &data.topk_ids, t, k, d_model, e);
+
+            let y_expected = cpu_moe_reference(
+                &data.x,
+                &data.topk_ids,
+                &data.topk_probs,
+                &data.w13,
+                &data.w2,
+                &data.up_biases,
+                &data.down_biases,
+                t,
+                d_model,
+                d_ff,
+                k,
+                gating_code,
+                silu_alpha,
+                f32::NEG_INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::INFINITY,
+            );
+
+            let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &scatter.x_perm);
+            let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.offsets);
+            let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w13);
+            let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w2);
+            let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.up_biases);
+            let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
+
+            let experts_kernel =
+                MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, gating_code, false, false)
+                    .expect("kernel");
+            let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+            let y_partial_buf = experts_kernel
+                .encode(
+                    MoeExpertsTwoPassArguments {
+                        x_perm: &x_perm_buf,
+                        expert_offsets: &offsets_buf,
+                        w13_all: &w13_buf,
+                        w2_all: &w2_buf,
+                        up_biases: &up_biases_buf,
+                        down_biases: &down_biases_buf,
+                        total_rows: sum_k,
+                        d_model,
+                        d_ff,
+                        num_routed_experts: e,
+                        gate_clip_min: f32::NEG_INFINITY,
+                        gate_clip_max: f32::INFINITY,
+                        up_clip_min: f32::NEG_INFINITY,
+                        up_clip_max: f32::INFINITY,
+                        silu_alpha,
+                    },
+                    &mut encoder,
+                )
+                .expect("failed to encode MoE experts");
+            let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+
+            let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
+            let y_gpu = gather_and_finalize(&y_partial_gpu, &data.topk_probs, &scatter.perm_idx, t, k, d_model);
+
+            assert_eq_float(&y_expected, &y_gpu, 0.02, label);
+            drop(y_partial_buf);
+            drop(completed);
+        }
+    });
+}
+
+#[uzu_test]
+fn test_two_pass_prefill_biasless_correctness() {
+    for_each_non_cpu_backend!(|B| {
+        let ctx = create_context::<B>();
+        let mut rng = StdRng::seed_from_u64(0xB1A5FEED);
+
+        let t = 4;
+        let k = 2;
+        let sum_k = t * k;
+        let d_model = 256;
+        let d_ff = 512;
+        let e = 8;
+        let gating_code = 3u32;
+        let silu_alpha = 1.0f32;
+
+        let mut data = MoeTestData::generate(&mut rng, t, k, d_model, d_ff, e);
+        data.up_biases.fill(bf16::from_f32(0.0));
+        data.down_biases.fill(bf16::from_f32(0.0));
+        let scatter = scatter_by_expert(&data.x, &data.topk_ids, t, k, d_model, e);
+
+        let y_expected = cpu_moe_reference(
+            &data.x,
+            &data.topk_ids,
+            &data.topk_probs,
+            &data.w13,
+            &data.w2,
+            &data.up_biases,
+            &data.down_biases,
+            t,
+            d_model,
+            d_ff,
+            k,
+            gating_code,
+            silu_alpha,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+        );
+
+        let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &scatter.x_perm);
+        let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.offsets);
+        let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w13);
+        let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w2);
+        let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.up_biases);
+        let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
+
+        let experts_kernel =
+            MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx, DataType::BF16, gating_code, false, false).expect("kernel");
+        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+        let y_partial_buf = experts_kernel
+            .encode(
+                MoeExpertsTwoPassArguments {
+                    x_perm: &x_perm_buf,
+                    expert_offsets: &offsets_buf,
+                    w13_all: &w13_buf,
+                    w2_all: &w2_buf,
+                    up_biases: &up_biases_buf,
+                    down_biases: &down_biases_buf,
+                    total_rows: sum_k,
+                    d_model,
+                    d_ff,
+                    num_routed_experts: e,
+                    gate_clip_min: f32::NEG_INFINITY,
+                    gate_clip_max: f32::INFINITY,
+                    up_clip_min: f32::NEG_INFINITY,
+                    up_clip_max: f32::INFINITY,
+                    silu_alpha,
+                },
+                &mut encoder,
+            )
+            .expect("failed to encode MoE experts");
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+
+        let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
+        let y_gpu = gather_and_finalize(&y_partial_gpu, &data.topk_probs, &scatter.perm_idx, t, k, d_model);
+
+        assert_eq_float(&y_expected, &y_gpu, 0.02, "2-pass prefill biasless");
         drop(y_partial_buf);
         drop(completed);
     });

@@ -320,6 +320,8 @@ fn run_moe_parity_test_internal<B: Backend>(
         &x_buf,
         &router_w_buf,
         &router_b_buf,
+        &router_w_buf,
+        &router_b_buf,
         &mut topk_ids_buf,
         &mut topk_probs_buf,
         t as u32,
@@ -327,6 +329,12 @@ fn run_moe_parity_test_internal<B: Backend>(
         e as u32,
         k as u32,
         true,
+        0.0,
+        1.0,
+        true,
+        false,
+        false,
+        false,
         &mut encoder,
     );
 
@@ -379,7 +387,8 @@ fn run_moe_parity_test_internal<B: Backend>(
 
     let total_rows = t * k;
 
-    let experts = MoeExpertsTwoPassPrefillBlock::<B>::new(ctx, DataType::BF16, gating_code).expect("experts");
+    let experts =
+        MoeExpertsTwoPassPrefillBlock::<B>::new(ctx, DataType::BF16, gating_code, true, true).expect("experts");
     let args = MoeExpertsTwoPassArguments {
         x_perm: &x_perm_buf,
         expert_offsets: &offsets_buf,

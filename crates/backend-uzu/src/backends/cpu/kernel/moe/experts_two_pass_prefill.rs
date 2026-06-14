@@ -24,6 +24,9 @@ pub fn moe_experts_prefill_pass_a<T: ArrayElement + Float>(
     #[allow(unused)]
     #[specialize]
     gating_sel: u32,
+    #[allow(unused)]
+    #[specialize]
+    has_up_biases: bool,
     #[allow(unused)] __dsl_indirect_dispatch_buffer: *const u32,
 ) {
     todo!()
@@ -41,6 +44,9 @@ pub fn moe_experts_prefill_pass_b<T: ArrayElement + Float>(
     #[allow(unused)] d_ff: u32,
     #[allow(unused)] e: u32,
     #[allow(unused)] tile_map: *const u32,
+    #[allow(unused)]
+    #[specialize]
+    has_down_biases: bool,
     #[allow(unused)] __dsl_indirect_dispatch_buffer: *const u32,
 ) {
     todo!()

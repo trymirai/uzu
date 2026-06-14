@@ -14,6 +14,10 @@ pub struct MixtureOfExpertsConfig {
     pub num_routed_experts: usize,
     pub num_active_routed_experts: usize,
     pub router_has_biases: bool,
+    pub router_has_scales: Option<bool>,
+    pub router_has_per_expert_scales: Option<bool>,
+    pub router_input_norm_epsilon: Option<f32>,
+    pub router_input_scale: Option<f32>,
 
     pub num_shared_experts: usize,
     pub expert_hidden_dim: usize,

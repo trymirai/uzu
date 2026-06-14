@@ -28,6 +28,8 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         ctx: &B::Context,
         data_type: DataType,
         gating_code: u32,
+        has_up_biases: bool,
+        has_down_biases: bool,
     ) -> Result<Self, B::Error> {
         Ok(Self {
             counts: <B::Kernels as Kernels>::MoePassATileCountsKernel::new(ctx)?,
@@ -35,8 +37,18 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             row_map: <B::Kernels as Kernels>::MoePassABuildRowMapKernel::new(ctx)?,
             build_map: <B::Kernels as Kernels>::MoePassABuildTileMapKernel::new(ctx)?,
             dispatch: <B::Kernels as Kernels>::MoePassAWriteDispatchArgsKernel::new(ctx)?,
-            pass_a_indirect: <B::Kernels as Kernels>::MoeExpertsDecodePassAKernel::new(ctx, data_type, gating_code)?,
-            fused_down: <B::Kernels as Kernels>::MoeExpertsDecodeDownFused2DKernel::new(ctx, data_type, DataType::F32)?,
+            pass_a_indirect: <B::Kernels as Kernels>::MoeExpertsDecodePassAKernel::new(
+                ctx,
+                data_type,
+                gating_code,
+                has_up_biases,
+            )?,
+            fused_down: <B::Kernels as Kernels>::MoeExpertsDecodeDownFused2DKernel::new(
+                ctx,
+                data_type,
+                DataType::F32,
+                has_down_biases,
+            )?,
             data_type,
         })
     }
