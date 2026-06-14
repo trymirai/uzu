@@ -1,6 +1,7 @@
 #![cfg(metal_backend)]
 
 use ndarray::{Array, Array3, s};
+use proc_macros::uzu_test;
 
 use super::*;
 use crate::{
@@ -107,7 +108,7 @@ fn test_random_pattern<B: Backend>(context: &B::Context) {
     assert_eq!(value_result, expected_values);
 }
 
-#[test]
+#[uzu_test]
 fn test_kv_cache_update_kernel() {
     let metal_context = match <Metal as Backend>::Context::new() {
         Ok(ctx) => ctx,
@@ -120,7 +121,7 @@ fn test_kv_cache_update_kernel() {
     test_random_pattern::<Metal>(&metal_context);
 }
 
-#[test]
+#[uzu_test]
 fn test_direct_swaps() {
     let sources = [0, 2, 4];
     let destinations = [1, 3, 5];

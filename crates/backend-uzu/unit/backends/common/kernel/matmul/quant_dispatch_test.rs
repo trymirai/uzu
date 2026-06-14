@@ -91,6 +91,7 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::gs16_4bit_zp_prefill(64, 256, 64, 16, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs32_4bit_mlx_prefill(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs64_4bit_mlx_prefill(64, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
@@ -112,6 +113,7 @@ fn parity_bf16(
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::gs32_8bit_mlx_prefill(64, 256, 64, 32, 8, QuantizationMethod::ScaleBias)]
 #[case::gs64_8bit_zp_prefill(64, 256, 64, 64, 8, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs128_8bit_zp_prefill(64, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint)]
@@ -154,6 +156,7 @@ fn run_parity_gemv<T: ArrayElement + Float + Debug + Display>(
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::m1_gs32_4bit_mlx(1, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::m1_gs64_4bit_mlx(1, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
 #[case::m1_gs128_4bit_mlx(1, 256, 64, 128, 4, QuantizationMethod::ScaleBias)]
@@ -261,6 +264,7 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::gs64_4bit(1, 96, 64, 64, 4, QuantizationMethod::ScaleBias)]
 #[case::gs64_4bit_zp(2, 96, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs128_8bit(1, 192, 64, 128, 8, QuantizationMethod::ScaleBias)]
@@ -278,6 +282,7 @@ fn parity_gemv_partial_group_bf16(
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::n12_gs32_4bit(1, 256, 12, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::n20_gs64_4bit_zp(2, 256, 20, 64, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::n36_gs32_8bit(1, 256, 36, 32, 8, QuantizationMethod::ScaleBias)]
@@ -497,6 +502,7 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::gs32_4bit_mlx(128, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs64_4bit_mlx(128, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
 #[case::gs128_4bit_mlx(128, 256, 64, 128, 4, QuantizationMethod::ScaleBias)]

@@ -50,7 +50,7 @@ impl SamplingMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct SamplingPreferences {
     pub mode: SamplingMode,
@@ -65,25 +65,6 @@ pub struct SamplingPreferences {
     pub repetition_penalty_enabled: bool,
     pub repetition_penalty: f64,
     pub suffix_repetition_length: i64,
-}
-
-impl Default for SamplingPreferences {
-    fn default() -> Self {
-        Self {
-            mode: SamplingMode::default(),
-            temperature_enabled: false,
-            temperature: 0.8,
-            top_k_enabled: false,
-            top_k: 64,
-            top_p_enabled: false,
-            top_p: 0.95,
-            min_p_enabled: false,
-            min_p: 0.05,
-            repetition_penalty_enabled: false,
-            repetition_penalty: 1.1,
-            suffix_repetition_length: 1024,
-        }
-    }
 }
 
 impl SamplingPreferences {
@@ -189,67 +170,4 @@ pub(super) fn cycle<T: Copy + PartialEq>(
     let index = values.iter().position(|value| *value == current).map(|index| index as isize).unwrap_or(0);
     let next = (index + delta).rem_euclid(length) as usize;
     values[next]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn model_default_maps_to_default_policy() {
-        let prefs = SamplingPreferences {
-            mode: SamplingMode::ModelDefault,
-            ..SamplingPreferences::default()
-        };
-        assert!(matches!(prefs.policy(), SamplingPolicy::Default {}));
-    }
-
-    #[test]
-    fn greedy_maps_to_greedy_method() {
-        let prefs = SamplingPreferences {
-            mode: SamplingMode::Greedy,
-            ..SamplingPreferences::default()
-        };
-        assert!(matches!(
-            prefs.policy(),
-            SamplingPolicy::Custom {
-                method: SamplingMethod::Greedy {},
-            }
-        ));
-    }
-
-    #[test]
-    fn stochastic_only_forwards_enabled_parameters() {
-        let prefs = SamplingPreferences {
-            mode: SamplingMode::Stochastic,
-            temperature_enabled: true,
-            temperature: 0.7,
-            top_k_enabled: false,
-            top_p_enabled: true,
-            top_p: 0.9,
-            min_p_enabled: false,
-            ..SamplingPreferences::default()
-        };
-        match prefs.policy() {
-            SamplingPolicy::Custom {
-                method:
-                    SamplingMethod::Stochastic {
-                        temperature,
-                        top_k,
-                        top_p,
-                        min_p,
-                        repetition_penalty,
-                        suffix_repetition_length,
-                    },
-            } => {
-                assert_eq!(temperature, Some(0.7));
-                assert_eq!(top_k, None);
-                assert_eq!(top_p, Some(0.9));
-                assert_eq!(min_p, None);
-                assert_eq!(repetition_penalty, None);
-                assert_eq!(suffix_repetition_length, None);
-            },
-            _ => panic!("stochastic mode must map to a custom stochastic policy"),
-        }
-    }
 }

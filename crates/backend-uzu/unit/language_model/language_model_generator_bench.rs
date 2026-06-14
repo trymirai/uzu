@@ -1,14 +1,18 @@
 use std::time::Duration;
 
 use backend_uzu::{
-    _benchmarks::{LanguageModelConfig, LanguageModelGenerator, RunModelResult, TrieCreationConfig, TrieNode},
     backends::common::Backend,
     session::{config::DecodingConfig, parameter::SamplingMethod},
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
 use proc_macros::uzu_bench;
 
-use crate::common::{metrics::wait_gpu_cooldown, path::get_test_model_path};
+use crate::{
+    common::{metrics::wait_gpu_cooldown, path::get_test_model_path},
+    config::model::language_model::LanguageModelConfig,
+    language_model::{LanguageModelGenerator, language_model_generator::RunModelResult},
+    trie::{TrieCreationConfig, TrieNode},
+};
 
 fn create_generator<B: Backend>() -> LanguageModelGenerator<B> {
     let model_path = get_test_model_path();

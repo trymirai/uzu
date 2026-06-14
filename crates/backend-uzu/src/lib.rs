@@ -1,3 +1,6 @@
+#![cfg_attr(test, feature(custom_test_frameworks, test))]
+#![cfg_attr(test, test_runner(crate::tests::uzu_harness))]
+
 // needed for tests to resolve `backend_uzu::` imports
 #[cfg(test)]
 extern crate self as backend_uzu;
@@ -26,11 +29,5 @@ pub mod session;
 
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
 
-#[doc(hidden)]
-pub mod _benchmarks {
-    pub use crate::{
-        config::model::language_model::LanguageModelConfig,
-        language_model::{LanguageModelGenerator, language_model_generator::RunModelResult},
-        trie::{TrieCreationConfig, TrieNode},
-    };
-}
+#[cfg(test)]
+pub mod tests;
