@@ -154,6 +154,10 @@ impl<B: Backend> MoeBlock<B> {
         let up_weights_tree = up_tree.subtree("weights")?;
         let down_weights_tree = down_tree.subtree("weights")?;
 
+        // Runtime experts use Uzu layout [E, 2*hidden, model] with the up
+        // projection in the first half and gate in the second half. HF fused
+        // layouts such as Gemma 4 gate_up_proj must be reordered before this
+        // point by the weight conversion/export boundary, not by the kernels.
         let w13 = up_weights_tree
             .leaf("weights")?
             .validate(&[moe_config.num_routed_experts, moe_config.expert_hidden_dim * 2, model_dim], data_type)?
