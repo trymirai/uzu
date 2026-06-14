@@ -8,9 +8,10 @@ use std::{
 use rocket::{
     Request, State,
     futures::Stream,
+    http::Status,
     post,
     response::{
-        Responder,
+        Responder, status,
         stream::{Event, EventStream},
     },
     serde::json::Json,
@@ -22,7 +23,7 @@ use uuid::Uuid;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
     types::{
-        basic::SamplingMethod,
+        basic::{ReasoningEffort, SamplingMethod},
         session::chat::{ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole},
     },
 };
@@ -51,6 +52,10 @@ pub struct ChatCompletionRequest {
     pub top_p: Option<f64>,
     #[serde(default)]
     pub top_k: Option<i64>,
+    #[serde(default)]
+    // Raw value, not a typed string, so a bad reasoning_effort becomes our OpenAI 400
+    // rather than Rocket's 422 at request extraction.
+    pub reasoning_effort: Option<serde_json::Value>,
     #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
@@ -106,9 +111,24 @@ struct ChatCompletionChunk {
     usage: Option<ChatCompletionUsage>,
 }
 
+#[derive(Serialize)]
+pub struct OaiErrorResponse {
+    error: OaiError,
+}
+
+#[derive(Serialize)]
+struct OaiError {
+    message: String,
+    #[serde(rename = "type")]
+    kind: String,
+    param: Option<String>,
+    code: Option<String>,
+}
+
 pub enum ChatCompletionResult {
     Json(Json<ChatCompletionResponse>),
     Stream(EventStream<Pin<Box<dyn Stream<Item = Event> + Send>>>),
+    Error(status::Custom<Json<OaiErrorResponse>>),
 }
 
 impl<'r> Responder<'r, 'r> for ChatCompletionResult {
@@ -119,6 +139,7 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
         match self {
             ChatCompletionResult::Json(json) => json.respond_to(request),
             ChatCompletionResult::Stream(stream) => stream.respond_to(request),
+            ChatCompletionResult::Error(error) => error.respond_to(request),
         }
     }
 }
@@ -127,14 +148,89 @@ fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
-    messages
+fn to_chat_messages(
+    messages: &[OaiMessage],
+    reasoning_effort: Option<ReasoningEffort>,
+) -> Vec<ChatMessage> {
+    let mut messages = messages
         .iter()
         .map(|message| {
             let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
             ChatMessage::for_role(role).with_text(message.content.clone())
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if let (Some(effort), Some(message)) = (reasoning_effort, messages.last_mut()) {
+        *message = message.with_reasoning_effort(effort);
+    }
+    messages
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RequestValidationError {
+    UnsupportedReasoningEffort(&'static str),
+    InvalidReasoningEffort(String),
+}
+
+impl RequestValidationError {
+    fn message(&self) -> String {
+        match self {
+            RequestValidationError::UnsupportedReasoningEffort(value) => {
+                format!("reasoning_effort `{value}` is recognized but not supported yet")
+            },
+            RequestValidationError::InvalidReasoningEffort(value) => {
+                format!("reasoning_effort must be one of none, low, medium, high, disabled, default; got `{value}`")
+            },
+        }
+    }
+
+    fn code(&self) -> &'static str {
+        match self {
+            RequestValidationError::UnsupportedReasoningEffort(_) => "unsupported_reasoning_effort",
+            RequestValidationError::InvalidReasoningEffort(_) => "invalid_reasoning_effort",
+        }
+    }
+
+    fn param(&self) -> &'static str {
+        "reasoning_effort"
+    }
+}
+
+fn request_error_response(error: RequestValidationError) -> ChatCompletionResult {
+    ChatCompletionResult::Error(status::Custom(
+        Status::BadRequest,
+        Json(OaiErrorResponse {
+            error: OaiError {
+                message: error.message(),
+                kind: "invalid_request_error".to_string(),
+                param: Some(error.param().to_string()),
+                code: Some(error.code().to_string()),
+            },
+        }),
+    ))
+}
+
+fn parse_reasoning_effort(
+    value: Option<&serde_json::Value>
+) -> Result<Option<ReasoningEffort>, RequestValidationError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(value) = value.as_str() else {
+        return Err(RequestValidationError::InvalidReasoningEffort(value.to_string()));
+    };
+    match value {
+        "none" | "disabled" => Ok(Some(ReasoningEffort::Disabled)),
+        "default" => Ok(Some(ReasoningEffort::Default)),
+        // Local chat templates currently expose a thinking on/off control. Keep the requested
+        // level in the message so backends that can honor levels may do so, while local backends
+        // treat all non-disabled levels as thinking enabled.
+        "low" => Ok(Some(ReasoningEffort::Low)),
+        "medium" => Ok(Some(ReasoningEffort::Medium)),
+        "high" => Ok(Some(ReasoningEffort::High)),
+        "minimal" => Err(RequestValidationError::UnsupportedReasoningEffort("minimal")),
+        "xhigh" => Err(RequestValidationError::UnsupportedReasoningEffort("xhigh")),
+        other => Err(RequestValidationError::InvalidReasoningEffort(other.to_string())),
+    }
 }
 
 fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
@@ -143,9 +239,7 @@ fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
 
     if request.temperature.is_some_and(|temperature| temperature <= 0.0) {
         return config.with_sampling_method(SamplingMethod::Greedy {});
-    }
-
-    if request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some() {
+    } else if request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some() {
         return config.with_sampling_method(SamplingMethod::Stochastic {
             temperature: request.temperature,
             top_k: request.top_k,
@@ -390,8 +484,12 @@ pub async fn handle_chat_completions(
     let model = state.model_name.clone();
     let is_stream = request.stream.unwrap_or(false);
 
-    let messages = to_chat_messages(&request.messages);
     let config = build_reply_config(&request);
+    let reasoning_effort = match parse_reasoning_effort(request.reasoning_effort.as_ref()) {
+        Ok(reasoning_effort) => reasoning_effort,
+        Err(error) => return request_error_response(error),
+    };
+    let messages = to_chat_messages(&request.messages, reasoning_effort);
 
     if is_stream {
         let session = Arc::clone(&state.session);
@@ -403,5 +501,151 @@ pub async fn handle_chat_completions(
         let session = Arc::clone(&state.session);
         let response = run_blocking(session, messages, config, id, model, created).await;
         ChatCompletionResult::Json(Json(response))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use uzu::types::session::chat::ChatMessageList;
+
+    use super::*;
+
+    fn request(json: &str) -> ChatCompletionRequest {
+        serde_json::from_str(json).expect("valid request json")
+    }
+
+    fn reply_config(json: &str) -> ChatReplyConfig {
+        build_reply_config(&request(json))
+    }
+
+    fn chat_messages(json: &str) -> Vec<ChatMessage> {
+        let request = request(json);
+        to_chat_messages(
+            &request.messages,
+            parse_reasoning_effort(request.reasoning_effort.as_ref()).expect("valid reasoning_effort"),
+        )
+    }
+
+    // Test-only route returning a reasoning_effort validation error, used to exercise the actual
+    // Rocket response layer. Defined at module level so the `rocket::get` macro stays local.
+    #[rocket::get("/err")]
+    fn err_route() -> ChatCompletionResult {
+        request_error_response(RequestValidationError::InvalidReasoningEffort("bad".to_string()))
+    }
+
+    #[test]
+    fn error_responder_yields_http_400_with_openai_body() {
+        let client = rocket::local::blocking::Client::tracked(rocket::build().mount("/", rocket::routes![err_route]))
+            .expect("rocket client");
+        let response = client.get("/err").dispatch();
+
+        assert_eq!(response.status(), Status::BadRequest);
+        let body: serde_json::Value = response.into_json().expect("json error body");
+        assert_eq!(body["error"]["type"], "invalid_request_error");
+        assert_eq!(body["error"]["param"], "reasoning_effort");
+        assert_eq!(body["error"]["code"], "invalid_reasoning_effort");
+        assert!(
+            body["error"]["message"].as_str().is_some_and(|message| !message.is_empty()),
+            "expected a non-empty error message, got {body}"
+        );
+    }
+
+    #[test]
+    fn reasoning_effort_is_optional() {
+        let messages = chat_messages(r#"{"messages":[{"role":"user","content":"hi"}]}"#);
+        assert_eq!(messages.reasoning_effort(), None);
+    }
+
+    #[test]
+    fn reasoning_effort_applies_to_latest_message() {
+        let messages = chat_messages(
+            r#"{"messages":[{"role":"system","content":"s"},{"role":"user","content":"u"}],"reasoning_effort":"none"}"#,
+        );
+
+        assert_eq!(messages.reasoning_effort(), Some(ReasoningEffort::Disabled));
+        assert_eq!(messages.first().and_then(ChatMessage::reasoning_effort), None);
+        assert_eq!(messages.last().and_then(ChatMessage::reasoning_effort), Some(ReasoningEffort::Disabled));
+    }
+
+    #[test]
+    fn reasoning_effort_accepts_openai_values_and_uzu_aliases() {
+        for (value, expected) in [
+            ("none", ReasoningEffort::Disabled),
+            ("disabled", ReasoningEffort::Disabled),
+            ("default", ReasoningEffort::Default),
+            ("low", ReasoningEffort::Low),
+            ("medium", ReasoningEffort::Medium),
+            ("high", ReasoningEffort::High),
+        ] {
+            let request = request(&format!(r#"{{"messages":[],"reasoning_effort":"{value}"}}"#));
+            assert_eq!(parse_reasoning_effort(request.reasoning_effort.as_ref()), Ok(Some(expected)));
+        }
+    }
+
+    #[test]
+    fn recognized_unsupported_reasoning_effort_is_request_error() {
+        for value in ["minimal", "xhigh"] {
+            let request = request(&format!(r#"{{"messages":[],"reasoning_effort":"{value}"}}"#));
+            let error = parse_reasoning_effort(request.reasoning_effort.as_ref())
+                .expect_err("unsupported reasoning_effort should be rejected");
+            assert_eq!(error, RequestValidationError::UnsupportedReasoningEffort(value));
+            assert_eq!(error.param(), "reasoning_effort");
+            assert_eq!(error.code(), "unsupported_reasoning_effort");
+        }
+    }
+
+    #[test]
+    fn invalid_reasoning_effort_is_request_error() {
+        let request = request(r#"{"messages":[],"reasoning_effort":"maximum"}"#);
+        let error = parse_reasoning_effort(request.reasoning_effort.as_ref())
+            .expect_err("invalid reasoning_effort should be rejected");
+        assert_eq!(error, RequestValidationError::InvalidReasoningEffort("maximum".to_string()));
+        assert_eq!(error.param(), "reasoning_effort");
+        assert_eq!(error.code(), "invalid_reasoning_effort");
+    }
+
+    #[test]
+    fn malformed_reasoning_effort_passes_json_extraction() {
+        for body in
+            [r#"{"messages":[],"reasoning_effort":123}"#, r#"{"messages":[],"reasoning_effort":{"level":"disabled"}}"#]
+        {
+            let request = serde_json::from_str::<ChatCompletionRequest>(body)
+                .unwrap_or_else(|error| panic!("expected {body} to pass extraction, got {error}"));
+            let error = parse_reasoning_effort(request.reasoning_effort.as_ref())
+                .expect_err("malformed reasoning_effort should be rejected");
+            assert_eq!(error.param(), "reasoning_effort");
+            assert_eq!(error.code(), "invalid_reasoning_effort");
+        }
+    }
+
+    #[test]
+    fn reasoning_effort_composes_with_sampling_options() {
+        let stochastic =
+            reply_config(r#"{"messages":[],"temperature":0.7,"top_p":0.9,"top_k":40,"reasoning_effort":"none"}"#);
+        let messages = chat_messages(
+            r#"{"messages":[{"role":"user","content":"json please"}],"temperature":0.7,"top_p":0.9,"top_k":40,"reasoning_effort":"none"}"#,
+        );
+        assert_eq!(messages.reasoning_effort(), Some(ReasoningEffort::Disabled));
+        assert_eq!(
+            stochastic.sampling_policy,
+            uzu::types::basic::SamplingPolicy::Custom {
+                method: SamplingMethod::Stochastic {
+                    temperature: Some(0.7),
+                    top_k: Some(40),
+                    top_p: Some(0.9),
+                    min_p: None,
+                    repetition_penalty: None,
+                    suffix_repetition_length: None,
+                },
+            }
+        );
+
+        let greedy = reply_config(r#"{"messages":[],"temperature":0,"reasoning_effort":"none"}"#);
+        assert_eq!(
+            greedy.sampling_policy,
+            uzu::types::basic::SamplingPolicy::Custom {
+                method: SamplingMethod::Greedy {},
+            }
+        );
     }
 }
