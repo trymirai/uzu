@@ -1,3 +1,5 @@
+use std::mem::size_of_val;
+
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
@@ -88,6 +90,13 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             quant_method,
             mode: mode_for_bits(bits),
         }
+    }
+
+    pub(crate) fn weight_buffer_bytes(&self) -> usize {
+        size_of_val(self.w_packed.as_slice())
+            + size_of_val(self.scales.as_slice())
+            + self.biases.as_ref().map_or(0, |biases| size_of_val(biases.as_slice()))
+            + self.zero_points.as_ref().map_or(0, |zero_points| size_of_val(zero_points.as_slice()))
     }
 }
 

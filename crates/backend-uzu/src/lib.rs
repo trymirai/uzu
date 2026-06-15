@@ -1,7 +1,7 @@
 #![cfg_attr(test, feature(custom_test_frameworks, test))]
 #![cfg_attr(test, test_runner(test_runner::uzu_harness))]
 
-mod array;
+pub mod array;
 mod audio;
 mod classifier;
 mod config;
