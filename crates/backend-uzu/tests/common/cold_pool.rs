@@ -35,8 +35,5 @@ pub(crate) fn copy_count(
     working_set: usize,
     bytes_per_copy: usize,
 ) -> usize {
-    if bytes_per_copy == 0 {
-        return 1;
-    }
     working_set.div_ceil(bytes_per_copy).max(1)
 }
