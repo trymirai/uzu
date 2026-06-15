@@ -2,6 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -15,8 +16,8 @@ use crate::{
         },
         cpu::Cpu,
     },
-    common::helpers::create_context,
     data_type::DataType,
+    tests::helpers::create_context,
 };
 
 fn cpu_expert_buckets<T: ArrayElement + Float>(
@@ -74,13 +75,23 @@ fn get_output_topk<B: Backend, T: ArrayElement + Float>(
     let mut topk_ids = ctx.create_array_uninitialized(&[t * k], DataType::I32).into_allocation();
     let mut topk_probs = ctx.create_array_uninitialized(&[t * k], T::data_type()).into_allocation();
 
-    let topk_kernel =
-        <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(ctx, T::data_type()).expect("router_topk");
+    let topk_kernel = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(
+        ctx,
+        T::data_type(),
+        true,
+        false,
+        false,
+        false,
+        false,
+    )
+    .expect("router_topk");
     let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
     topk_kernel.encode(
         input_array.allocation(),
         weights_array.allocation(),
-        bias_array.allocation(),
+        Some(bias_array.allocation()),
+        None::<&Allocation<B>>,
+        None::<&Allocation<B>>,
         &mut topk_ids,
         &mut topk_probs,
         t as u32,
@@ -88,6 +99,8 @@ fn get_output_topk<B: Backend, T: ArrayElement + Float>(
         e as u32,
         k as u32,
         true,
+        None::<f32>,
+        None::<f32>,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -140,7 +153,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-    let sumk = crate::common::helpers::allocation_to_vec::<B, u32>(&sumk)[0] as usize;
+    let sumk = crate::tests::helpers::allocation_to_vec::<B, u32>(&sumk)[0] as usize;
 
     // scatter
     let scatter_kernel = <<B as Backend>::Kernels as Kernels>::MoeScatterBucketsKernel::new(&ctx, T::data_type())
@@ -166,9 +179,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     (
-        crate::common::helpers::allocation_to_vec(&out_ids),
-        crate::common::helpers::allocation_to_vec(&out_probs),
-        crate::common::helpers::allocation_to_vec(&offsets),
+        crate::tests::helpers::allocation_to_vec(&out_ids),
+        crate::tests::helpers::allocation_to_vec(&out_probs),
+        crate::tests::helpers::allocation_to_vec(&offsets),
     )
 }
 
@@ -201,8 +214,8 @@ fn test_scatter_internal<B: Backend, T: ArrayElement + Float>(
         e,
         k,
     );
-    let cpu_topk_ids: Vec<i32> = crate::common::helpers::allocation_to_vec(&topk_ids_cpu);
-    let cpu_topk_probs: Vec<T> = crate::common::helpers::allocation_to_vec(&topk_probs_cpu);
+    let cpu_topk_ids: Vec<i32> = crate::tests::helpers::allocation_to_vec(&topk_ids_cpu);
+    let cpu_topk_probs: Vec<T> = crate::tests::helpers::allocation_to_vec(&topk_probs_cpu);
     let (cpu_ids, _cpu_probs, offsets_cpu) = cpu_expert_buckets(&cpu_topk_ids, &cpu_topk_probs, t, e, k);
     assert_eq!(out_offsets_array, offsets_cpu);
 

@@ -9,7 +9,7 @@ use crate::{
         common::{Context, Encoder},
         metal::Metal,
     },
-    common::helpers::{sparse_buffer_create_with, sparse_buffer_read_vec},
+    tests::helpers::{sparse_buffer_create_with, sparse_buffer_read_vec},
 };
 
 fn apply_swaps_3d<T: Clone>(
