@@ -13,6 +13,7 @@ mod moe;
 mod pooling;
 mod qk_unpack_test;
 mod qkv_norm_test;
+mod rms_norm_bench;
 mod rms_norm_test;
 mod rope_test;
 mod short_conv;
