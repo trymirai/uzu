@@ -7,7 +7,7 @@ use crate::{
         common::{Backend, SparseBuffer},
         metal::Metal,
     },
-    common::helpers::{create_context, sparse_buffer_create},
+    tests::helpers::{create_context, sparse_buffer_create},
 };
 
 /// Capacity sized to fit `heap_count` worth of heaps.

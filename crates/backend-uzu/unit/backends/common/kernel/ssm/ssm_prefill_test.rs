@@ -3,6 +3,7 @@ use std::fmt::{Debug, Display};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -13,8 +14,8 @@ use crate::{
         },
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
     data_type::DataType,
+    tests::assert::assert_eq_float,
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -170,8 +171,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {
-        y: crate::common::helpers::allocation_to_vec(&y),
-        state: crate::common::helpers::allocation_to_vec(&state),
+        y: crate::tests::helpers::allocation_to_vec(&y),
+        state: crate::tests::helpers::allocation_to_vec(&state),
     }
 }
 

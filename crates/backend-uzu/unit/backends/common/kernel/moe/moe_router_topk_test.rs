@@ -4,6 +4,7 @@ use half::bf16;
 use num_traits::Float;
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -11,8 +12,8 @@ use crate::{
         common::{Backend, Encoder, Kernels, kernel::MoeRouterTopKKernel},
         cpu::Cpu,
     },
-    common::helpers::create_context,
     data_type::DataType,
+    tests::helpers::create_context,
 };
 
 fn get_output<B: Backend, T: ArrayElement + Float>(
@@ -50,7 +51,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (crate::common::helpers::allocation_to_vec(&ids), crate::common::helpers::allocation_to_vec(&probs))
+    (crate::tests::helpers::allocation_to_vec(&ids), crate::tests::helpers::allocation_to_vec(&probs))
 }
 
 fn run_router_topk_once<B: Backend, T: ArrayElement + Debug + Float>(
