@@ -1,20 +1,22 @@
 use half::bf16;
+use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use test_runner::for_each_non_cpu_backend;
 
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGather};
 use crate::{
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         gpu_types::{ActivationType, activation_silu_alpha},
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
         },
     },
-    common::helpers::{
+    data_type::DataType,
+    tests::helpers::{
         alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
     },
-    data_type::DataType,
 };
 
 fn moe_cpu_reference(
@@ -314,11 +316,15 @@ fn run_moe_parity_test_internal<B: Backend>(
     let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
 
     // Router + TopK (fused kernel)
-    let router_topk = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(ctx, DataType::BF16).expect("router+topk");
+    let router_topk =
+        <B::Kernels as Kernels>::MoeRouterTopKKernel::new(ctx, DataType::BF16, true, false, false, false, false)
+            .expect("router+topk");
     router_topk.encode(
         &x_buf,
         &router_w_buf,
-        &router_b_buf,
+        Some(&router_b_buf),
+        None::<&Allocation<B>>,
+        None::<&Allocation<B>>,
         &mut topk_ids_buf,
         &mut topk_probs_buf,
         t as u32,
@@ -326,6 +332,8 @@ fn run_moe_parity_test_internal<B: Backend>(
         e as u32,
         k as u32,
         true,
+        None::<f32>,
+        None::<f32>,
         &mut encoder,
     );
 
@@ -626,7 +634,7 @@ fn run_moe_parity_test_internal<B: Backend>(
 }
 
 // Test 1: Minimal (K=1, small dims, no clipping, alpha=1.0)
-#[test]
+#[uzu_test]
 fn test_moe_minimal() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -648,7 +656,7 @@ fn test_moe_minimal() {
 }
 
 // Test 2: Multi-expert (K=2, tests finalize weighted sum)
-#[test]
+#[uzu_test]
 fn test_moe_multi_expert() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -670,7 +678,7 @@ fn test_moe_multi_expert() {
 }
 
 // Test 3: Large d_model only (K=1 to isolate from finalize complexity)
-#[test]
+#[uzu_test]
 fn test_moe_large_d_model_only() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -692,7 +700,7 @@ fn test_moe_large_d_model_only() {
 }
 
 // Test 4a: d_ff=32 (exactly 1 full chunk - baseline for multi-chunk)
-#[test]
+#[uzu_test]
 fn test_1_full_chunk() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -714,7 +722,7 @@ fn test_1_full_chunk() {
 }
 
 // Test 4b: d_ff=48 (1.5 chunks - tests partial second chunk)
-#[test]
+#[uzu_test]
 fn test_1_5_chunks() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -736,7 +744,7 @@ fn test_1_5_chunks() {
 }
 
 // Test 4c: d_ff=64 (exactly 2 full chunks)
-#[test]
+#[uzu_test]
 fn test_2_full_chunks() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -758,7 +766,7 @@ fn test_2_full_chunks() {
 }
 
 // Test 5: GELU activation (gating_code=0)
-#[test]
+#[uzu_test]
 fn test_gelu_activation() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -780,7 +788,7 @@ fn test_gelu_activation() {
 }
 
 // Test 6: SiLU activation (gating_code=1)
-#[test]
+#[uzu_test]
 fn test_silu_activation() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -802,7 +810,7 @@ fn test_silu_activation() {
 }
 
 // Test 7: GEGLU activation (gating_code=3)
-#[test]
+#[uzu_test]
 fn test_geglu_activation() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -824,7 +832,7 @@ fn test_geglu_activation() {
 }
 
 // Test 8: Bucket stress - multiple tokens, larger E, stress scatter/gather
-#[test]
+#[uzu_test]
 fn test_bucket_stress() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -846,7 +854,7 @@ fn test_bucket_stress() {
 }
 
 // Test 9a: K=4 small-scale to verify multi-expert accumulation
-#[test]
+#[uzu_test]
 fn test_small_scale() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -868,7 +876,7 @@ fn test_small_scale() {
 }
 
 // Test 9b: d_model=128 (4 k0 chunks, 2 n-tiles)
-#[test]
+#[uzu_test]
 fn test_model_128() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -890,7 +898,7 @@ fn test_model_128() {
 }
 
 // Test 9c: d_model=192 (6 k0 chunks, 3 n-tiles - test threshold)
-#[test]
+#[uzu_test]
 fn test_model_192() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -912,7 +920,7 @@ fn test_model_192() {
 }
 
 // Test 9d: d_model=256 (8 k0 chunks, 4 n-tiles)
-#[test]
+#[uzu_test]
 fn test_model_256() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -934,7 +942,7 @@ fn test_model_256() {
 }
 
 // Test 10a: Isolate large d_ff with small d_model (FF accumulation test)
-#[test]
+#[uzu_test]
 fn test_ff_accumulation() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -956,7 +964,7 @@ fn test_ff_accumulation() {
 }
 
 // Test 10b: d_model=1024 (16 n-tiles)
-#[test]
+#[uzu_test]
 fn test_model_1024() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -979,7 +987,7 @@ fn test_model_1024() {
 
 // Test 10c: Verify layout with d_model=96, d_ff=96 (3 chunks each)
 // This tests non-power-of-2 to catch stride bugs
-#[test]
+#[uzu_test]
 fn test_stride() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -1001,7 +1009,7 @@ fn test_stride() {
 }
 
 // Test 10d: d_model=1536
-#[test]
+#[uzu_test]
 fn test_model_1536() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -1023,7 +1031,7 @@ fn test_model_1536() {
 }
 
 // Test 10e: 2 n-tiles
-#[test]
+#[uzu_test]
 fn test_2n_tiles() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -1045,7 +1053,7 @@ fn test_2n_tiles() {
 }
 
 // Test 10g: 8 n-tiles - find threshold
-#[test]
+#[uzu_test]
 fn test_8n_tiles() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -1067,7 +1075,7 @@ fn test_8n_tiles() {
 }
 
 // Test 11b: Production scale with clipping but K=1
-#[test]
+#[uzu_test]
 #[ignore]
 fn test_prod_scale_clipping() {
     for_each_non_cpu_backend!(|B| {
@@ -1090,7 +1098,7 @@ fn test_prod_scale_clipping() {
 }
 
 // Test 11c: PRODUCTION SCALE T=1 decode (triggers GEMV v2)
-#[test]
+#[uzu_test]
 #[ignore]
 fn test_prod_scale_decode() {
     for_each_non_cpu_backend!(|B| {
@@ -1113,7 +1121,7 @@ fn test_prod_scale_decode() {
 }
 
 // Test 11d: FULL PRODUCTION SCALE with K=2, T=4 (uses tiled MMA)
-#[test]
+#[uzu_test]
 #[ignore]
 fn test_prod_scale_tile_mma() {
     for_each_non_cpu_backend!(|B| {

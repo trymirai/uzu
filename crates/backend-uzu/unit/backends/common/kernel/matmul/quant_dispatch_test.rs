@@ -24,7 +24,7 @@ use crate::{
         cpu::Cpu,
         metal::{GemmDispatchPath, Metal, MetalContext},
     },
-    common::{
+    tests::{
         helpers::allocation_to_vec,
         matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, run_quant_metal},
     },
@@ -91,6 +91,7 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::gs16_4bit_zp_prefill(64, 256, 64, 16, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs32_4bit_mlx_prefill(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs64_4bit_mlx_prefill(64, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
@@ -112,6 +113,7 @@ fn parity_bf16(
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::gs32_8bit_mlx_prefill(64, 256, 64, 32, 8, QuantizationMethod::ScaleBias)]
 #[case::gs64_8bit_zp_prefill(64, 256, 64, 64, 8, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs128_8bit_zp_prefill(64, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint)]
@@ -154,6 +156,7 @@ fn run_parity_gemv<T: ArrayElement + Float + Debug + Display>(
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::m1_gs32_4bit_mlx(1, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::m1_gs64_4bit_mlx(1, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
 #[case::m1_gs128_4bit_mlx(1, 256, 64, 128, 4, QuantizationMethod::ScaleBias)]
@@ -184,7 +187,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
     let bias_t: Vec<bf16> = bias_f32.iter().map(|&v| bf16::from_f32(v)).collect();
 
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-    let bias_pp_buf = crate::common::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
+    let bias_pp_buf = crate::tests::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -236,7 +239,7 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
         .collect();
 
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-    let bias_buf = crate::common::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
+    let bias_buf = crate::tests::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -261,6 +264,7 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::gs64_4bit(1, 96, 64, 64, 4, QuantizationMethod::ScaleBias)]
 #[case::gs64_4bit_zp(2, 96, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs128_8bit(1, 192, 64, 128, 8, QuantizationMethod::ScaleBias)]
@@ -278,6 +282,7 @@ fn parity_gemv_partial_group_bf16(
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::n12_gs32_4bit(1, 256, 12, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::n20_gs64_4bit_zp(2, 256, 20, 64, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::n36_gs32_8bit(1, 256, 36, 32, 8, QuantizationMethod::ScaleBias)]
@@ -313,8 +318,8 @@ fn parity_bf16_gemv_quant_rht_with_bias() {
     // Hadamard pass transforms the result) — the same order GEMV uses.
     let cpu_context = <Cpu as Backend>::Context::new().expect("Cpu context");
     let mut cpu_buffers = QuantBuffers::<Cpu, bf16>::allocate(&cpu_context, &input);
-    let cpu_rht = crate::common::helpers::alloc_allocation_with_data::<Cpu, i32>(&cpu_context, &rht);
-    let cpu_bias = crate::common::helpers::alloc_allocation_with_data::<Cpu, bf16>(&cpu_context, &bias_t);
+    let cpu_rht = crate::tests::helpers::alloc_allocation_with_data::<Cpu, i32>(&cpu_context, &rht);
+    let cpu_bias = crate::tests::helpers::alloc_allocation_with_data::<Cpu, bf16>(&cpu_context, &bias_t);
     let mut cpu_matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &cpu_context,
         bf16::data_type(),
@@ -335,8 +340,8 @@ fn parity_bf16_gemv_quant_rht_with_bias() {
     let reference = allocation_to_vec::<Cpu, bf16>(&cpu_buffers.y);
 
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-    let metal_rht = crate::common::helpers::alloc_allocation_with_data::<Metal, i32>(&context, &rht);
-    let metal_bias = crate::common::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
+    let metal_rht = crate::tests::helpers::alloc_allocation_with_data::<Metal, i32>(&context, &rht);
+    let metal_bias = crate::tests::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -377,7 +382,7 @@ fn parity_bf16_gemv_quant_rht() {
     // CPU reference applies the RHT through the CPU matmul kernel.
     let cpu_context = <Cpu as Backend>::Context::new().expect("Cpu context");
     let mut cpu_buffers = QuantBuffers::<Cpu, bf16>::allocate(&cpu_context, &input);
-    let cpu_rht = crate::common::helpers::alloc_allocation_with_data::<Cpu, i32>(&cpu_context, &rht);
+    let cpu_rht = crate::tests::helpers::alloc_allocation_with_data::<Cpu, i32>(&cpu_context, &rht);
     let mut cpu_matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &cpu_context,
         bf16::data_type(),
@@ -399,7 +404,7 @@ fn parity_bf16_gemv_quant_rht() {
 
     // Metal GEMV: m = 1 quant routes to GEMV, RHT selects the 8-simdgroup (32-row) layout.
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-    let metal_rht = crate::common::helpers::alloc_allocation_with_data::<Metal, i32>(&context, &rht);
+    let metal_rht = crate::tests::helpers::alloc_allocation_with_data::<Metal, i32>(&context, &rht);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -497,6 +502,7 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::gs32_4bit_mlx(128, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs64_4bit_mlx(128, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
 #[case::gs128_4bit_mlx(128, 256, 64, 128, 4, QuantizationMethod::ScaleBias)]

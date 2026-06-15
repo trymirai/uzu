@@ -1,8 +1,11 @@
+use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
+
 use super::{SSDPrefillArguments, SSDPrefillBlock, SSDPrefillMode};
 use crate::{
     backends::common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dScanKernel},
-    common::helpers::{alloc_allocation_with_data, allocation_to_vec},
     data_type::DataType,
+    tests::helpers::{alloc_allocation_with_data, allocation_to_vec},
 };
 
 fn ssd_prefill_cpu_reference(
@@ -387,35 +390,35 @@ fn conv1d_scan_deterministic_internal<B: Backend>() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn ssd_prefill_sequential_is_deterministic() {
     for_each_non_cpu_backend!(|B| {
         assert_deterministic_for_mode::<B>(SSDPrefillMode::Sequential);
     });
 }
 
-#[test]
+#[uzu_test]
 fn ssd_prefill_single_pass_is_deterministic() {
     for_each_non_cpu_backend!(|B| {
         assert_deterministic_for_mode::<B>(SSDPrefillMode::SinglePass);
     });
 }
 
-#[test]
+#[uzu_test]
 fn ssd_prefill_sequential_matches_cpu_reference() {
     for_each_non_cpu_backend!(|B| {
         assert_matches_cpu_reference::<B>(SSDPrefillMode::Sequential);
     });
 }
 
-#[test]
+#[uzu_test]
 fn ssd_prefill_single_pass_matches_cpu_reference() {
     for_each_non_cpu_backend!(|B| {
         assert_matches_cpu_reference::<B>(SSDPrefillMode::SinglePass);
     });
 }
 
-#[test]
+#[uzu_test]
 fn conv1d_scan_is_deterministic() {
     for_each_non_cpu_backend!(|B| {
         conv1d_scan_deterministic_internal::<B>();

@@ -2,11 +2,11 @@ use std::fs::File;
 
 use half::bf16;
 use proc_macros::uzu_test;
+use test_runner::{for_each_backend, path::get_test_weights_path};
 use test_tag::tag;
 
 use crate::{
     backends::common::{Backend, Context},
-    common::path::get_test_weights_path,
     data_type::DataType,
     parameters::{ParameterLoader, safetensors_metadata::read_metadata},
 };

@@ -1,23 +1,19 @@
 use std::{iter::repeat_with, mem::MaybeUninit};
 
-use backend_uzu::{
-    array::ArrayElement,
-    backends::common::{AllocationType, Backend, Context, Encoder},
-    dispatch_dtype,
-};
 use num_traits::{Float, NumCast};
+use proc_macros::uzu_test;
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rand_distr::Normal;
 
 use crate::{
-    common::{
-        for_each_context,
-        proptest::{ComparableTestResults, TestContextes, kernel_data_type},
-    },
+    array::ArrayElement,
+    backends::common::{AllocationType, Backend, Context, Encoder},
     data_type::DataType,
+    dispatch_dtype,
     encodable_block::Sampling,
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
+    tests::proptest::{ComparableTestResults, TestContextes, for_each_context, kernel_data_type},
 };
 
 struct SamplingTestResults(Vec<u32>);
@@ -167,7 +163,7 @@ fn sampling_case() -> impl Strategy<Value = SamplingCase> {
     )
 }
 
-#[test]
+#[uzu_test]
 fn test_sampling_prop() {
     let contextes = TestContextes::new();
 

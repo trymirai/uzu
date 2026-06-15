@@ -1,14 +1,16 @@
 #![cfg(metal_backend)]
 
+use proc_macros::uzu_test;
+
 use crate::{
     backends::{
         common::{Backend, Context, Encoder},
         metal::Metal,
     },
-    common::helpers::{sparse_buffer_create_with, sparse_buffer_read_vec, sparse_buffer_write},
     data_type::DataType,
     encodable_block::KVCacheUpdate,
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState, KVCacheLayerTrait},
+    tests::helpers::{sparse_buffer_create_with, sparse_buffer_read_vec, sparse_buffer_write},
 };
 
 #[derive(Debug)]
@@ -211,7 +213,7 @@ fn run_scenario<B: Backend>(
     );
 }
 
-#[test]
+#[uzu_test]
 fn kv_cache_state_scenarios() {
     let Some(context) = <Metal as Backend>::Context::new().ok() else {
         return;
@@ -291,7 +293,7 @@ fn kv_cache_state_scenarios() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn kv_cache_slice_apply_contiguous_window() {
     let Some(context) = <Metal as Backend>::Context::new().ok() else {
         return;
@@ -328,7 +330,7 @@ fn kv_cache_slice_apply_contiguous_window() {
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for contiguous slice");
 }
 
-#[test]
+#[uzu_test]
 fn kv_cache_slice_apply_wrap_window() {
     let Some(context) = <Metal as Backend>::Context::new().ok() else {
         return;
@@ -365,7 +367,7 @@ fn kv_cache_slice_apply_wrap_window() {
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for wrapped slice");
 }
 
-#[test]
+#[uzu_test]
 fn kv_cache_slice_apply_full_restores_metadata() {
     let Some(context) = <Metal as Backend>::Context::new().ok() else {
         return;

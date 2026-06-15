@@ -1,6 +1,7 @@
 #![cfg(metal_backend)]
 
 use ndarray::{Array4, s};
+use proc_macros::uzu_test;
 use test_tag::tag;
 
 use super::{AttentionGemmArguments, AttentionGemmBlock};
@@ -12,8 +13,8 @@ use crate::{
         },
         metal::Metal,
     },
-    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder},
     data_type::DataType,
+    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder},
 };
 
 fn reference_attention(
@@ -374,7 +375,7 @@ fn compare_results(
     Ok(())
 }
 
-#[test]
+#[uzu_test]
 fn test_single_pass_attention_basic() {
     let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
@@ -394,7 +395,7 @@ fn test_single_pass_attention_basic() {
     compare_results(&kernel_output, &reference_output, 1e-2, "Single-pass attention").unwrap();
 }
 
-#[test]
+#[uzu_test]
 fn test_gemm_attention_basic() {
     let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
@@ -415,7 +416,7 @@ fn test_gemm_attention_basic() {
     compare_results(&kernel_output, &reference_output, 1e-2, "Gemm attention").unwrap();
 }
 
-#[test]
+#[uzu_test]
 fn test_gemm_attention_f32_head_dim_128() {
     let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
@@ -436,7 +437,7 @@ fn test_gemm_attention_f32_head_dim_128() {
     compare_results(&kernel_output, &reference_output, 1e-2, "Gemm attention f32 head_dim=128").unwrap();
 }
 
-#[test]
+#[uzu_test]
 fn test_matrix_attention_matches_vector_and_cpu_seq256() {
     let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
@@ -472,7 +473,7 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
     );
 }
 
-#[test]
+#[uzu_test]
 fn test_single_pass_attention_with_sinks() {
     let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
@@ -495,7 +496,7 @@ fn test_single_pass_attention_with_sinks() {
     compare_results(&kernel_output, &reference_output, 1e-2, "Single-pass attention with sinks").unwrap();
 }
 
-#[test]
+#[uzu_test]
 fn test_single_pass_attention_with_sinks_long_sequence() {
     let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
@@ -519,7 +520,7 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
         .unwrap();
 }
 
-#[test]
+#[uzu_test]
 fn test_single_pass_attention_gqa() {
     let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
@@ -608,7 +609,7 @@ fn run_two_pass_attention(
     Ok(kernel_output)
 }
 
-#[test]
+#[uzu_test]
 fn test_two_pass_attention() {
     let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
@@ -632,7 +633,7 @@ fn test_two_pass_attention() {
     compare_results(&kernel_output, &reference_output, 1e-2, "Two-pass attention").unwrap();
 }
 
-#[test]
+#[uzu_test]
 fn test_two_pass_attention_gqa() {
     let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
@@ -657,7 +658,7 @@ fn test_two_pass_attention_gqa() {
 }
 
 #[tag(heavy)]
-#[test]
+#[uzu_test]
 fn perf_two_pass_attention() {
     use std::time::Instant;
 

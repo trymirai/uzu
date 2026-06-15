@@ -1,13 +1,15 @@
 use std::time::Instant;
 
 use half::bf16;
+use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use test_runner::for_each_non_cpu_backend;
 
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock};
 use crate::{
     backends::common::{Backend, Encoder},
-    common::helpers::{alloc_allocation_with_data, create_context},
     data_type::DataType,
+    tests::helpers::{alloc_allocation_with_data, create_context},
 };
 
 fn build_offsets(
@@ -263,7 +265,7 @@ fn run_two_pass_prefill_case<B: Backend>(
     eprintln!("    → Throughput: {:.1} µs/token (mean / sum_k)", (mean / sum_k as f64) * 1000.0);
 }
 
-#[test]
+#[uzu_test]
 #[ignore]
 fn test_two_pass_decode_speed() {
     for_each_non_cpu_backend!(|B| {
@@ -280,7 +282,7 @@ fn test_two_pass_decode_speed() {
     });
 }
 
-#[test]
+#[uzu_test]
 #[ignore]
 fn test_two_pass_prefill_speed() {
     for_each_non_cpu_backend!(|B| {

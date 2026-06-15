@@ -2,7 +2,9 @@ use std::fmt::{Debug, Display};
 
 use half::bf16;
 use num_traits::Float;
+use proc_macros::uzu_test;
 use rstest::rstest;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -16,7 +18,7 @@ use crate::{
         },
         cpu::Cpu,
     },
-    common::{
+    tests::{
         assert::assert_eq_float,
         helpers::{alloc_allocation_with_data, allocation_to_vec},
     },
@@ -106,6 +108,7 @@ fn test<T: ArrayElement + Float + Debug + Display>(
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::m1(1, 128, 64)]
 #[case::batched(4, 128, 64)]
 #[case::max_batch(8, 128, 64)]
@@ -122,6 +125,7 @@ fn gemv_bf16(
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::m1(1, 128, 64)]
 #[case::batched(4, 128, 64)]
 #[case::max_batch(8, 128, 64)]
