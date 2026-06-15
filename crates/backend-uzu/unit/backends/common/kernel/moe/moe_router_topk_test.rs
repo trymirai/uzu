@@ -15,30 +15,55 @@ use crate::{
     data_type::DataType,
 };
 
+#[derive(Copy, Clone, Debug)]
+enum RouterInput {
+    Biased,
+    Gemma4,
+}
+
 fn get_output<B: Backend, T: ArrayElement + Float>(
     input: &[T],
     weights: &[T],
-    bias: &[T],
+    bias: Option<&[T]>,
+    router_scale: Option<&[T]>,
+    per_expert_scale: Option<&[T]>,
     t: usize,
     d_model: usize,
     e: usize,
     k: usize,
     renorm: bool,
+    router_norm_epsilon: Option<f32>,
+    router_input_scale: Option<f32>,
 ) -> (Vec<i32>, Vec<T>) {
     let ctx = create_context::<B>();
 
     let input_array = ctx.create_array_from(&[input.len()], input);
     let weights_array = ctx.create_array_from(&[weights.len()], weights);
-    let bias_array = ctx.create_array_from(&[bias.len()], bias);
+    let bias_array = bias.map(|bias| ctx.create_array_from(&[bias.len()], bias));
+    let router_scale_array =
+        router_scale.map(|router_scale| ctx.create_array_from(&[router_scale.len()], router_scale));
+    let per_expert_scale_array =
+        per_expert_scale.map(|per_expert_scale| ctx.create_array_from(&[per_expert_scale.len()], per_expert_scale));
     let mut ids = ctx.create_array_uninitialized(&[t * k], DataType::I32).into_allocation();
     let mut probs = ctx.create_array_uninitialized(&[t * k], T::data_type()).into_allocation();
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, T::data_type()).expect("kernel");
+    let kernel = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(
+        &ctx,
+        T::data_type(),
+        bias_array.is_some(),
+        router_scale_array.is_some(),
+        per_expert_scale_array.is_some(),
+        router_input_scale.is_some(),
+        router_norm_epsilon.is_some(),
+    )
+    .expect("kernel");
     let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         input_array.allocation(),
         weights_array.allocation(),
-        bias_array.allocation(),
+        bias_array.as_ref().map(|bias| bias.allocation()),
+        router_scale_array.as_ref().map(|router_scale| router_scale.allocation()),
+        per_expert_scale_array.as_ref().map(|per_expert_scale| per_expert_scale.allocation()),
         &mut ids,
         &mut probs,
         t as u32,
@@ -46,6 +71,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         e as u32,
         k as u32,
         renorm,
+        router_norm_epsilon,
+        router_input_scale,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -59,20 +86,60 @@ fn run_router_topk_once<B: Backend, T: ArrayElement + Debug + Float>(
     e: usize,
     k: usize,
     renorm: bool,
+    router_input: RouterInput,
 ) {
-    let mut rng = StdRng::seed_from_u64(1234);
-    let input: Vec<T> = (0..t * d_model).map(|_| T::from(rng.random_range(-1.0..1.0)).unwrap()).collect();
-    let weight: Vec<T> = (0..e * d_model).map(|_| T::from(rng.random_range(-1.0..1.0)).unwrap()).collect();
-    let bias: Vec<T> = (0..e).map(|_| T::from(rng.random_range(-0.5..0.5)).unwrap()).collect();
+    assert_eq!(d_model % 4, 0, "router_topk kernel processes d_model in 4-wide chunks");
 
-    let (ids_ref, probs_ref) =
-        get_output::<Cpu, T>(input.as_slice(), weight.as_slice(), bias.as_slice(), t, d_model, e, k, renorm);
-    let (ids_gpu, probs_gpu) =
-        get_output::<B, T>(input.as_slice(), weight.as_slice(), bias.as_slice(), t, d_model, e, k, renorm);
+    let mut rng = StdRng::seed_from_u64(1234);
+    let gemma4 = matches!(router_input, RouterInput::Gemma4);
+    let input: Vec<T> = (0..t * d_model).map(|_| T::from(rng.random_range(-1.0..1.0)).unwrap()).collect();
+    let weight_range = if gemma4 {
+        -0.4..0.4
+    } else {
+        -1.0..1.0
+    };
+    let weight: Vec<T> = (0..e * d_model).map(|_| T::from(rng.random_range(weight_range.clone())).unwrap()).collect();
+    let bias: Option<Vec<T>> =
+        (!gemma4).then(|| (0..e).map(|_| T::from(rng.random_range(-0.5..0.5)).unwrap()).collect());
+    let router_scale: Option<Vec<T>> =
+        gemma4.then(|| (0..d_model).map(|i| T::from(0.75 + (i % 7) as f32 * 0.05).unwrap()).collect());
+    let per_expert_scale: Option<Vec<T>> =
+        gemma4.then(|| (0..e).map(|i| T::from(0.5 + (i % 11) as f32 * 0.03).unwrap()).collect());
+    let router_norm_epsilon = gemma4.then_some(1e-6);
+    let router_input_scale = gemma4.then_some((d_model as f32).sqrt().recip());
+
+    let (ids_ref, probs_ref) = get_output::<Cpu, T>(
+        input.as_slice(),
+        weight.as_slice(),
+        bias.as_deref(),
+        router_scale.as_deref(),
+        per_expert_scale.as_deref(),
+        t,
+        d_model,
+        e,
+        k,
+        renorm,
+        router_norm_epsilon,
+        router_input_scale,
+    );
+    let (ids_gpu, probs_gpu) = get_output::<B, T>(
+        input.as_slice(),
+        weight.as_slice(),
+        bias.as_deref(),
+        router_scale.as_deref(),
+        per_expert_scale.as_deref(),
+        t,
+        d_model,
+        e,
+        k,
+        renorm,
+        router_norm_epsilon,
+        router_input_scale,
+    );
     assert_eq!(
         ids_gpu, ids_ref,
-        "Top-k ids mismatch for T={}, d_model={}, E={}, K={}, renorm={}",
-        t, d_model, e, k, renorm
+        "Top-k ids mismatch for T={}, d_model={}, E={}, K={}, renorm={}, router_input={:?}",
+        t, d_model, e, k, renorm, router_input
     );
 
     for i in 0..(t * k) {
@@ -91,7 +158,7 @@ fn run_router_topk_once<B: Backend, T: ArrayElement + Debug + Float>(
         };
         assert!(
             diff <= atol,
-            "Top-k prob mismatch at {}: gpu={} ref={} (diff={}, atol={}) with T={}, d_model={}, E={}, K={}, renorm={}",
+            "Top-k prob mismatch at {}: gpu={} ref={} (diff={}, atol={}) with T={}, d_model={}, E={}, K={}, renorm={}, router_input={:?}",
             i,
             probs_gpu[i].to_f32().unwrap(),
             probs_ref[i].to_f32().unwrap(),
@@ -101,21 +168,34 @@ fn run_router_topk_once<B: Backend, T: ArrayElement + Debug + Float>(
             d_model,
             e,
             k,
-            renorm
+            renorm,
+            router_input
         );
     }
 }
 
 #[uzu_test]
 fn test_router_topk_fused_matches_reference() {
-    let configs =
-        [(1usize, 64usize, 32usize, 4usize), (2, 128, 64, 8), (4, 256, 128, 16), (8, 256, 256, 32), (1, 512, 512, 64)];
-    let renorm_options = [false, true];
+    let configs = [
+        (1usize, 64usize, 32usize, 4usize, RouterInput::Biased),
+        (2, 128, 64, 8, RouterInput::Biased),
+        (4, 256, 128, 16, RouterInput::Biased),
+        (8, 256, 256, 32, RouterInput::Biased),
+        (1, 512, 512, 64, RouterInput::Biased),
+        (3, 256, 128, 8, RouterInput::Gemma4),
+        (1, 2816, 128, 8, RouterInput::Gemma4),
+    ];
+    let biased_renorm_options = [false, true];
+    let gemma4_renorm_options = [true];
 
     for_each_non_cpu_backend!(|B| {
-        for &(t, d_model, e, k) in &configs {
-            for &renorm in &renorm_options {
-                run_router_topk_once::<B, bf16>(t, d_model, e, k, renorm);
+        for &(t, d_model, e, k, router_input) in &configs {
+            let renorm_options = match router_input {
+                RouterInput::Biased => &biased_renorm_options[..],
+                RouterInput::Gemma4 => &gemma4_renorm_options[..],
+            };
+            for &renorm in renorm_options {
+                run_router_topk_once::<B, bf16>(t, d_model, e, k, renorm, router_input);
             }
         }
     });

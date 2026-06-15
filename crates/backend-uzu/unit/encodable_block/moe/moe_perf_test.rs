@@ -5,7 +5,7 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGather};
 use crate::{
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
@@ -46,8 +46,16 @@ fn test_moe_e2e_decode_perf() {
             let mut topk_ids_buf = alloc_allocation::<B, i32>(&ctx, t * k);
             let mut topk_probs_buf = alloc_allocation::<B, bf16>(&ctx, t * k);
 
-            let router_topk = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16)
-                .expect("router+topk fused kernel");
+            let router_topk = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(
+                &ctx,
+                DataType::BF16,
+                true,
+                false,
+                false,
+                false,
+                false,
+            )
+            .expect("router+topk fused kernel");
 
             // Time fused Router+TopK
             let fused_perf = run_perf_with_warmup("Router+TopK (FUSED)", 5, 20, || {
@@ -55,7 +63,9 @@ fn test_moe_e2e_decode_perf() {
                 router_topk.encode(
                     &x_buf,
                     &router_w_buf,
-                    &router_b_buf,
+                    Some(&router_b_buf),
+                    None::<&Allocation<B>>,
+                    None::<&Allocation<B>>,
                     &mut topk_ids_buf,
                     &mut topk_probs_buf,
                     t as u32,
@@ -63,6 +73,8 @@ fn test_moe_e2e_decode_perf() {
                     e as u32,
                     k as u32,
                     true,
+                    None::<f32>,
+                    None::<f32>,
                     &mut encoder,
                 );
                 encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -103,8 +115,16 @@ fn test_moe_e2e_prefill_perf() {
             let mut topk_ids_buf = alloc_allocation::<B, i32>(&ctx, t * k);
             let mut topk_probs_buf = alloc_allocation::<B, bf16>(&ctx, t * k);
 
-            let router_topk = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16)
-                .expect("router+topk fused kernel");
+            let router_topk = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(
+                &ctx,
+                DataType::BF16,
+                true,
+                false,
+                false,
+                false,
+                false,
+            )
+            .expect("router+topk fused kernel");
 
             // Time fused Router+TopK
             let fused_perf = run_perf_with_warmup("Router+TopK (FUSED)", 5, 20, || {
@@ -112,7 +132,9 @@ fn test_moe_e2e_prefill_perf() {
                 router_topk.encode(
                     &x_buf,
                     &router_w_buf,
-                    &router_b_buf,
+                    Some(&router_b_buf),
+                    None::<&Allocation<B>>,
+                    None::<&Allocation<B>>,
                     &mut topk_ids_buf,
                     &mut topk_probs_buf,
                     t as u32,
@@ -120,6 +142,8 @@ fn test_moe_e2e_prefill_perf() {
                     e as u32,
                     k as u32,
                     true,
+                    None::<f32>,
+                    None::<f32>,
                     &mut encoder,
                 );
                 encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -216,9 +240,16 @@ fn test_moe_pipeline_breakdown_decode() {
             MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, 2).expect("experts two-pass decode");
         let finalize_kernel =
             <<B as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");
-        let router_topk_fused_kernel =
-            <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16)
-                .expect("router+topk fused");
+        let router_topk_fused_kernel = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(
+            &ctx,
+            DataType::BF16,
+            true,
+            false,
+            false,
+            false,
+            false,
+        )
+        .expect("router+topk fused");
 
         // Testing: Router + TopK + Counts+Offsets (FUSED)
         let router_topk_fused_perf = run_perf_with_warmup("Router+TopK (FUSED)", 2, 5, || {
@@ -226,7 +257,9 @@ fn test_moe_pipeline_breakdown_decode() {
             router_topk_fused_kernel.encode(
                 &x_buf,
                 &router_w_buf,
-                &router_b_buf,
+                Some(&router_b_buf),
+                None::<&Allocation<B>>,
+                None::<&Allocation<B>>,
                 &mut topk_ids_buf,
                 &mut topk_probs_buf,
                 t as u32,
@@ -234,6 +267,8 @@ fn test_moe_pipeline_breakdown_decode() {
                 e as u32,
                 k as u32,
                 true,
+                None::<f32>,
+                None::<f32>,
                 &mut encoder,
             );
             encoder.end_encoding().submit().wait_until_completed().unwrap();

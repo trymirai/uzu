@@ -74,13 +74,23 @@ fn get_output_topk<B: Backend, T: ArrayElement + Float>(
     let mut topk_ids = ctx.create_array_uninitialized(&[t * k], DataType::I32).into_allocation();
     let mut topk_probs = ctx.create_array_uninitialized(&[t * k], T::data_type()).into_allocation();
 
-    let topk_kernel =
-        <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(ctx, T::data_type()).expect("router_topk");
+    let topk_kernel = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(
+        ctx,
+        T::data_type(),
+        true,
+        false,
+        false,
+        false,
+        false,
+    )
+    .expect("router_topk");
     let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
     topk_kernel.encode(
         input_array.allocation(),
         weights_array.allocation(),
-        bias_array.allocation(),
+        Some(bias_array.allocation()),
+        None::<&Allocation<B>>,
+        None::<&Allocation<B>>,
         &mut topk_ids,
         &mut topk_probs,
         t as u32,
@@ -88,6 +98,8 @@ fn get_output_topk<B: Backend, T: ArrayElement + Float>(
         e as u32,
         k as u32,
         true,
+        None::<f32>,
+        None::<f32>,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
