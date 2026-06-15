@@ -20,5 +20,6 @@ pub fn resolve_model_specialization(model_path: &Path) -> Result<ModelSpecializa
         AnyModelConfig::LanguageModelConfig(_) => ModelSpecialization::Chat {},
         AnyModelConfig::ClassifierModelConfig(_) => ModelSpecialization::Classification {},
         AnyModelConfig::TTSModelConfig(_) => ModelSpecialization::TextToSpeech {},
+        AnyModelConfig::DFlashSpeculatorConfig(_) => ModelSpecialization::Speculation {},
     })
 }

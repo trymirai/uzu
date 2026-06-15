@@ -8,20 +8,20 @@ use std::{
 use backend_uzu::backends::common::{Backend, Context, Encoder};
 use criterion::Bencher;
 
-use crate::common::env_var_enabled;
+use crate::tests::env_vars;
 
 static CAPTURE_TAKEN: AtomicBool = AtomicBool::new(false);
 
 fn should_capture_benchmark(benchmark_path: &str) -> bool {
-    env_var_enabled("UZU_CAPTURE_BENCH")
+    env_vars::enabled(env_vars::UZU_CAPTURE_BENCH)
         && benchmark_path.starts_with("Metal/")
-        && env::var("UZU_CAPTURE_BENCH_FILTER").map_or(true, |filter| benchmark_path.contains(&filter))
+        && env::var(env_vars::UZU_CAPTURE_BENCH_FILTER).map_or(true, |filter| benchmark_path.contains(&filter))
         && !CAPTURE_TAKEN.swap(true, Ordering::AcqRel)
 }
 
 fn benchmark_capture_path() -> PathBuf {
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock before Unix epoch").as_secs();
-    env::var("UZU_CAPTURE_BENCH_DIR")
+    env::var(env_vars::UZU_CAPTURE_BENCH_DIR)
         .map(PathBuf::from)
         .unwrap_or(env::current_dir().unwrap())
         .join(format!("uzu_bench-{timestamp}.gputrace"))

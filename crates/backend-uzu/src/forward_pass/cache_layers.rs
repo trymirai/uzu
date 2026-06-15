@@ -689,5 +689,5 @@ impl<B: Backend> CacheLayers<B> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/forward_pass/cache_layers_test.rs"]
+#[path = "../../unit/forward_pass/cache_layers_test.rs"]
 mod tests;

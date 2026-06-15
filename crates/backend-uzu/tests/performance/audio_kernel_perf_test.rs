@@ -19,6 +19,7 @@ use backend_uzu::{
     },
     data_type::DataType,
 };
+use proc_macros::uzu_test;
 
 type Ctx = <Metal as Backend>::Context;
 
@@ -97,7 +98,7 @@ const DEC_STRIDES: [usize; 4] = [8, 8, 4, 2]; // decoder_rates
 
 const SEMANTIC_FRAMES_10S: usize = 215; // ~10s at 44100 Hz with upsample_factor=2048
 
-#[test]
+#[uzu_test]
 #[ignore] // Heavy benchmark (~240s); run explicitly with --ignored
 fn audio_kernel_perf() {
     let context = <Metal as Backend>::Context::new().unwrap();

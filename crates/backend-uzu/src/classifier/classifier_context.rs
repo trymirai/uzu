@@ -19,7 +19,7 @@ pub struct ClassifierContext<B: Backend> {
 
     pub model_config: ClassifierModelConfig,
     pub rope_configs: Box<[AnyRoPEConfig]>,
-    #[cfg(feature = "tracing")]
+    #[cfg(all(test, feature = "tracing"))]
     pub model_shape: ModelShape,
 
     pub embed: Embedding<B>,
@@ -229,7 +229,7 @@ impl<B: Backend> ClassifierContext<B> {
             model_config: model_config.clone(),
             rope_configs: rope_configs.into_iter().map(|(config, _)| config).collect(),
             logits_data_type: model_shape.data_type,
-            #[cfg(feature = "tracing")]
+            #[cfg(all(test, feature = "tracing"))]
             model_shape,
             embed,
             embedding_norm,

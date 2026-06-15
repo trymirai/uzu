@@ -4,7 +4,7 @@ use proc_macros::uzu_config;
 
 use crate::{
     config::{decoder::DecoderConfig, model::generation::GenerationConfig},
-    prelude::Error,
+    session::types::Error,
 };
 
 #[uzu_config(super::ModelConfig)]

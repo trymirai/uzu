@@ -1,3 +1,6 @@
+#![cfg_attr(test, feature(custom_test_frameworks, test))]
+#![cfg_attr(test, test_runner(crate::tests::uzu_harness))]
+
 // needed for tests to resolve `backend_uzu::` imports
 #[cfg(test)]
 extern crate self as backend_uzu;
@@ -15,43 +18,16 @@ pub mod data_type;
 mod encodable_block;
 mod forward_pass;
 mod language_model;
-pub mod parameters;
-mod speculators;
+mod parameters;
+pub mod speculators;
 mod trie;
 mod utils;
 
 pub mod backends;
 pub mod inference;
-pub mod prelude;
 pub mod session;
 
-#[cfg(metal_backend)]
-pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
-pub use language_model::gumbel::{gumbel_float, revidx};
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
 
-#[doc(hidden)]
-pub mod _benchmarks {
-    pub use crate::{
-        config::model::language_model::LanguageModelConfig,
-        language_model::{LanguageModelGenerator, language_model_generator::RunModelResult},
-        trie::{TrieCreationConfig, TrieNode},
-    };
-}
-
-#[cfg(feature = "tracing")]
-pub mod _private {
-    pub use crate::{
-        classifier::Classifier,
-        config::{model::AnyModelConfig, rope::AnyRoPEConfig},
-        encodable_block::{DecoderDecodeInput, Sampling},
-        forward_pass::{
-            cache_layers::CacheLayers,
-            kv_cache_layer::{KVCacheLayer, KVCacheLayerTrait},
-            rope::precalculate_rope,
-            token_inputs::TokenInputs,
-            traces::ActivationTrace,
-        },
-        language_model::language_model_generator_context::LanguageModelGeneratorContext,
-    };
-}
+#[cfg(test)]
+pub mod tests;

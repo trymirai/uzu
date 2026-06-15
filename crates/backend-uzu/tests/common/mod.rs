@@ -8,23 +8,12 @@ pub mod metrics;
 pub mod path;
 pub mod perf;
 pub mod proptest;
+pub mod repeat_speculator;
 
 pub(crate) use proptest::for_each_context;
 
 pub fn type_short_name<T>() -> &'static str {
     std::any::type_name::<T>().rsplit("::").next().unwrap()
-}
-
-pub fn env_var_enabled(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("yes") || v.eq_ignore_ascii_case("true"))
-}
-
-pub fn enable_benchmark_gpu_capture_if_requested() {
-    if env_var_enabled("UZU_CAPTURE_BENCH") {
-        unsafe {
-            std::env::set_var("METAL_CAPTURE_ENABLED", "1");
-        }
-    }
 }
 
 #[cfg(metal_backend)]

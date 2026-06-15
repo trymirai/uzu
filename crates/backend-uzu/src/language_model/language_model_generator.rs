@@ -1204,9 +1204,11 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
 #[cfg(test)]
 mod tests {
+    use proc_macros::uzu_test;
+
     use super::PrefillStepSchedule;
 
-    #[test]
+    #[uzu_test]
     fn cache_only_prefill_step_accepts_prompt_rows_without_sampling() {
         let schedule = PrefillStepSchedule::new(false, 10, 8, 16, 8);
 
@@ -1215,7 +1217,7 @@ mod tests {
         assert_eq!(schedule.accepted_prompt_rows, 2);
     }
 
-    #[test]
+    #[uzu_test]
     fn sampling_prefill_step_keeps_suffix_root_for_sampling() {
         let schedule = PrefillStepSchedule::new(true, 10, 8, 16, 8);
 
@@ -1224,7 +1226,7 @@ mod tests {
         assert_eq!(schedule.accepted_prompt_rows, 1);
     }
 
-    #[test]
+    #[uzu_test]
     fn sampling_prefill_step_on_chunk_boundary_keeps_final_prompt_row_for_sampling() {
         let schedule = PrefillStepSchedule::new(true, 16, 8, 16, 8);
 
@@ -1233,3 +1235,7 @@ mod tests {
         assert_eq!(schedule.accepted_prompt_rows, 7);
     }
 }
+
+#[cfg(test)]
+#[path = "../../unit/language_model/language_model_generator_bench.rs"]
+mod bench_tests;
