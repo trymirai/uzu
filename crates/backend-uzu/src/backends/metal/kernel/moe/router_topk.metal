@@ -32,8 +32,8 @@ PUBLIC KERNEL(MoeRouterTopK)(
     const bool has_per_expert_scales SPECIALIZE,
     const bool has_router_input_scale SPECIALIZE,
     const bool normalize_router_input SPECIALIZE,
-    threadgroup float4 x4_cache[1024],
-    threadgroup float expert_logits[MAX_EXPERTS],
+    threadgroup float4 x_cache[1024],
+    threadgroup float logits_shared[MAX_EXPERTS],
     threadgroup float reduce_tmp[THREADS_PER_TG],
     threadgroup uint reduce_tmp_u[THREADS_PER_TG],
     threadgroup uint shared_best_idx[1],
@@ -47,21 +47,15 @@ PUBLIC KERNEL(MoeRouterTopK)(
     return;
   }
 
-  const uint vec4_count = d_model / 4u;
-  const device ScalarT* token_input = input + (ulong)token_idx * (ulong)d_model;
+  const uint vecs = d_model / 4u;
+  const device ScalarT* x_vec = input + (ulong)token_idx * (ulong)vecs * 4;
 
   float local_sum_sq = 0.0f;
-  for (uint vec4_idx = lid; vec4_idx < vec4_count; vec4_idx += THREADS_PER_TG) {
-    const uint scalar_base = vec4_idx * 4;
-    const float4 x4 = float4(
-        token_input[scalar_base + 0],
-        token_input[scalar_base + 1],
-        token_input[scalar_base + 2],
-        token_input[scalar_base + 3]
-    );
-    x4_cache[vec4_idx] = x4;
+  for (uint c = lid; c < vecs; c += THREADS_PER_TG) {
+    const float4 xv = float4(x_vec[c * 4 + 0], x_vec[c * 4 + 1], x_vec[c * 4 + 2], x_vec[c * 4 + 3]);
+    x_cache[c] = xv;
     if (normalize_router_input) {
-      local_sum_sq += dot(x4, x4);
+      local_sum_sq += dot(xv, xv);
     }
   }
 
@@ -77,44 +71,33 @@ PUBLIC KERNEL(MoeRouterTopK)(
     if (has_router_input_scale) {
       base_scale4 *= float4(router_input_scale);
     }
-    for (uint vec4_idx = lid; vec4_idx < vec4_count; vec4_idx += THREADS_PER_TG) {
-      const uint scalar_base = vec4_idx * 4;
+    for (uint c = lid; c < vecs; c += THREADS_PER_TG) {
       float4 scale4 = base_scale4;
       if (has_router_scales) {
-        scale4 *= float4(
-            router_scale[scalar_base + 0],
-            router_scale[scalar_base + 1],
-            router_scale[scalar_base + 2],
-            router_scale[scalar_base + 3]
-        );
+        scale4 *=
+            float4(router_scale[c * 4 + 0], router_scale[c * 4 + 1], router_scale[c * 4 + 2], router_scale[c * 4 + 3]);
       }
-      x4_cache[vec4_idx] *= scale4;
+      x_cache[c] *= scale4;
     }
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  for (uint expert = thread_context.simdgroup_index; expert < e; expert += thread_context.simdgroups_per_threadgroup) {
-    const device ScalarT* expert_weights = weight + (ulong)expert * (ulong)d_model;
+  for (uint row = thread_context.simdgroup_index; row < e; row += thread_context.simdgroups_per_threadgroup) {
+    const device ScalarT* w_vec = weight + (ulong)row * (ulong)vecs * 4;
 
-    float4 dot4 = float4(0.0f);
-    for (uint vec4_idx = thread_context.simd_lane_id; vec4_idx < vec4_count; vec4_idx += 32u) {
-      const uint scalar_base = vec4_idx * 4;
-      const float4 w4 = float4(
-          expert_weights[scalar_base + 0],
-          expert_weights[scalar_base + 1],
-          expert_weights[scalar_base + 2],
-          expert_weights[scalar_base + 3]
-      );
-      const float4 x4 = x4_cache[vec4_idx];
-      dot4 = fma(w4, x4, dot4);
+    float4 accum4 = float4(0.0f);
+    for (uint c = thread_context.simd_lane_id; c < vecs; c += 32u) {
+      const float4 wv = float4(w_vec[c * 4 + 0], w_vec[c * 4 + 1], w_vec[c * 4 + 2], w_vec[c * 4 + 3]);
+      const float4 xv = x_cache[c];
+      accum4 = fma(wv, xv, accum4);
     }
-    float sum = (dot4.x + dot4.y) + (dot4.z + dot4.w);
+    float sum = (accum4.x + accum4.y) + (accum4.z + accum4.w);
     sum = simd_sum(sum);
     if (simd_is_first()) {
       if (has_biases) {
-        sum += float(bias[expert]);
+        sum += float(bias[row]);
       }
-      expert_logits[expert] = sum;
+      logits_shared[row] = sum;
     }
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -123,11 +106,11 @@ PUBLIC KERNEL(MoeRouterTopK)(
   for (uint sel = 0; sel < effective_k; ++sel) {
     float local_best = NEG_INF;
     uint local_idx = 0xFFFFFFFFu;
-    for (uint expert = lid; expert < e; expert += THREADS_PER_TG) {
-      float candidate = expert_logits[expert];
-      if (candidate > local_best || (candidate == local_best && expert < local_idx)) {
+    for (uint row = lid; row < e; row += THREADS_PER_TG) {
+      float candidate = logits_shared[row];
+      if (candidate > local_best || (candidate == local_best && row < local_idx)) {
         local_best = candidate;
-        local_idx = expert;
+        local_idx = row;
       }
     }
 
@@ -150,7 +133,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
       if (!renorm && has_per_expert_scales) {
         winner_val *= float(per_expert_scale[winner_idx]);
       }
-      expert_logits[winner_idx] = NEG_INF;
+      logits_shared[winner_idx] = NEG_INF;
       topk_ids[token_idx * k + sel] = int(winner_idx);
       topk_probs[token_idx * k + sel] = static_cast<ScalarT>(winner_val);
     }
