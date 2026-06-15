@@ -8569,8 +8569,8 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xgrammar-rs"
-version = "0.1.33"
-source = "git+https://github.com/trymirai/xgrammar-rs.git?rev=58def68d6e0e523e183b23e7a7a23f6ba1b572fa#58def68d6e0e523e183b23e7a7a23f6ba1b572fa"
+version = "0.2.2"
+source = "git+https://github.com/trymirai/xgrammar-rs.git?tag=0.2.2#d55d5bb1403f443d6a379c5acc7191a28bbcbb92"
 dependencies = [
  "cmake",
  "cxx",
