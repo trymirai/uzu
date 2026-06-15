@@ -3,19 +3,20 @@ use std::fmt::{Debug, Display};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            Allocation, Backend, Context, Encoder, Kernels,
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::QuantizedEmbeddingLookupKernel,
         },
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
     data_type::DataType,
+    tests::assert::assert_eq_float,
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -235,7 +236,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         zero_points_array.as_ref().map(|array| array.allocation()),
         biases_array.as_ref().map(|array| array.allocation()),
         &mut output,
-        None::<&backend_uzu::backends::common::Allocation<B>>,
+        None::<&Allocation<B>>,
         input.batch_size,
         input.vocab_size,
         input.model_dim,
@@ -244,7 +245,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::common::helpers::allocation_to_vec(&output)
+    crate::tests::helpers::allocation_to_vec(&output)
 }
 
 fn test_zero_point_group16<T: ArrayElement + Float + Debug + Display>() {

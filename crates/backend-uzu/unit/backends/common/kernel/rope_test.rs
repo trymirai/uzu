@@ -3,15 +3,16 @@ use std::fmt::{Debug, Display};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::RopeKernel},
+        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RopeKernel},
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
     data_type::DataType,
+    tests::assert::assert_eq_float,
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -119,7 +120,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         sines_array.allocation(),
         &mut rotated_queries,
         if query_only {
-            None::<&mut backend_uzu::backends::common::Allocation<B>>
+            None::<&mut Allocation<B>>
         } else {
             Some(&mut rotated_keys)
         },
@@ -136,11 +137,11 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let queries = crate::common::helpers::allocation_to_vec(&rotated_queries);
+    let queries = crate::tests::helpers::allocation_to_vec(&rotated_queries);
     let keys = if query_only {
         None
     } else {
-        Some(crate::common::helpers::allocation_to_vec(&rotated_keys))
+        Some(crate::tests::helpers::allocation_to_vec(&rotated_keys))
     };
     (queries, keys)
 }

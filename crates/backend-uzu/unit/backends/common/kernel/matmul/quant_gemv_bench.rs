@@ -2,6 +2,7 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use half::bf16;
 use num_traits::Float;
 use proc_macros::uzu_bench;
+use test_runner::for_each_backend;
 
 use crate::{
     array::ArrayElement,
@@ -10,10 +11,10 @@ use crate::{
         gpu_types::QuantizationMethod,
         kernel::{Kernels, matmul::MatmulKernel},
     },
-    common::{
+    tests::{
         cold_pool::ColdPool,
         matmul::{QuantBuffers, QuantInput, bench_quant_gemv_shapes, iter_encode_loop_named, quant_arguments},
-        type_short_name,
+        util::type_short_name,
     },
 };
 

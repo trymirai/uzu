@@ -5,7 +5,7 @@ use crate::{
         common::SparseBuffer,
         metal::{Metal, metal_extensions::SparsePageSizeExt},
     },
-    common::helpers::{create_context, sparse_buffer_create},
+    tests::helpers::{create_context, sparse_buffer_create},
 };
 
 #[uzu_test]

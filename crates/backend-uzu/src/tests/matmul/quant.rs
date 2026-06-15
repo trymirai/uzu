@@ -1,8 +1,11 @@
 use std::mem::size_of_val;
 
+use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
+
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::{GemmDispatchPath, Metal, MetalContext};
-use backend_uzu::{
+use crate::backends::metal::{GemmDispatchPath, Metal, MetalContext};
+use crate::{
     array::ArrayElement,
     backends::{
         common::{
@@ -15,11 +18,8 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
+    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
-use num_traits::Float;
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
-
-use super::super::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec};
 
 pub struct QuantInput<T: ArrayElement + Float> {
     pub w_packed: Vec<u32>,

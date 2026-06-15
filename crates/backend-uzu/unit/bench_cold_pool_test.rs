@@ -1,6 +1,6 @@
 use proc_macros::uzu_test;
 
-use crate::common::cold_pool::copy_count;
+use crate::tests::cold_pool::copy_count;
 
 #[uzu_test]
 fn copy_count_math() {

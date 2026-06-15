@@ -7,6 +7,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -14,8 +15,8 @@ use crate::{
         common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
     data_type::DataType,
+    tests::assert::assert_eq_float,
 };
 
 static BOOL_ALL: &[bool] = &[true, false];
@@ -165,7 +166,7 @@ fn get_output<
     let host_elapsed_ms = instant.elapsed().as_secs_f64() * 1e3;
     let gpu_elapsed_ms = completed.gpu_execution_time();
 
-    (crate::common::helpers::allocation_to_vec(&output), host_elapsed_ms, gpu_elapsed_ms)
+    (crate::tests::helpers::allocation_to_vec(&output), host_elapsed_ms, gpu_elapsed_ms)
 }
 
 fn test_internal<
@@ -417,8 +418,8 @@ fn run_scaled_rms<B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    let output_values = crate::common::helpers::allocation_to_vec(&output);
-    let shortcut_values = shortcut_buffer.as_ref().map(crate::common::helpers::allocation_to_vec).unwrap_or_default();
+    let output_values = crate::tests::helpers::allocation_to_vec(&output);
+    let shortcut_values = shortcut_buffer.as_ref().map(crate::tests::helpers::allocation_to_vec).unwrap_or_default();
     (output_values, shortcut_values)
 }
 

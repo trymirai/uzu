@@ -3,18 +3,19 @@ use std::fmt::{Debug, Display};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::ActivationKernel},
+        common::{Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::ActivationKernel},
         cpu::Cpu,
     },
-    common::{
+    data_type::DataType,
+    tests::{
         assert::assert_eq_float,
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
     },
-    data_type::DataType,
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -42,13 +43,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     if input.in_place {
         let mut output_allocation = alloc_allocation_with_data::<B, T>(&context, &input.data);
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
-        kernel.encode(
-            None::<&backend_uzu::backends::common::Allocation<B>>,
-            &mut output_allocation,
-            n as u32,
-            input.act_type,
-            &mut encoder,
-        );
+        kernel.encode(None::<&Allocation<B>>, &mut output_allocation, n as u32, input.act_type, &mut encoder);
         encoder.end_encoding().submit().wait_until_completed().unwrap();
         allocation_to_vec::<B, T>(&output_allocation)
     } else {
