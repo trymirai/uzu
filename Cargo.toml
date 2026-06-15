@@ -58,7 +58,7 @@ download-manager = { path = "crates/download-manager", default-features = false 
 mock-registry = { path = "crates/mock-registry", default-features = false }
 benchmarks = { path = "crates/benchmarks", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
-xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgrammar-rs.git", rev = "58def68d6e0e523e183b23e7a7a23f6ba1b572fa", features = ["tokenizers"] }
+xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgrammar-rs.git", tag = "0.2.2", features = ["tokenizers"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17"
 serde = { version = "1.0", features = ["derive"] }
