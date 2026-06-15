@@ -64,9 +64,7 @@ fn table_bucket_index(
     value: u32,
     bucket_maxes: &[u32],
 ) -> usize {
-    // Convert a dimension into a table row/column. For maxes [512, 2048],
-    // indices are 0 for <=512, 1 for <=2048, and 2 for >2048.
-    bucket_maxes.iter().position(|&max| value <= max).unwrap_or(bucket_maxes.len())
+    bucket_maxes.partition_point(|&max| value > max)
 }
 
 fn cap_k_split_to_complete_fp_k_blocks(
@@ -132,7 +130,7 @@ pub(crate) fn fp_tile(
     // confirmed wins, so shipped FP policy keeps SG8 and tunes KS/R only.
     let should_disable_k_split = !input_aligned
         || (m == 1 && tier == DeviceTier::Large && k < FP_LARGE_SPLIT_K_MIN_DEPTH)
-        || (m == 1 && tier == DeviceTier::SmallG13 && n >= SMALL_G13_HUGE_N);
+        || (m == 1 && tier == DeviceTier::SmallLegacy && n >= SMALL_G13_HUGE_N);
 
     let k_split = if should_disable_k_split {
         1
@@ -141,8 +139,8 @@ pub(crate) fn fp_tile(
     };
 
     // R1 won most single-row FP sweeps; Large devices only switch back to R4
-    // for deep-K rows, while SmallG13 wide rows keep R4.
-    let results_per_simdgroup = if tier == DeviceTier::SmallG13 && m == 1 && n >= SMALL_G13_WIDE_ROW_N {
+    // for deep-K rows, while legacy wide rows keep R4.
+    let results_per_simdgroup = if tier == DeviceTier::SmallLegacy && m == 1 && n >= SMALL_G13_WIDE_ROW_N {
         DEFAULT_RESULTS_PER_SIMDGROUP
     } else if m == 1 && (k <= DEEP_K || tier != DeviceTier::Large) {
         1
@@ -195,25 +193,25 @@ pub(crate) fn quant_tile(
         (DeviceTier::Large, 2, 1) => Q42,
         (DeviceTier::Large, 3, 1) => Q22,
 
-        (DeviceTier::Small, 0, 1) => Q44,
-        (DeviceTier::Small, 1, 0) => Q42,
-        (DeviceTier::Small, 1, 1) => Q22,
-        (DeviceTier::Small, 1, 2) => Q42,
-        (DeviceTier::Small, 1, 4) => Q22,
-        (DeviceTier::Small, 1, 5) => Q42,
-        (DeviceTier::Small, 2, 1) => Q42,
-        (DeviceTier::Small, 3, 1) => Q22,
+        (DeviceTier::SmallApple9, 0, 1) => Q44,
+        (DeviceTier::SmallApple9, 1, 0) => Q42,
+        (DeviceTier::SmallApple9, 1, 1) => Q22,
+        (DeviceTier::SmallApple9, 1, 2) => Q42,
+        (DeviceTier::SmallApple9, 1, 4) => Q22,
+        (DeviceTier::SmallApple9, 1, 5) => Q42,
+        (DeviceTier::SmallApple9, 2, 1) => Q42,
+        (DeviceTier::SmallApple9, 3, 1) => Q22,
 
-        (DeviceTier::SmallG14, 0, 1) => Q44,
-        (DeviceTier::SmallG14, 1, _) | (DeviceTier::SmallG14, 2, 1) => Q82,
+        (DeviceTier::SmallApple8, 0, 1) => Q44,
+        (DeviceTier::SmallApple8, 1, _) | (DeviceTier::SmallApple8, 2, 1) => Q82,
 
-        (DeviceTier::SmallG13, 0, 1) => Q48,
-        (DeviceTier::SmallG13, 1, 0..=3) => Q82,
+        (DeviceTier::SmallLegacy, 0, 1) => Q48,
+        (DeviceTier::SmallLegacy, 1, 0..=3) => Q82,
 
         _ => DEFAULT_TILE,
     };
     if n < selected.results_per_simdgroup {
-        // Defensive: future R8 cells could otherwise overrun tiny N.
+        // Coarse N buckets can include n < R; keep the default R4 tile for tiny rows.
         DEFAULT_TILE
     } else {
         selected

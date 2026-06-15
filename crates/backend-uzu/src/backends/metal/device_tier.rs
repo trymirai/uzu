@@ -4,11 +4,11 @@ use objc2::runtime::ProtocolObject;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DeviceTier {
     /// Small Apple9+ GPUs (M3/A17 and newer, below Max/Ultra class).
-    Small,
+    SmallApple9,
     /// Small Apple8 GPUs (M2/A15/A16 generation).
-    SmallG14,
+    SmallApple8,
     /// Small pre-Apple8 GPUs (M1/A14 generation).
-    SmallG13,
+    SmallLegacy,
     /// Max/Ultra-class GPUs, currently classified by >= 30 GPU cores.
     Large,
 }
@@ -32,11 +32,11 @@ fn device_tier_for(
     if gpu_core_count >= 30 {
         DeviceTier::Large
     } else if supports_apple9_family {
-        DeviceTier::Small
+        DeviceTier::SmallApple9
     } else if supports_apple8_family {
-        DeviceTier::SmallG14
+        DeviceTier::SmallApple8
     } else {
-        DeviceTier::SmallG13
+        DeviceTier::SmallLegacy
     }
 }
 

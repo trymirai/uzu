@@ -125,17 +125,16 @@ pub(crate) struct GemvDispatch {
 
 impl GemvDispatch {
     pub(crate) fn new(
-        _context: &MetalContext,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
-    ) -> Result<Self, MatmulError<Metal>> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             weights_data_type,
             input_data_type,
             output_data_type,
             pipelines: HashMap::new(),
-        })
+        }
     }
 
     fn get_or_create(
