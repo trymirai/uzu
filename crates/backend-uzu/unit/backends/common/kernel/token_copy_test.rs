@@ -1,11 +1,12 @@
 use proc_macros::uzu_test;
+use test_runner::for_each_backend;
 
 use crate::{
     backends::common::{
         Allocation, Backend, Context, Encoder, Kernels,
         kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
-    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
 
 fn test_token_copy_sampled_impl<B: Backend>(src_value: u32) {

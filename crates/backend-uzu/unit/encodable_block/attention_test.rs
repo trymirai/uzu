@@ -13,8 +13,8 @@ use crate::{
         },
         metal::Metal,
     },
-    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder},
     data_type::DataType,
+    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder},
 };
 
 fn reference_attention(

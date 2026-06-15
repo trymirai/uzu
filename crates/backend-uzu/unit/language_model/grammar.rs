@@ -4,6 +4,7 @@ use metal::MTLDevice;
 use proc_macros::uzu_test;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use test_runner::path::get_test_model_path;
 use tokenizers::Tokenizer;
 use xgrammar::{DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo, c_void};
 
@@ -13,7 +14,6 @@ use crate::{
         common::{AllocationType, Backend, Context},
         metal::Metal,
     },
-    common::path::get_test_model_path,
     data_type::DataType,
 };
 

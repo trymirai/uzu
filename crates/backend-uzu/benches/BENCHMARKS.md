@@ -112,3 +112,9 @@ To inspect a specific label only:
 open target/criterion/m2_max/report/index.html
 open target/criterion/a19/report/index.html
 ```
+
+## Cold GEMV
+
+GEMV-class benches cycle through enough quant-buffer copies to cover a 256 MiB
+weight working set before reusing one. This avoids ranking kernels on
+cache-warm weights; pools allocate lazily, so criterion filters skip their cost.

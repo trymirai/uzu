@@ -1,16 +1,14 @@
 use std::time::Duration;
 
-use backend_uzu::{
-    backends::common::Backend,
-    session::{config::DecodingConfig, parameter::SamplingMethod},
-};
 use criterion::{BenchmarkId, Criterion, Throughput};
 use proc_macros::uzu_bench;
+use test_runner::{for_each_non_cpu_backend, metrics::wait_gpu_cooldown, path::get_test_model_path};
 
 use crate::{
-    common::{metrics::wait_gpu_cooldown, path::get_test_model_path},
+    backends::common::Backend,
     config::model::language_model::LanguageModelConfig,
     language_model::{LanguageModelGenerator, language_model_generator::RunModelResult},
+    session::{config::DecodingConfig, parameter::SamplingMethod},
     trie::{TrieCreationConfig, TrieNode},
 };
 

@@ -477,7 +477,6 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "libm",
- "macmon",
  "memmap2",
  "minijinja",
  "minijinja-contrib",
@@ -506,6 +505,7 @@ dependencies = [
  "syn 2.0.117",
  "sysinfo",
  "tempfile",
+ "test-runner",
  "test-tag",
  "thiserror 2.0.18",
  "tokenizers",
@@ -6659,6 +6659,16 @@ dependencies = [
  "wezterm-dynamic",
  "wezterm-input-types",
  "winapi",
+]
+
+[[package]]
+name = "test-runner"
+version = "0.5.12"
+dependencies = [
+ "criterion",
+ "macmon",
+ "objc2",
+ "objc2-foundation",
 ]
 
 [[package]]
