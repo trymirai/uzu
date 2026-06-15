@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -36,7 +37,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     kernel.encode(gate_array.allocation(), &mut output, total_elements, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::common::helpers::allocation_to_vec(&output)
+    crate::tests::helpers::allocation_to_vec(&output)
 }
 
 fn run_test<T: ArrayElement + Float + Debug>(config: &Config) {

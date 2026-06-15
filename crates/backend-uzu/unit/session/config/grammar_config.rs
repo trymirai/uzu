@@ -5,16 +5,17 @@ use std::sync::Arc;
 use proc_macros::uzu_test;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use test_runner::path::get_test_model_path;
 use test_tag::tag;
 
 use crate::{
-    common::{path::get_test_model_path, repeat_speculator::RepeatSpeculator},
     session::{
         Session,
         config::{DecodingConfig, GrammarConfig, RunConfig, SpeculatorConfig, StructuredOutput},
         parameter::{SamplingPolicy, SamplingSeed},
         types::Input,
     },
+    speculators::repeat_speculator::RepeatSpeculator,
 };
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -58,7 +59,7 @@ fn test_grammar(speculator_config: SpeculatorConfig) {
         RunConfig::default().tokens_limit(1024).sampling_policy(SamplingPolicy::Default).grammar_config(grammar_config);
 
     let output = session
-        .run(input, run_config, None::<fn(backend_uzu::session::types::Output) -> bool>)
+        .run(input, run_config, None::<fn(crate::session::types::Output) -> bool>)
         .expect("Failed to run session");
 
     let stats = output.stats;

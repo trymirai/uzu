@@ -3,15 +3,16 @@ use std::fmt::{Debug, Display};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::SSDUpdateKernel},
+        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::SSDUpdateKernel},
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
     data_type::DataType,
+    tests::assert::assert_eq_float,
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -115,7 +116,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             c_array.allocation(),
             d_array.allocation(),
             z_array.allocation(),
-            None::<&backend_uzu::backends::common::Allocation<B>>,
+            None::<&Allocation<B>>,
             &mut y,
             &mut next_state,
             (h / g) as u32,
@@ -132,8 +133,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            y: crate::common::helpers::allocation_to_vec(&y),
-            next_state: crate::common::helpers::allocation_to_vec(&next_state),
+            y: crate::tests::helpers::allocation_to_vec(&y),
+            next_state: crate::tests::helpers::allocation_to_vec(&next_state),
         }
     } else {
         let state_array = context.create_array_from(&[ns_size], &input.state);
@@ -164,8 +165,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            y: crate::common::helpers::allocation_to_vec(&y),
-            next_state: crate::common::helpers::allocation_to_vec(&next_state),
+            y: crate::tests::helpers::allocation_to_vec(&y),
+            next_state: crate::tests::helpers::allocation_to_vec(&next_state),
         }
     }
 }
