@@ -24,36 +24,6 @@ const FP_LARGE_SPLIT_K_MIN_DEPTH: u32 = 4 * FP_K_BLOCK;
 const FP_K_DEPTH_N_MAX: u32 = 4095;
 const FP_K_DEPTH_DEEP_MIN: u32 = 3072;
 const FP_K_DEPTH_VERY_DEEP_RATIO: u32 = 16;
-const FP_M_BUCKET_MAXES: [u32; 2] = [2, 4];
-const FP_N_BUCKET_MAXES: [u32; 4] = [512, 1024, FP_K_DEPTH_N_MAX, 16384];
-const FP_M_BUCKET_COUNT: usize = FP_M_BUCKET_MAXES.len() + 1;
-const FP_N_BUCKET_COUNT: usize = FP_N_BUCKET_MAXES.len() + 1;
-const K_DEPTH_REGULAR: usize = 0;
-const K_DEPTH_DEEP: usize = 1;
-const K_DEPTH_VERY_DEEP: usize = 2;
-const FP_K_DEPTH_BUCKET_COUNT: usize = K_DEPTH_VERY_DEEP + 1;
-
-#[rustfmt::skip]
-const FP_PREFERRED_K_SPLIT: [[[u32; FP_K_DEPTH_BUCKET_COUNT]; FP_N_BUCKET_COUNT]; FP_M_BUCKET_COUNT] = [
-    //                     regular deep very-deep
-    /* m<=2, n<=512   */ [[ 8,     8,   8 ], // decode and small async batches keep high split-K.
-    /*       n<=1024  */  [ 8,     8,   8 ],
-    /*       n<=4095  */  [ 8,     8,   8 ],
-    /*       n<=16384 */  [ 8,     8,   8 ],
-    /*       n>16384  */  [ 8,     8,   8 ]],
-
-    /* m<=4, n<=512   */ [[ 8,     8,   8 ],
-    /*       n<=1024  */  [ 8,     8,   8 ],
-    /*       n<=4095  */  [ 8,     8,   8 ],
-    /*       n<=16384 */  [ 8,     8,   8 ],
-    /*       n>16384  */  [ 1,     1,   1 ]],
-
-    /* m>4,  n<=512   */ [[ 8,     8,   8 ],
-    /*       n<=1024  */  [ 4,     4,   8 ],
-    /*       n<=4095  */  [ 2,     4,   8 ],
-    /*       n<=16384 */  [ 1,     1,   1 ],
-    /*       n>16384  */  [ 1,     1,   1 ]],
-];
 
 const fn tile(
     num_simdgroups: u32,
@@ -76,7 +46,6 @@ const fn qtile(
 }
 
 pub(crate) const DEFAULT_TILE: GemvTile = qtile(DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP);
-const D: GemvTile = DEFAULT_TILE;
 // Qxy = qtile(num_simdgroups=x, results_per_simdgroup=y), with KS1.
 const Q21: GemvTile = qtile(2, 1);
 const Q22: GemvTile = qtile(2, 2);
@@ -87,46 +56,9 @@ const Q48: GemvTile = qtile(4, 8);
 const Q82: GemvTile = qtile(8, 2);
 const QUANT_N_BUCKET_MAXES: [u32; 6] = [512, 2048, 4096, 8192, 16384, 32768];
 const QUANT_K_BUCKET_MAXES: [u32; 3] = [512, 2048, 8192];
-const QUANT_N_BUCKET_COUNT: usize = QUANT_N_BUCKET_MAXES.len() + 1;
-const QUANT_K_BUCKET_COUNT: usize = QUANT_K_BUCKET_MAXES.len() + 1;
 const QUANT_RHT_TUNED_N_MIN_EXCLUSIVE: u32 = 2048;
 const QUANT_RHT_TUNED_N_MAX: u32 = 4096;
 const QUANT_RHT_TUNED_K_MIN: u32 = 2048;
-
-// Q4 BF16 decode tables from June 2026 gemv_fine_tune sweeps; default cells
-// keep SG8_KS1_R4. Other quant widths keep DEFAULT_TILE until swept.
-#[rustfmt::skip]
-const QUANT_TILE_LARGE: [[GemvTile; QUANT_N_BUCKET_COUNT]; QUANT_K_BUCKET_COUNT] = [
-    //              n<=512  <=2048 <=4096 <=8192 <=16384 <=32768 >32768
-    /* k<=512  */ [ D,      Q42,   D,     D,     D,      D,      D      ],
-    /* k<=2048 */ [ Q21,    Q22,   Q22,   Q22,   Q21,    Q24,    D      ],
-    /* k<=8192 */ [ D,      Q42,   D,     D,     D,      D,      D      ],
-    /* k>8192  */ [ D,      Q22,   D,     D,     D,      D,      D      ],
-];
-#[rustfmt::skip]
-const QUANT_TILE_SMALL: [[GemvTile; QUANT_N_BUCKET_COUNT]; QUANT_K_BUCKET_COUNT] = [
-    //              n<=512  <=2048 <=4096 <=8192 <=16384 <=32768 >32768
-    /* k<=512  */ [ D,      Q44,   D,     D,     D,      D,      D      ],
-    /* k<=2048 */ [ Q42,    Q22,   Q42,   D,     Q22,    Q42,    D      ],
-    /* k<=8192 */ [ D,      Q42,   D,     D,     D,      D,      D      ],
-    /* k>8192  */ [ D,      Q22,   D,     D,     D,      D,      D      ],
-];
-#[rustfmt::skip]
-const QUANT_TILE_SMALL_G14: [[GemvTile; QUANT_N_BUCKET_COUNT]; QUANT_K_BUCKET_COUNT] = [
-    //              n<=512  <=2048 <=4096 <=8192 <=16384 <=32768 >32768
-    /* k<=512  */ [ D,      Q44,   D,     D,     D,      D,      D      ],
-    /* k<=2048 */ [ Q82,    Q82,   Q82,   Q82,   Q82,    Q82,    Q82    ],
-    /* k<=8192 */ [ D,      Q82,   D,     D,     D,      D,      D      ],
-    /* k>8192  */ [ D,      D,     D,     D,     D,      D,      D      ],
-];
-#[rustfmt::skip]
-const QUANT_TILE_SMALL_G13: [[GemvTile; QUANT_N_BUCKET_COUNT]; QUANT_K_BUCKET_COUNT] = [
-    //              n<=512  <=2048 <=4096 <=8192 <=16384 <=32768 >32768
-    /* k<=512  */ [ D,      Q48,   D,     D,     D,      D,      D      ],
-    /* k<=2048 */ [ Q82,    Q82,   Q82,   Q82,   D,      D,      D      ],
-    /* k<=8192 */ [ D,      D,     D,     D,     D,      D,      D      ],
-    /* k>8192  */ [ D,      D,     D,     D,     D,      D,      D      ],
-];
 
 fn table_bucket_index(
     value: u32,
@@ -150,6 +82,43 @@ fn cap_k_split_to_complete_fp_k_blocks(
     preferred.min((1 << complete_blocks.ilog2()).min(DEFAULT_NUM_SIMDGROUPS))
 }
 
+fn preferred_fp_k_split(
+    m: u32,
+    n: u32,
+    k: u32,
+) -> u32 {
+    if m <= 2 {
+        return 8;
+    }
+    if m <= 4 {
+        return if n <= 16384 {
+            8
+        } else {
+            1
+        };
+    }
+    if n <= 512 {
+        return 8;
+    }
+    if n <= 1024 {
+        return if n != 0 && k / n >= FP_K_DEPTH_VERY_DEEP_RATIO {
+            8
+        } else {
+            4
+        };
+    }
+    if n <= FP_K_DEPTH_N_MAX {
+        return if n != 0 && k / n >= FP_K_DEPTH_VERY_DEEP_RATIO {
+            8
+        } else if k >= FP_K_DEPTH_DEEP_MIN {
+            4
+        } else {
+            2
+        };
+    }
+    1
+}
+
 /// Selects the full-precision GEMV tile. `m` is the input-vector count,
 /// `n` is the output row count, and `k` is the reduction depth.
 pub(crate) fn fp_tile(
@@ -168,20 +137,7 @@ pub(crate) fn fp_tile(
     let k_split = if should_disable_k_split {
         1
     } else {
-        // Only m>4 narrow-N rows use the K-depth axis today.
-        let k_depth_bucket = if m <= 4 || n > FP_K_DEPTH_N_MAX {
-            K_DEPTH_REGULAR
-        } else if n != 0 && k / n >= FP_K_DEPTH_VERY_DEEP_RATIO {
-            K_DEPTH_VERY_DEEP
-        } else if k >= FP_K_DEPTH_DEEP_MIN {
-            K_DEPTH_DEEP
-        } else {
-            K_DEPTH_REGULAR
-        };
-        let m_bucket = table_bucket_index(m, &FP_M_BUCKET_MAXES);
-        let n_bucket = table_bucket_index(n, &FP_N_BUCKET_MAXES);
-        let preferred = FP_PREFERRED_K_SPLIT[m_bucket][n_bucket][k_depth_bucket];
-        cap_k_split_to_complete_fp_k_blocks(k, preferred)
+        cap_k_split_to_complete_fp_k_blocks(k, preferred_fp_k_split(m, n, k))
     };
 
     // R1 won most single-row FP sweeps; Large devices only switch back to R4
@@ -226,15 +182,36 @@ pub(crate) fn quant_tile(
         };
     }
 
-    let table = match tier {
-        DeviceTier::Large => &QUANT_TILE_LARGE,
-        DeviceTier::Small => &QUANT_TILE_SMALL,
-        DeviceTier::SmallG14 => &QUANT_TILE_SMALL_G14,
-        DeviceTier::SmallG13 => &QUANT_TILE_SMALL_G13,
-    };
     let k_bucket = table_bucket_index(k, &QUANT_K_BUCKET_MAXES);
     let n_bucket = table_bucket_index(n, &QUANT_N_BUCKET_MAXES);
-    let selected = table[k_bucket][n_bucket];
+    // Q4 BF16 decode choices from June 2026 gemv_fine_tune sweeps; omitted
+    // cells keep SG8_KS1_R4. Other quant widths keep DEFAULT_TILE until swept.
+    let selected = match (tier, k_bucket, n_bucket) {
+        (DeviceTier::Large, 0, 1) => Q42,
+        (DeviceTier::Large, 1, 0) => Q21,
+        (DeviceTier::Large, 1, 1..=3) => Q22,
+        (DeviceTier::Large, 1, 4) => Q21,
+        (DeviceTier::Large, 1, 5) => Q24,
+        (DeviceTier::Large, 2, 1) => Q42,
+        (DeviceTier::Large, 3, 1) => Q22,
+
+        (DeviceTier::Small, 0, 1) => Q44,
+        (DeviceTier::Small, 1, 0) => Q42,
+        (DeviceTier::Small, 1, 1) => Q22,
+        (DeviceTier::Small, 1, 2) => Q42,
+        (DeviceTier::Small, 1, 4) => Q22,
+        (DeviceTier::Small, 1, 5) => Q42,
+        (DeviceTier::Small, 2, 1) => Q42,
+        (DeviceTier::Small, 3, 1) => Q22,
+
+        (DeviceTier::SmallG14, 0, 1) => Q44,
+        (DeviceTier::SmallG14, 1, _) | (DeviceTier::SmallG14, 2, 1) => Q82,
+
+        (DeviceTier::SmallG13, 0, 1) => Q48,
+        (DeviceTier::SmallG13, 1, 0..=3) => Q82,
+
+        _ => DEFAULT_TILE,
+    };
     if n < selected.results_per_simdgroup {
         // Defensive: future R8 cells could otherwise overrun tiny N.
         DEFAULT_TILE
