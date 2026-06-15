@@ -17,6 +17,7 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{
     Metal,
+    device_tier::{DeviceTier, device_tier_for_device},
     error::MetalError,
     kernel,
     metal_extensions::{DeviceExt, LibraryPipelineExtensions},
@@ -44,6 +45,7 @@ pub struct MetalContext {
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: RefCell<MetalSparseHeapPool>,
+    device_tier: DeviceTier,
     weak_self: Weak<MetalContext>,
     #[cfg(test)]
     timeline_shared_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
@@ -52,6 +54,10 @@ pub struct MetalContext {
 impl MetalContext {
     pub fn supports_mxu(&self) -> bool {
         self.device.supports_mxu()
+    }
+
+    pub(crate) fn device_tier(&self) -> DeviceTier {
+        self.device_tier
     }
 
     pub(super) fn update_peak_memory_usage(&self) {
@@ -129,6 +135,7 @@ impl Context for MetalContext {
             .map_err(|nserror| MetalError::CannotCreateLibrary(nserror.to_string()))?;
 
         let gpu_core_count = device.gpu_core_count();
+        let device_tier = device_tier_for_device(gpu_core_count, device.as_ref());
 
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = Metal::ALLOCATION_GRANULARITY;
@@ -149,6 +156,7 @@ impl Context for MetalContext {
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
             sparse_heap_pool: RefCell::new(sparse_pool),
+            device_tier,
             weak_self: weak_self.clone(),
             #[cfg(test)]
             timeline_shared_event,
