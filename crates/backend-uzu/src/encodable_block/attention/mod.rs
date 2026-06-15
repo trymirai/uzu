@@ -103,10 +103,10 @@ impl<B: Backend> Attention<B> {
         qk_unpack: Rc<QkUnpack<B>>,
         extract_input_hadamard: bool,
     ) -> Result<(Self, Option<Allocation<B>>), AttentionError<B>> {
-        let projection_mode = &config.projection_mode;
-        if projection_mode == &AttentionProjectionMode::QkSharedValue {
+        let projection_mode = config.projection_mode();
+        if projection_mode == AttentionProjectionMode::QkSharedValue {
             return Err(AttentionError::UnsupportedProjectionMode {
-                projection_mode: projection_mode.clone(),
+                projection_mode,
             });
         }
         let q_dim = config.num_heads * config.head_dim;

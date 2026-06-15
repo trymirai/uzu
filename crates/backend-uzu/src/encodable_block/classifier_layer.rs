@@ -67,7 +67,7 @@ impl<B: Backend> ClassifierLayer<B> {
     ) -> Result<Self, ClassifierLayerError<B>> {
         let attention_config =
             layer_config.mixer_config.as_attention().ok_or(ClassifierLayerError::NonAttentionMixer)?;
-        if attention_config.projection_mode == AttentionProjectionMode::BorrowedQ
+        if attention_config.projection_mode() == AttentionProjectionMode::BorrowedQ
             || transformer_config.kv_source_layer_index(layer_index).is_some()
         {
             return Err(ClassifierLayerError::KvSharingAttentionUnsupported);

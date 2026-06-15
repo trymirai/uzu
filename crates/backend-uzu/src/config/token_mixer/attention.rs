@@ -37,15 +37,17 @@ pub struct AttentionConfig {
     pub gate_projection_config: Option<LinearConfig>,
     pub normalize_values: bool,
     /// Newer lalamo exports omit this; fused QKV is the standard layout.
-    #[serde(default)]
-    pub projection_mode: AttentionProjectionMode,
+    pub projection_mode: Option<AttentionProjectionMode>,
     /// Newer lalamo exports mark KV-sharing producer layers; consumers carry
     /// `kv_source_layer_index`, which is what the runtime keys off.
-    #[serde(default)]
-    pub is_kv_sharing: bool,
+    pub is_kv_sharing: Option<bool>,
 }
 
 impl AttentionConfig {
+    pub fn projection_mode(&self) -> AttentionProjectionMode {
+        self.projection_mode.clone().unwrap_or_default()
+    }
+
     pub fn value_norm_config(&self) -> Option<NormalizationConfig> {
         self.normalize_values.then_some(NormalizationConfig {
             epsilon: 1e-6,

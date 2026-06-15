@@ -10,7 +10,6 @@ pub struct TransformerConfig {
     pub hidden_dim: usize,
     /// Older lalamo exports; newer ones omit this and set
     /// `TransformerLayerConfig::kv_source_layer_index` per layer instead.
-    #[serde(default)]
     pub kv_source_per_layer: Option<Box<[usize]>>,
 }
 
