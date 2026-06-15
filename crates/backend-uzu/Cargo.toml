@@ -53,6 +53,7 @@ xgrammar = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-tag.workspace = true
+test-runner = { workspace = true, features = ["nightly-harness"] }
 proptest.workspace = true
 criterion.workspace = true
 criterion-macro.workspace = true
@@ -66,10 +67,6 @@ rstest.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }
-
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-# for getting gpu temperature
-macmon.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true

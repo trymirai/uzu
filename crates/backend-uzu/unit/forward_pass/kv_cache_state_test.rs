@@ -7,10 +7,10 @@ use crate::{
         common::{Backend, Context, Encoder},
         metal::Metal,
     },
-    common::helpers::{sparse_buffer_create_with, sparse_buffer_read_vec, sparse_buffer_write},
     data_type::DataType,
     encodable_block::KVCacheUpdate,
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState, KVCacheLayerTrait},
+    tests::helpers::{sparse_buffer_create_with, sparse_buffer_read_vec, sparse_buffer_write},
 };
 
 #[derive(Debug)]

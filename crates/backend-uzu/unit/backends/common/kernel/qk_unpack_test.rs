@@ -3,6 +3,7 @@ use std::fmt::{Debug, Display};
 use half::bf16;
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -10,7 +11,7 @@ use crate::{
         common::{Backend, Context, Encoder, Kernels, kernel::QkUnpackKernel},
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
+    tests::assert::assert_eq_float,
 };
 
 fn run<T: ArrayElement + Float + Debug + Display, B: Backend>(
@@ -46,7 +47,7 @@ fn run<T: ArrayElement + Float + Debug + Display, B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (crate::common::helpers::allocation_to_vec(&queries), crate::common::helpers::allocation_to_vec(&keys))
+    (crate::tests::helpers::allocation_to_vec(&queries), crate::tests::helpers::allocation_to_vec(&keys))
 }
 
 fn check<T: ArrayElement + Float + Debug + Display>(
