@@ -111,6 +111,3 @@ tracing = []
 
 [lints]
 workspace = true
-
-[[bench]]
-name = "main"

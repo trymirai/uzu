@@ -1,13 +1,13 @@
-use backend_uzu::{
-    array::{ArrayContextExt, ArrayElement},
-    backends::common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
-};
 use criterion::{BenchmarkId, Criterion, Throughput};
 use itertools::iproduct;
 use proc_macros::uzu_bench;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
-use crate::common::type_short_name;
+use crate::{
+    array::{ArrayContextExt, ArrayElement},
+    backends::common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
+    common::type_short_name,
+};
 
 fn get_rms_norm_data(
     seed: u64,

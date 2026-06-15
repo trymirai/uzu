@@ -1,5 +1,11 @@
 use schemars::JsonSchema;
-use serde_json;
+use serde_json::{self, Value};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StructuredOutput {
+    Schema(String),
+    AnyJson,
+}
 
 #[derive(Debug, Clone)]
 pub enum GrammarConfig {
@@ -42,6 +48,37 @@ impl GrammarConfig {
             separators: Some((",".to_string(), ":".to_string())),
             strict_mode: true,
         }
+    }
+
+    pub fn structured_output_from_schema(raw: &str) -> StructuredOutput {
+        let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(raw) else {
+            return StructuredOutput::Schema(raw.to_string());
+        };
+
+        match obj.get("type").and_then(Value::as_str) {
+            Some("json_object") => return StructuredOutput::AnyJson,
+            Some("json_schema") => {
+                if let Some(inner) = obj.get("json_schema") {
+                    return StructuredOutput::Schema(unwrap_inner_schema(inner));
+                }
+                if let Some(schema) = obj.get("schema") {
+                    return StructuredOutput::Schema(schema.to_string());
+                }
+            },
+            _ => {},
+        }
+
+        if let Some(schema) = obj.get("schema") {
+            let looks_like_envelope = obj.get("name").is_some_and(Value::is_string)
+                && !obj.contains_key("type")
+                && !obj.contains_key("properties")
+                && !obj.contains_key("$ref");
+            if looks_like_envelope {
+                return StructuredOutput::Schema(schema.to_string());
+            }
+        }
+
+        StructuredOutput::Schema(raw.to_string())
     }
 
     pub fn regex(
@@ -90,6 +127,13 @@ impl GrammarConfig {
             strict_mode,
         })
     }
+}
+
+fn unwrap_inner_schema(inner: &Value) -> String {
+    if let Some(schema) = inner.as_object().and_then(|object| object.get("schema")) {
+        return schema.to_string();
+    }
+    inner.to_string()
 }
 
 #[cfg(test)]
