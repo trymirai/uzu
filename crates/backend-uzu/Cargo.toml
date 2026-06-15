@@ -40,16 +40,15 @@ rustix.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
 
+# grammar requires xgrammar
+xgrammar = { workspace = true, optional = true }
+
 # metal on macos requires objc2, bytesize, metal
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }
 objc2-foundation = { workspace = true, optional = true }
 bytesize = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
-
-# grammar on non-wasm requires xgrammar
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-xgrammar = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-tag.workspace = true
