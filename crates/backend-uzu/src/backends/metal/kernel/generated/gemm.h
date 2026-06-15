@@ -20,12 +20,8 @@ struct GemmDTransform {
   static constant constexpr uint ACCUMULATE = 1 << 1;
   static constant constexpr uint BIAS = 1 << 2;
   static constant constexpr uint RHT = 1 << 3;
-  constexpr bool contains(uint flag) const thread {
-    return (raw_value & flag) != 0;
-  }
-  constexpr bool contains(uint flag) const constant {
-    return (raw_value & flag) != 0;
-  }
+  constexpr bool contains(uint flag) const thread { return (raw_value & flag) != 0; }
+  constexpr bool contains(uint flag) const constant { return (raw_value & flag) != 0; }
   constexpr uint bits() const thread { return raw_value; }
   constexpr uint bits() const constant { return raw_value; }
 };
@@ -49,12 +45,8 @@ struct GemmAlignment {
   static constant constexpr uint M = 1 << 0;
   static constant constexpr uint N = 1 << 1;
   static constant constexpr uint K = 1 << 2;
-  constexpr bool contains(uint flag) const thread {
-    return (raw_value & flag) != 0;
-  }
-  constexpr bool contains(uint flag) const constant {
-    return (raw_value & flag) != 0;
-  }
+  constexpr bool contains(uint flag) const thread { return (raw_value & flag) != 0; }
+  constexpr bool contains(uint flag) const constant { return (raw_value & flag) != 0; }
   constexpr uint bits() const thread { return raw_value; }
   constexpr uint bits() const constant { return raw_value; }
 };

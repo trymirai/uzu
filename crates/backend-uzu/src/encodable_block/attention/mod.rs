@@ -174,9 +174,7 @@ impl<B: Backend> Attention<B> {
         let mut two_pass_2_kernels = HashMap::new();
         let mut fallback_scatter_scores_kernels = HashMap::new();
 
-        for (head_dim, is_trie, is_kv_cache_ring) in
-            iproduct!([64u32, 128u32, 256u32, 512u32], [false, true], [false, true])
-        {
+        for (head_dim, is_trie, is_kv_cache_ring) in iproduct!([config.head_dim as u32], [false, true], [false, true]) {
             let key = KernelKey {
                 head_dim,
                 is_trie,
@@ -877,5 +875,5 @@ struct KernelKey {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/encodable_block/attention_test.rs"]
+#[path = "../../../unit/encodable_block/attention_test.rs"]
 mod tests;

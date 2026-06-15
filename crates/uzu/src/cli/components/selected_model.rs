@@ -4,7 +4,7 @@ use iocraft::prelude::*;
 use tokio_stream::StreamExt;
 
 use crate::{
-    cli::components::{ApplicationState, ProgressBar},
+    cli::components::{ApplicationState, ModelCapabilities, ProgressBar, ThinkingSupport},
     storage::types::DownloadPhase,
 };
 
@@ -34,6 +34,10 @@ pub fn SelectedModel(
             let Some(model) = model else {
                 return;
             };
+            let capabilities = ModelCapabilities::load(&engine, &model).await;
+            if let Some(model_state) = state.write().model_state.as_mut() {
+                model_state.capabilities = capabilities;
+            }
             if !model.is_downloadable() {
                 return;
             }
@@ -42,10 +46,12 @@ pub fn SelectedModel(
 
             let mut stream = engine.storage_subscribe().await;
 
-            if let Some(initial) = downloader.state().await
-                && let Some(model_state) = state.write().model_state.as_mut()
-            {
-                model_state.download_state = initial;
+            let mut was_downloaded = false;
+            if let Some(initial) = downloader.state().await {
+                was_downloaded = matches!(initial.phase, DownloadPhase::Downloaded {});
+                if let Some(model_state) = state.write().model_state.as_mut() {
+                    model_state.download_state = initial;
+                }
             }
 
             if downloader.resume().await.is_err() {
@@ -69,8 +75,16 @@ pub fn SelectedModel(
                     last_progress_rendered_at = None;
                 }
 
+                let became_downloaded = !was_downloaded && matches!(event_state.phase, DownloadPhase::Downloaded {});
+                was_downloaded = matches!(event_state.phase, DownloadPhase::Downloaded {});
                 if let Some(model_state) = state.write().model_state.as_mut() {
                     model_state.download_state = event_state;
+                }
+                if became_downloaded {
+                    let capabilities = ModelCapabilities::load(&engine, &model).await;
+                    if let Some(model_state) = state.write().model_state.as_mut() {
+                        model_state.capabilities = capabilities;
+                    }
                 }
             }
         }
@@ -153,14 +167,15 @@ pub fn SelectedModel(
     });
 
     let theme = state.read().theme.clone();
+    let preferences = state.read().preferences;
     let model_data = state.read().model_state.as_ref().map(|model_state| {
         let session_status = model_state.session_state.as_deref().and_then(|session_state| session_state.status_text());
-        (model_state.model.clone(), model_state.download_state.clone(), session_status)
+        (model_state.model.clone(), model_state.download_state.clone(), session_status, model_state.capabilities)
     });
 
     let view: AnyElement<'static> = match model_data {
         None => element! { View }.into(),
-        Some((model, download_state, session_status)) => {
+        Some((model, download_state, session_status, capabilities)) => {
             let is_downloaded = matches!(download_state.phase, DownloadPhase::Downloaded {});
             let is_downloading = matches!(download_state.phase, DownloadPhase::Downloading {});
             let status = if is_downloading {
@@ -184,6 +199,16 @@ pub fn SelectedModel(
             );
             let padding = theme.padding();
             let padding_wide = theme.padding_wide();
+            let chat_indicator = (model.is_chat_capable() && (is_downloaded || !model.is_downloadable())).then(|| {
+                let thinking = match capabilities.thinking.with_preference(&preferences.thinking) {
+                    ThinkingSupport::Unsupported => None,
+                    support => Some(support.value_label()),
+                };
+                match thinking {
+                    Some(thinking) => format!("think {} · {}", thinking, preferences.sampling.mode.label()),
+                    None => format!("sampling {}", preferences.sampling.mode.label()),
+                }
+            });
 
             element! {
                 View(
@@ -208,6 +233,12 @@ pub fn SelectedModel(
                     }))
                     #((!is_downloading).then(|| element! {
                         View(flex_grow: 1.0f32)
+                    }))
+                    #(chat_indicator.map(|indicator| element! {
+                        View(flex_direction: FlexDirection::Row) {
+                            Text(content: indicator, color: theme.subtitle_color)
+                            View(width: padding_wide as u32)
+                        }
                     }))
                     #(session_status.map(|status| element! {
                         Text(content: status, color: theme.subtitle_color)

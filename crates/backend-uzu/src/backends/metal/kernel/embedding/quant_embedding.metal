@@ -37,14 +37,11 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
 
   const uint group_idx = dim_idx / group_size;
   const uint num_groups = (model_dim + group_size - 1) / group_size;
-  const uint zp_stride = quantization_mode == QuantizationMode::U4
-                             ? (num_groups + 1) / 2
-                             : num_groups;
+  const uint zp_stride = quantization_mode == QuantizationMode::U4 ? (num_groups + 1) / 2 : num_groups;
 
   const T scale = scales[token_id * num_groups + group_idx];
 
-  const uint packing_divisor =
-      quantization_mode == QuantizationMode::U4 ? 2 : 1;
+  const uint packing_divisor = quantization_mode == QuantizationMode::U4 ? 2 : 1;
   const uint weights_stride = model_dim / packing_divisor;
 
   int quantized_value = 0;
@@ -61,8 +58,7 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
   };
   case QuantizationMode::I8: {
     const uint elem_idx = token_id * weights_stride + dim_idx;
-    const device int8_t* weights_i8 =
-        reinterpret_cast<const device int8_t*>(weights);
+    const device int8_t* weights_i8 = reinterpret_cast<const device int8_t*>(weights);
     quantized_value = int(weights_i8[elem_idx]);
     break;
   };
@@ -80,8 +76,7 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
     uint zero_point = 0;
     if (quantization_mode == QuantizationMode::U4) {
       const uint8_t packed = zero_points[token_id * zp_stride + group_idx / 2];
-      zero_point =
-          (group_idx & 1) == 0 ? (packed & 0x0F) : ((packed >> 4) & 0x0F);
+      zero_point = (group_idx & 1) == 0 ? (packed & 0x0F) : ((packed >> 4) & 0x0F);
     } else {
       zero_point = zero_points[token_id * zp_stride + group_idx];
     }

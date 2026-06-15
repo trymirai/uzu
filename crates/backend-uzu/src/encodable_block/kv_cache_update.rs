@@ -112,5 +112,5 @@ pub fn create_swaps_direct(
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/encodable_block/kv_cache_update_test.rs"]
+#[path = "../../unit/encodable_block/kv_cache_update_test.rs"]
 mod tests;

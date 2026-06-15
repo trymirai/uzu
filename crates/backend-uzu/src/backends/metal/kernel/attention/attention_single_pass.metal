@@ -62,28 +62,21 @@ PUBLIC KERNEL(AttentionSinglePass)(
 
   const uint kv_head_idx = head_idx / gqa_factor;
   const uint o_offset = q_seq_idx * num_heads + head_idx;
-  const uint q_offset = query_transposed ? num_heads * q_seq_idx + head_idx
-                                         : head_idx * suffix_length + q_seq_idx;
+  const uint q_offset = query_transposed ? num_heads * q_seq_idx + head_idx : head_idx * suffix_length + q_seq_idx;
 
   const uint prefix_length = sequence_length - suffix_length;
 
-  const uint suffix_position =
-      is_kv_cache_ring ? uint(ring_params.ring_length) : prefix_length;
+  const uint suffix_position = is_kv_cache_ring ? uint(ring_params.ring_length) : prefix_length;
 
-  const uint query_position = is_trie ? suffix_position + trie[q_seq_idx].height
-                                      : suffix_position + q_seq_idx;
+  const uint query_position = is_trie ? suffix_position + trie[q_seq_idx].height : suffix_position + q_seq_idx;
 
-  queries += q_offset * HEAD_DIM +
-             thread_context.simd_lane_id * qk_elements_per_thread;
-  keys += kv_head_idx * k_head_stride +
-          thread_context.simdgroup_index * k_seq_stride +
+  queries += q_offset * HEAD_DIM + thread_context.simd_lane_id * qk_elements_per_thread;
+  keys += kv_head_idx * k_head_stride + thread_context.simdgroup_index * k_seq_stride +
           thread_context.simd_lane_id * qk_elements_per_thread;
-  values += kv_head_idx * v_head_stride +
-            thread_context.simdgroup_index * v_seq_stride +
+  values += kv_head_idx * v_head_stride + thread_context.simdgroup_index * v_seq_stride +
             thread_context.simd_lane_id * value_elements_per_thread;
 
-  out += o_offset * value_dim +
-         thread_context.simdgroup_index * value_elements_per_thread;
+  out += o_offset * value_dim + thread_context.simdgroup_index * value_elements_per_thread;
 
   // Read the query and 0 the output accumulator
   for (int i = 0; i < qk_elements_per_thread; i++) {
@@ -103,8 +96,7 @@ PUBLIC KERNEL(AttentionSinglePass)(
   }
 
   // For each key
-  for (uint i = thread_context.simdgroup_index; i < sequence_length;
-       i += SEQUENCE_BLOCK_SIZE) {
+  for (uint i = thread_context.simdgroup_index; i < sequence_length; i += SEQUENCE_BLOCK_SIZE) {
     if (should_use_key(
             ring_params,
             trie,
@@ -159,20 +151,14 @@ PUBLIC KERNEL(AttentionSinglePass)(
   max_score = shared_max_scores[thread_context.simd_lane_id];
   U new_max = simd_max(max_score);
   U factor = fast::exp(max_score - new_max);
-  sum_exp_score =
-      simd_sum(shared_sum_exp_scores[thread_context.simd_lane_id] * factor);
+  sum_exp_score = simd_sum(shared_sum_exp_scores[thread_context.simd_lane_id] * factor);
 
   // Now we need to aggregate all the outputs
   for (int i = 0; i < value_elements_per_thread; i++) {
-    shared_outputs
-        [thread_context.simd_lane_id * HEAD_BLOCK_SIZE +
-         thread_context.simdgroup_index] = o[i];
+    shared_outputs[thread_context.simd_lane_id * HEAD_BLOCK_SIZE + thread_context.simdgroup_index] = o[i];
     threadgroup_barrier(mem_flags::mem_threadgroup);
     o[i] = simd_sum(
-               shared_outputs
-                   [thread_context.simdgroup_index * HEAD_BLOCK_SIZE +
-                    thread_context.simd_lane_id] *
-               factor
+               shared_outputs[thread_context.simdgroup_index * HEAD_BLOCK_SIZE + thread_context.simd_lane_id] * factor
            ) /
            sum_exp_score;
     threadgroup_barrier(mem_flags::mem_threadgroup);

@@ -1,12 +1,11 @@
 #pragma once
 
 #include "../../../hadamard_transform/hadamard_transform.h"
-#include "gemv_common.h"
 
 namespace uzu {
 namespace gemm {
 
-template <typename BT, typename DT, typename U>
+template <typename BT, typename DT, typename U, uint RESULTS_PER_SIMDGROUP>
 struct Epilogue {
   static METAL_FUNC void store(
       thread U (&result)[RESULTS_PER_SIMDGROUP],
@@ -24,8 +23,7 @@ struct Epilogue {
       bool writer
   ) {
     const bool is_scale = output_transform.contains(GemmDTransform::SCALE);
-    const bool is_accumulate =
-        output_transform.contains(GemmDTransform::ACCUMULATE);
+    const bool is_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool is_bias = output_transform.contains(GemmDTransform::BIAS);
     const bool use_hadamard = output_transform.contains(GemmDTransform::RHT);
 
@@ -51,8 +49,7 @@ struct Epilogue {
       if (simd_lane == 0) {
         METAL_PRAGMA_UNROLL
         for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-          shared_results[simd_group * RESULTS_PER_SIMDGROUP + row] =
-              result[row];
+          shared_results[simd_group * RESULTS_PER_SIMDGROUP + row] = result[row];
         }
       }
 

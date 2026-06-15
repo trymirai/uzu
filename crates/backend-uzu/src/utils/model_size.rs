@@ -26,5 +26,5 @@ impl ModelSize {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/utils/model_size_test.rs"]
+#[path = "../../unit/utils/model_size_test.rs"]
 mod tests;

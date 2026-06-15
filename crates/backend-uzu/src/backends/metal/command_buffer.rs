@@ -7,15 +7,12 @@ use metal::{
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 
 use super::{Metal, buffer::BufferDowncastExt};
-use crate::{
-    backends::{
-        common::{
-            AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
-            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-        },
-        metal::error::MetalError,
+use crate::backends::{
+    common::{
+        AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
+        CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
     },
-    prelude::MetalContext,
+    metal::{MetalContext, error::MetalError},
 };
 
 pub struct MetalCommandBuffer;

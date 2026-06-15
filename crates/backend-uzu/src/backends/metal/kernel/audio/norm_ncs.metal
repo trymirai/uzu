@@ -48,9 +48,11 @@ void norm_ncs(
     }
   }
 
-  const float sum = threadgroup_cooperative_reduce<
-      SimdReduceSum<float>,
-      AUDIO_NORM_NCS_BLOCK_SIZE>(partial_sum, shared_mean, thread_context);
+  const float sum = threadgroup_cooperative_reduce<SimdReduceSum<float>, AUDIO_NORM_NCS_BLOCK_SIZE>(
+      partial_sum,
+      shared_mean,
+      thread_context
+  );
   const float mean = (subtract_mean != 0) ? (sum / (float)channels) : 0.0f;
 
   float partial_variance = 0.0f;
@@ -61,9 +63,7 @@ void norm_ncs(
     partial_variance += centered * centered;
   }
 
-  const float variance_sum = threadgroup_cooperative_reduce<
-      SimdReduceSum<float>,
-      AUDIO_NORM_NCS_BLOCK_SIZE>(
+  const float variance_sum = threadgroup_cooperative_reduce<SimdReduceSum<float>, AUDIO_NORM_NCS_BLOCK_SIZE>(
       partial_variance,
       shared_variance,
       thread_context

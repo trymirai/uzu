@@ -4542,7 +4542,7 @@ public func FfiConverterTypeReasoningEffort_lower(_ value: ReasoningEffort) -> R
 public enum SamplingMethod: Equatable, Hashable, Codable {
     
     case greedy
-    case stochastic(temperature: Double?, topK: Int64?, topP: Double?, minP: Double?
+    case stochastic(temperature: Double?, topK: Int64?, topP: Double?, minP: Double?, repetitionPenalty: Double?, suffixRepetitionLength: Int64?
     )
 
 
@@ -4567,7 +4567,7 @@ public struct FfiConverterTypeSamplingMethod: FfiConverterRustBuffer {
         
         case 1: return .greedy
         
-        case 2: return .stochastic(temperature: try FfiConverterOptionDouble.read(from: &buf), topK: try FfiConverterOptionInt64.read(from: &buf), topP: try FfiConverterOptionDouble.read(from: &buf), minP: try FfiConverterOptionDouble.read(from: &buf)
+        case 2: return .stochastic(temperature: try FfiConverterOptionDouble.read(from: &buf), topK: try FfiConverterOptionInt64.read(from: &buf), topP: try FfiConverterOptionDouble.read(from: &buf), minP: try FfiConverterOptionDouble.read(from: &buf), repetitionPenalty: try FfiConverterOptionDouble.read(from: &buf), suffixRepetitionLength: try FfiConverterOptionInt64.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -4582,12 +4582,14 @@ public struct FfiConverterTypeSamplingMethod: FfiConverterRustBuffer {
             writeInt(&buf, Int32(1))
         
         
-        case let .stochastic(temperature,topK,topP,minP):
+        case let .stochastic(temperature,topK,topP,minP,repetitionPenalty,suffixRepetitionLength):
             writeInt(&buf, Int32(2))
             FfiConverterOptionDouble.write(temperature, into: &buf)
             FfiConverterOptionInt64.write(topK, into: &buf)
             FfiConverterOptionDouble.write(topP, into: &buf)
             FfiConverterOptionDouble.write(minP, into: &buf)
+            FfiConverterOptionDouble.write(repetitionPenalty, into: &buf)
+            FfiConverterOptionInt64.write(suffixRepetitionLength, into: &buf)
             
         }
     }

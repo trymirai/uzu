@@ -51,12 +51,7 @@ METAL_FUNC bfloat4 uint4_to_fp4<bfloat, 8>(uint4 n) {
 }
 
 template <typename U, int N, int bits>
-inline void dequantize(
-    const device uint8_t* w,
-    U scale,
-    U bias,
-    threadgroup U* w_local
-) {
+inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local) {
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   if (bits == 4) {
@@ -74,18 +69,10 @@ inline void dequantize(
 }
 
 template <>
-inline void dequantize<bfloat, 8, 4>(
-    const device uint8_t* w,
-    bfloat scale,
-    bfloat bias,
-    threadgroup bfloat* w_local
-) {
+inline void dequantize<bfloat, 8, 4>(const device uint8_t* w, bfloat scale, bfloat bias, threadgroup bfloat* w_local) {
   const uint32_t packed = *reinterpret_cast<const device uint32_t*>(w);
-  const bfloat4 lo =
-      bfloat4(as_type<uchar4>(packed & 0x0f0f0f0fu)) * scale + bias;
-  const bfloat4 hi = bfloat4(as_type<uchar4>(packed & 0xf0f0f0f0u)) *
-                         (scale * bfloat(0.0625f)) +
-                     bias;
+  const bfloat4 lo = bfloat4(as_type<uchar4>(packed & 0x0f0f0f0fu)) * scale + bias;
+  const bfloat4 hi = bfloat4(as_type<uchar4>(packed & 0xf0f0f0f0u)) * (scale * bfloat(0.0625f)) + bias;
 
   w_local[0] = lo.x;
   w_local[1] = hi.x;

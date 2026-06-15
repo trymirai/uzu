@@ -56,8 +56,7 @@ PUBLIC KERNEL(AttentionTwoPass1)(
   typedef float U;
 
   // Flat query head mapping — fixed hardware shape, dynamic logical mapping
-  const uint head_idx = head_group_idx * SIMDGROUPS_PER_THREADGROUP +
-                        thread_context.simdgroup_index;
+  const uint head_idx = head_group_idx * SIMDGROUPS_PER_THREADGROUP + thread_context.simdgroup_index;
   if (head_idx >= num_heads)
     return;
 
@@ -66,20 +65,15 @@ PUBLIC KERNEL(AttentionTwoPass1)(
   const uint q_offset = head_idx * suffix_length + q_seq_idx;
 
   const uint prefix_length = sequence_length - suffix_length;
-  const uint suffix_position =
-      is_kv_cache_ring ? uint(ring_params.ring_length) : prefix_length;
-  const uint query_position = is_trie ? suffix_position + trie[q_seq_idx].height
-                                      : suffix_position + q_seq_idx;
+  const uint suffix_position = is_kv_cache_ring ? uint(ring_params.ring_length) : prefix_length;
+  const uint query_position = is_trie ? suffix_position + trie[q_seq_idx].height : suffix_position + q_seq_idx;
 
   thread U q[elements_per_thread];
   thread U o[elements_per_thread] = {0};
 
-  queries +=
-      q_offset * HEAD_DIM + thread_context.simd_lane_id * elements_per_thread;
-  keys += kv_head_idx * k_head_stride + block_idx * k_seq_stride +
-          thread_context.simd_lane_id * elements_per_thread;
-  values += kv_head_idx * v_head_stride + block_idx * v_seq_stride +
-            thread_context.simd_lane_id * elements_per_thread;
+  queries += q_offset * HEAD_DIM + thread_context.simd_lane_id * elements_per_thread;
+  keys += kv_head_idx * k_head_stride + block_idx * k_seq_stride + thread_context.simd_lane_id * elements_per_thread;
+  values += kv_head_idx * v_head_stride + block_idx * v_seq_stride + thread_context.simd_lane_id * elements_per_thread;
   out += o_offset * TOTAL_BLOCKS_COUNT * HEAD_DIM + block_idx * HEAD_DIM +
          thread_context.simd_lane_id * elements_per_thread;
   sums += o_offset * TOTAL_BLOCKS_COUNT + block_idx;
@@ -170,16 +164,14 @@ PUBLIC KERNEL(AttentionTwoPass2)(
 
   // Find global max across all blocks (each lane handles strided blocks)
   U max_score = -1e9;
-  for (uint b = thread_context.simd_lane_id; b < TOTAL_BLOCKS_COUNT;
-       b += METAL_SIMD_SIZE) {
+  for (uint b = thread_context.simd_lane_id; b < TOTAL_BLOCKS_COUNT; b += METAL_SIMD_SIZE) {
     max_score = max(max_score, maxs[b]);
   }
   U new_max = simd_max(max_score);
 
   // Find global sum across all blocks
   U sum_exp = 0;
-  for (uint b = thread_context.simd_lane_id; b < TOTAL_BLOCKS_COUNT;
-       b += METAL_SIMD_SIZE) {
+  for (uint b = thread_context.simd_lane_id; b < TOTAL_BLOCKS_COUNT; b += METAL_SIMD_SIZE) {
     sum_exp += sums[b] * fast::exp(maxs[b] - new_max);
   }
   U sum_exp_score = simd_sum(sum_exp);
@@ -190,14 +182,10 @@ PUBLIC KERNEL(AttentionTwoPass2)(
 
   for (uint chunk = 0; chunk < TOTAL_BLOCKS_COUNT; chunk += METAL_SIMD_SIZE) {
     uint block_idx = chunk + thread_context.simd_lane_id;
-    U factor = (block_idx < TOTAL_BLOCKS_COUNT)
-                   ? fast::exp(maxs[block_idx] - new_max)
-                   : 0;
+    U factor = (block_idx < TOTAL_BLOCKS_COUNT) ? fast::exp(maxs[block_idx] - new_max) : 0;
 
-    const device float* block_partials =
-        partials + o_offset * TOTAL_BLOCKS_COUNT * HEAD_DIM +
-        block_idx * HEAD_DIM +
-        thread_context.simdgroup_index * elements_per_thread;
+    const device float* block_partials = partials + o_offset * TOTAL_BLOCKS_COUNT * HEAD_DIM + block_idx * HEAD_DIM +
+                                         thread_context.simdgroup_index * elements_per_thread;
 
     for (uint i = 0; i < elements_per_thread; i++) {
       U val = (block_idx < TOTAL_BLOCKS_COUNT) ? block_partials[i] * factor : 0;
@@ -207,8 +195,7 @@ PUBLIC KERNEL(AttentionTwoPass2)(
 
   // Write the output
   if (thread_context.simd_lane_id == 0) {
-    out += o_offset * HEAD_DIM +
-           thread_context.simdgroup_index * elements_per_thread;
+    out += o_offset * HEAD_DIM + thread_context.simdgroup_index * elements_per_thread;
     for (uint i = 0; i < elements_per_thread; i++) {
       out[i] = static_cast<T>(o[i] / sum_exp_score);
     }

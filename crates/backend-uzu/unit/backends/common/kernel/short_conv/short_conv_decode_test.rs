@@ -1,0 +1,348 @@
+use std::fmt::{Debug, Display};
+
+use half::{bf16, f16};
+use num_traits::Float;
+use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
+
+use crate::{
+    array::{ArrayContextExt, ArrayElement},
+    backends::{
+        common::{Backend, Context, Encoder, Kernels, kernel::ShortConvDecodeKernel},
+        cpu::Cpu,
+    },
+    data_type::DataType,
+    tests::assert::assert_eq_float,
+};
+
+struct Input<T: ArrayElement + Float> {
+    in_proj: Box<[T]>,
+    w: Box<[f32]>,
+    b: Option<Box<[f32]>>,
+    state: Box<[T]>,
+    suffix_len: u32,
+    kernel_size: u32,
+    in_proj_stride: u32,
+    state_stride: u32,
+    model_dim: u32,
+}
+
+fn get_output<T: ArrayElement + Float, B: Backend>(
+    input: &Input<T>,
+    state_in_place: bool,
+) -> (Vec<T>, Vec<T>) {
+    let context = B::Context::new().expect("Failed to create Context");
+
+    let has_bias = input.b.is_some();
+    let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvDecodeKernel::new(
+        &context,
+        T::data_type(),
+        DataType::F32,
+        has_bias,
+        state_in_place,
+    )
+    .expect("Failed to create ShortConvDecodeKernel");
+
+    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
+    let w_array = context.create_array_from(&[input.w.len()], &input.w);
+    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b));
+
+    let out_size = input.suffix_len as usize * input.model_dim as usize;
+    let mut out = context.create_array_uninitialized(&[out_size], T::data_type()).into_allocation();
+
+    let state_size = input.model_dim as usize * input.state_stride as usize;
+    let state_allocation_size = state_size.max(1);
+    let state_data: Vec<T> =
+        input.state.iter().copied().chain(std::iter::repeat(T::zero())).take(state_allocation_size).collect();
+
+    let mut next_state = if state_in_place {
+        context.create_array_from(&[state_allocation_size], &state_data).into_allocation()
+    } else {
+        context.create_array_uninitialized(&[state_allocation_size], T::data_type()).into_allocation()
+    };
+
+    let state_array = (!state_in_place).then(|| context.create_array_from(&[state_allocation_size], &state_data));
+
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    kernel.encode(
+        in_proj_array.allocation(),
+        w_array.allocation(),
+        b_array.as_ref().map(|bias| bias.allocation()),
+        state_array.as_ref().map(|state| state.allocation()),
+        &mut out,
+        &mut next_state,
+        input.suffix_len,
+        input.kernel_size,
+        input.in_proj_stride,
+        input.state_stride,
+        input.model_dim,
+        &mut encoder,
+    );
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+
+    (crate::tests::helpers::allocation_to_vec(&out), crate::tests::helpers::allocation_to_vec(&next_state))
+}
+
+fn get_test_data_basic<T: ArrayElement + Float>(
+    model_dim: usize,
+    kernel_size: usize,
+    has_bias: bool,
+) -> (Input<T>, Vec<T>, Vec<T>) {
+    let state_stride = kernel_size.saturating_sub(1);
+    let in_proj_stride = model_dim * 3;
+    let suffix_len = 1;
+
+    // in_proj[token * in_proj_stride + col]
+    //   [0..model_dim)             = pre_conv_gate
+    //   [model_dim..2*model_dim)   = post_conv_gate
+    //   [2*model_dim..3*model_dim) = x_in
+    let mut in_proj = vec![T::zero(); suffix_len * in_proj_stride];
+    for ch in 0..model_dim {
+        let pre_gate = 0.3 * (ch as f32) + 1.0;
+        let post_gate = 0.01 * (ch as f32) + 1.0;
+        let x_in = 0.05 * (ch as f32) + 0.7;
+        in_proj[ch] = T::from(pre_gate).unwrap();
+        in_proj[model_dim + ch] = T::from(post_gate).unwrap();
+        in_proj[2 * model_dim + ch] = T::from(x_in).unwrap();
+    }
+
+    // w[channel * kernel_size + tap]
+    let mut w = vec![0.0f32; model_dim * kernel_size];
+    for ch in 0..model_dim {
+        for tap in 0..kernel_size {
+            let val = 0.1 * (tap as f32) - 0.01 * (ch as f32) + 0.5;
+            w[ch * kernel_size + tap] = val;
+        }
+    }
+
+    // state[channel * state_stride + tap]
+    let mut state = vec![T::zero(); model_dim * state_stride];
+    for ch in 0..model_dim {
+        for tap in 0..state_stride {
+            let val = 0.1 * (ch as f32) + 0.01 * (tap as f32) + 0.5;
+            state[ch * state_stride + tap] = T::from(val).unwrap();
+        }
+    }
+
+    let b = if has_bias {
+        let mut bias = vec![0.0f32; model_dim];
+        for ch in 0..model_dim {
+            bias[ch] = 0.01 * (ch as f32) + 0.1;
+        }
+        Some(bias.into_boxed_slice())
+    } else {
+        None
+    };
+
+    let input = Input {
+        in_proj: in_proj.into_boxed_slice(),
+        w: w.into_boxed_slice(),
+        b,
+        state: state.into_boxed_slice(),
+        suffix_len: suffix_len as u32,
+        kernel_size: kernel_size as u32,
+        in_proj_stride: in_proj_stride as u32,
+        state_stride: state_stride as u32,
+        model_dim: model_dim as u32,
+    };
+
+    let (out, next_state) = get_output::<T, Cpu>(&input, false);
+    (input, out, next_state)
+}
+
+fn get_test_data_edge<T: ArrayElement + Float>(
+    model_dim: usize,
+    kernel_size: usize,
+    has_bias: bool,
+) -> (Input<T>, Vec<T>, Vec<T>) {
+    let state_stride = kernel_size.saturating_sub(1);
+    let in_proj_stride = model_dim * 3;
+    let suffix_len = 1;
+
+    let mut in_proj = vec![T::zero(); suffix_len * in_proj_stride];
+    for ch in 0..model_dim {
+        let pre_gate = 0.5 + 0.1 * (ch as f32);
+        let post_gate = 0.5 + 0.1 * (ch as f32);
+        let x_in = 1e-3 * (ch as f32) + 0.01;
+        in_proj[ch] = T::from(pre_gate).unwrap();
+        in_proj[model_dim + ch] = T::from(post_gate).unwrap();
+        in_proj[2 * model_dim + ch] = T::from(x_in).unwrap();
+    }
+
+    let mut w = vec![0.0f32; model_dim * kernel_size];
+    for ch in 0..model_dim {
+        for tap in 0..kernel_size {
+            let val = 0.25 * (tap as f32) + 0.1;
+            w[ch * kernel_size + tap] = val;
+        }
+    }
+
+    let mut state = vec![T::zero(); model_dim * state_stride];
+    for ch in 0..model_dim {
+        for tap in 0..state_stride {
+            let val = 1e-3 * (ch as f32) + 1e-3 * (tap as f32) + 0.01;
+            state[ch * state_stride + tap] = T::from(val).unwrap();
+        }
+    }
+
+    let b = if has_bias {
+        let mut bias = vec![0.0f32; model_dim];
+        for ch in 0..model_dim {
+            bias[ch] = 0.005 * (ch as f32) + 0.01;
+        }
+        Some(bias.into_boxed_slice())
+    } else {
+        None
+    };
+
+    let input = Input {
+        in_proj: in_proj.into_boxed_slice(),
+        w: w.into_boxed_slice(),
+        b,
+        state: state.into_boxed_slice(),
+        suffix_len: suffix_len as u32,
+        kernel_size: kernel_size as u32,
+        in_proj_stride: in_proj_stride as u32,
+        state_stride: state_stride as u32,
+        model_dim: model_dim as u32,
+    };
+
+    let (out, next_state) = get_output::<T, Cpu>(&input, false);
+    (input, out, next_state)
+}
+
+fn test_internal<T: ArrayElement + Float + Debug + Display>(
+    input: &Input<T>,
+    expected_out: &[T],
+    expected_state: &[T],
+    state_in_place: bool,
+) {
+    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
+        0.02f32
+    } else {
+        1e-3
+    };
+
+    for_each_non_cpu_backend!(|B| {
+        let (out, next_state) = get_output::<T, B>(input, state_in_place);
+        let msg = format!(
+            "ShortConvDecode out failed with backend={}, has_bias={}, state_in_place={}, kernel_size={}, model_dim={}",
+            std::any::type_name::<B>(),
+            input.b.is_some(),
+            state_in_place,
+            input.kernel_size,
+            input.model_dim,
+        );
+        assert_eq_float::<T>(expected_out, &out, eps, &msg);
+
+        let state_msg = format!(
+            "ShortConvDecode state failed with backend={}, has_bias={}, state_in_place={}, kernel_size={}, model_dim={}",
+            std::any::type_name::<B>(),
+            input.b.is_some(),
+            state_in_place,
+            input.kernel_size,
+            input.model_dim,
+        );
+        assert_eq_float::<T>(expected_state, &next_state, eps, &state_msg);
+    });
+}
+
+fn test_basic<T: ArrayElement + Float + Debug + Display>() {
+    for has_bias in [false, true] {
+        for state_in_place in [false, true] {
+            let (input, expected_out, expected_state) = get_test_data_basic::<T>(64, 4, has_bias);
+            test_internal(&input, &expected_out, &expected_state, state_in_place);
+        }
+    }
+}
+
+fn test_large<T: ArrayElement + Float + Debug + Display>() {
+    for has_bias in [false, true] {
+        for state_in_place in [false, true] {
+            let (input, expected_out, expected_state) = get_test_data_basic::<T>(256, 4, has_bias);
+            test_internal(&input, &expected_out, &expected_state, state_in_place);
+        }
+    }
+}
+
+fn test_edge_small<T: ArrayElement + Float + Debug + Display>() {
+    for has_bias in [false, true] {
+        for state_in_place in [false, true] {
+            let (input, expected_out, expected_state) = get_test_data_edge::<T>(4, 2, has_bias);
+            test_internal(&input, &expected_out, &expected_state, state_in_place);
+        }
+    }
+}
+
+fn test_edge_kernel<T: ArrayElement + Float + Debug + Display>() {
+    for has_bias in [false, true] {
+        for state_in_place in [false, true] {
+            let (input, expected_out, expected_state) = get_test_data_edge::<T>(4, 1, has_bias);
+            test_internal(&input, &expected_out, &expected_state, state_in_place);
+        }
+    }
+}
+
+// basic tests
+#[uzu_test]
+fn test_basic_f32() {
+    test_basic::<f32>();
+}
+
+#[uzu_test]
+fn test_basic_f16() {
+    test_basic::<f16>();
+}
+
+#[uzu_test]
+fn test_basic_bf16() {
+    test_basic::<bf16>();
+}
+
+// large tests
+#[uzu_test]
+fn test_large_f32() {
+    test_large::<f32>();
+}
+
+#[uzu_test]
+fn test_large_f16() {
+    test_large::<f16>();
+}
+
+#[uzu_test]
+fn test_large_bf16() {
+    test_large::<bf16>();
+}
+
+// edge: small dimensions
+#[uzu_test]
+fn test_edge_small_f32() {
+    test_edge_small::<f32>();
+}
+
+#[uzu_test]
+fn test_edge_small_f16() {
+    test_edge_small::<f16>();
+}
+
+#[uzu_test]
+fn test_edge_small_bf16() {
+    test_edge_small::<bf16>();
+}
+
+// edge: kernel_size=1 (no state taps)
+#[uzu_test]
+fn test_edge_kernel_f32() {
+    test_edge_kernel::<f32>();
+}
+
+#[uzu_test]
+fn test_edge_kernel_f16() {
+    test_edge_kernel::<f16>();
+}
+
+#[uzu_test]
+fn test_edge_kernel_bf16() {
+    test_edge_kernel::<bf16>();
+}

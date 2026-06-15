@@ -43,6 +43,7 @@ struct RunContext {
     prefill_result: PrefillResult,
     prefill_duration: f64,
     prefill_suffix_length: usize,
+    enable_thinking: bool,
     run_start: Instant,
 }
 
@@ -259,6 +260,7 @@ impl ChatSession {
             prefill_result: prefill_result.clone(),
             prefill_duration,
             prefill_suffix_length,
+            enable_thinking: config.enable_thinking,
             run_start,
         };
 
@@ -531,7 +533,7 @@ impl ChatSession {
         finish_reason: Option<FinishReason>,
     ) -> Result<Output, Error> {
         let text = Self::decode_generated_tokens(tokenizer, &run_context.prefill_result.tokens, generate_results)?;
-        let parsed = output_parser.parse(text);
+        let parsed = output_parser.parse(text, run_context.enable_thinking);
         let start_idx = run_context.prefix_len_before + run_context.input_tokens_len;
         let output_tokens = language_model_generator.tokens_len().saturating_sub(start_idx);
 
@@ -643,3 +645,7 @@ impl ChatSession {
         self.llm.peak_memory_usage()
     }
 }
+
+#[cfg(test)]
+#[path = "../../unit/session/chat_session.rs"]
+mod tests;

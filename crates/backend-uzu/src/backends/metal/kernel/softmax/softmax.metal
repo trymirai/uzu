@@ -42,8 +42,7 @@ PUBLIC KERNEL(Softmax)(
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   // Pass 1: online (max, normalizer) accumulation over the row.
-  for (uint base = tid * SOFTMAX_ELEMENTS_PER_THREAD; base < row_length;
-       base += stride) {
+  for (uint base = tid * SOFTMAX_ELEMENTS_PER_THREAD; base < row_length; base += stride) {
     float vals[SOFTMAX_ELEMENTS_PER_THREAD];
     for (uint i = 0; i < SOFTMAX_ELEMENTS_PER_THREAD; i++) {
       vals[i] = (base + i < row_length) ? float(row[base + i]) : -FLT_MAX;
@@ -86,12 +85,10 @@ PUBLIC KERNEL(Softmax)(
   const float inv_norm = 1.0f / shared_norm[0];
 
   // Pass 2: normalize.
-  for (uint base = tid * SOFTMAX_ELEMENTS_PER_THREAD; base < row_length;
-       base += stride) {
+  for (uint base = tid * SOFTMAX_ELEMENTS_PER_THREAD; base < row_length; base += stride) {
     for (uint i = 0; i < SOFTMAX_ELEMENTS_PER_THREAD; i++) {
       if (base + i < row_length) {
-        row[base + i] =
-            T(fast::exp(float(row[base + i]) - final_max) * inv_norm);
+        row[base + i] = T(fast::exp(float(row[base + i]) - final_max) * inv_norm);
       }
     }
   }

@@ -86,7 +86,15 @@ fn valid_commands(
     let Some(command_name) = input.strip_prefix(SYMBOL_COMMAND) else {
         return Vec::new();
     };
-    state.read().registry.commands().into_iter().filter(|command| command.name.starts_with(command_name)).collect()
+    let model_loaded = state.read().model_state.is_some();
+    state
+        .read()
+        .registry
+        .commands()
+        .into_iter()
+        .filter(|command| command.name.starts_with(command_name))
+        .filter(|command| !command.requires_model || model_loaded)
+        .collect()
 }
 
 fn hint_component(

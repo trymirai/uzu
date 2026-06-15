@@ -44,10 +44,7 @@ void fsq_encode(
     return;
   }
 
-  const uint in_base =
-      (b * (uint)(num_groups * codebook_dim) + g * (uint)codebook_dim) *
-          (uint)seq_len +
-      t;
+  const uint in_base = (b * (uint)(num_groups * codebook_dim) + g * (uint)codebook_dim) * (uint)seq_len + t;
 
   int token = 0;
   for (int d = 0; d < codebook_dim; ++d) {
@@ -58,8 +55,7 @@ void fsq_encode(
     const float input_shift = tan(output_offset / output_scale);
 
     const float x = float(input[in_base + (uint)d * (uint)seq_len]);
-    const float compressed =
-        output_scale * tanh(x + input_shift) - output_offset;
+    const float compressed = output_scale * tanh(x + input_shift) - output_offset;
     const float rounded = round_ties_to_even(compressed);
 
     int code_nonneg = (int)rounded + scale_i;
@@ -87,16 +83,6 @@ PUBLIC KERNEL(AudioFsqEncode)(
     uint g AXIS(num_groups, 1),
     uint b AXIS(batch_size, 1)
 ) {
-  fsq_encode<T>(
-      input,
-      tokens,
-      lengths,
-      num_groups,
-      seq_len,
-      codebook_dim,
-      num_levels,
-      dim_base_index,
-      eps,
-      uint3(t, g, b)
-  );
+  fsq_encode<
+      T>(input, tokens, lengths, num_groups, seq_len, codebook_dim, num_levels, dim_base_index, eps, uint3(t, g, b));
 }

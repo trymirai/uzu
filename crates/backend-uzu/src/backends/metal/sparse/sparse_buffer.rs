@@ -9,12 +9,11 @@ use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions, MTLSparsePageSize};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::RangeSet;
 
-use crate::{
-    backends::{
-        common::{Backend, Buffer, SparseBuffer, SparseBufferExt},
-        metal::{Metal, error::MetalError, metal_extensions::SparsePageSizeExt, sparse::MetalSparseMappingOpsBatch},
+use crate::backends::{
+    common::{Backend, Buffer, SparseBuffer, SparseBufferExt},
+    metal::{
+        Metal, MetalContext, error::MetalError, metal_extensions::SparsePageSizeExt, sparse::MetalSparseMappingOpsBatch,
     },
-    prelude::MetalContext,
 };
 
 pub struct MetalSparseBuffer {
@@ -153,5 +152,5 @@ impl SparseBuffer for MetalSparseBuffer {
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/unit/backends/metal/sparse/sparse_buffer_test.rs"]
+#[path = "../../../../unit/backends/metal/sparse/sparse_buffer_test.rs"]
 mod tests;

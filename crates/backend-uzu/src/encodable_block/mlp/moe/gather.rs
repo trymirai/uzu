@@ -74,5 +74,5 @@ impl<B: Backend> MoeGather<B> {
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/unit/encodable_block/moe/moe_gather_test.rs"]
+#[path = "../../../../unit/encodable_block/moe/moe_gather_test.rs"]
 mod tests;

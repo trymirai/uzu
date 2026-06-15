@@ -158,8 +158,9 @@ impl<B: Backend> MoeBlock<B> {
             .validate(&[moe_config.num_routed_experts, model_dim], data_type)?
             .read_allocation()?;
 
-        let router_topk_kernel = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, data_type)
-            .map_err(MoeBlockError::BackendError)?;
+        let router_topk_kernel =
+            <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, data_type, true, false, false, false, false)
+                .map_err(MoeBlockError::BackendError)?;
         let counts_offsets_kernel = MoeCountsOffsetsFusedKernel::new(context).map_err(MoeBlockError::BackendError)?;
 
         let scatter_bases_kernel = <B::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel::new(context)
@@ -229,7 +230,9 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         self.router_topk_kernel.encode(
             &input,
             &self.router_weights,
-            &self.router_biases,
+            Some(&self.router_biases),
+            None::<&Allocation<B>>,
+            None::<&Allocation<B>>,
             &mut topk_ids,
             &mut topk_probs,
             batch_dim as u32,
@@ -237,6 +240,8 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             self.num_routed_experts as u32,
             self.num_active_experts as u32,
             self.router_renorm,
+            None::<f32>,
+            None::<f32>,
             encoder,
         );
 
@@ -256,7 +261,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         );
 
         let mut block_bases = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
-        let mut block_alloc = encoder.allocate_scratch(size_for_shape(&[num_blocks * num_tiles], DataType::U32))?;
+        let mut block_alloc = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
         let mut bucketed_ids = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
         let mut bucketed_probs = encoder.allocate_scratch(size_for_shape(&[total_rows], self.data_type))?;
         let mut tok2row = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
@@ -341,5 +346,5 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/unit/encodable_block/moe/mod.rs"]
+#[path = "../../../../unit/encodable_block/moe/mod.rs"]
 mod tests;

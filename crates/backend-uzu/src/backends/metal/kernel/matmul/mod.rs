@@ -7,7 +7,7 @@ use crate::{
     backends::{
         common::{
             AsBufferRangeRef, Buffer, Encoder,
-            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulQuantCombo},
+            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
         },
         metal::{Metal, context::MetalContext, error::MetalError},
     },
@@ -38,8 +38,7 @@ impl MatmulKernel for MatmulMetalKernel {
         }
 
         let gemm = GemmKernel::new(context, weights_data_type, input_data_type, output_data_type)?;
-        let gemv = GemvDispatch::new(context, weights_data_type, input_data_type, output_data_type)
-            .map_err(MetalError::from)?;
+        let gemv = GemvDispatch::new(weights_data_type, input_data_type, output_data_type);
 
         Ok(Self {
             gemv,
@@ -60,18 +59,10 @@ impl MatmulKernel for MatmulMetalKernel {
             self.weights_data_type,
             self.input_data_type,
             self.output_data_type,
+            encoder.context().device_tier(),
         ) {
             Some(spec) => self.gemv.encode(arguments, spec, encoder).map_err(MetalError::from),
             None => self.gemm.encode(arguments, encoder),
         }
-    }
-
-    fn preheat_quant_combo(
-        &mut self,
-        context: &MetalContext,
-        combo: MatmulQuantCombo,
-    ) -> Result<(), MetalError> {
-        self.gemv.preheat_quant_combo(context, combo).map_err(MetalError::from)?;
-        self.gemm.preheat_quant_combo(context, combo)
     }
 }
