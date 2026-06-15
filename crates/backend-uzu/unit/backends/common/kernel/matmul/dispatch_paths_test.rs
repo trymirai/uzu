@@ -16,7 +16,7 @@ use crate::{
         },
         metal::{GemmDispatchPath, Metal, MetalContext},
     },
-    common::{
+    tests::{
         assert::assert_eq_float,
         matmul::{Case, all_correctness_shapes, cpu_reference, deterministic_input, run_metal},
     },
@@ -44,7 +44,7 @@ fn check_case<T: ArrayElement + Float + Debug + Display>(
 }
 
 fn run_matrix<T: ArrayElement + Float + Debug + Display>(
-    case_for_shape: impl Fn(crate::common::matmul::Shape) -> Case,
+    case_for_shape: impl Fn(crate::tests::matmul::Shape) -> Case,
     tolerance: f32,
 ) {
     let context = MetalContext::new().expect("Metal context");
@@ -92,8 +92,8 @@ fn b_transpose_false_bf16() {
     );
 }
 
-fn rht_shapes() -> impl Iterator<Item = crate::common::matmul::Shape> {
-    use crate::common::matmul::Shape;
+fn rht_shapes() -> impl Iterator<Item = crate::tests::matmul::Shape> {
+    use crate::tests::matmul::Shape;
     [Shape::new(8, 128, 64), Shape::new(64, 128, 128), Shape::new(128, 2048, 256), Shape::new(33, 128, 64)].into_iter()
 }
 
@@ -117,7 +117,7 @@ fn rht_parity_bf16() {
 
 #[uzu_test]
 fn bias_parity_bf16() {
-    use crate::common::matmul::Shape;
+    use crate::tests::matmul::Shape;
     let context = MetalContext::new().expect("Metal context");
     let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
@@ -137,7 +137,7 @@ fn bias_parity_bf16() {
 
 #[uzu_test]
 fn gemv_fp_partial_output_block_bf16() {
-    use crate::common::matmul::Shape;
+    use crate::tests::matmul::Shape;
     let context = MetalContext::new().expect("Metal context");
     let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
@@ -156,7 +156,7 @@ fn gemv_fp_partial_output_block_bf16() {
 
 #[uzu_test]
 fn gemv_fp_output_transforms_bf16() {
-    use crate::common::matmul::Shape;
+    use crate::tests::matmul::Shape;
     let context = MetalContext::new().expect("Metal context");
     let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,

@@ -7,7 +7,7 @@ use crate::{
         AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig,
     },
     backends::metal::Metal,
-    common::audio::fsq_reference::{fsq_decode_reference, fsq_encode_reference},
+    tests::audio::fsq_reference::{fsq_decode_reference, fsq_encode_reference},
 };
 
 fn create_runtime() -> NanoCodecFsqRuntime<Metal> {

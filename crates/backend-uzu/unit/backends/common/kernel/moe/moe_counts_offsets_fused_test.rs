@@ -1,5 +1,6 @@
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use test_runner::{for_each_backend, for_each_non_cpu_backend};
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -60,9 +61,9 @@ fn get_output<B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let offsets = crate::common::helpers::allocation_to_vec::<B, u32>(&offsets);
-    let sum_k = crate::common::helpers::allocation_to_vec::<B, u32>(&sum_k)[0];
-    let partials = crate::common::helpers::allocation_prefix_to_vec::<B, u32>(&partials, e);
+    let offsets = crate::tests::helpers::allocation_to_vec::<B, u32>(&offsets);
+    let sum_k = crate::tests::helpers::allocation_to_vec::<B, u32>(&sum_k)[0];
+    let partials = crate::tests::helpers::allocation_prefix_to_vec::<B, u32>(&partials, e);
 
     (offsets, sum_k, partials)
 }
