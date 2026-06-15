@@ -1,6 +1,7 @@
 use half::bf16;
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use test_runner::for_each_non_cpu_backend;
 
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGather};
 use crate::{
@@ -12,10 +13,10 @@ use crate::{
             MoeScatterBucketsMapKernel,
         },
     },
-    common::helpers::{
+    data_type::DataType,
+    tests::helpers::{
         alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
     },
-    data_type::DataType,
 };
 
 fn moe_cpu_reference(

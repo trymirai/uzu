@@ -3,15 +3,18 @@ use std::fmt::{Debug, Display};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
-        common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dDecodeKernel},
+        common::{
+            Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dDecodeKernel,
+        },
         cpu::Cpu,
     },
-    common::assert::assert_eq_float,
     data_type::DataType,
+    tests::assert::assert_eq_float,
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -116,7 +119,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             x_array.allocation(),
             w_array.allocation(),
             b_array.as_ref().map(|bias| bias.allocation()),
-            None::<&backend_uzu::backends::common::Allocation<B>>,
+            None::<&Allocation<B>>,
             &mut x_out,
             &mut b_out,
             &mut c_out,
@@ -134,10 +137,10 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            x_out: crate::common::helpers::allocation_to_vec(&x_out),
-            b_out: crate::common::helpers::allocation_to_vec(&b_out),
-            c_out: crate::common::helpers::allocation_to_vec(&c_out),
-            next_state: crate::common::helpers::allocation_to_vec(&next_state),
+            x_out: crate::tests::helpers::allocation_to_vec(&x_out),
+            b_out: crate::tests::helpers::allocation_to_vec(&b_out),
+            c_out: crate::tests::helpers::allocation_to_vec(&c_out),
+            next_state: crate::tests::helpers::allocation_to_vec(&next_state),
         }
     } else {
         let state_array = context.create_array_from(&[state_size], &input.state);
@@ -166,10 +169,10 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            x_out: crate::common::helpers::allocation_to_vec(&x_out),
-            b_out: crate::common::helpers::allocation_to_vec(&b_out),
-            c_out: crate::common::helpers::allocation_to_vec(&c_out),
-            next_state: crate::common::helpers::allocation_to_vec(&next_state),
+            x_out: crate::tests::helpers::allocation_to_vec(&x_out),
+            b_out: crate::tests::helpers::allocation_to_vec(&b_out),
+            c_out: crate::tests::helpers::allocation_to_vec(&c_out),
+            next_state: crate::tests::helpers::allocation_to_vec(&next_state),
         }
     }
 }

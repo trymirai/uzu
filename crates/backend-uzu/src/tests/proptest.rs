@@ -1,15 +1,16 @@
 use std::rc::Rc;
 
+use proptest::prelude::*;
+
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::Metal;
-use backend_uzu::{
+use crate::backends::metal::Metal;
+use crate::{
     backends::{
         common::{Backend, Context},
         cpu::Cpu,
     },
     data_type::DataType,
 };
-use proptest::prelude::*;
 
 pub fn kernel_data_type() -> impl Strategy<Value = DataType> {
     prop_oneof![Just(DataType::BF16), Just(DataType::F32)]
@@ -39,7 +40,7 @@ pub struct TestResults<T> {
 
 macro_rules! for_each_context {
     ($CONTEXTES:ident, |$CONTEXT_NAME:ident: $CONTEXT_TYPE:ident| $body:expr) => {
-        crate::common::proptest::TestResults {
+        crate::tests::proptest::TestResults {
             cpu: ({
                 type $CONTEXT_TYPE =
                     <backend_uzu::backends::cpu::Cpu as backend_uzu::backends::common::Backend>::Context;

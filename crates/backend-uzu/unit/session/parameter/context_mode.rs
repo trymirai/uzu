@@ -1,16 +1,14 @@
 use proc_macros::uzu_test;
+use test_runner::path::get_test_model_path;
 use test_tag::tag;
 
-use crate::{
-    common::path::get_test_model_path,
-    session::{
-        Session,
-        config::{DecodingConfig, RunConfig, SpeculatorConfig},
-        parameter::{
-            AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize, SamplingMethod, SamplingPolicy, SamplingSeed,
-        },
-        types::{Input, Message, Output},
+use crate::session::{
+    Session,
+    config::{DecodingConfig, RunConfig, SpeculatorConfig},
+    parameter::{
+        AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize, SamplingMethod, SamplingPolicy, SamplingSeed,
     },
+    types::{Input, Message, Output},
 };
 
 fn build_decoding_config() -> DecodingConfig {

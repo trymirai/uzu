@@ -3,6 +3,7 @@ use std::fmt::{Debug, Display};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use super::{AttentionGemmArguments, AttentionGemmBlock};
 use crate::{
@@ -11,11 +12,11 @@ use crate::{
         common::{Allocation, Backend, Context, Encoder},
         cpu::Cpu,
     },
-    common::{
+    data_type::DataType,
+    tests::{
         assert::assert_eq_float,
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
     },
-    data_type::DataType,
 };
 
 struct Input<T: ArrayElement + Float> {

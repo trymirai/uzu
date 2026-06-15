@@ -1,11 +1,5 @@
-#![feature(custom_test_frameworks, test)]
-#![test_runner(crate::tests::uzu_harness)]
-
-#[macro_use]
-#[path = "../tests/common/mod.rs"]
-mod common;
-#[path = "../src/tests/mod.rs"]
-mod tests;
+#![feature(custom_test_frameworks)]
+#![test_runner(test_runner::uzu_harness)]
 
 mod cpu;
 mod session;

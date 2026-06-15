@@ -16,7 +16,8 @@ use crate::{
         },
         metal::Metal,
     },
-    common::{
+    data_type::DataType,
+    tests::{
         audio::{
             fsq_reference::{fsq_decode_reference, fsq_encode_reference},
             ops_reference::{
@@ -27,7 +28,6 @@ use crate::{
         },
         helpers::allocation_to_vec,
     },
-    data_type::DataType,
 };
 
 macro_rules! borrow_array_buffer {
