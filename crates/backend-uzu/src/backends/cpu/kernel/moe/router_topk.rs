@@ -41,40 +41,39 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
     };
     let router_norm_epsilon = router_norm_epsilon.unwrap_or(0.0);
 
-    let mut logits = vec![0.0f32; t * e];
+    let mut expert_logits = vec![0.0f32; t * e];
     unsafe {
-        for token in 0..t {
-            let x_row = input.add(token * d_model);
+        for token_idx in 0..t {
+            let token_input = input.add(token_idx * d_model);
             let mut inv_rms = 1.0f32;
             if normalize_router_input {
                 let mut sum_sq = 0.0f32;
-                for d in 0..d_model {
-                    let x = (*x_row.add(d)).to_f32().unwrap();
+                for scalar_idx in 0..d_model {
+                    let x = (*token_input.add(scalar_idx)).to_f32().unwrap();
                     sum_sq += x * x;
                 }
                 inv_rms = (sum_sq / d_model as f32 + router_norm_epsilon).sqrt().recip();
             }
             for expert in 0..e {
-                let w_row = weight.add(expert * d_model);
-                let mut accum = [0.0f32; 4];
+                let expert_weights = weight.add(expert * d_model);
+                let mut dot4 = [0.0f32; 4];
 
                 // Simulate GPU vec4 processing: accumulate in 4-element chunks
-                for chunk in (0..d_model).step_by(4) {
+                for scalar_base in (0..d_model).step_by(4) {
                     for i in 0..4 {
-                        let d = chunk + i;
+                        let scalar_idx = scalar_base + i;
                         let scale = if has_router_scales {
-                            (*router_scale.unwrap().add(d)).to_f32().unwrap()
+                            (*router_scale.unwrap().add(scalar_idx)).to_f32().unwrap()
                         } else {
                             1.0
                         };
-                        let x = (*x_row.add(d)).to_f32().unwrap() * inv_rms * router_input_scale * scale;
-                        accum[i] += (*w_row.add(d)).to_f32().unwrap() * x;
+                        let x = (*token_input.add(scalar_idx)).to_f32().unwrap() * inv_rms * router_input_scale * scale;
+                        dot4[i] += (*expert_weights.add(scalar_idx)).to_f32().unwrap() * x;
                     }
                 }
 
-                // Sum the 4-vector: (a.x + a.y) + (a.z + a.w) - matches Metal shader line 60
-                let sum = (accum[0] + accum[1]) + (accum[2] + accum[3]);
-                logits[token * e + expert] = sum
+                let sum = (dot4[0] + dot4[1]) + (dot4[2] + dot4[3]);
+                expert_logits[token_idx * e + expert] = sum
                     + if has_biases {
                         (*bias.unwrap().add(expert)).to_f32().unwrap()
                     } else {
@@ -84,12 +83,14 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
 
             let mut best_vals = vec![f32::NEG_INFINITY; k];
             let mut best_ids = vec![-1i32; k];
-            let row = &logits[token * e..(token + 1) * e];
+            let token_logits = &expert_logits[token_idx * e..(token_idx + 1) * e];
             for expert in 0..e {
-                let v = row[expert];
+                let candidate_logit = token_logits[expert];
                 let mut insert_pos = None;
                 for j in (0..k).rev() {
-                    if v > best_vals[j] || (v == best_vals[j] && (best_ids[j] < 0 || (expert as i32) < best_ids[j])) {
+                    if candidate_logit > best_vals[j]
+                        || (candidate_logit == best_vals[j] && (best_ids[j] < 0 || (expert as i32) < best_ids[j]))
+                    {
                         insert_pos = Some(j);
                     }
                 }
@@ -98,13 +99,13 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
                         best_vals[s] = best_vals[s - 1];
                         best_ids[s] = best_ids[s - 1];
                     }
-                    best_vals[pos] = v;
+                    best_vals[pos] = candidate_logit;
                     best_ids[pos] = expert as i32;
                 }
             }
-            let base = token * k;
+            let topk_base = token_idx * k;
             for kk in 0..k {
-                *topk_ids.add(base + kk) = best_ids[kk];
+                *topk_ids.add(topk_base + kk) = best_ids[kk];
             }
             let expert_scale = |id: i32| {
                 if has_per_expert_scales {
@@ -114,27 +115,28 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
                 }
             };
             if renorm {
-                let max_v = best_vals.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                let max_logit = best_vals.iter().copied().fold(f32::NEG_INFINITY, f32::max);
                 let mut exps = vec![0.0f32; k];
                 let mut sum = 0.0f32;
                 for kk in 0..k {
-                    exps[kk] = (best_vals[kk] - max_v).exp();
+                    exps[kk] = (best_vals[kk] - max_logit).exp();
                     sum += exps[kk];
                 }
                 if sum > 0.0 {
                     for kk in 0..k {
-                        *topk_probs.add(base + kk) =
+                        *topk_probs.add(topk_base + kk) =
                             ScalarT::from(exps[kk] / sum * expert_scale(best_ids[kk])).unwrap();
                     }
                 } else {
                     let uniform = 1.0f32 / k as f32;
                     for kk in 0..k {
-                        *topk_probs.add(base + kk) = ScalarT::from(uniform * expert_scale(best_ids[kk])).unwrap();
+                        *topk_probs.add(topk_base + kk) = ScalarT::from(uniform * expert_scale(best_ids[kk])).unwrap();
                     }
                 }
             } else {
                 for kk in 0..k {
-                    *topk_probs.add(base + kk) = ScalarT::from(best_vals[kk] * expert_scale(best_ids[kk])).unwrap();
+                    *topk_probs.add(topk_base + kk) =
+                        ScalarT::from(best_vals[kk] * expert_scale(best_ids[kk])).unwrap();
                 }
             }
         }
