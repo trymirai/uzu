@@ -643,6 +643,8 @@ mod tests {
                     top_k: Some(40),
                     top_p: Some(0.9),
                     min_p: None,
+                    repetition_penalty: None,
+                    suffix_repetition_length: None,
                 },
             }
         );
