@@ -62,11 +62,8 @@ PUBLIC KERNEL(MoeRouterTopK)(
 
   float inv_rms = 1.0f;
   if (normalize_router_input) {
-    const float sum_sq = threadgroup_cooperative_reduce<SimdReduceSum<float>, THREADS_PER_TG>(
-        local_sum_sq,
-        reduce_tmp,
-        thread_context
-    );
+    const float sum_sq =
+        threadgroup_cooperative_reduce<SimdReduceSum<float>, THREADS_PER_TG>(local_sum_sq, reduce_tmp, thread_context);
     inv_rms = rsqrt(sum_sq / float(d_model) + router_norm_epsilon);
   }
 
@@ -74,23 +71,14 @@ PUBLIC KERNEL(MoeRouterTopK)(
     float4 base_scale = float4(inv_rms);
     if (has_router_input_scale) {
       base_scale *= float4(router_input_scale);
-      for (uint c = lid; c < vecs; c += THREADS_PER_TG) {
-        const uint base = c * 4;
-        float4 scale = base_scale;
-        if (has_router_scales) {
-          scale *= float4(router_scale[base + 0], router_scale[base + 1], router_scale[base + 2], router_scale[base + 3]);
-        }
-        x_cache[c] *= scale;
+    }
+    for (uint c = lid; c < vecs; c += THREADS_PER_TG) {
+      const uint base = c * 4;
+      float4 scale = base_scale;
+      if (has_router_scales) {
+        scale *= float4(router_scale[base + 0], router_scale[base + 1], router_scale[base + 2], router_scale[base + 3]);
       }
-    } else {
-      for (uint c = lid; c < vecs; c += THREADS_PER_TG) {
-        const uint base = c * 4;
-        float4 scale = base_scale;
-        if (has_router_scales) {
-          scale *= float4(router_scale[base + 0], router_scale[base + 1], router_scale[base + 2], router_scale[base + 3]);
-        }
-        x_cache[c] *= scale;
-      }
+      x_cache[c] *= scale;
     }
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -143,6 +131,9 @@ PUBLIC KERNEL(MoeRouterTopK)(
     uint winner_idx = shared_best_idx[0];
     float winner_val = shared_best_val[0];
     if (lid == 0 && winner_idx < MAX_EXPERTS) {
+      if (!renorm && has_per_expert_scales) {
+        winner_val *= float(per_expert_scale[winner_idx]);
+      }
       logits_shared[winner_idx] = NEG_INF;
       topk_ids[token_idx * k + sel] = int(winner_idx);
       topk_probs[token_idx * k + sel] = static_cast<ScalarT>(winner_val);
@@ -170,14 +161,6 @@ PUBLIC KERNEL(MoeRouterTopK)(
     }
     for (uint i = effective_k; i < k; ++i) {
       out_probs[i] = static_cast<ScalarT>(0.0f);
-    }
-  } else if (lid == 0 && has_per_expert_scales) {
-    device ScalarT* out_probs = topk_probs + token_idx * k;
-    for (uint i = 0; i < effective_k; ++i) {
-      const int expert_id = topk_ids[token_idx * k + i];
-      if (expert_id >= 0) {
-        out_probs[i] = static_cast<ScalarT>(float(out_probs[i]) * float(per_expert_scale[expert_id]));
-      }
     }
   }
 }

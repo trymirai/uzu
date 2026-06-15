@@ -106,6 +106,13 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
             for kk in 0..k {
                 *topk_ids.add(base + kk) = best_ids[kk];
             }
+            let expert_scale = |id: i32| {
+                if has_per_expert_scales {
+                    (*per_expert_scale.unwrap().add(id as usize)).to_f32().unwrap()
+                } else {
+                    1.0
+                }
+            };
             if renorm {
                 let max_v = best_vals.iter().copied().fold(f32::NEG_INFINITY, f32::max);
                 let mut exps = vec![0.0f32; k];
@@ -116,32 +123,18 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
                 }
                 if sum > 0.0 {
                     for kk in 0..k {
-                        let expert_scale = if has_per_expert_scales {
-                            (*per_expert_scale.unwrap().add(best_ids[kk] as usize)).to_f32().unwrap()
-                        } else {
-                            1.0
-                        };
-                        *topk_probs.add(base + kk) = ScalarT::from(exps[kk] / sum * expert_scale).unwrap();
+                        *topk_probs.add(base + kk) =
+                            ScalarT::from(exps[kk] / sum * expert_scale(best_ids[kk])).unwrap();
                     }
                 } else {
                     let uniform = 1.0f32 / k as f32;
                     for kk in 0..k {
-                        let expert_scale = if has_per_expert_scales {
-                            (*per_expert_scale.unwrap().add(best_ids[kk] as usize)).to_f32().unwrap()
-                        } else {
-                            1.0
-                        };
-                        *topk_probs.add(base + kk) = ScalarT::from(uniform * expert_scale).unwrap();
+                        *topk_probs.add(base + kk) = ScalarT::from(uniform * expert_scale(best_ids[kk])).unwrap();
                     }
                 }
             } else {
                 for kk in 0..k {
-                    let expert_scale = if has_per_expert_scales {
-                        (*per_expert_scale.unwrap().add(best_ids[kk] as usize)).to_f32().unwrap()
-                    } else {
-                        1.0
-                    };
-                    *topk_probs.add(base + kk) = ScalarT::from(best_vals[kk] * expert_scale).unwrap();
+                    *topk_probs.add(base + kk) = ScalarT::from(best_vals[kk] * expert_scale(best_ids[kk])).unwrap();
                 }
             }
         }

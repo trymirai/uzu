@@ -17,6 +17,7 @@ use crate::{
 
 #[derive(Copy, Clone, Debug)]
 enum RouterInput {
+    Plain,
     Biased,
     Gemma4,
 }
@@ -99,8 +100,8 @@ fn run_router_topk_once<B: Backend, T: ArrayElement + Debug + Float>(
         -1.0..1.0
     };
     let weight: Vec<T> = (0..e * d_model).map(|_| T::from(rng.random_range(weight_range.clone())).unwrap()).collect();
-    let bias: Option<Vec<T>> =
-        (!gemma4).then(|| (0..e).map(|_| T::from(rng.random_range(-0.5..0.5)).unwrap()).collect());
+    let bias: Option<Vec<T>> = matches!(router_input, RouterInput::Biased)
+        .then(|| (0..e).map(|_| T::from(rng.random_range(-0.5..0.5)).unwrap()).collect());
     let router_scale: Option<Vec<T>> =
         gemma4.then(|| (0..d_model).map(|i| T::from(0.75 + (i % 7) as f32 * 0.05).unwrap()).collect());
     let per_expert_scale: Option<Vec<T>> =
@@ -176,24 +177,20 @@ fn run_router_topk_once<B: Backend, T: ArrayElement + Debug + Float>(
 
 #[uzu_test]
 fn test_router_topk_fused_matches_reference() {
-    let configs = [
-        (1usize, 64usize, 32usize, 4usize, RouterInput::Biased),
-        (2, 128, 64, 8, RouterInput::Biased),
-        (4, 256, 128, 16, RouterInput::Biased),
-        (8, 256, 256, 32, RouterInput::Biased),
-        (1, 512, 512, 64, RouterInput::Biased),
-        (3, 256, 128, 8, RouterInput::Gemma4),
-        (1, 2816, 128, 8, RouterInput::Gemma4),
+    let configs: &[(usize, usize, usize, usize, RouterInput, &[bool])] = &[
+        (1, 64, 32, 4, RouterInput::Plain, &[false, true]),
+        (4, 256, 128, 16, RouterInput::Plain, &[false, true]),
+        (1, 64, 32, 4, RouterInput::Biased, &[false, true]),
+        (2, 128, 64, 8, RouterInput::Biased, &[false, true]),
+        (4, 256, 128, 16, RouterInput::Biased, &[false, true]),
+        (8, 256, 256, 32, RouterInput::Biased, &[false, true]),
+        (1, 512, 512, 64, RouterInput::Biased, &[false, true]),
+        (3, 256, 128, 8, RouterInput::Gemma4, &[true]),
+        (1, 2816, 128, 8, RouterInput::Gemma4, &[true]),
     ];
-    let biased_renorm_options = [false, true];
-    let gemma4_renorm_options = [true];
 
     for_each_non_cpu_backend!(|B| {
-        for &(t, d_model, e, k, router_input) in &configs {
-            let renorm_options = match router_input {
-                RouterInput::Biased => &biased_renorm_options[..],
-                RouterInput::Gemma4 => &gemma4_renorm_options[..],
-            };
+        for &(t, d_model, e, k, router_input, renorm_options) in configs {
             for &renorm in renorm_options {
                 run_router_topk_once::<B, bf16>(t, d_model, e, k, renorm, router_input);
             }
