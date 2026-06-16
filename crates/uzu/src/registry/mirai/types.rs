@@ -202,8 +202,8 @@ impl ResponseModel {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Response {
-    models: Vec<ResponseModel>,
-    metadatas: Vec<Metadata>,
+    pub(super) models: Vec<ResponseModel>,
+    pub(super) metadatas: Vec<Metadata>,
 }
 
 impl Response {

@@ -4,7 +4,7 @@ pub mod types;
 
 use std::{
     collections::{HashMap, HashSet},
-    fs::{create_dir_all, read_dir, remove_dir_all},
+    fs::{create_dir_all, remove_dir_all, write},
     sync::Arc,
 };
 
@@ -107,16 +107,20 @@ impl Storage {
 
         for model in models {
             let identifier = model.identifier.clone();
+            let cache_path = self.config.cache_model_path(&model).ok_or(StorageError::UnsupportedItem {
+                identifier: identifier.clone(),
+            })?;
+
+            if Config::cache_path_has_model_files(&cache_path) {
+                self.persist_model_metadata(&model)?;
+            }
+
             if items.contains_key(&identifier) {
                 continue;
             }
 
             let files = self.resolve_model_files(&model)?;
             let total_bytes: u64 = files.iter().map(|file| file.size as u64).sum();
-
-            let cache_path = self.config.cache_model_path(&model).ok_or(StorageError::UnsupportedItem {
-                identifier: identifier.clone(),
-            })?;
 
             let has_files_on_disk = cache_path.exists();
             let has_active_tasks = files.iter().any(|file| {
@@ -160,17 +164,9 @@ impl Storage {
 
                 if matches!(item_state.phase, DownloadPhase::NotDownloaded {})
                     && cache_path.exists()
-                    && let Ok(entries) = read_dir(&cache_path)
+                    && !Config::cache_path_has_model_files(&cache_path)
                 {
-                    let has_real_files = entries.flatten().any(|entry| {
-                        entry
-                            .file_name()
-                            .to_str()
-                            .is_some_and(|name| !name.ends_with(".resume_data") && !name.starts_with('.'))
-                    });
-                    if !has_real_files {
-                        let _ = remove_dir_all(&cache_path);
-                    }
+                    let _ = remove_dir_all(&cache_path);
                 }
 
                 item
@@ -252,6 +248,19 @@ impl Storage {
         })?;
         item.cancel().await
     }
+
+    pub fn persist_model_metadata_if_cached(
+        &self,
+        model: &Model,
+    ) -> Result<(), StorageError> {
+        let cache_path = self.config.cache_model_path(model).ok_or(StorageError::UnsupportedItem {
+            identifier: model.identifier.clone(),
+        })?;
+        if Config::cache_path_has_model_files(&cache_path) {
+            self.persist_model_metadata(model)?;
+        }
+        Ok(())
+    }
 }
 
 impl Storage {
@@ -285,5 +294,25 @@ impl Storage {
                 identifier: model.identifier.clone(),
             }),
         }
+    }
+
+    fn persist_model_metadata(
+        &self,
+        model: &Model,
+    ) -> Result<(), StorageError> {
+        let path = self.config.cache_model_metadata_path(model).ok_or(StorageError::UnsupportedItem {
+            identifier: model.identifier.clone(),
+        })?;
+        if let Some(parent) = path.parent() {
+            create_dir_all(parent).map_err(|error| StorageError::IO {
+                message: format!("Unable to create model metadata directory at {}: {}", parent.display(), error),
+            })?;
+        }
+        let contents = serde_json::to_vec_pretty(model).map_err(|error| StorageError::IO {
+            message: format!("Unable to serialize model metadata for {}: {}", model.identifier, error),
+        })?;
+        write(&path, contents).map_err(|error| StorageError::IO {
+            message: format!("Unable to write model metadata at {}: {}", path.display(), error),
+        })
     }
 }

@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    fs::read_dir,
+    path::{Path, PathBuf},
+};
 
 use download_manager::FileDownloadManagerType;
 use serde::{Deserialize, Serialize};
@@ -45,6 +48,26 @@ impl Config {
         let reference_name = model.reference_name()?;
         let checkpoint_version = model.checkpoint_version()?;
         Some(self.cache_models_path().join(reference_name).join(model.cache_identifier()).join(checkpoint_version))
+    }
+
+    pub fn cache_model_metadata_path(
+        &self,
+        model: &Model,
+    ) -> Option<PathBuf> {
+        let reference_name = model.reference_name()?;
+        Some(self.cache_models_path().join(reference_name).join(model.cache_identifier()).join("model.json"))
+    }
+
+    pub fn cache_path_has_model_files(path: &Path) -> bool {
+        path.exists()
+            && read_dir(path).is_ok_and(|entries| {
+                entries.flatten().any(|entry| {
+                    entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| !name.ends_with(".resume_data") && !name.starts_with('.'))
+                })
+            })
     }
 
     pub fn log_name(&self) -> String {

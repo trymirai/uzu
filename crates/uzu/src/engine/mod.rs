@@ -99,6 +99,7 @@ impl Engine {
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
         let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string())
             .with_download_manager_type(config.download_manager_type.into());
+        let storage_cache_path = storage_config.cache_path();
         logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
 
         let storage = SharedAccess::new(Storage::new(tokio_handle, storage_config).await?);
@@ -126,6 +127,7 @@ impl Engine {
                     version: uzu_backend_version.clone(),
                 }],
                 include_traces: false,
+                cache_path: storage_cache_path,
             };
             let mirai_registry = Box::new(MiraiRegistry::new(mirai_registry_config)?);
 
@@ -419,11 +421,13 @@ impl Engine {
             return Some(local_external_path);
         }
         let storage = self.storage.lock().await;
+        let cache_model_path = storage.config.cache_model_path(model)?;
+        if StorageConfig::cache_path_has_model_files(&cache_model_path) {
+            return Some(cache_model_path.to_string_lossy().to_string());
+        }
         let state = storage.state(&model.identifier).await?;
         match state.phase {
-            DownloadPhase::Downloaded {} => {
-                storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
-            },
+            DownloadPhase::Downloaded {} => Some(cache_model_path.to_string_lossy().to_string()),
             DownloadPhase::NotDownloaded {}
             | DownloadPhase::Downloading {}
             | DownloadPhase::Paused {}
@@ -554,6 +558,8 @@ impl Engine {
     async fn spawn_storage_listener(&self) {
         let mut stream = self.storage_subscribe().await;
         let callback = self.callback.clone();
+        let registry = self.registry.clone();
+        let storage = self.storage.clone();
         let telemetry = self.telemetry.lock().await.clone();
         tokio::spawn(async move {
             let mut last_phase: HashMap<String, DownloadPhase> = HashMap::new();
@@ -565,18 +571,32 @@ impl Engine {
                 let event = match (&previous, &state.phase) {
                     (prev, DownloadPhase::Downloading {}) if !matches!(prev, Some(DownloadPhase::Downloading {})) => {
                         Some(TelemetryEvent::ModelDownloadStarted {
-                            model_id: id,
+                            model_id: id.clone(),
                         })
                     },
                     (Some(DownloadPhase::Downloading {}), DownloadPhase::Downloaded {}) => {
                         Some(TelemetryEvent::ModelDownloadFinished {
-                            model_id: id,
+                            model_id: id.clone(),
                         })
                     },
                     _ => None,
                 };
                 if let Some(event) = event {
                     telemetry.report(event);
+                }
+                if matches!(state.phase, DownloadPhase::Downloaded {}) {
+                    let model = registry.lock().await.model_by_identifier(&id).await;
+                    match model {
+                        Ok(Some(model)) => {
+                            if let Err(error) = storage.lock().await.persist_model_metadata_if_cached(&model) {
+                                tracing::warn!(?error, model_id = %id, "failed to persist cached model metadata");
+                            }
+                        },
+                        Ok(None) => {},
+                        Err(error) => {
+                            tracing::warn!(?error, model_id = %id, "failed to resolve downloaded model metadata");
+                        },
+                    }
                 }
                 if let Some(callback) = callback.lock().await.as_ref().cloned() {
                     callback.on_event();
