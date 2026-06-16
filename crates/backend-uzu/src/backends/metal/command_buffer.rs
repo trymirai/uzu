@@ -1,8 +1,9 @@
 use std::{cell::Cell, rc::Rc, time::Duration};
 
 use metal::{
-    MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
-    MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLBarrierScope, MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt,
+    MTLCommandBufferHandler, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLDispatchType,
 };
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 
@@ -91,7 +92,9 @@ impl MetalCommandBufferEncoding {
         if !matches!(self.encoding_state, MetalCommandBufferEncodingEncodingState::Compute(_)) {
             self.ensure_none();
             self.encoding_state = MetalCommandBufferEncodingEncodingState::Compute(
-                self.command_buffer.compute_command_encoder().expect("Failed to create compute command encoder"),
+                self.command_buffer
+                    .compute_command_encoder_with_dispatch_type(MTLDispatchType::CONCURRENT)
+                    .expect("Failed to create concurrent compute command encoder"),
             );
         }
 
@@ -158,8 +161,14 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
     fn encode_barrier(
         &mut self,
         _after: AccessFlags,
-        _before: AccessFlags,
+        before: AccessFlags,
     ) {
+        let upcoming_compute = before.compute_read || before.compute_write;
+        if upcoming_compute {
+            if let MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) = &self.encoding_state {
+                compute_encoder.memory_barrier_with_scope(MTLBarrierScope::Buffers);
+            }
+        }
     }
 
     fn add_completion_handler(

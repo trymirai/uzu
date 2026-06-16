@@ -71,7 +71,7 @@ tokenizers = { version = "0.22", features = [
 objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
 objc2-security = "0.3.2"
-metal = { package = "mtl-rs", version = "0.1.12" }
+metal = { package = "mtl-rs", version = "0.1.13" }
 block2 = "0.6"
 bytemuck = "1.23"
 bytesize = "2"
