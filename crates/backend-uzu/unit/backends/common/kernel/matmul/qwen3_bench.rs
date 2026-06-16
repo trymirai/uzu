@@ -15,9 +15,10 @@ use crate::{
         },
         metal::{Metal, MetalContext},
     },
-    common::{
+    tests::{
+        cold_pool::ColdPool,
         matmul::{QuantBuffers, QuantInput, iter_encode_loop, quant_arguments, qwen3_layer_shapes},
-        type_short_name,
+        util::type_short_name,
     },
 };
 
@@ -33,7 +34,8 @@ fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
     for (layer, shape) in qwen3_layer_shapes(bits) {
         let (m, k, n) = (shape.m, shape.k, shape.n);
         let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 42);
-        let mut buffers = QuantBuffers::<Metal, T>::allocate(context, &input);
+        let mut buffers =
+            ColdPool::new(input.weight_buffer_bytes(), || QuantBuffers::<Metal, T>::allocate(context, &input));
         let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
             context,
             T::data_type(),
@@ -45,7 +47,7 @@ fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
         group.throughput(Throughput::Elements((m * n * k) as u64));
         group.bench_function(BenchmarkId::from_parameter(format!("{layer}_{shape}")), |b| {
             iter_encode_loop::<Metal, _>(context, b, |encoder| {
-                matmul.encode(quant_arguments(&mut buffers, &input), encoder).expect("encode qwen3 layer");
+                matmul.encode(quant_arguments(buffers.next_mut(), &input), encoder).expect("encode qwen3 layer");
             });
         });
     }
@@ -53,7 +55,7 @@ fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
 
 #[uzu_bench]
 fn bench_qwen3_layers(c: &mut Criterion) {
-    let context = crate::common::shared_metal_context();
+    let context = crate::tests::util::shared_metal_context();
     bench_qwen3_layers_typed::<bf16>(c, &context, "ScaleBias_BF16_gs128_4b", 128, 4, QuantizationMethod::ScaleBias);
     bench_qwen3_layers_typed::<bf16>(c, &context, "ZP_BF16_gs128_4b", 128, 4, QuantizationMethod::ScaleZeroPoint);
 }

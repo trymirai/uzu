@@ -356,26 +356,27 @@ impl ChatSession {
         sampling_method: SamplingMethod,
         progress: &Option<impl Fn(Output) -> bool>,
     ) -> Result<Output, Error> {
-        let mut generate_results: Vec<GenerateResult> = Vec::new();
-        let mut generate_durations: Vec<f64> = Vec::new();
+        let estimated_generate_capacity =
+            Self::remaining_generate_tokens(run_context, language_model_generator.tokens_len());
+        let mut generate_results: Vec<GenerateResult> = Vec::with_capacity(estimated_generate_capacity);
+        let mut generate_durations: Vec<f64> = Vec::with_capacity(estimated_generate_capacity);
         let mut compiled_grammar_mut = compiled_grammar;
 
         loop {
             let generate_start = Instant::now();
             let generate_result =
                 language_model_generator.generate(compiled_grammar_mut.as_deref_mut(), sampling_method)?;
-            let generate_tokens = generate_result.tokens.clone();
             let generate_duration = generate_start.elapsed().as_secs_f64();
-            generate_results.push(generate_result);
-            generate_durations.push(generate_duration);
 
             let grammar_terminated = compiled_grammar_mut.as_ref().map(|g| g.is_terminated()).unwrap_or(false);
 
             let generate_finish_reason = if grammar_terminated {
                 Some(FinishReason::Stop)
             } else {
-                Self::check_finish_reason(run_context, language_model_generator, &generate_tokens)
+                Self::check_finish_reason(run_context, language_model_generator, &generate_result.tokens)
             };
+            generate_results.push(generate_result);
+            generate_durations.push(generate_duration);
             let generate_output = Self::build_output(
                 tokenizer,
                 output_parser,
@@ -411,9 +412,7 @@ impl ChatSession {
         progress: &Option<impl Fn(Output) -> bool>,
         batch_size: usize,
     ) -> Result<Output, Error> {
-        let remaining_by_limit = run_context.tokens_limit.saturating_sub(run_context.prefill_result.tokens.len());
-        let remaining_by_context = run_context.context_length.saturating_sub(llm.tokens_len());
-        let tokens_to_generate = remaining_by_limit.min(remaining_by_context);
+        let tokens_to_generate = Self::remaining_generate_tokens(run_context, llm.tokens_len());
 
         llm.prepare_async(tokens_to_generate);
 
@@ -513,6 +512,15 @@ impl ChatSession {
         Self::build_output(tokenizer, output_parser, run_context, llm, &results, &durations, Some(finish_reason))
     }
 
+    fn remaining_generate_tokens(
+        run_context: &RunContext,
+        current_tokens_len: usize,
+    ) -> usize {
+        let remaining_by_limit = run_context.tokens_limit.saturating_sub(run_context.prefill_result.tokens.len());
+        let remaining_by_context = run_context.context_length.saturating_sub(current_tokens_len);
+        remaining_by_limit.min(remaining_by_context)
+    }
+
     fn check_finish_reason(
         run_context: &RunContext,
         language_model_generator: &dyn LanguageModelGeneratorTrait,
@@ -564,11 +572,11 @@ impl ChatSession {
         Ok(Output {
             text: parsed,
             stats: Self::build_stats(
-                run_context.prefill_result.clone(),
+                &run_context.prefill_result,
                 run_context.prefill_duration,
                 run_context.prefill_suffix_length,
-                generate_results.to_vec(),
-                generate_durations.to_vec(),
+                generate_results,
+                generate_durations,
                 language_model_generator.generate_suffix_length(),
                 run_context.run_start.elapsed().as_secs_f64(),
                 run_context.input_tokens_len,
@@ -579,11 +587,11 @@ impl ChatSession {
     }
 
     fn build_stats(
-        prefill_result: PrefillResult,
+        prefill_result: &PrefillResult,
         prefill_duration: f64,
         prefill_suffix_length: usize,
-        generate_results: Vec<GenerateResult>,
-        generate_durations: Vec<f64>,
+        generate_results: &[GenerateResult],
+        generate_durations: &[f64],
         generate_suffix_length: usize,
         total_duration: f64,
         tokens_count_input: usize,

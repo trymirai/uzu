@@ -1,6 +1,11 @@
+use std::mem::size_of_val;
+
+use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
+
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::{GemmDispatchPath, Metal, MetalContext};
-use backend_uzu::{
+use crate::backends::metal::{GemmDispatchPath, Metal, MetalContext};
+use crate::{
     array::ArrayElement,
     backends::{
         common::{
@@ -13,11 +18,8 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
+    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
-use num_traits::Float;
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
-
-use super::super::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec};
 
 pub struct QuantInput<T: ArrayElement + Float> {
     pub w_packed: Vec<u32>,
@@ -88,6 +90,13 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             quant_method,
             mode: mode_for_bits(bits),
         }
+    }
+
+    pub(crate) fn weight_buffer_bytes(&self) -> usize {
+        size_of_val(self.w_packed.as_slice())
+            + size_of_val(self.scales.as_slice())
+            + self.biases.as_ref().map_or(0, |biases| size_of_val(biases.as_slice()))
+            + self.zero_points.as_ref().map_or(0, |zero_points| size_of_val(zero_points.as_slice()))
     }
 }
 

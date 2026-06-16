@@ -4,7 +4,7 @@ use std::{collections::VecDeque, iter::repeat_n};
 
 use xgrammar::{
     DLDataType, DLDataTypeCode, DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher,
-    TokenizerInfo,
+    TokenizerInfo, c_void,
 };
 
 use crate::{
@@ -187,21 +187,23 @@ impl CompiledGrammar for CompiledXGrammar {
             let mut cpu_mask = repeat_n(0, self.vocab_size.div_ceil(32)).collect::<Box<[u32]>>();
             let batch_mask_slice = &mut cpu_mask;
             let mut shape_i64 = [self.vocab_size.div_ceil(32) as i64];
-            let mut bitmask_tensor = DLTensor {
-                data: batch_mask_slice.as_mut_ptr() as *mut core::ffi::c_void,
-                device: DLDevice {
-                    device_type: DLDeviceType::kDLCPU,
-                    device_id: 0,
-                },
-                ndim: 1,
-                dtype: DLDataType {
-                    code: 0,
-                    bits: 32,
-                    lanes: 1,
-                },
-                shape: shape_i64.as_mut_ptr(),
-                strides: core::ptr::null_mut(),
-                byte_offset: 0,
+            let mut bitmask_tensor = unsafe {
+                DLTensor::new(
+                    batch_mask_slice.as_mut_ptr() as *mut c_void,
+                    DLDevice {
+                        device_type: DLDeviceType::kDLCPU,
+                        device_id: 0,
+                    },
+                    1,
+                    DLDataType {
+                        code: 0,
+                        bits: 32,
+                        lanes: 1,
+                    },
+                    shape_i64.as_mut_ptr(),
+                    core::ptr::null_mut(),
+                    0,
+                )
             };
 
             let success = self.matcher.fill_next_token_bitmask(&mut bitmask_tensor, 0, false);
