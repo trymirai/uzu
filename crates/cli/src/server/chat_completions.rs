@@ -230,6 +230,18 @@ fn with_response_format_grammar(
     Ok(config.with_grammar(Some(grammar)))
 }
 
+fn json_schema_grammar(json_schema: &JsonSchemaFormat) -> Result<Grammar, ResponseFormatError> {
+    // Reject a malformed schema up front (OpenAI answers 400 here) instead of letting it fail
+    // later inside generation, where it would surface as a normal 200 reply.
+    jsonschema::meta::validate(&json_schema.schema)
+        .map_err(|error| ResponseFormatError::InvalidJsonSchema(error.to_string()))?;
+    let schema = serde_json::to_string(&json_schema.schema)
+        .map_err(|error| ResponseFormatError::InvalidResponseFormat(error.to_string()))?;
+    Ok(Grammar::JsonSchema {
+        schema,
+    })
+}
+
 fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig, ResponseFormatError> {
     let token_limit = request.max_completion_tokens.or(request.max_tokens);
     let mut config = ChatReplyConfig::default().with_token_limit(token_limit);
@@ -267,21 +279,7 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
         // tokens the schema allows, so the reply conforms to the schema.
         Some(ResponseFormat::JsonSchema {
             json_schema,
-        }) => {
-            // Reject a malformed schema up front (OpenAI answers 400 here) instead of letting it
-            // fail later inside generation, where it would surface as a normal 200 reply.
-            if let Err(error) = jsonschema::meta::validate(&json_schema.schema) {
-                return Err(ResponseFormatError::InvalidJsonSchema(error.to_string()));
-            }
-            let schema = serde_json::to_string(&json_schema.schema)
-                .map_err(|error| ResponseFormatError::InvalidResponseFormat(error.to_string()))?;
-            with_response_format_grammar(
-                config,
-                Grammar::JsonSchema {
-                    schema,
-                },
-            )?
-        },
+        }) => with_response_format_grammar(config, json_schema_grammar(&json_schema)?)?,
         Some(ResponseFormat::Text) | None => config,
     };
 
@@ -570,10 +568,19 @@ mod tests {
     #[test]
     fn response_format_rejects_grammar_without_capability() {
         #[cfg(not(feature = "capability-grammar"))]
-        assert_eq!(
-            reply_config_error(r#"{"messages":[],"response_format":{"type":"json_object"}}"#),
-            ResponseFormatError::GrammarUnsupported
-        );
+        {
+            assert_eq!(
+                reply_config_error(r#"{"messages":[],"response_format":{"type":"json_object"}}"#),
+                ResponseFormatError::GrammarUnsupported
+            );
+            // A structurally valid json_schema still needs capability-grammar to be honored.
+            assert_eq!(
+                reply_config_error(
+                    r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object"}}}}"#
+                ),
+                ResponseFormatError::GrammarUnsupported
+            );
+        }
     }
 
     #[test]
