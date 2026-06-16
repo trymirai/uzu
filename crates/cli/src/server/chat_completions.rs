@@ -66,6 +66,14 @@ pub struct ChatCompletionRequest {
 pub enum ResponseFormat {
     Text,
     JsonObject,
+    JsonSchema {
+        json_schema: JsonSchemaFormat,
+    },
+}
+
+#[derive(Deserialize)]
+pub struct JsonSchemaFormat {
+    pub schema: serde_json::Value,
 }
 
 #[derive(Serialize, Clone)]
@@ -168,9 +176,6 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
 #[derive(Debug, PartialEq, Eq)]
 enum ResponseFormatError {
     GrammarUnsupported,
-    /// A recognized OpenAI response_format type this server does not support (e.g. `json_schema`).
-    /// Distinct from `InvalidResponseFormat`: the request is well-formed.
-    UnsupportedResponseFormat(&'static str),
     InvalidResponseFormat(String),
 }
 
@@ -181,9 +186,6 @@ impl ResponseFormatError {
                 "response_format with JSON constraints requires building mirai server with capability-grammar"
                     .to_string()
             },
-            ResponseFormatError::UnsupportedResponseFormat(kind) => {
-                format!("response_format type `{kind}` is recognized but not supported yet")
-            },
             ResponseFormatError::InvalidResponseFormat(detail) => {
                 format!("response_format is not a recognized object: {detail}")
             },
@@ -193,7 +195,6 @@ impl ResponseFormatError {
     fn code(&self) -> &'static str {
         match self {
             ResponseFormatError::GrammarUnsupported => "unsupported_response_format",
-            ResponseFormatError::UnsupportedResponseFormat(_) => "unsupported_response_format",
             ResponseFormatError::InvalidResponseFormat(_) => "invalid_response_format",
         }
     }
@@ -242,18 +243,11 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
     }
 
     // Interpret the raw value here so an unrecognized object surfaces as our 400, not Rocket's 422.
-    // `json_schema` is recognized but rejected as unsupported: xgrammar silently ignores schema
-    // keywords it cannot enforce, so accepting it would violate OpenAI's strict guarantee.
     let response_format = match &request.response_format {
-        Some(value) => {
-            if value.get("type").and_then(serde_json::Value::as_str) == Some("json_schema") {
-                return Err(ResponseFormatError::UnsupportedResponseFormat("json_schema"));
-            }
-            Some(
-                serde_json::from_value::<ResponseFormat>(value.clone())
-                    .map_err(|error| ResponseFormatError::InvalidResponseFormat(error.to_string()))?,
-            )
-        },
+        Some(value) => Some(
+            serde_json::from_value::<ResponseFormat>(value.clone())
+                .map_err(|error| ResponseFormatError::InvalidResponseFormat(error.to_string()))?,
+        ),
         None => None,
     };
 
@@ -263,6 +257,21 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
         // means complete valid JSON and finish_reason=length means possibly truncated — the client
         // checks finish_reason, as with OpenAI.
         Some(ResponseFormat::JsonObject) => with_response_format_grammar(config, Grammar::JsonAny {})?,
+        // json_schema forwards the nested JSON Schema to the backend, which compiles it into a
+        // grammar (structured_output_from_schema / from_json_schema) and masks the sampler to the
+        // tokens the schema allows, so the reply conforms to the schema.
+        Some(ResponseFormat::JsonSchema {
+            json_schema,
+        }) => {
+            let schema = serde_json::to_string(&json_schema.schema)
+                .map_err(|error| ResponseFormatError::InvalidResponseFormat(error.to_string()))?;
+            with_response_format_grammar(
+                config,
+                Grammar::JsonSchema {
+                    schema,
+                },
+            )?
+        },
         Some(ResponseFormat::Text) | None => config,
     };
 
@@ -568,15 +577,19 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "capability-grammar")]
     #[test]
-    fn response_format_json_schema_is_unsupported_not_invalid() {
-        // json_schema is a recognized form, so it is reported as unsupported, not as a bad object.
-        let error = build_reply_config(&request(
-            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object"}}}}"#,
-        ))
-        .expect_err("json_schema should be rejected as unsupported");
-        assert_eq!(error, ResponseFormatError::UnsupportedResponseFormat("json_schema"));
-        assert_eq!(error.code(), "unsupported_response_format");
+    fn response_format_json_schema_maps_to_grammar() {
+        // json_schema forwards the nested schema to the backend as a JsonSchema grammar.
+        let config = reply_config(
+            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"name":"person","schema":{"type":"object"}}}}"#,
+        );
+        assert_eq!(
+            config.grammar,
+            Some(Grammar::JsonSchema {
+                schema: r#"{"type":"object"}"#.to_string(),
+            })
+        );
     }
 
     #[test]
@@ -595,7 +608,6 @@ mod tests {
         // request reaches our handler and becomes a 400.
         for body in [
             r#"{"messages":[],"response_format":{"type":"totally-bogus"}}"#,
-            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{}}}}"#,
             r#"{"messages":[],"response_format":"not-even-an-object"}"#,
         ] {
             serde_json::from_str::<ChatCompletionRequest>(body)
