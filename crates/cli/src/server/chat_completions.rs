@@ -177,6 +177,7 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
 enum ResponseFormatError {
     GrammarUnsupported,
     InvalidResponseFormat(String),
+    InvalidJsonSchema(String),
 }
 
 impl ResponseFormatError {
@@ -189,6 +190,9 @@ impl ResponseFormatError {
             ResponseFormatError::InvalidResponseFormat(detail) => {
                 format!("response_format is not a recognized object: {detail}")
             },
+            ResponseFormatError::InvalidJsonSchema(detail) => {
+                format!("response_format.json_schema.schema is not a valid JSON Schema: {detail}")
+            },
         }
     }
 
@@ -196,6 +200,7 @@ impl ResponseFormatError {
         match self {
             ResponseFormatError::GrammarUnsupported => "unsupported_response_format",
             ResponseFormatError::InvalidResponseFormat(_) => "invalid_response_format",
+            ResponseFormatError::InvalidJsonSchema(_) => "invalid_json_schema",
         }
     }
 }
@@ -263,6 +268,11 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
         Some(ResponseFormat::JsonSchema {
             json_schema,
         }) => {
+            // Reject a malformed schema up front (OpenAI answers 400 here) instead of letting it
+            // fail later inside generation, where it would surface as a normal 200 reply.
+            if let Err(error) = jsonschema::meta::validate(&json_schema.schema) {
+                return Err(ResponseFormatError::InvalidJsonSchema(error.to_string()));
+            }
             let schema = serde_json::to_string(&json_schema.schema)
                 .map_err(|error| ResponseFormatError::InvalidResponseFormat(error.to_string()))?;
             with_response_format_grammar(
@@ -590,6 +600,20 @@ mod tests {
                 schema: r#"{"type":"object"}"#.to_string(),
             })
         );
+    }
+
+    #[test]
+    fn response_format_json_schema_rejects_invalid_schema() {
+        // A structurally invalid JSON Schema is a 400 request error, not a generation-time failure.
+        let error = build_reply_config(&request(
+            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"not-a-json-schema-type"}}}}"#,
+        ))
+        .expect_err("an invalid JSON Schema should be rejected");
+        assert!(
+            matches!(error, ResponseFormatError::InvalidJsonSchema(_)),
+            "expected InvalidJsonSchema, got {error:?}"
+        );
+        assert_eq!(error.code(), "invalid_json_schema");
     }
 
     #[test]
