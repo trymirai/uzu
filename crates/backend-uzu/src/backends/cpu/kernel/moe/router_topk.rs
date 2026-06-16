@@ -9,7 +9,9 @@ use crate::array::ArrayElement;
 pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
     input: *const ScalarT,
     weight: *const ScalarT,
-    bias: *const ScalarT,
+    #[optional(has_biases)] bias: Option<*const ScalarT>,
+    #[optional(has_router_scales)] router_scale: Option<*const ScalarT>,
+    #[optional(has_per_expert_scales)] per_expert_scale: Option<*const ScalarT>,
     topk_ids: *mut i32,
     topk_probs: *mut ScalarT,
     t: u32,
@@ -17,6 +19,13 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
     e: u32,
     k: u32,
     renorm: bool,
+    #[optional(normalize_router_input)] router_norm_epsilon: Option<f32>,
+    #[optional(has_router_input_scale)] router_input_scale: Option<f32>,
+    #[specialize] has_biases: bool,
+    #[specialize] has_router_scales: bool,
+    #[specialize] has_per_expert_scales: bool,
+    #[specialize] has_router_input_scale: bool,
+    #[specialize] normalize_router_input: bool,
 ) {
     assert_eq!(d_model % 4, 0, "d_model must be multiple of 4");
     assert!(k >= 1 && e >= k);
@@ -25,11 +34,26 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
     let d_model = d_model as usize;
     let e = e as usize;
     let k = k as usize;
+    let router_input_scale = if has_router_input_scale {
+        router_input_scale.unwrap()
+    } else {
+        1.0
+    };
+    let router_norm_epsilon = router_norm_epsilon.unwrap_or(0.0);
 
     let mut logits = vec![0.0f32; t * e];
     unsafe {
         for token in 0..t {
             let x_row = input.add(token * d_model);
+            let mut inv_rms = 1.0f32;
+            if normalize_router_input {
+                let mut sum_sq = 0.0f32;
+                for idx in 0..d_model {
+                    let x = (*x_row.add(idx)).to_f32().unwrap();
+                    sum_sq += x * x;
+                }
+                inv_rms = (sum_sq / d_model as f32 + router_norm_epsilon).sqrt().recip();
+            }
             for expert in 0..e {
                 let w_row = weight.add(expert * d_model);
                 let mut accum = [0.0f32; 4];
@@ -37,14 +61,25 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
                 // Simulate GPU vec4 processing: accumulate in 4-element chunks
                 for chunk in (0..d_model).step_by(4) {
                     for i in 0..4 {
-                        accum[i] +=
-                            (*w_row.add(chunk + i)).to_f32().unwrap() * (*x_row.add(chunk + i)).to_f32().unwrap()
+                        let idx = chunk + i;
+                        let scale = if has_router_scales {
+                            (*router_scale.unwrap().add(idx)).to_f32().unwrap()
+                        } else {
+                            1.0
+                        };
+                        let x = (*x_row.add(idx)).to_f32().unwrap() * inv_rms * router_input_scale * scale;
+                        accum[i] += (*w_row.add(idx)).to_f32().unwrap() * x;
                     }
                 }
 
                 // Sum the 4-vector: (a.x + a.y) + (a.z + a.w) - matches Metal shader line 60
                 let sum = (accum[0] + accum[1]) + (accum[2] + accum[3]);
-                logits[token * e + expert] = sum + (*bias.add(expert)).to_f32().unwrap();
+                logits[token * e + expert] = sum
+                    + if has_biases {
+                        (*bias.unwrap().add(expert)).to_f32().unwrap()
+                    } else {
+                        0.0
+                    };
             }
 
             let mut best_vals = vec![f32::NEG_INFINITY; k];
@@ -71,6 +106,13 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
             for kk in 0..k {
                 *topk_ids.add(base + kk) = best_ids[kk];
             }
+            let expert_scale = |id: i32| {
+                if has_per_expert_scales {
+                    (*per_expert_scale.unwrap().add(id as usize)).to_f32().unwrap()
+                } else {
+                    1.0
+                }
+            };
             if renorm {
                 let max_v = best_vals.iter().copied().fold(f32::NEG_INFINITY, f32::max);
                 let mut exps = vec![0.0f32; k];
@@ -81,17 +123,18 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
                 }
                 if sum > 0.0 {
                     for kk in 0..k {
-                        *topk_probs.add(base + kk) = ScalarT::from(exps[kk] / sum).unwrap();
+                        *topk_probs.add(base + kk) =
+                            ScalarT::from(exps[kk] / sum * expert_scale(best_ids[kk])).unwrap();
                     }
                 } else {
                     let uniform = 1.0f32 / k as f32;
                     for kk in 0..k {
-                        *topk_probs.add(base + kk) = ScalarT::from(uniform).unwrap();
+                        *topk_probs.add(base + kk) = ScalarT::from(uniform * expert_scale(best_ids[kk])).unwrap();
                     }
                 }
             } else {
                 for kk in 0..k {
-                    *topk_probs.add(base + kk) = ScalarT::from(best_vals[kk]).unwrap();
+                    *topk_probs.add(base + kk) = ScalarT::from(best_vals[kk] * expert_scale(best_ids[kk])).unwrap();
                 }
             }
         }

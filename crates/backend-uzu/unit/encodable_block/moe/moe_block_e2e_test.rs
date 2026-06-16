@@ -1,21 +1,22 @@
 use half::bf16;
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use test_runner::for_each_non_cpu_backend;
 
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGather};
 use crate::{
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         gpu_types::{ActivationType, activation_silu_alpha},
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
         },
     },
-    common::helpers::{
+    data_type::DataType,
+    tests::helpers::{
         alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
     },
-    data_type::DataType,
 };
 
 fn moe_cpu_reference(
@@ -315,11 +316,15 @@ fn run_moe_parity_test_internal<B: Backend>(
     let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
 
     // Router + TopK (fused kernel)
-    let router_topk = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(ctx, DataType::BF16).expect("router+topk");
+    let router_topk =
+        <B::Kernels as Kernels>::MoeRouterTopKKernel::new(ctx, DataType::BF16, true, false, false, false, false)
+            .expect("router+topk");
     router_topk.encode(
         &x_buf,
         &router_w_buf,
-        &router_b_buf,
+        Some(&router_b_buf),
+        None::<&Allocation<B>>,
+        None::<&Allocation<B>>,
         &mut topk_ids_buf,
         &mut topk_probs_buf,
         t as u32,
@@ -327,6 +332,8 @@ fn run_moe_parity_test_internal<B: Backend>(
         e as u32,
         k as u32,
         true,
+        None::<f32>,
+        None::<f32>,
         &mut encoder,
     );
 

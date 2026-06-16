@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use half::bf16;
 use num_traits::Float;
 use proc_macros::uzu_test;
+use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
@@ -121,7 +122,7 @@ fn run_kernel<T: ArrayElement + Float, B: Backend>(input: &TestInput<T>) -> Vec<
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::common::helpers::allocation_to_vec(&data)
+    crate::tests::helpers::allocation_to_vec(&data)
 }
 
 fn test_hadamard_transform<T: ArrayElement + Float + Debug>(tolerance: f64) {

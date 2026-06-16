@@ -33,13 +33,21 @@ VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
-VARIANTS(RESULTS_PER_SIMDGROUP, 4)
-VARIANTS(NUM_SIMDGROUPS, 2, 8)
+VARIANTS(RESULTS_PER_SIMDGROUP, 1, 2, 4, 8)
+VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || K_SPLIT == 1)
-CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::FullPrecision || NUM_SIMDGROUPS == 8)
+CONSTRAINT(K_SPLIT <= NUM_SIMDGROUPS)
+// Only selector-reachable tiles are instantiated (fleet-tuned tables): fp
+// always runs 8 simdgroups with 1 or 4 rows each; non-default quantized
+// tiles exist for bf16 IO only. Widen locally when sweeping new configs.
+CONSTRAINT(BITS != 0 || NUM_SIMDGROUPS == 8)
+CONSTRAINT(BITS != 0 || RESULTS_PER_SIMDGROUP == 1 || RESULTS_PER_SIMDGROUP == 4)
+CONSTRAINT(
+    BITS == 0 || (NUM_SIMDGROUPS == 8 && RESULTS_PER_SIMDGROUP == 4) ||
+    (AT == "bfloat" && DT == "bfloat"))
 KERNEL(Gemv)(
     const device uint32_t* b,
     const device BT* scales
