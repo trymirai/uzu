@@ -1,6 +1,6 @@
 use std::{any::Any, fmt::Debug, ops::Range};
 
-use crate::backends::common::Backend;
+use crate::backends::common::{Backend, hazard_tracker::ResourceHandle};
 
 pub mod dense;
 pub mod range;
@@ -12,6 +12,13 @@ pub trait Buffer: Any + Debug {
     fn gpu_ptr(&self) -> usize;
 
     fn size(&self) -> usize;
+
+    /// Opaque handle to the underlying backend resource, used to scope memory barriers to the
+    /// exact resources involved. Defaults to `None` (backends without a notion of resource
+    /// handles, e.g. CPU, fall back to a coarse barrier).
+    fn resource_handle(&self) -> ResourceHandle {
+        None
+    }
 }
 
 pub trait BufferGpuAddressRangeExt: Buffer {

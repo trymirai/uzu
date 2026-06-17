@@ -1,9 +1,9 @@
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{cell::Cell, ffi::c_void, ptr::NonNull, rc::Rc, time::Duration};
 
 use metal::{
     MTLBarrierScope, MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt,
     MTLCommandBufferHandler, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
-    MTLDispatchType,
+    MTLComputeCommandEncoderExt, MTLDispatchType, MTLResource,
 };
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 
@@ -162,12 +162,28 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         &mut self,
         _after: AccessFlags,
         before: AccessFlags,
+        resources: &[NonNull<c_void>],
     ) {
+        // Only an upcoming compute command sharing the open concurrent encoder needs a manual
+        // barrier (see the state==Compute rationale). Scope the barrier to the exact conflicting
+        // resources (`memoryBarrierWithResources:`) rather than all buffer memory — same ordering
+        // guarantee, lower fixed cost on the GPU. Fall back to the buffer-wide scope only when no
+        // resource handles are available.
         let upcoming_compute = before.compute_read || before.compute_write;
-        if upcoming_compute {
-            if let MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) = &self.encoding_state {
-                compute_encoder.memory_barrier_with_scope(MTLBarrierScope::Buffers);
-            }
+        if !upcoming_compute {
+            return;
+        }
+        let MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) = &self.encoding_state else {
+            return;
+        };
+        if resources.is_empty() {
+            compute_encoder.memory_barrier_with_scope(MTLBarrierScope::Buffers);
+        } else {
+            let mtl_resources: Vec<&ProtocolObject<dyn MTLResource>> = resources
+                .iter()
+                .map(|resource| unsafe { &*(resource.as_ptr() as *const ProtocolObject<dyn MTLResource>) })
+                .collect();
+            compute_encoder.memory_barrier_with_resources(&mtl_resources);
         }
     }
 

@@ -105,6 +105,7 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         &mut self,
         _after: AccessFlags,
         _before: AccessFlags,
+        _resources: &[std::ptr::NonNull<std::ffi::c_void>],
     ) {
     }
 

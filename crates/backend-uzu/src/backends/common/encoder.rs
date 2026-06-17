@@ -102,10 +102,12 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
             Access {
                 range: src_buffer_range.buffer().gpu_address_subrange(src_buffer_range.range()),
                 flags: AccessFlags::copy_read(),
+                resource: src_buffer_range.buffer().resource_handle(),
             },
             Access {
                 range: dst_buffer_range.buffer().gpu_address_subrange(dst_buffer_range.range()),
                 flags: AccessFlags::copy_write(),
+                resource: dst_buffer_range.buffer().resource_handle(),
             },
         ]);
         self.command_buffer.encode_copy(src_buffer_range, dst_buffer_range);
@@ -121,6 +123,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         self.access(&[Access {
             range: dst_buffer_range.buffer().gpu_address_subrange(dst_buffer_range.range()),
             flags: AccessFlags::copy_write(),
+            resource: dst_buffer_range.buffer().resource_handle(),
         }]);
         self.command_buffer.encode_fill(dst_buffer_range, value);
     }
@@ -129,8 +132,8 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         &mut self,
         accesses: &[Access],
     ) {
-        if let Some((after, before)) = self.hazard_tracker.access(accesses) {
-            self.command_buffer.encode_barrier(after, before);
+        if let Some(barrier) = self.hazard_tracker.access(accesses) {
+            self.command_buffer.encode_barrier(barrier.after, barrier.before, &barrier.resources);
         }
     }
 

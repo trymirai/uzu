@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{ffi::c_void, ptr::NonNull, time::Duration};
 
 use super::{Backend, Buffer, BufferRangeMut, BufferRangeRef};
 
@@ -89,6 +89,7 @@ pub trait CommandBufferEncoding {
         &mut self,
         after: AccessFlags,
         before: AccessFlags,
+        resources: &[NonNull<c_void>],
     );
 
     fn add_completion_handler(

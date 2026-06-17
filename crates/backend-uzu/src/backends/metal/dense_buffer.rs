@@ -4,7 +4,7 @@ use metal::MTLBuffer;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::Metal;
-use crate::backends::common::{Buffer, DenseBuffer};
+use crate::backends::common::{Buffer, DenseBuffer, ResourceHandle};
 
 impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
     type Backend = Metal;
@@ -15,6 +15,10 @@ impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
 
     fn size(&self) -> usize {
         self.length()
+    }
+
+    fn resource_handle(&self) -> ResourceHandle {
+        NonNull::new(Retained::as_ptr(self) as *mut c_void)
     }
 }
 

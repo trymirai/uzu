@@ -11,8 +11,10 @@ fn test_hazard_tracker_simple_compute_sequence() {
         assert_eq!(
             ht.access(&[Access {
                 range: 0..16,
-                flags: AccessFlags::compute_read()
-            }]),
+                flags: AccessFlags::compute_read(),
+                resource: None,
+            }])
+            .map(|barrier| (barrier.after, barrier.before)),
             None
         );
     }
@@ -21,8 +23,10 @@ fn test_hazard_tracker_simple_compute_sequence() {
     assert_eq!(
         ht.access(&[Access {
             range: 0..16,
-            flags: AccessFlags::compute_write()
-        }]),
+            flags: AccessFlags::compute_write(),
+            resource: None,
+        }])
+        .map(|barrier| (barrier.after, barrier.before)),
         Some((AccessFlags::compute_read(), AccessFlags::compute_write()))
     );
 
@@ -31,8 +35,10 @@ fn test_hazard_tracker_simple_compute_sequence() {
         assert_eq!(
             ht.access(&[Access {
                 range: 0..16,
-                flags: AccessFlags::compute_write()
-            }]),
+                flags: AccessFlags::compute_write(),
+                resource: None,
+            }])
+            .map(|barrier| (barrier.after, barrier.before)),
             Some((AccessFlags::compute_write(), AccessFlags::compute_write()))
         );
     }
@@ -41,8 +47,10 @@ fn test_hazard_tracker_simple_compute_sequence() {
     assert_eq!(
         ht.access(&[Access {
             range: 0..16,
-            flags: AccessFlags::compute_read()
-        }]),
+            flags: AccessFlags::compute_read(),
+            resource: None,
+        }])
+        .map(|barrier| (barrier.after, barrier.before)),
         Some((AccessFlags::compute_write(), AccessFlags::compute_read()))
     );
 }

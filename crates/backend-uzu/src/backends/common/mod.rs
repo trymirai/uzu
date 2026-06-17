@@ -22,5 +22,5 @@ pub use command_buffer::{
 };
 pub use context::Context;
 pub use encoder::{Completed, Encoder, Executable, Pending};
-pub use hazard_tracker::Access;
+pub use hazard_tracker::{Access, Barrier, ResourceHandle};
 pub use kernel::Kernels;

@@ -263,6 +263,7 @@ impl ArgumentEmission {
                         (__dsl_indirect_dispatch_buffer.1)..(__dsl_indirect_dispatch_buffer.1 + 12),
                     ),
                     flags: crate::backends::common::AccessFlags::compute_read(),
+                    resource: __dsl_indirect_dispatch_buffer.0.resource_handle(),
                 })
             }),
             ArgumentEmission::Constant(_) | ArgumentEmission::Shared(_) => None,
@@ -357,6 +358,7 @@ fn emit_buffer_access(buffer: &BufferArgument) -> TokenStream {
                 copy_read: false,
                 copy_write: false,
             },
+            resource: #name.0.resource_handle(),
         }
     };
     if buffer.condition.is_some() {

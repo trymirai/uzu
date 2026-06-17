@@ -81,6 +81,10 @@ impl Buffer for MetalSparseBuffer {
     fn size(&self) -> usize {
         self.buffer.size()
     }
+
+    fn resource_handle(&self) -> crate::backends::common::ResourceHandle {
+        self.buffer.resource_handle()
+    }
 }
 
 impl SparseBuffer for MetalSparseBuffer {
