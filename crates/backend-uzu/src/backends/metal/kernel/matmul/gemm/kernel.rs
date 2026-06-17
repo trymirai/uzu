@@ -676,7 +676,7 @@ pub(crate) fn select_mxu_tiling(
 ) -> GemmTiling {
     if m < 64 && n >= 64 {
         if n == k {
-            return if k <= 2560 {
+            return if m < 16 && k <= 2560 {
                 GemmTiling::Tile16x32x256_Simdgroups1x1
             } else {
                 GemmTiling::Tile32x64x256_Simdgroups2x2
