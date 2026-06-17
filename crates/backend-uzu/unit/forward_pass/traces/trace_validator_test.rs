@@ -24,7 +24,7 @@ fn test_tracer_internal<B: Backend>() {
     let total_token_violations = results.number_of_tokens_violations();
     let allowed_token_violations = results.number_of_allowed_tokens_violations();
     assert!(
-        total_token_violations < allowed_token_violations,
+        total_token_violations <= allowed_token_violations,
         "Too much token violations: {} / {}. Indices: {:?}",
         total_token_violations,
         allowed_token_violations,

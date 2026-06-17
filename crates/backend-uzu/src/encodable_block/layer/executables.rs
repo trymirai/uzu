@@ -15,7 +15,9 @@ use crate::{
     encodable_block::{
         Attention, AttentionError, DeltaNetArguments, DeltaNetMixer, DeltaNetMixerError, MambaArguments, MambaMixer,
         MambaMixerError, Mlp, MlpBlockError, PerLayerEmbeddingProjection, PostLayerScalar, PrecalculatedRope, QkUnpack,
-        RMSNorm, RMSNormError, Rope, ShortConvArguments, ShortConvMixer, ShortConvMixerError, layer::MixerExecutables,
+        RMSNorm, RMSNormError, Rope, ShortConvArguments, ShortConvMixer, ShortConvMixerError,
+        layer::MixerExecutables,
+        mlp::{MoeBlock, MoeRouterScaling},
     },
     forward_pass::cache_layers::LayerCacheAccess,
     parameters::{ParameterLoaderError, ParameterTree},
@@ -49,11 +51,6 @@ pub enum LayerExecutablesError<B: Backend> {
     },
     #[error("decoder layers require pre_mixer_norm_config")]
     MissingPreMixerNormConfig,
-    #[error("layer {layer_index} residual_moe_config requires {field}")]
-    MissingResidualMoeConfig {
-        layer_index: usize,
-        field: &'static str,
-    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,27 +250,36 @@ impl<B: Backend> LayerExecutables<B> {
             residual_sum_scalar,
         )?;
 
-        let residual_moe_parts = if let Some(residual_moe_config) = &layer_config.residual_moe_config {
-            let (residual_moe, residual_moe_input_hadamard_factors) = <dyn Mlp<B>>::new(
-                residual_moe_config,
-                transformer_config.model_dim,
-                layer_config.residual_moe_hidden_dim.unwrap_or(transformer_config.hidden_dim),
-                context,
-                &parameter_tree.subtree("residual_moe")?,
-                data_type,
-            )?;
+        let residual_moe_parts = if let Some(gemma4_moe_config) = &layer_config.gemma4_moe_config {
+            let model_dim = transformer_config.model_dim;
+            let moe_config = &gemma4_moe_config.moe_config;
+            let gemma4_tree = parameter_tree.subtree("gemma4_moe")?;
+
+            let scaling = MoeRouterScaling {
+                router_scales: Some(
+                    gemma4_tree.leaf("router_scale")?.validate(&[model_dim], data_type)?.read_allocation()?,
+                ),
+                per_expert_scales: Some(
+                    gemma4_tree
+                        .leaf("per_expert_scale")?
+                        .validate(&[moe_config.num_routed_experts], data_type)?
+                        .read_allocation()?,
+                ),
+                input_norm_epsilon: gemma4_moe_config.router_norm_epsilon,
+                input_scale: (model_dim as f32).powf(-0.5),
+            };
+            let residual_moe: Box<dyn Mlp<B>> = Box::new(
+                MoeBlock::new(context, moe_config, model_dim, data_type, &gemma4_tree.subtree("moe")?, scaling)
+                    .map_err(MlpBlockError::MoeBlockError)?,
+            );
+
             let pre_residual_moe_norm = RMSNorm::new(
                 context,
                 data_type,
-                transformer_config.model_dim,
-                layer_config.pre_residual_moe_norm_config.clone().ok_or(
-                    LayerExecutablesError::MissingResidualMoeConfig {
-                        layer_index,
-                        field: "pre_residual_moe_norm_config",
-                    },
-                )?,
-                &parameter_tree.subtree("pre_residual_moe_norm")?,
-                residual_moe_input_hadamard_factors,
+                model_dim,
+                gemma4_moe_config.norm_config.clone(),
+                &gemma4_tree.subtree("pre_moe_norm")?,
+                None,
                 false,
                 false,
                 PostLayerScalar::None,
@@ -281,14 +287,9 @@ impl<B: Backend> LayerExecutables<B> {
             let post_dense_mlp_norm = RMSNorm::new(
                 context,
                 data_type,
-                transformer_config.model_dim,
-                layer_config.post_dense_mlp_norm_config.clone().ok_or(
-                    LayerExecutablesError::MissingResidualMoeConfig {
-                        layer_index,
-                        field: "post_dense_mlp_norm_config",
-                    },
-                )?,
-                &parameter_tree.subtree("post_dense_mlp_norm")?,
+                model_dim,
+                gemma4_moe_config.norm_config.clone(),
+                &gemma4_tree.subtree("post_dense_norm")?,
                 None,
                 false,
                 false,
@@ -297,14 +298,9 @@ impl<B: Backend> LayerExecutables<B> {
             let post_residual_moe_norm = RMSNorm::new(
                 context,
                 data_type,
-                transformer_config.model_dim,
-                layer_config.post_residual_moe_norm_config.clone().ok_or(
-                    LayerExecutablesError::MissingResidualMoeConfig {
-                        layer_index,
-                        field: "post_residual_moe_norm_config",
-                    },
-                )?,
-                &parameter_tree.subtree("post_residual_moe_norm")?,
+                model_dim,
+                gemma4_moe_config.norm_config.clone(),
+                &gemma4_tree.subtree("post_moe_norm")?,
                 None,
                 false,
                 false,

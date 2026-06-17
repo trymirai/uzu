@@ -1,12 +1,19 @@
 use proc_macros::uzu_config;
 
-use crate::{
-    config::{
-        mlp::AnyMLPConfig, normalization::NormalizationConfig, per_layer_embedding::PLELayerConfig,
-        rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig,
-    },
-    utils::strict_serde::Unsupported,
+use crate::config::{
+    mlp::{AnyMLPConfig, mixture_of_experts::MixtureOfExpertsConfig},
+    normalization::NormalizationConfig,
+    per_layer_embedding::PLELayerConfig,
+    rope::AnyRoPEConfig,
+    token_mixer::AnyTokenMixerConfig,
 };
+
+#[uzu_config]
+pub struct Gemma4MoEBlockConfig {
+    pub moe_config: MixtureOfExpertsConfig,
+    pub norm_config: NormalizationConfig,
+    pub router_norm_epsilon: f32,
+}
 
 #[uzu_config]
 pub struct TransformerLayerConfig {
@@ -17,16 +24,9 @@ pub struct TransformerLayerConfig {
     pub mlp_config: AnyMLPConfig,
     pub post_mlp_norm_config: Option<NormalizationConfig>,
     pub hidden_dim: Option<usize>,
-    pub residual_moe_config: Option<AnyMLPConfig>,
-    pub residual_moe_hidden_dim: Option<usize>,
-    pub pre_residual_moe_norm_config: Option<NormalizationConfig>,
-    pub post_dense_mlp_norm_config: Option<NormalizationConfig>,
-    pub post_residual_moe_norm_config: Option<NormalizationConfig>,
     pub ple_config: Option<PLELayerConfig>,
-    pub gemma4_moe_config: Option<Unsupported>,
+    pub gemma4_moe_config: Option<Gemma4MoEBlockConfig>,
     pub has_post_layer_scalar: bool,
     pub rope_config: Option<AnyRoPEConfig>,
-    /// Newer lalamo exports declare KV sharing per layer; older bundles carry
-    /// `TransformerConfig::kv_source_per_layer` instead and omit this field.
     pub kv_source_layer_index: Option<usize>,
 }

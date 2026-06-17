@@ -113,13 +113,6 @@ impl PrefillStepSchedule {
     fn should_sample(self) -> bool {
         self.sampling_length > 0
     }
-
-    fn split_sampling_start(
-        self,
-        prefill_skips_trailing_layers: bool,
-    ) -> Option<usize> {
-        (prefill_skips_trailing_layers && self.sampling_start > 0).then_some(self.sampling_start)
-    }
 }
 
 fn rebase_sampling_subtrie_ranges(
@@ -976,9 +969,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
         bitmask_row_len: usize,
         sampling_method: SamplingMethod,
     ) -> Result<PrefillStepRun<B>, Error> {
-        let Some(prompt_row_count) =
-            schedule.split_sampling_start(self.context.model_shape.prefill_skips_trailing_layers())
-        else {
+        let split_point = (self.context.model_shape.prefill_skips_trailing_layers() && schedule.sampling_start > 0)
+            .then_some(schedule.sampling_start);
+        let Some(prompt_row_count) = split_point else {
             let run_result = self.run_model(task, sampling_method)?;
             self.accept_prefilled_prompt_rows(
                 schedule.accepted_prompt_rows,

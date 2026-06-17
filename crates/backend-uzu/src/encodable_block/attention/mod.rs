@@ -104,11 +104,6 @@ impl<B: Backend> Attention<B> {
         extract_input_hadamard: bool,
     ) -> Result<(Self, Option<Allocation<B>>), AttentionError<B>> {
         let projection_mode = config.projection_mode();
-        if projection_mode == AttentionProjectionMode::QkSharedValue {
-            return Err(AttentionError::UnsupportedProjectionMode {
-                projection_mode,
-            });
-        }
         let q_dim = config.num_heads * config.head_dim;
         let kv_dim = config.num_groups * config.head_dim;
         // Borrowed-Q layers reuse the source layer's K/V: project queries only, with no key/value norm.
@@ -117,7 +112,11 @@ impl<B: Backend> Attention<B> {
                 (q_dim + 2 * kv_dim, config.key_norm_config.clone(), config.value_norm_config(), config.num_groups)
             },
             AttentionProjectionMode::BorrowedQ => (q_dim, None, None, 0),
-            AttentionProjectionMode::QkSharedValue => unreachable!(),
+            AttentionProjectionMode::QkSharedValue => {
+                return Err(AttentionError::UnsupportedProjectionMode {
+                    projection_mode,
+                });
+            },
         };
 
         let qkv_projection_tree = parameter_tree.subtree("qkv_projection")?;

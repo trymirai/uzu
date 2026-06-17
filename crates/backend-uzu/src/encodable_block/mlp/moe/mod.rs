@@ -60,6 +60,24 @@ pub struct MoeBlock<B: Backend> {
     data_type: DataType,
 }
 
+pub(crate) struct MoeRouterScaling<B: Backend> {
+    pub router_scales: Option<Allocation<B>>,
+    pub per_expert_scales: Option<Allocation<B>>,
+    pub input_norm_epsilon: f32,
+    pub input_scale: f32,
+}
+
+impl<B: Backend> Default for MoeRouterScaling<B> {
+    fn default() -> Self {
+        Self {
+            router_scales: None,
+            per_expert_scales: None,
+            input_norm_epsilon: 0.0,
+            input_scale: 1.0,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum MoeBlockError<B: Backend> {
     #[error("Backend error: {0}")]
@@ -83,12 +101,13 @@ pub enum MoeBlockError<B: Backend> {
 }
 
 impl<B: Backend> MoeBlock<B> {
-    pub fn new(
+    pub(crate) fn new(
         context: &B::Context,
         moe_config: &MixtureOfExpertsConfig,
         model_dim: usize,
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
+        scaling: MoeRouterScaling<B>,
     ) -> Result<Self, MoeBlockError<B>> {
         if !model_dim.is_multiple_of(4) {
             return Err(MoeBlockError::InvalidModelDim);
@@ -132,21 +151,12 @@ impl<B: Backend> MoeBlock<B> {
         } else {
             None
         };
-        let router_scales = if moe_config.router_has_scales.unwrap_or(false) {
-            Some(router_tree.leaf("scale")?.validate(&[model_dim], data_type)?.read_allocation()?)
-        } else {
-            None
-        };
-        let per_expert_scales = if moe_config.router_has_per_expert_scales.unwrap_or(false) {
-            Some(
-                router_tree
-                    .leaf("per_expert_scale")?
-                    .validate(&[moe_config.num_routed_experts], data_type)?
-                    .read_allocation()?,
-            )
-        } else {
-            None
-        };
+        let MoeRouterScaling {
+            router_scales,
+            per_expert_scales,
+            input_norm_epsilon: router_input_norm_epsilon,
+            input_scale: router_input_scale,
+        } = scaling;
 
         let experts_tree = parameter_tree.subtree("experts")?;
         let up_tree = experts_tree.subtree("up_projection")?;
@@ -233,8 +243,8 @@ impl<B: Backend> MoeBlock<B> {
             router_scales,
             per_expert_scales,
             router_renorm,
-            router_input_norm_epsilon: moe_config.router_input_norm_epsilon.unwrap_or(0.0),
-            router_input_scale: moe_config.router_input_scale.unwrap_or(1.0),
+            router_input_norm_epsilon,
+            router_input_scale,
             w13,
             w2,
             up_biases,

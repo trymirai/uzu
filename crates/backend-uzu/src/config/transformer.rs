@@ -8,8 +8,6 @@ pub struct TransformerConfig {
     pub output_norm_config: NormalizationConfig,
     pub model_dim: usize,
     pub hidden_dim: usize,
-    /// Older lalamo exports; newer ones omit this and set
-    /// `TransformerLayerConfig::kv_source_layer_index` per layer instead.
     pub kv_source_per_layer: Option<Box<[usize]>>,
 }
 

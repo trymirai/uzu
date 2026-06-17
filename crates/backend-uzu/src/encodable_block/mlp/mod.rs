@@ -4,6 +4,7 @@ mod moe;
 
 pub use dense::DenseMlp;
 use gate_act_mul::MlpGateActMulEncodable;
+pub(crate) use moe::MoeRouterScaling;
 pub use moe::{MoeBlock, MoeBlockError};
 use thiserror::Error;
 
@@ -93,6 +94,7 @@ impl<B: Backend> dyn Mlp<B> {
                     model_dimension,
                     data_type,
                     parameter_tree,
+                    MoeRouterScaling::default(),
                 )?),
                 None,
             )),
