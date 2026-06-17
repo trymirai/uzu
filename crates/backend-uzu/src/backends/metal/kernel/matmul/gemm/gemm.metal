@@ -38,6 +38,8 @@ VARIANTS(
     GemmTiling::Tile64x64x16_Simdgroups2x2,
     GemmTiling::Tile64x64x32_Simdgroups2x2,
     GemmTiling::Tile32x32x32_Simdgroups2x2,
+    GemmTiling::Tile16x32x256_Simdgroups1x1,
+    GemmTiling::Tile16x128x256_Simdgroups1x4,
     GemmTiling::Tile32x64x256_Simdgroups2x2,
     GemmTiling::Tile64x32x256_Simdgroups4x1,
     GemmTiling::Tile64x64x256_Simdgroups2x2,
@@ -54,7 +56,9 @@ VARIANTS(BITS, 0, 4, 8)
 VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 CONSTRAINT(
     USE_MXU ==
-    (GEMM_TILING == GemmTiling::Tile32x64x256_Simdgroups2x2 ||
+    (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
+     GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4 ||
+     GEMM_TILING == GemmTiling::Tile32x64x256_Simdgroups2x2 ||
      GEMM_TILING == GemmTiling::Tile64x32x256_Simdgroups4x1 ||
      GEMM_TILING == GemmTiling::Tile64x64x256_Simdgroups2x2 ||
      GEMM_TILING == GemmTiling::Tile128x128x256_Simdgroups4x4))
@@ -73,6 +77,10 @@ CONSTRAINT(
     B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
     GEMM_TILING != GemmTiling::Tile128x128x256_Simdgroups4x4 ||
     GROUP_SIZE <= 64)
+CONSTRAINT(
+    !(GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
+      GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4) ||
+    (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::FullPrecision))
 KERNEL(Gemm)(
     const device AT* a,
     const device BT* b,
