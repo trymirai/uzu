@@ -32,10 +32,12 @@ enum class GemmTiling : uint32_t {
   Tile64x64x16_Simdgroups2x2 = 2,
   Tile64x64x32_Simdgroups2x2 = 3,
   Tile32x32x32_Simdgroups2x2 = 4,
-  Tile32x64x256_Simdgroups2x2 = 5,
-  Tile64x32x256_Simdgroups4x1 = 6,
-  Tile64x64x256_Simdgroups2x2 = 7,
-  Tile128x128x256_Simdgroups4x4 = 8,
+  Tile16x32x256_Simdgroups1x1 = 5,
+  Tile16x128x256_Simdgroups1x4 = 6,
+  Tile32x64x256_Simdgroups2x2 = 7,
+  Tile64x32x256_Simdgroups4x1 = 8,
+  Tile64x64x256_Simdgroups2x2 = 9,
+  Tile128x128x256_Simdgroups4x4 = 10,
 };
 
 struct GemmAlignment {
