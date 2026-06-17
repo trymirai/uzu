@@ -4,8 +4,10 @@ use std::rc::Rc;
 
 use thiserror::Error;
 
+#[cfg(feature = "tracing")]
+use crate::{backends::common::kernel::TensorAddBiasKernel, forward_pass::traces::LayerActivationTrace};
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::TensorAddScaleKernel},
     config::{
         token_mixer::AnyTokenMixerConfig, transformer::TransformerConfig, transformer_layer::TransformerLayerConfig,
     },
@@ -18,15 +20,9 @@ use crate::{
     forward_pass::cache_layers::LayerCacheAccess,
     parameters::{ParameterLoaderError, ParameterTree},
 };
-#[cfg(feature = "tracing")]
-use crate::{
-    backends::common::{Kernels, kernel::TensorAddBiasKernel},
-    forward_pass::traces::LayerActivationTrace,
-};
 
 #[derive(Debug, Error)]
 pub enum LayerExecutablesError<B: Backend> {
-    #[cfg(feature = "tracing")]
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
@@ -53,6 +49,11 @@ pub enum LayerExecutablesError<B: Backend> {
     },
     #[error("decoder layers require pre_mixer_norm_config")]
     MissingPreMixerNormConfig,
+    #[error("layer {layer_index} residual_moe_config requires {field}")]
+    MissingResidualMoeConfig {
+        layer_index: usize,
+        field: &'static str,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,9 +85,13 @@ pub struct LayerExecutables<B: Backend> {
     pub post_mixer_norm: Option<RMSNorm<B>>,
     pub pre_mlp_norm: RMSNorm<B>,
     pub mlp: Box<dyn Mlp<B>>,
+    pub residual_moe: Option<Box<dyn Mlp<B>>>,
+    pub pre_residual_moe_norm: Option<RMSNorm<B>>,
+    pub post_dense_mlp_norm: Option<RMSNorm<B>>,
+    pub post_residual_moe_norm: Option<RMSNorm<B>>,
+    mlp_branch_add: Option<<B::Kernels as Kernels>::TensorAddScaleKernel>,
     pub post_mlp_norm: Option<RMSNorm<B>>,
     pub ple_projection: Option<PerLayerEmbeddingProjection<B>>,
-    #[cfg(feature = "tracing")]
     model_dim: usize,
 }
 
@@ -248,6 +253,78 @@ impl<B: Backend> LayerExecutables<B> {
             residual_sum_scalar,
         )?;
 
+        let residual_moe_parts = if let Some(residual_moe_config) = &layer_config.residual_moe_config {
+            let (residual_moe, residual_moe_input_hadamard_factors) = <dyn Mlp<B>>::new(
+                residual_moe_config,
+                transformer_config.model_dim,
+                layer_config.residual_moe_hidden_dim.unwrap_or(transformer_config.hidden_dim),
+                context,
+                &parameter_tree.subtree("residual_moe")?,
+                data_type,
+            )?;
+            let pre_residual_moe_norm = RMSNorm::new(
+                context,
+                data_type,
+                transformer_config.model_dim,
+                layer_config.pre_residual_moe_norm_config.clone().ok_or(
+                    LayerExecutablesError::MissingResidualMoeConfig {
+                        layer_index,
+                        field: "pre_residual_moe_norm_config",
+                    },
+                )?,
+                &parameter_tree.subtree("pre_residual_moe_norm")?,
+                residual_moe_input_hadamard_factors,
+                false,
+                false,
+                PostLayerScalar::None,
+            )?;
+            let post_dense_mlp_norm = RMSNorm::new(
+                context,
+                data_type,
+                transformer_config.model_dim,
+                layer_config.post_dense_mlp_norm_config.clone().ok_or(
+                    LayerExecutablesError::MissingResidualMoeConfig {
+                        layer_index,
+                        field: "post_dense_mlp_norm_config",
+                    },
+                )?,
+                &parameter_tree.subtree("post_dense_mlp_norm")?,
+                None,
+                false,
+                false,
+                PostLayerScalar::None,
+            )?;
+            let post_residual_moe_norm = RMSNorm::new(
+                context,
+                data_type,
+                transformer_config.model_dim,
+                layer_config.post_residual_moe_norm_config.clone().ok_or(
+                    LayerExecutablesError::MissingResidualMoeConfig {
+                        layer_index,
+                        field: "post_residual_moe_norm_config",
+                    },
+                )?,
+                &parameter_tree.subtree("post_residual_moe_norm")?,
+                None,
+                false,
+                false,
+                PostLayerScalar::None,
+            )?;
+            let branch_add = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, true)
+                .map_err(LayerExecutablesError::BackendError)?;
+            (
+                Some(residual_moe),
+                Some(pre_residual_moe_norm),
+                Some(post_dense_mlp_norm),
+                Some(post_residual_moe_norm),
+                Some(branch_add),
+            )
+        } else {
+            (None, None, None, None, None)
+        };
+        let (residual_moe, pre_residual_moe_norm, post_dense_mlp_norm, post_residual_moe_norm, mlp_branch_add) =
+            residual_moe_parts;
+
         let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
             Some(RMSNorm::new(
                 context,
@@ -288,9 +365,13 @@ impl<B: Backend> LayerExecutables<B> {
             post_mixer_norm,
             pre_mlp_norm,
             mlp,
+            residual_moe,
+            pre_residual_moe_norm,
+            post_dense_mlp_norm,
+            post_residual_moe_norm,
+            mlp_branch_add,
             post_mlp_norm,
             ple_projection,
-            #[cfg(feature = "tracing")]
             model_dim: transformer_config.model_dim,
         })
     }
@@ -410,6 +491,36 @@ impl<B: Backend> LayerExecutables<B> {
         }
 
         hidden = self.mlp.encode(hidden, batch_dim, encoder)?;
+        if let Some(residual_moe) = &self.residual_moe {
+            let post_dense_mlp_norm =
+                self.post_dense_mlp_norm.as_ref().expect("residual_moe construction requires post_dense_mlp_norm");
+            let pre_residual_moe_norm =
+                self.pre_residual_moe_norm.as_ref().expect("residual_moe construction requires pre_residual_moe_norm");
+            let post_residual_moe_norm = self
+                .post_residual_moe_norm
+                .as_ref()
+                .expect("residual_moe construction requires post_residual_moe_norm");
+            let mlp_branch_add = self.mlp_branch_add.as_ref().expect("residual_moe construction requires branch add");
+
+            let mut dense_branch = post_dense_mlp_norm.encode(&hidden, 0, batch_dim, None, encoder)?;
+            let residual_moe_input = pre_residual_moe_norm.encode(shortcut, 0, batch_dim, None, encoder)?;
+            let residual_moe_output =
+                residual_moe.encode_with_router_input(shortcut, residual_moe_input, batch_dim, encoder)?;
+            let residual_moe_branch =
+                post_residual_moe_norm.encode(&residual_moe_output, 0, batch_dim, None, encoder)?;
+            let length = (batch_dim * self.model_dim) as u32;
+            // A full-length column count makes TensorAddScale act as an elementwise branch add.
+            mlp_branch_add.encode(
+                None::<&Allocation<B>>,
+                &residual_moe_branch,
+                &mut dense_branch,
+                length,
+                length,
+                1.0,
+                encoder,
+            );
+            hidden = dense_branch;
+        }
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
             encoder.encode_copy(&hidden, .., layer_traces.mlp.allocation_mut(), ..);

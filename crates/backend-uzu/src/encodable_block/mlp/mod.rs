@@ -22,6 +22,16 @@ pub trait Mlp<B: Backend> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error>;
+
+    fn encode_with_router_input(
+        &self,
+        _router_input: &Allocation<B>,
+        expert_input: Allocation<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        self.encode(expert_input, batch_dim, encoder)
+    }
 }
 
 #[derive(Debug, Error)]

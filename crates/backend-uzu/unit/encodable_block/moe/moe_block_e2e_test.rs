@@ -19,7 +19,8 @@ use crate::{
 };
 
 fn moe_cpu_reference(
-    x: &[bf16],
+    router_x: &[bf16],
+    expert_x: &[bf16],
     router_weight: &[f32], // [E, d_model] - kept as F32 for router (computed before BF16 conversion)
     router_bias: &[f32],   // [E]
     w13: &[bf16],          // source layout [E, d_model, 2*d_ff] (GPU transposes to [E, 2*d_ff, d_model])
@@ -47,7 +48,7 @@ fn moe_cpu_reference(
         for expert_idx in 0..e {
             let mut logit = router_bias[expert_idx];
             for d in 0..d_model {
-                let x_val = f32::from(x[x_start + d]);
+                let x_val = f32::from(router_x[x_start + d]);
                 logit += x_val * router_weight[expert_idx * d_model + d];
             }
             token_logits[expert_idx] = logit;
@@ -85,7 +86,7 @@ fn moe_cpu_reference(
 
                 for input_idx in 0..d_model {
                     let w_base = w13_offset + input_idx * 2 * d_ff;
-                    let x_val = f32::from(x[x_start + input_idx]);
+                    let x_val = f32::from(expert_x[x_start + input_idx]);
                     let w_up = f32::from(w13[w_base + ff_idx]);
                     let w_gate = f32::from(w13[w_base + d_ff + ff_idx]);
                     up_sum += x_val * w_up;
@@ -157,6 +158,38 @@ fn run_moe_parity_test<B: Backend>(
     seed: u64,
     test_name: &str,
 ) {
+    run_moe_parity_test_with_options::<B>(
+        ctx,
+        t,
+        e,
+        k,
+        d_model,
+        d_ff,
+        gating_code,
+        silu_alpha,
+        gate_clip,
+        up_clip,
+        seed,
+        test_name,
+        false,
+    );
+}
+
+fn run_moe_parity_test_with_options<B: Backend>(
+    ctx: &B::Context,
+    t: usize,
+    e: usize,
+    k: usize,
+    d_model: usize,
+    d_ff: usize,
+    gating_code: u32,
+    silu_alpha: f32,
+    gate_clip: (f32, f32),
+    up_clip: (f32, f32),
+    seed: u64,
+    test_name: &str,
+    use_split_inputs: bool,
+) {
     if t > 1 {
         // Test 1-pass prefill (default, stable)
         run_moe_parity_test_internal::<B>(
@@ -172,6 +205,7 @@ fn run_moe_parity_test<B: Backend>(
             up_clip,
             seed,
             &format!("{}_decode", test_name),
+            use_split_inputs,
         );
         // Test 2-pass prefill (experimental)
         run_moe_parity_test_internal::<B>(
@@ -187,6 +221,7 @@ fn run_moe_parity_test<B: Backend>(
             up_clip,
             seed,
             &format!("{}_prefill", test_name),
+            use_split_inputs,
         );
     } else {
         // Decode mode (T=1) - no prefill variants
@@ -203,6 +238,7 @@ fn run_moe_parity_test<B: Backend>(
             up_clip,
             seed,
             test_name,
+            use_split_inputs,
         );
     }
 }
@@ -220,6 +256,7 @@ fn run_moe_parity_test_internal<B: Backend>(
     up_clip: (f32, f32),
     seed: u64,
     test_name: &str,
+    use_split_inputs: bool,
 ) {
     let mut rng = StdRng::seed_from_u64(seed);
 
@@ -234,8 +271,13 @@ fn run_moe_parity_test_internal<B: Backend>(
         test_name, t, e, k, d_model, d_ff, silu_alpha, gate_clip, up_clip, prefill_mode
     );
 
-    // Random BF16 inputs
+    // Random BF16 expert inputs. Split-input cases route from a second tensor.
     let x: Vec<bf16> = (0..t * d_model).map(|_| bf16::from_f32(rng.random_range(-1.0..1.0))).collect();
+    let router_x: Vec<bf16> = if use_split_inputs {
+        (0..t * d_model).map(|_| bf16::from_f32(rng.random_range(-1.0..1.0))).collect()
+    } else {
+        x.clone()
+    };
 
     // Generate random router weights and biases for CPU reference
     let router_weight_f32: Vec<f32> = (0..e * d_model).map(|_| rng.random_range(-0.5..0.5)).collect();
@@ -286,6 +328,7 @@ fn run_moe_parity_test_internal<B: Backend>(
 
     // Create Metal buffers
     let x_buf = alloc_allocation_with_data::<B, bf16>(ctx, &x);
+    let router_x_buf = alloc_allocation_with_data::<B, bf16>(ctx, &router_x);
     let router_w_buf = alloc_allocation_with_data::<B, bf16>(ctx, &router_weight_bf16);
     let router_b_buf = alloc_allocation_with_data::<B, bf16>(ctx, &router_bias_bf16);
     let w13_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w13_gpu);
@@ -317,7 +360,9 @@ fn run_moe_parity_test_internal<B: Backend>(
     // Router + TopK (fused kernel)
     let router_topk = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(ctx, DataType::BF16).expect("router+topk");
     router_topk.encode(
-        &x_buf,
+        &router_x_buf,
+        &router_w_buf,
+        &router_b_buf,
         &router_w_buf,
         &router_b_buf,
         &mut topk_ids_buf,
@@ -327,6 +372,12 @@ fn run_moe_parity_test_internal<B: Backend>(
         e as u32,
         k as u32,
         true,
+        0.0,
+        1.0,
+        true,
+        false,
+        false,
+        false,
         &mut encoder,
     );
 
@@ -379,7 +430,8 @@ fn run_moe_parity_test_internal<B: Backend>(
 
     let total_rows = t * k;
 
-    let experts = MoeExpertsTwoPassPrefillBlock::<B>::new(ctx, DataType::BF16, gating_code).expect("experts");
+    let experts =
+        MoeExpertsTwoPassPrefillBlock::<B>::new(ctx, DataType::BF16, gating_code, true, true).expect("experts");
     let args = MoeExpertsTwoPassArguments {
         x_perm: &x_perm_buf,
         expert_offsets: &offsets_buf,
@@ -488,6 +540,7 @@ fn run_moe_parity_test_internal<B: Backend>(
     }
 
     let y_cpu = moe_cpu_reference(
+        &router_x,
         &x,
         &router_weight_f32,
         &router_bias_f32,
@@ -666,6 +719,28 @@ fn test_moe_multi_expert() {
             (-6.0, 8.0),              // up_clip (GPT-OSS config)
             0xE2E_0002,
             "Multi_K2_SwiGLU",
+        );
+    })
+}
+
+#[uzu_test]
+fn test_moe_split_router_and_expert_inputs() {
+    for_each_non_cpu_backend!(|B| {
+        let ctx = create_context::<B>();
+        run_moe_parity_test_with_options::<B>(
+            &ctx,
+            3,   // t
+            4,   // e
+            2,   // k
+            16,  // d_model
+            32,  // d_ff
+            2,   // gating_code (SwiGLU)
+            1.0, // silu_alpha
+            (f32::NEG_INFINITY, f32::INFINITY),
+            (f32::NEG_INFINITY, f32::INFINITY),
+            0xE2E_001F,
+            "SplitRouterExpertInputs",
+            true,
         );
     })
 }

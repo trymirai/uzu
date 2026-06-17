@@ -25,14 +25,25 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
         ctx: &B::Context,
         data_type: DataType,
         gating_code: u32,
+        has_up_biases: bool,
+        has_down_biases: bool,
     ) -> Result<Self, B::Error> {
         Ok(Self {
             counts: <B::Kernels as Kernels>::MoeTileCountsKernel::new(ctx)?,
             scan: <B::Kernels as Kernels>::MoeTileScanKernel::new(ctx)?,
             build: <B::Kernels as Kernels>::MoeBuildTileMapKernel::new(ctx)?,
             dispatch: <B::Kernels as Kernels>::MoeWriteDispatchArgsKernel::new(ctx)?,
-            pass_a_indirect: <B::Kernels as Kernels>::MoeExpertsPrefillPassAKernel::new(ctx, data_type, gating_code)?,
-            pass_b_indirect: <B::Kernels as Kernels>::MoeExpertsPrefillPassBKernel::new(ctx, data_type)?,
+            pass_a_indirect: <B::Kernels as Kernels>::MoeExpertsPrefillPassAKernel::new(
+                ctx,
+                data_type,
+                gating_code,
+                has_up_biases,
+            )?,
+            pass_b_indirect: <B::Kernels as Kernels>::MoeExpertsPrefillPassBKernel::new(
+                ctx,
+                data_type,
+                has_down_biases,
+            )?,
             data_type,
         })
     }

@@ -81,6 +81,8 @@ fn get_output_topk<B: Backend, T: ArrayElement + Float>(
         input_array.allocation(),
         weights_array.allocation(),
         bias_array.allocation(),
+        weights_array.allocation(),
+        bias_array.allocation(),
         &mut topk_ids,
         &mut topk_probs,
         t as u32,
@@ -88,6 +90,12 @@ fn get_output_topk<B: Backend, T: ArrayElement + Float>(
         e as u32,
         k as u32,
         true,
+        0.0,
+        1.0,
+        true,
+        false,
+        false,
+        false,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();

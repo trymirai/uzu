@@ -56,6 +56,8 @@ fn test_moe_e2e_decode_perf() {
                     &x_buf,
                     &router_w_buf,
                     &router_b_buf,
+                    &router_w_buf,
+                    &router_b_buf,
                     &mut topk_ids_buf,
                     &mut topk_probs_buf,
                     t as u32,
@@ -63,6 +65,12 @@ fn test_moe_e2e_decode_perf() {
                     e as u32,
                     k as u32,
                     true,
+                    0.0,
+                    1.0,
+                    true,
+                    false,
+                    false,
+                    false,
                     &mut encoder,
                 );
                 encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -113,6 +121,8 @@ fn test_moe_e2e_prefill_perf() {
                     &x_buf,
                     &router_w_buf,
                     &router_b_buf,
+                    &router_w_buf,
+                    &router_b_buf,
                     &mut topk_ids_buf,
                     &mut topk_probs_buf,
                     t as u32,
@@ -120,6 +130,12 @@ fn test_moe_e2e_prefill_perf() {
                     e as u32,
                     k as u32,
                     true,
+                    0.0,
+                    1.0,
+                    true,
+                    false,
+                    false,
+                    false,
                     &mut encoder,
                 );
                 encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -212,8 +228,8 @@ fn test_moe_pipeline_breakdown_decode() {
             <<B as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel::new(&ctx, DataType::BF16)
                 .expect("<<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel");
         let gather = MoeGather::<B>::new(&ctx, DataType::BF16).expect("gather");
-        let experts_kernel =
-            MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, 2).expect("experts two-pass decode");
+        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, 2, true, true)
+            .expect("experts two-pass decode");
         let finalize_kernel =
             <<B as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");
         let router_topk_fused_kernel =
@@ -227,6 +243,8 @@ fn test_moe_pipeline_breakdown_decode() {
                 &x_buf,
                 &router_w_buf,
                 &router_b_buf,
+                &router_w_buf,
+                &router_b_buf,
                 &mut topk_ids_buf,
                 &mut topk_probs_buf,
                 t as u32,
@@ -234,6 +252,12 @@ fn test_moe_pipeline_breakdown_decode() {
                 e as u32,
                 k as u32,
                 true,
+                0.0,
+                1.0,
+                true,
+                false,
+                false,
+                false,
                 &mut encoder,
             );
             encoder.end_encoding().submit().wait_until_completed().unwrap();

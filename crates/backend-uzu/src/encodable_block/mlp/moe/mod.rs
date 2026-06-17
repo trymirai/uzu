@@ -38,12 +38,16 @@ pub struct MoeBlock<B: Backend> {
     experts_two_pass_prefill_block: MoeExpertsTwoPassPrefillBlock<B>,
     finalize_kernel: <B::Kernels as Kernels>::MoeFinalizeKernel,
     router_weights: Allocation<B>,
-    router_biases: Allocation<B>,
+    router_biases: Option<Allocation<B>>,
+    router_scales: Option<Allocation<B>>,
+    per_expert_scales: Option<Allocation<B>>,
     router_renorm: bool,
+    router_input_norm_epsilon: f32,
+    router_input_scale: f32,
     w13: Allocation<B>,
     w2: Allocation<B>,
-    up_biases: Allocation<B>,
-    down_biases: Allocation<B>,
+    up_biases: Option<Allocation<B>>,
+    down_biases: Option<Allocation<B>>,
     model_dim: usize,
     hidden_dim: usize,
     num_routed_experts: usize,
@@ -72,8 +76,6 @@ pub enum MoeBlockError<B: Backend> {
     UnsupportedSharedExperts,
     #[error("MoE expert gate is not supported")]
     UnsupportedExpertGate,
-    #[error("MoE without router, up, and down biases is not supported")]
-    UnsupportedNoBiases,
     #[error("Unsupported MoE router configuration: {0}")]
     UnsupportedRouterConfiguration(String),
     #[error("Unsupported MoE expert activation: {0:?}")]
@@ -103,13 +105,6 @@ impl<B: Backend> MoeBlock<B> {
         if moe_config.gate_config.is_some() {
             return Err(MoeBlockError::UnsupportedExpertGate);
         }
-        if !moe_config.router_has_biases
-            || !moe_config.expert_config.has_up_biases
-            || !moe_config.expert_config.has_down_biases
-        {
-            return Err(MoeBlockError::UnsupportedNoBiases);
-        }
-
         let gating_code = match moe_config.expert_config.activation.act_type() {
             ActivationType::GELUApprox => 3,
             ActivationType::SILU => 2,
@@ -132,8 +127,26 @@ impl<B: Backend> MoeBlock<B> {
             .leaf("weights")?
             .validate(&[moe_config.num_routed_experts, model_dim], data_type)?
             .read_allocation()?;
-        let router_biases =
-            router_tree.leaf("biases")?.validate(&[moe_config.num_routed_experts], data_type)?.read_allocation()?;
+        let router_biases = if moe_config.router_has_biases {
+            Some(router_tree.leaf("biases")?.validate(&[moe_config.num_routed_experts], data_type)?.read_allocation()?)
+        } else {
+            None
+        };
+        let router_scales = if moe_config.router_has_scales.unwrap_or(false) {
+            Some(router_tree.leaf("scale")?.validate(&[model_dim], data_type)?.read_allocation()?)
+        } else {
+            None
+        };
+        let per_expert_scales = if moe_config.router_has_per_expert_scales.unwrap_or(false) {
+            Some(
+                router_tree
+                    .leaf("per_expert_scale")?
+                    .validate(&[moe_config.num_routed_experts], data_type)?
+                    .read_allocation()?,
+            )
+        } else {
+            None
+        };
 
         let experts_tree = parameter_tree.subtree("experts")?;
         let up_tree = experts_tree.subtree("up_projection")?;
@@ -141,6 +154,10 @@ impl<B: Backend> MoeBlock<B> {
         let up_weights_tree = up_tree.subtree("weights")?;
         let down_weights_tree = down_tree.subtree("weights")?;
 
+        // Runtime experts use Uzu layout [E, 2*hidden, model] with the up
+        // projection in the first half and gate in the second half. HF fused
+        // layouts such as Gemma 4 gate_up_proj must be reordered before this
+        // point by the weight conversion/export boundary, not by the kernels.
         let w13 = up_weights_tree
             .leaf("weights")?
             .validate(&[moe_config.num_routed_experts, moe_config.expert_hidden_dim * 2, model_dim], data_type)?
@@ -149,14 +166,26 @@ impl<B: Backend> MoeBlock<B> {
             .leaf("weights")?
             .validate(&[moe_config.num_routed_experts, model_dim, moe_config.expert_hidden_dim], data_type)?
             .read_allocation()?;
-        let up_biases = up_tree
-            .leaf("biases")?
-            .validate(&[moe_config.num_routed_experts, moe_config.expert_hidden_dim * 2], data_type)?
-            .read_allocation()?;
-        let down_biases = down_tree
-            .leaf("biases")?
-            .validate(&[moe_config.num_routed_experts, model_dim], data_type)?
-            .read_allocation()?;
+        let up_biases = if moe_config.expert_config.has_up_biases {
+            Some(
+                up_tree
+                    .leaf("biases")?
+                    .validate(&[moe_config.num_routed_experts, moe_config.expert_hidden_dim * 2], data_type)?
+                    .read_allocation()?,
+            )
+        } else {
+            None
+        };
+        let down_biases = if moe_config.expert_config.has_down_biases {
+            Some(
+                down_tree
+                    .leaf("biases")?
+                    .validate(&[moe_config.num_routed_experts, model_dim], data_type)?
+                    .read_allocation()?,
+            )
+        } else {
+            None
+        };
 
         let router_topk_kernel = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, data_type)
             .map_err(MoeBlockError::BackendError)?;
@@ -168,10 +197,22 @@ impl<B: Backend> MoeBlock<B> {
             .map_err(MoeBlockError::BackendError)?;
 
         let gather = MoeGather::new(context, data_type).map_err(MoeBlockError::BackendError)?;
-        let experts_two_pass_decode_block =
-            MoeExpertsTwoPassDecodeBlock::new(context, data_type, gating_code).map_err(MoeBlockError::BackendError)?;
-        let experts_two_pass_prefill_block =
-            MoeExpertsTwoPassPrefillBlock::new(context, data_type, gating_code).map_err(MoeBlockError::BackendError)?;
+        let experts_two_pass_decode_block = MoeExpertsTwoPassDecodeBlock::new(
+            context,
+            data_type,
+            gating_code,
+            moe_config.expert_config.has_up_biases,
+            moe_config.expert_config.has_down_biases,
+        )
+        .map_err(MoeBlockError::BackendError)?;
+        let experts_two_pass_prefill_block = MoeExpertsTwoPassPrefillBlock::new(
+            context,
+            data_type,
+            gating_code,
+            moe_config.expert_config.has_up_biases,
+            moe_config.expert_config.has_down_biases,
+        )
+        .map_err(MoeBlockError::BackendError)?;
         let finalize_kernel =
             <B::Kernels as Kernels>::MoeFinalizeKernel::new(context, data_type).map_err(MoeBlockError::BackendError)?;
 
@@ -189,7 +230,11 @@ impl<B: Backend> MoeBlock<B> {
             finalize_kernel,
             router_weights,
             router_biases,
+            router_scales,
+            per_expert_scales,
             router_renorm,
+            router_input_norm_epsilon: moe_config.router_input_norm_epsilon.unwrap_or(0.0),
+            router_input_scale: moe_config.router_input_scale.unwrap_or(1.0),
             w13,
             w2,
             up_biases,
@@ -215,6 +260,28 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        self.encode_inner(&input, &input, batch_dim, encoder)
+    }
+
+    fn encode_with_router_input(
+        &self,
+        router_input: &Allocation<B>,
+        expert_input: Allocation<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        self.encode_inner(router_input, &expert_input, batch_dim, encoder)
+    }
+}
+
+impl<B: Backend> MoeBlock<B> {
+    fn encode_inner(
+        &self,
+        router_input: &Allocation<B>,
+        expert_input: &Allocation<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
         let total_rows = batch_dim * self.num_active_experts;
         let num_blocks = batch_dim.div_ceil(256);
         let num_tiles = self.num_routed_experts.div_ceil(512);
@@ -226,10 +293,15 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
 
         encoder.encode_fill(&mut topk_ids, 0xFF);
 
+        let router_biases = self.router_biases.as_ref().unwrap_or(&self.router_weights);
+        let router_scales = self.router_scales.as_ref().unwrap_or(&self.router_weights);
+        let per_expert_scales = self.per_expert_scales.as_ref().unwrap_or(&self.router_weights);
         self.router_topk_kernel.encode(
-            &input,
+            router_input,
             &self.router_weights,
-            &self.router_biases,
+            router_biases,
+            router_scales,
+            per_expert_scales,
             &mut topk_ids,
             &mut topk_probs,
             batch_dim as u32,
@@ -237,6 +309,12 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             self.num_routed_experts as u32,
             self.num_active_experts as u32,
             self.router_renorm,
+            self.router_input_norm_epsilon,
+            self.router_input_scale,
+            self.router_biases.is_some(),
+            self.router_scales.is_some(),
+            self.per_expert_scales.is_some(),
+            self.router_input_norm_epsilon > 0.0,
             encoder,
         );
 
@@ -291,7 +369,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         );
 
         let x_perm = self.gather.encode(
-            &input,
+            expert_input,
             &bucketed_ids,
             &sumk,
             batch_dim,
@@ -300,13 +378,15 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             encoder,
         )?;
 
+        let up_biases = self.up_biases.as_ref().unwrap_or(&self.w13);
+        let down_biases = self.down_biases.as_ref().unwrap_or(&self.w2);
         let args = MoeExpertsTwoPassArguments {
             x_perm: &x_perm,
             expert_offsets: &offsets,
             w13_all: &self.w13,
             w2_all: &self.w2,
-            up_biases: &self.up_biases,
-            down_biases: &self.down_biases,
+            up_biases,
+            down_biases,
             total_rows,
             d_model: self.model_dim,
             d_ff: self.hidden_dim,

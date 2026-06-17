@@ -24,6 +24,9 @@ pub fn moe_experts_decode_pass_a<T: ArrayElement + Float>(
     #[allow(unused)]
     #[specialize]
     gating_sel: u32,
+    #[allow(unused)]
+    #[specialize]
+    has_up_biases: bool,
     #[allow(unused)] __dsl_indirect_dispatch_buffer: *const u32,
 ) {
     todo!()
@@ -43,6 +46,7 @@ pub fn moe_experts_decode_down_fused2_d<T: ArrayElement + Float, AccumT: ArrayEl
     d_model: u32,
     d_ff: u32,
     e: u32,
+    #[specialize] has_down_biases: bool,
 ) {
     let dm = d_model as usize;
     let df = d_ff as usize;
@@ -64,9 +68,10 @@ pub fn moe_experts_decode_down_fused2_d<T: ArrayElement + Float, AccumT: ArrayEl
                 acc = h_val.mul_add(w_val, acc);
             }
 
-            // Add bias
-            let bias_idx = expert_idx * dm + my_col;
-            acc += unsafe { *down_biases.add(bias_idx) }.to_f32().unwrap();
+            if has_down_biases {
+                let bias_idx = expert_idx * dm + my_col;
+                acc += unsafe { *down_biases.add(bias_idx) }.to_f32().unwrap();
+            }
 
             let out_idx = row_idx * dm + my_col;
             unsafe {
