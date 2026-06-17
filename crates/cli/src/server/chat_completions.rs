@@ -52,8 +52,7 @@ pub struct ChatCompletionRequest {
     pub top_p: Option<f64>,
     #[serde(default)]
     pub top_k: Option<i64>,
-    // Raw value, not a typed `ResponseFormat`, so a bad response_format becomes our OpenAI 400
-    // rather than Rocket's 422 at request extraction.
+    // Raw value (not typed) so a bad response_format is our 400, not Rocket's 422.
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
     #[serde(default)]
@@ -231,8 +230,6 @@ fn with_response_format_grammar(
 }
 
 fn json_schema_grammar(json_schema: &JsonSchemaFormat) -> Result<Grammar, ResponseFormatError> {
-    // Reject a malformed schema up front (OpenAI answers 400 here) instead of letting it fail
-    // later inside generation, where it would surface as a normal 200 reply.
     jsonschema::meta::validate(&json_schema.schema)
         .map_err(|error| ResponseFormatError::InvalidJsonSchema(error.to_string()))?;
     let schema = serde_json::to_string(&json_schema.schema)
@@ -259,7 +256,6 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
         });
     }
 
-    // Interpret the raw value here so an unrecognized object surfaces as our 400, not Rocket's 422.
     let response_format = match &request.response_format {
         Some(value) => Some(
             serde_json::from_value::<ResponseFormat>(value.clone())
@@ -269,14 +265,7 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
     };
 
     config = match response_format {
-        // json_object maps to xgrammar's builtin JSON grammar (root is an object or array, not a
-        // scalar). The grammar masks the stop token until the value closes, so finish_reason=stop
-        // means complete valid JSON and finish_reason=length means possibly truncated — the client
-        // checks finish_reason, as with OpenAI.
         Some(ResponseFormat::JsonObject) => with_response_format_grammar(config, Grammar::JsonAny {})?,
-        // json_schema forwards the nested JSON Schema to the backend, which compiles it into a
-        // grammar (structured_output_from_schema / from_json_schema) and masks the sampler to the
-        // tokens the schema allows, so the reply conforms to the schema.
         Some(ResponseFormat::JsonSchema {
             json_schema,
         }) => with_response_format_grammar(config, json_schema_grammar(&json_schema)?)?,
@@ -573,7 +562,6 @@ mod tests {
                 reply_config_error(r#"{"messages":[],"response_format":{"type":"json_object"}}"#),
                 ResponseFormatError::GrammarUnsupported
             );
-            // A structurally valid json_schema still needs capability-grammar to be honored.
             assert_eq!(
                 reply_config_error(
                     r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object"}}}}"#
@@ -585,7 +573,6 @@ mod tests {
 
     #[test]
     fn response_format_unrecognized_is_invalid() {
-        // An unrecognized object becomes our 400 (invalid_response_format), not Rocket's 422.
         let error = build_reply_config(&request(r#"{"messages":[],"response_format":{"type":"totally-bogus"}}"#))
             .expect_err("unrecognized response_format should be rejected");
         assert!(
@@ -597,7 +584,6 @@ mod tests {
     #[cfg(feature = "capability-grammar")]
     #[test]
     fn response_format_json_schema_maps_to_grammar() {
-        // json_schema forwards the nested schema to the backend as a JsonSchema grammar.
         let config = reply_config(
             r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"name":"person","schema":{"type":"object"}}}}"#,
         );
@@ -611,7 +597,6 @@ mod tests {
 
     #[test]
     fn response_format_json_schema_rejects_invalid_schema() {
-        // A structurally invalid JSON Schema is a 400 request error, not a generation-time failure.
         let error = build_reply_config(&request(
             r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"not-a-json-schema-type"}}}}"#,
         ))
@@ -635,8 +620,6 @@ mod tests {
 
     #[test]
     fn malformed_response_format_passes_json_extraction() {
-        // The raw-value field keeps a malformed response_format out of Rocket's 422 path so the
-        // request reaches our handler and becomes a 400.
         for body in [
             r#"{"messages":[],"response_format":{"type":"totally-bogus"}}"#,
             r#"{"messages":[],"response_format":"not-even-an-object"}"#,
@@ -646,8 +629,6 @@ mod tests {
         }
     }
 
-    // Test-only route returning a response_format validation error, used to exercise the actual
-    // Rocket response layer. Defined at module level so the `rocket::get` macro stays local.
     #[rocket::get("/err")]
     fn err_route() -> ChatCompletionResult {
         request_error_response(ResponseFormatError::InvalidResponseFormat("bad".to_string()))
@@ -655,7 +636,6 @@ mod tests {
 
     #[test]
     fn error_responder_yields_http_400_with_openai_body() {
-        // A validation error must come back as HTTP 400 with an OpenAI-shaped body.
         let client = rocket::local::blocking::Client::tracked(rocket::build().mount("/", rocket::routes![err_route]))
             .expect("rocket client");
         let response = client.get("/err").dispatch();
