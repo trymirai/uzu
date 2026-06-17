@@ -1,0 +1,23 @@
+[package]
+name = "denryoku"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Temperature and power-consumption sensor readings on Apple platforms via private IOKit HID APIs"
+
+[lib]
+name = "denryoku"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2-core-foundation.workspace = true
+libc.workspace = true

@@ -18,6 +18,7 @@ members = [
     "crates/cli-storage",
     "crates/cli-tools",
     "crates/test-runner",
+    "crates/denryoku",
 ]
 resolver = "3"
 
@@ -57,6 +58,7 @@ nagare = { path = "crates/nagare", default-features = false }
 download-manager = { path = "crates/download-manager", default-features = false }
 mock-registry = { path = "crates/mock-registry", default-features = false }
 benchmarks = { path = "crates/benchmarks", default-features = false }
+denryoku = { path = "crates/denryoku", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
 xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgrammar-rs.git", tag = "0.2.2", features = ["tokenizers"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
@@ -70,6 +72,7 @@ tokenizers = { version = "0.22", features = [
 ], default-features = false }
 objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
+objc2-core-foundation = "0.3.2"
 objc2-security = "0.3.2"
 metal = { package = "mtl-rs", version = "0.1.12" }
 block2 = "0.6"

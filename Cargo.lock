@@ -1669,6 +1669,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5729f5117e208430e437df2f4843f5e5952997175992d1414f94c57d61e270b4"
 
 [[package]]
+name = "denryoku"
+version = "0.5.12"
+dependencies = [
+ "libc",
+ "objc2-core-foundation",
+]
+
+[[package]]
 name = "depfile"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
