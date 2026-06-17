@@ -111,6 +111,14 @@ impl GemmKernel {
         &self,
         arguments: &MatmulArguments<'_, Metal, TB>,
     ) -> bool {
+        if arguments.m == 4
+            && arguments.n == arguments.k
+            && [self.weights_data_type, self.input_data_type, self.output_data_type]
+                .into_iter()
+                .all(|data_type| data_type == DataType::F32)
+        {
+            return false;
+        }
         if !small_m_mxu_skips_gemv(arguments.m, arguments.n, arguments.k) {
             return false;
         }
