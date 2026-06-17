@@ -119,7 +119,7 @@ impl GemmKernel {
         {
             return false;
         }
-        if !small_m_mxu_skips_gemv(arguments.m, arguments.n, arguments.k) {
+        if !small_m_prefers_mxu(arguments.m, arguments.n, arguments.k) {
             return false;
         }
         matches!(
@@ -730,12 +730,21 @@ fn select_small_m_mxu_tiling(
     GemmTiling::Tile32x64x256_Simdgroups2x2
 }
 
-fn small_m_mxu_skips_gemv(
+fn small_m_prefers_mxu(
     m: u32,
     n: u32,
     k: u32,
 ) -> bool {
-    m >= 8 || (m >= 4 && ((n <= 6144 && k <= 9728) || k > 3_u32.saturating_mul(n)))
+    match m {
+        0..=3 | 5..=7 => false,
+        4 => {
+            // The M4 MXU tile only uses a quarter of its rows; avoid it for wide-N shapes.
+            let small_enough_for_mxu = n <= 6144 && k <= 9728;
+            let k_dominates = k > 3_u32.saturating_mul(n);
+            small_enough_for_mxu || k_dominates
+        },
+        _ => true,
+    }
 }
 
 pub(crate) fn select_mxu_quant_tiling(
