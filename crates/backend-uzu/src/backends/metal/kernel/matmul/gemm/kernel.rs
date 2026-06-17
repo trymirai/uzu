@@ -111,13 +111,14 @@ impl GemmKernel {
         &self,
         arguments: &MatmulArguments<'_, Metal, TB>,
     ) -> bool {
-        if arguments.m == 4
-            && arguments.n == arguments.k
-            && [self.weights_data_type, self.input_data_type, self.output_data_type]
-                .into_iter()
-                .all(|data_type| data_type == DataType::F32)
-        {
-            return false;
+        match (
+            arguments.m,
+            arguments.n == arguments.k,
+            (self.weights_data_type, self.input_data_type, self.output_data_type),
+        ) {
+            (4, true, (DataType::F32, DataType::F32, DataType::F32))
+            | (5, _, (DataType::BF16, DataType::BF16, DataType::BF16)) => return false,
+            _ => {},
         }
         if !small_m_prefers_mxu(arguments.m, arguments.n, arguments.k) {
             return false;
@@ -736,7 +737,7 @@ fn small_m_prefers_mxu(
     k: u32,
 ) -> bool {
     match m {
-        0..=3 | 5..=7 => false,
+        0..=3 => false,
         4 => {
             // The M4 MXU tile only uses a quarter of its rows; avoid it for wide-N shapes.
             let small_enough_for_mxu = n <= 6144 && k <= 9728;
