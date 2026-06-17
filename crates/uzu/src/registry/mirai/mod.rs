@@ -15,10 +15,18 @@ pub use config::{Backend, Config};
 use indexmap::IndexMap;
 use nagare::api::{Client, Config as ClientConfig};
 use reqwest::header::AUTHORIZATION;
+use serde::{Deserialize, Serialize};
 use shoji::{traits::Registry as RegistryTrait, types::model::Model};
 pub use types::Response;
+use uuid::Uuid;
 
 use crate::registry::RegistryError;
+
+#[derive(Serialize, Deserialize)]
+struct RegistryCache {
+    key: String,
+    models: Vec<Model>,
+}
 
 pub struct Registry {
     config: Config,
@@ -97,11 +105,28 @@ impl Registry {
         self.config.cache_path.join("registry.json")
     }
 
+    fn cache_key(&self) -> String {
+        let fingerprint = serde_json::json!({
+            "api_key": self.config.api_key,
+            "backends": self.config.backends,
+            "include_traces": self.config.include_traces,
+            "os_name": self.config.device.os_name,
+            "cpu_name": self.config.device.cpu_name,
+            "memory_total": self.config.device.memory_total,
+        });
+        let bytes = serde_json::to_vec(&fingerprint).unwrap_or_default();
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, &bytes).simple().to_string()
+    }
+
     fn save_registry(
         &self,
         models: &[Model],
     ) -> Result<(), RegistryError> {
-        let contents = serde_json::to_vec_pretty(models).map_err(|error| RegistryError::UnableToGetModels {
+        let cache = RegistryCache {
+            key: self.cache_key(),
+            models: models.to_vec(),
+        };
+        let contents = serde_json::to_vec_pretty(&cache).map_err(|error| RegistryError::UnableToGetModels {
             message: format!("Unable to serialize registry: {}", error),
         })?;
         write(self.registry_path(), contents).map_err(|error| RegistryError::UnableToGetModels {
@@ -113,8 +138,15 @@ impl Registry {
         let contents = read_to_string(self.registry_path()).map_err(|error| RegistryError::UnableToGetModels {
             message: format!("Unable to read registry: {}", error),
         })?;
-        serde_json::from_str(&contents).map_err(|error| RegistryError::UnableToGetModels {
-            message: format!("Unable to parse registry: {}", error),
-        })
+        let cache: RegistryCache =
+            serde_json::from_str(&contents).map_err(|error| RegistryError::UnableToGetModels {
+                message: format!("Unable to parse registry: {}", error),
+            })?;
+        if cache.key != self.cache_key() {
+            return Err(RegistryError::UnableToGetModels {
+                message: "Cached registry does not match the current request context".to_string(),
+            });
+        }
+        Ok(cache.models)
     }
 }
