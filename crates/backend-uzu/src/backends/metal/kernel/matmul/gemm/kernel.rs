@@ -107,7 +107,7 @@ impl GemmKernel {
         }
     }
 
-    pub(crate) fn prefers_mxu_over_gemv<TB: AsBufferRangeRef>(
+    pub(crate) fn should_skip_gemv_for_mxu<TB: AsBufferRangeRef>(
         &self,
         arguments: &MatmulArguments<'_, Metal, TB>,
     ) -> bool {
@@ -120,8 +120,17 @@ impl GemmKernel {
             | (5, _, (DataType::BF16, DataType::BF16, DataType::BF16)) => return false,
             _ => {},
         }
-        if !small_m_prefers_mxu(arguments.m, arguments.n, arguments.k) {
-            return false;
+        match arguments.m {
+            0..=3 => return false,
+            4 => {
+                // The M4 MXU tile only uses a quarter of its rows; avoid it for wide-N shapes.
+                let small_enough_for_mxu = arguments.n <= 6144 && arguments.k <= 9728;
+                let k_dominates = arguments.k > 3_u32.saturating_mul(arguments.n);
+                if !(small_enough_for_mxu || k_dominates) {
+                    return false;
+                }
+            },
+            _ => {},
         }
         matches!(
             self.select_mxu_tiling(arguments),
@@ -729,23 +738,6 @@ fn select_small_m_mxu_tiling(
         return GemmTiling::Tile16x128x256_Simdgroups1x4;
     }
     GemmTiling::Tile32x64x256_Simdgroups2x2
-}
-
-fn small_m_prefers_mxu(
-    m: u32,
-    n: u32,
-    k: u32,
-) -> bool {
-    match m {
-        0..=3 => false,
-        4 => {
-            // The M4 MXU tile only uses a quarter of its rows; avoid it for wide-N shapes.
-            let small_enough_for_mxu = n <= 6144 && k <= 9728;
-            let k_dominates = k > 3_u32.saturating_mul(n);
-            small_enough_for_mxu || k_dominates
-        },
-        _ => true,
-    }
 }
 
 pub(crate) fn select_mxu_quant_tiling(

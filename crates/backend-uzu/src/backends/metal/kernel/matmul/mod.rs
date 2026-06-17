@@ -54,8 +54,8 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        let prefer_mxu_gemm = encoder.context().device.supports_mxu() && self.gemm.prefers_mxu_over_gemv(&arguments);
-        if !prefer_mxu_gemm
+        let skip_gemv = encoder.context().device.supports_mxu() && self.gemm.should_skip_gemv_for_mxu(&arguments);
+        if !skip_gemv
             && let Some(gemv) = GemvSpecialization::select(
                 &arguments,
                 self.weights_data_type,
