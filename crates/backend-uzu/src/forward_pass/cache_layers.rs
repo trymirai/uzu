@@ -108,17 +108,11 @@ enum LayerCacheBinding {
     Owned {
         entry: CacheEntryIndex,
     },
-    Shared {
-        source: CacheEntryIndex,
-    },
 }
 
 pub enum LayerCacheAccess<'a, B: Backend> {
     Owned {
         entry: &'a mut CacheLayer<B>,
-    },
-    Shared {
-        source: &'a CacheLayer<B>,
     },
 }
 
@@ -131,32 +125,9 @@ impl<B: Backend> CacheLayers<B> {
     ) -> Self {
         let total_context_length = max_prefix_length.max(max_suffix_length);
 
-        let kv_source_layers = model_shape.kv_source_layers();
-
         let mut entries: Vec<CacheLayer<B>> = Vec::with_capacity(model_shape.layer_mixers().len());
         let mut bindings: Vec<LayerCacheBinding> = Vec::with_capacity(model_shape.layer_mixers().len());
-        for (layer_index, mixer) in model_shape.layer_mixers().iter().enumerate() {
-            if let Some(source_layer_index) = kv_source_layers.get(layer_index).copied().flatten() {
-                let LayerCacheBinding::Owned {
-                    entry: source,
-                } = bindings[source_layer_index]
-                else {
-                    panic!("kv_source_layer_index {source_layer_index} (layer {layer_index}) must be a prior owner");
-                };
-                let geometry = |m: &AnyTokenMixerConfig| {
-                    m.as_attention().map(|a| (a.num_groups, a.head_dim, a.sliding_window_size))
-                };
-                assert_eq!(
-                    geometry(&model_shape.layer_mixers()[source_layer_index]),
-                    geometry(mixer),
-                    "KV cache sharing requires identical attention geometry"
-                );
-                bindings.push(LayerCacheBinding::Shared {
-                    source,
-                });
-                continue;
-            }
-
+        for mixer in model_shape.layer_mixers().iter() {
             let layer = match mixer {
                 AnyTokenMixerConfig::AttentionConfig(attn) => {
                     let sliding_window = attn.sliding_window_size;
@@ -294,23 +265,19 @@ impl<B: Backend> CacheLayers<B> {
             } => LayerCacheAccess::Owned {
                 entry: &mut self.entries[entry.index],
             },
-            LayerCacheBinding::Shared {
-                source,
-            } => LayerCacheAccess::Shared {
-                source: &self.entries[source.index],
-            },
         }
     }
 
     pub fn iter_layers(&self) -> impl Iterator<Item = (usize, &CacheLayer<B>)> {
-        self.bindings.iter().enumerate().filter_map(|(index, binding)| match binding {
-            LayerCacheBinding::Owned {
-                entry,
-            } => Some((index, &self.entries[entry.index])),
-            LayerCacheBinding::Shared {
-                ..
-            } => None,
-        })
+        self.bindings
+            .iter()
+            .enumerate()
+            .map(|(index, binding)| match binding {
+                LayerCacheBinding::Owned {
+                    entry,
+                } => Some((index, &self.entries[entry.index])),
+            })
+            .flatten()
     }
 
     pub fn clear(

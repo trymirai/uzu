@@ -16,6 +16,5 @@ pub struct TransformerLayerConfig {
     pub hidden_dim: Option<usize>,
     pub ple_config: Option<PLELayerConfig>,
     pub has_post_layer_scalar: bool,
-    pub kv_source_layer_index: Option<usize>,
     pub rope_config: Option<AnyRoPEConfig>,
 }

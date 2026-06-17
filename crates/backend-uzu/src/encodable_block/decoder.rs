@@ -181,12 +181,6 @@ impl<B: Backend> Decoder<B> {
             .collect();
 
         let rope = Rc::new(Rope::<B>::new(context, model_shape, false).map_err(DecoderError::BackendError)?);
-        // Built only when some layer projects queries only (reuses an earlier layer's KV cache).
-        let rope_query_only = if tf.layer_configs.iter().any(|l| l.kv_source_layer_index.is_some()) {
-            Some(Rc::new(Rope::<B>::new(context, model_shape, true).map_err(DecoderError::BackendError)?))
-        } else {
-            None
-        };
         let qk_unpack =
             Rc::new(QkUnpack::<B>::new(context, model_shape.data_type).map_err(DecoderError::BackendError)?);
 
@@ -196,11 +190,6 @@ impl<B: Backend> Decoder<B> {
             .enumerate()
             .map(|(layer_index, layer_config)| {
                 let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index))?;
-                let layer_rope = if layer_config.kv_source_layer_index.is_some() {
-                    rope_query_only.as_ref().expect("query-only rope is built whenever a layer shares KV")
-                } else {
-                    &rope
-                };
 
                 LayerExecutables::new(
                     context,
@@ -209,7 +198,7 @@ impl<B: Backend> Decoder<B> {
                     layer_index,
                     layer_rope_kinds[layer_index],
                     &layer_loader,
-                    layer_rope,
+                    &rope,
                     &qk_unpack,
                     model_shape.data_type,
                 )

@@ -98,16 +98,13 @@ impl<B: Backend> Attention<B> {
         rope: Rc<Rope<B>>,
         qk_unpack: Rc<QkUnpack<B>>,
         extract_input_hadamard: bool,
-        is_kv_sharing: bool,
     ) -> Result<(Self, Option<Allocation<B>>), AttentionError<B>> {
         let q_dim = config.num_heads * config.head_dim;
         let kv_dim = config.num_groups * config.head_dim;
-        // KV-sharing layers reuse the source layer's K/V: project queries only, with no key/value norm.
-        let (qkv_output_dim, key_norm_config, value_norm_config, kv_norm_groups) = if is_kv_sharing {
-            (q_dim, None, None, 0)
-        } else {
-            (q_dim + 2 * kv_dim, config.key_norm_config.clone(), config.value_norm_config(), config.num_groups)
-        };
+        let qkv_output_dim = q_dim + 2 * kv_dim;
+        let key_norm_config = config.key_norm_config.clone();
+        let value_norm_config = config.value_norm_config();
+        let kv_norm_groups = config.num_groups;
 
         let qkv_projection_tree = parameter_tree.subtree("qkv_projection")?;
         let (qkv_projection, input_hadamard_factors) = if extract_input_hadamard {
@@ -395,9 +392,6 @@ impl<B: Backend> Attention<B> {
                 LayerCacheAccess::Owned {
                     entry,
                 } => entry.as_transformer(),
-                LayerCacheAccess::Shared {
-                    source,
-                } => source.as_transformer(),
             }
             .expect("attention expects transformer cache")
         });
@@ -558,18 +552,6 @@ impl<B: Backend> Attention<B> {
                         encode_cached_attention!(&layer.keys, &layer.values)
                     } else {
                         panic!("Attention layer expects sparse or dense transformer cache")
-                    }
-                },
-                LayerCacheAccess::Shared {
-                    source,
-                } => {
-                    let source = source.as_transformer().expect("kv_source must be a transformer cache");
-                    if let Some(source) = source.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
-                        encode_cached_attention!(&source.keys, &source.values)
-                    } else if let Some(source) = source.as_any().downcast_ref::<KVCacheLayer<B, B::DenseBuffer>>() {
-                        encode_cached_attention!(&source.keys, &source.values)
-                    } else {
-                        panic!("kv_source must be a sparse or dense transformer cache")
                     }
                 },
             }

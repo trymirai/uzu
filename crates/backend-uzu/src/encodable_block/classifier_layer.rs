@@ -29,8 +29,6 @@ pub enum ClassifierLayerError<B: Backend> {
     NonAttentionMixer,
     #[error("classifier does not support attention hadamard")]
     AttentionHadamardUnsupported,
-    #[error("classifier does not support KV-sharing attention")]
-    KvSharingAttentionUnsupported,
     #[error("classifier does not support MLP hadamard")]
     MlpHadamardUnsupported,
 }
@@ -64,9 +62,6 @@ impl<B: Backend> ClassifierLayer<B> {
     ) -> Result<Self, ClassifierLayerError<B>> {
         let attention_config =
             layer_config.mixer_config.as_attention().ok_or(ClassifierLayerError::NonAttentionMixer)?;
-        if attention_config.is_kv_sharing || layer_config.kv_source_layer_index.is_some() {
-            return Err(ClassifierLayerError::KvSharingAttentionUnsupported);
-        }
 
         let pre_attention_norm = if let Some(norm_config) = &layer_config.pre_mixer_norm_config {
             Some(Normalization::new(
@@ -88,7 +83,6 @@ impl<B: Backend> ClassifierLayer<B> {
             &layer_loader.subtree("mixer")?,
             rope,
             qk_unpack,
-            false,
             false,
         )?;
         if attention_hadamard_factors.is_some() {
