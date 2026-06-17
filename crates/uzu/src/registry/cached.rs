@@ -37,12 +37,7 @@ impl Registry for CachedRegistry {
             if let Some(cached_models) = cached_models.as_ref() {
                 Ok(cached_models.clone())
             } else {
-                let models = match self.registry.models().await {
-                    Ok(models) => models.clone(),
-                    Err(_) => {
-                        vec![]
-                    },
-                };
+                let models = self.registry.models().await?;
                 *cached_models = Some(models.clone());
                 Ok(models)
             }

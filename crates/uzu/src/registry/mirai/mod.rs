@@ -2,7 +2,13 @@ mod api;
 mod config;
 mod types;
 
-use std::{future::Future, pin::Pin, time::Duration};
+use std::{
+    fs::{read_to_string, write},
+    future::Future,
+    path::PathBuf,
+    pin::Pin,
+    time::Duration,
+};
 
 pub use api::Endpoint;
 pub use config::{Backend, Config};
@@ -47,21 +53,68 @@ impl RegistryTrait for Registry {
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
         Box::pin(async {
-            let response: Response = self
-                .client
-                .response(&Endpoint::FetchModels {
-                    device: self.config.device.clone(),
-                    backends: self.config.backends.clone(),
-                    include_traces: self.config.include_traces,
-                })
-                .await
-                .map_err(|error| RegistryError::UnableToGetModels {
-                    message: error.to_string(),
-                })?;
-            let models = response.models().ok_or(RegistryError::UnableToGetModels {
-                message: "Unable to extract from response".to_string(),
+            match self.fetch_models().await {
+                Ok(models) => {
+                    if let Err(error) = self.save_registry(&models) {
+                        tracing::warn!(?error, "failed to save Mirai registry");
+                    }
+                    Ok(models)
+                },
+                Err(fetch_error) => match self.load_registry() {
+                    Ok(models) => {
+                        tracing::warn!(?fetch_error, "serving cached Mirai registry after fetch failure");
+                        Ok(models)
+                    },
+                    Err(load_error) => {
+                        tracing::warn!(?load_error, "failed to load cached Mirai registry");
+                        Err(fetch_error)
+                    },
+                },
+            }
+        })
+    }
+}
+
+impl Registry {
+    async fn fetch_models(&self) -> Result<Vec<Model>, RegistryError> {
+        let response: Response = self
+            .client
+            .response(&Endpoint::FetchModels {
+                device: self.config.device.clone(),
+                backends: self.config.backends.clone(),
+                include_traces: self.config.include_traces,
+            })
+            .await
+            .map_err(|error| RegistryError::UnableToGetModels {
+                message: error.to_string(),
             })?;
-            Ok(models)
+        response.models().ok_or(RegistryError::UnableToGetModels {
+            message: "Unable to extract from response".to_string(),
+        })
+    }
+
+    fn registry_path(&self) -> PathBuf {
+        self.config.cache_path.join("registry.json")
+    }
+
+    fn save_registry(
+        &self,
+        models: &[Model],
+    ) -> Result<(), RegistryError> {
+        let contents = serde_json::to_vec_pretty(models).map_err(|error| RegistryError::UnableToGetModels {
+            message: format!("Unable to serialize registry: {}", error),
+        })?;
+        write(self.registry_path(), contents).map_err(|error| RegistryError::UnableToGetModels {
+            message: format!("Unable to write registry: {}", error),
+        })
+    }
+
+    fn load_registry(&self) -> Result<Vec<Model>, RegistryError> {
+        let contents = read_to_string(self.registry_path()).map_err(|error| RegistryError::UnableToGetModels {
+            message: format!("Unable to read registry: {}", error),
+        })?;
+        serde_json::from_str(&contents).map_err(|error| RegistryError::UnableToGetModels {
+            message: format!("Unable to parse registry: {}", error),
         })
     }
 }
