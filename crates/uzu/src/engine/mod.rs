@@ -99,6 +99,7 @@ impl Engine {
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
         let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string())
             .with_download_manager_type(config.download_manager_type.into());
+        let storage_cache_path = storage_config.cache_path();
         logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
 
         let storage = SharedAccess::new(Storage::new(tokio_handle, storage_config).await?);
@@ -126,6 +127,7 @@ impl Engine {
                     version: uzu_backend_version.clone(),
                 }],
                 include_traces: false,
+                cache_path: storage_cache_path,
             };
             let mirai_registry = Box::new(MiraiRegistry::new(mirai_registry_config)?);
 
