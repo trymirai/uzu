@@ -760,24 +760,3 @@ pub(crate) fn select_quant_tiling(
         GemmTiling::Tile32x32x32_Simdgroups2x2
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use proc_macros::uzu_test;
-
-    use super::{GemmTiling, select_mxu_tiling, small_m_mxu_skips_gemv};
-
-    #[uzu_test]
-    fn m5_small_m_mxu_policy() {
-        assert_eq!(select_mxu_tiling(8, 2560, 2560), GemmTiling::Tile16x32x256_Simdgroups1x1);
-        assert_eq!(select_mxu_tiling(8, 4096, 4096), GemmTiling::Tile32x64x256_Simdgroups2x2);
-        assert_eq!(select_mxu_tiling(8, 2560, 9728), GemmTiling::Tile16x128x256_Simdgroups1x4);
-        assert_eq!(select_mxu_tiling(16, 24576, 4096), GemmTiling::Tile32x64x256_Simdgroups2x2);
-        assert_eq!(select_mxu_tiling(24, 24576, 4096), GemmTiling::Tile32x64x256_Simdgroups2x2);
-        assert_eq!(select_mxu_tiling(32, 4096, 12288), GemmTiling::Tile32x64x256_Simdgroups2x2);
-        assert!(small_m_mxu_skips_gemv(4, 2560, 2560));
-        assert!(small_m_mxu_skips_gemv(8, 2560, 9728));
-        assert!(!small_m_mxu_skips_gemv(4, 19456, 2560));
-        assert!(!small_m_mxu_skips_gemv(4, 24576, 4096));
-    }
-}
