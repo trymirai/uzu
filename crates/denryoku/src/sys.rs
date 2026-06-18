@@ -13,30 +13,60 @@ pub(crate) const fn event_field_base(event_type: i64) -> i32 {
 
 #[cfg(target_vendor = "apple")]
 mod apple {
-    use core::ffi::{c_char, c_void};
-    use std::sync::OnceLock;
+    use core::{
+        cell::UnsafeCell,
+        ffi::c_void,
+        marker::{PhantomData, PhantomPinned},
+    };
+    use std::{ffi::CString, sync::OnceLock};
 
-    pub(crate) struct Functions {
-        pub create: unsafe extern "C" fn(*const c_void) -> *mut c_void,
-        pub set_matching: unsafe extern "C" fn(*mut c_void, *const c_void) -> i32,
-        pub copy_services: unsafe extern "C" fn(*mut c_void) -> *const c_void,
-        pub copy_property: unsafe extern "C" fn(*mut c_void, *const c_void) -> *const c_void,
-        pub copy_event: unsafe extern "C" fn(*mut c_void, i64, i32, i64) -> *mut c_void,
-        pub get_float_value: unsafe extern "C" fn(*mut c_void, i32) -> f64,
-        pub get_registry_id: unsafe extern "C" fn(*mut c_void) -> u64,
+    use obfstr::obfstr;
+    use objc2_core_foundation::{CFAllocator, CFArray, CFDictionary, CFNumber, CFString, CFType};
+
+    // The IOHID handles are CoreFoundation types (they retain/release via
+    // `CFRetain`/`CFRelease`). Declaring them as proper CF types — same shape as
+    // `objc2-io-surface`'s `IOSurfaceRef` — lets them deref to `CFType` and flow
+    // through `CFRetained<T>`, so the FFI below is typed end-to-end instead of
+    // trafficking in `*mut c_void`.
+    macro_rules! opaque_cf_type {
+        ($name:ident) => {
+            #[repr(C)]
+            #[allow(dead_code)]
+            pub(crate) struct $name {
+                inner: [u8; 0],
+                _p: UnsafeCell<PhantomData<(*const UnsafeCell<()>, PhantomPinned)>>,
+            }
+            objc2_core_foundation::cf_type!(
+                unsafe impl $name {}
+            );
+        };
     }
 
-    const IOKIT_FRAMEWORK_PATH: &[u8] = b"/System/Library/Frameworks/IOKit.framework/IOKit\0";
+    opaque_cf_type!(IOHIDEventSystemClient);
+    opaque_cf_type!(IOHIDServiceClient);
+    opaque_cf_type!(IOHIDEvent);
+
+    pub(crate) struct Functions {
+        pub create: unsafe extern "C" fn(Option<&CFAllocator>) -> *mut IOHIDEventSystemClient,
+        pub set_matching: unsafe extern "C" fn(&IOHIDEventSystemClient, &CFDictionary<CFString, CFNumber>) -> i32,
+        pub copy_services: unsafe extern "C" fn(&IOHIDEventSystemClient) -> *mut CFArray,
+        pub copy_property: unsafe extern "C" fn(&IOHIDServiceClient, &CFString) -> *mut CFType,
+        pub copy_event: unsafe extern "C" fn(&IOHIDServiceClient, i64, i32, i64) -> *mut IOHIDEvent,
+        pub get_float_value: unsafe extern "C" fn(&IOHIDEvent, i32) -> f64,
+        pub get_registry_id: unsafe extern "C" fn(&IOHIDServiceClient) -> u64,
+    }
 
     fn resolve() -> Option<Functions> {
-        let handle = unsafe { libc::dlopen(IOKIT_FRAMEWORK_PATH.as_ptr().cast::<c_char>(), libc::RTLD_LAZY) };
+        let path = CString::new(obfstr!("/System/Library/Frameworks/IOKit.framework/IOKit")).ok()?;
+        let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_LAZY) };
         if handle.is_null() {
             return None;
         }
 
         macro_rules! symbol {
             ($name:literal, $signature:ty) => {{
-                let symbol = unsafe { libc::dlsym(handle, concat!($name, "\0").as_ptr().cast::<c_char>()) };
+                let name = CString::new(obfstr!($name)).ok()?;
+                let symbol = unsafe { libc::dlsym(handle, name.as_ptr()) };
                 if symbol.is_null() {
                     return None;
                 }
@@ -45,25 +75,31 @@ mod apple {
         }
 
         Some(Functions {
-            create: symbol!("IOHIDEventSystemClientCreate", unsafe extern "C" fn(*const c_void) -> *mut c_void),
+            create: symbol!(
+                "IOHIDEventSystemClientCreate",
+                unsafe extern "C" fn(Option<&CFAllocator>) -> *mut IOHIDEventSystemClient
+            ),
             set_matching: symbol!(
                 "IOHIDEventSystemClientSetMatching",
-                unsafe extern "C" fn(*mut c_void, *const c_void) -> i32
+                unsafe extern "C" fn(&IOHIDEventSystemClient, &CFDictionary<CFString, CFNumber>) -> i32
             ),
             copy_services: symbol!(
                 "IOHIDEventSystemClientCopyServices",
-                unsafe extern "C" fn(*mut c_void) -> *const c_void
+                unsafe extern "C" fn(&IOHIDEventSystemClient) -> *mut CFArray
             ),
             copy_property: symbol!(
                 "IOHIDServiceClientCopyProperty",
-                unsafe extern "C" fn(*mut c_void, *const c_void) -> *const c_void
+                unsafe extern "C" fn(&IOHIDServiceClient, &CFString) -> *mut CFType
             ),
             copy_event: symbol!(
                 "IOHIDServiceClientCopyEvent",
-                unsafe extern "C" fn(*mut c_void, i64, i32, i64) -> *mut c_void
+                unsafe extern "C" fn(&IOHIDServiceClient, i64, i32, i64) -> *mut IOHIDEvent
             ),
-            get_float_value: symbol!("IOHIDEventGetFloatValue", unsafe extern "C" fn(*mut c_void, i32) -> f64),
-            get_registry_id: symbol!("IOHIDServiceClientGetRegistryID", unsafe extern "C" fn(*mut c_void) -> u64),
+            get_float_value: symbol!("IOHIDEventGetFloatValue", unsafe extern "C" fn(&IOHIDEvent, i32) -> f64),
+            get_registry_id: symbol!(
+                "IOHIDServiceClientGetRegistryID",
+                unsafe extern "C" fn(&IOHIDServiceClient) -> u64
+            ),
         })
     }
 
@@ -74,4 +110,4 @@ mod apple {
 }
 
 #[cfg(target_vendor = "apple")]
-pub(crate) use apple::{Functions, functions};
+pub(crate) use apple::{Functions, IOHIDEvent, IOHIDEventSystemClient, IOHIDServiceClient, functions};

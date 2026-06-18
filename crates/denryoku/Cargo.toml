@@ -21,3 +21,4 @@ workspace = true
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2-core-foundation.workspace = true
 libc.workspace = true
+obfstr.workspace = true
