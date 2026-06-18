@@ -1,11 +1,12 @@
 use core::mem::transmute;
+use std::ffi::CString;
 
 use metal::MTLDevice;
+use obfstr::obfstr;
 use objc2::{
     Message,
     ffi::objc_msgSend,
     runtime::{NSObjectProtocol, ProtocolObject, Sel},
-    sel,
 };
 
 // Used to bypass objc2's debug-mode class validation for proxy objects like
@@ -24,11 +25,19 @@ unsafe fn raw_msg_send<T: Message + ?Sized, R>(
     unsafe { send(object_pointer, sel) }
 }
 
+// Registers a selector by name at runtime, so the obfuscated private selector
+// names are only ever materialized at runtime — never appearing verbatim in the
+// binary the way a compile-time `sel!(...)` would.
+fn register_selector(name: &str) -> Sel {
+    Sel::register(&CString::new(name).expect("selector name has no interior NUL byte"))
+}
+
 pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
     /// Number of GPU shader cores.
     fn gpu_core_count(&self) -> u32 {
-        if self.respondsToSelector(sel!(gpuCoreCount)) {
-            unsafe { raw_msg_send(self, sel!(gpuCoreCount)) }
+        let selector = register_selector(obfstr!("gpuCoreCount"));
+        if self.respondsToSelector(selector) {
+            unsafe { raw_msg_send(self, selector) }
         } else {
             8
         }
@@ -37,8 +46,9 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
     /// Whether the GPU has a Matrix eXtension Unit (neural accelerator for compute).
     /// True on M5+ (Gen18+), false on M1-M4.
     fn supports_mxu(&self) -> bool {
-        if self.respondsToSelector(sel!(supportsMXU)) {
-            unsafe { raw_msg_send(self, sel!(supportsMXU)) }
+        let selector = register_selector(obfstr!("supportsMXU"));
+        if self.respondsToSelector(selector) {
+            unsafe { raw_msg_send(self, selector) }
         } else {
             false
         }
