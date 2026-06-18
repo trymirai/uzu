@@ -8,14 +8,14 @@
 using namespace metal;
 
 // path_matrix: [B, T, T] uint8, inclusive ancestor matrix
-// a:           [B, HV, T] transposed
+// a_transposed: [B, HV, T]
 // b:           [B, T, HV]
 // prefix,beta: [B, T, HV] fp32
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(BuildPrefixBeta)(
     const device uint8_t* path_matrix,
-    const device T* a,
+    const device T* a_transposed,
     const device T* b,
     const device float* a_log,
     const device float* dt_bias,
@@ -46,7 +46,7 @@ PUBLIC KERNEL(BuildPrefixBeta)(
   for (uint col_idx = lane_id; col_idx < tree_size; col_idx += METAL_SIMD_SIZE) {
     if (path_matrix[path_row_offset + col_idx] != 0) {
       const uint a_idx = batch_offset + head_idx * tree_size + col_idx;
-      partial -= scale * activate_softplus(float(a[a_idx]) + dt);
+      partial -= scale * activate_softplus(float(a_transposed[a_idx]) + dt);
     }
   }
 

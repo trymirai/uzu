@@ -8,7 +8,7 @@ use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 #[variants(T, f32, f16, bf16)]
 pub fn build_prefix_beta<T: ArrayElement + Float>(
     path_matrix: *const u8,
-    a: *const T,
+    a_transposed: *const T,
     b: *const T,
     a_log: *const f32,
     dt_bias: *const f32,
@@ -38,7 +38,7 @@ pub fn build_prefix_beta<T: ArrayElement + Float>(
                         if *path_matrix.add(path_batch + row * tree_size + col) == 0 {
                             continue;
                         }
-                        let a_val = (*a.add(batch_offset + head * tree_size + col)).to_f32().unwrap();
+                        let a_val = (*a_transposed.add(batch_offset + head * tree_size + col)).to_f32().unwrap();
                         let sp = ActivationType::SOFTPLUS.activate(a_val + *dt_bias.add(head));
                         sum -= a_log.add(head).read().exp() * sp;
                     }

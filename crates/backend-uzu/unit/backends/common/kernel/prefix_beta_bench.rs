@@ -27,7 +27,7 @@ fn chain_path_matrix(tree_size: usize) -> Vec<u8> {
 
 struct PrefixBetaBuffers {
     path_matrix: Allocation<Metal>,
-    a: Allocation<Metal>,
+    a_transposed: Allocation<Metal>,
     b: Allocation<Metal>,
     prefix: Allocation<Metal>,
     beta: Allocation<Metal>,
@@ -46,7 +46,7 @@ fn bench_build_prefix_beta(c: &mut Criterion) {
         let value_heads = 48usize;
         let len = batch_size * tree_size * value_heads;
         let path_matrix = chain_path_matrix(tree_size);
-        let a = (0..len).map(|i| (i as f32 * 0.17).sin() - 0.4).collect::<Vec<_>>();
+        let a_transposed = (0..len).map(|i| (i as f32 * 0.17).sin() - 0.4).collect::<Vec<_>>();
         let b_data = (0..len).map(|i| (i as f32 * 0.11).cos() * 0.8).collect::<Vec<_>>();
         let a_log = (0..value_heads).map(|i| -0.2 + i as f32 * 0.03).collect::<Vec<_>>();
         let dt_bias = (0..value_heads).map(|i| 0.1 - i as f32 * 0.02).collect::<Vec<_>>();
@@ -56,7 +56,7 @@ fn bench_build_prefix_beta(c: &mut Criterion) {
         let bytes_per_copy = path_matrix.len() + len * size_of::<f32>() * 4;
         let mut buffers = ColdPool::new(bytes_per_copy, || PrefixBetaBuffers {
             path_matrix: context.create_array_from(&[path_matrix.len()], &path_matrix).into_allocation(),
-            a: context.create_array_from(&[a.len()], &a).into_allocation(),
+            a_transposed: context.create_array_from(&[a_transposed.len()], &a_transposed).into_allocation(),
             b: context.create_array_from(&[b_data.len()], &b_data).into_allocation(),
             prefix: context.create_array_uninitialized(&[len], DataType::F32).into_allocation(),
             beta: context.create_array_uninitialized(&[len], DataType::F32).into_allocation(),
@@ -72,7 +72,7 @@ fn bench_build_prefix_beta(c: &mut Criterion) {
                 let buffers = buffers.next_mut();
                 kernel.encode(
                     &buffers.path_matrix,
-                    &buffers.a,
+                    &buffers.a_transposed,
                     &buffers.b,
                     a_log.allocation(),
                     dt_bias.allocation(),
