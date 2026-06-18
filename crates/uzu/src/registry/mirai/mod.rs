@@ -15,47 +15,10 @@ pub use config::{Backend, Config};
 use indexmap::IndexMap;
 use nagare::api::{Client, Config as ClientConfig, Error as ApiError};
 use reqwest::header::AUTHORIZATION;
-use serde::{Deserialize, Serialize};
 use shoji::{traits::Registry as RegistryTrait, types::model::Model};
 pub use types::Response;
-use uuid::Uuid;
 
 use crate::registry::RegistryError;
-
-#[derive(Serialize, Deserialize)]
-struct RegistryCache {
-    key: String,
-    models: Vec<Model>,
-}
-
-#[derive(Debug)]
-enum FetchModelsError {
-    Request(ApiError),
-    EmptyResponse,
-}
-
-impl FetchModelsError {
-    fn is_transient(&self) -> bool {
-        match self {
-            FetchModelsError::Request(error) => {
-                matches!(error, ApiError::Timeout | ApiError::Network(_))
-                    || matches!(error, ApiError::Http { code, .. } if *code >= 500)
-            },
-            FetchModelsError::EmptyResponse => false,
-        }
-    }
-}
-
-impl From<FetchModelsError> for RegistryError {
-    fn from(error: FetchModelsError) -> Self {
-        RegistryError::UnableToGetModels {
-            message: match error {
-                FetchModelsError::Request(error) => error.to_string(),
-                FetchModelsError::EmptyResponse => "Unable to extract from response".to_string(),
-            },
-        }
-    }
-}
 
 pub struct Registry {
     config: Config,
@@ -97,20 +60,16 @@ impl RegistryTrait for Registry {
                     }
                     Ok(models)
                 },
-                Err(fetch_error) => {
-                    if !fetch_error.is_transient() {
-                        return Err(fetch_error.into());
+                Err(error) => {
+                    let transient = matches!(error, ApiError::Timeout | ApiError::Network(_))
+                        || matches!(error, ApiError::Http { code, .. } if code >= 500);
+                    if transient && let Ok(models) = self.load_registry() {
+                        tracing::warn!(?error, "serving cached Mirai registry after fetch failure");
+                        return Ok(models);
                     }
-                    match self.load_registry() {
-                        Ok(models) => {
-                            tracing::warn!(?fetch_error, "serving cached Mirai registry after fetch failure");
-                            Ok(models)
-                        },
-                        Err(load_error) => {
-                            tracing::warn!(?load_error, "failed to load cached Mirai registry");
-                            Err(fetch_error.into())
-                        },
-                    }
+                    Err(RegistryError::UnableToGetModels {
+                        message: error.to_string(),
+                    })
                 },
             }
         })
@@ -118,7 +77,7 @@ impl RegistryTrait for Registry {
 }
 
 impl Registry {
-    async fn fetch_models(&self) -> Result<Vec<Model>, FetchModelsError> {
+    async fn fetch_models(&self) -> Result<Vec<Model>, ApiError> {
         let response: Response = self
             .client
             .response(&Endpoint::FetchModels {
@@ -126,37 +85,19 @@ impl Registry {
                 backends: self.config.backends.clone(),
                 include_traces: self.config.include_traces,
             })
-            .await
-            .map_err(FetchModelsError::Request)?;
-        response.models().ok_or(FetchModelsError::EmptyResponse)
+            .await?;
+        response.models().ok_or_else(|| ApiError::Decode("response contained no models".to_string()))
     }
 
     fn registry_path(&self) -> PathBuf {
         self.config.cache_path.join("registry.json")
     }
 
-    fn cache_key(&self) -> String {
-        let fingerprint = serde_json::json!({
-            "api_key": self.config.api_key,
-            "backends": self.config.backends,
-            "include_traces": self.config.include_traces,
-            "os_name": self.config.device.os_name,
-            "cpu_name": self.config.device.cpu_name,
-            "memory_total": self.config.device.memory_total,
-        });
-        let bytes = serde_json::to_vec(&fingerprint).unwrap_or_default();
-        Uuid::new_v5(&Uuid::NAMESPACE_URL, &bytes).simple().to_string()
-    }
-
     fn save_registry(
         &self,
         models: &[Model],
     ) -> Result<(), RegistryError> {
-        let cache = RegistryCache {
-            key: self.cache_key(),
-            models: models.to_vec(),
-        };
-        let contents = serde_json::to_vec_pretty(&cache).map_err(|error| RegistryError::UnableToGetModels {
+        let contents = serde_json::to_vec_pretty(models).map_err(|error| RegistryError::UnableToGetModels {
             message: format!("Unable to serialize registry: {}", error),
         })?;
         write(self.registry_path(), contents).map_err(|error| RegistryError::UnableToGetModels {
@@ -168,15 +109,8 @@ impl Registry {
         let contents = read_to_string(self.registry_path()).map_err(|error| RegistryError::UnableToGetModels {
             message: format!("Unable to read registry: {}", error),
         })?;
-        let cache: RegistryCache =
-            serde_json::from_str(&contents).map_err(|error| RegistryError::UnableToGetModels {
-                message: format!("Unable to parse registry: {}", error),
-            })?;
-        if cache.key != self.cache_key() {
-            return Err(RegistryError::UnableToGetModels {
-                message: "Cached registry does not match the current request context".to_string(),
-            });
-        }
-        Ok(cache.models)
+        serde_json::from_str(&contents).map_err(|error| RegistryError::UnableToGetModels {
+            message: format!("Unable to parse registry: {}", error),
+        })
     }
 }
