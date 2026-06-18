@@ -1024,6 +1024,7 @@ dependencies = [
  "clap",
  "comfy-table",
  "indicatif",
+ "jsonschema",
  "rocket",
  "serde",
  "serde_json",

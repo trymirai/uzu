@@ -107,15 +107,56 @@ impl GemmKernel {
         }
     }
 
-    pub fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
-        &mut self,
-        arguments: MatmulArguments<'a, Metal, TB>,
-        encoder: &mut Encoder<Metal>,
-    ) -> Result<(), MetalError> {
-        let mxu_eligible_for_quant = match &arguments.b {
+    pub(crate) fn should_skip_gemv_for_mxu<TB: AsBufferRangeRef>(
+        &self,
+        arguments: &MatmulArguments<'_, Metal, TB>,
+    ) -> bool {
+        match (
+            arguments.m,
+            arguments.n == arguments.k,
+            (self.weights_data_type, self.input_data_type, self.output_data_type),
+        ) {
+            (4, true, (DataType::F32, DataType::F32, DataType::F32))
+            | (5, _, (DataType::BF16, DataType::BF16, DataType::BF16)) => return false,
+            _ => {},
+        }
+        match arguments.m {
+            0..=3 => return false,
+            4 => {
+                // The M4 MXU tile only uses a quarter of its rows; avoid it for wide-N shapes.
+                let small_enough_for_mxu = arguments.n <= 6144 && arguments.k <= 9728;
+                let k_dominates = arguments.k > 3_u32.saturating_mul(arguments.n);
+                if !(small_enough_for_mxu || k_dominates) {
+                    return false;
+                }
+            },
+            _ => {},
+        }
+        matches!(
+            self.select_mxu_tiling(arguments),
+            Some(GemmTiling::Tile16x32x256_Simdgroups1x1 | GemmTiling::Tile16x128x256_Simdgroups1x4)
+        )
+    }
+
+    fn select_mxu_tiling<TB: AsBufferRangeRef>(
+        &self,
+        arguments: &MatmulArguments<'_, Metal, TB>,
+    ) -> Option<GemmTiling> {
+        if ![self.weights_data_type, self.input_data_type, self.output_data_type]
+            .into_iter()
+            .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32))
+        {
+            return None;
+        }
+
+        match &arguments.b {
             MatmulB::FullPrecision {
                 ..
-            } => true,
+            } => Some(if arguments.b_transpose {
+                select_mxu_tiling(arguments.m, arguments.n, arguments.k)
+            } else {
+                select_base_mxu_tiling(arguments.m, arguments.n)
+            }),
             MatmulB::ScaleBiasDequant {
                 ..
             }
@@ -125,18 +166,21 @@ impl GemmKernel {
             | MatmulB::ScaleSymmetricDequant {
                 ..
             } => {
-                arguments.b_transpose
-                    && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
-                    && arguments.b_offset == 0
-                    && arguments.k.is_multiple_of(select_mxu_tiling(arguments.m, arguments.n).block_k())
+                if !arguments.b_transpose || arguments.b_leading_dimension.is_some() || arguments.b_offset != 0 {
+                    return None;
+                }
+                let tiling = select_mxu_quant_tiling(arguments.m, arguments.n, arguments.b.group_size().unwrap_or(0));
+                arguments.k.is_multiple_of(tiling.block_k()).then_some(tiling)
             },
-        };
-        let path = if encoder.context().device.supports_mxu()
-            && [self.weights_data_type, self.input_data_type, self.output_data_type]
-                .into_iter()
-                .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32))
-            && mxu_eligible_for_quant
-        {
+        }
+    }
+
+    pub fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+        &mut self,
+        arguments: MatmulArguments<'a, Metal, TB>,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MetalError> {
+        let path = if encoder.context().device.supports_mxu() && self.select_mxu_tiling(&arguments).is_some() {
             GemmDispatchPath::Mxu
         } else {
             GemmDispatchPath::Simdgroup
@@ -218,7 +262,11 @@ impl GemmKernel {
                 b: weights,
             } => {
                 let tiling = if use_mxu {
-                    select_mxu_tiling(m, n)
+                    if b_transpose {
+                        select_mxu_tiling(m, n, k)
+                    } else {
+                        select_base_mxu_tiling(m, n)
+                    }
                 } else {
                     select_simdgroup_tiling(m, n, k)
                 };
@@ -642,6 +690,28 @@ pub(crate) fn select_simdgroup_tiling(
 pub(crate) fn select_mxu_tiling(
     m: u32,
     n: u32,
+    k: u32,
+) -> GemmTiling {
+    if m < 64 && n >= 64 {
+        if n == k {
+            return if m < 16 && k <= 2560 {
+                GemmTiling::Tile16x32x256_Simdgroups1x1
+            } else {
+                GemmTiling::Tile32x64x256_Simdgroups2x2
+            };
+        }
+        return if m < 16 {
+            select_small_m_mxu_tiling(n, k)
+        } else {
+            select_base_mxu_tiling(m, n)
+        };
+    }
+    select_base_mxu_tiling(m, n)
+}
+
+fn select_base_mxu_tiling(
+    m: u32,
+    n: u32,
 ) -> GemmTiling {
     if m >= 256 && n >= 128 {
         GemmTiling::Tile128x128x256_Simdgroups4x4
@@ -654,17 +724,30 @@ pub(crate) fn select_mxu_tiling(
     }
 }
 
+fn select_small_m_mxu_tiling(
+    n: u32,
+    k: u32,
+) -> GemmTiling {
+    if k > n {
+        return GemmTiling::Tile16x128x256_Simdgroups1x4;
+    }
+    if n > 32_u32.saturating_mul(k) {
+        return GemmTiling::Tile16x32x256_Simdgroups1x1;
+    }
+    if (k >= 4096 && n >= 4_u32.saturating_mul(k)) || (k == 2560 && n >= 6_u32.saturating_mul(k)) {
+        return GemmTiling::Tile16x128x256_Simdgroups1x4;
+    }
+    GemmTiling::Tile32x64x256_Simdgroups2x2
+}
+
 pub(crate) fn select_mxu_quant_tiling(
     m: u32,
     n: u32,
     group_size: u32,
 ) -> GemmTiling {
-    if m >= 256 && n >= 128 && GemmTiling::Tile128x128x256_Simdgroups4x4.fits_quant_group_size(group_size) {
-        GemmTiling::Tile128x128x256_Simdgroups4x4
-    } else if n < 64 {
-        GemmTiling::Tile64x32x256_Simdgroups4x1
-    } else if m < 64 {
-        GemmTiling::Tile32x64x256_Simdgroups2x2
+    let tiling = select_base_mxu_tiling(m, n);
+    if tiling.fits_quant_group_size(group_size) {
+        tiling
     } else {
         GemmTiling::Tile64x64x256_Simdgroups2x2
     }
