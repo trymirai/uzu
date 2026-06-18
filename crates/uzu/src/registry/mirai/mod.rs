@@ -13,7 +13,7 @@ use std::{
 pub use api::Endpoint;
 pub use config::{Backend, Config};
 use indexmap::IndexMap;
-use nagare::api::{Client, Config as ClientConfig};
+use nagare::api::{Client, Config as ClientConfig, Error as ApiError};
 use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 use shoji::{traits::Registry as RegistryTrait, types::model::Model};
@@ -26,6 +26,35 @@ use crate::registry::RegistryError;
 struct RegistryCache {
     key: String,
     models: Vec<Model>,
+}
+
+#[derive(Debug)]
+enum FetchModelsError {
+    Request(ApiError),
+    EmptyResponse,
+}
+
+impl FetchModelsError {
+    fn is_transient(&self) -> bool {
+        match self {
+            FetchModelsError::Request(error) => {
+                matches!(error, ApiError::Timeout | ApiError::Network(_))
+                    || matches!(error, ApiError::Http { code, .. } if *code >= 500)
+            },
+            FetchModelsError::EmptyResponse => false,
+        }
+    }
+}
+
+impl From<FetchModelsError> for RegistryError {
+    fn from(error: FetchModelsError) -> Self {
+        RegistryError::UnableToGetModels {
+            message: match error {
+                FetchModelsError::Request(error) => error.to_string(),
+                FetchModelsError::EmptyResponse => "Unable to extract from response".to_string(),
+            },
+        }
+    }
 }
 
 pub struct Registry {
@@ -68,15 +97,20 @@ impl RegistryTrait for Registry {
                     }
                     Ok(models)
                 },
-                Err(fetch_error) => match self.load_registry() {
-                    Ok(models) => {
-                        tracing::warn!(?fetch_error, "serving cached Mirai registry after fetch failure");
-                        Ok(models)
-                    },
-                    Err(load_error) => {
-                        tracing::warn!(?load_error, "failed to load cached Mirai registry");
-                        Err(fetch_error)
-                    },
+                Err(fetch_error) => {
+                    if !fetch_error.is_transient() {
+                        return Err(fetch_error.into());
+                    }
+                    match self.load_registry() {
+                        Ok(models) => {
+                            tracing::warn!(?fetch_error, "serving cached Mirai registry after fetch failure");
+                            Ok(models)
+                        },
+                        Err(load_error) => {
+                            tracing::warn!(?load_error, "failed to load cached Mirai registry");
+                            Err(fetch_error.into())
+                        },
+                    }
                 },
             }
         })
@@ -84,7 +118,7 @@ impl RegistryTrait for Registry {
 }
 
 impl Registry {
-    async fn fetch_models(&self) -> Result<Vec<Model>, RegistryError> {
+    async fn fetch_models(&self) -> Result<Vec<Model>, FetchModelsError> {
         let response: Response = self
             .client
             .response(&Endpoint::FetchModels {
@@ -93,12 +127,8 @@ impl Registry {
                 include_traces: self.config.include_traces,
             })
             .await
-            .map_err(|error| RegistryError::UnableToGetModels {
-                message: error.to_string(),
-            })?;
-        response.models().ok_or(RegistryError::UnableToGetModels {
-            message: "Unable to extract from response".to_string(),
-        })
+            .map_err(FetchModelsError::Request)?;
+        response.models().ok_or(FetchModelsError::EmptyResponse)
     }
 
     fn registry_path(&self) -> PathBuf {
