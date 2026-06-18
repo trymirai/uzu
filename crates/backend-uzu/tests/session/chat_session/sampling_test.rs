@@ -27,7 +27,10 @@ fn run(
             .expect("load model");
     session
         .run(
-            Input::Messages(vec![Message::user(prompt.to_string())]),
+            Input::Messages {
+                messages: vec![Message::user(prompt.to_string())],
+                tools: Vec::new(),
+            },
             RunConfig::default().tokens_limit(48).enable_thinking(false).sampling_policy(policy),
             Some(|_: Output| true),
         )

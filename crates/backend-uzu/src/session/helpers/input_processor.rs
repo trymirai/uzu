@@ -103,15 +103,21 @@ impl InputProcessor for InputProcessorDefault {
         environment.add_template(template_name, template.as_str()).map_err(Error::UnableToLoadPromptTemplate)?;
         let template = environment.get_template(template_name).map_err(Error::UnableToLoadPromptTemplate)?;
 
-        let result = template
-            .render(context!(
-                messages => messages,
-                add_generation_prompt => add_generation_prompt,
-                bos_token => bos_token,
-                eos_token => eos_token,
-                enable_thinking => enable_thinking
-            ))
-            .map_err(Error::UnableToRenderPromptTemplate)?;
+        let mut render_context = context!(
+            messages => messages,
+            add_generation_prompt => add_generation_prompt,
+            bos_token => bos_token,
+            eos_token => eos_token,
+            enable_thinking => enable_thinking
+        );
+        // Only expose `tools` when present: some templates (e.g. Llama 3.x) gate on
+        // `tools is not none`, so an empty list would wrongly enable tool-calling.
+        let tools = input.get_tools();
+        if !tools.is_empty() {
+            render_context = context!(tools => tools, ..render_context);
+        }
+
+        let result = template.render(render_context).map_err(Error::UnableToRenderPromptTemplate)?;
         Ok(result)
     }
 }

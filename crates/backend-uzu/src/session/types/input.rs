@@ -3,7 +3,10 @@ use crate::session::types::{Message, Role};
 #[derive(Debug, Clone)]
 pub enum Input {
     Text(String),
-    Messages(Vec<Message>),
+    Messages {
+        messages: Vec<Message>,
+        tools: Vec<serde_json::Value>,
+    },
 }
 
 impl Input {
@@ -14,7 +17,20 @@ impl Input {
                 content: content.clone(),
                 reasoning_content: None,
             }],
-            Input::Messages(messages) => messages.clone(),
+            Input::Messages {
+                messages,
+                ..
+            } => messages.clone(),
+        }
+    }
+
+    pub fn get_tools(&self) -> &[serde_json::Value] {
+        match self {
+            Input::Messages {
+                tools,
+                ..
+            } => tools,
+            Input::Text(_) => &[],
         }
     }
 }

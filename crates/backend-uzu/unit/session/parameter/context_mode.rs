@@ -93,16 +93,19 @@ fn test_context_mode_static() {
     let parameter_city = "London".to_string();
 
     let decoding_config = build_decoding_config().with_context_mode(ContextMode::Static {
-        input: Input::Messages(vec![
-            Message::system("Always answer with one word or number, no punctuation".to_string()),
-            Message::user(
-                format!(
-                    "Name: {}\nAge: {}\nOccupation: {}\nCity: {}",
-                    parameter_name, parameter_age, parameter_occupation, parameter_city
-                )
-                .to_string(),
-            ),
-        ]),
+        input: Input::Messages {
+            messages: vec![
+                Message::system("Always answer with one word or number, no punctuation".to_string()),
+                Message::user(
+                    format!(
+                        "Name: {}\nAge: {}\nOccupation: {}\nCity: {}",
+                        parameter_name, parameter_age, parameter_occupation, parameter_city
+                    )
+                    .to_string(),
+                ),
+            ],
+            tools: Vec::new(),
+        },
     });
     let mut session = Session::new(get_test_model_path(), decoding_config).unwrap();
 

@@ -26,7 +26,10 @@ fn ask(
             .expect("load model");
     session
         .run(
-            Input::Messages(vec![Message::user(prompt.to_string())]),
+            Input::Messages {
+                messages: vec![Message::user(prompt.to_string())],
+                tools: Vec::new(),
+            },
             RunConfig::default().tokens_limit(256).enable_thinking(enable_thinking),
             Some(|_: Output| true),
         )
@@ -91,7 +94,10 @@ fn thinking_toggle_within_one_session() {
         messages.push(Message::user(prompt.to_string()));
         let output = session
             .run(
-                Input::Messages(messages.clone()),
+                Input::Messages {
+                    messages: messages.clone(),
+                    tools: Vec::new(),
+                },
                 RunConfig::default().tokens_limit(256).enable_thinking(enable_thinking),
                 Some(|_: Output| true),
             )
