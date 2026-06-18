@@ -1674,7 +1674,7 @@ checksum = "5729f5117e208430e437df2f4843f5e5952997175992d1414f94c57d61e270b4"
 name = "denryoku"
 version = "0.5.12"
 dependencies = [
- "libc",
+ "kanka",
  "obfstr",
  "objc2-core-foundation",
 ]
@@ -3269,6 +3269,15 @@ dependencies = [
  "serde_json",
  "unicode-general-category",
  "uuid-simd",
+]
+
+[[package]]
+name = "kanka"
+version = "0.5.12"
+dependencies = [
+ "libc",
+ "obfstr",
+ "objc2-core-foundation",
 ]
 
 [[package]]

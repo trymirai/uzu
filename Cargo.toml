@@ -19,6 +19,7 @@ members = [
     "crates/cli-tools",
     "crates/test-runner",
     "crates/denryoku",
+    "crates/kanka",
 ]
 resolver = "3"
 
@@ -59,6 +60,7 @@ download-manager = { path = "crates/download-manager", default-features = false 
 mock-registry = { path = "crates/mock-registry", default-features = false }
 benchmarks = { path = "crates/benchmarks", default-features = false }
 denryoku = { path = "crates/denryoku", default-features = false }
+kanka = { path = "crates/kanka", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
 xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgrammar-rs.git", tag = "0.2.2", features = ["tokenizers"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
