@@ -74,6 +74,7 @@ objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
 objc2-core-foundation = "0.3.2"
 objc2-security = "0.3.2"
+obfstr = "0.4.4"
 metal = { package = "mtl-rs", version = "0.1.12" }
 block2 = "0.6"
 bytemuck = "1.23"
