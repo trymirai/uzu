@@ -8,7 +8,8 @@
 using namespace metal;
 
 // path_matrix: [B, T, T] uint8, inclusive ancestor matrix
-// a, b:        [B, T, HV]
+// a:           [B, HV, T] transposed
+// b:           [B, T, HV]
 // prefix,beta: [B, T, HV] fp32
 template <typename T>
 VARIANTS(T, float, half, bfloat)
@@ -35,16 +36,16 @@ PUBLIC KERNEL(BuildPrefixBeta)(
     return;
   }
 
-  const uint tensor_base = batch_idx * tree_size * value_heads;
-  const uint path_base = batch_idx * tree_size * tree_size + row_idx * tree_size;
-  const uint out_idx = tensor_base + row_idx * value_heads + head_idx;
+  const uint batch_offset = batch_idx * tree_size * value_heads;
+  const uint path_row_offset = batch_idx * tree_size * tree_size + row_idx * tree_size;
+  const uint out_idx = batch_offset + row_idx * value_heads + head_idx;
 
   const float scale = fast::exp(float(a_log[head_idx]));
   const float dt = float(dt_bias[head_idx]);
   float partial = 0.0f;
   for (uint col_idx = lane_id; col_idx < tree_size; col_idx += METAL_SIMD_SIZE) {
-    if (path_matrix[path_base + col_idx] != 0) {
-      const uint a_idx = tensor_base + col_idx * value_heads + head_idx;
+    if (path_matrix[path_row_offset + col_idx] != 0) {
+      const uint a_idx = batch_offset + head_idx * tree_size + col_idx;
       partial -= scale * activate_softplus(float(a[a_idx]) + dt);
     }
   }

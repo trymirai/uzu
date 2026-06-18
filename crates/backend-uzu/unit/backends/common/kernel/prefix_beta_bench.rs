@@ -1,16 +1,18 @@
 #![cfg(metal_backend)]
 
+use std::mem::size_of;
+
 use criterion::{BenchmarkId, Criterion, Throughput};
 use proc_macros::uzu_bench;
 
 use crate::{
     array::ArrayContextExt,
     backends::{
-        common::{Backend, Kernels, kernel::BuildPrefixBetaKernel},
+        common::{Allocation, Backend, Kernels, kernel::BuildPrefixBetaKernel},
         metal::Metal,
     },
     data_type::DataType,
-    tests::{matmul::iter_encode_loop_named, util::type_short_name},
+    tests::{cold_pool::ColdPool, matmul::iter_encode_loop_named, util::type_short_name},
 };
 
 fn chain_path_matrix(tree_size: usize) -> Vec<u8> {
@@ -21,6 +23,14 @@ fn chain_path_matrix(tree_size: usize) -> Vec<u8> {
         }
     }
     path_matrix
+}
+
+struct PrefixBetaBuffers {
+    path_matrix: Allocation<Metal>,
+    a: Allocation<Metal>,
+    b: Allocation<Metal>,
+    prefix: Allocation<Metal>,
+    beta: Allocation<Metal>,
 }
 
 #[uzu_bench]
@@ -41,13 +51,16 @@ fn bench_build_prefix_beta(c: &mut Criterion) {
         let a_log = (0..value_heads).map(|i| -0.2 + i as f32 * 0.03).collect::<Vec<_>>();
         let dt_bias = (0..value_heads).map(|i| 0.1 - i as f32 * 0.02).collect::<Vec<_>>();
 
-        let path_matrix = context.create_array_from(&[path_matrix.len()], &path_matrix);
-        let a = context.create_array_from(&[a.len()], &a);
-        let b_data = context.create_array_from(&[b_data.len()], &b_data);
         let a_log = context.create_array_from(&[a_log.len()], &a_log);
         let dt_bias = context.create_array_from(&[dt_bias.len()], &dt_bias);
-        let mut prefix = context.create_array_uninitialized(&[len], DataType::F32).into_allocation();
-        let mut beta = context.create_array_uninitialized(&[len], DataType::F32).into_allocation();
+        let bytes_per_copy = path_matrix.len() + len * size_of::<f32>() * 4;
+        let mut buffers = ColdPool::new(bytes_per_copy, || PrefixBetaBuffers {
+            path_matrix: context.create_array_from(&[path_matrix.len()], &path_matrix).into_allocation(),
+            a: context.create_array_from(&[a.len()], &a).into_allocation(),
+            b: context.create_array_from(&[b_data.len()], &b_data).into_allocation(),
+            prefix: context.create_array_uninitialized(&[len], DataType::F32).into_allocation(),
+            beta: context.create_array_uninitialized(&[len], DataType::F32).into_allocation(),
+        });
 
         group.throughput(Throughput::Elements((len * tree_size) as u64));
         group.bench_function(BenchmarkId::from_parameter(format!("B1_T{tree_size}_HV{value_heads}")), |bencher| {
@@ -56,14 +69,15 @@ fn bench_build_prefix_beta(c: &mut Criterion) {
                 type_short_name::<Metal>()
             );
             iter_encode_loop_named::<Metal, _>(&context, bencher, &benchmark_path, |encoder| {
+                let buffers = buffers.next_mut();
                 kernel.encode(
-                    path_matrix.allocation(),
-                    a.allocation(),
-                    b_data.allocation(),
+                    &buffers.path_matrix,
+                    &buffers.a,
+                    &buffers.b,
                     a_log.allocation(),
                     dt_bias.allocation(),
-                    &mut prefix,
-                    &mut beta,
+                    &mut buffers.prefix,
+                    &mut buffers.beta,
                     batch_size as u32,
                     tree_size as u32,
                     value_heads as u32,
