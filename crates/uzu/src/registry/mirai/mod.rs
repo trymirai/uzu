@@ -13,7 +13,7 @@ use std::{
 pub use api::Endpoint;
 pub use config::{Backend, Config};
 use indexmap::IndexMap;
-use nagare::api::{Client, Config as ClientConfig};
+use nagare::api::{Client, Config as ClientConfig, Error as ApiError};
 use reqwest::header::AUTHORIZATION;
 use shoji::{traits::Registry as RegistryTrait, types::model::Model};
 pub use types::Response;
@@ -60,15 +60,16 @@ impl RegistryTrait for Registry {
                     }
                     Ok(models)
                 },
-                Err(fetch_error) => match self.load_registry() {
-                    Ok(models) => {
-                        tracing::warn!(?fetch_error, "serving cached Mirai registry after fetch failure");
-                        Ok(models)
-                    },
-                    Err(load_error) => {
-                        tracing::warn!(?load_error, "failed to load cached Mirai registry");
-                        Err(fetch_error)
-                    },
+                Err(error) => {
+                    let transient = matches!(error, ApiError::Timeout | ApiError::Network(_))
+                        || matches!(error, ApiError::Http { code, .. } if code >= 500);
+                    if transient && let Ok(models) = self.load_registry() {
+                        tracing::warn!(?error, "serving cached Mirai registry after fetch failure");
+                        return Ok(models);
+                    }
+                    Err(RegistryError::UnableToGetModels {
+                        message: error.to_string(),
+                    })
                 },
             }
         })
@@ -76,7 +77,7 @@ impl RegistryTrait for Registry {
 }
 
 impl Registry {
-    async fn fetch_models(&self) -> Result<Vec<Model>, RegistryError> {
+    async fn fetch_models(&self) -> Result<Vec<Model>, ApiError> {
         let response: Response = self
             .client
             .response(&Endpoint::FetchModels {
@@ -84,13 +85,8 @@ impl Registry {
                 backends: self.config.backends.clone(),
                 include_traces: self.config.include_traces,
             })
-            .await
-            .map_err(|error| RegistryError::UnableToGetModels {
-                message: error.to_string(),
-            })?;
-        response.models().ok_or(RegistryError::UnableToGetModels {
-            message: "Unable to extract from response".to_string(),
-        })
+            .await?;
+        response.models().ok_or_else(|| ApiError::Decode("response contained no models".to_string()))
     }
 
     fn registry_path(&self) -> PathBuf {
