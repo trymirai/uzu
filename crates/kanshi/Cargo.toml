@@ -1,5 +1,5 @@
 [package]
-name = "monitor"
+name = "kanshi"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
@@ -10,7 +10,7 @@ license.workspace = true
 description = "mactop-style live system monitor built on keisoku"
 
 [[bin]]
-name = "monitor"
+name = "kanshi"
 path = "src/main.rs"
 
 [lints]

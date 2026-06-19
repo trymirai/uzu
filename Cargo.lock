@@ -3283,6 +3283,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kanshi"
+version = "0.5.12"
+dependencies = [
+ "crossterm",
+ "keisoku",
+ "ratatui",
+ "sysinfo",
+]
+
+[[package]]
 name = "kasuari"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3727,16 +3737,6 @@ dependencies = [
  "tokio",
  "tracing",
  "wiremock",
-]
-
-[[package]]
-name = "monitor"
-version = "0.5.12"
-dependencies = [
- "crossterm",
- "keisoku",
- "ratatui",
- "sysinfo",
 ]
 
 [[package]]

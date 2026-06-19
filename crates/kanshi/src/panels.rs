@@ -288,7 +288,7 @@ fn render_processes(
 fn header_title(device: Option<&Device>) -> String {
     match device {
         Some(device) => format!(
-            " keisoku  •  {}  •  {}C ({}E+{}P)  •  {} GPU  •  {:.0} GB ",
+            " kanshi  •  {}  •  {}C ({}E+{}P)  •  {} GPU  •  {:.0} GB ",
             device.chip,
             device.efficiency_cores + device.performance_cores,
             device.efficiency_cores,
@@ -296,6 +296,6 @@ fn header_title(device: Option<&Device>) -> String {
             device.gpu_cores,
             device.ram_total.value() as f64 / 1e9,
         ),
-        None => " keisoku ".to_string(),
+        None => " kanshi ".to_string(),
     }
 }
