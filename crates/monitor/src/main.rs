@@ -1,3 +1,9 @@
+mod disk_row;
+mod host_info;
+mod net_interface;
+mod process_row;
+mod telemetry;
+
 use std::{
     collections::{HashSet, VecDeque},
     io,
@@ -9,7 +15,7 @@ use std::{
 };
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use keisoku::{Collector, Device, Snapshot};
+use keisoku::{Collector, Device};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -18,6 +24,10 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
 };
 use sysinfo::{Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System};
+
+use crate::{
+    disk_row::DiskRow, host_info::HostInfo, net_interface::NetInterface, process_row::ProcessRow, telemetry::Telemetry,
+};
 
 const HISTORY: usize = 256;
 const PROCESS_ROWS: usize = 8;
@@ -91,57 +101,6 @@ fn adjust_interval(delta: i64) {
     let current = INTERVAL_MS.load(Ordering::Relaxed) as i64;
     let next = (current + delta).clamp(MIN_INTERVAL_MS as i64, MAX_INTERVAL_MS as i64) as u64;
     INTERVAL_MS.store(next, Ordering::Relaxed);
-}
-
-struct ProcessRow {
-    cpu: f32,
-    memory: u64,
-    name: String,
-}
-
-struct DiskRow {
-    name: String,
-    used: u64,
-    total: u64,
-}
-
-struct NetInterface {
-    name: String,
-    down: f64,
-    up: f64,
-}
-
-struct HostInfo {
-    user: String,
-    hostname: String,
-    os: String,
-    kernel: String,
-    shell: String,
-}
-
-#[derive(Default)]
-struct Telemetry {
-    device: Option<Device>,
-    host: Option<HostInfo>,
-    snapshot: Option<Snapshot>,
-    cpu_history: VecDeque<f64>,
-    gpu_history: VecDeque<f64>,
-    ane_history: VecDeque<f64>,
-    memory_history: VecDeque<f64>,
-    power_history: VecDeque<f64>,
-    max_power: f64,
-    uptime_seconds: u64,
-    network_down: f64,
-    network_up: f64,
-    network_packets_down: f64,
-    network_packets_up: f64,
-    network_total_down: u64,
-    network_total_up: u64,
-    network_interfaces: Vec<NetInterface>,
-    disk_read: f64,
-    disk_written: f64,
-    disks: Vec<DiskRow>,
-    processes: Vec<ProcessRow>,
 }
 
 fn main() -> io::Result<()> {
