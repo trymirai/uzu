@@ -1,27 +1,3 @@
-//! A faithful recreation of the `mactop` default layout, built on `keisoku`
-//! for the SoC telemetry (CPU/GPU/ANE/power/DRAM/temps) and `sysinfo` for the
-//! OS-level panels (processes, network, disks), using the same
-//! `ratatui`/`crossterm` stack as the rest of the workspace.
-//!
-//! Keys: `i` toggles a neofetch-style info screen, `c` cycles the accent color,
-//! `b` toggles the background, `+`/`-` speed up / slow down sampling,
-//! `q`/`Esc`/`Ctrl-C` quits (mactop-style).
-//! Run: `cargo run -p keisoku --example monitor`.
-//!
-//! Layout (mactop "default", rounded outer frame). Every usage metric is a
-//! filled-area braille line chart (smooth top edge, flat accent color):
-//! ```text
-//! ┌ keisoku · <chip> · <cores> · <gpu> · <ram> ───────────────── 0.5 ┐
-//! │ CPU chart                       │ GPU chart                      │
-//! ├─────────────────────────────────┼────────────────────────────────┤
-//! │ ANE chart                       │ Memory chart                   │
-//! │ Power Usage   │ Package chart   │ Apple Silicon  │ Fans           │
-//! ├─────────────────────────────────┴────────────────────────────────┤
-//! │ Process List            │ IO      │ Disk         │ Network        │
-//! └ green ────────── Color: c · BG: b · Exit: q ────────── -/+ 1000ms ┘
-//! ```
-//! Power Usage shows per-rail watts + `Pkg` (SMC package) + `Battery`.
-
 use std::{
     collections::{HashSet, VecDeque},
     io,
@@ -47,13 +23,11 @@ const HISTORY: usize = 256;
 const PROCESS_ROWS: usize = 8;
 const NETWORK_ROWS: usize = 4;
 
-// Sampling cadence, adjustable at runtime with `+` (faster) / `-` (slower).
 const MIN_INTERVAL_MS: u64 = 100;
 const MAX_INTERVAL_MS: u64 = 5000;
 const INTERVAL_STEP_MS: u64 = 100;
 static INTERVAL_MS: AtomicU64 = AtomicU64::new(1000);
 
-/// Accent colors cycled with `c` (mactop-style); first is the default.
 const THEMES: [(&str, Color); 7] = [
     ("green", Color::Green),
     ("cyan", Color::Cyan),
@@ -66,16 +40,13 @@ const THEMES: [(&str, Color); 7] = [
 
 static THEME_INDEX: AtomicUsize = AtomicUsize::new(0);
 static DARK_BACKGROUND: AtomicBool = AtomicBool::new(true);
-/// Toggled by `i`: replaces the dashboard with a neofetch-style info screen.
+
 static SHOW_INFO: AtomicBool = AtomicBool::new(false);
-/// Bumped on every published sample so the render loop only redraws on changes.
+
 static DATA_VERSION: AtomicU64 = AtomicU64::new(0);
 
-/// Disk capacity changes slowly, so re-probe volumes at most this often (the
-/// per-volume `statfs` is the single most expensive part of a sample).
 const DISK_REFRESH: Duration = Duration::from_secs(3);
 
-/// macOS Apple logo, drawn beside the info lines (mactop/neofetch style).
 const APPLE_ART: [&str; 17] = [
     "                    'c.        ",
     "                 ,xNMM.        ",
@@ -96,7 +67,6 @@ const APPLE_ART: [&str; 17] = [
     "       .cooc,.    .,coo:.      ",
 ];
 
-/// Current theme `(name, color)`, advanced by `c`.
 fn theme() -> (&'static str, Color) {
     THEMES[THEME_INDEX.load(Ordering::Relaxed) % THEMES.len()]
 }
@@ -105,7 +75,6 @@ fn accent() -> Color {
     theme().1
 }
 
-/// Current background, toggled by `b`.
 fn background() -> Color {
     if DARK_BACKGROUND.load(Ordering::Relaxed) {
         Color::Black
@@ -114,41 +83,34 @@ fn background() -> Color {
     }
 }
 
-/// The current sampling cadence.
 fn interval() -> Duration {
     Duration::from_millis(INTERVAL_MS.load(Ordering::Relaxed))
 }
 
-/// Shifts the sampling cadence by `delta` ms (clamped); `+` passes a negative
-/// delta to sample faster, `-` a positive one to sample slower.
 fn adjust_interval(delta: i64) {
     let current = INTERVAL_MS.load(Ordering::Relaxed) as i64;
     let next = (current + delta).clamp(MIN_INTERVAL_MS as i64, MAX_INTERVAL_MS as i64) as u64;
     INTERVAL_MS.store(next, Ordering::Relaxed);
 }
 
-/// A process row for the bottom list.
 struct ProcessRow {
     cpu: f32,
     memory: u64,
     name: String,
 }
 
-/// A disk row for the network/disk panel.
 struct DiskRow {
     name: String,
     used: u64,
     total: u64,
 }
 
-/// A per-interface row for the detailed network panel (rates in bytes/sec).
 struct NetInterface {
     name: String,
     down: f64,
     up: f64,
 }
 
-/// Static host identity for the info screen, gathered once at startup.
 struct HostInfo {
     user: String,
     hostname: String,
@@ -157,7 +119,6 @@ struct HostInfo {
     shell: String,
 }
 
-/// Live state shared between the sampler thread and the render loop.
 #[derive(Default)]
 struct Telemetry {
     device: Option<Device>,
@@ -193,9 +154,6 @@ fn main() -> io::Result<()> {
         std::thread::spawn(move || sample_loop(&telemetry, &stop))
     };
 
-    // `ratatui::init` enters raw mode + the alternate screen and installs a
-    // panic hook that restores the terminal, so a panic in the render loop
-    // can't leave the shell corrupted.
     let mut terminal = ratatui::init();
     let result = run(&mut terminal, &telemetry);
     ratatui::restore();
@@ -205,8 +163,6 @@ fn main() -> io::Result<()> {
     result
 }
 
-/// Background sampler: `keisoku` for SoC telemetry (blocks the window),
-/// `sysinfo` for processes / network / disks, published into shared state.
 fn sample_loop(
     telemetry: &Arc<Mutex<Telemetry>>,
     stop: &Arc<AtomicBool>,
@@ -233,8 +189,7 @@ fn sample_loop(
     let mut all_disks = Disks::new_with_refreshed_list();
     let mut last_refresh = Instant::now();
     let mut last_disk_refresh: Option<Instant> = None;
-    // Only the data the panels actually use — skips per-process thread/exe
-    // enumeration that the default `refresh_processes` would do.
+
     let process_kind = ProcessRefreshKind::nothing().with_cpu().with_memory().with_disk_usage();
 
     while !stop.load(Ordering::Relaxed) {
@@ -256,7 +211,7 @@ fn sample_loop(
             packets_out += data.packets_transmitted();
             total_in += data.total_received();
             total_out += data.total_transmitted();
-            // List interfaces that have ever carried traffic, busiest first.
+
             if data.total_received() > 0 || data.total_transmitted() > 0 {
                 interfaces.push(NetInterface {
                     name: name.clone(),
@@ -268,10 +223,6 @@ fn sample_loop(
         interfaces.sort_by(|a, b| (b.down + b.up).partial_cmp(&(a.down + a.up)).unwrap_or(std::cmp::Ordering::Equal));
         interfaces.truncate(NETWORK_ROWS);
 
-        // Disk capacity barely moves, so re-probe at most every `DISK_REFRESH`
-        // and reuse the last rows otherwise. macOS lists the APFS system and
-        // data volumes (and other synthesized mounts) under one name, e.g.
-        // "Macintosh HD" twice — keep the first of each name.
         let disks = last_disk_refresh.is_none_or(|at| at.elapsed() >= DISK_REFRESH).then(|| {
             last_disk_refresh = Some(Instant::now());
             all_disks.refresh(true);
@@ -288,8 +239,6 @@ fn sample_loop(
                 .collect::<Vec<_>>()
         });
 
-        // Aggregate system disk activity from per-process I/O deltas (sysinfo
-        // has no per-volume counters), summed over every process this refresh.
         let (mut disk_read, mut disk_written) = (0u64, 0u64);
         for process in system.processes().values() {
             let io = process.disk_usage();
@@ -318,7 +267,7 @@ fn sample_loop(
             .filter(|m| m.ram_total.value() > 0)
             .map(|m| m.ram_usage.value() as f64 / m.ram_total.value() as f64 * 100.0)
             .unwrap_or(0.0);
-        // Track whole-package power (SMC PSTR) as the headline graph.
+
         let power = snapshot.power.as_ref().map(|p| p.package.value() as f64).unwrap_or(0.0);
 
         if let Ok(mut state) = telemetry.lock() {
@@ -352,9 +301,6 @@ fn run(
     terminal: &mut DefaultTerminal,
     telemetry: &Arc<Mutex<Telemetry>>,
 ) -> io::Result<()> {
-    // Redraw only when a new sample has been published or input/resize forces
-    // it, instead of unconditionally every poll — keeps the UI near-idle while
-    // the sampler sleeps the interval.
     let mut shown_version = u64::MAX;
     let mut redraw = true;
     loop {
@@ -367,8 +313,6 @@ fn run(
         }
         if event::poll(Duration::from_millis(200))? {
             match event::read()? {
-                // Only react to presses: terminals with the kitty/Windows key
-                // protocol also report releases/repeats (double-handling keys).
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
                     match key.code {
@@ -424,12 +368,10 @@ fn draw(
         .constraints([Constraint::Percentage(25), Constraint::Percentage(50), Constraint::Percentage(25)])
         .split(area);
 
-    // Row 1: CPU | GPU usage history charts.
     let top = split_horizontal(rows[0], [Constraint::Percentage(50), Constraint::Percentage(50)]);
     render_chart(frame, top[0], cpu_title(state), &state.cpu_history, 100.0);
     render_chart(frame, top[1], gpu_title(state), &state.gpu_history, 100.0);
 
-    // Row 2: left (ANE + power) | right (memory + model/network).
     let middle = split_horizontal(rows[1], [Constraint::Percentage(50), Constraint::Percentage(50)]);
 
     let left = split_vertical(middle[0], [Constraint::Percentage(50), Constraint::Percentage(50)]);
@@ -444,7 +386,6 @@ fn draw(
     render_model(frame, right_bottom[0], state);
     render_fans(frame, right_bottom[1], state);
 
-    // Row 3: process list | IO | disk | network.
     let bottom = split_horizontal(
         rows[2],
         [
@@ -460,8 +401,6 @@ fn draw(
     render_network(frame, bottom[3], state);
 }
 
-/// The neofetch-style info screen (mactop's `i` layout): the Apple logo beside a
-/// column of system identity + live-telemetry key/value lines.
 fn render_info(
     frame: &mut Frame,
     area: Rect,
@@ -475,7 +414,6 @@ fn render_info(
     frame.render_widget(Paragraph::new(build_info_lines(state)).style(Style::default().fg(accent())), columns[1]);
 }
 
-/// A `label: value` info row, label padded and bold like mactop's info layout.
 fn info_line(
     label: &str,
     value: String,
@@ -486,8 +424,6 @@ fn info_line(
     ])
 }
 
-/// Builds the info-screen key/value lines from host identity + the latest
-/// snapshot, in mactop's order (identity, usage, I/O, battery, fans, volumes).
 fn build_info_lines(state: &Telemetry) -> Vec<Line<'static>> {
     let snapshot = state.snapshot.as_ref();
     let mut lines = Vec::new();
@@ -601,16 +537,8 @@ fn build_info_lines(state: &Telemetry) -> Vec<Line<'static>> {
     lines
 }
 
-/// Braille dot bits per cell sub-column (`0`/`1`) and internal row (`0` = top
-/// of the cell), in standard Unicode dot numbering — used to fill the area with
-/// 2×4-dot resolution.
 const BRAILLE_DOTS: [[u16; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
 
-/// A bordered panel containing a filled-area history chart, rendered in braille
-/// (2×4 dots per cell) in the flat accent color. The fill height is linearly
-/// interpolated across the two sub-columns of each cell, so the top edge slopes
-/// smoothly between samples (a line-plot look rather than vertical bars); newest
-/// sample at the right.
 fn render_chart(
     frame: &mut Frame,
     area: Rect,
@@ -633,13 +561,11 @@ fn render_chart(
     let offset = columns - shown.len();
     let ceiling = ceiling.max(1e-9);
     let cell_rows = inner.height as usize;
-    let sub_rows = cell_rows * 4; // four braille dot rows per cell
+    let sub_rows = cell_rows * 4;
     let last = shown.len() - 1;
     let color = accent();
     let background = background();
 
-    // Fill height (in dot rows from the floor) for a braille sub-column, with
-    // two sub-columns per terminal cell linearly interpolated between samples.
     let fill_at = |sub_x: usize| -> Option<usize> {
         let position = sub_x as f64 / 2.0 - offset as f64;
         if position < 0.0 {
@@ -753,8 +679,6 @@ fn render_power(
 ) {
     let mut lines = Vec::new();
     if let Some(power) = state.snapshot.as_ref().and_then(|s| s.power.as_ref()) {
-        // Fixed-width labels (5) and values (6) so the `|` and right column stay
-        // aligned as the numbers grow.
         lines.push(Line::from(format!(
             "{:<6}{:>6.2} W | {:<5}{:>6.2} W",
             "CPU:",
@@ -828,7 +752,6 @@ fn render_fans(
     frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Fans")), area);
 }
 
-/// Live disk read/write activity (aggregate I/O), in its own panel.
 fn render_io(
     frame: &mut Frame,
     area: Rect,
@@ -859,8 +782,6 @@ fn render_network(
     area: Rect,
     state: &Telemetry,
 ) {
-    // Aggregate rates, packet rates, and cumulative session totals, then a
-    // per-interface breakdown (busiest first) so it's clear which link is busy.
     let mut lines = vec![
         Line::from(format!(
             "{:<6}↑ {}/s  ↓ {}/s",
@@ -902,7 +823,6 @@ fn render_processes(
     frame.render_widget(List::new(items).style(Style::default().fg(accent())).block(panel("Process List")), area);
 }
 
-/// A square-bordered, green panel with a title (matches mactop's inner widgets).
 fn panel(title: &str) -> Block<'_> {
     Block::default()
         .borders(Borders::ALL)

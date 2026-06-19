@@ -3297,13 +3297,11 @@ dependencies = [
 name = "keisoku"
 version = "0.5.12"
 dependencies = [
- "crossterm",
  "kanka",
  "libc",
  "obfstr",
  "objc2-core-foundation",
  "objc2-io-kit",
- "ratatui",
  "serde",
  "serde_json",
  "sysinfo",
@@ -3729,6 +3727,16 @@ dependencies = [
  "tokio",
  "tracing",
  "wiremock",
+]
+
+[[package]]
+name = "monitor"
+version = "0.5.12"
+dependencies = [
+ "crossterm",
+ "keisoku",
+ "ratatui",
+ "sysinfo",
 ]
 
 [[package]]

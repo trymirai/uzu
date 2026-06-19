@@ -21,11 +21,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sysinfo.workspace = true
 
-# For the `monitor` example (a mactop-style live TUI).
-[dev-dependencies]
-crossterm.workspace = true
-ratatui.workspace = true
-
 [target.'cfg(target_vendor = "apple")'.dependencies]
 kanka.workspace = true
 objc2-core-foundation.workspace = true

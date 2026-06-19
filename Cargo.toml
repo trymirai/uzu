@@ -19,6 +19,7 @@ members = [
     "crates/cli-tools",
     "crates/test-runner",
     "crates/keisoku",
+    "crates/monitor",
     "crates/kanka",
 ]
 resolver = "3"
