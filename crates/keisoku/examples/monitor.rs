@@ -17,7 +17,7 @@
 //! │ ANE chart                       │ Memory chart                   │
 //! │ Power Usage   │ Package chart   │ Apple Silicon │ Fans           │
 //! ├─────────────────────────────────┴────────────────────────────────┤
-//! │ Process List                  │ Disk           │ Network         │
+//! │ Process List            │ IO      │ Disk         │ Network        │
 //! └ green ────────── Color: c · BG: b · Exit: q ────────── -/+ 1000ms ┘
 //! ```
 //! Power Usage shows per-rail watts + `Pkg` (SMC package) + `Battery`.
@@ -413,12 +413,20 @@ fn draw(
     render_model(frame, right_bottom[0], state);
     render_fans(frame, right_bottom[1], state);
 
-    // Row 3: process list | disk | network.
-    let bottom =
-        split_horizontal(rows[2], [Constraint::Percentage(50), Constraint::Percentage(25), Constraint::Percentage(25)]);
+    // Row 3: process list | IO | disk | network.
+    let bottom = split_horizontal(
+        rows[2],
+        [
+            Constraint::Percentage(40),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+        ],
+    );
     render_processes(frame, bottom[0], state);
-    render_disk(frame, bottom[1], state);
-    render_network(frame, bottom[2], state);
+    render_io(frame, bottom[1], state);
+    render_disk(frame, bottom[2], state);
+    render_network(frame, bottom[3], state);
 }
 
 /// The neofetch-style info screen (mactop's `i` layout): the Apple logo beside a
@@ -789,20 +797,29 @@ fn render_fans(
     frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Fans")), area);
 }
 
+/// Live disk read/write activity (aggregate I/O), in its own panel.
+fn render_io(
+    frame: &mut Frame,
+    area: Rect,
+    state: &Telemetry,
+) {
+    let lines = vec![
+        Line::from(format!("R {}/s", human_bytes(state.disk_read as u64))),
+        Line::from(format!("W {}/s", human_bytes(state.disk_written as u64))),
+    ];
+    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("IO")), area);
+}
+
 fn render_disk(
     frame: &mut Frame,
     area: Rect,
     state: &Telemetry,
 ) {
-    // Live read/write activity (I/O) on top, then per-volume capacity.
-    let mut lines = vec![Line::from(format!(
-        "I/O  R {}/s  W {}/s",
-        human_bytes(state.disk_read as u64),
-        human_bytes(state.disk_written as u64),
-    ))];
-    for disk in &state.disks {
-        lines.push(Line::from(format!("{}: {} / {}", disk.name, human_bytes(disk.used), human_bytes(disk.total))));
-    }
+    let lines: Vec<Line> = state
+        .disks
+        .iter()
+        .map(|disk| Line::from(format!("{}: {} / {}", disk.name, human_bytes(disk.used), human_bytes(disk.total))))
+        .collect();
     frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Disk")), area);
 }
 
