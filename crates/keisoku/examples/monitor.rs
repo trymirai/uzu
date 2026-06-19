@@ -66,7 +66,7 @@ const THEMES: [(&str, Color); 7] = [
 ];
 
 static THEME_INDEX: AtomicUsize = AtomicUsize::new(0);
-static DARK_BACKGROUND: AtomicBool = AtomicBool::new(false);
+static DARK_BACKGROUND: AtomicBool = AtomicBool::new(true);
 
 /// Current accent (name, color), advanced by `c`.
 fn theme() -> (&'static str, Color) {
