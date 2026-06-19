@@ -1,7 +1,21 @@
-//! A mactop-style live system monitor built on `keisoku`, using the same
+//! A faithful recreation of the `mactop` default layout, built on `keisoku`
+//! for the SoC telemetry (CPU/GPU/ANE/power/DRAM/temps) and `sysinfo` for the
+//! OS-level panels (processes, network, disks), using the same
 //! `ratatui`/`crossterm` stack as the rest of the workspace.
 //!
 //! `cargo run -p keisoku --example monitor`  —  press `q`/`Esc`/`Ctrl-C` to quit.
+//!
+//! Layout (mactop "default", all green, rounded outer frame):
+//! ```text
+//! ┌ keisoku · <chip> · <cores> · <gpu> · <ram> ───────────────── 0.5 ┐
+//! │ CPU gauge                       │ GPU gauge                      │
+//! ├─────────────────────────────────┼────────────────────────────────┤
+//! │ ANE gauge                       │ Memory gauge                   │
+//! │ Power Usage   │ <power spark>   │ Apple Silicon │ Network & Disk │
+//! ├─────────────────────────────────┴────────────────────────────────┤
+//! │ Process List                                                      │
+//! └ 1/1 layout (green) ───────────── Exit: q ──────────────── 1000ms ┘
+//! ```
 
 use std::{
     collections::VecDeque,
@@ -10,7 +24,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crossterm::{
@@ -23,51 +37,54 @@ use ratatui::{
     Frame, Terminal,
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, Paragraph},
+    widgets::{Block, BorderType, Borders, Gauge, List, ListItem, Paragraph},
 };
+use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
 
-const HISTORY: usize = 240;
+const GREEN: Color = Color::Green;
+const LABEL: Color = Color::Indexed(245); // grey, like mactop's gauge label
+const HISTORY: usize = 256;
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(1000);
+const PROCESS_ROWS: usize = 8;
+
+/// A process row for the bottom list.
+struct ProcessRow {
+    cpu: f32,
+    memory: u64,
+    name: String,
+}
+
+/// A disk row for the network/disk panel.
+struct DiskRow {
+    name: String,
+    used: u64,
+    total: u64,
+}
 
 /// Live state shared between the sampler thread and the render loop.
 #[derive(Default)]
-struct Monitor {
+struct Telemetry {
     device: Option<Device>,
-    latest: Option<Snapshot>,
+    snapshot: Option<Snapshot>,
     power_history: VecDeque<f64>,
+    max_power: f64,
+    uptime_seconds: u64,
+    network_down: f64,
+    network_up: f64,
+    disks: Vec<DiskRow>,
+    processes: Vec<ProcessRow>,
 }
 
 fn main() -> io::Result<()> {
-    let monitor = Arc::new(Mutex::new(Monitor::default()));
+    let telemetry = Arc::new(Mutex::new(Telemetry::default()));
     let stop = Arc::new(AtomicBool::new(false));
 
-    // The Collector holds raw IOReport pointers (`!Send`) and `sample` blocks
-    // for the window, so it lives in its own thread and publishes the latest
-    // snapshot; the render loop stays responsive.
     let sampler = {
-        let monitor = Arc::clone(&monitor);
+        let telemetry = Arc::clone(&telemetry);
         let stop = Arc::clone(&stop);
-        std::thread::spawn(move || {
-            let mut collector = Collector::new();
-            let device = collector.device();
-            if let Ok(mut state) = monitor.lock() {
-                state.device = Some(device);
-            }
-            while !stop.load(Ordering::Relaxed) {
-                let snapshot = collector.sample(SAMPLE_INTERVAL);
-                if let Ok(mut state) = monitor.lock() {
-                    if let Some(power) = &snapshot.power {
-                        state.power_history.push_back(power.total.value() as f64);
-                        while state.power_history.len() > HISTORY {
-                            state.power_history.pop_front();
-                        }
-                    }
-                    state.latest = Some(snapshot);
-                }
-            }
-        })
+        std::thread::spawn(move || sample_loop(&telemetry, &stop))
     };
 
     enable_raw_mode()?;
@@ -75,7 +92,7 @@ fn main() -> io::Result<()> {
     execute!(stdout, EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
-    let result = run(&mut terminal, &monitor);
+    let result = run(&mut terminal, &telemetry);
 
     stop.store(true, Ordering::Relaxed);
     disable_raw_mode()?;
@@ -85,20 +102,86 @@ fn main() -> io::Result<()> {
     result
 }
 
+/// Background sampler: `keisoku` for SoC telemetry (blocks the window),
+/// `sysinfo` for processes / network / disks, published into shared state.
+fn sample_loop(
+    telemetry: &Arc<Mutex<Telemetry>>,
+    stop: &Arc<AtomicBool>,
+) {
+    let mut collector = Collector::new();
+    let device = collector.device();
+    if let Ok(mut state) = telemetry.lock() {
+        state.device = Some(device);
+    }
+
+    let mut system = System::new();
+    let mut networks = Networks::new_with_refreshed_list();
+    let mut last_refresh = Instant::now();
+
+    while !stop.load(Ordering::Relaxed) {
+        let snapshot = collector.sample(SAMPLE_INTERVAL);
+
+        system.refresh_processes(ProcessesToUpdate::All, true);
+        networks.refresh(true);
+        let elapsed = last_refresh.elapsed().as_secs_f64().max(0.001);
+        last_refresh = Instant::now();
+
+        let (mut received, mut transmitted) = (0u64, 0u64);
+        for data in networks.values() {
+            received += data.received();
+            transmitted += data.transmitted();
+        }
+
+        let disks = Disks::new_with_refreshed_list()
+            .list()
+            .iter()
+            .map(|disk| DiskRow {
+                name: disk.name().to_string_lossy().into_owned(),
+                used: disk.total_space().saturating_sub(disk.available_space()),
+                total: disk.total_space(),
+            })
+            .collect::<Vec<_>>();
+
+        let mut processes = system
+            .processes()
+            .values()
+            .map(|process| ProcessRow {
+                cpu: process.cpu_usage(),
+                memory: process.memory(),
+                name: process.name().to_string_lossy().into_owned(),
+            })
+            .collect::<Vec<_>>();
+        processes.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap_or(std::cmp::Ordering::Equal));
+        processes.truncate(PROCESS_ROWS);
+
+        if let Ok(mut state) = telemetry.lock() {
+            if let Some(power) = &snapshot.power {
+                let total = power.total.value() as f64;
+                state.power_history.push_back(total);
+                while state.power_history.len() > HISTORY {
+                    state.power_history.pop_front();
+                }
+                state.max_power = state.max_power.max(total);
+            }
+            state.snapshot = Some(snapshot);
+            state.uptime_seconds = System::uptime();
+            state.network_down = received as f64 / elapsed;
+            state.network_up = transmitted as f64 / elapsed;
+            state.disks = disks;
+            state.processes = processes;
+        }
+    }
+}
+
 fn run<B: Backend>(
     terminal: &mut Terminal<B>,
-    monitor: &Arc<Mutex<Monitor>>,
+    telemetry: &Arc<Mutex<Telemetry>>,
 ) -> io::Result<()> {
     loop {
-        // Copy the data out under the lock, then draw without holding it.
-        let (device, latest, power_history) = {
-            let state = monitor.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            (state.device.clone(), state.latest.clone(), state.power_history.iter().copied().collect::<Vec<_>>())
-        };
-        terminal
-            .draw(|frame| draw(frame, device.as_ref(), latest.as_ref(), &power_history))
-            .map_err(|error| io::Error::other(error.to_string()))?;
-
+        {
+            let state = telemetry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            terminal.draw(|frame| draw(frame, &state)).map_err(|error| io::Error::other(error.to_string()))?;
+        }
         if event::poll(Duration::from_millis(200))?
             && let Event::Key(key) = event::read()?
         {
@@ -113,210 +196,316 @@ fn run<B: Backend>(
 
 fn draw(
     frame: &mut Frame,
-    device: Option<&Device>,
-    latest: Option<&Snapshot>,
-    power_history: &[f64],
+    state: &Telemetry,
 ) {
-    let title = device.map(device_title).unwrap_or_else(|| " keisoku monitor ".to_string());
     let outer = Block::default()
         .borders(Borders::ALL)
-        .title(Span::styled(title, Style::default().add_modifier(Modifier::BOLD).fg(Color::White)));
-    let inner = outer.inner(frame.area());
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(GREEN))
+        .title_style(Style::default().fg(GREEN))
+        .title_top(Line::from(header_title(state.device.as_ref())))
+        .title_top(Line::from(format!(" {} ", env!("CARGO_PKG_VERSION"))).right_aligned())
+        .title_bottom(Line::from(" 1/1 layout (green) "))
+        .title_bottom(Line::from(" Exit: q ").centered())
+        .title_bottom(Line::from(" 1000ms ").right_aligned());
+    let area = outer.inner(frame.area());
     frame.render_widget(outer, frame.area());
-
-    let Some(snapshot) = latest else {
-        frame.render_widget(Paragraph::new("\n  sampling…").style(Style::default().fg(Color::DarkGray)), inner);
-        return;
-    };
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // CPU
-            Constraint::Length(3), // GPU
-            Constraint::Length(3), // ANE
-            Constraint::Length(3), // RAM
-            Constraint::Min(4),    // power graph
-            Constraint::Length(5), // stats (DRAM / temps / thermal)
-            Constraint::Length(1), // footer
-        ])
-        .split(inner);
+        .constraints([Constraint::Percentage(25), Constraint::Percentage(50), Constraint::Percentage(25)])
+        .split(area);
 
-    if let Some(cpu) = &snapshot.cpu {
-        let label = format!(
-            "CPU {:>5.1}%    E {:.2} GHz    P {:.2} GHz",
-            cpu.usage.value(),
-            cpu.ecpu_frequency.value() as f64 / 1000.0,
-            cpu.pcpu_frequency.value() as f64 / 1000.0,
-        );
-        render_gauge(frame, rows[0], Color::Cyan, ratio(cpu.usage.value(), 100.0), label);
-    } else {
-        render_unavailable(frame, rows[0], "CPU");
-    }
+    // Row 1: CPU | GPU gauges.
+    let top = split_horizontal(rows[0], [Constraint::Percentage(50), Constraint::Percentage(50)]);
+    render_cpu(frame, top[0], state);
+    render_gpu(frame, top[1], state);
 
-    if let Some(gpu) = &snapshot.gpu {
-        let label = format!("GPU {:>5.1}%    {} MHz", gpu.usage.value(), gpu.frequency.value());
-        render_gauge(frame, rows[1], Color::Green, ratio(gpu.usage.value(), 100.0), label);
-    } else {
-        render_unavailable(frame, rows[1], "GPU");
-    }
+    // Row 2: left (ANE + power) | right (memory + model/network).
+    let middle = split_horizontal(rows[1], [Constraint::Percentage(50), Constraint::Percentage(50)]);
 
-    if let Some(ane) = &snapshot.neural_engine {
-        let label = format!("ANE {:>5.1}%    {:.2} W", ane.active.value(), ane.power.value());
-        render_gauge(frame, rows[2], Color::Magenta, ratio(ane.active.value(), 100.0), label);
-    } else {
-        render_unavailable(frame, rows[2], "ANE");
-    }
+    let left = split_vertical(middle[0], [Constraint::Percentage(50), Constraint::Percentage(50)]);
+    render_ane(frame, left[0], state);
+    let left_bottom = split_horizontal(left[1], [Constraint::Percentage(50), Constraint::Percentage(50)]);
+    render_power(frame, left_bottom[0], state);
+    render_sparkline(frame, left_bottom[1], state);
 
-    if let Some(memory) = &snapshot.memory {
-        let used = memory.ram_usage.value() as f64;
-        let total = memory.ram_total.value() as f64;
-        let label = format!("RAM   {:.1} / {:.1} GB", used / 1e9, total / 1e9);
-        render_gauge(
-            frame,
-            rows[3],
-            Color::Blue,
-            if total > 0.0 {
-                used / total
-            } else {
-                0.0
-            },
-            label,
-        );
-    } else {
-        render_unavailable(frame, rows[3], "RAM");
-    }
+    let right = split_vertical(middle[1], [Constraint::Percentage(50), Constraint::Percentage(50)]);
+    render_memory(frame, right[0], state);
+    let right_bottom = split_horizontal(right[1], [Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]);
+    render_model(frame, right_bottom[0], state);
+    render_network(frame, right_bottom[1], state);
 
-    render_power(frame, rows[4], snapshot, power_history);
-    render_stats(frame, rows[5], snapshot);
-    frame.render_widget(
-        Paragraph::new(" q/Esc quit · 1s sampling").style(Style::default().fg(Color::DarkGray)),
-        rows[6],
-    );
+    // Row 3: process list.
+    render_processes(frame, rows[2], state);
 }
 
-fn render_power(
+fn render_cpu(
     frame: &mut Frame,
     area: Rect,
-    snapshot: &Snapshot,
-    power_history: &[f64],
+    state: &Telemetry,
 ) {
-    let block = Block::default().borders(Borders::ALL).title(" Power ");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let mut lines = Vec::new();
-    if let Some(power) = &snapshot.power {
-        lines.push(Line::from(format!(
-            "total {:>6.2} W    cpu {:.2}  gpu {:.2} (sram {:.2})  ane {:.2}  ram {:.2}",
-            power.total.value(),
-            power.cpu.value(),
-            power.gpu.value(),
-            power.gpu_sram.value(),
-            power.ane.value(),
-            power.ram.value(),
-        )));
-    } else {
-        lines.push(Line::from(Span::styled("power unavailable", Style::default().fg(Color::DarkGray))));
-    }
-    let graph = sparkline(power_history, inner.width as usize);
-    lines.push(Line::from(Span::styled(graph, Style::default().fg(Color::Yellow))));
-    frame.render_widget(Paragraph::new(lines), inner);
-}
-
-fn render_stats(
-    frame: &mut Frame,
-    area: Rect,
-    snapshot: &Snapshot,
-) {
-    let mut lines = Vec::new();
-    if let Some(bandwidth) = &snapshot.bandwidth {
-        lines.push(Line::from(format!(
-            "DRAM    read {:>6.1}    write {:>6.1} GB/s",
-            bandwidth.dram_read.value(),
-            bandwidth.dram_write.value(),
-        )));
-    }
-    if let Some(temperatures) = &snapshot.temperatures {
-        lines.push(Line::from(format!(
-            "Temp    CPU {:>5.1}°C    GPU {:>5.1}°C    sensors {}",
-            temperatures.cpu_average.value(),
-            temperatures.gpu_average.value(),
-            snapshot.sensors.len(),
-        )));
-    }
-    let thermal = snapshot.thermal_pressure.map(|state| format!("{state:?}")).unwrap_or_else(|| "—".to_string());
-    let thermal_color = if matches!(thermal.as_str(), "Nominal" | "—") {
-        Color::Green
-    } else {
-        Color::Red
+    let cpu = state.snapshot.as_ref().and_then(|s| s.cpu.as_ref());
+    let device = state.device.as_ref();
+    let temperature = state.snapshot.as_ref().and_then(|s| s.temperatures.as_ref()).map(|t| t.cpu_average.value());
+    let (title, ratio) = match (cpu, device) {
+        (Some(cpu), Some(device)) => {
+            let cores = device.efficiency_cores + device.performance_cores;
+            let title = format!(
+                "{} Cores ({}E/{}P) {:.2}% @ E{:.1}/P{:.1} GHz ({:.0}°C)",
+                cores,
+                device.efficiency_cores,
+                device.performance_cores,
+                cpu.usage.value(),
+                cpu.ecpu_frequency.value() as f64 / 1000.0,
+                cpu.pcpu_frequency.value() as f64 / 1000.0,
+                temperature.unwrap_or(0.0),
+            );
+            (title, cpu.usage.value() as f64 / 100.0)
+        },
+        _ => ("Loading…".to_string(), 0.0),
     };
-    lines.push(Line::from(vec![Span::raw("Thermal "), Span::styled(thermal, Style::default().fg(thermal_color))]));
+    render_gauge(frame, area, &title, ratio);
+}
 
-    frame.render_widget(Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" System ")), area);
+fn render_gpu(
+    frame: &mut Frame,
+    area: Rect,
+    state: &Telemetry,
+) {
+    let gpu = state.snapshot.as_ref().and_then(|s| s.gpu.as_ref());
+    let temperature = state.snapshot.as_ref().and_then(|s| s.temperatures.as_ref()).map(|t| t.gpu_average.value());
+    let (title, ratio) = match gpu {
+        Some(gpu) => (
+            format!(
+                "GPU Usage: {:.0}% @ {} MHz ({:.0}°C)",
+                gpu.usage.value(),
+                gpu.frequency.value(),
+                temperature.unwrap_or(0.0),
+            ),
+            gpu.usage.value() as f64 / 100.0,
+        ),
+        None => ("GPU Usage".to_string(), 0.0),
+    };
+    render_gauge(frame, area, &title, ratio);
+}
+
+fn render_ane(
+    frame: &mut Frame,
+    area: Rect,
+    state: &Telemetry,
+) {
+    let ane = state.snapshot.as_ref().and_then(|s| s.neural_engine.as_ref());
+    let (title, ratio) = match ane {
+        Some(ane) => (
+            format!("ANE Usage: {:.2}% @ {:.2} W", ane.active.value(), ane.power.value()),
+            ane.active.value() as f64 / 100.0,
+        ),
+        None => ("ANE Usage".to_string(), 0.0),
+    };
+    render_gauge(frame, area, &title, ratio);
+}
+
+fn render_memory(
+    frame: &mut Frame,
+    area: Rect,
+    state: &Telemetry,
+) {
+    let memory = state.snapshot.as_ref().and_then(|s| s.memory.as_ref());
+    let bandwidth = state
+        .snapshot
+        .as_ref()
+        .and_then(|s| s.bandwidth.as_ref())
+        .map(|b| b.dram_read.value() + b.dram_write.value())
+        .unwrap_or(0.0);
+    let (title, ratio) = match memory {
+        Some(memory) => {
+            let used = memory.ram_usage.value() as f64;
+            let total = memory.ram_total.value() as f64;
+            let title = format!(
+                "Mem: {:.2} GB / {:.2} GB (Swap: {:.2}/{:.2} GB) BW: {:.1} GB/s",
+                used / 1e9,
+                total / 1e9,
+                memory.swap_usage.value() as f64 / 1e9,
+                memory.swap_total.value() as f64 / 1e9,
+                bandwidth,
+            );
+            (
+                title,
+                if total > 0.0 {
+                    used / total
+                } else {
+                    0.0
+                },
+            )
+        },
+        None => ("Memory Usage".to_string(), 0.0),
+    };
+    render_gauge(frame, area, &title, ratio);
 }
 
 fn render_gauge(
     frame: &mut Frame,
     area: Rect,
-    color: Color,
+    title: &str,
     ratio: f64,
-    label: String,
 ) {
+    let ratio = ratio.clamp(0.0, 1.0);
     let gauge = Gauge::default()
-        .block(Block::default().borders(Borders::ALL))
-        .gauge_style(Style::default().fg(color).bg(Color::Black))
-        .ratio(ratio.clamp(0.0, 1.0))
-        .label(label);
+        .block(panel(title))
+        .gauge_style(Style::default().fg(GREEN).bg(Color::Reset))
+        .label(Span::styled(format!("{:.0}%", ratio * 100.0), Style::default().fg(LABEL)))
+        .ratio(ratio);
     frame.render_widget(gauge, area);
 }
 
-fn render_unavailable(
+fn render_power(
     frame: &mut Frame,
     area: Rect,
-    name: &str,
+    state: &Telemetry,
 ) {
-    let text = format!("{name}   unavailable on this platform");
-    frame.render_widget(
-        Paragraph::new(Span::styled(text, Style::default().fg(Color::DarkGray)))
-            .block(Block::default().borders(Borders::ALL)),
-        area,
-    );
-}
-
-fn ratio(
-    value: f32,
-    full: f32,
-) -> f64 {
-    if full > 0.0 {
-        (value / full) as f64
-    } else {
-        0.0
+    let mut lines = Vec::new();
+    if let Some(power) = state.snapshot.as_ref().and_then(|s| s.power.as_ref()) {
+        lines.push(Line::from(format!(
+            "CPU: {:.2} W | GPU: {:.2} W",
+            power.cpu.value(),
+            power.gpu.value() + power.gpu_sram.value(),
+        )));
+        lines.push(Line::from(format!("ANE: {:.2} W | DRAM: {:.2} W", power.ane.value(), power.ram.value())));
+        lines.push(Line::from(format!("Total: {:.2} W", power.total.value())));
     }
+    let thermals =
+        state.snapshot.as_ref().and_then(|s| s.thermal_pressure).map(|t| format!("{t:?}")).unwrap_or_default();
+    lines.push(Line::from(format!("Thermals: {thermals}")));
+    lines.push(Line::from(format!("Uptime: {}", format_uptime(state.uptime_seconds))));
+    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(GREEN)).block(panel("Power Usage")), area);
 }
 
-fn device_title(device: &Device) -> String {
-    format!(
-        " {} · {} · {}E/{}P · {} GPU · {:.0} GB ",
-        device.chip,
-        device.os,
-        device.efficiency_cores,
-        device.performance_cores,
-        device.gpu_cores,
-        device.ram_total.value() as f64 / 1e9,
-    )
+fn render_sparkline(
+    frame: &mut Frame,
+    area: Rect,
+    state: &Telemetry,
+) {
+    let current = state.power_history.back().copied().unwrap_or(0.0);
+    let average = if state.power_history.is_empty() {
+        0.0
+    } else {
+        state.power_history.iter().sum::<f64>() / state.power_history.len() as f64
+    };
+    let thermals =
+        state.snapshot.as_ref().and_then(|s| s.thermal_pressure).map(|t| format!("{t:?}")).unwrap_or_default();
+    let block = panel_owned(format!("{current:.2} W Total (Max: {:.2} W)", state.max_power));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let graph = sparkline(&state.power_history, inner.width as usize);
+    let lines = vec![Line::from(graph), Line::from(format!("Avg: {average:.2} W | {thermals}"))];
+    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(GREEN)), inner);
+}
+
+fn render_model(
+    frame: &mut Frame,
+    area: Rect,
+    state: &Telemetry,
+) {
+    let mut lines = Vec::new();
+    if let Some(device) = &state.device {
+        lines.push(Line::from(device.chip.clone()));
+        lines.push(Line::from(format!("{} Cores", device.efficiency_cores + device.performance_cores)));
+        lines.push(Line::from(format!("{} E-Cores", device.efficiency_cores)));
+        lines.push(Line::from(format!("{} P-Cores", device.performance_cores)));
+        lines.push(Line::from(format!("{} GPU Cores", device.gpu_cores)));
+    }
+    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(GREEN)).block(panel("Apple Silicon")), area);
+}
+
+fn render_network(
+    frame: &mut Frame,
+    area: Rect,
+    state: &Telemetry,
+) {
+    let mut lines = vec![Line::from(format!(
+        "Net: ↑ {}/s  ↓ {}/s",
+        human_bytes(state.network_up as u64),
+        human_bytes(state.network_down as u64),
+    ))];
+    for disk in state.disks.iter().take(3) {
+        lines.push(Line::from(format!("{}: {} / {}", disk.name, human_bytes(disk.used), human_bytes(disk.total),)));
+    }
+    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(GREEN)).block(panel("Network & Disk")), area);
+}
+
+fn render_processes(
+    frame: &mut Frame,
+    area: Rect,
+    state: &Telemetry,
+) {
+    let items: Vec<ListItem> = state
+        .processes
+        .iter()
+        .map(|process| {
+            ListItem::new(format!("{:>6.1}%  {:>9}  {}", process.cpu, human_bytes(process.memory), process.name))
+        })
+        .collect();
+    frame.render_widget(List::new(items).style(Style::default().fg(GREEN)).block(panel("Process List")), area);
+}
+
+/// A square-bordered, green panel with a title (matches mactop's inner widgets).
+fn panel(title: &str) -> Block<'_> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(GREEN))
+        .title_style(Style::default().fg(GREEN))
+        .title(title)
+}
+
+fn panel_owned(title: String) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(GREEN))
+        .title_style(Style::default().fg(GREEN))
+        .title(title)
+}
+
+fn split_horizontal<const N: usize>(
+    area: Rect,
+    constraints: [Constraint; N],
+) -> std::rc::Rc<[Rect]> {
+    Layout::default().direction(Direction::Horizontal).constraints(constraints).split(area)
+}
+
+fn split_vertical<const N: usize>(
+    area: Rect,
+    constraints: [Constraint; N],
+) -> std::rc::Rc<[Rect]> {
+    Layout::default().direction(Direction::Vertical).constraints(constraints).split(area)
+}
+
+fn header_title(device: Option<&Device>) -> String {
+    match device {
+        Some(device) => format!(
+            " keisoku  •  {}  •  {}C ({}E+{}P)  •  {} GPU  •  {:.0} GB ",
+            device.chip,
+            device.efficiency_cores + device.performance_cores,
+            device.efficiency_cores,
+            device.performance_cores,
+            device.gpu_cores,
+            device.ram_total.value() as f64 / 1e9,
+        ),
+        None => " keisoku ".to_string(),
+    }
 }
 
 /// A block-glyph history graph (`▁▂▃▄▅▆▇█`), auto-scaled to the window's peak.
 fn sparkline(
-    history: &[f64],
+    history: &VecDeque<f64>,
     width: usize,
 ) -> String {
     const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     if history.is_empty() || width == 0 {
         return String::new();
     }
-    let window = &history[history.len().saturating_sub(width)..];
+    let start = history.len().saturating_sub(width);
+    let window: Vec<f64> = history.iter().skip(start).copied().collect();
     let peak = window.iter().copied().fold(0.0_f64, f64::max).max(1e-9);
     window
         .iter()
@@ -325,4 +514,28 @@ fn sparkline(
             BARS[index]
         })
         .collect()
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+fn format_uptime(seconds: u64) -> String {
+    let (hours, minutes) = (seconds / 3600, (seconds % 3600) / 60);
+    if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else {
+        format!("{minutes}m")
+    }
 }
