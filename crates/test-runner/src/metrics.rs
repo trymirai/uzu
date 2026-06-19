@@ -3,16 +3,11 @@ use std::{thread::sleep, time::Duration};
 const COOL_GPU_TEMP: f32 = 60.0;
 
 fn get_gpu_temp() -> f32 {
-    #[cfg(target_os = "macos")]
-    {
-        use macmon::Sampler;
-        let mut sample = Sampler::new().unwrap();
-        let metrics = sample.get_metrics(0).unwrap();
-        metrics.temp.gpu_temp_avg
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    0.0f32
+    let (sum, count) = keisoku::thermal_sensors()
+        .iter()
+        .filter(|sensor| sensor.component == keisoku::Component::Gpu)
+        .fold((0.0f32, 0u32), |(sum, count), sensor| (sum + sensor.value as f32, count + 1));
+    if count == 0 { 0.0 } else { sum / count as f32 }
 }
 
 pub fn wait_gpu_cooldown() {
