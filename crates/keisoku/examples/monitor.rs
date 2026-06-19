@@ -44,6 +44,7 @@ use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
 
 const HISTORY: usize = 256;
 const PROCESS_ROWS: usize = 8;
+const NETWORK_ROWS: usize = 4;
 
 // Sampling cadence, adjustable at runtime with `+` (faster) / `-` (slower).
 const MIN_INTERVAL_MS: u64 = 100;
@@ -110,6 +111,13 @@ struct DiskRow {
     total: u64,
 }
 
+/// A per-interface row for the detailed network panel (rates in bytes/sec).
+struct NetInterface {
+    name: String,
+    down: f64,
+    up: f64,
+}
+
 /// Live state shared between the sampler thread and the render loop.
 #[derive(Default)]
 struct Telemetry {
@@ -124,6 +132,11 @@ struct Telemetry {
     uptime_seconds: u64,
     network_down: f64,
     network_up: f64,
+    network_packets_down: f64,
+    network_packets_up: f64,
+    network_total_down: u64,
+    network_total_up: u64,
+    network_interfaces: Vec<NetInterface>,
     disks: Vec<DiskRow>,
     processes: Vec<ProcessRow>,
 }
@@ -175,10 +188,27 @@ fn sample_loop(
         last_refresh = Instant::now();
 
         let (mut received, mut transmitted) = (0u64, 0u64);
-        for data in networks.values() {
+        let (mut packets_in, mut packets_out) = (0u64, 0u64);
+        let (mut total_in, mut total_out) = (0u64, 0u64);
+        let mut interfaces: Vec<NetInterface> = Vec::new();
+        for (name, data) in networks.iter() {
             received += data.received();
             transmitted += data.transmitted();
+            packets_in += data.packets_received();
+            packets_out += data.packets_transmitted();
+            total_in += data.total_received();
+            total_out += data.total_transmitted();
+            // List interfaces that have ever carried traffic, busiest first.
+            if data.total_received() > 0 || data.total_transmitted() > 0 {
+                interfaces.push(NetInterface {
+                    name: name.clone(),
+                    down: data.received() as f64 / elapsed,
+                    up: data.transmitted() as f64 / elapsed,
+                });
+            }
         }
+        interfaces.sort_by(|a, b| (b.down + b.up).partial_cmp(&(a.down + a.up)).unwrap_or(std::cmp::Ordering::Equal));
+        interfaces.truncate(NETWORK_ROWS);
 
         // macOS lists the APFS system and data volumes (and other synthesized
         // mounts) under one name, e.g. "Macintosh HD" twice — keep the first of
@@ -230,6 +260,11 @@ fn sample_loop(
             state.uptime_seconds = System::uptime();
             state.network_down = received as f64 / elapsed;
             state.network_up = transmitted as f64 / elapsed;
+            state.network_packets_down = packets_in as f64 / elapsed;
+            state.network_packets_up = packets_out as f64 / elapsed;
+            state.network_total_down = total_in;
+            state.network_total_up = total_out;
+            state.network_interfaces = interfaces;
             state.disks = disks;
             state.processes = processes;
         }
@@ -565,10 +600,31 @@ fn render_network(
     area: Rect,
     state: &Telemetry,
 ) {
-    let lines = vec![
-        Line::from(format!("↑ {}/s", human_bytes(state.network_up as u64))),
-        Line::from(format!("↓ {}/s", human_bytes(state.network_down as u64))),
+    // Aggregate rates, packet rates, and cumulative session totals, then a
+    // per-interface breakdown (busiest first) so it's clear which link is busy.
+    let mut lines = vec![
+        Line::from(format!(
+            "{:<6}↑ {}/s  ↓ {}/s",
+            "Rate",
+            human_bytes(state.network_up as u64),
+            human_bytes(state.network_down as u64),
+        )),
+        Line::from(format!("{:<6}↑ {:.0}/s  ↓ {:.0}/s", "Pkts", state.network_packets_up, state.network_packets_down,)),
+        Line::from(format!(
+            "{:<6}↑ {}  ↓ {}",
+            "Total",
+            human_bytes(state.network_total_up),
+            human_bytes(state.network_total_down),
+        )),
     ];
+    for iface in &state.network_interfaces {
+        lines.push(Line::from(format!(
+            "{:<6}↑ {}/s ↓ {}/s",
+            iface.name,
+            human_bytes(iface.up as u64),
+            human_bytes(iface.down as u64),
+        )));
+    }
     frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Network")), area);
 }
 
