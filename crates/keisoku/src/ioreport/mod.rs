@@ -1,9 +1,3 @@
-//! IOReport sampling: SoC power (Energy Model) and CPU/GPU residency → freq/%.
-//!
-//! The IOReport symbols are private, so they're bound through `kanka` (dlsym +
-//! obfuscated names) from `libIOReport`. The channel/group names and the
-//! residency→freq math are ported from macmon. macOS only.
-
 use core::ffi::c_void;
 
 mod report;

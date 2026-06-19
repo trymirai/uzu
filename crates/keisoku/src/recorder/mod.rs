@@ -1,7 +1,3 @@
-//! Background recorder: samples the system at a fixed interval into a
-//! time-series [`Session`] that can be marked with inference phases and
-//! exported as JSON for offline correlation.
-
 mod config;
 mod device;
 mod handle;

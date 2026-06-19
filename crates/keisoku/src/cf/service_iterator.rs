@@ -6,9 +6,6 @@ use objc2_io_kit::{
     io_iterator_t, io_object_t, io_registry_entry_t,
 };
 
-/// Iterates IOKit services matching a class name, yielding `(entry, name)`.
-/// The yielded entry stays valid until the next `next()` (or drop), which
-/// releases it — so callers never manage the entry's lifetime themselves.
 pub struct IoServiceIterator {
     iterator: io_iterator_t,
     current_entry: io_object_t,
@@ -17,8 +14,7 @@ pub struct IoServiceIterator {
 impl IoServiceIterator {
     pub fn new(service_name: &str) -> Option<Self> {
         let name = std::ffi::CString::new(service_name).ok()?;
-        // `IOServiceMatching` returns a +1 dictionary that `…GetMatchingServices`
-        // consumes; the cast is the mutable→base upcast (same layout).
+
         let matching = unsafe { IOServiceMatching(name.as_ptr()) }?;
         let matching = unsafe { CFRetained::from_raw(CFRetained::into_raw(matching).cast()) };
         let mut iterator: io_iterator_t = 0;

@@ -10,8 +10,6 @@ use crate::{
     soc::SocInfo,
 };
 
-/// Full-tilt ANE power assumed for the power→active% estimate when residency is
-/// unavailable (mactop's `aneMaxPowerW`, a single value for all chips).
 const ANE_MAX_POWER_WATTS: f32 = 8.0;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -27,8 +25,6 @@ enum Subsystem {
     NeuralEngine,
 }
 
-/// Holds an open IOReport subscription + merged channel set for repeated
-/// sampling. Both are `CFRetained`, so they release automatically on drop.
 pub struct IoReport {
     functions: &'static IoReportFunctions,
     subscription: CFRetained<CFType>,
@@ -39,8 +35,6 @@ impl IoReport {
     pub fn new() -> Option<Self> {
         let functions = IoReportFunctions::get()?;
 
-        // `AMC Stats`/`PMP` carry DRAM & ANE bandwidth and (on M5) ANE
-        // residency; they're absent on some chips, so a `None` group is skipped.
         let mut groups: Vec<CFRetained<CFDictionary>> = Vec::with_capacity(5);
         for (group, subgroup) in [
             (obfstr!("Energy Model"), None::<&str>),
@@ -59,7 +53,7 @@ impl IoReport {
             unsafe { (functions.merge_channels)(raw(first), raw(other), core::ptr::null()) };
         }
         let channels = unsafe { CFMutableDictionary::new_copy(None, first.count(), Some(&**first)) }?;
-        // The merged copy is independent; the source groups release here.
+
         drop(groups);
         cf_dictionary_value(&channels, obfstr!("IOReportChannels"))?;
 
@@ -76,9 +70,6 @@ impl IoReport {
         })
     }
 
-    /// Samples power + CPU/GPU/ANE usage and DRAM/ANE bandwidth over `interval`
-    /// (blocks for the window — energy/bandwidth are deltas/Δt, so a real window
-    /// is required, like macmon/mactop).
     pub fn sample(
         &self,
         soc: &SocInfo,
@@ -108,8 +99,6 @@ impl IoReport {
         let mut pcpu_readings = Vec::new();
         let window_milliseconds = interval.as_millis().max(1) as u64;
 
-        // Bandwidth byte counters (AMC Stats, M1-M4) and residency-histogram
-        // GB/s (PMP, M5+) accumulate separately; the AMC path wins if present.
         let mut bandwidth = BandwidthAccumulator::default();
 
         if let Some(items) = cf_dictionary_value(&delta, obfstr!("IOReportChannels")) {
@@ -173,11 +162,6 @@ impl IoReport {
         result
     }
 
-    /// `AMC Stats` DCS byte counters. Only the system-wide aggregates are taken
-    /// — `[DIEn ]DCS RD/WR` for DRAM and `[DIEn ]ANE DCS RD/WR` for the ANE —
-    /// never the per-client breakdowns (`… ECPU0 DCS RD`) or the cycle/entry
-    /// perf counters (`DCS CAS`, `DCS PD CYCLES`), which would double-count or
-    /// add non-byte values.
     fn accumulate_amc_bandwidth(
         &self,
         item: *const c_void,
@@ -206,8 +190,6 @@ impl IoReport {
         }
     }
 
-    /// `PMP` residency channels: ANE active % (`*Floor` subgroups) and the M5
-    /// ANE/DRAM bandwidth histograms (`AF BW`/`DRAM BW` subgroups).
     fn accumulate_pmp(
         &self,
         item: *const c_void,
@@ -251,7 +233,6 @@ impl IoReport {
             .collect()
     }
 
-    /// Fraction of time spent above the idle/floor states, as a percent.
     fn residency_active_percent(
         &self,
         item: *const c_void,
@@ -266,8 +247,6 @@ impl IoReport {
         (active / total * 100.0) as f32
     }
 
-    /// Residency-weighted average of `"<N>GB/s"`-named states (the PMP bandwidth
-    /// histograms used on M5+, where direct byte counters are unavailable).
     fn residency_weighted_gbps(
         &self,
         item: *const c_void,
@@ -286,7 +265,6 @@ impl IoReport {
         }
     }
 
-    /// Energy delta → average watts over the window (graceful 0 on bad data).
     fn watts(
         &self,
         item: *const c_void,
@@ -306,7 +284,6 @@ impl IoReport {
         }
     }
 
-    /// Residency states → (average active frequency, percent-of-max). Graceful, no panic.
     fn calculate_frequency(
         &self,
         item: *const c_void,
@@ -316,7 +293,7 @@ impl IoReport {
         if states.len() <= frequencies.len() || frequencies.is_empty() {
             return (0, 0.0);
         }
-        // Active states start after the idle/off states.
+
         let Some(offset) = states.iter().position(|(name, _)| !is_idle_state(name)) else {
             return (0, 0.0);
         };
@@ -336,18 +313,14 @@ impl IoReport {
     }
 }
 
-/// Raw pointer to a retained CF object, for passing into the IOReport functions.
 fn raw<T: Type>(value: &CFRetained<T>) -> *mut c_void {
     CFRetained::as_ptr(value).as_ptr().cast()
 }
 
-/// Wraps an owned (+1) raw dictionary pointer in a `CFRetained` (releases on drop).
 fn retained_dictionary(value: *const c_void) -> Option<CFRetained<CFDictionary>> {
     NonNull::new(value.cast_mut().cast::<CFDictionary>()).map(|pointer| unsafe { CFRetained::from_raw(pointer) })
 }
 
-/// Accumulates bandwidth from the two possible sources (AMC byte counters and
-/// PMP residency histograms), preferring the byte counters when present.
 #[derive(Default)]
 struct BandwidthAccumulator {
     dram_read_bytes: f64,
@@ -387,7 +360,6 @@ impl BandwidthAccumulator {
         }
     }
 
-    /// Resolves byte counters / histograms into GB/s on `result`.
     fn finish(
         mut self,
         window_milliseconds: u64,
@@ -428,8 +400,6 @@ impl BandwidthAccumulator {
     }
 }
 
-/// Copies one group/subgroup's channels into an owned dictionary (released on
-/// drop). The transient key `CFString`s release at the end of this call.
 fn copy_channel_group(
     functions: &IoReportFunctions,
     group: &str,
@@ -445,9 +415,6 @@ fn copy_channel_group(
     retained_dictionary(channels)
 }
 
-/// Strips an optional `DIE<n> ` prefix so multi-die channels collapse onto the
-/// same aggregate name (`"DIE0 DCS RD"` → `"DCS RD"`); leaves per-client and
-/// un-prefixed names unchanged (`"DIE0 ECPU0 DCS RD"` → `"ECPU0 DCS RD"`).
 fn strip_die_prefix(channel: &str) -> &str {
     let Some(rest) = channel.strip_prefix(obfstr!("DIE")) else {
         return channel;
@@ -456,7 +423,6 @@ fn strip_die_prefix(channel: &str) -> &str {
     rest.strip_prefix(' ').unwrap_or(channel)
 }
 
-/// Classifies a bandwidth channel name by direction.
 fn flow(channel: &str) -> Flow {
     if channel.contains(obfstr!("RD+WR")) || channel.ends_with(obfstr!("RW")) {
         Flow::Combined
@@ -469,7 +435,6 @@ fn flow(channel: &str) -> Flow {
     }
 }
 
-/// Whether a residency state name is one of the idle/floor states.
 fn is_idle_state(name: &str) -> bool {
     name == obfstr!("OFF")
         || name == obfstr!("IDLE")
@@ -480,7 +445,6 @@ fn is_idle_state(name: &str) -> bool {
         || name == obfstr!("0%")
 }
 
-/// Parses the leading number of a `"<N>GB/s"` state name.
 fn parse_leading_number(name: &str) -> f64 {
     let digits: String =
         name.trim().chars().take_while(|character| character.is_ascii_digit() || *character == '.').collect();

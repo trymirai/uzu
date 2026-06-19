@@ -1,5 +1,3 @@
-//! IOHID per-sensor readings (temperature/voltage/current) and their kinds.
-
 mod kind;
 mod reading;
 

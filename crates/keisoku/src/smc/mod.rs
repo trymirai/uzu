@@ -1,8 +1,3 @@
-//! AppleSMC user-client reader for whole-package power (`PSTR`) and fan RPM
-//! (`F{i}Ac/Mn/Mx/Tg`). The service name, keys, and the `flt ` type tag are
-//! obfuscated via `obfstr` (same hardening as the IOReport bindings). Reads
-//! need no root; we never write. Ported from mactop `smc.c`/`smc.h`.
-
 use core::ffi::c_void;
 
 use obfstr::obfstr;
@@ -17,7 +12,7 @@ use crate::{
     units::{Rpm, Watts},
 };
 
-const KERNEL_INDEX_SMC: u32 = 2; // kSMCHandleYPCEvent
+const KERNEL_INDEX_SMC: u32 = 2;
 const SMC_CMD_READ_BYTES: u8 = 5;
 const SMC_CMD_READ_KEYINFO: u8 = 9;
 
@@ -49,8 +44,6 @@ struct SmcKeyInfo {
     data_attributes: u8,
 }
 
-/// The 80-byte wire struct passed to `IOConnectCallStructMethod` (matches
-/// mactop's `SMCKeyData_t`).
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct SmcKeyData {
@@ -67,13 +60,12 @@ struct SmcKeyData {
 
 const _: () = assert!(core::mem::size_of::<SmcKeyData>() == 80);
 
-/// An open AppleSMC connection (closed on drop).
 pub struct Smc {
     connection: io_connect_t,
 }
 
 impl Smc {
-    #[allow(deprecated)] // mach_task_self is still the supported way here
+    #[allow(deprecated)]
     pub fn new() -> Option<Self> {
         let name = std::ffi::CString::new(obfstr!("AppleSMC")).ok()?;
         let matching = unsafe { IOServiceMatching(name.as_ptr()) }?;
@@ -95,12 +87,10 @@ impl Smc {
         })
     }
 
-    /// Whole-package power from the `PSTR` rail.
     pub fn package_watts(&self) -> Option<Watts> {
         self.read_f32(obfstr!("PSTR")).map(Watts)
     }
 
-    /// All fans (`FNum` count, then per-fan `Ac/Mn/Mx/Tg`).
     pub fn fans(&self) -> FanMetrics {
         let count = self.read_u8(obfstr!("FNum")).unwrap_or(0);
         let fans = (0..count)
@@ -124,7 +114,6 @@ impl Smc {
         self.read_f32(&format!("{}{}{}", obfstr!("F"), index, suffix)).unwrap_or(0.0)
     }
 
-    /// Reads a `flt ` key as `f32` (the only float type Apple-silicon SMC uses).
     fn read_f32(
         &self,
         key: &str,
@@ -133,7 +122,6 @@ impl Smc {
         (data_type == fourcc(obfstr!("flt "))?).then(|| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
-    /// Reads a single-byte key (`ui8 `), e.g. `FNum`.
     fn read_u8(
         &self,
         key: &str,
@@ -141,7 +129,6 @@ impl Smc {
         self.read_key(key).map(|(_, bytes)| bytes[0])
     }
 
-    /// Two-call protocol: read the key's info (size/type), then its bytes.
     fn read_key(
         &self,
         key: &str,
@@ -190,7 +177,6 @@ impl Drop for Smc {
     }
 }
 
-/// Packs a 4-char SMC key into its big-endian `u32` FourCC.
 fn fourcc(key: &str) -> Option<u32> {
     let bytes = key.as_bytes();
     if bytes.len() != 4 {

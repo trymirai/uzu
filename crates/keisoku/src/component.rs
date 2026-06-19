@@ -70,9 +70,6 @@ pub fn classify(name: &str) -> Component {
     Component::Unknown
 }
 
-/// Apple thermal probes are named like `tp1s` / `tp3g`, where the trailing
-/// letter hints at the monitored block (`s` ≈ SoC, `g` ≈ GPU). Returns that
-/// letter for any `tp<digits><letter>` token in the (lowercased) name.
 fn thermal_probe_block(name: &str) -> Option<char> {
     name.split_whitespace().find_map(|token| {
         let rest = token.strip_prefix("tp")?;

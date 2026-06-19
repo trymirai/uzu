@@ -1,7 +1,3 @@
-//! Battery status via the IOKit power-sources API (macOS). These are public
-//! power-source keys, so unlike the SMC/IOReport bindings they need no
-//! obfuscation. Ported from mactop `battery.go`.
-
 use serde::{Deserialize, Serialize};
 
 use crate::units::Percent;

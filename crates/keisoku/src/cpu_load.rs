@@ -1,12 +1,7 @@
-//! Per-core CPU utilization via the mach `host_processor_info` API (macOS).
-//! Ported from mactop's `GetCPUUsage`/`GetCPUPercentages`.
-
 use crate::units::Percent;
 
 const STATES: usize = libc::CPU_STATE_MAX as usize;
 
-/// Tracks cumulative per-core tick counters and turns the per-call delta into
-/// utilization percentages.
 pub struct CpuLoad {
     last: Vec<[u64; STATES]>,
 }
@@ -18,8 +13,6 @@ impl CpuLoad {
         }
     }
 
-    /// Per-core utilization since the previous call. The first call (or a core
-    /// count change) establishes the baseline and returns zeros.
     pub fn sample(&mut self) -> Vec<Percent> {
         let Some(ticks) = read_ticks() else {
             return Vec::new();
@@ -50,8 +43,7 @@ impl CpuLoad {
     }
 }
 
-/// Reads cumulative `[user, system, idle, nice]` tick counters per core.
-#[allow(deprecated)] // mach_host_self / mach_task_self are still the supported way here
+#[allow(deprecated)]
 fn read_ticks() -> Option<Vec<[u64; STATES]>> {
     let mut cpu_count: libc::natural_t = 0;
     let mut info: libc::processor_info_array_t = core::ptr::null_mut();
@@ -83,7 +75,6 @@ fn read_ticks() -> Option<Vec<[u64; STATES]>> {
         })
         .collect();
 
-    // The kernel allocates `info_count` `integer_t`s; release them or leak each tick.
     unsafe {
         libc::vm_deallocate(
             libc::mach_task_self(),

@@ -11,12 +11,8 @@ use crate::{
     sys,
 };
 
-/// Slow, environmental sensors (battery / storage / display / PMU) barely move,
-/// so the reader re-reads them at most this often and reuses the last value in
-/// between. Fast silicon sensors (CPU / GPU / SoC / ANE) are always read live.
 const COLD_REFRESH: Duration = Duration::from_millis(3000);
 
-/// Whether a sensor's component changes fast enough to read every sample.
 fn is_hot(component: Component) -> bool {
     matches!(component, Component::Cpu | Component::Gpu | Component::Soc | Component::NeuralEngine)
 }
@@ -47,16 +43,10 @@ kanka::ffi_table! {
 mod event_system_client;
 mod service_client;
 
-/// Whether the private IOKit HID API resolved on this system.
 pub(crate) fn is_available() -> bool {
     IOKit::get().is_some()
 }
 
-/// Reads every sensor of `kind` in one full create→enumerate→read→release cycle.
-///
-/// The event-system client and its services live for the whole call, so reads
-/// are always valid (matches macmon's `IOHIDSensors`); on return everything is
-/// released together. No handles are retained across calls.
 pub(crate) fn collect(kind: SensorKind) -> Vec<Sensor> {
     let Some(io_kit) = IOKit::get() else {
         return Vec::new();
@@ -79,7 +69,7 @@ pub(crate) fn collect(kind: SensorKind) -> Vec<Sensor> {
         let Some(pointer) = NonNull::new(pointer.cast_mut()) else {
             continue;
         };
-        // Borrowed from the array; valid for the duration of this iteration.
+
         let service = ServiceClient {
             io_kit,
             inner: unsafe { pointer.as_ref() },
@@ -102,7 +92,6 @@ pub(crate) fn collect(kind: SensorKind) -> Vec<Sensor> {
     readings
 }
 
-/// One enumerated sensor: its static metadata (read once) plus the last value.
 struct CachedSensor {
     service: NonNull<IOHIDServiceClient>,
     name: String,
@@ -115,18 +104,6 @@ struct CachedSensor {
     value: f64,
 }
 
-/// A persistent, tiered sensor reader. It enumerates the matching services and
-/// reads their static metadata **once**, retaining the client and services
-/// array for its lifetime so the cached service pointers stay valid (matching
-/// macmon's persistent `IOHIDSensors`). Each [`read`](Self::read) then re-reads
-/// only the live value — and only for *fast* silicon sensors every call, while
-/// *slow* environmental sensors (battery / storage / display / PMU) refresh at
-/// most every [`COLD_REFRESH`] and reuse their last value otherwise.
-///
-/// Versus mactop this does strictly less work per sample: no per-call client
-/// creation, no service re-enumeration (mactop re-copies the services array on
-/// a 5s TTL), no per-sample metadata round-trips, a single API (no parallel SMC
-/// path), and the slow majority of sensors skipped on most ticks.
 pub(crate) struct SensorReader {
     io_kit: &'static IOKit,
     kind: SensorKind,
@@ -198,8 +175,6 @@ impl SensorReader {
             .iter_mut()
             .map(|cached| {
                 if cached.hot || refresh_cold {
-                    // Valid: the service pointer is owned by `_services`, kept
-                    // alive with `_client` for this reader's whole lifetime.
                     let service = ServiceClient {
                         io_kit,
                         inner: unsafe { cached.service.as_ref() },

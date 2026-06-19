@@ -1,11 +1,5 @@
-//! OS thermal-pressure level — the system's own throttling signal, useful for
-//! spotting inference slowdowns caused by heat. Read from the public
-//! `com.apple.system.thermalpressurelevel` notify state.
-
 use serde::{Deserialize, Serialize};
 
-/// `OSThermalPressureLevel`, increasing severity. Above `Nominal` the system is
-/// actively throttling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThermalPressure {
     Nominal,

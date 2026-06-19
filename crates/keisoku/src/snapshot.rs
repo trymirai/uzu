@@ -1,5 +1,3 @@
-//! One instant of telemetry, fused from every available provider.
-
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -11,8 +9,6 @@ use crate::{
     units::Milliseconds,
 };
 
-/// One instant of telemetry. Fields are `None` where the platform/provider
-/// can't supply them (e.g. CPU/GPU/power off macOS).
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
     pub elapsed: Milliseconds,

@@ -1,6 +1,3 @@
-//! Derived, serde-serializable metric structs (one per file) plus the memory
-//! and thermal-pressure providers.
-
 mod bandwidth;
 mod battery;
 mod cpu;

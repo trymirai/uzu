@@ -1,7 +1,3 @@
-//! Newtype wrappers giving each reading a concrete unit, so a `Watts` can't be
-//! mixed up with a `Percent` or a `Megahertz`. Each is `#[serde(transparent)]`,
-//! so the JSON form is the bare number — the `Session` format is unchanged.
-
 use serde::{Deserialize, Serialize};
 
 macro_rules! unit {
@@ -13,7 +9,7 @@ macro_rules! unit {
         pub struct $name(pub $inner);
 
         impl $name {
-            /// The underlying scalar.
+
             pub const fn value(self) -> $inner {
                 self.0
             }
@@ -36,19 +32,11 @@ macro_rules! unit {
     };
 }
 
-unit!(/// Power, in watts.
-    Watts(f32) = "W");
-unit!(/// A utilization ratio, 0-100.
-    Percent(f32) = "%");
-unit!(/// Temperature, in degrees Celsius.
-    Celsius(f32) = "°C");
-unit!(/// Clock frequency, in megahertz.
-    Megahertz(u32) = "MHz");
-unit!(/// Memory bandwidth, in gigabytes per second.
-    GigabytesPerSecond(f32) = "GB/s");
-unit!(/// A byte count.
-    Bytes(u64) = "B");
-unit!(/// A duration, in milliseconds.
-    Milliseconds(u64) = "ms");
-unit!(/// Fan speed, in revolutions per minute.
-    Rpm(f32) = "rpm");
+unit!(Watts(f32) = "W");
+unit!(Percent(f32) = "%");
+unit!(Celsius(f32) = "°C");
+unit!(Megahertz(u32) = "MHz");
+unit!(GigabytesPerSecond(f32) = "GB/s");
+unit!(Bytes(u64) = "B");
+unit!(Milliseconds(u64) = "ms");
+unit!(Rpm(f32) = "rpm");

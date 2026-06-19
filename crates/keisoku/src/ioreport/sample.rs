@@ -1,4 +1,3 @@
-/// One IOReport sample's derived SoC metrics.
 #[derive(Debug, Default, Clone)]
 pub struct SocSample {
     pub cpu_power: f32,
@@ -7,9 +6,9 @@ pub struct SocSample {
     pub ram_power: f32,
     pub gpu_ram_power: f32,
     pub total_power: f32,
-    pub ecpu_usage: (u32, f32), // (average frequency MHz, percent-of-max)
+    pub ecpu_usage: (u32, f32),
     pub pcpu_usage: (u32, f32),
-    pub cpu_usage_percent: f32, // combined, weighted by core count
+    pub cpu_usage_percent: f32,
     pub gpu_usage: (u32, f32),
     pub ane_active_percent: f32,
     pub ane_read_gbps: f32,

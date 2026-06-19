@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-/// How the recorder samples.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub interval: Duration,

@@ -1,6 +1,3 @@
-//! RAM/swap usage. The `read` provider uses `mach`/`sysctl` on macOS (ported
-//! from macmon) and `sysinfo` elsewhere.
-
 use serde::{Deserialize, Serialize};
 
 use crate::units::Bytes;

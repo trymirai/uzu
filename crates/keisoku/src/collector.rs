@@ -1,6 +1,3 @@
-//! Gathers a [`Snapshot`] from whichever providers are available on this
-//! platform (IOReport / memory / IOHID sensors / thermal pressure).
-
 use std::time::Duration;
 
 #[cfg(target_os = "macos")]
@@ -12,7 +9,6 @@ use crate::{
     units::{Celsius, Milliseconds},
 };
 
-/// The SoC metrics IOReport derives in one sample (macOS only).
 #[derive(Default)]
 struct SocMetrics {
     cpu: Option<CpuMetrics>,
@@ -57,20 +53,15 @@ impl Collector {
         }
     }
 
-    /// Static SoC description (macOS only).
     #[cfg(target_os = "macos")]
     pub fn soc(&self) -> Option<&crate::soc::SocInfo> {
         self.soc.as_ref()
     }
 
-    /// The static device description (chip, core counts, RAM) for this machine.
     pub fn device(&self) -> crate::Device {
         crate::Device::detect(self)
     }
 
-    /// Collects one snapshot. **Blocks for ~`interval`**: on macOS the IOReport
-    /// energy/residency delta needs a real window (which also sets the cadence);
-    /// otherwise it just sleeps `interval`.
     pub fn sample(
         &mut self,
         interval: Duration,
@@ -176,7 +167,6 @@ fn average(values: &[f32]) -> f32 {
     }
 }
 
-/// Derives CPU/GPU average temperatures from classified sensors.
 fn temperatures_from(sensors: &[Sensor]) -> Temperatures {
     use crate::Component;
     let cpu_temperatures: Vec<f32> = sensors

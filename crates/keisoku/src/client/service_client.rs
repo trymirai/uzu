@@ -4,14 +4,12 @@ use objc2_core_foundation::{CFNumber, CFRetained, CFString, CFType, ConcreteType
 
 use super::{IOHIDEvent, IOHIDServiceClient, IOKit};
 
-/// A single sensor service, borrowed from a matched services array.
 pub(super) struct ServiceClient<'a> {
     pub(super) io_kit: &'static IOKit,
     pub(super) inner: &'a IOHIDServiceClient,
 }
 
 impl ServiceClient<'_> {
-    /// Reads a `"key"` property and downcasts it to a concrete CF type `T`.
     fn property<T: ConcreteType>(
         &self,
         key: &str,

@@ -10,7 +10,6 @@ use std::{
 use super::{Config, Device, Marker, Session};
 use crate::{Collector, snapshot::Snapshot, units::Milliseconds};
 
-/// Handle to a running recorder. Drop or call [`stop`](RecorderHandle::stop).
 pub struct RecorderHandle {
     started_at: Instant,
     interval: Duration,
@@ -20,7 +19,6 @@ pub struct RecorderHandle {
 }
 
 impl RecorderHandle {
-    /// Annotates the timeline at the current elapsed time.
     pub fn mark(
         &self,
         label: impl Into<String>,
@@ -34,7 +32,6 @@ impl RecorderHandle {
         }
     }
 
-    /// Stops sampling and returns the recorded session.
     pub fn stop(mut self) -> Session {
         self.stop_flag.store(true, Ordering::Relaxed);
         let (device, snapshots) = match self.worker.take().map(JoinHandle::join) {
@@ -60,7 +57,6 @@ impl Drop for RecorderHandle {
     }
 }
 
-/// Starts a background recorder sampling at `config.interval`.
 pub fn start(config: Config) -> RecorderHandle {
     let started_at = Instant::now();
     let interval = config.interval;
@@ -69,8 +65,7 @@ pub fn start(config: Config) -> RecorderHandle {
 
     let worker = {
         let stop_flag = Arc::clone(&stop_flag);
-        // The Collector holds raw IOReport pointers (`!Send`), so it's created
-        // and owned entirely inside the worker thread.
+
         std::thread::spawn(move || {
             let mut collector = Collector::new();
             let device = Device::detect(&collector);

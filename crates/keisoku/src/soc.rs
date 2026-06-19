@@ -1,8 +1,3 @@
-//! Static SoC description: chip name, core counts, and the per-cluster DVFS
-//! frequency tables needed to turn IOReport residency into percent-of-max.
-//! Ported from macmon (`system_profiler` for identity, IORegistry `pmgr` for
-//! frequencies).
-
 use objc2_core_foundation::CFDictionary;
 use serde::Serialize;
 
@@ -15,16 +10,14 @@ pub struct SocInfo {
     pub memory_gigabytes: u8,
     pub ecpu_cores: u8,
     pub pcpu_cores: u8,
-    pub ecpu_label: String, // "E" on M1-M4, "P" on M5+
-    pub pcpu_label: String, // "P" on M1-M4, "S" on M5+
+    pub ecpu_label: String,
+    pub pcpu_label: String,
     pub gpu_cores: u8,
     pub ecpu_frequencies: Vec<u32>,
     pub pcpu_frequencies: Vec<u32>,
     pub gpu_frequencies: Vec<u32>,
 }
 
-/// A DVFS table is pairs of little-endian `(frequency, voltage)` u32s; we keep
-/// the frequencies.
 fn dvfs_frequencies(
     dictionary: &CFDictionary,
     key: &str,
@@ -45,9 +38,6 @@ fn to_megahertz(
     frequencies.iter().map(|frequency| frequency / scale).collect()
 }
 
-/// `acc-clusters` is 8-byte entries: `[voltage-states index, cluster type, ..]`.
-/// Highest type = P cluster, second-highest = E cluster (handles M5 Max where
-/// the lowest tier is absent). Returns `(ecpu_key, pcpu_key)` SRAM key names.
 fn cluster_voltage_state_keys(dictionary: &CFDictionary) -> Option<(String, String)> {
     let data = cf_data_bytes(cf_dictionary_value(dictionary, "acc-clusters")?);
     if data.len() < 8 {
@@ -64,7 +54,6 @@ fn cluster_voltage_state_keys(dictionary: &CFDictionary) -> Option<(String, Stri
     Some((ecpu_key, pcpu_key))
 }
 
-/// Known voltage-states key (M1-M4) first, fall back to acc-clusters (M5+).
 fn cpu_frequencies(
     dictionary: &CFDictionary,
     key: &str,
@@ -83,8 +72,6 @@ fn cpu_frequencies(
     Some(to_megahertz(dvfs_frequencies(dictionary, &key)?, scale))
 }
 
-/// `"proc T:P:E"` (macOS 15) or `"proc T:P_or_S:E:M"` (macOS 26+) →
-/// `(ecpu_cores, pcpu_cores, has_media_cluster)`.
 fn parse_cpu_cores(processors: &str) -> (u64, u64, bool) {
     let counts: Vec<u64> =
         processors.strip_prefix("proc ").unwrap_or("").split(':').map(|count| count.parse().unwrap_or(0)).collect();

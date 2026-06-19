@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Collector, units::Bytes};
 
-/// Static description of the machine the session was recorded on.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Device {
     pub os: String,
@@ -14,7 +13,6 @@ pub struct Device {
 }
 
 impl Device {
-    /// Builds the device description, enriching with SoC details on macOS.
     pub(crate) fn detect(#[allow(unused_variables)] collector: &Collector) -> Device {
         let os = sysinfo::System::long_os_version().unwrap_or_default();
         let mut system = sysinfo::System::new_all();
