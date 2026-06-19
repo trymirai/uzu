@@ -171,6 +171,8 @@ struct Telemetry {
     network_total_down: u64,
     network_total_up: u64,
     network_interfaces: Vec<NetInterface>,
+    disk_read: f64,
+    disk_written: f64,
     disks: Vec<DiskRow>,
     processes: Vec<ProcessRow>,
 }
@@ -270,6 +272,15 @@ fn sample_loop(
             })
             .collect::<Vec<_>>();
 
+        // Aggregate system disk activity from per-process I/O deltas (sysinfo
+        // has no per-volume counters), summed over every process this refresh.
+        let (mut disk_read, mut disk_written) = (0u64, 0u64);
+        for process in system.processes().values() {
+            let io = process.disk_usage();
+            disk_read += io.read_bytes;
+            disk_written += io.written_bytes;
+        }
+
         let mut processes = system
             .processes()
             .values()
@@ -310,6 +321,8 @@ fn sample_loop(
             state.network_total_down = total_in;
             state.network_total_up = total_out;
             state.network_interfaces = interfaces;
+            state.disk_read = disk_read as f64 / elapsed;
+            state.disk_written = disk_written as f64 / elapsed;
             state.disks = disks;
             state.processes = processes;
         }
@@ -502,6 +515,10 @@ fn build_info_lines(state: &Telemetry) -> Vec<Line<'static>> {
     lines.push(info_line(
         "Network",
         format!("↑ {}/s  ↓ {}/s", human_bytes(state.network_up as u64), human_bytes(state.network_down as u64)),
+    ));
+    lines.push(info_line(
+        "Disk",
+        format!("R {}/s  W {}/s", human_bytes(state.disk_read as u64), human_bytes(state.disk_written as u64)),
     ));
     if let Some(bandwidth) = snapshot.and_then(|s| s.bandwidth.as_ref()) {
         lines.push(info_line(
@@ -777,11 +794,15 @@ fn render_disk(
     area: Rect,
     state: &Telemetry,
 ) {
-    let lines: Vec<Line> = state
-        .disks
-        .iter()
-        .map(|disk| Line::from(format!("{}: {} / {}", disk.name, human_bytes(disk.used), human_bytes(disk.total))))
-        .collect();
+    // Live read/write activity (I/O) on top, then per-volume capacity.
+    let mut lines = vec![Line::from(format!(
+        "I/O  R {}/s  W {}/s",
+        human_bytes(state.disk_read as u64),
+        human_bytes(state.disk_written as u64),
+    ))];
+    for disk in &state.disks {
+        lines.push(Line::from(format!("{}: {} / {}", disk.name, human_bytes(disk.used), human_bytes(disk.total))));
+    }
     frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Disk")), area);
 }
 
