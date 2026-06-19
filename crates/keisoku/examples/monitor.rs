@@ -3,10 +3,11 @@
 //! OS-level panels (processes, network, disks), using the same
 //! `ratatui`/`crossterm` stack as the rest of the workspace.
 //!
-//! `cargo run -p keisoku --example monitor`  —  press `q`/`Esc`/`Ctrl-C` to quit.
+//! Keys: `c` cycles the accent color, `b` toggles the background, `q`/`Esc`/
+//! `Ctrl-C` quits (mactop-style). Run: `cargo run -p keisoku --example monitor`.
 //!
-//! Layout (mactop "default", all green, rounded outer frame). Every usage
-//! metric is a braille filled-area history chart (`⡇⢸⣿⣤`):
+//! Layout (mactop "default", rounded outer frame). Every usage metric is a
+//! braille filled-area history chart (`⡇⢸⣿⣤`):
 //! ```text
 //! ┌ keisoku · <chip> · <cores> · <gpu> · <ram> ───────────────── 0.5 ┐
 //! │ CPU chart                       │ GPU chart                      │
@@ -15,7 +16,7 @@
 //! │ Power Usage   │ Power chart     │ Apple Silicon │ Network & Disk │
 //! ├─────────────────────────────────┴────────────────────────────────┤
 //! │ Process List                                                      │
-//! └ 1/1 layout (green) ───────────── Exit: q ──────────────── 1000ms ┘
+//! └ green ──────────── Color: c · BG: b · Exit: q ──────────── 1000ms ┘
 //! ```
 
 use std::{
@@ -23,7 +24,7 @@ use std::{
     io,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -48,10 +49,41 @@ use ratatui::{
 };
 use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
 
-const GREEN: Color = Color::Green;
 const HISTORY: usize = 256;
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(1000);
 const PROCESS_ROWS: usize = 8;
+
+/// Accent colors cycled with `c` (mactop-style); first is the default.
+const THEMES: [(&str, Color); 7] = [
+    ("green", Color::Green),
+    ("cyan", Color::Cyan),
+    ("blue", Color::Blue),
+    ("magenta", Color::Magenta),
+    ("yellow", Color::Yellow),
+    ("red", Color::Red),
+    ("white", Color::White),
+];
+
+static THEME_INDEX: AtomicUsize = AtomicUsize::new(0);
+static DARK_BACKGROUND: AtomicBool = AtomicBool::new(false);
+
+/// Current accent (name, color), advanced by `c`.
+fn theme() -> (&'static str, Color) {
+    THEMES[THEME_INDEX.load(Ordering::Relaxed) % THEMES.len()]
+}
+
+fn accent() -> Color {
+    theme().1
+}
+
+/// Current background, toggled by `b`.
+fn background() -> Color {
+    if DARK_BACKGROUND.load(Ordering::Relaxed) {
+        Color::Black
+    } else {
+        Color::Reset
+    }
+}
 
 /// A process row for the bottom list.
 struct ProcessRow {
@@ -202,10 +234,17 @@ fn run<B: Backend>(
         if event::poll(Duration::from_millis(200))?
             && let Event::Key(key) = event::read()?
         {
-            let quit = matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
-                || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL));
-            if quit {
-                return Ok(());
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                KeyCode::Char('c') if ctrl => return Ok(()),
+                KeyCode::Char('c') => {
+                    THEME_INDEX.fetch_add(1, Ordering::Relaxed);
+                },
+                KeyCode::Char('b') => {
+                    DARK_BACKGROUND.fetch_xor(true, Ordering::Relaxed);
+                },
+                _ => {},
             }
         }
     }
@@ -218,12 +257,13 @@ fn draw(
     let outer = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(GREEN))
-        .title_style(Style::default().fg(GREEN))
+        .style(Style::default().bg(background()))
+        .border_style(Style::default().fg(accent()))
+        .title_style(Style::default().fg(accent()))
         .title_top(Line::from(header_title(state.device.as_ref())))
         .title_top(Line::from(format!(" {} ", env!("CARGO_PKG_VERSION"))).right_aligned())
-        .title_bottom(Line::from(" 1/1 layout (green) "))
-        .title_bottom(Line::from(" Exit: q ").centered())
+        .title_bottom(Line::from(format!(" {} ", theme().0)))
+        .title_bottom(Line::from(" Color: c · BG: b · Exit: q ").centered())
         .title_bottom(Line::from(" 1000ms ").right_aligned());
     let area = outer.inner(frame.area());
     frame.render_widget(outer, frame.area());
@@ -277,21 +317,23 @@ fn render_chart(
     let shown: Vec<f64> = history.iter().rev().take(columns).rev().copied().collect();
     let offset = columns - shown.len();
     let ceiling = ceiling.max(1e-9);
-    let chart =
-        Canvas::default().marker(Marker::Braille).x_bounds([0.0, columns as f64]).y_bounds([0.0, ceiling]).paint(
-            move |context| {
-                for (index, &value) in shown.iter().enumerate() {
-                    let x = (offset + index) as f64;
-                    context.draw(&CanvasLine {
-                        x1: x,
-                        y1: 0.0,
-                        x2: x,
-                        y2: value,
-                        color: GREEN,
-                    });
-                }
-            },
-        );
+    let chart = Canvas::default()
+        .marker(Marker::Braille)
+        .background_color(background())
+        .x_bounds([0.0, columns as f64])
+        .y_bounds([0.0, ceiling])
+        .paint(move |context| {
+            for (index, &value) in shown.iter().enumerate() {
+                let x = (offset + index) as f64;
+                context.draw(&CanvasLine {
+                    x1: x,
+                    y1: 0.0,
+                    x2: x,
+                    y2: value,
+                    color: accent(),
+                });
+            }
+        });
     frame.render_widget(chart, inner);
 }
 
@@ -377,7 +419,7 @@ fn render_power(
         state.snapshot.as_ref().and_then(|s| s.thermal_pressure).map(|t| format!("{t:?}")).unwrap_or_default();
     lines.push(Line::from(format!("Thermals: {thermals}")));
     lines.push(Line::from(format!("Uptime: {}", format_uptime(state.uptime_seconds))));
-    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(GREEN)).block(panel("Power Usage")), area);
+    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Power Usage")), area);
 }
 
 fn render_model(
@@ -393,7 +435,7 @@ fn render_model(
         lines.push(Line::from(format!("{} P-Cores", device.performance_cores)));
         lines.push(Line::from(format!("{} GPU Cores", device.gpu_cores)));
     }
-    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(GREEN)).block(panel("Apple Silicon")), area);
+    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Apple Silicon")), area);
 }
 
 fn render_network(
@@ -409,7 +451,8 @@ fn render_network(
     for disk in state.disks.iter().take(3) {
         lines.push(Line::from(format!("{}: {} / {}", disk.name, human_bytes(disk.used), human_bytes(disk.total),)));
     }
-    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(GREEN)).block(panel("Network & Disk")), area);
+    frame
+        .render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Network & Disk")), area);
 }
 
 fn render_processes(
@@ -424,23 +467,23 @@ fn render_processes(
             ListItem::new(format!("{:>6.1}%  {:>9}  {}", process.cpu, human_bytes(process.memory), process.name))
         })
         .collect();
-    frame.render_widget(List::new(items).style(Style::default().fg(GREEN)).block(panel("Process List")), area);
+    frame.render_widget(List::new(items).style(Style::default().fg(accent())).block(panel("Process List")), area);
 }
 
 /// A square-bordered, green panel with a title (matches mactop's inner widgets).
 fn panel(title: &str) -> Block<'_> {
     Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(GREEN))
-        .title_style(Style::default().fg(GREEN))
+        .border_style(Style::default().fg(accent()))
+        .title_style(Style::default().fg(accent()))
         .title(title)
 }
 
 fn panel_owned(title: String) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(GREEN))
-        .title_style(Style::default().fg(GREEN))
+        .border_style(Style::default().fg(accent()))
+        .title_style(Style::default().fg(accent()))
         .title(title)
 }
 
