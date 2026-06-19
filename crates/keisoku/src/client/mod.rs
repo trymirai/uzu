@@ -1,4 +1,5 @@
 use core::ptr::NonNull;
+use std::time::{Duration, Instant};
 
 use obfstr::obfstr;
 use objc2_core_foundation::{CFAllocator, CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType};
@@ -9,6 +10,16 @@ use crate::{
     sensor::{Sensor, SensorKind},
     sys,
 };
+
+/// Slow, environmental sensors (battery / storage / display / PMU) barely move,
+/// so the reader re-reads them at most this often and reuses the last value in
+/// between. Fast silicon sensors (CPU / GPU / SoC / ANE) are always read live.
+const COLD_REFRESH: Duration = Duration::from_millis(3000);
+
+/// Whether a sensor's component changes fast enough to read every sample.
+fn is_hot(component: Component) -> bool {
+    matches!(component, Component::Cpu | Component::Gpu | Component::Soc | Component::NeuralEngine)
+}
 
 kanka::opaque_cf_type!(IOHIDEventSystemClient);
 kanka::opaque_cf_type!(IOHIDServiceClient);
@@ -91,7 +102,7 @@ pub(crate) fn collect(kind: SensorKind) -> Vec<Sensor> {
     readings
 }
 
-/// The static (per-sensor, never-changing) metadata, read once at construction.
+/// One enumerated sensor: its static metadata (read once) plus the last value.
 struct CachedSensor {
     service: NonNull<IOHIDServiceClient>,
     name: String,
@@ -100,21 +111,29 @@ struct CachedSensor {
     category: Option<String>,
     location_id: Option<i64>,
     registry_id: u64,
+    hot: bool,
+    value: f64,
 }
 
-/// A persistent sensor reader: enumerates the matching services and reads their
-/// static metadata **once**, then every [`read`](Self::read) re-reads only the
-/// live value per service. This avoids the per-sample client creation, service
-/// enumeration, and four metadata IOKit round-trips per sensor that [`collect`]
-/// repeats — the bulk of a sample's cost. The client and the services array are
-/// both retained for the reader's lifetime, so the cached service pointers stay
-/// valid (matching macmon's persistent `IOHIDSensors`); nothing is dropped early.
+/// A persistent, tiered sensor reader. It enumerates the matching services and
+/// reads their static metadata **once**, retaining the client and services
+/// array for its lifetime so the cached service pointers stay valid (matching
+/// macmon's persistent `IOHIDSensors`). Each [`read`](Self::read) then re-reads
+/// only the live value — and only for *fast* silicon sensors every call, while
+/// *slow* environmental sensors (battery / storage / display / PMU) refresh at
+/// most every [`COLD_REFRESH`] and reuse their last value otherwise.
+///
+/// Versus mactop this does strictly less work per sample: no per-call client
+/// creation, no service re-enumeration (mactop re-copies the services array on
+/// a 5s TTL), no per-sample metadata round-trips, a single API (no parallel SMC
+/// path), and the slow majority of sensors skipped on most ticks.
 pub(crate) struct SensorReader {
     io_kit: &'static IOKit,
     kind: SensorKind,
     event_type: i64,
     event_field: i32,
     sensors: Vec<CachedSensor>,
+    last_cold_read: Option<Instant>,
     _services: CFRetained<CFArray>,
     _client: EventSystemClient,
 }
@@ -139,19 +158,21 @@ impl SensorReader {
                 io_kit,
                 inner: unsafe { pointer.as_ref() },
             };
-            // Keep only services that actually report a value of this kind.
-            if service.f64_value(event_type, event_field).is_none() {
+            let Some(value) = service.f64_value(event_type, event_field) else {
                 continue;
-            }
+            };
             let name = service.string(obfstr!("Product")).unwrap_or_default();
+            let component = classify(&name);
             sensors.push(CachedSensor {
-                component: classify(&name),
                 manufacturer: service.string(obfstr!("Manufacturer")),
                 category: service.string(obfstr!("Category")),
                 location_id: service.i64_value(obfstr!("LocationID")),
                 registry_id: service.registry_id(),
                 service: pointer,
+                hot: is_hot(component),
+                component,
                 name,
+                value,
             });
         }
 
@@ -161,33 +182,42 @@ impl SensorReader {
             event_type,
             event_field,
             sensors,
+            last_cold_read: None,
             _services: services,
             _client: client,
         })
     }
 
-    /// Re-reads the live value of every cached sensor (one IOKit call each).
-    pub(crate) fn read(&self) -> Vec<Sensor> {
+    pub(crate) fn read(&mut self) -> Vec<Sensor> {
+        let refresh_cold = self.last_cold_read.is_none_or(|at| at.elapsed() >= COLD_REFRESH);
+        if refresh_cold {
+            self.last_cold_read = Some(Instant::now());
+        }
+        let (kind, event_type, event_field, io_kit) = (self.kind, self.event_type, self.event_field, self.io_kit);
         self.sensors
-            .iter()
-            .filter_map(|cached| {
-                // Valid: the service pointer is owned by `_services`, kept alive
-                // alongside `_client` for the whole lifetime of this reader.
-                let service = ServiceClient {
-                    io_kit: self.io_kit,
-                    inner: unsafe { cached.service.as_ref() },
-                };
-                let value = service.f64_value(self.event_type, self.event_field)?;
-                Some(Sensor {
+            .iter_mut()
+            .map(|cached| {
+                if cached.hot || refresh_cold {
+                    // Valid: the service pointer is owned by `_services`, kept
+                    // alive with `_client` for this reader's whole lifetime.
+                    let service = ServiceClient {
+                        io_kit,
+                        inner: unsafe { cached.service.as_ref() },
+                    };
+                    if let Some(value) = service.f64_value(event_type, event_field) {
+                        cached.value = value;
+                    }
+                }
+                Sensor {
                     component: cached.component,
                     manufacturer: cached.manufacturer.clone(),
                     category: cached.category.clone(),
                     location_id: cached.location_id,
                     registry_id: cached.registry_id,
                     name: cached.name.clone(),
-                    value,
-                    kind: self.kind,
-                })
+                    value: cached.value,
+                    kind,
+                }
             })
             .collect()
     }

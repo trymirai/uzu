@@ -81,7 +81,7 @@ impl Collector {
         let battery = crate::metrics::read_battery();
         let thermal_pressure = crate::metrics::read_thermal_pressure();
         #[cfg(target_vendor = "apple")]
-        let sensors = self.temperature_reader.as_ref().map(crate::client::SensorReader::read).unwrap_or_default();
+        let sensors = self.temperature_reader.as_mut().map(crate::client::SensorReader::read).unwrap_or_default();
         #[cfg(not(target_vendor = "apple"))]
         let sensors = crate::sensors(SensorKind::Temperature);
         let temperatures = (!sensors.is_empty()).then(|| temperatures_from(&sensors));
