@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+use crate::units::Celsius;
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Temperatures {
-    pub cpu_average: f32,
-    pub gpu_average: f32,
+    pub cpu_average: Celsius,
+    pub gpu_average: Celsius,
 }

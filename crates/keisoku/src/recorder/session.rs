@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
 use super::{Device, Marker};
-use crate::snapshot::Snapshot;
+use crate::{snapshot::Snapshot, units::Milliseconds};
 
 /// A recorded telemetry session: device + the sampled time-series + markers.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub device: Device,
-    pub interval_milliseconds: u64,
+    pub interval_milliseconds: Milliseconds,
     pub snapshots: Vec<Snapshot>,
     pub markers: Vec<Marker>,
 }

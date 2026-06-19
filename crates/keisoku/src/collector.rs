@@ -3,10 +3,13 @@
 
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
+use crate::units::{GigabytesPerSecond, Megahertz, Percent, Watts};
 use crate::{
     metrics::{BandwidthMetrics, CpuMetrics, GpuMetrics, NeuralEngineMetrics, PowerMetrics, Temperatures},
     sensor::{Sensor, SensorKind},
     snapshot::Snapshot,
+    units::{Celsius, Milliseconds},
 };
 
 /// The SoC metrics IOReport derives in one sample (macOS only).
@@ -61,7 +64,7 @@ impl Collector {
         let sensors = crate::sensors(SensorKind::Temperature);
         let temperatures = (!sensors.is_empty()).then(|| temperatures_from(&sensors));
         Snapshot {
-            elapsed_milliseconds: 0,
+            elapsed_milliseconds: Milliseconds(0),
             cpu: soc.cpu,
             gpu: soc.gpu,
             neural_engine: soc.neural_engine,
@@ -86,33 +89,33 @@ impl Collector {
         let sample = ioreport.sample(soc, interval);
         SocMetrics {
             cpu: Some(CpuMetrics {
-                usage_percent: sample.cpu_usage_percent * 100.0,
-                ecpu_frequency_megahertz: sample.ecpu_usage.0,
-                ecpu_usage_percent: sample.ecpu_usage.1 * 100.0,
-                pcpu_frequency_megahertz: sample.pcpu_usage.0,
-                pcpu_usage_percent: sample.pcpu_usage.1 * 100.0,
+                usage_percent: Percent(sample.cpu_usage_percent * 100.0),
+                ecpu_frequency_megahertz: Megahertz(sample.ecpu_usage.0),
+                ecpu_usage_percent: Percent(sample.ecpu_usage.1 * 100.0),
+                pcpu_frequency_megahertz: Megahertz(sample.pcpu_usage.0),
+                pcpu_usage_percent: Percent(sample.pcpu_usage.1 * 100.0),
             }),
             gpu: Some(GpuMetrics {
-                frequency_megahertz: sample.gpu_usage.0,
-                usage_percent: sample.gpu_usage.1 * 100.0,
+                frequency_megahertz: Megahertz(sample.gpu_usage.0),
+                usage_percent: Percent(sample.gpu_usage.1 * 100.0),
             }),
             neural_engine: Some(NeuralEngineMetrics {
-                power_watts: sample.ane_power,
-                active_percent: sample.ane_active_percent,
-                read_bandwidth_gbps: sample.ane_read_gbps,
-                write_bandwidth_gbps: sample.ane_write_gbps,
+                power_watts: Watts(sample.ane_power),
+                active_percent: Percent(sample.ane_active_percent),
+                read_bandwidth_gbps: GigabytesPerSecond(sample.ane_read_gbps),
+                write_bandwidth_gbps: GigabytesPerSecond(sample.ane_write_gbps),
             }),
             power: Some(PowerMetrics {
-                cpu_watts: sample.cpu_power,
-                gpu_watts: sample.gpu_power,
-                gpu_sram_watts: sample.gpu_ram_power,
-                ane_watts: sample.ane_power,
-                ram_watts: sample.ram_power,
-                total_watts: sample.total_power,
+                cpu_watts: Watts(sample.cpu_power),
+                gpu_watts: Watts(sample.gpu_power),
+                gpu_sram_watts: Watts(sample.gpu_ram_power),
+                ane_watts: Watts(sample.ane_power),
+                ram_watts: Watts(sample.ram_power),
+                total_watts: Watts(sample.total_power),
             }),
             bandwidth: Some(BandwidthMetrics {
-                dram_read_gbps: sample.dram_read_gbps,
-                dram_write_gbps: sample.dram_write_gbps,
+                dram_read_gbps: GigabytesPerSecond(sample.dram_read_gbps),
+                dram_write_gbps: GigabytesPerSecond(sample.dram_write_gbps),
             }),
         }
     }
@@ -146,7 +149,7 @@ fn temperatures_from(sensors: &[Sensor]) -> Temperatures {
     let gpu_temperatures: Vec<f32> =
         sensors.iter().filter(|sensor| sensor.component == Component::Gpu).map(|sensor| sensor.value as f32).collect();
     Temperatures {
-        cpu_average: average(&cpu_temperatures),
-        gpu_average: average(&gpu_temperatures),
+        cpu_average: Celsius(average(&cpu_temperatures)),
+        gpu_average: Celsius(average(&gpu_temperatures)),
     }
 }

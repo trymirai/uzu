@@ -8,7 +8,7 @@ use std::{
 };
 
 use super::{Config, Device, Marker, Session};
-use crate::{Collector, snapshot::Snapshot};
+use crate::{Collector, snapshot::Snapshot, units::Milliseconds};
 
 /// Handle to a running recorder. Drop or call [`stop`](RecorderHandle::stop).
 pub struct RecorderHandle {
@@ -25,7 +25,7 @@ impl RecorderHandle {
         &self,
         label: impl Into<String>,
     ) {
-        let elapsed_milliseconds = self.started_at.elapsed().as_millis() as u64;
+        let elapsed_milliseconds = Milliseconds(self.started_at.elapsed().as_millis() as u64);
         if let Ok(mut markers) = self.markers.lock() {
             markers.push(Marker {
                 elapsed_milliseconds,
@@ -44,7 +44,7 @@ impl RecorderHandle {
         let markers = self.markers.lock().map(|markers| markers.clone()).unwrap_or_default();
         Session {
             device,
-            interval_milliseconds: self.interval.as_millis() as u64,
+            interval_milliseconds: Milliseconds(self.interval.as_millis() as u64),
             snapshots,
             markers,
         }
@@ -77,7 +77,7 @@ pub fn start(config: Config) -> RecorderHandle {
             let mut snapshots = Vec::new();
             while !stop_flag.load(Ordering::Relaxed) {
                 let mut snapshot = collector.sample(interval);
-                snapshot.elapsed_milliseconds = started_at.elapsed().as_millis() as u64;
+                snapshot.elapsed_milliseconds = Milliseconds(started_at.elapsed().as_millis() as u64);
                 snapshots.push(snapshot);
             }
             (device, snapshots)

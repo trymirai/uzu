@@ -8,13 +8,14 @@ use crate::{
         ThermalPressure,
     },
     sensor::Sensor,
+    units::Milliseconds,
 };
 
 /// One instant of telemetry. Fields are `None` where the platform/provider
 /// can't supply them (e.g. CPU/GPU/power off macOS).
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
-    pub elapsed_milliseconds: u64,
+    pub elapsed_milliseconds: Milliseconds,
     pub cpu: Option<CpuMetrics>,
     pub gpu: Option<GpuMetrics>,
     pub neural_engine: Option<NeuralEngineMetrics>,

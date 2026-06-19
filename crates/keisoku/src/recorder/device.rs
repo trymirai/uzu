@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::Collector;
+use crate::{Collector, units::Bytes};
 
 /// Static description of the machine the session was recorded on.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Device {
     pub os: String,
     pub chip: String,
-    pub ram_total: u64,
+    pub ram_total: Bytes,
     pub efficiency_cores: u8,
     pub performance_cores: u8,
     pub gpu_cores: u8,
@@ -20,7 +20,7 @@ impl Device {
         let mut system = sysinfo::System::new_all();
         system.refresh_all();
         let chip = system.cpus().first().map(|c| c.brand().trim().to_string()).unwrap_or_default();
-        let ram_total = system.total_memory();
+        let ram_total = Bytes(system.total_memory());
 
         #[cfg(target_os = "macos")]
         if let Some(soc) = collector.soc() {

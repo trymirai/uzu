@@ -11,6 +11,7 @@ mod metrics;
 mod recorder;
 mod sensor;
 mod snapshot;
+mod units;
 
 #[cfg(target_os = "macos")]
 mod cf;
@@ -32,6 +33,7 @@ pub use metrics::{
 pub use recorder::{Config, Device, Marker, RecorderHandle, Session, start};
 pub use sensor::{Sensor, SensorKind, current_sensors, thermal_sensors, voltage_sensors};
 pub use snapshot::Snapshot;
+pub use units::{Bytes, Celsius, GigabytesPerSecond, Megahertz, Milliseconds, Percent, Watts};
 
 /// Reads every sensor of `kind` (temperature/voltage/current). Empty off Apple.
 #[cfg(target_vendor = "apple")]
@@ -75,7 +77,7 @@ mod tests {
         let mut collector = Collector::new();
         let snapshot = collector.sample(std::time::Duration::from_millis(120));
         if let Some(power) = &snapshot.power {
-            assert!(power.total_watts.is_finite() && power.total_watts >= 0.0);
+            assert!(power.total_watts.value().is_finite() && power.total_watts.value() >= 0.0);
         }
         if let Some(memory) = &snapshot.memory {
             assert!(memory.ram_total >= memory.ram_usage);

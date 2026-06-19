@@ -46,30 +46,30 @@ fn print_session(session: &Session) {
         device.efficiency_cores,
         device.performance_cores,
         device.gpu_cores,
-        device.ram_total as f64 / 1e9,
+        device.ram_total.value() as f64 / 1e9,
     );
     println!(
         "\n{:>6}  {:>5}  {:>5}  {:>5}  {:>6}  {:>9}  {:>5}  {:>5}",
         "t(ms)", "cpu%", "gpu%", "ane%", "pwr(W)", "DRAM GB/s", "cpu°", "gpu°",
     );
     for snapshot in &session.snapshots {
-        let cpu_percent = snapshot.cpu.as_ref().map(|cpu| cpu.usage_percent).unwrap_or(0.0);
-        let gpu_percent = snapshot.gpu.as_ref().map(|gpu| gpu.usage_percent).unwrap_or(0.0);
-        let ane_percent = snapshot.neural_engine.as_ref().map(|ane| ane.active_percent).unwrap_or(0.0);
-        let total_watts = snapshot.power.as_ref().map(|power| power.total_watts).unwrap_or(0.0);
+        let cpu_percent = snapshot.cpu.as_ref().map(|cpu| cpu.usage_percent.value()).unwrap_or(0.0);
+        let gpu_percent = snapshot.gpu.as_ref().map(|gpu| gpu.usage_percent.value()).unwrap_or(0.0);
+        let ane_percent = snapshot.neural_engine.as_ref().map(|ane| ane.active_percent.value()).unwrap_or(0.0);
+        let total_watts = snapshot.power.as_ref().map(|power| power.total_watts.value()).unwrap_or(0.0);
         let (dram_read, dram_write) = snapshot
             .bandwidth
             .as_ref()
-            .map(|bandwidth| (bandwidth.dram_read_gbps, bandwidth.dram_write_gbps))
+            .map(|bandwidth| (bandwidth.dram_read_gbps.value(), bandwidth.dram_write_gbps.value()))
             .unwrap_or((0.0, 0.0));
         let (cpu_celsius, gpu_celsius) = snapshot
             .temperatures
             .as_ref()
-            .map(|temperatures| (temperatures.cpu_average, temperatures.gpu_average))
+            .map(|temperatures| (temperatures.cpu_average.value(), temperatures.gpu_average.value()))
             .unwrap_or((0.0, 0.0));
         println!(
             "{:>6}  {:>5.1}  {:>5.1}  {:>5.1}  {:>6.2}  {:>4.0}/{:<4.0}  {:>5.1}  {:>5.1}",
-            snapshot.elapsed_milliseconds,
+            snapshot.elapsed_milliseconds.value(),
             cpu_percent,
             gpu_percent,
             ane_percent,
@@ -84,18 +84,21 @@ fn print_session(session: &Session) {
         if let Some(power) = &snapshot.power {
             println!(
                 "\nlast power: cpu {:.2}W  gpu {:.2}W (sram {:.2}W)  ane {:.2}W  ram {:.2}W  total {:.2}W",
-                power.cpu_watts,
-                power.gpu_watts,
-                power.gpu_sram_watts,
-                power.ane_watts,
-                power.ram_watts,
-                power.total_watts,
+                power.cpu_watts.value(),
+                power.gpu_watts.value(),
+                power.gpu_sram_watts.value(),
+                power.ane_watts.value(),
+                power.ram_watts.value(),
+                power.total_watts.value(),
             );
         }
         if let Some(ane) = &snapshot.neural_engine {
             println!(
                 "last ANE:   {:.1}% active, {:.2}W, bandwidth {:.1}/{:.1} GB/s (r/w)",
-                ane.active_percent, ane.power_watts, ane.read_bandwidth_gbps, ane.write_bandwidth_gbps,
+                ane.active_percent.value(),
+                ane.power_watts.value(),
+                ane.read_bandwidth_gbps.value(),
+                ane.write_bandwidth_gbps.value(),
             );
         }
         if let Some(thermal_pressure) = snapshot.thermal_pressure {
@@ -103,6 +106,6 @@ fn print_session(session: &Session) {
         }
     }
     for marker in &session.markers {
-        println!("  marker @ {:>6}ms: {}", marker.elapsed_milliseconds, marker.label);
+        println!("  marker @ {:>6}ms: {}", marker.elapsed_milliseconds.value(), marker.label);
     }
 }

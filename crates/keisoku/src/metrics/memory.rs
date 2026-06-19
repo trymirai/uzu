@@ -3,12 +3,14 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::units::Bytes;
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct MemoryMetrics {
-    pub ram_total: u64,
-    pub ram_usage: u64,
-    pub swap_total: u64,
-    pub swap_usage: u64,
+    pub ram_total: Bytes,
+    pub ram_usage: Bytes,
+    pub swap_total: Bytes,
+    pub swap_usage: Bytes,
 }
 
 #[cfg(target_os = "macos")]
@@ -74,10 +76,10 @@ pub(crate) fn read() -> Option<MemoryMetrics> {
     };
 
     Some(MemoryMetrics {
-        ram_total,
-        ram_usage,
-        swap_total,
-        swap_usage,
+        ram_total: Bytes(ram_total),
+        ram_usage: Bytes(ram_usage),
+        swap_total: Bytes(swap_total),
+        swap_usage: Bytes(swap_usage),
     })
 }
 
@@ -87,9 +89,9 @@ pub(crate) fn read() -> Option<MemoryMetrics> {
     let mut system = System::new();
     system.refresh_memory();
     Some(MemoryMetrics {
-        ram_total: system.total_memory(),
-        ram_usage: system.used_memory(),
-        swap_total: system.total_swap(),
-        swap_usage: system.used_swap(),
+        ram_total: Bytes(system.total_memory()),
+        ram_usage: Bytes(system.used_memory()),
+        swap_total: Bytes(system.total_swap()),
+        swap_usage: Bytes(system.used_swap()),
     })
 }

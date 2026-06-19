@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+use crate::units::{Megahertz, Percent};
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct GpuMetrics {
-    pub frequency_megahertz: u32,
-    pub usage_percent: f32,
+    pub frequency_megahertz: Megahertz,
+    pub usage_percent: Percent,
 }
