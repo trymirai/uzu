@@ -11,7 +11,7 @@
 //! braille filled-area history chart (`⡇⢸⣿⣤`):
 //! ```text
 //! ┌ keisoku · <chip> · <cores> · <gpu> · <ram> ───────────────── 0.5 ┐
-//! │ CPU per-core bars               │ GPU chart                      │
+//! │ CPU chart                       │ GPU chart                      │
 //! ├─────────────────────────────────┼────────────────────────────────┤
 //! │ ANE chart                       │ Memory chart                   │
 //! │ Power Usage   │ Package chart   │ Apple Silicon │ Fans           │
@@ -32,7 +32,7 @@ use std::{
 };
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use keisoku::{Collector, Device, Percent, Snapshot};
+use keisoku::{Collector, Device, Snapshot};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -40,7 +40,7 @@ use ratatui::{
     symbols::Marker,
     text::Line,
     widgets::{
-        Bar, BarChart, BarGroup, Block, BorderType, Borders, List, ListItem, Paragraph,
+        Block, BorderType, Borders, List, ListItem, Paragraph,
         canvas::{Canvas, Line as CanvasLine},
     },
 };
@@ -119,6 +119,7 @@ struct DiskRow {
 struct Telemetry {
     device: Option<Device>,
     snapshot: Option<Snapshot>,
+    cpu_history: VecDeque<f64>,
     gpu_history: VecDeque<f64>,
     ane_history: VecDeque<f64>,
     memory_history: VecDeque<f64>,
@@ -205,6 +206,7 @@ fn sample_loop(
         processes.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap_or(std::cmp::Ordering::Equal));
         processes.truncate(PROCESS_ROWS);
 
+        let cpu = snapshot.cpu.as_ref().map(|c| c.usage.value() as f64).unwrap_or(0.0);
         let gpu = snapshot.gpu.as_ref().map(|g| g.usage.value() as f64).unwrap_or(0.0);
         let ane = snapshot.neural_engine.as_ref().map(|a| a.active.value() as f64).unwrap_or(0.0);
         let memory = snapshot
@@ -217,6 +219,7 @@ fn sample_loop(
         let power = snapshot.power.as_ref().map(|p| p.package.value() as f64).unwrap_or(0.0);
 
         if let Ok(mut state) = telemetry.lock() {
+            push_history(&mut state.cpu_history, cpu);
             push_history(&mut state.gpu_history, gpu);
             push_history(&mut state.ane_history, ane);
             push_history(&mut state.memory_history, memory);
@@ -290,8 +293,7 @@ fn draw(
 
     // Row 1: CPU | GPU usage history charts.
     let top = split_horizontal(rows[0], [Constraint::Percentage(50), Constraint::Percentage(50)]);
-    let per_core = state.snapshot.as_ref().and_then(|s| s.cpu.as_ref()).map(|c| c.per_core.as_slice()).unwrap_or(&[]);
-    render_cpu_cores(frame, top[0], cpu_title(state), per_core);
+    render_chart(frame, top[0], cpu_title(state), &state.cpu_history, 100.0);
     render_chart(frame, top[1], gpu_title(state), &state.gpu_history, 100.0);
 
     // Row 2: left (ANE + power) | right (memory + model/network).
@@ -355,43 +357,6 @@ fn render_chart(
             }
         });
     frame.render_widget(chart, inner);
-}
-
-/// Per-core CPU as a labeled bar chart — one block bar per logical core (height
-/// = current %, label = core index), so each core is clearly distinguishable.
-fn render_cpu_cores(
-    frame: &mut Frame,
-    area: Rect,
-    title: String,
-    per_core: &[Percent],
-) {
-    if per_core.is_empty() {
-        frame.render_widget(panel_owned(title), area);
-        return;
-    }
-    let cores = per_core.len() as u16;
-    let inner_width = area.width.saturating_sub(2);
-    let bar_width = (inner_width.saturating_sub(cores.saturating_sub(1)) / cores).clamp(1, 6);
-    let bars: Vec<Bar> = per_core
-        .iter()
-        .enumerate()
-        .map(|(index, core)| {
-            Bar::default()
-                .value(core.value().round() as u64)
-                .label(Line::from(format!("{index}")))
-                .text_value(format!("{:.0}", core.value()))
-        })
-        .collect();
-    let chart = BarChart::default()
-        .block(panel_owned(title))
-        .data(BarGroup::default().bars(&bars))
-        .bar_width(bar_width)
-        .bar_gap(1)
-        .max(100)
-        .bar_style(Style::default().fg(accent()))
-        .value_style(Style::default().fg(Color::Black).bg(accent()))
-        .label_style(Style::default().fg(accent()));
-    frame.render_widget(chart, area);
 }
 
 fn cpu_title(state: &Telemetry) -> String {
