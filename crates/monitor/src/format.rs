@@ -1,3 +1,15 @@
+use keisoku::BatteryMetrics;
+
+pub(crate) fn battery_status(battery: &BatteryMetrics) -> &'static str {
+    if battery.charging {
+        "charging"
+    } else if battery.on_ac_power {
+        "AC"
+    } else {
+        "battery"
+    }
+}
+
 pub(crate) fn human_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes as f64;

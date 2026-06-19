@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::{
-    format::{format_uptime, human_bytes},
+    format::{battery_status, format_uptime, human_bytes},
     state::accent,
     telemetry::Telemetry,
     widgets::split_horizontal,
@@ -139,13 +139,7 @@ fn build_info_lines(state: &Telemetry) -> Vec<Line<'static>> {
         ));
     }
     if let Some(battery) = snapshot.and_then(|s| s.battery.as_ref()).filter(|battery| battery.present) {
-        let status = if battery.charging {
-            "charging"
-        } else if battery.on_ac_power {
-            "AC"
-        } else {
-            "battery"
-        };
+        let status = battery_status(battery);
         lines.push(info_line("Battery", format!("{:.0}% ({status})", battery.percent.value())));
     }
 

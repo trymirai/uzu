@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::{
     chart::render_chart,
-    format::{format_uptime, human_bytes},
+    format::{battery_status, format_uptime, human_bytes},
     info::render_info,
     state::{accent, background, interval_ms, show_info, theme},
     telemetry::Telemetry,
@@ -169,13 +169,7 @@ fn render_power(
     lines.push(Line::from(format!("Thermals: {thermals}")));
     lines.push(Line::from(format!("Uptime: {}", format_uptime(state.uptime_seconds))));
     if let Some(battery) = state.snapshot.as_ref().and_then(|s| s.battery.as_ref()).filter(|b| b.present) {
-        let status = if battery.charging {
-            "charging"
-        } else if battery.on_ac_power {
-            "AC"
-        } else {
-            "battery"
-        };
+        let status = battery_status(battery);
         lines.push(Line::from(format!("Battery: {:.0}% ({status})", battery.percent.value())));
     }
     frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Power Usage")), area);
