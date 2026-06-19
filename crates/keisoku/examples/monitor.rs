@@ -8,7 +8,7 @@
 //! Run: `cargo run -p keisoku --example monitor`.
 //!
 //! Layout (mactop "default", rounded outer frame). Every usage metric is a
-//! gradient filled-area braille line chart (smooth top edge, gradient by height):
+//! filled-area braille line chart (smooth top edge, flat accent color):
 //! ```text
 //! ┌ keisoku · <chip> · <cores> · <gpu> · <ram> ───────────────── 0.5 ┐
 //! │ CPU chart                       │ GPU chart                      │
@@ -51,49 +51,27 @@ const MAX_INTERVAL_MS: u64 = 5000;
 const INTERVAL_STEP_MS: u64 = 100;
 static INTERVAL_MS: AtomicU64 = AtomicU64::new(1000);
 
-/// Accent colors cycled with `c` (mactop-style); first is the default. Each is
-/// `(name, terminal color for borders/text, vivid RGB base for chart gradients)`.
-const THEMES: [(&str, Color, (u8, u8, u8)); 7] = [
-    ("green", Color::Green, (46, 204, 113)),
-    ("cyan", Color::Cyan, (46, 199, 214)),
-    ("blue", Color::Blue, (66, 135, 245)),
-    ("magenta", Color::Magenta, (199, 84, 199)),
-    ("yellow", Color::Yellow, (230, 200, 70)),
-    ("red", Color::Red, (235, 77, 75)),
-    ("white", Color::White, (220, 220, 230)),
+/// Accent colors cycled with `c` (mactop-style); first is the default.
+const THEMES: [(&str, Color); 7] = [
+    ("green", Color::Green),
+    ("cyan", Color::Cyan),
+    ("blue", Color::Blue),
+    ("magenta", Color::Magenta),
+    ("yellow", Color::Yellow),
+    ("red", Color::Red),
+    ("white", Color::White),
 ];
 
 static THEME_INDEX: AtomicUsize = AtomicUsize::new(0);
 static DARK_BACKGROUND: AtomicBool = AtomicBool::new(true);
 
-/// Current theme `(name, color, rgb base)`, advanced by `c`.
-fn theme() -> (&'static str, Color, (u8, u8, u8)) {
+/// Current theme `(name, color)`, advanced by `c`.
+fn theme() -> (&'static str, Color) {
     THEMES[THEME_INDEX.load(Ordering::Relaxed) % THEMES.len()]
 }
 
 fn accent() -> Color {
     theme().1
-}
-
-/// The accent's vivid RGB base, used to build chart gradients.
-fn accent_rgb() -> (u8, u8, u8) {
-    theme().2
-}
-
-/// Maps a vertical position `fraction` (0 = chart floor, 1 = ceiling) to a
-/// color along the accent gradient: a dim base near the floor brightening to
-/// the full accent, with a subtle white highlight at the very top — the glossy
-/// btop-style look that makes tall spikes glow.
-fn gradient(fraction: f64) -> Color {
-    let (r, g, b) = accent_rgb();
-    let f = fraction.clamp(0.0, 1.0);
-    let level = 0.30 + 0.70 * f;
-    let lift = f * f * f * 0.35;
-    let mix = |channel: u8| {
-        let dimmed = channel as f64 * level;
-        (dimmed + (255.0 - dimmed) * lift).round().clamp(0.0, 255.0) as u8
-    };
-    Color::Rgb(mix(r), mix(g), mix(b))
 }
 
 /// Current background, toggled by `b`.
@@ -342,11 +320,11 @@ fn draw(
 /// 2×4-dot resolution.
 const BRAILLE_DOTS: [[u16; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
 
-/// A bordered panel containing a gradient filled-area history chart, rendered in
-/// braille (2×4 dots per cell). The fill height is linearly interpolated across
-/// the two sub-columns of each cell, so the top edge slopes smoothly between
-/// samples (a line-plot look rather than vertical bars). Each cell is colored by
-/// height along the accent [`gradient`]; newest sample at the right.
+/// A bordered panel containing a filled-area history chart, rendered in braille
+/// (2×4 dots per cell) in the flat accent color. The fill height is linearly
+/// interpolated across the two sub-columns of each cell, so the top edge slopes
+/// smoothly between samples (a line-plot look rather than vertical bars); newest
+/// sample at the right.
 fn render_chart(
     frame: &mut Frame,
     area: Rect,
@@ -371,6 +349,7 @@ fn render_chart(
     let cell_rows = inner.height as usize;
     let sub_rows = cell_rows * 4; // four braille dot rows per cell
     let last = shown.len() - 1;
+    let color = accent();
     let background = background();
 
     // Fill height (in dot rows from the floor) for a braille sub-column, with
@@ -410,7 +389,6 @@ fn render_chart(
                 continue;
             }
             let symbol = char::from_u32(0x2800 + dots as u32).unwrap_or(' ');
-            let color = gradient((row as f64 + 0.5) / cell_rows as f64);
             let y = inner.bottom() - 1 - row as u16;
             if let Some(cell) = buffer.cell_mut((x, y)) {
                 cell.set_char(symbol).set_fg(color).set_bg(background);
