@@ -169,15 +169,16 @@ fn average(values: &[f32]) -> f32 {
 
 fn temperatures_from(sensors: &[Sensor]) -> Temperatures {
     use crate::Component;
-    let cpu_temperatures: Vec<f32> = sensors
-        .iter()
-        .filter(|sensor| matches!(sensor.component, Component::Cpu | Component::Soc))
-        .map(|sensor| sensor.value as f32)
-        .collect();
-    let gpu_temperatures: Vec<f32> =
-        sensors.iter().filter(|sensor| sensor.component == Component::Gpu).map(|sensor| sensor.value as f32).collect();
+    let average_of = |components: &[Component]| {
+        let values: Vec<f32> = sensors
+            .iter()
+            .filter(|sensor| components.contains(&sensor.component) && (1.0..150.0).contains(&sensor.value))
+            .map(|sensor| sensor.value as f32)
+            .collect();
+        Celsius(average(&values))
+    };
     Temperatures {
-        cpu_average: Celsius(average(&cpu_temperatures)),
-        gpu_average: Celsius(average(&gpu_temperatures)),
+        cpu_average: average_of(&[Component::Cpu, Component::Soc]),
+        gpu_average: average_of(&[Component::Gpu]),
     }
 }
