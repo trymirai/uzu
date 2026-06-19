@@ -61,7 +61,7 @@ pub fn classify(name: &str) -> Component {
     if name.contains("cpu") || name.contains("pcore") || name.contains("ecore") {
         return Component::Cpu;
     }
-    if name.contains("soc") || thermal_probe_block(&name) == Some('s') {
+    if name.contains("soc") || name.contains("tdie") || thermal_probe_block(&name) == Some('s') {
         return Component::Soc;
     }
     if name.contains("pmu") {
@@ -93,7 +93,8 @@ mod tests {
         assert_eq!(classify("NAND CH0 temp"), Component::Storage);
         assert_eq!(classify("PMU TP3g"), Component::Gpu);
         assert_eq!(classify("PMU TP1s"), Component::Soc);
-        assert_eq!(classify("PMU tdie1"), Component::PowerManagementUnit);
+        assert_eq!(classify("PMU tdie1"), Component::Soc);
+        assert_eq!(classify("PMU tdev1"), Component::PowerManagementUnit);
         assert_eq!(classify("PMU vbuck0"), Component::PowerManagementUnit);
         assert_eq!(classify("ANE temp"), Component::NeuralEngine);
         assert_eq!(classify("GPU die"), Component::Gpu);
