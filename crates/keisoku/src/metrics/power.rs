@@ -9,5 +9,8 @@ pub struct PowerMetrics {
     pub gpu_sram: Watts,
     pub ane: Watts,
     pub ram: Watts,
+    /// Sum of the component rails above.
     pub total: Watts,
+    /// Whole-package power from the SMC `PSTR` rail; falls back to `total`.
+    pub package: Watts,
 }

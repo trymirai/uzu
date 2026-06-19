@@ -50,3 +50,5 @@ unit!(/// A byte count.
     Bytes(u64) = "B");
 unit!(/// A duration, in milliseconds.
     Milliseconds(u64) = "ms");
+unit!(/// Fan speed, in revolutions per minute.
+    Rpm(f32) = "rpm");

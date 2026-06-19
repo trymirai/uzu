@@ -29,6 +29,8 @@ pub struct Collector {
     ioreport: Option<crate::ioreport::IoReport>,
     #[cfg(target_os = "macos")]
     cpu_load: crate::cpu_load::CpuLoad,
+    #[cfg(target_os = "macos")]
+    smc: Option<crate::smc::Smc>,
 }
 
 impl Default for Collector {
@@ -46,6 +48,8 @@ impl Collector {
             ioreport: crate::ioreport::IoReport::new(),
             #[cfg(target_os = "macos")]
             cpu_load: crate::cpu_load::CpuLoad::new(),
+            #[cfg(target_os = "macos")]
+            smc: crate::smc::Smc::new(),
         }
     }
 
@@ -69,6 +73,7 @@ impl Collector {
     ) -> Snapshot {
         let soc = self.sample_soc(interval);
         let memory = crate::metrics::read_memory();
+        let fans = self.read_fans();
         let thermal_pressure = crate::metrics::read_thermal_pressure();
         let sensors = crate::sensors(SensorKind::Temperature);
         let temperatures = (!sensors.is_empty()).then(|| temperatures_from(&sensors));
@@ -80,6 +85,7 @@ impl Collector {
             power: soc.power,
             memory,
             bandwidth: soc.bandwidth,
+            fans,
             temperatures,
             thermal_pressure,
             sensors,
@@ -97,6 +103,7 @@ impl Collector {
         };
         let sample = ioreport.sample(soc, interval);
         let per_core = self.cpu_load.sample();
+        let package = self.smc.as_ref().and_then(|smc| smc.package_watts()).unwrap_or(Watts(sample.total_power));
         SocMetrics {
             cpu: Some(CpuMetrics {
                 usage: Percent(sample.cpu_usage_percent * 100.0),
@@ -123,6 +130,7 @@ impl Collector {
                 ane: Watts(sample.ane_power),
                 ram: Watts(sample.ram_power),
                 total: Watts(sample.total_power),
+                package,
             }),
             bandwidth: Some(BandwidthMetrics {
                 dram_read: GigabytesPerSecond(sample.dram_read_gbps),
@@ -138,6 +146,16 @@ impl Collector {
     ) -> SocMetrics {
         std::thread::sleep(interval);
         SocMetrics::default()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn read_fans(&self) -> Option<crate::metrics::FanMetrics> {
+        self.smc.as_ref().map(|smc| smc.fans())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn read_fans(&self) -> Option<crate::metrics::FanMetrics> {
+        None
     }
 }
 

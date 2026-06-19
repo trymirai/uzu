@@ -22,6 +22,8 @@ mod cpu_load;
 #[cfg(target_os = "macos")]
 mod ioreport;
 #[cfg(target_os = "macos")]
+mod smc;
+#[cfg(target_os = "macos")]
 mod soc;
 #[cfg(target_vendor = "apple")]
 mod sys;
@@ -29,13 +31,13 @@ mod sys;
 pub use collector::Collector;
 pub use component::{Component, classify};
 pub use metrics::{
-    BandwidthMetrics, CpuMetrics, GpuMetrics, MemoryMetrics, NeuralEngineMetrics, PowerMetrics, Temperatures,
-    ThermalPressure,
+    BandwidthMetrics, CpuMetrics, Fan, FanMetrics, GpuMetrics, MemoryMetrics, NeuralEngineMetrics, PowerMetrics,
+    Temperatures, ThermalPressure,
 };
 pub use recorder::{Config, Device, Marker, RecorderHandle, Session, start};
 pub use sensor::{Sensor, SensorKind, current_sensors, thermal_sensors, voltage_sensors};
 pub use snapshot::Snapshot;
-pub use units::{Bytes, Celsius, GigabytesPerSecond, Megahertz, Milliseconds, Percent, Watts};
+pub use units::{Bytes, Celsius, GigabytesPerSecond, Megahertz, Milliseconds, Percent, Rpm, Watts};
 
 /// Reads every sensor of `kind` (temperature/voltage/current). Empty off Apple.
 #[cfg(target_vendor = "apple")]
