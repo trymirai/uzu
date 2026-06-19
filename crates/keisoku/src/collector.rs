@@ -31,6 +31,8 @@ pub struct Collector {
     cpu_load: crate::cpu_load::CpuLoad,
     #[cfg(target_os = "macos")]
     smc: Option<crate::smc::Smc>,
+    #[cfg(target_vendor = "apple")]
+    temperature_reader: Option<crate::client::SensorReader>,
 }
 
 impl Default for Collector {
@@ -50,6 +52,8 @@ impl Collector {
             cpu_load: crate::cpu_load::CpuLoad::new(),
             #[cfg(target_os = "macos")]
             smc: crate::smc::Smc::new(),
+            #[cfg(target_vendor = "apple")]
+            temperature_reader: crate::client::SensorReader::new(SensorKind::Temperature),
         }
     }
 
@@ -76,6 +80,9 @@ impl Collector {
         let fans = self.read_fans();
         let battery = crate::metrics::read_battery();
         let thermal_pressure = crate::metrics::read_thermal_pressure();
+        #[cfg(target_vendor = "apple")]
+        let sensors = self.temperature_reader.as_ref().map(crate::client::SensorReader::read).unwrap_or_default();
+        #[cfg(not(target_vendor = "apple"))]
         let sensors = crate::sensors(SensorKind::Temperature);
         let temperatures = (!sensors.is_empty()).then(|| temperatures_from(&sensors));
         Snapshot {

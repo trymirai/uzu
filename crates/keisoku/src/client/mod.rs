@@ -1,11 +1,11 @@
 use core::ptr::NonNull;
 
 use obfstr::obfstr;
-use objc2_core_foundation::{CFAllocator, CFArray, CFDictionary, CFNumber, CFString, CFType};
+use objc2_core_foundation::{CFAllocator, CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType};
 
 use self::{event_system_client::EventSystemClient, service_client::ServiceClient};
 use crate::{
-    component::classify,
+    component::{Component, classify},
     sensor::{Sensor, SensorKind},
     sys,
 };
@@ -89,4 +89,106 @@ pub(crate) fn collect(kind: SensorKind) -> Vec<Sensor> {
         });
     }
     readings
+}
+
+/// The static (per-sensor, never-changing) metadata, read once at construction.
+struct CachedSensor {
+    service: NonNull<IOHIDServiceClient>,
+    name: String,
+    component: Component,
+    manufacturer: Option<String>,
+    category: Option<String>,
+    location_id: Option<i64>,
+    registry_id: u64,
+}
+
+/// A persistent sensor reader: enumerates the matching services and reads their
+/// static metadata **once**, then every [`read`](Self::read) re-reads only the
+/// live value per service. This avoids the per-sample client creation, service
+/// enumeration, and four metadata IOKit round-trips per sensor that [`collect`]
+/// repeats — the bulk of a sample's cost. The client and the services array are
+/// both retained for the reader's lifetime, so the cached service pointers stay
+/// valid (matching macmon's persistent `IOHIDSensors`); nothing is dropped early.
+pub(crate) struct SensorReader {
+    io_kit: &'static IOKit,
+    kind: SensorKind,
+    event_type: i64,
+    event_field: i32,
+    sensors: Vec<CachedSensor>,
+    _services: CFRetained<CFArray>,
+    _client: EventSystemClient,
+}
+
+impl SensorReader {
+    pub(crate) fn new(kind: SensorKind) -> Option<Self> {
+        let io_kit = IOKit::get()?;
+        let client = EventSystemClient::new()?;
+        let (page, usage) = kind.matching();
+        let services = client.services_matching(page, usage)?;
+        let event_type = kind.event_type();
+        let event_field = sys::event_field_base(event_type);
+
+        let count = services.count();
+        let mut sensors = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let pointer = unsafe { services.value_at_index(index) }.cast::<IOHIDServiceClient>();
+            let Some(pointer) = NonNull::new(pointer.cast_mut()) else {
+                continue;
+            };
+            let service = ServiceClient {
+                io_kit,
+                inner: unsafe { pointer.as_ref() },
+            };
+            // Keep only services that actually report a value of this kind.
+            if service.f64_value(event_type, event_field).is_none() {
+                continue;
+            }
+            let name = service.string(obfstr!("Product")).unwrap_or_default();
+            sensors.push(CachedSensor {
+                component: classify(&name),
+                manufacturer: service.string(obfstr!("Manufacturer")),
+                category: service.string(obfstr!("Category")),
+                location_id: service.i64_value(obfstr!("LocationID")),
+                registry_id: service.registry_id(),
+                service: pointer,
+                name,
+            });
+        }
+
+        Some(Self {
+            io_kit,
+            kind,
+            event_type,
+            event_field,
+            sensors,
+            _services: services,
+            _client: client,
+        })
+    }
+
+    /// Re-reads the live value of every cached sensor (one IOKit call each).
+    pub(crate) fn read(&self) -> Vec<Sensor> {
+        self.sensors
+            .iter()
+            .filter_map(|cached| {
+                // Valid: the service pointer is owned by `_services`, kept alive
+                // alongside `_client` for the whole lifetime of this reader.
+                let service = ServiceClient {
+                    io_kit: self.io_kit,
+                    inner: unsafe { cached.service.as_ref() },
+                };
+                let value = service.f64_value(self.event_type, self.event_field)?;
+                Some(Sensor {
+                    component: cached.component,
+                    manufacturer: cached.manufacturer.clone(),
+                    category: cached.category.clone(),
+                    location_id: cached.location_id,
+                    registry_id: cached.registry_id,
+                    name: cached.name.clone(),
+                    value,
+                    kind: self.kind,
+                })
+            })
+            .collect()
+    }
 }
