@@ -22,7 +22,7 @@
 //! Power Usage shows per-rail watts + `Pkg` (SMC package) + `Battery`.
 
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     io,
     sync::{
         Arc, Mutex,
@@ -180,9 +180,14 @@ fn sample_loop(
             transmitted += data.transmitted();
         }
 
+        // macOS lists the APFS system and data volumes (and other synthesized
+        // mounts) under one name, e.g. "Macintosh HD" twice — keep the first of
+        // each name so the panel shows one row per volume.
+        let mut seen_disks = HashSet::new();
         let disks = Disks::new_with_refreshed_list()
             .list()
             .iter()
+            .filter(|disk| seen_disks.insert(disk.name().to_os_string()))
             .map(|disk| DiskRow {
                 name: disk.name().to_string_lossy().into_owned(),
                 used: disk.total_space().saturating_sub(disk.available_space()),
