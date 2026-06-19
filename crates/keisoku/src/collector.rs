@@ -175,7 +175,7 @@ fn temperatures_from(sensors: &[Sensor]) -> Temperatures {
             .filter(|sensor| components.contains(&sensor.component) && (1.0..150.0).contains(&sensor.value))
             .map(|sensor| sensor.value as f32)
             .collect();
-        Celsius(average(&values))
+        (!values.is_empty()).then(|| Celsius(average(&values)))
     };
     Temperatures {
         cpu_average: average_of(&[Component::Cpu, Component::Soc]),

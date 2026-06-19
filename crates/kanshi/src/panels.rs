@@ -79,7 +79,8 @@ pub(crate) fn draw(
 
 fn cpu_title(state: &Telemetry) -> String {
     let cpu = state.snapshot.as_ref().and_then(|s| s.cpu.as_ref());
-    let temperature = state.snapshot.as_ref().and_then(|s| s.temperatures.as_ref()).map(|t| t.cpu_average.value());
+    let temperature =
+        state.snapshot.as_ref().and_then(|s| s.temperatures.as_ref()).and_then(|t| t.cpu_average).map(|c| c.value());
     match (cpu, state.device.as_ref()) {
         (Some(cpu), Some(device)) => format!(
             "{} Cores ({}E/{}P) {:.2}% @ E{:.1}/P{:.1} GHz ({:.0}°C)",
@@ -96,7 +97,8 @@ fn cpu_title(state: &Telemetry) -> String {
 }
 
 fn gpu_title(state: &Telemetry) -> String {
-    let temperature = state.snapshot.as_ref().and_then(|s| s.temperatures.as_ref()).map(|t| t.gpu_average.value());
+    let temperature =
+        state.snapshot.as_ref().and_then(|s| s.temperatures.as_ref()).and_then(|t| t.gpu_average).map(|c| c.value());
     match state.snapshot.as_ref().and_then(|s| s.gpu.as_ref()) {
         Some(gpu) => format!(
             "GPU Usage: {:.0}% @ {} MHz ({:.0}°C)",

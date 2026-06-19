@@ -114,10 +114,16 @@ fn build_info_lines(state: &Telemetry) -> Vec<Line<'static>> {
         lines.push(info_line("Power", format!("{:.2} W (max {:.2} W)", power.package.value(), state.max_power)));
     }
     if let Some(temperatures) = snapshot.and_then(|s| s.temperatures.as_ref()) {
-        lines.push(info_line(
-            "Thermals",
-            format!("CPU {:.0}°C  GPU {:.0}°C", temperatures.cpu_average.value(), temperatures.gpu_average.value()),
-        ));
+        let mut parts = Vec::new();
+        if let Some(cpu) = temperatures.cpu_average {
+            parts.push(format!("CPU {:.0}°C", cpu.value()));
+        }
+        if let Some(gpu) = temperatures.gpu_average {
+            parts.push(format!("GPU {:.0}°C", gpu.value()));
+        }
+        if !parts.is_empty() {
+            lines.push(info_line("Thermals", parts.join("  ")));
+        }
     }
     lines.push(info_line(
         "Network",

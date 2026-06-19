@@ -94,7 +94,12 @@ fn print_once() -> io::Result<()> {
         );
     }
     if let Some(temperatures) = &snapshot.temperatures {
-        println!("  cpu {:.1}°C   gpu {:.1}°C", temperatures.cpu_average.value(), temperatures.gpu_average.value(),);
+        if let Some(cpu) = temperatures.cpu_average {
+            println!("  cpu temp   {:.1}°C", cpu.value());
+        }
+        if let Some(gpu) = temperatures.gpu_average {
+            println!("  gpu temp   {:.1}°C", gpu.value());
+        }
     }
     for sensor in snapshot.sensors.iter().take(24) {
         println!("  {:<26} {:>8.2}  [{}]", sensor.name, sensor.value, sensor.component);
