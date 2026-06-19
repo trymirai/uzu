@@ -18,6 +18,8 @@ mod cf;
 #[cfg(target_vendor = "apple")]
 mod client;
 #[cfg(target_os = "macos")]
+mod cpu_load;
+#[cfg(target_os = "macos")]
 mod ioreport;
 #[cfg(target_os = "macos")]
 mod soc;

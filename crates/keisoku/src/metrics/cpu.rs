@@ -9,4 +9,5 @@ pub struct CpuMetrics {
     pub ecpu_usage: Percent,
     pub pcpu_frequency: Megahertz,
     pub pcpu_usage: Percent,
+    pub per_core: Vec<Percent>, // one entry per logical core (macOS)
 }

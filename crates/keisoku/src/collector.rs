@@ -27,6 +27,8 @@ pub struct Collector {
     soc: Option<crate::soc::SocInfo>,
     #[cfg(target_os = "macos")]
     ioreport: Option<crate::ioreport::IoReport>,
+    #[cfg(target_os = "macos")]
+    cpu_load: crate::cpu_load::CpuLoad,
 }
 
 impl Default for Collector {
@@ -42,6 +44,8 @@ impl Collector {
             soc: crate::soc::SocInfo::new(),
             #[cfg(target_os = "macos")]
             ioreport: crate::ioreport::IoReport::new(),
+            #[cfg(target_os = "macos")]
+            cpu_load: crate::cpu_load::CpuLoad::new(),
         }
     }
 
@@ -92,6 +96,7 @@ impl Collector {
             return SocMetrics::default();
         };
         let sample = ioreport.sample(soc, interval);
+        let per_core = self.cpu_load.sample();
         SocMetrics {
             cpu: Some(CpuMetrics {
                 usage: Percent(sample.cpu_usage_percent * 100.0),
@@ -99,6 +104,7 @@ impl Collector {
                 ecpu_usage: Percent(sample.ecpu_usage.1 * 100.0),
                 pcpu_frequency: Megahertz(sample.pcpu_usage.0),
                 pcpu_usage: Percent(sample.pcpu_usage.1 * 100.0),
+                per_core,
             }),
             gpu: Some(GpuMetrics {
                 frequency: Megahertz(sample.gpu_usage.0),
