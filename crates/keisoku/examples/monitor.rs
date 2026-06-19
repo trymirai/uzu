@@ -8,7 +8,7 @@
 //! Run: `cargo run -p keisoku --example monitor`.
 //!
 //! Layout (mactop "default", rounded outer frame). Every usage metric is a
-//! braille filled-area history chart (`⡇⢸⣿⣤`):
+//! gradient filled-area history chart (half-block cells colored by height):
 //! ```text
 //! ┌ keisoku · <chip> · <cores> · <gpu> · <ram> ───────────────── 0.5 ┐
 //! │ CPU chart                       │ GPU chart                      │
@@ -37,12 +37,8 @@ use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
-    symbols::Marker,
     text::Line,
-    widgets::{
-        Block, BorderType, Borders, List, ListItem, Paragraph,
-        canvas::{Canvas, Line as CanvasLine},
-    },
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
 };
 use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
 
@@ -55,27 +51,49 @@ const MAX_INTERVAL_MS: u64 = 5000;
 const INTERVAL_STEP_MS: u64 = 100;
 static INTERVAL_MS: AtomicU64 = AtomicU64::new(1000);
 
-/// Accent colors cycled with `c` (mactop-style); first is the default.
-const THEMES: [(&str, Color); 7] = [
-    ("green", Color::Green),
-    ("cyan", Color::Cyan),
-    ("blue", Color::Blue),
-    ("magenta", Color::Magenta),
-    ("yellow", Color::Yellow),
-    ("red", Color::Red),
-    ("white", Color::White),
+/// Accent colors cycled with `c` (mactop-style); first is the default. Each is
+/// `(name, terminal color for borders/text, vivid RGB base for chart gradients)`.
+const THEMES: [(&str, Color, (u8, u8, u8)); 7] = [
+    ("green", Color::Green, (46, 204, 113)),
+    ("cyan", Color::Cyan, (46, 199, 214)),
+    ("blue", Color::Blue, (66, 135, 245)),
+    ("magenta", Color::Magenta, (199, 84, 199)),
+    ("yellow", Color::Yellow, (230, 200, 70)),
+    ("red", Color::Red, (235, 77, 75)),
+    ("white", Color::White, (220, 220, 230)),
 ];
 
 static THEME_INDEX: AtomicUsize = AtomicUsize::new(0);
 static DARK_BACKGROUND: AtomicBool = AtomicBool::new(true);
 
-/// Current accent (name, color), advanced by `c`.
-fn theme() -> (&'static str, Color) {
+/// Current theme `(name, color, rgb base)`, advanced by `c`.
+fn theme() -> (&'static str, Color, (u8, u8, u8)) {
     THEMES[THEME_INDEX.load(Ordering::Relaxed) % THEMES.len()]
 }
 
 fn accent() -> Color {
     theme().1
+}
+
+/// The accent's vivid RGB base, used to build chart gradients.
+fn accent_rgb() -> (u8, u8, u8) {
+    theme().2
+}
+
+/// Maps a vertical position `fraction` (0 = chart floor, 1 = ceiling) to a
+/// color along the accent gradient: a dim base near the floor brightening to
+/// the full accent, with a subtle white highlight at the very top — the glossy
+/// btop-style look that makes tall spikes glow.
+fn gradient(fraction: f64) -> Color {
+    let (r, g, b) = accent_rgb();
+    let f = fraction.clamp(0.0, 1.0);
+    let level = 0.30 + 0.70 * f;
+    let lift = f * f * f * 0.35;
+    let mix = |channel: u8| {
+        let dimmed = channel as f64 * level;
+        (dimmed + (255.0 - dimmed) * lift).round().clamp(0.0, 255.0) as u8
+    };
+    Color::Rgb(mix(r), mix(g), mix(b))
 }
 
 /// Current background, toggled by `b`.
@@ -319,9 +337,10 @@ fn draw(
     render_network(frame, bottom[2], state);
 }
 
-/// A bordered green panel containing a braille filled-area history chart — the
-/// same `⡇⢸⣿⣤` braille rendering as the power graph, for every metric. The
-/// title carries the current values; the chart shows the recent history.
+/// A bordered panel containing a gradient filled-area history chart. Each
+/// terminal column is one history sample drawn with half-block cells (`█`/`▄`,
+/// 2× vertical resolution), colored by height along the accent [`gradient`] so
+/// the area fades from a dim floor up to a glowing tip — newest at the right.
 fn render_chart(
     frame: &mut Frame,
     area: Rect,
@@ -332,31 +351,39 @@ fn render_chart(
     let block = panel_owned(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
 
-    // Each cell is 2×4 braille dots; one vertical line per braille column gives
-    // a smooth, high-resolution filled area (btop-style), newest at the right.
-    let columns = (inner.width as usize * 2).max(1);
+    let columns = inner.width as usize;
     let shown: Vec<f64> = history.iter().rev().take(columns).rev().copied().collect();
     let offset = columns - shown.len();
     let ceiling = ceiling.max(1e-9);
-    let chart = Canvas::default()
-        .marker(Marker::Braille)
-        .background_color(background())
-        .x_bounds([0.0, columns as f64])
-        .y_bounds([0.0, ceiling])
-        .paint(move |context| {
-            for (index, &value) in shown.iter().enumerate() {
-                let x = (offset + index) as f64;
-                context.draw(&CanvasLine {
-                    x1: x,
-                    y1: 0.0,
-                    x2: x,
-                    y2: value,
-                    color: accent(),
-                });
+    let cell_rows = inner.height as usize;
+    let sub_rows = cell_rows * 2; // two half-block steps per cell row
+    let background = background();
+    let buffer = frame.buffer_mut();
+
+    for (index, &value) in shown.iter().enumerate() {
+        let x = inner.left() + (offset + index) as u16;
+        let filled_subs = ((value / ceiling).clamp(0.0, 1.0) * sub_rows as f64).round() as usize;
+        for row in 0..cell_rows {
+            let subs_in_cell = filled_subs.saturating_sub(row * 2).min(2);
+            if subs_in_cell == 0 {
+                continue;
             }
-        });
-    frame.render_widget(chart, inner);
+            let symbol = if subs_in_cell == 2 {
+                "█"
+            } else {
+                "▄"
+            };
+            let color = gradient((row as f64 + 0.5) / cell_rows as f64);
+            let y = inner.bottom() - 1 - row as u16;
+            if let Some(cell) = buffer.cell_mut((x, y)) {
+                cell.set_symbol(symbol).set_fg(color).set_bg(background);
+            }
+        }
+    }
 }
 
 fn cpu_title(state: &Telemetry) -> String {
