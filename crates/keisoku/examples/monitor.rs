@@ -407,13 +407,23 @@ fn render_power(
 ) {
     let mut lines = Vec::new();
     if let Some(power) = state.snapshot.as_ref().and_then(|s| s.power.as_ref()) {
+        // Fixed-width labels (5) and values (6) so the `|` and right column stay
+        // aligned as the numbers grow.
         lines.push(Line::from(format!(
-            "CPU: {:.2} W | GPU: {:.2} W",
+            "{:<6}{:>6.2} W | {:<5}{:>6.2} W",
+            "CPU:",
             power.cpu.value(),
+            "GPU:",
             power.gpu.value() + power.gpu_sram.value(),
         )));
-        lines.push(Line::from(format!("ANE: {:.2} W | DRAM: {:.2} W", power.ane.value(), power.ram.value())));
-        lines.push(Line::from(format!("Total: {:.2} W", power.total.value())));
+        lines.push(Line::from(format!(
+            "{:<6}{:>6.2} W | {:<5}{:>6.2} W",
+            "ANE:",
+            power.ane.value(),
+            "DRAM:",
+            power.ram.value(),
+        )));
+        lines.push(Line::from(format!("{:<6}{:>6.2} W", "Total:", power.total.value())));
     }
     let thermals =
         state.snapshot.as_ref().and_then(|s| s.thermal_pressure).map(|t| format!("{t:?}")).unwrap_or_default();
