@@ -21,6 +21,10 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sysinfo.workspace = true
 
+# Used only by the on-device `table` test to render a snapshot via TestBackend.
+[dev-dependencies]
+ratatui.workspace = true
+
 [target.'cfg(target_vendor = "apple")'.dependencies]
 kanka.workspace = true
 objc2-core-foundation.workspace = true

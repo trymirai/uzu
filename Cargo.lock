@@ -3312,6 +3312,7 @@ dependencies = [
  "obfstr",
  "objc2-core-foundation",
  "objc2-io-kit",
+ "ratatui",
  "serde",
  "serde_json",
  "sysinfo",
