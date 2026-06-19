@@ -5,13 +5,14 @@
 //!
 //! `cargo run -p keisoku --example monitor`  —  press `q`/`Esc`/`Ctrl-C` to quit.
 //!
-//! Layout (mactop "default", all green, rounded outer frame):
+//! Layout (mactop "default", all green, rounded outer frame). Every usage
+//! metric is a braille filled-area history chart (`⡇⢸⣿⣤`):
 //! ```text
 //! ┌ keisoku · <chip> · <cores> · <gpu> · <ram> ───────────────── 0.5 ┐
-//! │ CPU gauge                       │ GPU gauge                      │
+//! │ CPU chart                       │ GPU chart                      │
 //! ├─────────────────────────────────┼────────────────────────────────┤
-//! │ ANE gauge                       │ Memory gauge                   │
-//! │ Power Usage   │ <power spark>   │ Apple Silicon │ Network & Disk │
+//! │ ANE chart                       │ Memory chart                   │
+//! │ Power Usage   │ Power chart     │ Apple Silicon │ Network & Disk │
 //! ├─────────────────────────────────┴────────────────────────────────┤
 //! │ Process List                                                      │
 //! └ 1/1 layout (green) ───────────── Exit: q ──────────────── 1000ms ┘
@@ -39,16 +40,15 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     symbols::Marker,
-    text::{Line, Span},
+    text::Line,
     widgets::{
-        Block, BorderType, Borders, Gauge, List, ListItem, Paragraph,
+        Block, BorderType, Borders, List, ListItem, Paragraph,
         canvas::{Canvas, Line as CanvasLine},
     },
 };
 use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
 
 const GREEN: Color = Color::Green;
-const LABEL: Color = Color::Indexed(245); // grey, like mactop's gauge label
 const HISTORY: usize = 256;
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(1000);
 const PROCESS_ROWS: usize = 8;
@@ -72,6 +72,10 @@ struct DiskRow {
 struct Telemetry {
     device: Option<Device>,
     snapshot: Option<Snapshot>,
+    cpu_history: VecDeque<f64>,
+    gpu_history: VecDeque<f64>,
+    ane_history: VecDeque<f64>,
+    memory_history: VecDeque<f64>,
     power_history: VecDeque<f64>,
     max_power: f64,
     uptime_seconds: u64,
@@ -158,15 +162,24 @@ fn sample_loop(
         processes.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap_or(std::cmp::Ordering::Equal));
         processes.truncate(PROCESS_ROWS);
 
+        let cpu = snapshot.cpu.as_ref().map(|c| c.usage.value() as f64).unwrap_or(0.0);
+        let gpu = snapshot.gpu.as_ref().map(|g| g.usage.value() as f64).unwrap_or(0.0);
+        let ane = snapshot.neural_engine.as_ref().map(|a| a.active.value() as f64).unwrap_or(0.0);
+        let memory = snapshot
+            .memory
+            .as_ref()
+            .filter(|m| m.ram_total.value() > 0)
+            .map(|m| m.ram_usage.value() as f64 / m.ram_total.value() as f64 * 100.0)
+            .unwrap_or(0.0);
+        let power = snapshot.power.as_ref().map(|p| p.total.value() as f64).unwrap_or(0.0);
+
         if let Ok(mut state) = telemetry.lock() {
-            if let Some(power) = &snapshot.power {
-                let total = power.total.value() as f64;
-                state.power_history.push_back(total);
-                while state.power_history.len() > HISTORY {
-                    state.power_history.pop_front();
-                }
-                state.max_power = state.max_power.max(total);
-            }
+            push_history(&mut state.cpu_history, cpu);
+            push_history(&mut state.gpu_history, gpu);
+            push_history(&mut state.ane_history, ane);
+            push_history(&mut state.memory_history, memory);
+            push_history(&mut state.power_history, power);
+            state.max_power = state.max_power.max(power);
             state.snapshot = Some(snapshot);
             state.uptime_seconds = System::uptime();
             state.network_down = received as f64 / elapsed;
@@ -220,22 +233,22 @@ fn draw(
         .constraints([Constraint::Percentage(25), Constraint::Percentage(50), Constraint::Percentage(25)])
         .split(area);
 
-    // Row 1: CPU | GPU gauges.
+    // Row 1: CPU | GPU usage history charts.
     let top = split_horizontal(rows[0], [Constraint::Percentage(50), Constraint::Percentage(50)]);
-    render_cpu(frame, top[0], state);
-    render_gpu(frame, top[1], state);
+    render_chart(frame, top[0], cpu_title(state), &state.cpu_history, 100.0);
+    render_chart(frame, top[1], gpu_title(state), &state.gpu_history, 100.0);
 
     // Row 2: left (ANE + power) | right (memory + model/network).
     let middle = split_horizontal(rows[1], [Constraint::Percentage(50), Constraint::Percentage(50)]);
 
     let left = split_vertical(middle[0], [Constraint::Percentage(50), Constraint::Percentage(50)]);
-    render_ane(frame, left[0], state);
+    render_chart(frame, left[0], ane_title(state), &state.ane_history, 100.0);
     let left_bottom = split_horizontal(left[1], [Constraint::Percentage(50), Constraint::Percentage(50)]);
     render_power(frame, left_bottom[0], state);
-    render_power_chart(frame, left_bottom[1], state);
+    render_chart(frame, left_bottom[1], power_title(state), &state.power_history, state.max_power);
 
     let right = split_vertical(middle[1], [Constraint::Percentage(50), Constraint::Percentage(50)]);
-    render_memory(frame, right[0], state);
+    render_chart(frame, right[0], memory_title(state), &state.memory_history, 100.0);
     let right_bottom = split_horizontal(right[1], [Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]);
     render_model(frame, right_bottom[0], state);
     render_network(frame, right_bottom[1], state);
@@ -244,124 +257,105 @@ fn draw(
     render_processes(frame, rows[2], state);
 }
 
-fn render_cpu(
+/// A bordered green panel containing a braille filled-area history chart — the
+/// same `⡇⢸⣿⣤` braille rendering as the power graph, for every metric. The
+/// title carries the current values; the chart shows the recent history.
+fn render_chart(
     frame: &mut Frame,
     area: Rect,
-    state: &Telemetry,
+    title: String,
+    history: &VecDeque<f64>,
+    ceiling: f64,
 ) {
+    let block = panel_owned(title);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Each cell is 2×4 braille dots; one vertical line per braille column gives
+    // a smooth, high-resolution filled area (btop-style), newest at the right.
+    let columns = (inner.width as usize * 2).max(1);
+    let shown: Vec<f64> = history.iter().rev().take(columns).rev().copied().collect();
+    let offset = columns - shown.len();
+    let ceiling = ceiling.max(1e-9);
+    let chart =
+        Canvas::default().marker(Marker::Braille).x_bounds([0.0, columns as f64]).y_bounds([0.0, ceiling]).paint(
+            move |context| {
+                for (index, &value) in shown.iter().enumerate() {
+                    let x = (offset + index) as f64;
+                    context.draw(&CanvasLine {
+                        x1: x,
+                        y1: 0.0,
+                        x2: x,
+                        y2: value,
+                        color: GREEN,
+                    });
+                }
+            },
+        );
+    frame.render_widget(chart, inner);
+}
+
+fn cpu_title(state: &Telemetry) -> String {
     let cpu = state.snapshot.as_ref().and_then(|s| s.cpu.as_ref());
-    let device = state.device.as_ref();
     let temperature = state.snapshot.as_ref().and_then(|s| s.temperatures.as_ref()).map(|t| t.cpu_average.value());
-    let (title, ratio) = match (cpu, device) {
-        (Some(cpu), Some(device)) => {
-            let cores = device.efficiency_cores + device.performance_cores;
-            let title = format!(
-                "{} Cores ({}E/{}P) {:.2}% @ E{:.1}/P{:.1} GHz ({:.0}°C)",
-                cores,
-                device.efficiency_cores,
-                device.performance_cores,
-                cpu.usage.value(),
-                cpu.ecpu_frequency.value() as f64 / 1000.0,
-                cpu.pcpu_frequency.value() as f64 / 1000.0,
-                temperature.unwrap_or(0.0),
-            );
-            (title, cpu.usage.value() as f64 / 100.0)
-        },
-        _ => ("Loading…".to_string(), 0.0),
-    };
-    render_gauge(frame, area, &title, ratio);
+    match (cpu, state.device.as_ref()) {
+        (Some(cpu), Some(device)) => format!(
+            "{} Cores ({}E/{}P) {:.2}% @ E{:.1}/P{:.1} GHz ({:.0}°C)",
+            device.efficiency_cores + device.performance_cores,
+            device.efficiency_cores,
+            device.performance_cores,
+            cpu.usage.value(),
+            cpu.ecpu_frequency.value() as f64 / 1000.0,
+            cpu.pcpu_frequency.value() as f64 / 1000.0,
+            temperature.unwrap_or(0.0),
+        ),
+        _ => "CPU Usage".to_string(),
+    }
 }
 
-fn render_gpu(
-    frame: &mut Frame,
-    area: Rect,
-    state: &Telemetry,
-) {
-    let gpu = state.snapshot.as_ref().and_then(|s| s.gpu.as_ref());
+fn gpu_title(state: &Telemetry) -> String {
     let temperature = state.snapshot.as_ref().and_then(|s| s.temperatures.as_ref()).map(|t| t.gpu_average.value());
-    let (title, ratio) = match gpu {
-        Some(gpu) => (
-            format!(
-                "GPU Usage: {:.0}% @ {} MHz ({:.0}°C)",
-                gpu.usage.value(),
-                gpu.frequency.value(),
-                temperature.unwrap_or(0.0),
-            ),
-            gpu.usage.value() as f64 / 100.0,
+    match state.snapshot.as_ref().and_then(|s| s.gpu.as_ref()) {
+        Some(gpu) => format!(
+            "GPU Usage: {:.0}% @ {} MHz ({:.0}°C)",
+            gpu.usage.value(),
+            gpu.frequency.value(),
+            temperature.unwrap_or(0.0),
         ),
-        None => ("GPU Usage".to_string(), 0.0),
-    };
-    render_gauge(frame, area, &title, ratio);
+        None => "GPU Usage".to_string(),
+    }
 }
 
-fn render_ane(
-    frame: &mut Frame,
-    area: Rect,
-    state: &Telemetry,
-) {
-    let ane = state.snapshot.as_ref().and_then(|s| s.neural_engine.as_ref());
-    let (title, ratio) = match ane {
-        Some(ane) => (
-            format!("ANE Usage: {:.2}% @ {:.2} W", ane.active.value(), ane.power.value()),
-            ane.active.value() as f64 / 100.0,
-        ),
-        None => ("ANE Usage".to_string(), 0.0),
-    };
-    render_gauge(frame, area, &title, ratio);
+fn ane_title(state: &Telemetry) -> String {
+    match state.snapshot.as_ref().and_then(|s| s.neural_engine.as_ref()) {
+        Some(ane) => format!("ANE Usage: {:.2}% @ {:.2} W", ane.active.value(), ane.power.value()),
+        None => "ANE Usage".to_string(),
+    }
 }
 
-fn render_memory(
-    frame: &mut Frame,
-    area: Rect,
-    state: &Telemetry,
-) {
-    let memory = state.snapshot.as_ref().and_then(|s| s.memory.as_ref());
+fn memory_title(state: &Telemetry) -> String {
     let bandwidth = state
         .snapshot
         .as_ref()
         .and_then(|s| s.bandwidth.as_ref())
         .map(|b| b.dram_read.value() + b.dram_write.value())
         .unwrap_or(0.0);
-    let (title, ratio) = match memory {
-        Some(memory) => {
-            let used = memory.ram_usage.value() as f64;
-            let total = memory.ram_total.value() as f64;
-            let title = format!(
-                "Mem: {:.2} GB / {:.2} GB (Swap: {:.2}/{:.2} GB) BW: {:.1} GB/s",
-                used / 1e9,
-                total / 1e9,
-                memory.swap_usage.value() as f64 / 1e9,
-                memory.swap_total.value() as f64 / 1e9,
-                bandwidth,
-            );
-            (
-                title,
-                if total > 0.0 {
-                    used / total
-                } else {
-                    0.0
-                },
-            )
-        },
-        None => ("Memory Usage".to_string(), 0.0),
-    };
-    render_gauge(frame, area, &title, ratio);
+    match state.snapshot.as_ref().and_then(|s| s.memory.as_ref()) {
+        Some(memory) => format!(
+            "Mem: {:.2} GB / {:.2} GB (Swap: {:.2}/{:.2} GB) BW: {:.1} GB/s",
+            memory.ram_usage.value() as f64 / 1e9,
+            memory.ram_total.value() as f64 / 1e9,
+            memory.swap_usage.value() as f64 / 1e9,
+            memory.swap_total.value() as f64 / 1e9,
+            bandwidth,
+        ),
+        None => "Memory Usage".to_string(),
+    }
 }
 
-fn render_gauge(
-    frame: &mut Frame,
-    area: Rect,
-    title: &str,
-    ratio: f64,
-) {
-    let ratio = ratio.clamp(0.0, 1.0);
-    let gauge = Gauge::default()
-        .block(panel(title))
-        .gauge_style(Style::default().fg(GREEN).bg(Color::Reset))
-        .use_unicode(true) // sub-cell (1/8) bar resolution for a smooth edge
-        .label(Span::styled(format!("{:.0}%", ratio * 100.0), Style::default().fg(LABEL)))
-        .ratio(ratio);
-    frame.render_widget(gauge, area);
+fn power_title(state: &Telemetry) -> String {
+    let current = state.power_history.back().copied().unwrap_or(0.0);
+    format!("{current:.2} W Total (Max: {:.2} W)", state.max_power)
 }
 
 fn render_power(
@@ -384,58 +378,6 @@ fn render_power(
     lines.push(Line::from(format!("Thermals: {thermals}")));
     lines.push(Line::from(format!("Uptime: {}", format_uptime(state.uptime_seconds))));
     frame.render_widget(Paragraph::new(lines).style(Style::default().fg(GREEN)).block(panel("Power Usage")), area);
-}
-
-fn render_power_chart(
-    frame: &mut Frame,
-    area: Rect,
-    state: &Telemetry,
-) {
-    let current = state.power_history.back().copied().unwrap_or(0.0);
-    let average = if state.power_history.is_empty() {
-        0.0
-    } else {
-        state.power_history.iter().sum::<f64>() / state.power_history.len() as f64
-    };
-    let thermals =
-        state.snapshot.as_ref().and_then(|s| s.thermal_pressure).map(|t| format!("{t:?}")).unwrap_or_default();
-
-    let block = panel_owned(format!("{current:.2} W Total (Max: {:.2} W)", state.max_power));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let parts = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner);
-
-    // Braille filled-area chart: each cell is 2×4 dots, so a vertical line per
-    // braille column gives a smooth, high-resolution graph (btop-style).
-    let columns = (parts[0].width as usize * 2).max(1);
-    let shown: Vec<f64> = state.power_history.iter().rev().take(columns).rev().copied().collect();
-    let offset = columns - shown.len(); // keep the newest samples flush to the right edge
-    let ceiling = state.max_power.max(1e-9);
-    let chart =
-        Canvas::default().marker(Marker::Braille).x_bounds([0.0, columns as f64]).y_bounds([0.0, ceiling]).paint(
-            move |context| {
-                for (index, &watts) in shown.iter().enumerate() {
-                    let x = (offset + index) as f64;
-                    context.draw(&CanvasLine {
-                        x1: x,
-                        y1: 0.0,
-                        x2: x,
-                        y2: watts,
-                        color: GREEN,
-                    });
-                }
-            },
-        );
-    frame.render_widget(chart, parts[0]);
-
-    frame.render_widget(
-        Paragraph::new(Line::from(format!("Avg: {average:.2} W | {thermals}"))).style(Style::default().fg(GREEN)),
-        parts[1],
-    );
 }
 
 fn render_model(
@@ -528,6 +470,16 @@ fn header_title(device: Option<&Device>) -> String {
             device.ram_total.value() as f64 / 1e9,
         ),
         None => " keisoku ".to_string(),
+    }
+}
+
+fn push_history(
+    history: &mut VecDeque<f64>,
+    value: f64,
+) {
+    history.push_back(value);
+    while history.len() > HISTORY {
+        history.pop_front();
     }
 }
 
