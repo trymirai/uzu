@@ -1,15 +1,18 @@
 mod disk_row;
+mod format;
 mod host_info;
 mod net_interface;
 mod process_row;
+mod state;
 mod telemetry;
+mod widgets;
 
 use std::{
     collections::{HashSet, VecDeque},
     io,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -19,41 +22,29 @@ use keisoku::{Collector, Device};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
 };
 use sysinfo::{Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System};
 
 use crate::{
-    disk_row::DiskRow, host_info::HostInfo, net_interface::NetInterface, process_row::ProcessRow, telemetry::Telemetry,
+    disk_row::DiskRow,
+    format::{format_uptime, human_bytes},
+    host_info::HostInfo,
+    net_interface::NetInterface,
+    process_row::ProcessRow,
+    state::{
+        accent, background, bump_data_version, cycle_theme, data_version, interval, interval_ms, show_info, slow_down,
+        speed_up, theme, toggle_background, toggle_info,
+    },
+    telemetry::Telemetry,
+    widgets::{panel, panel_owned, split_horizontal, split_vertical},
 };
 
 const HISTORY: usize = 256;
 const PROCESS_ROWS: usize = 8;
 const NETWORK_ROWS: usize = 4;
-
-const MIN_INTERVAL_MS: u64 = 100;
-const MAX_INTERVAL_MS: u64 = 5000;
-const INTERVAL_STEP_MS: u64 = 100;
-static INTERVAL_MS: AtomicU64 = AtomicU64::new(1000);
-
-const THEMES: [(&str, Color); 7] = [
-    ("green", Color::Green),
-    ("cyan", Color::Cyan),
-    ("blue", Color::Blue),
-    ("magenta", Color::Magenta),
-    ("yellow", Color::Yellow),
-    ("red", Color::Red),
-    ("white", Color::White),
-];
-
-static THEME_INDEX: AtomicUsize = AtomicUsize::new(0);
-static DARK_BACKGROUND: AtomicBool = AtomicBool::new(true);
-
-static SHOW_INFO: AtomicBool = AtomicBool::new(false);
-
-static DATA_VERSION: AtomicU64 = AtomicU64::new(0);
 
 const DISK_REFRESH: Duration = Duration::from_secs(3);
 
@@ -76,32 +67,6 @@ const APPLE_ART: [&str; 17] = [
     "     ;KMMMMMMMWXXWMMMMMMMk.    ",
     "       .cooc,.    .,coo:.      ",
 ];
-
-fn theme() -> (&'static str, Color) {
-    THEMES[THEME_INDEX.load(Ordering::Relaxed) % THEMES.len()]
-}
-
-fn accent() -> Color {
-    theme().1
-}
-
-fn background() -> Color {
-    if DARK_BACKGROUND.load(Ordering::Relaxed) {
-        Color::Black
-    } else {
-        Color::Reset
-    }
-}
-
-fn interval() -> Duration {
-    Duration::from_millis(INTERVAL_MS.load(Ordering::Relaxed))
-}
-
-fn adjust_interval(delta: i64) {
-    let current = INTERVAL_MS.load(Ordering::Relaxed) as i64;
-    let next = (current + delta).clamp(MIN_INTERVAL_MS as i64, MAX_INTERVAL_MS as i64) as u64;
-    INTERVAL_MS.store(next, Ordering::Relaxed);
-}
 
 fn main() -> io::Result<()> {
     let telemetry = Arc::new(Mutex::new(Telemetry::default()));
@@ -252,7 +217,7 @@ fn sample_loop(
             }
             state.processes = processes;
         }
-        DATA_VERSION.fetch_add(1, Ordering::Relaxed);
+        bump_data_version();
     }
 }
 
@@ -263,7 +228,7 @@ fn run(
     let mut shown_version = u64::MAX;
     let mut redraw = true;
     loop {
-        let version = DATA_VERSION.load(Ordering::Relaxed);
+        let version = data_version();
         if redraw || version != shown_version {
             shown_version = version;
             redraw = false;
@@ -277,17 +242,11 @@ fn run(
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                         KeyCode::Char('c') if ctrl => return Ok(()),
-                        KeyCode::Char('c') => {
-                            THEME_INDEX.fetch_add(1, Ordering::Relaxed);
-                        },
-                        KeyCode::Char('b') => {
-                            DARK_BACKGROUND.fetch_xor(true, Ordering::Relaxed);
-                        },
-                        KeyCode::Char('i') => {
-                            SHOW_INFO.fetch_xor(true, Ordering::Relaxed);
-                        },
-                        KeyCode::Char('+') | KeyCode::Char('=') => adjust_interval(-(INTERVAL_STEP_MS as i64)),
-                        KeyCode::Char('-') | KeyCode::Char('_') => adjust_interval(INTERVAL_STEP_MS as i64),
+                        KeyCode::Char('c') => cycle_theme(),
+                        KeyCode::Char('b') => toggle_background(),
+                        KeyCode::Char('i') => toggle_info(),
+                        KeyCode::Char('+') | KeyCode::Char('=') => speed_up(),
+                        KeyCode::Char('-') | KeyCode::Char('_') => slow_down(),
                         _ => {},
                     }
                     redraw = true;
@@ -313,11 +272,11 @@ fn draw(
         .title_top(Line::from(format!(" {} ", env!("CARGO_PKG_VERSION"))).right_aligned())
         .title_bottom(Line::from(format!(" {} ", theme().0)))
         .title_bottom(Line::from(" Info: i · Color: c · BG: b · Exit: q ").centered())
-        .title_bottom(Line::from(format!(" -/+ {}ms ", INTERVAL_MS.load(Ordering::Relaxed))).right_aligned());
+        .title_bottom(Line::from(format!(" -/+ {}ms ", interval_ms())).right_aligned());
     let area = outer.inner(frame.area());
     frame.render_widget(outer, frame.area());
 
-    if SHOW_INFO.load(Ordering::Relaxed) {
+    if show_info() {
         render_info(frame, area, state);
         return;
     }
@@ -782,36 +741,6 @@ fn render_processes(
     frame.render_widget(List::new(items).style(Style::default().fg(accent())).block(panel("Process List")), area);
 }
 
-fn panel(title: &str) -> Block<'_> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(accent()))
-        .title_style(Style::default().fg(accent()))
-        .title(title)
-}
-
-fn panel_owned(title: String) -> Block<'static> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(accent()))
-        .title_style(Style::default().fg(accent()))
-        .title(title)
-}
-
-fn split_horizontal<const N: usize>(
-    area: Rect,
-    constraints: [Constraint; N],
-) -> std::rc::Rc<[Rect]> {
-    Layout::default().direction(Direction::Horizontal).constraints(constraints).split(area)
-}
-
-fn split_vertical<const N: usize>(
-    area: Rect,
-    constraints: [Constraint; N],
-) -> std::rc::Rc<[Rect]> {
-    Layout::default().direction(Direction::Vertical).constraints(constraints).split(area)
-}
-
 fn header_title(device: Option<&Device>) -> String {
     match device {
         Some(device) => format!(
@@ -834,29 +763,5 @@ fn push_history(
     history.push_back(value);
     while history.len() > HISTORY {
         history.pop_front();
-    }
-}
-
-fn human_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
-}
-
-fn format_uptime(seconds: u64) -> String {
-    let (hours, minutes) = (seconds / 3600, (seconds % 3600) / 60);
-    if hours > 0 {
-        format!("{hours}h {minutes}m")
-    } else {
-        format!("{minutes}m")
     }
 }
