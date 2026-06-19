@@ -187,7 +187,7 @@ tsify = { version = "0.5.6", features = ["js"] }
 openai-harmony = "0.0.8"
 dirs = "6.0.0"
 dotenvy = "0.15.7"
-ratatui = "0.30.0"
+ratatui = "0.30.2"
 crossterm = "0.29.0"
 async-openai = { version = "0.35.0", features = [
     "chat-completion",
