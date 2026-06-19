@@ -41,7 +41,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
 };
-use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
+use sysinfo::{Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System};
 
 const HISTORY: usize = 256;
 const PROCESS_ROWS: usize = 8;
@@ -68,6 +68,12 @@ static THEME_INDEX: AtomicUsize = AtomicUsize::new(0);
 static DARK_BACKGROUND: AtomicBool = AtomicBool::new(true);
 /// Toggled by `i`: replaces the dashboard with a neofetch-style info screen.
 static SHOW_INFO: AtomicBool = AtomicBool::new(false);
+/// Bumped on every published sample so the render loop only redraws on changes.
+static DATA_VERSION: AtomicU64 = AtomicU64::new(0);
+
+/// Disk capacity changes slowly, so re-probe volumes at most this often (the
+/// per-volume `statfs` is the single most expensive part of a sample).
+const DISK_REFRESH: Duration = Duration::from_secs(3);
 
 /// macOS Apple logo, drawn beside the info lines (mactop/neofetch style).
 const APPLE_ART: [&str; 17] = [
@@ -224,12 +230,17 @@ fn sample_loop(
 
     let mut system = System::new();
     let mut networks = Networks::new_with_refreshed_list();
+    let mut all_disks = Disks::new_with_refreshed_list();
     let mut last_refresh = Instant::now();
+    let mut last_disk_refresh: Option<Instant> = None;
+    // Only the data the panels actually use — skips per-process thread/exe
+    // enumeration that the default `refresh_processes` would do.
+    let process_kind = ProcessRefreshKind::nothing().with_cpu().with_memory().with_disk_usage();
 
     while !stop.load(Ordering::Relaxed) {
         let snapshot = collector.sample(interval());
 
-        system.refresh_processes(ProcessesToUpdate::All, true);
+        system.refresh_processes_specifics(ProcessesToUpdate::All, true, process_kind);
         networks.refresh(true);
         let elapsed = last_refresh.elapsed().as_secs_f64().max(0.001);
         last_refresh = Instant::now();
@@ -257,20 +268,25 @@ fn sample_loop(
         interfaces.sort_by(|a, b| (b.down + b.up).partial_cmp(&(a.down + a.up)).unwrap_or(std::cmp::Ordering::Equal));
         interfaces.truncate(NETWORK_ROWS);
 
-        // macOS lists the APFS system and data volumes (and other synthesized
-        // mounts) under one name, e.g. "Macintosh HD" twice — keep the first of
-        // each name so the panel shows one row per volume.
-        let mut seen_disks = HashSet::new();
-        let disks = Disks::new_with_refreshed_list()
-            .list()
-            .iter()
-            .filter(|disk| seen_disks.insert(disk.name().to_os_string()))
-            .map(|disk| DiskRow {
-                name: disk.name().to_string_lossy().into_owned(),
-                used: disk.total_space().saturating_sub(disk.available_space()),
-                total: disk.total_space(),
-            })
-            .collect::<Vec<_>>();
+        // Disk capacity barely moves, so re-probe at most every `DISK_REFRESH`
+        // and reuse the last rows otherwise. macOS lists the APFS system and
+        // data volumes (and other synthesized mounts) under one name, e.g.
+        // "Macintosh HD" twice — keep the first of each name.
+        let disks = last_disk_refresh.is_none_or(|at| at.elapsed() >= DISK_REFRESH).then(|| {
+            last_disk_refresh = Some(Instant::now());
+            all_disks.refresh(true);
+            let mut seen_disks = HashSet::new();
+            all_disks
+                .list()
+                .iter()
+                .filter(|disk| seen_disks.insert(disk.name().to_os_string()))
+                .map(|disk| DiskRow {
+                    name: disk.name().to_string_lossy().into_owned(),
+                    used: disk.total_space().saturating_sub(disk.available_space()),
+                    total: disk.total_space(),
+                })
+                .collect::<Vec<_>>()
+        });
 
         // Aggregate system disk activity from per-process I/O deltas (sysinfo
         // has no per-volume counters), summed over every process this refresh.
@@ -323,9 +339,12 @@ fn sample_loop(
             state.network_interfaces = interfaces;
             state.disk_read = disk_read as f64 / elapsed;
             state.disk_written = disk_written as f64 / elapsed;
-            state.disks = disks;
+            if let Some(disks) = disks {
+                state.disks = disks;
+            }
             state.processes = processes;
         }
+        DATA_VERSION.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -333,32 +352,44 @@ fn run(
     terminal: &mut DefaultTerminal,
     telemetry: &Arc<Mutex<Telemetry>>,
 ) -> io::Result<()> {
+    // Redraw only when a new sample has been published or input/resize forces
+    // it, instead of unconditionally every poll — keeps the UI near-idle while
+    // the sampler sleeps the interval.
+    let mut shown_version = u64::MAX;
+    let mut redraw = true;
     loop {
-        {
+        let version = DATA_VERSION.load(Ordering::Relaxed);
+        if redraw || version != shown_version {
+            shown_version = version;
+            redraw = false;
             let state = telemetry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             terminal.draw(|frame| draw(frame, &state))?;
         }
-        // Only react to presses: terminals with the kitty/Windows key protocol
-        // also report releases and repeats, which would double-handle each key.
-        if event::poll(Duration::from_millis(200))?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                KeyCode::Char('c') if ctrl => return Ok(()),
-                KeyCode::Char('c') => {
-                    THEME_INDEX.fetch_add(1, Ordering::Relaxed);
+        if event::poll(Duration::from_millis(200))? {
+            match event::read()? {
+                // Only react to presses: terminals with the kitty/Windows key
+                // protocol also report releases/repeats (double-handling keys).
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                        KeyCode::Char('c') if ctrl => return Ok(()),
+                        KeyCode::Char('c') => {
+                            THEME_INDEX.fetch_add(1, Ordering::Relaxed);
+                        },
+                        KeyCode::Char('b') => {
+                            DARK_BACKGROUND.fetch_xor(true, Ordering::Relaxed);
+                        },
+                        KeyCode::Char('i') => {
+                            SHOW_INFO.fetch_xor(true, Ordering::Relaxed);
+                        },
+                        KeyCode::Char('+') | KeyCode::Char('=') => adjust_interval(-(INTERVAL_STEP_MS as i64)),
+                        KeyCode::Char('-') | KeyCode::Char('_') => adjust_interval(INTERVAL_STEP_MS as i64),
+                        _ => {},
+                    }
+                    redraw = true;
                 },
-                KeyCode::Char('b') => {
-                    DARK_BACKGROUND.fetch_xor(true, Ordering::Relaxed);
-                },
-                KeyCode::Char('i') => {
-                    SHOW_INFO.fetch_xor(true, Ordering::Relaxed);
-                },
-                KeyCode::Char('+') | KeyCode::Char('=') => adjust_interval(-(INTERVAL_STEP_MS as i64)),
-                KeyCode::Char('-') | KeyCode::Char('_') => adjust_interval(INTERVAL_STEP_MS as i64),
+                Event::Resize(_, _) => redraw = true,
                 _ => {},
             }
         }
