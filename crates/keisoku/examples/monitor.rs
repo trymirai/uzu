@@ -38,8 +38,12 @@ use ratatui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
+    symbols::Marker,
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Gauge, List, ListItem, Paragraph},
+    widgets::{
+        Block, BorderType, Borders, Gauge, List, ListItem, Paragraph,
+        canvas::{Canvas, Line as CanvasLine},
+    },
 };
 use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
 
@@ -228,7 +232,7 @@ fn draw(
     render_ane(frame, left[0], state);
     let left_bottom = split_horizontal(left[1], [Constraint::Percentage(50), Constraint::Percentage(50)]);
     render_power(frame, left_bottom[0], state);
-    render_sparkline(frame, left_bottom[1], state);
+    render_power_chart(frame, left_bottom[1], state);
 
     let right = split_vertical(middle[1], [Constraint::Percentage(50), Constraint::Percentage(50)]);
     render_memory(frame, right[0], state);
@@ -354,6 +358,7 @@ fn render_gauge(
     let gauge = Gauge::default()
         .block(panel(title))
         .gauge_style(Style::default().fg(GREEN).bg(Color::Reset))
+        .use_unicode(true) // sub-cell (1/8) bar resolution for a smooth edge
         .label(Span::styled(format!("{:.0}%", ratio * 100.0), Style::default().fg(LABEL)))
         .ratio(ratio);
     frame.render_widget(gauge, area);
@@ -381,7 +386,7 @@ fn render_power(
     frame.render_widget(Paragraph::new(lines).style(Style::default().fg(GREEN)).block(panel("Power Usage")), area);
 }
 
-fn render_sparkline(
+fn render_power_chart(
     frame: &mut Frame,
     area: Rect,
     state: &Telemetry,
@@ -394,12 +399,43 @@ fn render_sparkline(
     };
     let thermals =
         state.snapshot.as_ref().and_then(|s| s.thermal_pressure).map(|t| format!("{t:?}")).unwrap_or_default();
+
     let block = panel_owned(format!("{current:.2} W Total (Max: {:.2} W)", state.max_power));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let graph = sparkline(&state.power_history, inner.width as usize);
-    let lines = vec![Line::from(graph), Line::from(format!("Avg: {average:.2} W | {thermals}"))];
-    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(GREEN)), inner);
+
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    // Braille filled-area chart: each cell is 2×4 dots, so a vertical line per
+    // braille column gives a smooth, high-resolution graph (btop-style).
+    let columns = (parts[0].width as usize * 2).max(1);
+    let shown: Vec<f64> = state.power_history.iter().rev().take(columns).rev().copied().collect();
+    let offset = columns - shown.len(); // keep the newest samples flush to the right edge
+    let ceiling = state.max_power.max(1e-9);
+    let chart =
+        Canvas::default().marker(Marker::Braille).x_bounds([0.0, columns as f64]).y_bounds([0.0, ceiling]).paint(
+            move |context| {
+                for (index, &watts) in shown.iter().enumerate() {
+                    let x = (offset + index) as f64;
+                    context.draw(&CanvasLine {
+                        x1: x,
+                        y1: 0.0,
+                        x2: x,
+                        y2: watts,
+                        color: GREEN,
+                    });
+                }
+            },
+        );
+    frame.render_widget(chart, parts[0]);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(format!("Avg: {average:.2} W | {thermals}"))).style(Style::default().fg(GREEN)),
+        parts[1],
+    );
 }
 
 fn render_model(
@@ -493,27 +529,6 @@ fn header_title(device: Option<&Device>) -> String {
         ),
         None => " keisoku ".to_string(),
     }
-}
-
-/// A block-glyph history graph (`▁▂▃▄▅▆▇█`), auto-scaled to the window's peak.
-fn sparkline(
-    history: &VecDeque<f64>,
-    width: usize,
-) -> String {
-    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    if history.is_empty() || width == 0 {
-        return String::new();
-    }
-    let start = history.len().saturating_sub(width);
-    let window: Vec<f64> = history.iter().skip(start).copied().collect();
-    let peak = window.iter().copied().fold(0.0_f64, f64::max).max(1e-9);
-    window
-        .iter()
-        .map(|&value| {
-            let index = ((value / peak) * (BARS.len() - 1) as f64).round().clamp(0.0, 7.0) as usize;
-            BARS[index]
-        })
-        .collect()
 }
 
 fn human_bytes(bytes: u64) -> String {
