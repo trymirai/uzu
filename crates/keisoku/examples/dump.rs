@@ -1,8 +1,8 @@
-use denryoku::SensorKind;
+use keisoku::SensorKind;
 
 fn main() {
     for kind in [SensorKind::Temperature, SensorKind::Voltage, SensorKind::Current] {
-        let sensors = denryoku::sensors(kind);
+        let sensors = keisoku::sensors(kind);
         println!("\n{:?} sensors ({}):", kind, sensors.len());
         for sensor in &sensors {
             let category = sensor.category.as_deref().unwrap_or("-");

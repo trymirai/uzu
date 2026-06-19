@@ -1,0 +1,32 @@
+[package]
+name = "keisoku"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "System telemetry collector (CPU/GPU/RAM/power/sensors) for Apple platforms"
+
+[lib]
+name = "keisoku"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sysinfo.workspace = true
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+kanka.workspace = true
+objc2-core-foundation.workspace = true
+obfstr.workspace = true
+libc.workspace = true
+
+# IOReport/SoC traversal is macOS-only; IOKit service iteration via objc2-io-kit.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-io-kit.workspace = true

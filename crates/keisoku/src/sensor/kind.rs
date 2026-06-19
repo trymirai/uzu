@@ -1,6 +1,9 @@
-use crate::{component::Component, sys};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg(target_vendor = "apple")]
+use crate::sys;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SensorKind {
     Temperature,
     Voltage,
@@ -15,7 +18,10 @@ impl SensorKind {
             SensorKind::Current => "A",
         }
     }
+}
 
+#[cfg(target_vendor = "apple")]
+impl SensorKind {
     pub(crate) fn matching(self) -> (i32, i32) {
         match self {
             SensorKind::Temperature => (sys::HID_PAGE_APPLE_VENDOR, sys::HID_USAGE_TEMPERATURE_SENSOR),
@@ -30,28 +36,4 @@ impl SensorKind {
             SensorKind::Voltage | SensorKind::Current => sys::EVENT_TYPE_POWER,
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Sensor {
-    pub name: String,
-    pub value: f64,
-    pub kind: SensorKind,
-    pub component: Component,
-    pub manufacturer: Option<String>,
-    pub category: Option<String>,
-    pub location_id: Option<i64>,
-    pub registry_id: u64,
-}
-
-pub fn thermal_sensors() -> Vec<Sensor> {
-    crate::sensors(SensorKind::Temperature)
-}
-
-pub fn voltage_sensors() -> Vec<Sensor> {
-    crate::sensors(SensorKind::Voltage)
-}
-
-pub fn current_sensors() -> Vec<Sensor> {
-    crate::sensors(SensorKind::Current)
 }
