@@ -3,8 +3,9 @@
 //! OS-level panels (processes, network, disks), using the same
 //! `ratatui`/`crossterm` stack as the rest of the workspace.
 //!
-//! Keys: `c` cycles the accent color, `b` toggles the background, `+`/`-` speed
-//! up / slow down sampling, `q`/`Esc`/`Ctrl-C` quits (mactop-style).
+//! Keys: `i` toggles a neofetch-style info screen, `c` cycles the accent color,
+//! `b` toggles the background, `+`/`-` speed up / slow down sampling,
+//! `q`/`Esc`/`Ctrl-C` quits (mactop-style).
 //! Run: `cargo run -p keisoku --example monitor`.
 //!
 //! Layout (mactop "default", rounded outer frame). Every usage metric is a
@@ -36,8 +37,8 @@ use keisoku::{Collector, Device, Snapshot};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
-    text::Line,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
 };
 use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
@@ -65,6 +66,29 @@ const THEMES: [(&str, Color); 7] = [
 
 static THEME_INDEX: AtomicUsize = AtomicUsize::new(0);
 static DARK_BACKGROUND: AtomicBool = AtomicBool::new(true);
+/// Toggled by `i`: replaces the dashboard with a neofetch-style info screen.
+static SHOW_INFO: AtomicBool = AtomicBool::new(false);
+
+/// macOS Apple logo, drawn beside the info lines (mactop/neofetch style).
+const APPLE_ART: [&str; 17] = [
+    "                    'c.        ",
+    "                 ,xNMM.        ",
+    "               .OMMMMo         ",
+    "               OMMM0,          ",
+    "     .;loddo:' loolloddol;.    ",
+    "   cKMMMMMMMMMMNWMMMMMMMMMM0:  ",
+    " .KMMMMMMMMMMMMMMMMMMMMMMMWd.  ",
+    " XMMMMMMMMMMMMMMMMMMMMMMMX.    ",
+    ";MMMMMMMMMMMMMMMMMMMMMMMM:     ",
+    ":MMMMMMMMMMMMMMMMMMMMMMMM:     ",
+    ".MMMMMMMMMMMMMMMMMMMMMMMMX.    ",
+    " kMMMMMMMMMMMMMMMMMMMMMMMMWd.  ",
+    " .XMMMMMMMMMMMMMMMMMMMMMMMMMMk ",
+    "  .XMMMMMMMMMMMMMMMMMMMMMMMMK. ",
+    "    kMMMMMMMMMMMMMMMMMMMMMMd   ",
+    "     ;KMMMMMMMWXXWMMMMMMMk.    ",
+    "       .cooc,.    .,coo:.      ",
+];
 
 /// Current theme `(name, color)`, advanced by `c`.
 fn theme() -> (&'static str, Color) {
@@ -118,10 +142,20 @@ struct NetInterface {
     up: f64,
 }
 
+/// Static host identity for the info screen, gathered once at startup.
+struct HostInfo {
+    user: String,
+    hostname: String,
+    os: String,
+    kernel: String,
+    shell: String,
+}
+
 /// Live state shared between the sampler thread and the render loop.
 #[derive(Default)]
 struct Telemetry {
     device: Option<Device>,
+    host: Option<HostInfo>,
     snapshot: Option<Snapshot>,
     cpu_history: VecDeque<f64>,
     gpu_history: VecDeque<f64>,
@@ -171,8 +205,19 @@ fn sample_loop(
 ) {
     let mut collector = Collector::new();
     let device = collector.device();
+    let host = HostInfo {
+        user: std::env::var("USER").unwrap_or_else(|_| "user".into()),
+        hostname: System::host_name().unwrap_or_default(),
+        os: System::long_os_version().unwrap_or_default(),
+        kernel: System::kernel_version().unwrap_or_default(),
+        shell: std::env::var("SHELL")
+            .ok()
+            .and_then(|path| path.rsplit('/').next().map(str::to_owned))
+            .unwrap_or_default(),
+    };
     if let Ok(mut state) = telemetry.lock() {
         state.device = Some(device);
+        state.host = Some(host);
     }
 
     let mut system = System::new();
@@ -296,6 +341,9 @@ fn run(
                 KeyCode::Char('b') => {
                     DARK_BACKGROUND.fetch_xor(true, Ordering::Relaxed);
                 },
+                KeyCode::Char('i') => {
+                    SHOW_INFO.fetch_xor(true, Ordering::Relaxed);
+                },
                 KeyCode::Char('+') | KeyCode::Char('=') => adjust_interval(-(INTERVAL_STEP_MS as i64)),
                 KeyCode::Char('-') | KeyCode::Char('_') => adjust_interval(INTERVAL_STEP_MS as i64),
                 _ => {},
@@ -317,10 +365,15 @@ fn draw(
         .title_top(Line::from(header_title(state.device.as_ref())))
         .title_top(Line::from(format!(" {} ", env!("CARGO_PKG_VERSION"))).right_aligned())
         .title_bottom(Line::from(format!(" {} ", theme().0)))
-        .title_bottom(Line::from(" Color: c · BG: b · Exit: q ").centered())
+        .title_bottom(Line::from(" Info: i · Color: c · BG: b · Exit: q ").centered())
         .title_bottom(Line::from(format!(" -/+ {}ms ", INTERVAL_MS.load(Ordering::Relaxed))).right_aligned());
     let area = outer.inner(frame.area());
     frame.render_widget(outer, frame.area());
+
+    if SHOW_INFO.load(Ordering::Relaxed) {
+        render_info(frame, area, state);
+        return;
+    }
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -353,6 +406,143 @@ fn draw(
     render_processes(frame, bottom[0], state);
     render_disk(frame, bottom[1], state);
     render_network(frame, bottom[2], state);
+}
+
+/// The neofetch-style info screen (mactop's `i` layout): the Apple logo beside a
+/// column of system identity + live-telemetry key/value lines.
+fn render_info(
+    frame: &mut Frame,
+    area: Rect,
+    state: &Telemetry,
+) {
+    let art_width = APPLE_ART.iter().map(|line| line.chars().count()).max().unwrap_or(0) as u16 + 2;
+    let columns = split_horizontal(area, [Constraint::Length(art_width), Constraint::Min(0)]);
+
+    let art: Vec<Line> = APPLE_ART.iter().map(|line| Line::from(*line)).collect();
+    frame.render_widget(Paragraph::new(art).style(Style::default().fg(accent())), columns[0]);
+    frame.render_widget(Paragraph::new(build_info_lines(state)).style(Style::default().fg(accent())), columns[1]);
+}
+
+/// A `label: value` info row, label padded and bold like mactop's info layout.
+fn info_line(
+    label: &str,
+    value: String,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label:<11}"), Style::default().fg(accent()).add_modifier(Modifier::BOLD)),
+        Span::raw(value),
+    ])
+}
+
+/// Builds the info-screen key/value lines from host identity + the latest
+/// snapshot, in mactop's order (identity, usage, I/O, battery, fans, volumes).
+fn build_info_lines(state: &Telemetry) -> Vec<Line<'static>> {
+    let snapshot = state.snapshot.as_ref();
+    let mut lines = Vec::new();
+
+    if let Some(host) = &state.host {
+        lines.push(Line::from(Span::styled(
+            format!("{}@{}", host.user, host.hostname),
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from("-".repeat(25)));
+        lines.push(info_line("OS", host.os.clone()));
+        if let Some(device) = &state.device {
+            lines.push(info_line("Host", device.chip.clone()));
+        }
+        lines.push(info_line("Kernel", host.kernel.clone()));
+        lines.push(info_line("Uptime", format_uptime(state.uptime_seconds)));
+        lines.push(info_line("Shell", host.shell.clone()));
+    }
+    if let Some(device) = &state.device {
+        lines.push(info_line(
+            "CPU",
+            format!("{} ({}E+{}P)", device.chip, device.efficiency_cores, device.performance_cores),
+        ));
+        lines.push(info_line("GPU", format!("{} Cores", device.gpu_cores)));
+    }
+    if let Some(memory) = snapshot.and_then(|s| s.memory.as_ref()) {
+        lines.push(info_line(
+            "Memory",
+            format!(
+                "{:.2} GB / {:.2} GB",
+                memory.ram_usage.value() as f64 / 1e9,
+                memory.ram_total.value() as f64 / 1e9
+            ),
+        ));
+        lines.push(info_line(
+            "Swap",
+            format!(
+                "{:.2} GB / {:.2} GB",
+                memory.swap_usage.value() as f64 / 1e9,
+                memory.swap_total.value() as f64 / 1e9
+            ),
+        ));
+    }
+
+    lines.push(Line::from(""));
+    if let Some(cpu) = snapshot.and_then(|s| s.cpu.as_ref()) {
+        lines.push(info_line("CPU Usage", format!("{:.2}%", cpu.usage.value())));
+    }
+    if let Some(gpu) = snapshot.and_then(|s| s.gpu.as_ref()) {
+        lines.push(info_line("GPU Usage", format!("{:.0}%", gpu.usage.value())));
+    }
+    if let Some(ane) = snapshot.and_then(|s| s.neural_engine.as_ref()) {
+        lines.push(info_line("ANE Usage", format!("{:.0}%", ane.active.value())));
+    }
+    if let Some(power) = snapshot.and_then(|s| s.power.as_ref()) {
+        lines.push(info_line("Power", format!("{:.2} W (max {:.2} W)", power.package.value(), state.max_power)));
+    }
+    if let Some(temperatures) = snapshot.and_then(|s| s.temperatures.as_ref()) {
+        lines.push(info_line(
+            "Thermals",
+            format!("CPU {:.0}°C  GPU {:.0}°C", temperatures.cpu_average.value(), temperatures.gpu_average.value()),
+        ));
+    }
+    lines.push(info_line(
+        "Network",
+        format!("↑ {}/s  ↓ {}/s", human_bytes(state.network_up as u64), human_bytes(state.network_down as u64)),
+    ));
+    if let Some(bandwidth) = snapshot.and_then(|s| s.bandwidth.as_ref()) {
+        lines.push(info_line(
+            "DRAM BW",
+            format!(
+                "R {:.1}  W {:.1}  ({:.1}) GB/s",
+                bandwidth.dram_read.value(),
+                bandwidth.dram_write.value(),
+                bandwidth.dram_read.value() + bandwidth.dram_write.value(),
+            ),
+        ));
+    }
+    if let Some(battery) = snapshot.and_then(|s| s.battery.as_ref()).filter(|battery| battery.present) {
+        let status = if battery.charging {
+            "charging"
+        } else if battery.on_ac_power {
+            "AC"
+        } else {
+            "battery"
+        };
+        lines.push(info_line("Battery", format!("{:.0}% ({status})", battery.percent.value())));
+    }
+
+    if let Some(fans) = snapshot.and_then(|s| s.fans.as_ref()).filter(|fans| !fans.fans.is_empty()) {
+        lines.push(Line::from(""));
+        for (index, fan) in fans.fans.iter().enumerate() {
+            lines.push(info_line(
+                &format!("Fan {}", index + 1),
+                format!("{:.0} rpm ({:.0}–{:.0})", fan.actual.value(), fan.minimum.value(), fan.maximum.value()),
+            ));
+        }
+    }
+
+    if !state.disks.is_empty() {
+        lines.push(Line::from("-".repeat(25)));
+        for disk in &state.disks {
+            lines.push(info_line(&disk.name, format!("{} / {}", human_bytes(disk.used), human_bytes(disk.total))));
+        }
+    }
+
+    lines
 }
 
 /// Braille dot bits per cell sub-column (`0`/`1`) and internal row (`0` = top
