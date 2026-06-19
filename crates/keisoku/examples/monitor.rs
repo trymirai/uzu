@@ -15,7 +15,7 @@
 //! │ CPU chart                       │ GPU chart                      │
 //! ├─────────────────────────────────┼────────────────────────────────┤
 //! │ ANE chart                       │ Memory chart                   │
-//! │ Power Usage   │ Package chart   │ Apple Silicon │ Fans           │
+//! │ Power Usage   │ Package chart   │ Apple Silicon  │ Fans           │
 //! ├─────────────────────────────────┴────────────────────────────────┤
 //! │ Process List            │ IO      │ Disk         │ Network        │
 //! └ green ────────── Color: c · BG: b · Exit: q ────────── -/+ 1000ms ┘
@@ -409,7 +409,7 @@ fn draw(
 
     let right = split_vertical(middle[1], [Constraint::Percentage(50), Constraint::Percentage(50)]);
     render_chart(frame, right[0], memory_title(state), &state.memory_history, 100.0);
-    let right_bottom = split_horizontal(right[1], [Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]);
+    let right_bottom = split_horizontal(right[1], [Constraint::Percentage(50), Constraint::Percentage(50)]);
     render_model(frame, right_bottom[0], state);
     render_fans(frame, right_bottom[1], state);
 
