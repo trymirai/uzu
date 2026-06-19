@@ -9,6 +9,7 @@ pub enum Component {
     NeuralEngine,
     Soc,
     PowerManagementUnit,
+    Charger,
     Battery,
     Storage,
     Display,
@@ -23,6 +24,7 @@ impl Component {
             Component::NeuralEngine => "Neural Engine",
             Component::Soc => "SoC",
             Component::PowerManagementUnit => "Power Management Unit",
+            Component::Charger => "Charger",
             Component::Battery => "Battery",
             Component::Storage => "Storage",
             Component::Display => "Display",
@@ -46,6 +48,9 @@ pub fn classify(name: &str) -> Component {
     if name.contains("battery") || name.contains("gas gauge") || name.contains("fuel gauge") {
         return Component::Battery;
     }
+    if name.contains("charger") {
+        return Component::Charger;
+    }
     if name.contains("nand") || name.contains("ssd") || name.contains("flash") {
         return Component::Storage;
     }
@@ -61,10 +66,19 @@ pub fn classify(name: &str) -> Component {
     if name.contains("cpu") || name.contains("pcore") || name.contains("ecore") {
         return Component::Cpu;
     }
-    if name.contains("soc") || name.contains("tdie") || thermal_probe_block(&name) == Some('s') {
+    if name.contains("soc")
+        || name.contains("tdie")
+        || name.contains("tjunc")
+        || thermal_probe_block(&name) == Some('s')
+    {
         return Component::Soc;
     }
-    if name.contains("pmu") {
+    if name.contains("pmu")
+        || name.contains("tdev")
+        || name.contains("tcal")
+        || name.contains("buck")
+        || name.contains("ldo")
+    {
         return Component::PowerManagementUnit;
     }
     Component::Unknown
@@ -94,8 +108,12 @@ mod tests {
         assert_eq!(classify("PMU TP3g"), Component::Gpu);
         assert_eq!(classify("PMU TP1s"), Component::Soc);
         assert_eq!(classify("PMU tdie1"), Component::Soc);
+        assert_eq!(classify("PMU tjunc"), Component::Soc);
         assert_eq!(classify("PMU tdev1"), Component::PowerManagementUnit);
+        assert_eq!(classify("PMU tcal"), Component::PowerManagementUnit);
         assert_eq!(classify("PMU vbuck0"), Component::PowerManagementUnit);
+        assert_eq!(classify("PMU ildo3"), Component::PowerManagementUnit);
+        assert_eq!(classify("Charger TQ0j"), Component::Charger);
         assert_eq!(classify("ANE temp"), Component::NeuralEngine);
         assert_eq!(classify("GPU die"), Component::Gpu);
         assert_eq!(classify("something weird"), Component::Unknown);
