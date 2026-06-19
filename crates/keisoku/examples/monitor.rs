@@ -10,14 +10,15 @@
 //! braille filled-area history chart (`⡇⢸⣿⣤`):
 //! ```text
 //! ┌ keisoku · <chip> · <cores> · <gpu> · <ram> ───────────────── 0.5 ┐
-//! │ CPU chart                       │ GPU chart                      │
+//! │ CPU per-core bars               │ GPU chart                      │
 //! ├─────────────────────────────────┼────────────────────────────────┤
 //! │ ANE chart                       │ Memory chart                   │
-//! │ Power Usage   │ Power chart     │ Apple Silicon │ Network & Disk │
+//! │ Power Usage   │ Package chart   │ Apple Silicon │ Net·Disk·Fans  │
 //! ├─────────────────────────────────┴────────────────────────────────┤
 //! │ Process List                                                      │
 //! └ green ──────────── Color: c · BG: b · Exit: q ──────────── 1000ms ┘
 //! ```
+//! Power Usage shows per-rail watts + `Pkg` (SMC package) + `Battery`.
 
 use std::{
     collections::VecDeque,
@@ -34,7 +35,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use keisoku::{Collector, Device, Snapshot};
+use keisoku::{Collector, Device, Percent, Snapshot};
 use ratatui::{
     Frame, Terminal,
     backend::{Backend, CrosstermBackend},
@@ -104,7 +105,6 @@ struct DiskRow {
 struct Telemetry {
     device: Option<Device>,
     snapshot: Option<Snapshot>,
-    cpu_history: VecDeque<f64>,
     gpu_history: VecDeque<f64>,
     ane_history: VecDeque<f64>,
     memory_history: VecDeque<f64>,
@@ -194,7 +194,6 @@ fn sample_loop(
         processes.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap_or(std::cmp::Ordering::Equal));
         processes.truncate(PROCESS_ROWS);
 
-        let cpu = snapshot.cpu.as_ref().map(|c| c.usage.value() as f64).unwrap_or(0.0);
         let gpu = snapshot.gpu.as_ref().map(|g| g.usage.value() as f64).unwrap_or(0.0);
         let ane = snapshot.neural_engine.as_ref().map(|a| a.active.value() as f64).unwrap_or(0.0);
         let memory = snapshot
@@ -203,10 +202,10 @@ fn sample_loop(
             .filter(|m| m.ram_total.value() > 0)
             .map(|m| m.ram_usage.value() as f64 / m.ram_total.value() as f64 * 100.0)
             .unwrap_or(0.0);
-        let power = snapshot.power.as_ref().map(|p| p.total.value() as f64).unwrap_or(0.0);
+        // Track whole-package power (SMC PSTR) as the headline graph.
+        let power = snapshot.power.as_ref().map(|p| p.package.value() as f64).unwrap_or(0.0);
 
         if let Ok(mut state) = telemetry.lock() {
-            push_history(&mut state.cpu_history, cpu);
             push_history(&mut state.gpu_history, gpu);
             push_history(&mut state.ane_history, ane);
             push_history(&mut state.memory_history, memory);
@@ -275,7 +274,8 @@ fn draw(
 
     // Row 1: CPU | GPU usage history charts.
     let top = split_horizontal(rows[0], [Constraint::Percentage(50), Constraint::Percentage(50)]);
-    render_chart(frame, top[0], cpu_title(state), &state.cpu_history, 100.0);
+    let per_core = state.snapshot.as_ref().and_then(|s| s.cpu.as_ref()).map(|c| c.per_core.as_slice()).unwrap_or(&[]);
+    render_cpu_cores(frame, top[0], cpu_title(state), per_core);
     render_chart(frame, top[1], gpu_title(state), &state.gpu_history, 100.0);
 
     // Row 2: left (ANE + power) | right (memory + model/network).
@@ -325,6 +325,41 @@ fn render_chart(
         .paint(move |context| {
             for (index, &value) in shown.iter().enumerate() {
                 let x = (offset + index) as f64;
+                context.draw(&CanvasLine {
+                    x1: x,
+                    y1: 0.0,
+                    x2: x,
+                    y2: value,
+                    color: accent(),
+                });
+            }
+        });
+    frame.render_widget(chart, inner);
+}
+
+/// Per-core CPU as one braille bar per logical core (current %, 0-100).
+fn render_cpu_cores(
+    frame: &mut Frame,
+    area: Rect,
+    title: String,
+    per_core: &[Percent],
+) {
+    let block = panel_owned(title);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if per_core.is_empty() {
+        return;
+    }
+    let values: Vec<f64> = per_core.iter().map(|core| core.value() as f64).collect();
+    let cores = values.len() as f64;
+    let chart = Canvas::default()
+        .marker(Marker::Braille)
+        .background_color(background())
+        .x_bounds([0.0, cores])
+        .y_bounds([0.0, 100.0])
+        .paint(move |context| {
+            for (index, &value) in values.iter().enumerate() {
+                let x = index as f64 + 0.5;
                 context.draw(&CanvasLine {
                     x1: x,
                     y1: 0.0,
@@ -424,11 +459,22 @@ fn render_power(
             power.ram.value(),
         )));
         lines.push(Line::from(format!("{:<6}{:>6.2} W", "Total:", power.total.value())));
+        lines.push(Line::from(format!("{:<6}{:>6.2} W", "Pkg:", power.package.value())));
     }
     let thermals =
         state.snapshot.as_ref().and_then(|s| s.thermal_pressure).map(|t| format!("{t:?}")).unwrap_or_default();
     lines.push(Line::from(format!("Thermals: {thermals}")));
     lines.push(Line::from(format!("Uptime: {}", format_uptime(state.uptime_seconds))));
+    if let Some(battery) = state.snapshot.as_ref().and_then(|s| s.battery.as_ref()).filter(|b| b.present) {
+        let status = if battery.charging {
+            "charging"
+        } else if battery.on_ac_power {
+            "AC"
+        } else {
+            "battery"
+        };
+        lines.push(Line::from(format!("Battery: {:.0}% ({status})", battery.percent.value())));
+    }
     frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Power Usage")), area);
 }
 
@@ -458,11 +504,23 @@ fn render_network(
         human_bytes(state.network_up as u64),
         human_bytes(state.network_down as u64),
     ))];
-    for disk in state.disks.iter().take(3) {
+    for disk in state.disks.iter().take(2) {
         lines.push(Line::from(format!("{}: {} / {}", disk.name, human_bytes(disk.used), human_bytes(disk.total),)));
     }
-    frame
-        .render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Network & Disk")), area);
+    if let Some(fans) = state.snapshot.as_ref().and_then(|s| s.fans.as_ref()) {
+        for (index, fan) in fans.fans.iter().enumerate() {
+            lines.push(Line::from(format!(
+                "Fan {}: {:.0}/{:.0} rpm",
+                index + 1,
+                fan.actual.value(),
+                fan.maximum.value()
+            )));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Network · Disk · Fans")),
+        area,
+    );
 }
 
 fn render_processes(
