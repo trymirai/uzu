@@ -31,15 +31,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use keisoku::{Collector, Device, Percent, Snapshot};
 use ratatui::{
-    Frame, Terminal,
-    backend::{Backend, CrosstermBackend},
+    DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     symbols::Marker,
@@ -146,17 +141,14 @@ fn main() -> io::Result<()> {
         std::thread::spawn(move || sample_loop(&telemetry, &stop))
     };
 
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
-
+    // `ratatui::init` enters raw mode + the alternate screen and installs a
+    // panic hook that restores the terminal, so a panic in the render loop
+    // can't leave the shell corrupted.
+    let mut terminal = ratatui::init();
     let result = run(&mut terminal, &telemetry);
+    ratatui::restore();
 
     stop.store(true, Ordering::Relaxed);
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
     let _ = sampler.join();
     result
 }
@@ -240,17 +232,20 @@ fn sample_loop(
     }
 }
 
-fn run<B: Backend>(
-    terminal: &mut Terminal<B>,
+fn run(
+    terminal: &mut DefaultTerminal,
     telemetry: &Arc<Mutex<Telemetry>>,
 ) -> io::Result<()> {
     loop {
         {
             let state = telemetry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            terminal.draw(|frame| draw(frame, &state)).map_err(|error| io::Error::other(error.to_string()))?;
+            terminal.draw(|frame| draw(frame, &state))?;
         }
+        // Only react to presses: terminals with the kitty/Windows key protocol
+        // also report releases and repeats, which would double-handle each key.
         if event::poll(Duration::from_millis(200))?
             && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
         {
             let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
             match key.code {
