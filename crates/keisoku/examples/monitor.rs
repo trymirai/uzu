@@ -3,8 +3,9 @@
 //! OS-level panels (processes, network, disks), using the same
 //! `ratatui`/`crossterm` stack as the rest of the workspace.
 //!
-//! Keys: `c` cycles the accent color, `b` toggles the background, `q`/`Esc`/
-//! `Ctrl-C` quits (mactop-style). Run: `cargo run -p keisoku --example monitor`.
+//! Keys: `c` cycles the accent color, `b` toggles the background, `+`/`-` speed
+//! up / slow down sampling, `q`/`Esc`/`Ctrl-C` quits (mactop-style).
+//! Run: `cargo run -p keisoku --example monitor`.
 //!
 //! Layout (mactop "default", rounded outer frame). Every usage metric is a
 //! braille filled-area history chart (`⡇⢸⣿⣤`):
@@ -16,7 +17,7 @@
 //! │ Power Usage   │ Package chart   │ Apple Silicon │ Fans           │
 //! ├─────────────────────────────────┴────────────────────────────────┤
 //! │ Process List                  │ Disk           │ Network         │
-//! └ green ──────────── Color: c · BG: b · Exit: q ──────────── 1000ms ┘
+//! └ green ────────── Color: c · BG: b · Exit: q ────────── -/+ 1000ms ┘
 //! ```
 //! Power Usage shows per-rail watts + `Pkg` (SMC package) + `Battery`.
 
@@ -25,7 +26,7 @@ use std::{
     io,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -51,8 +52,13 @@ use ratatui::{
 use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
 
 const HISTORY: usize = 256;
-const SAMPLE_INTERVAL: Duration = Duration::from_millis(1000);
 const PROCESS_ROWS: usize = 8;
+
+// Sampling cadence, adjustable at runtime with `+` (faster) / `-` (slower).
+const MIN_INTERVAL_MS: u64 = 100;
+const MAX_INTERVAL_MS: u64 = 5000;
+const INTERVAL_STEP_MS: u64 = 100;
+static INTERVAL_MS: AtomicU64 = AtomicU64::new(1000);
 
 /// Accent colors cycled with `c` (mactop-style); first is the default.
 const THEMES: [(&str, Color); 7] = [
@@ -84,6 +90,19 @@ fn background() -> Color {
     } else {
         Color::Reset
     }
+}
+
+/// The current sampling cadence.
+fn interval() -> Duration {
+    Duration::from_millis(INTERVAL_MS.load(Ordering::Relaxed))
+}
+
+/// Shifts the sampling cadence by `delta` ms (clamped); `+` passes a negative
+/// delta to sample faster, `-` a positive one to sample slower.
+fn adjust_interval(delta: i64) {
+    let current = INTERVAL_MS.load(Ordering::Relaxed) as i64;
+    let next = (current + delta).clamp(MIN_INTERVAL_MS as i64, MAX_INTERVAL_MS as i64) as u64;
+    INTERVAL_MS.store(next, Ordering::Relaxed);
 }
 
 /// A process row for the bottom list.
@@ -159,7 +178,7 @@ fn sample_loop(
     let mut last_refresh = Instant::now();
 
     while !stop.load(Ordering::Relaxed) {
-        let snapshot = collector.sample(SAMPLE_INTERVAL);
+        let snapshot = collector.sample(interval());
 
         system.refresh_processes(ProcessesToUpdate::All, true);
         networks.refresh(true);
@@ -243,6 +262,8 @@ fn run<B: Backend>(
                 KeyCode::Char('b') => {
                     DARK_BACKGROUND.fetch_xor(true, Ordering::Relaxed);
                 },
+                KeyCode::Char('+') | KeyCode::Char('=') => adjust_interval(-(INTERVAL_STEP_MS as i64)),
+                KeyCode::Char('-') | KeyCode::Char('_') => adjust_interval(INTERVAL_STEP_MS as i64),
                 _ => {},
             }
         }
@@ -263,7 +284,7 @@ fn draw(
         .title_top(Line::from(format!(" {} ", env!("CARGO_PKG_VERSION"))).right_aligned())
         .title_bottom(Line::from(format!(" {} ", theme().0)))
         .title_bottom(Line::from(" Color: c · BG: b · Exit: q ").centered())
-        .title_bottom(Line::from(" 1000ms ").right_aligned());
+        .title_bottom(Line::from(format!(" -/+ {}ms ", INTERVAL_MS.load(Ordering::Relaxed))).right_aligned());
     let area = outer.inner(frame.area());
     frame.render_widget(outer, frame.area());
 
