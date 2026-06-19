@@ -15,7 +15,7 @@ use crate::{
 /// can't supply them (e.g. CPU/GPU/power off macOS).
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
-    pub elapsed_milliseconds: Milliseconds,
+    pub elapsed: Milliseconds,
     pub cpu: Option<CpuMetrics>,
     pub gpu: Option<GpuMetrics>,
     pub neural_engine: Option<NeuralEngineMetrics>,

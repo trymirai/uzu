@@ -64,7 +64,7 @@ impl Collector {
         let sensors = crate::sensors(SensorKind::Temperature);
         let temperatures = (!sensors.is_empty()).then(|| temperatures_from(&sensors));
         Snapshot {
-            elapsed_milliseconds: Milliseconds(0),
+            elapsed: Milliseconds(0),
             cpu: soc.cpu,
             gpu: soc.gpu,
             neural_engine: soc.neural_engine,
@@ -89,33 +89,33 @@ impl Collector {
         let sample = ioreport.sample(soc, interval);
         SocMetrics {
             cpu: Some(CpuMetrics {
-                usage_percent: Percent(sample.cpu_usage_percent * 100.0),
-                ecpu_frequency_megahertz: Megahertz(sample.ecpu_usage.0),
-                ecpu_usage_percent: Percent(sample.ecpu_usage.1 * 100.0),
-                pcpu_frequency_megahertz: Megahertz(sample.pcpu_usage.0),
-                pcpu_usage_percent: Percent(sample.pcpu_usage.1 * 100.0),
+                usage: Percent(sample.cpu_usage_percent * 100.0),
+                ecpu_frequency: Megahertz(sample.ecpu_usage.0),
+                ecpu_usage: Percent(sample.ecpu_usage.1 * 100.0),
+                pcpu_frequency: Megahertz(sample.pcpu_usage.0),
+                pcpu_usage: Percent(sample.pcpu_usage.1 * 100.0),
             }),
             gpu: Some(GpuMetrics {
-                frequency_megahertz: Megahertz(sample.gpu_usage.0),
-                usage_percent: Percent(sample.gpu_usage.1 * 100.0),
+                frequency: Megahertz(sample.gpu_usage.0),
+                usage: Percent(sample.gpu_usage.1 * 100.0),
             }),
             neural_engine: Some(NeuralEngineMetrics {
-                power_watts: Watts(sample.ane_power),
-                active_percent: Percent(sample.ane_active_percent),
-                read_bandwidth_gbps: GigabytesPerSecond(sample.ane_read_gbps),
-                write_bandwidth_gbps: GigabytesPerSecond(sample.ane_write_gbps),
+                power: Watts(sample.ane_power),
+                active: Percent(sample.ane_active_percent),
+                read_bandwidth: GigabytesPerSecond(sample.ane_read_gbps),
+                write_bandwidth: GigabytesPerSecond(sample.ane_write_gbps),
             }),
             power: Some(PowerMetrics {
-                cpu_watts: Watts(sample.cpu_power),
-                gpu_watts: Watts(sample.gpu_power),
-                gpu_sram_watts: Watts(sample.gpu_ram_power),
-                ane_watts: Watts(sample.ane_power),
-                ram_watts: Watts(sample.ram_power),
-                total_watts: Watts(sample.total_power),
+                cpu: Watts(sample.cpu_power),
+                gpu: Watts(sample.gpu_power),
+                gpu_sram: Watts(sample.gpu_ram_power),
+                ane: Watts(sample.ane_power),
+                ram: Watts(sample.ram_power),
+                total: Watts(sample.total_power),
             }),
             bandwidth: Some(BandwidthMetrics {
-                dram_read_gbps: GigabytesPerSecond(sample.dram_read_gbps),
-                dram_write_gbps: GigabytesPerSecond(sample.dram_write_gbps),
+                dram_read: GigabytesPerSecond(sample.dram_read_gbps),
+                dram_write: GigabytesPerSecond(sample.dram_write_gbps),
             }),
         }
     }

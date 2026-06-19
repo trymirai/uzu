@@ -6,6 +6,6 @@ use crate::units::GigabytesPerSecond;
 /// (M1-M4) or the `PMP` `DRAM BW` residency histogram (M5+).
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct BandwidthMetrics {
-    pub dram_read_gbps: GigabytesPerSecond,
-    pub dram_write_gbps: GigabytesPerSecond,
+    pub dram_read: GigabytesPerSecond,
+    pub dram_write: GigabytesPerSecond,
 }

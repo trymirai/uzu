@@ -77,7 +77,7 @@ mod tests {
         let mut collector = Collector::new();
         let snapshot = collector.sample(std::time::Duration::from_millis(120));
         if let Some(power) = &snapshot.power {
-            assert!(power.total_watts.value().is_finite() && power.total_watts.value() >= 0.0);
+            assert!(power.total.value().is_finite() && power.total.value() >= 0.0);
         }
         if let Some(memory) = &snapshot.memory {
             assert!(memory.ram_total >= memory.ram_usage);

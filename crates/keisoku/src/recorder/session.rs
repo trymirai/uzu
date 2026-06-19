@@ -7,7 +7,7 @@ use crate::{snapshot::Snapshot, units::Milliseconds};
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub device: Device,
-    pub interval_milliseconds: Milliseconds,
+    pub interval: Milliseconds,
     pub snapshots: Vec<Snapshot>,
     pub markers: Vec<Marker>,
 }

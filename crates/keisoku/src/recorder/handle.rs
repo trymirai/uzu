@@ -25,10 +25,10 @@ impl RecorderHandle {
         &self,
         label: impl Into<String>,
     ) {
-        let elapsed_milliseconds = Milliseconds(self.started_at.elapsed().as_millis() as u64);
+        let elapsed = Milliseconds(self.started_at.elapsed().as_millis() as u64);
         if let Ok(mut markers) = self.markers.lock() {
             markers.push(Marker {
-                elapsed_milliseconds,
+                elapsed,
                 label: label.into(),
             });
         }
@@ -44,7 +44,7 @@ impl RecorderHandle {
         let markers = self.markers.lock().map(|markers| markers.clone()).unwrap_or_default();
         Session {
             device,
-            interval_milliseconds: Milliseconds(self.interval.as_millis() as u64),
+            interval: Milliseconds(self.interval.as_millis() as u64),
             snapshots,
             markers,
         }
@@ -77,7 +77,7 @@ pub fn start(config: Config) -> RecorderHandle {
             let mut snapshots = Vec::new();
             while !stop_flag.load(Ordering::Relaxed) {
                 let mut snapshot = collector.sample(interval);
-                snapshot.elapsed_milliseconds = Milliseconds(started_at.elapsed().as_millis() as u64);
+                snapshot.elapsed = Milliseconds(started_at.elapsed().as_millis() as u64);
                 snapshots.push(snapshot);
             }
             (device, snapshots)
