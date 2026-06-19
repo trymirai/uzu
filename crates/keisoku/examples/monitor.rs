@@ -8,7 +8,7 @@
 //! Run: `cargo run -p keisoku --example monitor`.
 //!
 //! Layout (mactop "default", rounded outer frame). Every usage metric is a
-//! gradient filled-area history chart (eighth-block cells colored by height):
+//! gradient filled-area braille line chart (smooth top edge, gradient by height):
 //! ```text
 //! ┌ keisoku · <chip> · <cores> · <gpu> · <ram> ───────────────── 0.5 ┐
 //! │ CPU chart                       │ GPU chart                      │
@@ -337,14 +337,16 @@ fn draw(
     render_network(frame, bottom[2], state);
 }
 
-/// Partial vertical blocks, 1/8-cell steps (`U+2581..U+2588`); index 0 is empty.
-const BLOCKS: [&str; 9] = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+/// Braille dot bits per cell sub-column (`0`/`1`) and internal row (`0` = top
+/// of the cell), in standard Unicode dot numbering — used to fill the area with
+/// 2×4-dot resolution.
+const BRAILLE_DOTS: [[u16; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
 
-/// A bordered panel containing a gradient filled-area history chart. Each
-/// terminal column is one history sample drawn with eighth-block cells
-/// (`▁▂▃▄▅▆▇█`, 8× vertical resolution so the top edge reads as a smooth curve),
-/// colored by height along the accent [`gradient`] so the area fades from a dim
-/// floor up to a glowing tip — newest at the right.
+/// A bordered panel containing a gradient filled-area history chart, rendered in
+/// braille (2×4 dots per cell). The fill height is linearly interpolated across
+/// the two sub-columns of each cell, so the top edge slopes smoothly between
+/// samples (a line-plot look rather than vertical bars). Each cell is colored by
+/// height along the accent [`gradient`]; newest sample at the right.
 fn render_chart(
     frame: &mut Frame,
     area: Rect,
@@ -361,25 +363,57 @@ fn render_chart(
 
     let columns = inner.width as usize;
     let shown: Vec<f64> = history.iter().rev().take(columns).rev().copied().collect();
+    if shown.is_empty() {
+        return;
+    }
     let offset = columns - shown.len();
     let ceiling = ceiling.max(1e-9);
     let cell_rows = inner.height as usize;
-    let max_eighths = cell_rows * 8; // eight sub-steps per cell row
+    let sub_rows = cell_rows * 4; // four braille dot rows per cell
+    let last = shown.len() - 1;
     let background = background();
-    let buffer = frame.buffer_mut();
 
-    for (index, &value) in shown.iter().enumerate() {
-        let x = inner.left() + (offset + index) as u16;
-        let filled = ((value / ceiling).clamp(0.0, 1.0) * max_eighths as f64).round() as usize;
+    // Fill height (in dot rows from the floor) for a braille sub-column, with
+    // two sub-columns per terminal cell linearly interpolated between samples.
+    let fill_at = |sub_x: usize| -> Option<usize> {
+        let position = sub_x as f64 / 2.0 - offset as f64;
+        if position < 0.0 {
+            return None;
+        }
+        let low = (position.floor() as usize).min(last);
+        let high = (low + 1).min(last);
+        let blend = position - low as f64;
+        let value = shown[low] * (1.0 - blend) + shown[high] * blend;
+        Some(((value / ceiling).clamp(0.0, 1.0) * sub_rows as f64).round() as usize)
+    };
+
+    let buffer = frame.buffer_mut();
+    for cell_x in 0..columns {
+        let fills = [fill_at(cell_x * 2), fill_at(cell_x * 2 + 1)];
+        if fills.iter().all(Option::is_none) {
+            continue;
+        }
+        let x = inner.left() + cell_x as u16;
         for row in 0..cell_rows {
-            let eighths = filled.saturating_sub(row * 8).min(8);
-            if eighths == 0 {
+            let mut dots = 0u16;
+            for (sub, fill) in fills.iter().enumerate() {
+                let Some(fill) = fill else {
+                    continue;
+                };
+                for internal in 0..4 {
+                    if row * 4 + (3 - internal) < *fill {
+                        dots |= BRAILLE_DOTS[sub][internal];
+                    }
+                }
+            }
+            if dots == 0 {
                 continue;
             }
+            let symbol = char::from_u32(0x2800 + dots as u32).unwrap_or(' ');
             let color = gradient((row as f64 + 0.5) / cell_rows as f64);
             let y = inner.bottom() - 1 - row as u16;
             if let Some(cell) = buffer.cell_mut((x, y)) {
-                cell.set_symbol(BLOCKS[eighths]).set_fg(color).set_bg(background);
+                cell.set_char(symbol).set_fg(color).set_bg(background);
             }
         }
     }
