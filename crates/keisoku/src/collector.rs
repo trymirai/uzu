@@ -51,6 +51,11 @@ impl Collector {
         self.soc.as_ref()
     }
 
+    /// The static device description (chip, core counts, RAM) for this machine.
+    pub fn device(&self) -> crate::Device {
+        crate::Device::detect(self)
+    }
+
     /// Collects one snapshot. **Blocks for ~`interval`**: on macOS the IOReport
     /// energy/residency delta needs a real window (which also sets the cadence);
     /// otherwise it just sleeps `interval`.
