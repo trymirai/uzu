@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     metrics::{
-        BandwidthMetrics, CpuMetrics, FanMetrics, GpuMetrics, MemoryMetrics, NeuralEngineMetrics, PowerMetrics,
-        Temperatures, ThermalPressure,
+        BandwidthMetrics, BatteryMetrics, CpuMetrics, FanMetrics, GpuMetrics, MemoryMetrics, NeuralEngineMetrics,
+        PowerMetrics, Temperatures, ThermalPressure,
     },
     sensor::Sensor,
     units::Milliseconds,
@@ -23,6 +23,7 @@ pub struct Snapshot {
     pub memory: Option<MemoryMetrics>,
     pub bandwidth: Option<BandwidthMetrics>,
     pub fans: Option<FanMetrics>,
+    pub battery: Option<BatteryMetrics>,
     pub temperatures: Option<Temperatures>,
     pub thermal_pressure: Option<ThermalPressure>,
     pub sensors: Vec<Sensor>,

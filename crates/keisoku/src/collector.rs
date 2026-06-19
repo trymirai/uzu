@@ -74,6 +74,7 @@ impl Collector {
         let soc = self.sample_soc(interval);
         let memory = crate::metrics::read_memory();
         let fans = self.read_fans();
+        let battery = crate::metrics::read_battery();
         let thermal_pressure = crate::metrics::read_thermal_pressure();
         let sensors = crate::sensors(SensorKind::Temperature);
         let temperatures = (!sensors.is_empty()).then(|| temperatures_from(&sensors));
@@ -86,6 +87,7 @@ impl Collector {
             memory,
             bandwidth: soc.bandwidth,
             fans,
+            battery,
             temperatures,
             thermal_pressure,
             sensors,

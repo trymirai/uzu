@@ -2,6 +2,7 @@
 //! and thermal-pressure providers.
 
 mod bandwidth;
+mod battery;
 mod cpu;
 mod fans;
 mod gpu;
@@ -12,6 +13,8 @@ mod temperatures;
 mod thermal_pressure;
 
 pub use bandwidth::BandwidthMetrics;
+pub use battery::BatteryMetrics;
+pub(crate) use battery::read as read_battery;
 pub use cpu::CpuMetrics;
 pub use fans::{Fan, FanMetrics};
 pub use gpu::GpuMetrics;

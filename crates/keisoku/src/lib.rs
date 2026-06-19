@@ -31,8 +31,8 @@ mod sys;
 pub use collector::Collector;
 pub use component::{Component, classify};
 pub use metrics::{
-    BandwidthMetrics, CpuMetrics, Fan, FanMetrics, GpuMetrics, MemoryMetrics, NeuralEngineMetrics, PowerMetrics,
-    Temperatures, ThermalPressure,
+    BandwidthMetrics, BatteryMetrics, CpuMetrics, Fan, FanMetrics, GpuMetrics, MemoryMetrics, NeuralEngineMetrics,
+    PowerMetrics, Temperatures, ThermalPressure,
 };
 pub use recorder::{Config, Device, Marker, RecorderHandle, Session, start};
 pub use sensor::{Sensor, SensorKind, current_sensors, thermal_sensors, voltage_sensors};

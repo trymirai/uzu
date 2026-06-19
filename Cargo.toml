@@ -75,7 +75,7 @@ tokenizers = { version = "0.22", features = [
 objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
 objc2-core-foundation = "0.3.2"
-objc2-io-kit = { version = "0.3.2", default-features = false, features = ["libc"] }
+objc2-io-kit = { version = "0.3.2", default-features = false, features = ["libc", "ps"] }
 objc2-security = "0.3.2"
 obfstr = "0.4.4"
 metal = { package = "mtl-rs", version = "0.1.12" }
