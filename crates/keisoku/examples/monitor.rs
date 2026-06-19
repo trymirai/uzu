@@ -8,7 +8,7 @@
 //! Run: `cargo run -p keisoku --example monitor`.
 //!
 //! Layout (mactop "default", rounded outer frame). Every usage metric is a
-//! gradient filled-area history chart (half-block cells colored by height):
+//! gradient filled-area history chart (eighth-block cells colored by height):
 //! ```text
 //! ┌ keisoku · <chip> · <cores> · <gpu> · <ram> ───────────────── 0.5 ┐
 //! │ CPU chart                       │ GPU chart                      │
@@ -337,10 +337,14 @@ fn draw(
     render_network(frame, bottom[2], state);
 }
 
+/// Partial vertical blocks, 1/8-cell steps (`U+2581..U+2588`); index 0 is empty.
+const BLOCKS: [&str; 9] = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+
 /// A bordered panel containing a gradient filled-area history chart. Each
-/// terminal column is one history sample drawn with half-block cells (`█`/`▄`,
-/// 2× vertical resolution), colored by height along the accent [`gradient`] so
-/// the area fades from a dim floor up to a glowing tip — newest at the right.
+/// terminal column is one history sample drawn with eighth-block cells
+/// (`▁▂▃▄▅▆▇█`, 8× vertical resolution so the top edge reads as a smooth curve),
+/// colored by height along the accent [`gradient`] so the area fades from a dim
+/// floor up to a glowing tip — newest at the right.
 fn render_chart(
     frame: &mut Frame,
     area: Rect,
@@ -360,27 +364,22 @@ fn render_chart(
     let offset = columns - shown.len();
     let ceiling = ceiling.max(1e-9);
     let cell_rows = inner.height as usize;
-    let sub_rows = cell_rows * 2; // two half-block steps per cell row
+    let max_eighths = cell_rows * 8; // eight sub-steps per cell row
     let background = background();
     let buffer = frame.buffer_mut();
 
     for (index, &value) in shown.iter().enumerate() {
         let x = inner.left() + (offset + index) as u16;
-        let filled_subs = ((value / ceiling).clamp(0.0, 1.0) * sub_rows as f64).round() as usize;
+        let filled = ((value / ceiling).clamp(0.0, 1.0) * max_eighths as f64).round() as usize;
         for row in 0..cell_rows {
-            let subs_in_cell = filled_subs.saturating_sub(row * 2).min(2);
-            if subs_in_cell == 0 {
+            let eighths = filled.saturating_sub(row * 8).min(8);
+            if eighths == 0 {
                 continue;
             }
-            let symbol = if subs_in_cell == 2 {
-                "█"
-            } else {
-                "▄"
-            };
             let color = gradient((row as f64 + 0.5) / cell_rows as f64);
             let y = inner.bottom() - 1 - row as u16;
             if let Some(cell) = buffer.cell_mut((x, y)) {
-                cell.set_symbol(symbol).set_fg(color).set_bg(background);
+                cell.set_symbol(BLOCKS[eighths]).set_fg(color).set_bg(background);
             }
         }
     }
