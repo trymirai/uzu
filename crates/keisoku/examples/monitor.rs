@@ -13,9 +13,9 @@
 //! │ CPU per-core bars               │ GPU chart                      │
 //! ├─────────────────────────────────┼────────────────────────────────┤
 //! │ ANE chart                       │ Memory chart                   │
-//! │ Power Usage   │ Package chart   │ Apple Silicon │ Net·Disk·Fans  │
+//! │ Power Usage   │ Package chart   │ Apple Silicon │ Fans           │
 //! ├─────────────────────────────────┴────────────────────────────────┤
-//! │ Process List                                                      │
+//! │ Process List                  │ Disk           │ Network         │
 //! └ green ──────────── Color: c · BG: b · Exit: q ──────────── 1000ms ┘
 //! ```
 //! Power Usage shows per-rail watts + `Pkg` (SMC package) + `Battery`.
@@ -291,10 +291,14 @@ fn draw(
     render_chart(frame, right[0], memory_title(state), &state.memory_history, 100.0);
     let right_bottom = split_horizontal(right[1], [Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]);
     render_model(frame, right_bottom[0], state);
-    render_network(frame, right_bottom[1], state);
+    render_fans(frame, right_bottom[1], state);
 
-    // Row 3: process list.
-    render_processes(frame, rows[2], state);
+    // Row 3: process list | disk | network.
+    let bottom =
+        split_horizontal(rows[2], [Constraint::Percentage(50), Constraint::Percentage(25), Constraint::Percentage(25)]);
+    render_processes(frame, bottom[0], state);
+    render_disk(frame, bottom[1], state);
+    render_network(frame, bottom[2], state);
 }
 
 /// A bordered green panel containing a braille filled-area history chart — the
@@ -494,33 +498,52 @@ fn render_model(
     frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Apple Silicon")), area);
 }
 
+fn render_fans(
+    frame: &mut Frame,
+    area: Rect,
+    state: &Telemetry,
+) {
+    let mut lines = Vec::new();
+    if let Some(fans) = state.snapshot.as_ref().and_then(|s| s.fans.as_ref()) {
+        for (index, fan) in fans.fans.iter().enumerate() {
+            lines.push(Line::from(format!("Fan {}:  {:.0} rpm", index + 1, fan.actual.value())));
+            lines.push(Line::from(format!(
+                "  range {:.0}–{:.0} · target {:.0}",
+                fan.minimum.value(),
+                fan.maximum.value(),
+                fan.target.value(),
+            )));
+        }
+    }
+    if lines.is_empty() {
+        lines.push(Line::from("no fans"));
+    }
+    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Fans")), area);
+}
+
+fn render_disk(
+    frame: &mut Frame,
+    area: Rect,
+    state: &Telemetry,
+) {
+    let lines: Vec<Line> = state
+        .disks
+        .iter()
+        .map(|disk| Line::from(format!("{}: {} / {}", disk.name, human_bytes(disk.used), human_bytes(disk.total))))
+        .collect();
+    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Disk")), area);
+}
+
 fn render_network(
     frame: &mut Frame,
     area: Rect,
     state: &Telemetry,
 ) {
-    let mut lines = vec![Line::from(format!(
-        "Net: ↑ {}/s  ↓ {}/s",
-        human_bytes(state.network_up as u64),
-        human_bytes(state.network_down as u64),
-    ))];
-    for disk in state.disks.iter().take(2) {
-        lines.push(Line::from(format!("{}: {} / {}", disk.name, human_bytes(disk.used), human_bytes(disk.total),)));
-    }
-    if let Some(fans) = state.snapshot.as_ref().and_then(|s| s.fans.as_ref()) {
-        for (index, fan) in fans.fans.iter().enumerate() {
-            lines.push(Line::from(format!(
-                "Fan {}: {:.0}/{:.0} rpm",
-                index + 1,
-                fan.actual.value(),
-                fan.maximum.value()
-            )));
-        }
-    }
-    frame.render_widget(
-        Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Network · Disk · Fans")),
-        area,
-    );
+    let lines = vec![
+        Line::from(format!("↑ {}/s", human_bytes(state.network_up as u64))),
+        Line::from(format!("↓ {}/s", human_bytes(state.network_down as u64))),
+    ];
+    frame.render_widget(Paragraph::new(lines).style(Style::default().fg(accent())).block(panel("Network")), area);
 }
 
 fn render_processes(
