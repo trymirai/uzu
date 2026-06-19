@@ -44,7 +44,7 @@ use ratatui::{
     symbols::Marker,
     text::Line,
     widgets::{
-        Block, BorderType, Borders, List, ListItem, Paragraph,
+        Bar, BarChart, BarGroup, Block, BorderType, Borders, List, ListItem, Paragraph,
         canvas::{Canvas, Line as CanvasLine},
     },
 };
@@ -341,39 +341,41 @@ fn render_chart(
     frame.render_widget(chart, inner);
 }
 
-/// Per-core CPU as one braille bar per logical core (current %, 0-100).
+/// Per-core CPU as a labeled bar chart — one block bar per logical core (height
+/// = current %, label = core index), so each core is clearly distinguishable.
 fn render_cpu_cores(
     frame: &mut Frame,
     area: Rect,
     title: String,
     per_core: &[Percent],
 ) {
-    let block = panel_owned(title);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
     if per_core.is_empty() {
+        frame.render_widget(panel_owned(title), area);
         return;
     }
-    let values: Vec<f64> = per_core.iter().map(|core| core.value() as f64).collect();
-    let cores = values.len() as f64;
-    let chart = Canvas::default()
-        .marker(Marker::Braille)
-        .background_color(background())
-        .x_bounds([0.0, cores])
-        .y_bounds([0.0, 100.0])
-        .paint(move |context| {
-            for (index, &value) in values.iter().enumerate() {
-                let x = index as f64 + 0.5;
-                context.draw(&CanvasLine {
-                    x1: x,
-                    y1: 0.0,
-                    x2: x,
-                    y2: value,
-                    color: accent(),
-                });
-            }
-        });
-    frame.render_widget(chart, inner);
+    let cores = per_core.len() as u16;
+    let inner_width = area.width.saturating_sub(2);
+    let bar_width = (inner_width.saturating_sub(cores.saturating_sub(1)) / cores).clamp(1, 6);
+    let bars: Vec<Bar> = per_core
+        .iter()
+        .enumerate()
+        .map(|(index, core)| {
+            Bar::default()
+                .value(core.value().round() as u64)
+                .label(Line::from(format!("{index}")))
+                .text_value(format!("{:.0}", core.value()))
+        })
+        .collect();
+    let chart = BarChart::default()
+        .block(panel_owned(title))
+        .data(BarGroup::default().bars(&bars))
+        .bar_width(bar_width)
+        .bar_gap(1)
+        .max(100)
+        .bar_style(Style::default().fg(accent()))
+        .value_style(Style::default().fg(Color::Black).bg(accent()))
+        .label_style(Style::default().fg(accent()));
+    frame.render_widget(chart, area);
 }
 
 fn cpu_title(state: &Telemetry) -> String {
