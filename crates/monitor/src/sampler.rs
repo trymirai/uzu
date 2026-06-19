@@ -48,10 +48,15 @@ pub(crate) fn sample_loop(
     let mut system = System::new();
     let mut networks = Networks::new_with_refreshed_list();
     let mut all_disks = Disks::new_with_refreshed_list();
-    let mut last_refresh = Instant::now();
     let mut last_disk_refresh: Option<Instant> = None;
 
     let process_kind = ProcessRefreshKind::nothing().with_cpu().with_memory().with_disk_usage();
+
+    // Prime so the first sample's rates span the interval rather than reading
+    // each counter's whole since-boot total as if it accrued in one tick.
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, process_kind);
+    networks.refresh(true);
+    let mut last_refresh = Instant::now();
 
     while !stop.load(Ordering::Relaxed) {
         let snapshot = collector.sample(interval());
