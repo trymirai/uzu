@@ -1,4 +1,9 @@
-use std::{path::PathBuf, pin::Pin};
+use std::{
+    any::Any,
+    path::PathBuf,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use futures::{Stream, StreamExt, stream};
 use shoji::{
@@ -22,7 +27,11 @@ use crate::{
     encodable_block::sampling::{SamplingMethod as UzuSamplingMethod, SamplingProcessingOrder},
     engine::{
         Engine,
-        language_model::{LanguageModel, state::LanguageModelState, stream::LanguageModelStreamOptions},
+        language_model::{
+            LanguageModel,
+            state::LanguageModelState,
+            stream::{LanguageModelStreamDriver, LanguageModelStreamOptions},
+        },
     },
 };
 
@@ -58,38 +67,101 @@ impl<B: Backend> LlmInstance for UzuChatTokenLlmInstance<B> {
     fn stream<'a>(
         &'a self,
         input: &'a Self::StreamInput,
-        _state: &'a mut dyn LlmInstanceState,
+        state: &'a mut dyn LlmInstanceState,
         config: Self::StreamConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, Error>> + Send + 'a>> {
-        let model = match self.model.value.lock() {
+        let state = match state.as_any_mut().downcast_mut::<Container<LanguageModelState<B>>>() {
+            Some(state) => state.clone(),
+            None => return error_stream("unexpected state type for uzu chat token instance".to_string()),
+        };
+        let model = self.model.clone();
+
+        let driver = {
+            let model = match model.value.lock() {
+                Ok(model) => model,
+                Err(err) => return error_stream(err.to_string()),
+            };
+            let model_state = match state.value.lock() {
+                Ok(model_state) => model_state,
+                Err(err) => return error_stream(err.to_string()),
+            };
+            let stream_options = get_stream_options(config, &model);
+            match LanguageModelStreamDriver::new(input, &model_state, stream_options) {
+                Ok(driver) => driver,
+                Err(err) => return error_stream(err.to_string()),
+            }
+        };
+
+        UzuChatTokenStream::new(model, state, driver).take_until(cancel_token.cancelled_owned()).boxed()
+    }
+}
+
+struct UzuChatTokenStream<B: Backend> {
+    model: Container<LanguageModel<B>>,
+    state: Container<LanguageModelState<B>>,
+    driver: LanguageModelStreamDriver,
+    finished: bool,
+}
+
+impl<B: Backend> UzuChatTokenStream<B> {
+    fn new(
+        model: Container<LanguageModel<B>>,
+        state: Container<LanguageModelState<B>>,
+        driver: LanguageModelStreamDriver,
+    ) -> Self {
+        Self {
+            model,
+            state,
+            driver,
+            finished: false,
+        }
+    }
+}
+
+impl<B: Backend> Stream for UzuChatTokenStream<B> {
+    type Item = Result<ChatTokenStreamOutput, Error>;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        if this.finished {
+            return Poll::Ready(None);
+        }
+
+        let model = match this.model.value.lock() {
             Ok(model) => model,
-            Err(err) => return error_stream(err.to_string()),
+            Err(err) => {
+                this.finished = true;
+                return Poll::Ready(Some(Err(Box::<dyn std::error::Error + Send + Sync>::from(err.to_string()))));
+            },
         };
-
-        let mut model_state = match self.state.value.lock() {
+        let mut model_state = match this.state.value.lock() {
             Ok(model_state) => model_state,
-            Err(err) => return error_stream(err.to_string()),
+            Err(err) => {
+                this.finished = true;
+                return Poll::Ready(Some(Err(Box::<dyn std::error::Error + Send + Sync>::from(err.to_string()))));
+            },
         };
 
-        let stream_options = get_stream_options(config, &model);
-        let model_stream = match model.stream(input, &mut model_state, stream_options) {
-            Ok(model_stream) => model_stream,
-            Err(err) => return error_stream(err.to_string()),
-        };
-
-        let outputs = model_stream
-            .map(|item| item.map_err(|err| Box::<dyn std::error::Error + Send + Sync>::from(err.to_string())))
-            // TODO agolokoz: fix collection to vector
-            .collect::<Vec<Result<Self::StreamOutput, Error>>>();
-
-        stream::iter(outputs).take_until(cancel_token.cancelled_owned()).boxed()
+        Poll::Ready(
+            this.driver
+                .step(&model, &mut model_state)
+                .map_err(|err| Box::<dyn std::error::Error + Send + Sync>::from(err.to_string()))
+                .transpose(),
+        )
     }
 }
 
 impl<B: Backend> LlmInstanceState for Container<LanguageModelState<B>> {
     fn clone_boxed(&self) -> Box<dyn LlmInstanceState> {
         Box::new(self.clone())
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 

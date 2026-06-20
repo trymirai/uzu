@@ -8,6 +8,8 @@ use crate::{
 
 mod sync;
 
+pub use sync::LanguageModelStreamDriver;
+
 #[derive(Debug, Clone)]
 pub struct LanguageModelStreamOptions {
     pub sampling_method: SamplingMethod,
@@ -50,6 +52,6 @@ impl<B: Backend> LanguageModel<B> {
         state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<impl Iterator<Item = Result<u64, LanguageModelStreamError<B>>> + 'a, LanguageModelStreamError<B>> {
-        sync::LanguageModelSyncStream::new(self, input, state, options)
+        sync::LanguageModelIterator::new(self, input, state, options)
     }
 }

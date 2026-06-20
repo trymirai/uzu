@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc};
+use std::{any::Any, pin::Pin, sync::Arc};
 
 use async_openai::{Client, config::OpenAIConfig};
 use futures::Stream;
@@ -25,6 +25,10 @@ pub struct State;
 impl StateTrait for State {
     fn clone_boxed(&self) -> Box<dyn StateTrait> {
         Box::new(self.clone())
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 

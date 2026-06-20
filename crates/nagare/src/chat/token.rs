@@ -27,7 +27,7 @@ pub struct Session {
     instance: Box<dyn Instance>,
     state: Box<dyn State>,
     encoding: Encoding,
-    tokens: Vec<u64>,
+    stream_tokens: Vec<u64>,
 }
 
 impl Session {
@@ -63,7 +63,7 @@ impl Session {
             instance,
             state,
             encoding,
-            tokens: Vec::new(),
+            stream_tokens: Vec::new(),
         })
     }
 
@@ -80,7 +80,7 @@ impl Session {
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
-        self.tokens = match self.get_tokens(input) {
+        self.stream_tokens = match self.get_tokens(input) {
             Ok(tok) => tok,
             Err(err) => {
                 return Box::pin(stream::once(async move {
@@ -93,7 +93,7 @@ impl Session {
 
         let encoding = &mut self.encoding;
         self.instance
-            .stream(&self.tokens, self.state.as_mut(), config, cancel_token)
+            .stream(&self.stream_tokens, self.state.as_mut(), config, cancel_token)
             .map(move |event| {
                 let token = event.map_err(|error| ChatSessionError::Backend {
                     message: error.to_string(),
