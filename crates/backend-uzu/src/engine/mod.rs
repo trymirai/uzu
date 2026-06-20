@@ -5,7 +5,6 @@ use thiserror::Error;
 use crate::backends::common::{Backend, Context};
 
 pub mod classifier_model;
-pub mod inference;
 pub mod language_model;
 
 pub struct Engine<B: Backend> {

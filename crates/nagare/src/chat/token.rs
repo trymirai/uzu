@@ -1,23 +1,32 @@
-use std::pin::Pin;
+use std::{io, pin::Pin};
 
-use futures::{Stream, stream};
+use futures::{Stream, StreamExt, stream};
+use hanashi::{
+    Encoding as EncodingTrait,
+    chat::{Config, Context, Encoding, Error, TokenizerLocation, hanashi::Config as HanashiConfig},
+};
 use shoji::{
     traits::{
         State,
         backend::{
-            chat_message::Output,
+            chat_message::{Output, ToolCallState},
             chat_token::{Backend, Instance},
         },
     },
-    types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+    types::{
+        basic::TokenId,
+        model::{Model, ModelFamily},
+        session::chat::{ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyStats},
+    },
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::chat::ChatSessionError;
 
 pub struct Session {
-    _instance: Box<dyn Instance>,
-    _state: Box<dyn State>,
+    instance: Box<dyn Instance>,
+    state: Box<dyn State>,
+    encoding: Encoding,
 }
 
 impl Session {
@@ -25,35 +34,120 @@ impl Session {
         backend: &dyn Backend,
         config: ChatConfig,
         reference: String,
+        model: &Model,
     ) -> Result<Self, ChatSessionError> {
-        let instance = backend.instance(reference, config).await.map_err(|error| ChatSessionError::Backend {
-            message: error.to_string(),
-        })?;
+        let instance =
+            backend.instance(reference.to_string(), config).await.map_err(|error| ChatSessionError::Backend {
+                message: error.to_string(),
+            })?;
         let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
+
+        let encoding_config = Self::get_encoding_config(model).map_err(|err| ChatSessionError::LoadingError {
+            message: err.to_string(),
+        })?;
+        let encoding_context = Context {
+            tokenizer_location: TokenizerLocation::Directory {
+                path: reference,
+                name: Some("tokenizer.json".to_string()),
+            },
+        };
+        let encoding =
+            Encoding::new(encoding_config, encoding_context).map_err(|err| ChatSessionError::LoadingError {
+                message: err.to_string(),
+            })?;
+
         Ok(Self {
-            _instance: instance,
-            _state: state,
+            instance,
+            state,
+            encoding,
         })
     }
 
     pub async fn reset(&mut self) -> Result<(), ChatSessionError> {
-        Err(ChatSessionError::Backend {
-            message: "token chat session reset not implemented".to_string(),
-        })
+        self.state = self.instance.state().await.map_err(|error| ChatSessionError::Backend {
+            message: error.to_string(),
+        })?;
+        Ok(())
     }
 
     pub fn stream<'a>(
         &'a mut self,
-        _input: &'a Vec<ChatMessage>,
-        _config: ChatReplyConfig,
-        _cancel_token: CancellationToken,
+        input: &'a Vec<ChatMessage>,
+        config: ChatReplyConfig,
+        cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
-        Box::pin(stream::once(async {
-            Err(ChatSessionError::Backend {
-                message: "Token chat session stream not implemented".to_string(),
+        let tokens = match self.get_tokens(input) {
+            Ok(tok) => tok,
+            Err(err) => {
+                return Box::pin(stream::once(async {
+                    Err(ChatSessionError::Backend {
+                        message: err.to_string(),
+                    })
+                }));
+            },
+        };
+
+        let encoding = &mut self.encoding;
+        self.instance
+            .stream(&tokens, self.state.as_mut(), config, cancel_token)
+            .map(move |event| {
+                let token = event.map_err(|error| ChatSessionError::Backend {
+                    message: error.to_string(),
+                })?;
+                encoding.decode(vec![token as TokenId]).map_err(|error| ChatSessionError::Backend {
+                    message: error.to_string(),
+                })?;
+                Ok(Self::build_output(encoding.state().messages.last()))
             })
-        }))
+            .boxed()
+    }
+
+    fn build_output(message: Option<&ChatMessage>) -> Output {
+        let Some(message) = message else {
+            return Output::default();
+        };
+
+        let tool_calls = message
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ChatContentBlock::ToolCall {
+                    value,
+                } => Some(ToolCallState::Finished(value.clone())),
+                ChatContentBlock::ToolCallCandidate {
+                    value,
+                } => Some(ToolCallState::Candidate(value.json.clone())),
+                _ => None,
+            })
+            .collect();
+
+        Output {
+            reasoning: message.reasoning(),
+            text: message.text(),
+            tool_calls,
+            finish_reason: None,
+            stats: ChatReplyStats::default(),
+        }
+    }
+
+    fn get_encoding_config(model: &Model) -> Result<Config, io::Error> {
+        let family: &ModelFamily =
+            model.family.as_ref().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing model family"))?;
+        let model_name = family.metadata.name.to_lowercase();
+        let hanashi_config: HanashiConfig = serde_json::from_value(serde_json::json!({ "name": model_name }))
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+        Ok(Config::Hanashi(hanashi_config))
+    }
+
+    fn get_tokens(
+        &mut self,
+        messages: &Vec<ChatMessage>,
+    ) -> Result<Vec<u64>, Error> {
+        self.encoding.reset()?;
+        self.encoding.encode(messages.to_vec())?;
+        let tokens = self.encoding.state().tokens.iter().map(|token| token.id as u64).to_vec::<Vec<u64>>();
+        Ok(tokens)
     }
 }

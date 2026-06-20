@@ -102,7 +102,7 @@ impl ChatSession {
 
         let instance = tokio::spawn(async move {
             if let Some(token_backend) = backend.as_chat_via_token_capable() {
-                token::Session::new(token_backend, config, reference).await.map(Instance::Token)
+                token::Session::new(token_backend, config, reference, &model).await.map(Instance::Token)
             } else if let Some(message_backend) = backend.as_chat_via_message_capable() {
                 message::Session::new(message_backend, config, reference).await.map(Instance::Message)
             } else {
@@ -240,6 +240,7 @@ impl ChatSession {
                 match partial_output {
                     Ok(backend_output) => {
                         let message = build_message(&backend_output);
+                        // TODO agolokoz: maybe move to session.stream()
                         let output = ChatReply {
                             message: message.clone(),
                             stats: backend_output.stats.clone(),

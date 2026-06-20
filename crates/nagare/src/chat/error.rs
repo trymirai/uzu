@@ -8,6 +8,10 @@ pub enum ChatSessionError {
     Backend {
         message: String,
     },
+    #[error("Unable to load model: {message}")]
+    LoadingError {
+        message: String,
+    },
     #[error("Unsupported model")]
     UnsupportedModel {},
     #[error("Unable to perform operation in current state")]
