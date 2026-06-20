@@ -6,6 +6,7 @@ mod audio;
 mod delta_net;
 mod embedding;
 mod gated_act_mul;
+mod gdn_tree_verify;
 mod hadamard_transform;
 mod kv_cache_update;
 mod layer_norm;
