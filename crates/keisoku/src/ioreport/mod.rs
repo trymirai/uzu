@@ -1,5 +1,10 @@
-use core::ffi::c_void;
+use core::{ffi::c_void, ptr::NonNull};
 
+use objc2_core_foundation::{CFDictionary, CFMutableDictionary, CFRetained, CFString, CFType, Type};
+
+mod bandwidth;
+mod channel;
+mod frequency;
 mod report;
 mod sample;
 
@@ -35,4 +40,63 @@ kanka::ffi_table! {
         state_get_residency = "IOReportStateGetResidency":
             unsafe extern "C" fn(*const c_void, i32) -> i64,
     }
+}
+
+impl IoReportFunctions {
+    fn copy_channels_in_group(
+        &self,
+        group: &CFString,
+        subgroup: Option<&CFString>,
+    ) -> Option<CFRetained<CFDictionary>> {
+        let subgroup_pointer = subgroup.map_or(core::ptr::null_mut(), raw);
+        let channels = unsafe { (self.copy_channels_in_group)(raw(group), subgroup_pointer, 0, 0, 0) };
+        retained_dictionary(channels)
+    }
+
+    fn merge_channels(
+        &self,
+        first: &CFDictionary,
+        other: &CFDictionary,
+    ) {
+        unsafe { (self.merge_channels)(raw(first), raw(other), core::ptr::null()) };
+    }
+
+    fn create_subscription(
+        &self,
+        channels: &CFMutableDictionary,
+    ) -> Option<(CFRetained<CFType>, Option<CFRetained<CFDictionary>>)> {
+        let mut subscribed: *mut c_void = core::ptr::null_mut();
+        let subscription = unsafe {
+            (self.create_subscription)(core::ptr::null(), raw(channels), &mut subscribed, 0, core::ptr::null())
+        };
+        let subscription = unsafe { CFRetained::from_raw(NonNull::new(subscription.cast_mut().cast::<CFType>())?) };
+        Some((subscription, retained_dictionary(subscribed)))
+    }
+
+    fn create_samples(
+        &self,
+        subscription: &CFType,
+        channels: &CFMutableDictionary,
+    ) -> Option<CFRetained<CFDictionary>> {
+        let samples = unsafe { (self.create_samples)(raw(subscription), raw(channels), core::ptr::null()) };
+        retained_dictionary(samples)
+    }
+
+    fn create_samples_delta(
+        &self,
+        previous: &CFDictionary,
+        next: &CFDictionary,
+    ) -> Option<CFRetained<CFDictionary>> {
+        let delta = unsafe { (self.create_samples_delta)(raw(previous), raw(next), core::ptr::null()) };
+        retained_dictionary(delta)
+    }
+}
+
+fn raw<T: Type>(value: &T) -> *mut c_void {
+    let pointer: *const T = value;
+    pointer.cast::<c_void>().cast_mut()
+}
+
+fn retained_dictionary(value: *const c_void) -> Option<CFRetained<CFDictionary>> {
+    NonNull::new(value.cast_mut().cast::<CFDictionary>()).map(|pointer| unsafe { CFRetained::from_raw(pointer) })
 }
