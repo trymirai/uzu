@@ -1,13 +1,13 @@
 use std::time::{Duration, Instant};
 
 use obfstr::obfstr;
-use objc2_core_foundation::{CFDictionary, CFMutableDictionary, CFRetained, CFString, CFType};
 
 use super::{
     IoReportFunctions, SocSample,
     bandwidth::{BandwidthAccumulator, accumulate_amc_bandwidth, accumulate_pmp},
     channel::decode_channels,
     frequency::{average_cluster_frequency, calculate_frequency, divide_or_zero},
+    subscription::Subscription,
 };
 use crate::soc::SocInfo;
 
@@ -15,44 +15,16 @@ const ANE_MAX_POWER_WATTS: f32 = 8.0;
 
 pub struct IoReport {
     functions: &'static IoReportFunctions,
-    subscription: CFRetained<CFType>,
-    channels: CFRetained<CFMutableDictionary>,
+    subscription: Subscription,
 }
 
 impl IoReport {
     pub fn new() -> Option<Self> {
         let functions = IoReportFunctions::get()?;
-
-        let mut groups: Vec<CFRetained<CFDictionary>> = Vec::with_capacity(5);
-        for (group, subgroup) in [
-            (obfstr!("Energy Model"), None::<&str>),
-            (obfstr!("CPU Stats"), Some(obfstr!("CPU Core Performance States"))),
-            (obfstr!("GPU Stats"), Some(obfstr!("GPU Performance States"))),
-            (obfstr!("AMC Stats"), None),
-            (obfstr!("PMP"), None),
-        ] {
-            let group_name = CFString::from_str(group);
-            let subgroup_name = subgroup.map(CFString::from_str);
-            if let Some(group_channels) = functions.copy_channels_in_group(&group_name, subgroup_name.as_deref()) {
-                groups.push(group_channels);
-            }
-        }
-
-        let (first, rest) = groups.split_first()?;
-        for other in rest {
-            functions.merge_channels(first, other);
-        }
-        let channels = unsafe { CFMutableDictionary::new_copy(None, first.count(), Some(&**first)) }?;
-
-        drop(groups);
-
-        let (subscription, subscribed) = functions.create_subscription(&channels)?;
-        drop(subscribed);
-
+        let subscription = Subscription::new(functions)?;
         Some(Self {
             functions,
             subscription,
-            channels,
         })
     }
 
@@ -63,13 +35,13 @@ impl IoReport {
     ) -> SocSample {
         let functions = self.functions;
 
-        let Some(previous) = functions.create_samples(&self.subscription, &self.channels) else {
+        let Some(previous) = self.subscription.snapshot(functions) else {
             std::thread::sleep(interval);
             return SocSample::default();
         };
         let started = Instant::now();
         std::thread::sleep(interval);
-        let next = functions.create_samples(&self.subscription, &self.channels);
+        let next = self.subscription.snapshot(functions);
         let elapsed = started.elapsed();
         let Some(next) = next else {
             return SocSample::default();

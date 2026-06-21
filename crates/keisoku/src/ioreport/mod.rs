@@ -7,6 +7,7 @@ mod channel;
 mod frequency;
 mod report;
 mod sample;
+mod subscription;
 
 pub use report::IoReport;
 pub use sample::SocSample;
