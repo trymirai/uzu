@@ -7,7 +7,11 @@ fn get_gpu_temp() -> f32 {
         .iter()
         .filter(|sensor| sensor.component == keisoku::Component::Gpu)
         .fold((0.0f32, 0u32), |(sum, count), sensor| (sum + sensor.value as f32, count + 1));
-    if count == 0 { 0.0 } else { sum / count as f32 }
+    if count == 0 {
+        0.0
+    } else {
+        sum / count as f32
+    }
 }
 
 pub fn wait_gpu_cooldown() {
