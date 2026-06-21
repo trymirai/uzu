@@ -4,18 +4,28 @@ use objc2_core_foundation::{CFNumber, CFRetained, CFString, CFType, ConcreteType
 
 use super::{IOHIDEvent, IOHIDServiceClient, IOKit};
 
-pub(super) struct ServiceClient<'a> {
-    pub(super) io_kit: &'static IOKit,
-    pub(super) inner: &'a IOHIDServiceClient,
+pub(super) struct ServiceClient {
+    io_kit: &'static IOKit,
+    inner: CFRetained<IOHIDServiceClient>,
 }
 
-impl ServiceClient<'_> {
+impl ServiceClient {
+    pub(super) fn new(
+        io_kit: &'static IOKit,
+        inner: CFRetained<IOHIDServiceClient>,
+    ) -> Self {
+        Self {
+            io_kit,
+            inner,
+        }
+    }
+
     fn property<T: ConcreteType>(
         &self,
         key: &str,
     ) -> Option<CFRetained<T>> {
         let key = CFString::from_str(key);
-        let value = unsafe { (self.io_kit.copy_property)(self.inner, &key) };
+        let value = unsafe { (self.io_kit.copy_property)(&self.inner, &key) };
         let value: CFRetained<CFType> = unsafe { CFRetained::from_raw(NonNull::new(value)?) };
         value.downcast::<T>().ok()
     }
@@ -39,12 +49,12 @@ impl ServiceClient<'_> {
         event_type: i64,
         event_field: i32,
     ) -> Option<f64> {
-        let event = unsafe { (self.io_kit.copy_event)(self.inner, event_type, 0, 0) };
+        let event = unsafe { (self.io_kit.copy_event)(&self.inner, event_type, 0, 0) };
         let event: CFRetained<IOHIDEvent> = unsafe { CFRetained::from_raw(NonNull::new(event)?) };
         Some(unsafe { (self.io_kit.get_float_value)(&event, event_field) })
     }
 
     pub(super) fn registry_id(&self) -> u64 {
-        unsafe { (self.io_kit.get_registry_id)(self.inner) }
+        unsafe { (self.io_kit.get_registry_id)(&self.inner) }
     }
 }

@@ -1,8 +1,7 @@
-use core::ptr::NonNull;
 use std::time::{Duration, Instant};
 
 use obfstr::obfstr;
-use objc2_core_foundation::{CFAllocator, CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType};
+use objc2_core_foundation::{CFAllocator, CFArray, CFDictionary, CFNumber, CFString, CFType};
 
 use self::{event_system_client::EventSystemClient, service_client::ServiceClient};
 use crate::{
@@ -48,32 +47,15 @@ pub(crate) fn is_available() -> bool {
 }
 
 pub(crate) fn collect(kind: SensorKind) -> Vec<Sensor> {
-    let Some(io_kit) = IOKit::get() else {
-        return Vec::new();
-    };
     let Some(client) = EventSystemClient::new() else {
         return Vec::new();
     };
     let (page, usage) = kind.matching();
-    let Some(services) = client.services_matching(page, usage) else {
-        return Vec::new();
-    };
-
     let event_type = kind.event_type();
     let event_field = sys::event_field_base(event_type);
 
-    let count = services.count();
-    let mut readings = Vec::with_capacity(count as usize);
-    for index in 0..count {
-        let pointer = unsafe { services.value_at_index(index) }.cast::<IOHIDServiceClient>();
-        let Some(pointer) = NonNull::new(pointer.cast_mut()) else {
-            continue;
-        };
-
-        let service = ServiceClient {
-            io_kit,
-            inner: unsafe { pointer.as_ref() },
-        };
+    let mut readings = Vec::new();
+    for service in client.services(page, usage) {
         let Some(value) = service.f64_value(event_type, event_field) else {
             continue;
         };
@@ -93,7 +75,7 @@ pub(crate) fn collect(kind: SensorKind) -> Vec<Sensor> {
 }
 
 struct CachedSensor {
-    service: NonNull<IOHIDServiceClient>,
+    service: ServiceClient,
     name: String,
     component: Component,
     manufacturer: Option<String>,
@@ -105,36 +87,23 @@ struct CachedSensor {
 }
 
 pub(crate) struct SensorReader {
-    io_kit: &'static IOKit,
     kind: SensorKind,
     event_type: i64,
     event_field: i32,
     sensors: Vec<CachedSensor>,
     last_cold_read: Option<Instant>,
-    _services: CFRetained<CFArray>,
     _client: EventSystemClient,
 }
 
 impl SensorReader {
     pub(crate) fn new(kind: SensorKind) -> Option<Self> {
-        let io_kit = IOKit::get()?;
         let client = EventSystemClient::new()?;
         let (page, usage) = kind.matching();
-        let services = client.services_matching(page, usage)?;
         let event_type = kind.event_type();
         let event_field = sys::event_field_base(event_type);
 
-        let count = services.count();
-        let mut sensors = Vec::with_capacity(count as usize);
-        for index in 0..count {
-            let pointer = unsafe { services.value_at_index(index) }.cast::<IOHIDServiceClient>();
-            let Some(pointer) = NonNull::new(pointer.cast_mut()) else {
-                continue;
-            };
-            let service = ServiceClient {
-                io_kit,
-                inner: unsafe { pointer.as_ref() },
-            };
+        let mut sensors = Vec::new();
+        for service in client.services(page, usage) {
             let Some(value) = service.f64_value(event_type, event_field) else {
                 continue;
             };
@@ -145,22 +114,20 @@ impl SensorReader {
                 category: service.string(obfstr!("Category")),
                 location_id: service.i64_value(obfstr!("LocationID")),
                 registry_id: service.registry_id(),
-                service: pointer,
                 hot: is_hot(component),
                 component,
                 name,
                 value,
+                service,
             });
         }
 
         Some(Self {
-            io_kit,
             kind,
             event_type,
             event_field,
             sensors,
             last_cold_read: None,
-            _services: services,
             _client: client,
         })
     }
@@ -170,18 +137,14 @@ impl SensorReader {
         if refresh_cold {
             self.last_cold_read = Some(Instant::now());
         }
-        let (kind, event_type, event_field, io_kit) = (self.kind, self.event_type, self.event_field, self.io_kit);
+        let (kind, event_type, event_field) = (self.kind, self.event_type, self.event_field);
         self.sensors
             .iter_mut()
             .map(|cached| {
-                if cached.hot || refresh_cold {
-                    let service = ServiceClient {
-                        io_kit,
-                        inner: unsafe { cached.service.as_ref() },
-                    };
-                    if let Some(value) = service.f64_value(event_type, event_field) {
-                        cached.value = value;
-                    }
+                let refreshed =
+                    (cached.hot || refresh_cold).then(|| cached.service.f64_value(event_type, event_field)).flatten();
+                if let Some(value) = refreshed {
+                    cached.value = value;
                 }
                 Sensor {
                     component: cached.component,
