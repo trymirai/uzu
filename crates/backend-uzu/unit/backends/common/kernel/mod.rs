@@ -10,6 +10,7 @@ mod layer_norm_test;
 mod logit_soft_cap_test;
 mod matmul;
 mod moe;
+mod path_matrix_test;
 mod pooling;
 mod prefix_beta_bench;
 mod prefix_beta_test;
