@@ -1,7 +1,7 @@
 use objc2_core_foundation::CFDictionary;
 use serde::Serialize;
 
-use crate::cf::{IoServiceIterator, cf_data_bytes, cf_dictionary_value, registry_properties};
+use crate::cf::{IoServiceIterator, dictionary_data, registry_properties};
 
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct SocInfo {
@@ -22,7 +22,7 @@ fn dvfs_frequencies(
     dictionary: &CFDictionary,
     key: &str,
 ) -> Option<Vec<u32>> {
-    let bytes = cf_data_bytes(cf_dictionary_value(dictionary, key)?);
+    let bytes = dictionary_data(dictionary, key)?;
     if bytes.len() < 8 {
         return None;
     }
@@ -39,7 +39,7 @@ fn to_megahertz(
 }
 
 fn cluster_voltage_state_keys(dictionary: &CFDictionary) -> Option<(String, String)> {
-    let data = cf_data_bytes(cf_dictionary_value(dictionary, "acc-clusters")?);
+    let data = dictionary_data(dictionary, "acc-clusters")?;
     if data.len() < 8 {
         return None;
     }
