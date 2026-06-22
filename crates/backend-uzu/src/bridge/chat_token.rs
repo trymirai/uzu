@@ -38,17 +38,14 @@ use crate::{
 
 pub struct UzuChatTokenLlmInstance<B: Backend> {
     model: Container<LanguageModel<B>>,
-    state: Container<LanguageModelState<B>>,
 }
 
 impl<B: Backend> UzuChatTokenLlmInstance<B> {
     pub fn new(model_path: String) -> Result<Self, Error> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model = engine.load_language_model(&PathBuf::from(model_path)).map_err(|err| err.to_string())?;
-        let state = model.create_empty_state(model.recommended_context_length()).map_err(|err| err.to_string())?;
         Ok(Self {
             model: Container::new(model),
-            state: Container::new(state),
         })
     }
 }
@@ -59,7 +56,14 @@ impl<B: Backend> LlmInstance for UzuChatTokenLlmInstance<B> {
     type StreamOutput = ChatTokenStreamOutput;
 
     fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn LlmInstanceState>, Error>> + Send + '_>> {
-        Box::pin(async move { Ok(self.state.clone_boxed()) })
+        // TODO agolokoz: ask what this method should actually do
+        Box::pin(async move {
+            let model = self.model.value.lock().map_err(|err| Error::from(err.to_string()))?;
+            let state = model
+                .create_empty_state(model.recommended_context_length())
+                .map_err(|err| Error::from(err.to_string()))?;
+            Ok(Box::new(Container::new(state)) as Box<dyn LlmInstanceState>)
+        })
     }
 
     fn stream<'a>(
@@ -123,7 +127,7 @@ impl<B: Backend> UzuChatTokenStream<B> {
         let state_ref: &'static mut LanguageModelState<B> =
             unsafe { &mut *(&mut *state_guard as *mut LanguageModelState<B>) };
 
-        let options = Self::get_stream_options(config, model_ref);
+        let options = Self::get_stream_options(model_ref, config);
         let decoding_loop = match model_ref.stream(&input, state_ref, options) {
             Ok(stream) => Box::new(stream) as Box<dyn Iterator<Item = Result<u64, LanguageModelStreamError<B>>>>,
             Err(err) => return Err(Error::from(err.to_string())),
@@ -140,10 +144,22 @@ impl<B: Backend> UzuChatTokenStream<B> {
     }
 
     fn get_stream_options<'a>(
-        config: ChatReplyConfig,
         model: &LanguageModel<B>,
+        config: ChatReplyConfig,
     ) -> LanguageModelStreamOptions<'a> {
-        let sampling_method = match config.sampling_policy {
+        let sampling_method = Self::get_sampling_method(model, &config.sampling_policy);
+        LanguageModelStreamOptions {
+            sampling_method,
+            grammar: None,
+            speculator: None,
+        }
+    }
+
+    fn get_sampling_method(
+        model: &LanguageModel<B>,
+        sampling_method: &ShojiSamplingPolicy,
+    ) -> UzuSamplingMethod {
+        match sampling_method {
             ShojiSamplingPolicy::Default {
                 ..
             } => model.default_sampling_method(),
@@ -170,12 +186,6 @@ impl<B: Backend> UzuChatTokenStream<B> {
                     processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
             },
-        };
-
-        LanguageModelStreamOptions {
-            sampling_method,
-            grammar: None,
-            speculator: None,
         }
     }
 }
@@ -193,6 +203,13 @@ impl<B: Backend> Stream for UzuChatTokenStream<B> {
             return Poll::Ready(None);
         }
 
+        if let Some(max_tokens) = self.model_guard.recommended_context_length()
+            && self.state_guard.tokens().len() >= max_tokens
+        {
+            self.finished = true;
+            return Poll::Ready(None);
+        }
+
         let option_result = self.decoding_loop.next().map(|res| {
             let result = res.map_err(|err| {
                 self.finished = true;
@@ -205,12 +222,6 @@ impl<B: Backend> Stream for UzuChatTokenStream<B> {
             });
             result
         });
-
-        if let Some(max_tokens) = self.model_guard.recommended_context_length() {
-            if self.state_guard.tokens().len() >= max_tokens {
-                self.finished = true;
-            }
-        }
 
         Poll::Ready(option_result)
     }
