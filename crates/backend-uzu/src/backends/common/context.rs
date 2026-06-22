@@ -49,4 +49,8 @@ pub trait Context: Sized {
     fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error>;
 
     fn sparse_buffers_supported(&self) -> bool;
+
+    /// Whether the device has M5-class matrix units (MXU). Selects the MXU GEMM
+    /// backend in kernels that have both an MXU and a simdgroup variant.
+    fn supports_mxu(&self) -> bool;
 }

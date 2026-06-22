@@ -105,7 +105,7 @@ struct MxuMmaCore {
       thread Loader& loader_b,
       const thread ThreadContext& thread_context
   ) {
-    AccumFragment accumulator(thread_context);
+    AccumFragment accumulator;
     accumulator.clear();
 
     threadgroup BT* b_shared_simdgroup = b_shared + tile_col_offset * SHARED_STRIDE_B;
@@ -123,18 +123,22 @@ struct MxuMmaCore {
 
       METAL_PRAGMA_NO_UNROLL
       for (int inner_k = 0; inner_k < QUANT_BK; inner_k += SIMDGROUP_BLOCK_K) {
-        uzu::matmul::Fragment<AT, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps> left_tile(thread_context);
-        uzu::matmul::Fragment<BT, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps> right_tile(thread_context);
+        uzu::matmul::Fragment<AT, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps> left_tile;
+        uzu::matmul::Fragment<BT, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps> right_tile;
 
         const int left_offset = inner_k;
         if constexpr (ALIGNED_M) {
-          left_tile.load(a_simdgroup + left_offset, leading_dimension_a);
+          left_tile.load(thread_context.simd_lane_id, a_simdgroup + left_offset, leading_dimension_a);
         } else {
-          left_tile
-              .load_safe(a_simdgroup + left_offset, leading_dimension_a, short2(SIMDGROUP_BLOCK_K, simdgroup_limit_m));
+          left_tile.load_safe(
+              thread_context.simd_lane_id,
+              a_simdgroup + left_offset,
+              leading_dimension_a,
+              short2(SIMDGROUP_BLOCK_K, simdgroup_limit_m)
+          );
         }
 
-        right_tile.load(b_shared_simdgroup + inner_k, int(SHARED_STRIDE_B));
+        right_tile.load(thread_context.simd_lane_id, b_shared_simdgroup + inner_k, int(SHARED_STRIDE_B));
 
         uzu::matmul::MxuFragmentOps::template tile_matmul<false, true>(accumulator, left_tile, right_tile);
       }
@@ -210,8 +214,6 @@ struct MxuMmaCore {
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
 
     const device BT* bias_simdgroup = output_bias + size_t(block_col) + size_t(tile_col_offset);
-    using FragType = uzu::matmul::Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>;
-    const short2 thread_position = FragType::get_position(thread_context);
 
     auto dispatch_aligned_k = [&](auto body) {
       if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
@@ -332,13 +334,12 @@ struct MxuMmaCore {
                   }
 
                   if (apply_accumulate) {
-                    uzu::matmul::Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps> existing_output(
-                        thread_context
-                    );
+                    uzu::matmul::Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps> existing_output;
                     if constexpr (aligned_m.value && aligned_n.value) {
-                      existing_output.load(d_simdgroup, int(params->leading_dimension_d));
+                      existing_output.load(thread_context.simd_lane_id, d_simdgroup, int(params->leading_dimension_d));
                     } else {
                       existing_output.load_safe(
+                          thread_context.simd_lane_id,
                           d_simdgroup,
                           int(params->leading_dimension_d),
                           short2(simdgroup_limit_n, simdgroup_limit_m)
@@ -351,36 +352,25 @@ struct MxuMmaCore {
                   }
 
                   if (apply_bias) {
-                    METAL_PRAGMA_UNROLL
-                    for (ushort tile_row = 0; tile_row < TILES_M; ++tile_row) {
-                      METAL_PRAGMA_UNROLL
-                      for (ushort tile_col = 0; tile_col < TILES_N; ++tile_col) {
-                        thread auto& frag = accumulator_tile.fragment_at(tile_row, tile_col);
-                        const short col_base =
-                            short(tile_col * uzu::matmul::MxuFragmentOps::FRAGMENT_COLS + thread_position.x);
-                        METAL_PRAGMA_UNROLL
-                        for (ushort i = 0; i < uzu::matmul::MxuFragmentOps::THREAD_ELEMENT_ROWS; ++i) {
-                          METAL_PRAGMA_UNROLL
-                          for (ushort j = 0; j < uzu::matmul::MxuFragmentOps::THREAD_ELEMENT_COLS; ++j) {
-                            const ushort element_index = i * uzu::matmul::MxuFragmentOps::THREAD_ELEMENT_COLS + j;
-                            const short col_local = short(col_base + j);
-                            if constexpr (aligned_n.value) {
-                              frag[element_index] += AccumulatorType(bias_simdgroup[col_local]);
-                            } else {
-                              if (col_local < simdgroup_limit_n) {
-                                frag[element_index] += AccumulatorType(bias_simdgroup[col_local]);
-                              }
+                    accumulator_tile.for_each_element(
+                        thread_context.simd_lane_id,
+                        [&](short, short col, thread auto& value) {
+                          if constexpr (aligned_n.value) {
+                            value += AccumulatorType(bias_simdgroup[col]);
+                          } else {
+                            if (col < simdgroup_limit_n) {
+                              value += AccumulatorType(bias_simdgroup[col]);
                             }
                           }
                         }
-                      }
-                    }
+                    );
                   }
 
                   if constexpr (aligned_m.value && aligned_n.value) {
-                    accumulator_tile.store(d_simdgroup, int(params->leading_dimension_d));
+                    accumulator_tile.store(thread_context.simd_lane_id, d_simdgroup, int(params->leading_dimension_d));
                   } else {
                     accumulator_tile.store_safe(
+                        thread_context.simd_lane_id,
                         d_simdgroup,
                         int(params->leading_dimension_d),
                         short2(simdgroup_limit_n, simdgroup_limit_m)

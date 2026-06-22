@@ -117,5 +117,30 @@ struct ThreadgroupLoader {
   METAL_FUNC void next() { source += tile_stride; }
 };
 
+// Cooperatively stage a [ROWS, COLS] block from device into shared memory (smem,
+// leading dimension LD), bracketed by barriers so the buffer can be reused safely
+// (the barrier-before lets a prior block's readers finish before this overwrites).
+// The generic "staged load": any kernel/operand stages a tile, then reads register
+// fragments from smem via Fragment::load_from. `valid_rows < ROWS` does a bounds-
+// safe load (ragged tail), zero-filling the rest.
+template <ushort ROWS, ushort COLS, ushort LD, ushort THREADGROUP_SIZE, typename T>
+METAL_FUNC void stage_tile(
+    const device T* source,
+    const int source_leading_dimension,
+    threadgroup T* smem,
+    const short valid_rows,
+    const thread ThreadContext& thread_context
+) {
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  ThreadgroupLoader<T, ROWS, COLS, LD, 0, THREADGROUP_SIZE>
+      loader(source, source_leading_dimension, smem, thread_context);
+  if (valid_rows < short(ROWS)) {
+    loader.load_safe(short2(COLS, valid_rows));
+  } else {
+    loader.load_unsafe();
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+}
+
 } // namespace matmul
 } // namespace uzu

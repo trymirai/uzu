@@ -36,6 +36,10 @@ struct MxuFragmentOps {
   template <typename U>
   using ThreadVector = typename metal::vec<U, ELEMENTS_PER_THREAD>;
 
+  // NOTE: no single-sub-tile mma here. MPP requires M, N, or K == 32 for a
+  // cooperative-input matmul2d, so a 16x16x16 op is invalid; MXU kernels must go
+  // through tile_matmul (where N = head-dim >= 32 on the PV) instead.
+
   // Runs a 16x32 MPP matmul accumulating into (output_0 | output_1). The caller
   // supplies a `marshal_inputs` callable that copies its fragments into the
   // cooperative left/right tensors; the descriptor and output marshalling are
@@ -145,6 +149,14 @@ struct MxuFragmentOps {
     constexpr ushort left_tile_k = transpose_a ? LeftTile::TILE_ROWS : LeftTile::TILE_COLS;
     constexpr ushort tile_k = transpose_b ? RightTile::TILE_COLS : RightTile::TILE_ROWS;
     static_assert(left_tile_k == tile_k, "tile matmul: K dimensions do not match");
+
+    // MPP pairs cooperative inputs, so a tile is only emitted when N is even
+    // (N-paired) or N==1 with even M (M-paired). Any other shape would silently
+    // produce no MMAs -- reject it at compile time instead.
+    static_assert(
+        (tile_n % 2 == 0) || (tile_n == 1 && tile_m % 2 == 0),
+        "MXU tile_matmul requires even N, or N==1 with even M (MPP pairing)"
+    );
 
     constexpr auto transpose_left = metal::bool_constant<transpose_a>{};
     constexpr auto transpose_right = metal::bool_constant<transpose_b>{};

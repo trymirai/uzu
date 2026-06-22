@@ -52,10 +52,6 @@ pub struct MetalContext {
 }
 
 impl MetalContext {
-    pub fn supports_mxu(&self) -> bool {
-        self.device.supports_mxu()
-    }
-
     pub(crate) fn device_tier(&self) -> DeviceTier {
         self.device_tier
     }
@@ -261,5 +257,9 @@ impl Context for MetalContext {
 
     fn sparse_buffers_supported(&self) -> bool {
         self.device.supports_placement_sparse_resources()
+    }
+
+    fn supports_mxu(&self) -> bool {
+        self.device.supports_mxu()
     }
 }

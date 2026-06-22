@@ -5,14 +5,12 @@ use std::{
 
 use crate::{
     backends::common::{
-        Allocation, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
+        Allocation, AsBufferRangeRef, Backend, Buffer, Context, Encoder, Kernels,
         gpu_types::{AttnParams, ring::RingParams},
         kernel::AttentionGemmKernel,
     },
     data_type::DataType,
 };
-
-const BQ: usize = 32;
 
 pub struct AttentionGemmArguments<'a, B: Backend, KVBuf: AsBufferRangeRef> {
     pub queries: &'a Allocation<B>,
@@ -60,13 +58,36 @@ impl<B: Backend> AttentionGemmBlock<B> {
         encoder: &mut Encoder<B>,
         args: AttentionGemmArguments<B, KVBuf>,
     ) -> Result<(), B::Error> {
-        let bk: usize = if args.head_dim < 128 {
+        let head_dim = args.head_dim;
+        // MXU (M5 tensor units) needs BK == 32 (KEY_GRID_COLS even) and runs a
+        // 64-row Q block. Used for the f16/bf16 inference path only: MXU's f32
+        // matmul is reduced-precision (fails f32's tight eps), and a 64-row f32 Q
+        // block busts the 32 KB threadgroup limit at head_dim 128.
+        //
+        // Benchmarked on M5 (bf16): MXU is 2.2-2.7x faster than simdgroup on
+        // prefill but ties/loses on decode (suffix=1) because the 64-row Q block
+        // is then 1/64 utilized. So MXU only when there is at least one full Q
+        // block of queries. ponytail: head_dim capped at 128 (256 busts tg-mem /
+        // spills); MXU_MIN_SUFFIX is a heuristic — tune if speculative-decode
+        // batch sizes land between it and the crossover.
+        const MXU_MIN_SUFFIX: usize = 64;
+        let use_mxu = encoder.context().supports_mxu()
+            && self.data_type != DataType::F32
+            && head_dim <= 128
+            && args.suffix_length >= MXU_MIN_SUFFIX;
+        let bk: usize = if use_mxu || args.head_dim < 128 {
             32
         } else {
             16
         };
-        let head_dim = args.head_dim;
-        let align_q = args.suffix_length.is_multiple_of(BQ);
+        // The threadgroup query-block is 4 simdgroups * frag_rows rows (frag_rows =
+        // 16 on MXU, 8 on simdgroup): 64 on MXU, 32 on simdgroup.
+        let bq: usize = if use_mxu {
+            64
+        } else {
+            32
+        };
+        let align_q = args.suffix_length.is_multiple_of(bq);
         let align_k = args.sequence_length.is_multiple_of(bk);
         let is_kv_cache_ring = args.ring_params.is_some();
         let is_causal = args.is_causal;
@@ -76,6 +97,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
         let key = KernelKey {
             bk,
             head_dim,
+            use_mxu,
             align_q,
             align_k,
             is_kv_cache_ring,
@@ -94,6 +116,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
                     self.data_type,
                     bk as u32,
                     head_dim as u32,
+                    use_mxu,
                     align_q,
                     align_k,
                     is_kv_cache_ring,
@@ -114,7 +137,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
         let o_seq_stride = (args.num_heads * head_dim) as u64;
 
         let nk = args.sequence_length.div_ceil(bk);
-        let nq_aligned = args.suffix_length / BQ;
+        let nq_aligned = args.suffix_length / bq;
         let nk_aligned = args.sequence_length / bk;
 
         let params = AttnParams {
@@ -128,7 +151,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
             k_len: args.sequence_length as u32,
             q_off: args.segment_prefix_length as u32,
             nq_aligned: nq_aligned as u32,
-            q_rem: (args.suffix_length - nq_aligned * BQ) as u32,
+            q_rem: (args.suffix_length - nq_aligned * bq) as u32,
             nk: nk as u32,
             nk_aligned: nk_aligned as u32,
             k_rem: (args.sequence_length - nk_aligned * bk) as u32,
@@ -157,6 +180,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
 struct KernelKey {
     bk: usize,
     head_dim: usize,
+    use_mxu: bool,
     align_q: bool,
     align_k: bool,
     is_kv_cache_ring: bool,

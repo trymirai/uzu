@@ -9,7 +9,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Backend,
+            Backend, Context,
             gpu_types::QuantizationMethod,
             kernel::{Kernels, matmul::MatmulKernel},
         },

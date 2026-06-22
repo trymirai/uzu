@@ -88,4 +88,8 @@ impl Context for CpuContext {
     fn sparse_buffers_supported(&self) -> bool {
         false
     }
+
+    fn supports_mxu(&self) -> bool {
+        false
+    }
 }
