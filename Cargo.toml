@@ -21,6 +21,7 @@ members = [
     "crates/keisoku",
     "crates/kanshi",
     "crates/kanka",
+    "crates/cargo-keisoku",
 ]
 resolver = "3"
 
