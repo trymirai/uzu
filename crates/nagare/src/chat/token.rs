@@ -68,8 +68,11 @@ impl Session {
     }
 
     pub async fn reset(&mut self) -> Result<(), ChatSessionError> {
-        self.state = self.instance.state().await.map_err(|error| ChatSessionError::Backend {
-            message: error.to_string(),
+        self.encoding.reset().map_err(|err| ChatSessionError::Backend {
+            message: err.to_string(),
+        })?;
+        self.state = self.instance.state().await.map_err(|err| ChatSessionError::Backend {
+            message: err.to_string(),
         })?;
         Ok(())
     }
@@ -147,7 +150,6 @@ impl Session {
         &mut self,
         messages: &Vec<ChatMessage>,
     ) -> Result<Vec<u64>, Error> {
-        self.encoding.reset()?;
         self.encoding.encode(messages.to_vec())?;
         let tokens = self.encoding.state().tokens.iter().map(|token| token.id as u64).collect::<Vec<u64>>();
         Ok(tokens)
