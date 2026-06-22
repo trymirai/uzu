@@ -135,4 +135,8 @@ impl<B: Backend> LanguageModel<B> {
             processing_order: SamplingProcessingOrder::TemperatureThenFilters,
         }
     }
+
+    pub fn generation_config(&self) -> &GenerationConfig {
+        &self.generation_config
+    }
 }

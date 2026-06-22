@@ -1,7 +1,5 @@
 mod ring;
-mod sync;
 
-pub(crate) use sync::LanguageModelIteratorData;
 use thiserror::Error;
 
 use crate::{
