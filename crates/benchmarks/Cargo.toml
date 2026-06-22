@@ -10,6 +10,7 @@ license.workspace = true
 
 [dependencies]
 backend-uzu.workspace = true
+keisoku.workspace = true
 serde.workspace = true
 sysinfo.workspace = true
 

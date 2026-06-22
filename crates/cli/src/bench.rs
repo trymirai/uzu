@@ -53,11 +53,26 @@ fn print_summary(results: &[BenchmarkResult]) -> Result<()> {
         results.iter().map(|result| result.prompt_tokens_per_second).collect::<Vec<f64>>();
     let generate_tokens_per_second_list =
         results.iter().filter_map(|result| result.generate_tokens_per_second).collect::<Vec<f64>>();
+    let gpu_power_avg_list = results
+        .iter()
+        .filter_map(|result| result.power.as_ref().map(|power| power.gpu_watts_avg))
+        .collect::<Vec<f64>>();
+    let gpu_power_peak_list = results
+        .iter()
+        .filter_map(|result| result.power.as_ref().map(|power| power.gpu_watts_peak))
+        .collect::<Vec<f64>>();
+    let energy_list = results
+        .iter()
+        .filter_map(|result| result.power.as_ref().map(|power| power.energy_joules))
+        .collect::<Vec<f64>>();
 
     let memory_used_metric = calculate_metric(&memory_used_list);
     let time_to_first_token_metric = calculate_metric(&time_to_first_token_list);
     let prompt_tokens_per_second_metric = calculate_metric(&prompt_tokens_per_second_list);
     let generate_tokens_per_second_metric = calculate_metric(&generate_tokens_per_second_list);
+    let gpu_power_avg_metric = calculate_metric(&gpu_power_avg_list);
+    let gpu_power_peak_metric = calculate_metric(&gpu_power_peak_list);
+    let energy_metric = calculate_metric(&energy_list);
 
     let mut table = Table::new();
     table
@@ -68,7 +83,10 @@ fn print_summary(results: &[BenchmarkResult]) -> Result<()> {
         .add_row(vec!["Used memory, GB", memory_used_metric.as_str()])
         .add_row(vec!["TTFT, s", time_to_first_token_metric.as_str()])
         .add_row(vec!["Prompt, t/s", prompt_tokens_per_second_metric.as_str()])
-        .add_row(vec!["Generate, t/s", generate_tokens_per_second_metric.as_str()]);
+        .add_row(vec!["Generate, t/s", generate_tokens_per_second_metric.as_str()])
+        .add_row(vec!["GPU power avg, W", gpu_power_avg_metric.as_str()])
+        .add_row(vec!["GPU power peak, W", gpu_power_peak_metric.as_str()])
+        .add_row(vec!["Energy, J", energy_metric.as_str()]);
 
     let Some(column) = table.column_mut(1) else {
         bail!("Benchmark summary table value column is missing");

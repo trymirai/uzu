@@ -1,6 +1,6 @@
 use std::{
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use backend_uzu::{
@@ -12,9 +12,15 @@ use backend_uzu::{
         types::{Input, Output},
     },
 };
+use keisoku::Config;
 use sysinfo::System;
 
-use crate::runner::types::{Device, Result as TaskResult, Task};
+use crate::runner::{
+    summarize,
+    types::{Device, Result as TaskResult, Task},
+};
+
+const SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct Runner {
     pub task: Task,
@@ -67,7 +73,11 @@ impl Runner {
                     value: SamplingMethod::Greedy,
                 });
             }
+            let recorder = keisoku::start(Config {
+                interval: SAMPLE_INTERVAL,
+            });
             let output = session.run(input.clone(), run_config, Option::<fn(Output) -> bool>::None)?;
+            let power = summarize(&recorder.stop());
 
             let memory_used = session.peak_memory_usage();
 
@@ -83,6 +93,7 @@ impl Runner {
                 time_to_first_token: output.stats.prefill_stats.duration,
                 prompt_tokens_per_second: output.stats.prefill_stats.processed_tokens_per_second,
                 generate_tokens_per_second: output.stats.generate_stats.map(|stats| stats.tokens_per_second),
+                power,
                 text: output.text.original,
             };
             results.push(result);

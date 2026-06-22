@@ -1,7 +1,10 @@
 use backend_uzu::data_type::DataType;
 use serde::{Deserialize, Serialize};
 
-use crate::runner::types::{Device, Task};
+use crate::runner::{
+    PowerSummary,
+    types::{Device, Task},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Result {
@@ -16,5 +19,6 @@ pub struct Result {
     pub time_to_first_token: f64,
     pub prompt_tokens_per_second: f64,
     pub generate_tokens_per_second: Option<f64>,
+    pub power: Option<PowerSummary>,
     pub text: String,
 }
