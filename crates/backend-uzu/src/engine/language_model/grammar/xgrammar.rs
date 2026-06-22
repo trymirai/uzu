@@ -1,5 +1,3 @@
-use std::iter::repeat_n;
-
 use thiserror::Error;
 use tokenizers::Tokenizer;
 use xgrammar::{
@@ -143,14 +141,18 @@ impl CompiledXGrammar {
 }
 
 impl CompiledGrammar for CompiledXGrammar {
-    fn next_bitmask(&mut self) -> Result<Option<Box<[u32]>>, GrammarError> {
+    fn next_bitmask(
+        &mut self,
+        bitmask: &mut [u32],
+    ) -> bool {
+        let vocab_size_in_u32s = self.vocab_size.div_ceil(32);
+        assert!(bitmask.len() == vocab_size_in_u32s);
+
         if self.engagement_state.is_engaged() {
-            let mut cpu_mask = repeat_n(0, self.vocab_size.div_ceil(32)).collect::<Box<[u32]>>();
-            let batch_mask_slice = &mut cpu_mask;
-            let mut shape_i64 = [self.vocab_size.div_ceil(32) as i64];
+            let mut shape_i64 = [vocab_size_in_u32s as i64];
             let mut bitmask_tensor = unsafe {
                 DLTensor::new(
-                    batch_mask_slice.as_mut_ptr() as *mut c_void,
+                    bitmask.as_mut_ptr() as *mut c_void,
                     DLDevice {
                         device_type: DLDeviceType::kDLCPU,
                         device_id: 0,
@@ -167,11 +169,11 @@ impl CompiledGrammar for CompiledXGrammar {
                 )
             };
 
-            self.matcher.fill_next_token_bitmask(&mut bitmask_tensor, 0, false);
-
-            Ok(Some(cpu_mask))
+            self.matcher.fill_next_token_bitmask(&mut bitmask_tensor, 0, false)
         } else {
-            Ok(None)
+            bitmask.fill(u32::MAX);
+
+            false
         }
     }
 

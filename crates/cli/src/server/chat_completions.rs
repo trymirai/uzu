@@ -8,9 +8,10 @@ use std::{
 use rocket::{
     Request, State,
     futures::Stream,
+    http::Status,
     post,
     response::{
-        Responder,
+        Responder, status,
         stream::{Event, EventStream},
     },
     serde::json::Json,
@@ -22,7 +23,7 @@ use uuid::Uuid;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
     types::{
-        basic::SamplingMethod,
+        basic::{Grammar, SamplingMethod},
         session::chat::{ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole},
     },
 };
@@ -51,9 +52,27 @@ pub struct ChatCompletionRequest {
     pub top_p: Option<f64>,
     #[serde(default)]
     pub top_k: Option<i64>,
+    // Raw value (not typed) so a bad response_format is our 400, not Rocket's 422.
+    #[serde(default)]
+    pub response_format: Option<serde_json::Value>,
     #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    Text,
+    JsonObject,
+    JsonSchema {
+        json_schema: JsonSchemaFormat,
+    },
+}
+
+#[derive(Deserialize)]
+pub struct JsonSchemaFormat {
+    pub schema: serde_json::Value,
 }
 
 #[derive(Serialize, Clone)]
@@ -106,9 +125,24 @@ struct ChatCompletionChunk {
     usage: Option<ChatCompletionUsage>,
 }
 
+#[derive(Serialize)]
+pub struct OaiErrorResponse {
+    error: OaiError,
+}
+
+#[derive(Serialize)]
+struct OaiError {
+    message: String,
+    #[serde(rename = "type")]
+    kind: String,
+    param: Option<String>,
+    code: Option<String>,
+}
+
 pub enum ChatCompletionResult {
     Json(Json<ChatCompletionResponse>),
     Stream(EventStream<Pin<Box<dyn Stream<Item = Event> + Send>>>),
+    Error(status::Custom<Json<OaiErrorResponse>>),
 }
 
 impl<'r> Responder<'r, 'r> for ChatCompletionResult {
@@ -119,6 +153,7 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
         match self {
             ChatCompletionResult::Json(json) => json.respond_to(request),
             ChatCompletionResult::Stream(stream) => stream.respond_to(request),
+            ChatCompletionResult::Error(error) => error.respond_to(request),
         }
     }
 }
@@ -137,16 +172,81 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
-fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
-    let token_limit = request.max_completion_tokens.or(request.max_tokens);
-    let config = ChatReplyConfig::default().with_token_limit(token_limit);
+#[derive(Debug, PartialEq, Eq)]
+enum ResponseFormatError {
+    GrammarUnsupported,
+    InvalidResponseFormat(String),
+    InvalidJsonSchema(String),
+}
 
-    if request.temperature.is_some_and(|temperature| temperature <= 0.0) {
-        return config.with_sampling_method(SamplingMethod::Greedy {});
+impl ResponseFormatError {
+    fn message(&self) -> String {
+        match self {
+            ResponseFormatError::GrammarUnsupported => {
+                "response_format with JSON constraints requires building mirai server with capability-grammar"
+                    .to_string()
+            },
+            ResponseFormatError::InvalidResponseFormat(detail) => {
+                format!("response_format is not a recognized object: {detail}")
+            },
+            ResponseFormatError::InvalidJsonSchema(detail) => {
+                format!("response_format.json_schema.schema is not a valid JSON Schema: {detail}")
+            },
+        }
     }
 
-    if request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some() {
-        return config.with_sampling_method(SamplingMethod::Stochastic {
+    fn code(&self) -> &'static str {
+        match self {
+            ResponseFormatError::GrammarUnsupported => "unsupported_response_format",
+            ResponseFormatError::InvalidResponseFormat(_) => "invalid_response_format",
+            ResponseFormatError::InvalidJsonSchema(_) => "invalid_json_schema",
+        }
+    }
+}
+
+fn request_error_response(error: ResponseFormatError) -> ChatCompletionResult {
+    ChatCompletionResult::Error(status::Custom(
+        Status::BadRequest,
+        Json(OaiErrorResponse {
+            error: OaiError {
+                message: error.message(),
+                kind: "invalid_request_error".to_string(),
+                param: Some("response_format".to_string()),
+                code: Some(error.code().to_string()),
+            },
+        }),
+    ))
+}
+
+fn with_response_format_grammar(
+    config: ChatReplyConfig,
+    grammar: Grammar,
+) -> Result<ChatReplyConfig, ResponseFormatError> {
+    if !cfg!(feature = "capability-grammar") {
+        return Err(ResponseFormatError::GrammarUnsupported);
+    }
+
+    Ok(config.with_grammar(Some(grammar)))
+}
+
+fn json_schema_grammar(json_schema: &JsonSchemaFormat) -> Result<Grammar, ResponseFormatError> {
+    jsonschema::meta::validate(&json_schema.schema)
+        .map_err(|error| ResponseFormatError::InvalidJsonSchema(error.to_string()))?;
+    let schema = serde_json::to_string(&json_schema.schema)
+        .map_err(|error| ResponseFormatError::InvalidResponseFormat(error.to_string()))?;
+    Ok(Grammar::JsonSchema {
+        schema,
+    })
+}
+
+fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig, ResponseFormatError> {
+    let token_limit = request.max_completion_tokens.or(request.max_tokens);
+    let mut config = ChatReplyConfig::default().with_token_limit(token_limit);
+
+    if request.temperature.is_some_and(|temperature| temperature <= 0.0) {
+        config = config.with_sampling_method(SamplingMethod::Greedy {});
+    } else if request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some() {
+        config = config.with_sampling_method(SamplingMethod::Stochastic {
             temperature: request.temperature,
             top_k: request.top_k,
             top_p: request.top_p,
@@ -156,7 +256,23 @@ fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
         });
     }
 
-    config
+    let response_format = match &request.response_format {
+        Some(value) => Some(
+            serde_json::from_value::<ResponseFormat>(value.clone())
+                .map_err(|error| ResponseFormatError::InvalidResponseFormat(error.to_string()))?,
+        ),
+        None => None,
+    };
+
+    config = match response_format {
+        Some(ResponseFormat::JsonObject) => with_response_format_grammar(config, Grammar::JsonAny {})?,
+        Some(ResponseFormat::JsonSchema {
+            json_schema,
+        }) => with_response_format_grammar(config, json_schema_grammar(&json_schema)?)?,
+        Some(ResponseFormat::Text) | None => config,
+    };
+
+    Ok(config)
 }
 
 fn map_finish_reason(finish_reason: &ChatReplyFinishReason) -> String {
@@ -390,8 +506,11 @@ pub async fn handle_chat_completions(
     let model = state.model_name.clone();
     let is_stream = request.stream.unwrap_or(false);
 
+    let config = match build_reply_config(&request) {
+        Ok(config) => config,
+        Err(error) => return request_error_response(error),
+    };
     let messages = to_chat_messages(&request.messages);
-    let config = build_reply_config(&request);
 
     if is_stream {
         let session = Arc::clone(&state.session);
@@ -405,3 +524,7 @@ pub async fn handle_chat_completions(
         ChatCompletionResult::Json(Json(response))
     }
 }
+
+#[cfg(test)]
+#[path = "../../unit/server/chat_completions_test.rs"]
+mod tests;

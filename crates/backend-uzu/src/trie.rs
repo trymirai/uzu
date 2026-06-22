@@ -1,3 +1,6 @@
+use std::cmp::Ordering;
+
+use itertools::Itertools;
 use thiserror::Error;
 
 use crate::{
@@ -27,7 +30,6 @@ impl Default for TrieCreationConfig {
 #[derive(Debug)]
 pub struct TrieNode {
     token: u64,
-    mask: Option<Box<[u32]>>,
     seed: u64,
     next: Vec<TrieNode>,
 }
@@ -47,12 +49,10 @@ pub struct FlatTrie<'a> {
 impl TrieNode {
     pub fn new(
         token: u64,
-        mask: Option<Box<[u32]>>,
         seed: u64,
     ) -> Self {
         Self {
             token,
-            mask,
             seed,
             next: Vec::new(),
         }
@@ -110,8 +110,7 @@ impl TrieNode {
 
         let mut length = 1;
         let mut height = 0;
-        let mask = compiled_grammar.as_deref_mut().and_then(|g| g.next_bitmask().unwrap());
-        let mut root = Self::new(*prefix.last().unwrap(), mask, seed.derive((prefix_length - 1) as u64));
+        let mut root = Self::new(*prefix.last().unwrap(), seed.derive((prefix_length - 1) as u64));
 
         let mut cur_node = &mut root;
         let mut cur_node_width = 0;
@@ -125,20 +124,15 @@ impl TrieNode {
                 speculator_sample(cur_node.seed(), vocab_size, &cur_node_speculator_weights)
             {
                 // Add speculated token to the trie
-                let mask = if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+                if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
                     if compiled_grammar.accept_token(next_speculated_token).is_err() {
                         cur_node_speculator_weights.remove(&next_speculated_token);
                         continue;
                     }
-                    let next_bitmask = compiled_grammar.next_bitmask().unwrap();
                     compiled_grammar.rollback(1);
+                }
 
-                    next_bitmask
-                } else {
-                    None
-                };
-
-                let leaf_node = Self::new(next_speculated_token, mask, seed.derive((prefix_length + height) as u64));
+                let leaf_node = Self::new(next_speculated_token, seed.derive((prefix_length + height) as u64));
                 cur_node.add(leaf_node).unwrap();
 
                 // If this is the first node we sampled (most likely to be selected after gumbel noise application) - set it as the next one
@@ -244,12 +238,49 @@ impl<'a> FlatTrie<'a> {
         self.tokens.iter().map(|n| n.height)
     }
 
-    pub fn token_masks(&self) -> impl Iterator<Item = Option<&[u32]>> {
-        self.tokens.iter().map(|n| n.node.mask.as_deref())
-    }
-
     pub fn token_seeds(&self) -> impl Iterator<Item = u64> {
         self.tokens.iter().map(|n| n.node.seed)
+    }
+
+    pub fn fill_bitmasks(
+        &self,
+        bitmasks: &mut [u32],
+        vocab_size: usize,
+        compiled_grammar: &mut (dyn CompiledGrammar + 'static),
+    ) -> bool {
+        let vocab_size_in_u32s = vocab_size.div_ceil(32);
+        assert!(bitmasks.len() == self.tokens.len() * vocab_size_in_u32s);
+
+        let mut any_non_full = false;
+        let mut last_token_height = 0;
+        for ((token_index, token), bitmask) in
+            self.tokens.iter().enumerate().zip_eq(bitmasks.chunks_exact_mut(vocab_size_in_u32s))
+        {
+            match token.height.cmp(&last_token_height) {
+                Ordering::Less => {
+                    compiled_grammar.rollback(last_token_height - token.height);
+                },
+                Ordering::Equal => {
+                    assert!(token_index == 0, "non-root trie node cannot have equal height to the previous one");
+                },
+                Ordering::Greater => {
+                    assert!(
+                        last_token_height + 1 == token.height,
+                        "trie node cannot be higher than prev trie node + 1"
+                    );
+                    compiled_grammar.accept_token(token.node.token).expect("flat trie doesn't match grammar");
+                },
+            }
+            last_token_height = token.height;
+
+            any_non_full |= compiled_grammar.next_bitmask(bitmask);
+        }
+
+        if last_token_height > 0 {
+            compiled_grammar.rollback(last_token_height);
+        }
+
+        any_non_full
     }
 
     pub fn root(&self) -> Option<&TrieNode> {

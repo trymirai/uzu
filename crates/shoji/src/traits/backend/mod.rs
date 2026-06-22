@@ -50,7 +50,5 @@ pub trait Instance: Send + Sync {
 pub trait State: Send + Sync + 'static {
     fn clone_boxed(&self) -> Box<dyn State>;
 
-    /// Enables downcasting `&mut dyn State` back to the concrete state type so that
-    /// backends can borrow their internal state for the lifetime of a stream.
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }

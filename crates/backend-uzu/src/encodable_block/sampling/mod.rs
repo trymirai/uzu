@@ -55,6 +55,18 @@ pub enum SamplingMethod {
     },
 }
 
+impl SamplingMethod {
+    pub fn suffix_repetition_length(&self) -> Option<usize> {
+        match self {
+            SamplingMethod::Greedy => None,
+            SamplingMethod::Stochastic {
+                suffix_repetition_length,
+                ..
+            } => *suffix_repetition_length,
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Hash)]
 struct UnifiedSamplingKey {
     has_seeds: bool,

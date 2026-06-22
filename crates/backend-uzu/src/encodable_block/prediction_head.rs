@@ -30,7 +30,6 @@ pub enum PredictionHeadError<B: Backend> {
 pub struct PredictionHead<B: Backend> {
     hidden_dim: usize,
     activation: ActivationType,
-    data_type: DataType,
     dense_projection: Box<dyn Linear<B>>,
     activation_kernel: <B::Kernels as Kernels>::ActivationKernel,
     normalization: Normalization<B>,
@@ -83,7 +82,6 @@ impl<B: Backend> PredictionHead<B> {
         Ok(Self {
             hidden_dim,
             activation,
-            data_type,
             dense_projection,
             activation_kernel,
             normalization,

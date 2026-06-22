@@ -1,4 +1,4 @@
-use std::{fs::File, path::PathBuf};
+use std::{fs::File, path::PathBuf, time::Instant};
 
 use backend_uzu::{backends::metal::Metal, engine::Engine};
 use minijinja::{Environment, context};
@@ -8,10 +8,16 @@ use tokenizers::Tokenizer;
 
 pub fn main() {
     let model_path = PathBuf::from(std::env::args().nth(1).unwrap());
-    let prompt = "What is 2 + 2?";
+    let prompt = "Tell me about London";
 
     let config: Value = serde_json::from_reader(File::open(model_path.join("config.json")).unwrap()).unwrap();
     let codec = &config["token_codec_config"];
+    let stop_token_ids = config["generation_config"]["stop_token_ids"]
+        .as_array()
+        .unwrap()
+        .into_iter()
+        .map(|v| v.as_u64().unwrap())
+        .collect::<Vec<u64>>();
     let tokenizer = Tokenizer::from_file(model_path.join("tokenizer.json")).unwrap();
 
     let mut environment = Environment::new();
@@ -42,13 +48,20 @@ pub fn main() {
 
     let engine = Engine::<Metal>::new().unwrap();
     let model = engine.load_language_model(&model_path).unwrap();
-    let mut state = model.create_empty_state().unwrap();
-    let stream = model.stream(&prompt, &mut state, model.default_stream_options().with_token_limit(Some(256))).unwrap();
+    let mut state = model.create_empty_state(model.recommended_context_length()).unwrap();
+    let stream = model.stream(&prompt, &mut state, model.default_stream_options()).unwrap();
 
     let mut output = Vec::new();
-    for token in stream {
-        output.push(token.unwrap() as u32);
+    let start = Instant::now();
+    for token in stream.take(2048) {
+        let token = token.unwrap();
+        output.push(token as u32);
+        if stop_token_ids.contains(&token) {
+            break;
+        }
     }
+    let elapsed = start.elapsed();
 
     println!("{}", tokenizer.decode(&output, false).unwrap());
+    println!("{} tps", output.len() as f64 / elapsed.as_secs_f64());
 }

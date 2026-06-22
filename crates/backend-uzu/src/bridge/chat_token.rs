@@ -14,24 +14,16 @@ use shoji::{
             chat_token::{StreamInput as ChatTokenStreamInput, StreamOutput as ChatTokenStreamOutput},
         },
     },
-    types::{
-        basic::{SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy},
-        session::chat::{ChatConfig, ChatReplyConfig},
-    },
+    types::session::chat::ChatReplyConfig,
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     backends::common::Backend,
     bridge::container::Container,
-    encodable_block::sampling::{SamplingMethod as UzuSamplingMethod, SamplingProcessingOrder},
     engine::{
         Engine,
-        language_model::{
-            LanguageModel,
-            state::LanguageModelState,
-            stream::{LanguageModelStreamDriver, LanguageModelStreamOptions},
-        },
+        language_model::{LanguageModel, state::LanguageModelState, stream::LanguageModelIteratorData},
     },
 };
 
@@ -41,13 +33,10 @@ pub struct UzuChatTokenLlmInstance<B: Backend> {
 }
 
 impl<B: Backend> UzuChatTokenLlmInstance<B> {
-    pub fn new(
-        model_path: String,
-        _config: ChatConfig,
-    ) -> Result<Self, Error> {
+    pub fn new(model_path: String) -> Result<Self, Error> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model = engine.load_language_model(&PathBuf::from(model_path)).map_err(|err| err.to_string())?;
-        let state = model.create_empty_state().map_err(|err| err.to_string())?;
+        let state = model.create_empty_state(model.recommended_context_length()).map_err(|err| err.to_string())?;
         Ok(Self {
             model: Container::new(model),
             state: Container::new(state),
@@ -68,7 +57,7 @@ impl<B: Backend> LlmInstance for UzuChatTokenLlmInstance<B> {
         &'a self,
         input: &'a Self::StreamInput,
         state: &'a mut dyn LlmInstanceState,
-        config: Self::StreamConfig,
+        _config: Self::StreamConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, Error>> + Send + 'a>> {
         let state = match state.as_any_mut().downcast_mut::<Container<LanguageModelState<B>>>() {
@@ -77,47 +66,36 @@ impl<B: Backend> LlmInstance for UzuChatTokenLlmInstance<B> {
         };
         let model = self.model.clone();
 
-        let driver = {
-            let model = match model.value.lock() {
-                Ok(model) => model,
-                Err(err) => return error_stream(err.to_string()),
-            };
+        let data = {
             let model_state = match state.value.lock() {
                 Ok(model_state) => model_state,
                 Err(err) => return error_stream(err.to_string()),
             };
-            let stream_options = get_stream_options(config, &model);
-            match LanguageModelStreamDriver::new(input, &model_state, stream_options) {
-                Ok(driver) => driver,
+            match LanguageModelIteratorData::new(input, &model_state) {
+                Ok(data) => data,
                 Err(err) => return error_stream(err.to_string()),
             }
         };
 
-        UzuChatTokenStream::new(model, state, driver).take_until(cancel_token.cancelled_owned()).boxed()
+        UzuChatTokenStream {
+            model,
+            state,
+            data,
+            finished: false,
+        }
+        .take_until(cancel_token.cancelled_owned())
+        .boxed()
     }
 }
 
 struct UzuChatTokenStream<B: Backend> {
     model: Container<LanguageModel<B>>,
     state: Container<LanguageModelState<B>>,
-    driver: LanguageModelStreamDriver,
+    data: LanguageModelIteratorData,
     finished: bool,
 }
 
-impl<B: Backend> UzuChatTokenStream<B> {
-    fn new(
-        model: Container<LanguageModel<B>>,
-        state: Container<LanguageModelState<B>>,
-        driver: LanguageModelStreamDriver,
-    ) -> Self {
-        Self {
-            model,
-            state,
-            driver,
-            finished: false,
-        }
-    }
-}
+unsafe impl<B: Backend> Send for UzuChatTokenStream<B> {}
 
 impl<B: Backend> Stream for UzuChatTokenStream<B> {
     type Item = Result<ChatTokenStreamOutput, Error>;
@@ -126,32 +104,40 @@ impl<B: Backend> Stream for UzuChatTokenStream<B> {
         self: Pin<&mut Self>,
         _cx: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-        if this.finished {
+        if self.finished {
             return Poll::Ready(None);
         }
 
-        let model = match this.model.value.lock() {
-            Ok(model) => model,
-            Err(err) => {
-                this.finished = true;
-                return Poll::Ready(Some(Err(Box::<dyn std::error::Error + Send + Sync>::from(err.to_string()))));
-            },
-        };
-        let mut model_state = match this.state.value.lock() {
-            Ok(model_state) => model_state,
-            Err(err) => {
-                this.finished = true;
-                return Poll::Ready(Some(Err(Box::<dyn std::error::Error + Send + Sync>::from(err.to_string()))));
-            },
+        let self_mut = self.get_mut();
+        let step = {
+            let model_guard = match self_mut.model.value.lock() {
+                Ok(model_guard) => model_guard,
+                Err(err) => {
+                    self_mut.finished = true;
+                    return Poll::Ready(Some(Err(Box::<dyn std::error::Error + Send + Sync>::from(err.to_string()))));
+                },
+            };
+            let mut model_state = match self_mut.state.value.lock() {
+                Ok(model_state) => model_state,
+                Err(err) => {
+                    self_mut.finished = true;
+                    return Poll::Ready(Some(Err(Box::<dyn std::error::Error + Send + Sync>::from(err.to_string()))));
+                },
+            };
+            self_mut.data.step(&model_guard, &mut model_state)
         };
 
-        Poll::Ready(
-            this.driver
-                .step(&model, &mut model_state)
-                .map_err(|err| Box::<dyn std::error::Error + Send + Sync>::from(err.to_string()))
-                .transpose(),
-        )
+        Poll::Ready(match step.transpose() {
+            Some(Ok(token)) => Some(Ok(token)),
+            Some(Err(err)) => {
+                self_mut.finished = true;
+                Some(Err(Box::<dyn std::error::Error + Send + Sync>::from(err.to_string())))
+            },
+            None => {
+                self_mut.finished = true;
+                None
+            },
+        })
     }
 }
 
@@ -169,45 +155,4 @@ fn error_stream<'a>(message: String) -> Pin<Box<dyn Stream<Item = Result<ChatTok
     Box::pin(stream::once(async move {
         Err::<ChatTokenStreamOutput, Error>(Box::<dyn std::error::Error + Send + Sync>::from(message))
     }))
-}
-
-fn get_stream_options<B: Backend>(
-    config: ChatReplyConfig,
-    model: &LanguageModel<B>,
-) -> LanguageModelStreamOptions {
-    let sampling_method = match config.sampling_policy {
-        ShojiSamplingPolicy::Default {
-            ..
-        } => model.default_sampling_method(),
-        ShojiSamplingPolicy::Custom {
-            method,
-        } => match method {
-            ShojiSamplingMethod::Greedy {
-                ..
-            } => UzuSamplingMethod::Greedy,
-            ShojiSamplingMethod::Stochastic {
-                temperature,
-                top_k,
-                top_p,
-                min_p,
-                repetition_penalty,
-                suffix_repetition_length,
-            } => UzuSamplingMethod::Stochastic {
-                temperature: temperature.map(|value| value as f32),
-                top_k: top_k.map(|value| value as u32),
-                top_p: top_p.map(|value| value as f32),
-                min_p: min_p.map(|value| value as f32),
-                repetition_penalty: repetition_penalty.map(|value| value as f32),
-                suffix_repetition_length: suffix_repetition_length.map(|value| value as usize),
-                // TODO agolokoz: ask what to do!
-                processing_order: SamplingProcessingOrder::TemperatureThenFilters,
-            },
-        },
-    };
-
-    LanguageModelStreamOptions {
-        sampling_method,
-        stop_token_ids: model.default_stop_token_ids().to_vec(),
-        token_limit: config.token_limit.map(|limit| limit as usize),
-    }
 }

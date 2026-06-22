@@ -3,7 +3,7 @@ use std::{fs::File, io, io::BufReader, path::Path, rc::Rc};
 use thiserror::Error;
 
 use crate::{
-    backends::common::Backend,
+    backends::common::{Backend, Context, Kernels, kernel::TokenCopySampledKernel},
     config::model::{generation::GenerationConfig, language_model::LanguageModelConfig},
     data_type::DataType,
     encodable_block::{
@@ -23,6 +23,8 @@ pub struct LanguageModel<B: Backend> {
     context: Rc<B::Context>,
     decoder: Decoder<B>,
     sampling: Sampling<B>,
+    token_copy_plain: <B::Kernels as Kernels>::TokenCopySampledKernel,
+    token_copy_ring: <B::Kernels as Kernels>::TokenCopySampledKernel,
     generation_config: GenerationConfig,
 }
 
@@ -36,6 +38,8 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     HeaderLoading(#[from] HeaderLoadingError),
     #[error("ParameterLoader error: {0}")]
     ParameterLoader(#[from] ParameterLoaderError<B>),
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
     #[error("Decoder error: {0}")]
     Decoder(#[from] DecoderError<B>),
 }
@@ -64,6 +68,11 @@ impl<B: Backend> Engine<B> {
 
         let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);
 
+        let token_copy_plain = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context, false)
+            .map_err(EngineLoadLanguageModelError::Backend)?;
+        let token_copy_ring = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context, true)
+            .map_err(EngineLoadLanguageModelError::Backend)?;
+
         weight_loader.tree().assert_all_tensors_validated()?;
 
         let generation_config = config.generation_config;
@@ -72,12 +81,49 @@ impl<B: Backend> Engine<B> {
             context,
             decoder,
             sampling,
+            token_copy_plain,
+            token_copy_ring,
             generation_config,
         })
     }
 }
 
 impl<B: Backend> LanguageModel<B> {
+    pub fn max_context_length(&self) -> Option<usize> {
+        self.decoder.max_context_length()
+    }
+
+    pub fn recommended_context_length(&self) -> Option<usize> {
+        let max_context_length = self.max_context_length();
+
+        // TODO: This is not the correct way to do it, there should be a real memory model
+        if self.context.sparse_buffers_supported() {
+            // We just assume that all mixers use sparse if it's available to make max context free until it's actually used
+            // Currenlty true for all mixers in uzu:
+            // - full attention uses sparse if it's available to make max context free until it's actually used
+            // - sliding window attention is bound, usually well below the recommended max context size on non-sparse (but can be made to use sparse if we care about it enough)
+            // - short conv/mamba2/delta net are constant state size
+            max_context_length
+        } else if let Some(max_context_length) = max_context_length {
+            // If sparse buffers aren't supported and model has finite maximum context length we assume that kv cache is expensive enough that we should probably clamp it to
+            // something reasonable-ish for the platform. This is very primitive but works I guess...
+            let platform_recommended_context_length = if cfg!(target_os = "ios") {
+                8192
+            } else {
+                16384
+            };
+
+            Some(usize::min(max_context_length, platform_recommended_context_length))
+        } else {
+            // We just assume that unlimited context means constant state size on all mixers and is thus free
+            None
+        }
+    }
+
+    pub fn speculation_supported(&self) -> bool {
+        self.decoder.trie_supported()
+    }
+
     pub fn default_sampling_method(&self) -> SamplingMethod {
         SamplingMethod::Stochastic {
             temperature: self.generation_config.temperature,
@@ -88,9 +134,5 @@ impl<B: Backend> LanguageModel<B> {
             suffix_repetition_length: self.generation_config.suffix_repetition_length,
             processing_order: SamplingProcessingOrder::TemperatureThenFilters,
         }
-    }
-
-    pub fn default_stop_token_ids(&self) -> &[u64] {
-        &self.generation_config.stop_token_ids
     }
 }

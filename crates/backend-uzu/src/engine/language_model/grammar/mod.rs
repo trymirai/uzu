@@ -106,8 +106,13 @@ pub struct GrammarError(Box<dyn Error>);
 #[error("No grammar backend available")]
 pub struct NoGrammarBackend;
 
+// TODO: jumpforward
+
 pub trait CompiledGrammar {
-    fn next_bitmask(&mut self) -> Result<Option<Box<[u32]>>, GrammarError>;
+    fn next_bitmask(
+        &mut self,
+        bitmask: &mut [u32],
+    ) -> bool;
 
     fn accept_token(
         &mut self,
