@@ -1,6 +1,10 @@
+mod calibrate;
+mod model;
+mod predict;
 mod report;
 
 use std::{
+    collections::BTreeMap,
     io::{BufRead, BufReader, Write},
     process::{Command, Stdio},
     time::Duration,
@@ -8,12 +12,21 @@ use std::{
 
 use keisoku::{Config, start};
 
+use crate::report::Data;
+
 const MARK_PREFIX: &str = "KEISOKU_MARK ";
+const DATA_PREFIX: &str = "KEISOKU_DATA ";
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("keisoku") {
         args.remove(0);
+    }
+
+    match args.first().map(String::as_str) {
+        Some("calibrate") => return calibrate::run(&args[1..]),
+        Some("predict") => return predict::run(&args[1..]),
+        _ => {},
     }
 
     let mut interval_ms = 100u64;
@@ -45,16 +58,22 @@ fn main() {
 
     let stdout = child.stdout.take().expect("missing child stdout");
     let mut forward = std::io::stdout();
+    let mut data: Data = BTreeMap::new();
     for line in BufReader::new(stdout).lines() {
         let line = line.unwrap_or_default();
         if let Some(label) = line.strip_prefix(MARK_PREFIX) {
             recorder.mark(label.trim());
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix(DATA_PREFIX) {
+            absorb_data(&mut data, rest);
+            continue;
         }
         let _ = writeln!(forward, "{line}");
     }
 
     let status = child.wait().expect("failed to wait for cargo");
-    let report = report::build(recorder.stop());
+    let report = report::build(recorder.stop(), data);
     let json = serde_json::to_string_pretty(&report).expect("failed to serialize report");
     std::fs::write(&out_path, json).expect("failed to write report");
     eprintln!("keisoku: wrote {out_path} ({} windows)", report.windows.len());
@@ -71,4 +90,22 @@ fn take_value(
         std::process::exit(2);
     }
     args.remove(0)
+}
+
+fn absorb_data(
+    data: &mut Data,
+    rest: &str,
+) {
+    let mut tokens = rest.split_whitespace();
+    let Some(label) = tokens.next() else {
+        return;
+    };
+    let entry = data.entry(label.to_string()).or_default();
+    for token in tokens {
+        if let Some((key, value)) = token.split_once('=') {
+            if let Ok(value) = value.parse::<f64>() {
+                *entry.entry(key.to_string()).or_default() += value;
+            }
+        }
+    }
 }

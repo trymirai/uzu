@@ -1,7 +1,11 @@
-use keisoku::{Device, Session};
-use serde::Serialize;
+use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Serialize)]
+use keisoku::{Device, Session};
+use serde::{Deserialize, Serialize};
+
+pub type Data = BTreeMap<String, BTreeMap<String, f64>>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Report {
     pub device: Device,
     pub interval_ms: u64,
@@ -9,7 +13,7 @@ pub struct Report {
     pub session: Session,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Window {
     pub label: String,
     pub start_ms: u64,
@@ -19,10 +23,14 @@ pub struct Window {
     pub total_watts_avg: f64,
     pub energy_joules: f64,
     pub samples: usize,
+    pub data: BTreeMap<String, f64>,
 }
 
-pub fn build(session: Session) -> Report {
-    let windows = windows(&session);
+pub fn build(
+    session: Session,
+    data: Data,
+) -> Report {
+    let windows = windows(&session, &data);
     Report {
         device: session.device.clone(),
         interval_ms: session.interval.value(),
@@ -31,7 +39,10 @@ pub fn build(session: Session) -> Report {
     }
 }
 
-fn windows(session: &Session) -> Vec<Window> {
+fn windows(
+    session: &Session,
+    data: &Data,
+) -> Vec<Window> {
     let end_of_run = session.snapshots.last().map(|snapshot| snapshot.elapsed.value()).unwrap_or_default();
     session
         .markers
@@ -40,13 +51,14 @@ fn windows(session: &Session) -> Vec<Window> {
         .map(|(index, marker)| {
             let start_ms = marker.elapsed.value();
             let end_ms = session.markers.get(index + 1).map(|next| next.elapsed.value()).unwrap_or(end_of_run);
-            window(session, marker.label.clone(), start_ms, end_ms)
+            window(session, data, marker.label.clone(), start_ms, end_ms)
         })
         .collect()
 }
 
 fn window(
     session: &Session,
+    data: &Data,
     label: String,
     start_ms: u64,
     end_ms: u64,
@@ -73,7 +85,7 @@ fn window(
     }
     let count = samples.max(1) as f64;
     Window {
-        label,
+        label: label.clone(),
         start_ms,
         end_ms,
         gpu_watts_avg: gpu_sum / count,
@@ -81,6 +93,7 @@ fn window(
         total_watts_avg: total_sum / count,
         energy_joules: trapezoid(&points),
         samples,
+        data: data.get(&label).cloned().unwrap_or_default(),
     }
 }
 
