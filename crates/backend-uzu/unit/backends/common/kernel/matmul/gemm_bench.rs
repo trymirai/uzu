@@ -17,7 +17,7 @@ use crate::{
         metal::{GemmDispatchPath, Metal},
     },
     tests::{
-        matmul::{bench_fp_gemm_shapes, iter_encode_loop},
+        matmul::{bench_fp_gemm_shapes, iter_encode_loop_named},
         util::type_short_name,
     },
 };
@@ -40,7 +40,8 @@ fn bench_gemm(c: &mut Criterion) {
     };
 
     for &(group_label, path) in paths {
-        let mut group = c.benchmark_group(format!("{}/Kernel/Matmul/{}", type_short_name::<Metal>(), group_label));
+        let group_path = format!("{}/Kernel/Matmul/{}", type_short_name::<Metal>(), group_label);
+        let mut group = c.benchmark_group(group_path.clone());
 
         for shape in bench_fp_gemm_shapes() {
             let (m, k, n) = (shape.m, shape.k, shape.n);
@@ -54,7 +55,8 @@ fn bench_gemm(c: &mut Criterion) {
 
             group.throughput(Throughput::Elements((2 * m * k * n) as u64));
             group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
-                iter_encode_loop::<Metal, _>(&context, b, |encoder| {
+                let benchmark_path = format!("{group_path}/{shape}");
+                iter_encode_loop_named::<Metal, _>(&context, b, &benchmark_path, |encoder| {
                     kernel
                         .gemm
                         .encode_dispatch_path(

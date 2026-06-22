@@ -1,7 +1,11 @@
 use std::{
     env,
+    io::Write,
     path::PathBuf,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -11,6 +15,31 @@ use test_runner::env_vars;
 use crate::backends::common::{Backend, Context, Encoder};
 
 static CAPTURE_TAKEN: AtomicBool = AtomicBool::new(false);
+static LAST_MARK: Mutex<Option<String>> = Mutex::new(None);
+
+fn emit_mark(label: &str) {
+    if label == "unnamed_benchmark" || !env_vars::enabled(env_vars::KEISOKU_MARK) {
+        return;
+    }
+    let mut last = LAST_MARK.lock().unwrap();
+    if last.as_deref() != Some(label) {
+        println!("KEISOKU_MARK {label}");
+        let _ = std::io::stdout().flush();
+        *last = Some(label.to_string());
+    }
+}
+
+fn emit_data(
+    label: &str,
+    iters: u64,
+    gpu_time: std::time::Duration,
+) {
+    if label == "unnamed_benchmark" || !env_vars::enabled(env_vars::KEISOKU_MARK) {
+        return;
+    }
+    println!("KEISOKU_DATA {label} iters={iters} gpu_ns={}", gpu_time.as_nanos());
+    let _ = std::io::stdout().flush();
+}
 
 fn should_capture_benchmark(benchmark_path: &str) -> bool {
     env_vars::enabled(env_vars::UZU_CAPTURE_BENCH)
@@ -59,6 +88,7 @@ pub fn iter_encode_loop_named<B: Backend, F>(
 ) where
     F: FnMut(&mut Encoder<B>),
 {
+    emit_mark(benchmark_path);
     bencher.iter_custom(|n_iters| {
         let capture = start_benchmark_capture::<B>(context, benchmark_path);
         let mut encoder = Encoder::<B>::new(context).unwrap();
@@ -69,6 +99,8 @@ pub fn iter_encode_loop_named<B: Backend, F>(
         if capture {
             context.stop_capture().expect("failed to stop benchmark GPU capture");
         }
-        completed.gpu_execution_time()
+        let gpu_time = completed.gpu_execution_time();
+        emit_data(benchmark_path, n_iters, gpu_time);
+        gpu_time
     });
 }
