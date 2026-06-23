@@ -8,6 +8,7 @@ homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 description = "Cargo subcommand that samples system power while a cargo command runs"
+readme = "README.md"
 
 [[bin]]
 name = "cargo-keisoku"

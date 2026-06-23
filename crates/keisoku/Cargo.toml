@@ -8,6 +8,7 @@ homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 description = "System telemetry collector (CPU/GPU/RAM/power/sensors) for Apple platforms"
+readme = "README.md"
 
 [lib]
 name = "keisoku"
