@@ -2,7 +2,6 @@ use std::{
     any::Any,
     path::PathBuf,
     pin::Pin,
-    sync::MutexGuard,
     task::{Context, Poll},
 };
 
@@ -56,14 +55,16 @@ impl<B: Backend> LlmInstance for UzuChatTokenLlmInstance<B> {
     type StreamOutput = ChatTokenStreamOutput;
 
     fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn LlmInstanceState>, Error>> + Send + '_>> {
-        // TODO agolokoz: ask what this method should actually do
-        Box::pin(async move {
-            let model = self.model.value.lock().map_err(|err| Error::from(err.to_string()))?;
-            let state = model
-                .create_empty_state(model.recommended_context_length())
-                .map_err(|err| Error::from(err.to_string()))?;
-            Ok(Box::new(Container::new(state)) as Box<dyn LlmInstanceState>)
-        })
+        let result = self
+            .model
+            .value
+            .lock()
+            .map_err(|err| Error::from(err.to_string()))
+            .and_then(|model| {
+                model.create_empty_state(model.recommended_context_length()).map_err(|err| Error::from(err.to_string()))
+            })
+            .map(|state| Box::new(Container::new(state)) as Box<dyn LlmInstanceState>);
+        Box::pin(async move { result })
     }
 
     fn stream<'a>(
@@ -77,68 +78,50 @@ impl<B: Backend> LlmInstance for UzuChatTokenLlmInstance<B> {
             Some(state) => state.clone(),
             None => return error_stream("unexpected state type for uzu chat token instance".to_string()),
         };
-
-        let stream = match UzuChatTokenStream::new(state, self.model.clone(), input, config) {
+        match UzuChatTokenStream::new(self.model.clone(), state, input, config) {
             Ok(stream) => stream,
             Err(err) => return error_stream(err.to_string()),
-        };
-        stream.take_until(cancel_token.cancelled_owned()).boxed()
+        }
+        .take_until(cancel_token.cancelled_owned())
+        .boxed()
     }
 }
 
 struct UzuChatTokenStream<B: Backend> {
-    // Drop order matters (fields drop top-to-bottom):
-    //   1. `decoding_loop` borrows the guards -> must drop first
-    //      (its Drop also writes `state.next_seed_token` back, while locks are still held)
-    //   2. the guards release the locks
-    //   3. the Arc<Mutex<_>> owners are released last
-    decoding_loop: Box<dyn Iterator<Item = Result<u64, LanguageModelStreamError<B>>>>,
-    state_guard: MutexGuard<'static, LanguageModelState<B>>,
-    model_guard: MutexGuard<'static, LanguageModel<B>>,
-    _state: Container<LanguageModelState<B>>,
-    _model: Container<LanguageModel<B>>,
+    iterator: Box<dyn Iterator<Item = Result<u64, LanguageModelStreamError<B>>> + 'static>,
+    state: Container<LanguageModelState<B>>,
+    stop_token_ids: Box<[u64]>,
+    max_length: Option<usize>,
     finished: bool,
 }
 
 impl<B: Backend> UzuChatTokenStream<B> {
     pub fn new(
-        state: Container<LanguageModelState<B>>,
         model: Container<LanguageModel<B>>,
+        state: Container<LanguageModelState<B>>,
         input: &Vec<u64>,
         config: ChatReplyConfig,
     ) -> Result<Self, Error> {
-        // SAFETY: the guards are extended to `'static`, which is sound because the
-        // `Arc<Mutex<_>>` allocations they lock are owned by `_model`/`_state` in the same
-        // struct, and the guards (and the iterator borrowing them) are dropped before those
-        // owners. The Mutex value lives behind the Arc, so moving the guards does not move it.
-        let model_guard: MutexGuard<'static, LanguageModel<B>> = match model.value.lock() {
-            Ok(guard) => unsafe { std::mem::transmute(guard) },
-            Err(err) => return Err(Error::from(err.to_string())),
-        };
-        let mut state_guard: MutexGuard<'static, LanguageModelState<B>> = match state.value.lock() {
-            Ok(guard) => unsafe { std::mem::transmute(guard) },
-            Err(err) => return Err(Error::from(err.to_string())),
-        };
+        let model_guard = model.value.lock().map_err(|err| Error::from(err.to_string()))?;
 
-        // SAFETY: the referenced data outlives the iterator (see field docs on
-        // `UzuChatTokenStream`). The guards are only kept to hold the locks and are never
-        // touched again, so the iterator is the sole active borrower.
-        let model_ref: &'static LanguageModel<B> = unsafe { &*(&*model_guard as *const LanguageModel<B>) };
-        let state_ref: &'static mut LanguageModelState<B> =
-            unsafe { &mut *(&mut *state_guard as *mut LanguageModelState<B>) };
+        let options = Self::get_stream_options(&model_guard, config);
+        let max_length = model_guard.recommended_context_length();
+        let stop_token_ids = model_guard.generation_config().stop_token_ids.clone();
 
-        let options = Self::get_stream_options(model_ref, config);
-        let decoding_loop = match model_ref.stream(&input, state_ref, options) {
-            Ok(stream) => Box::new(stream) as Box<dyn Iterator<Item = Result<u64, LanguageModelStreamError<B>>>>,
-            Err(err) => return Err(Error::from(err.to_string())),
-        };
+        let mut state_guard = state.value.lock().map_err(|err| Error::from(err.to_string()))?;
+        let iterator: Box<dyn Iterator<Item = Result<u64, LanguageModelStreamError<B>>> + '_> =
+            Box::new(model_guard.stream(input, &mut state_guard, options).map_err(|err| Error::from(err.to_string()))?);
+        let iterator: Box<dyn Iterator<Item = Result<u64, LanguageModelStreamError<B>>> + 'static> =
+            unsafe { std::mem::transmute(iterator) };
+
+        drop(model_guard);
+        drop(state_guard);
 
         Ok(Self {
-            decoding_loop,
-            state_guard,
-            model_guard,
-            _state: state,
-            _model: model,
+            iterator,
+            state,
+            stop_token_ids,
+            max_length,
             finished: false,
         })
     }
@@ -203,31 +186,42 @@ impl<B: Backend> Stream for UzuChatTokenStream<B> {
             return Poll::Ready(None);
         }
 
-        if let Some(max_tokens) = self.model_guard.recommended_context_length()
-            && self.state_guard.tokens().len() >= max_tokens
-        {
-            self.finished = true;
-            return Poll::Ready(None);
+        if let Some(max_length) = self.max_length {
+            let result = match self.state.value.lock() {
+                Ok(state) => Ok(state.tokens().len() >= max_length),
+                Err(err) => Err(Error::from(err.to_string())),
+            };
+            match result {
+                Ok(true) => {
+                    self.finished = true;
+                    return Poll::Ready(None);
+                },
+                Ok(false) => {},
+                Err(err) => {
+                    self.finished = true;
+                    return Poll::Ready(Some(Err(err)));
+                },
+            }
         }
 
-        let option_result = self.decoding_loop.next().map(|res| {
-            let result = res.map_err(|err| {
-                self.finished = true;
-                Error::from(err.to_string())
-            });
-            result.iter().for_each(|token| {
-                if self.model_guard.generation_config().stop_token_ids.contains(&token) {
+        let item = match self.iterator.next() {
+            Some(Ok(token)) => {
+                if self.stop_token_ids.contains(&token) {
                     self.finished = true;
                 }
-            });
-            result
-        });
+                Some(Ok(token))
+            },
+            Some(Err(err)) => {
+                self.finished = true;
+                Some(Err(Error::from(err.to_string())))
+            },
+            None => {
+                self.finished = true;
+                None
+            },
+        };
 
-        Poll::Ready(option_result)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.decoding_loop.size_hint()
+        Poll::Ready(item)
     }
 }
 
