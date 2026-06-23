@@ -41,5 +41,5 @@ Real numbers on Apple Silicon (macOS, and iOS for the subset exposed there). On 
 platforms the power/SoC fields are `None` and the calls are safe no-ops, so code that
 depends on keisoku still builds and runs everywhere.
 
-Used by [`cargo-keisoku`](../cargo-keisoku) (power-aware cargo subcommand) and
-[`kanshi`](../kanshi) (live monitor); reaches Apple's private counters via [`kanka`](../kanka).
+Used by [`kanshi`](../kanshi) (live monitor); reaches Apple's private counters via
+[`kanka`](../kanka).
