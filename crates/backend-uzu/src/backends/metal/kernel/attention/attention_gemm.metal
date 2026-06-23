@@ -23,17 +23,21 @@ struct TransformScale {
   METAL_FUNC T apply(T x) const { return scale * x; }
 };
 
-#define ATTN_MMA_DIM (USE_ACCELERATOR ? 16 : 8)
+#define ATTN_SIMDGROUP_MMA_DIM 8
+#define ATTN_MXU_MMA_DIM 16
+#define ATTN_MMA_DIM (USE_ACCELERATOR ? ATTN_MXU_MMA_DIM : ATTN_SIMDGROUP_MMA_DIM)
 #define BLOCK_QUERY_ROWS (4 * ATTN_MMA_DIM)
+#define ROW_ALIGNMENT_BYTES 16
+#define ROW_PADDING_ELEMENTS (ROW_ALIGNMENT_BYTES / int(sizeof(T)))
 #define SIMDGROUPS_PER_ROW 4
 #define SIMDGROUPS_PER_COLUMN 1
 
 // Resident Q regresses simdgroup GPUs; keep it MXU-only.
 #define Q_IS_RESIDENT (USE_ACCELERATOR)
-#define QSMEM_SIZE (Q_IS_RESIDENT ? 1 : (BLOCK_QUERY_ROWS * (int(BD) + 16 / int(sizeof(T)))))
+#define QSMEM_SIZE (Q_IS_RESIDENT ? 1 : (BLOCK_QUERY_ROWS * (int(BD) + ROW_PADDING_ELEMENTS)))
 
 // Direct K/V reads regress small-cache simdgroup GPUs; keep them MXU-only.
-#define KVSMEM_SIZE (USE_ACCELERATOR ? 1 : (int(BK) * (int(BD) + 16 / int(sizeof(T)))))
+#define KVSMEM_SIZE (USE_ACCELERATOR ? 1 : (int(BK) * (int(BD) + ROW_PADDING_ELEMENTS)))
 
 template <typename T, uint BK, uint BD, bool USE_ACCELERATOR>
 VARIANTS(T, float, half, bfloat)
@@ -66,7 +70,7 @@ PUBLIC KERNEL(AttentionGemm)(
     threadgroup T q_smem[QSMEM_SIZE],
     threadgroup T kv_smem[KVSMEM_SIZE],
     const ThreadContext thread_context,
-    const uint q_tile_idx GROUPS(suffix_length.div_ceil(4 * if USE_ACCELERATOR { 16 } else { 8 })),
+    const uint q_tile_idx GROUPS(suffix_length.div_ceil(BLOCK_QUERY_ROWS)),
     const uint head_idx GROUPS(num_heads),
     const uint batch_idx GROUPS(1),
     const uint lid THREADS(128)
@@ -130,7 +134,7 @@ PUBLIC KERNEL(AttentionGemm)(
   constexpr short head_dim_fragment_stride = MMA_DIM;
 
   const bool ragged_q = (!align_q && int(q_tile_idx) == params.nq_aligned);
-  constexpr short query_leading_dimension = BD + 16 / sizeof(T);
+  constexpr short query_leading_dimension = BD + ROW_PADDING_ELEMENTS;
   threadgroup T* query_shared = q_smem;
   const short query_shared_offset = simdgroup_row_base * query_leading_dimension;
 
@@ -148,8 +152,13 @@ PUBLIC KERNEL(AttentionGemm)(
       });
     }
   } else {
-    using QueryLoader =
-        ThreadgroupLoader<T, BLOCK_QUERY_ROWS, BD, query_leading_dimension, 1, SIMDGROUPS_PER_THREADGROUP * 32>;
+    using QueryLoader = ThreadgroupLoader<
+        T,
+        BLOCK_QUERY_ROWS,
+        BD,
+        query_leading_dimension,
+        1,
+        SIMDGROUPS_PER_THREADGROUP * METAL_SIMD_SIZE>;
     thread QueryLoader query_loader(q, query_source_stride, query_shared, thread_context);
     if (ragged_q) {
       query_loader.load_safe(short2(BD, params.q_rem));
@@ -183,7 +192,7 @@ PUBLIC KERNEL(AttentionGemm)(
   const int prefix_length = params.q_off;
   const int suffix_position = is_kv_cache_ring ? int(ring_params.ring_length) : prefix_length;
 
-  constexpr short kv_leading_dimension = BD + 16 / sizeof(T);
+  constexpr short kv_leading_dimension = BD + ROW_PADDING_ELEMENTS;
   threadgroup T* kv_shared = kv_smem;
 
   for (int kb = 0; kb < kb_lim; kb++) {
@@ -196,7 +205,7 @@ PUBLIC KERNEL(AttentionGemm)(
       k_dev = k_dev.bounded(params.k_rem, MMA_DIM);
     }
     if constexpr (!USE_ACCELERATOR) {
-      stage_tile<BK, BD, kv_leading_dimension, SIMDGROUPS_PER_THREADGROUP * 32>(
+      stage_tile<BK, BD, kv_leading_dimension, SIMDGROUPS_PER_THREADGROUP * METAL_SIMD_SIZE>(
           k_block,
           key_source_stride,
           kv_shared,
@@ -310,7 +319,7 @@ PUBLIC KERNEL(AttentionGemm)(
       v_dev = v_dev.bounded(params.k_rem, OUTPUT_CHUNK_COLS);
     }
     if constexpr (!USE_ACCELERATOR) {
-      stage_tile<BK, BD, kv_leading_dimension, SIMDGROUPS_PER_THREADGROUP * 32>(
+      stage_tile<BK, BD, kv_leading_dimension, SIMDGROUPS_PER_THREADGROUP * METAL_SIMD_SIZE>(
           v_block,
           value_source_stride,
           kv_shared,

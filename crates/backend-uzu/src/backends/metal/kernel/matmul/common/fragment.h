@@ -69,6 +69,8 @@ struct Fragment {
 
   METAL_CONST ushort NUM_FRAGS = ROW_FRAGMENTS * COL_FRAGMENTS;
   METAL_CONST ushort ELEMENTS_PER_FRAGMENT = NUM_FRAGS * Ops::ELEMENTS_PER_THREAD;
+  METAL_CONST ushort ROW_REDUCE_LANE_XOR_0 = 1;
+  METAL_CONST ushort ROW_REDUCE_LANE_XOR_1 = 8;
 
   ThreadVectorType fragment_data[NUM_FRAGS];
 
@@ -112,8 +114,7 @@ struct Fragment {
     for_each_fragment([&](auto fragment_row, auto fragment_col) {
       const short row_base = position.y + short(fragment_row.value) * FRAGMENT_ROWS;
       const short col_base = position.x + short(fragment_col.value) * FRAGMENT_COLS;
-      const ushort frag_base =
-          (fragment_row.value * COL_FRAGMENTS + fragment_col.value) * Ops::ELEMENTS_PER_THREAD;
+      const ushort frag_base = (fragment_row.value * COL_FRAGMENTS + fragment_col.value) * Ops::ELEMENTS_PER_THREAD;
       METAL_PRAGMA_UNROLL
       for (ushort i = 0; i < Ops::THREAD_ELEMENT_ROWS; ++i) {
         METAL_PRAGMA_UNROLL
@@ -143,8 +144,8 @@ struct Fragment {
             acc = op(acc, Acc(data[frag_base + i * Ops::THREAD_ELEMENT_COLS + j]));
           }
         }
-        acc = op(acc, simd_shuffle_xor(acc, 1));
-        acc = op(acc, simd_shuffle_xor(acc, 8));
+        acc = op(acc, simd_shuffle_xor(acc, ROW_REDUCE_LANE_XOR_0));
+        acc = op(acc, simd_shuffle_xor(acc, ROW_REDUCE_LANE_XOR_1));
         out[tr * Ops::THREAD_ELEMENT_ROWS + i] = acc;
       }
     }
@@ -328,11 +329,7 @@ template <
     class OutputFragment,
     class LeftFragment,
     class RightFragment>
-METAL_FUNC void fragment_matmul(
-    thread OutputFragment& output,
-    thread LeftFragment& left,
-    thread RightFragment& right
-) {
+METAL_FUNC void fragment_matmul(thread OutputFragment& output, thread LeftFragment& left, thread RightFragment& right) {
   static_assert(
       metal::is_same_v<typename OutputFragment::FragmentOpsType, typename LeftFragment::FragmentOpsType> &&
           metal::is_same_v<typename OutputFragment::FragmentOpsType, typename RightFragment::FragmentOpsType>,
