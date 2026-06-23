@@ -23,8 +23,8 @@ struct TransformScale {
   METAL_FUNC T apply(T x) const { return scale * x; }
 };
 
-#define FRAG_ROWS (USE_ACCELERATOR ? 16 : 8)
-#define BLOCK_QUERY_ROWS (4 * FRAG_ROWS)
+#define ATTN_MMA_DIM (USE_ACCELERATOR ? 16 : 8)
+#define BLOCK_QUERY_ROWS (4 * ATTN_MMA_DIM)
 #define SIMDGROUPS_PER_ROW 4
 #define SIMDGROUPS_PER_COLUMN 1
 
@@ -91,43 +91,43 @@ PUBLIC KERNEL(AttentionGemm)(
 
   using AccumType = float;
   using Ops = metal::conditional_t<USE_ACCELERATOR, MxuFragmentOps, SimdgroupFragmentOps>;
-  constexpr short SIMDGROUP_BLOCK_SIZE = Ops::FRAGMENT_ROWS;
+  constexpr short MMA_DIM = Ops::FRAGMENT_ROWS;
 
   // MXU uses input dtype with f32 accumulate; simdgroup MMA needs matched types.
   using InputType = metal::conditional_t<USE_ACCELERATOR, T, AccumType>;
 
   constexpr int SIMDGROUPS_PER_THREADGROUP = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
   static_assert(
-      BLOCK_QUERY_ROWS >= (SIMDGROUPS_PER_THREADGROUP * SIMDGROUP_BLOCK_SIZE) &&
-          BLOCK_QUERY_ROWS % (SIMDGROUPS_PER_THREADGROUP * SIMDGROUP_BLOCK_SIZE) == 0,
+      BLOCK_QUERY_ROWS >= (SIMDGROUPS_PER_THREADGROUP * MMA_DIM) &&
+          BLOCK_QUERY_ROWS % (SIMDGROUPS_PER_THREADGROUP * MMA_DIM) == 0,
       "Each simdgroup must host at least 1 simdgroup matrix along Q sequence."
   );
 
-  constexpr int QUERY_GRID_ROWS = BLOCK_QUERY_ROWS / (SIMDGROUPS_PER_THREADGROUP * SIMDGROUP_BLOCK_SIZE);
-  constexpr int KEY_GRID_COLS = BK / SIMDGROUP_BLOCK_SIZE;
-  constexpr int HEAD_DIM_GRID_COLS = BD / SIMDGROUP_BLOCK_SIZE;
+  constexpr int QUERY_ROW_FRAGMENTS = BLOCK_QUERY_ROWS / (SIMDGROUPS_PER_THREADGROUP * MMA_DIM);
+  constexpr int KEY_COL_FRAGMENTS = BK / MMA_DIM;
+  constexpr int HEAD_DIM_FRAGMENTS = BD / MMA_DIM;
 
-  static_assert(QUERY_GRID_ROWS == 1, "Expected QUERY_GRID_ROWS == 1");
-  static_assert(!USE_ACCELERATOR || KEY_GRID_COLS % 2 == 0, "MXU QK needs even N (KEY_GRID_COLS)");
+  static_assert(QUERY_ROW_FRAGMENTS == 1, "Expected QUERY_ROW_FRAGMENTS == 1");
+  static_assert(!USE_ACCELERATOR || KEY_COL_FRAGMENTS % 2 == 0, "MXU QK needs even N (KEY_COL_FRAGMENTS)");
 
-  constexpr int Q_FRAG_COUNT = Q_IS_RESIDENT ? HEAD_DIM_GRID_COLS : 1;
-  Fragment<InputType, QUERY_GRID_ROWS, 1, Ops> query_frags[Q_FRAG_COUNT];
-  Fragment<InputType, 1, KEY_GRID_COLS, Ops> key_fragment;
-  Fragment<AccumType, QUERY_GRID_ROWS, KEY_GRID_COLS, Ops> score_fragment;
-  constexpr int VCHUNK = USE_ACCELERATOR ? 2 : HEAD_DIM_GRID_COLS;
-  static_assert(HEAD_DIM_GRID_COLS % VCHUNK == 0, "head-dim must split into VCHUNK frags");
-  static_assert(!USE_ACCELERATOR || VCHUNK % 2 == 0, "MXU PV needs even N (VCHUNK)");
-  constexpr int N_OUT_CHUNKS = HEAD_DIM_GRID_COLS / VCHUNK;
-  constexpr short CHUNK_COLS = VCHUNK * SIMDGROUP_BLOCK_SIZE;
-  Fragment<AccumType, QUERY_GRID_ROWS, VCHUNK, Ops> output_chunks[N_OUT_CHUNKS];
+  constexpr int QUERY_FRAGMENT_COUNT = Q_IS_RESIDENT ? HEAD_DIM_FRAGMENTS : 1;
+  Fragment<InputType, QUERY_ROW_FRAGMENTS, 1, Ops> query_frags[QUERY_FRAGMENT_COUNT];
+  Fragment<InputType, 1, KEY_COL_FRAGMENTS, Ops> key_fragment;
+  Fragment<AccumType, QUERY_ROW_FRAGMENTS, KEY_COL_FRAGMENTS, Ops> score_fragment;
+  constexpr int VALUE_COL_FRAGMENTS = USE_ACCELERATOR ? 2 : HEAD_DIM_FRAGMENTS;
+  static_assert(HEAD_DIM_FRAGMENTS % VALUE_COL_FRAGMENTS == 0, "head-dim must split into VALUE_COL_FRAGMENTS frags");
+  static_assert(!USE_ACCELERATOR || VALUE_COL_FRAGMENTS % 2 == 0, "MXU PV needs even N (VALUE_COL_FRAGMENTS)");
+  constexpr int OUTPUT_CHUNKS = HEAD_DIM_FRAGMENTS / VALUE_COL_FRAGMENTS;
+  constexpr short OUTPUT_CHUNK_COLS = VALUE_COL_FRAGMENTS * MMA_DIM;
+  Fragment<AccumType, QUERY_ROW_FRAGMENTS, VALUE_COL_FRAGMENTS, Ops> output_chunks[OUTPUT_CHUNKS];
 
   METAL_PRAGMA_UNROLL
-  for (int c = 0; c < N_OUT_CHUNKS; ++c) {
+  for (int c = 0; c < OUTPUT_CHUNKS; ++c) {
     output_chunks[c].clear();
   }
 
-  const short simdgroup_row_base = SIMDGROUP_BLOCK_SIZE * QUERY_GRID_ROWS * short(thread_context.simdgroup_index);
-  constexpr short head_dim_tile_stride = SIMDGROUP_BLOCK_SIZE;
+  const short simdgroup_row_base = MMA_DIM * QUERY_ROW_FRAGMENTS * short(thread_context.simdgroup_index);
+  constexpr short head_dim_fragment_stride = MMA_DIM;
 
   const bool ragged_q = (!align_q && int(q_tile_idx) == params.nq_aligned);
   constexpr short query_leading_dimension = BD + 16 / sizeof(T);
@@ -135,14 +135,14 @@ PUBLIC KERNEL(AttentionGemm)(
   const short query_shared_offset = simdgroup_row_base * query_leading_dimension;
 
   if constexpr (Q_IS_RESIDENT) {
-    auto q_src = tile_source(q + int64_t(simdgroup_row_base) * query_source_stride, query_source_stride);
+    auto q_src = fragment_source(q + int64_t(simdgroup_row_base) * query_source_stride, query_source_stride);
     if (ragged_q) {
-      q_src = q_src.bounded(params.q_rem - simdgroup_row_base, SIMDGROUP_BLOCK_SIZE);
+      q_src = q_src.bounded(params.q_rem - simdgroup_row_base, MMA_DIM);
     }
     const InputType query_scale = static_cast<InputType>(params.scale * M_LOG2E_F);
     METAL_PRAGMA_UNROLL
-    for (short dd = 0; dd < HEAD_DIM_GRID_COLS; dd++) {
-      query_frags[dd].load_from(thread_context.simd_lane_id, q_src.advanced(dd * head_dim_tile_stride));
+    for (short dd = 0; dd < HEAD_DIM_FRAGMENTS; dd++) {
+      query_frags[dd].load_from(thread_context.simd_lane_id, q_src.advanced(dd * head_dim_fragment_stride));
       query_frags[dd].for_each_element(thread_context.simd_lane_id, [&](short, short, thread InputType& v) {
         v *= query_scale;
       });
@@ -162,7 +162,7 @@ PUBLIC KERNEL(AttentionGemm)(
 
   // Finite neg_inf keeps fully masked rows from producing NaN.
   const AccumType neg_inf = static_cast<AccumType>(-1e9f) * M_LOG2E_F;
-  constexpr int ROWS_PER_LANE = QUERY_GRID_ROWS * Ops::THREAD_ELEMENT_ROWS;
+  constexpr int ROWS_PER_LANE = QUERY_ROW_FRAGMENTS * Ops::THREAD_ELEMENT_ROWS;
   const AccumType init_max = has_sinks ? AccumType(M_LOG2E_F * static_cast<AccumType>(sinks[head_idx])) : -INFINITY;
   const AccumType init_sum = has_sinks ? AccumType(1) : AccumType(0);
   AccumType max_score[ROWS_PER_LANE];
@@ -191,9 +191,9 @@ PUBLIC KERNEL(AttentionGemm)(
     const device T* k_block = k + int64_t(kb) * int(BK) * key_source_stride;
     score_fragment.clear();
 
-    auto k_dev = tile_source(k_block, key_source_stride);
+    auto k_dev = fragment_source(k_block, key_source_stride);
     if (tail_k) {
-      k_dev = k_dev.bounded(params.k_rem, SIMDGROUP_BLOCK_SIZE);
+      k_dev = k_dev.bounded(params.k_rem, MMA_DIM);
     }
     if constexpr (!USE_ACCELERATOR) {
       stage_tile<BK, BD, kv_leading_dimension, SIMDGROUPS_PER_THREADGROUP * 32>(
@@ -204,25 +204,25 @@ PUBLIC KERNEL(AttentionGemm)(
           thread_context
       );
     }
-    auto k_shared = tile_source(kv_shared, 1, kv_leading_dimension);
-    auto q_shared_src = tile_source(query_shared + query_shared_offset, query_leading_dimension);
+    auto k_shared = fragment_source(kv_shared, 1, kv_leading_dimension);
+    auto q_shared_src = fragment_source(query_shared + query_shared_offset, query_leading_dimension);
 
     METAL_PRAGMA_UNROLL
-    for (short dd = 0; dd < HEAD_DIM_GRID_COLS; dd++) {
+    for (short dd = 0; dd < HEAD_DIM_FRAGMENTS; dd++) {
       if constexpr (!Q_IS_RESIDENT) {
-        query_frags[0].load_from(thread_context.simd_lane_id, q_shared_src.advanced(dd * head_dim_tile_stride));
+        query_frags[0].load_from(thread_context.simd_lane_id, q_shared_src.advanced(dd * head_dim_fragment_stride));
       }
       const short q_idx = Q_IS_RESIDENT ? dd : 0;
 
       if constexpr (USE_ACCELERATOR) {
-        Fragment<InputType, KEY_GRID_COLS, 1, Ops> key_block;
-        key_block.load_from(thread_context.simd_lane_id, k_dev.advanced(dd * head_dim_tile_stride));
+        Fragment<InputType, KEY_COL_FRAGMENTS, 1, Ops> key_block;
+        key_block.load_from(thread_context.simd_lane_id, k_dev.advanced(dd * head_dim_fragment_stride));
         simdgroup_barrier(mem_flags::mem_none);
-        uzu::matmul::tile_matmul<false, true>(score_fragment, query_frags[q_idx], key_block);
+        uzu::matmul::fragment_matmul<false, true>(score_fragment, query_frags[q_idx], key_block);
       } else {
-        key_fragment.load_from(thread_context.simd_lane_id, k_shared.advanced(dd * head_dim_tile_stride));
+        key_fragment.load_from(thread_context.simd_lane_id, k_shared.advanced(dd * head_dim_fragment_stride));
         simdgroup_barrier(mem_flags::mem_none);
-        uzu::matmul::tile_matmul(score_fragment, query_frags[q_idx], key_fragment);
+        uzu::matmul::fragment_matmul(score_fragment, query_frags[q_idx], key_fragment);
       }
     }
 
@@ -300,14 +300,14 @@ PUBLIC KERNEL(AttentionGemm)(
     }
 
     METAL_PRAGMA_UNROLL
-    for (int c = 0; c < N_OUT_CHUNKS; ++c) {
+    for (int c = 0; c < OUTPUT_CHUNKS; ++c) {
       output_chunks[c].row_bin_op(factor, [](AccumType v, AccumType f) { return v * f; });
     }
 
     const device T* v_block = v + int64_t(kb) * int(BK) * value_source_stride;
-    auto v_dev = tile_source(v_block, value_source_stride);
+    auto v_dev = fragment_source(v_block, value_source_stride);
     if (tail_k) {
-      v_dev = v_dev.bounded(params.k_rem, CHUNK_COLS);
+      v_dev = v_dev.bounded(params.k_rem, OUTPUT_CHUNK_COLS);
     }
     if constexpr (!USE_ACCELERATOR) {
       stage_tile<BK, BD, kv_leading_dimension, SIMDGROUPS_PER_THREADGROUP * 32>(
@@ -318,16 +318,16 @@ PUBLIC KERNEL(AttentionGemm)(
           thread_context
       );
     }
-    auto v_shared = tile_source(kv_shared, kv_leading_dimension);
+    auto v_shared = fragment_source(kv_shared, kv_leading_dimension);
     METAL_PRAGMA_UNROLL
-    for (int c = 0; c < N_OUT_CHUNKS; ++c) {
-      Fragment<InputType, KEY_GRID_COLS, VCHUNK, Ops> value_chunk;
+    for (int c = 0; c < OUTPUT_CHUNKS; ++c) {
+      Fragment<InputType, KEY_COL_FRAGMENTS, VALUE_COL_FRAGMENTS, Ops> value_chunk;
       if constexpr (USE_ACCELERATOR) {
-        value_chunk.load_from(thread_context.simd_lane_id, v_dev.advanced(c * CHUNK_COLS));
+        value_chunk.load_from(thread_context.simd_lane_id, v_dev.advanced(c * OUTPUT_CHUNK_COLS));
       } else {
-        value_chunk.load_from(thread_context.simd_lane_id, v_shared.advanced(c * CHUNK_COLS));
+        value_chunk.load_from(thread_context.simd_lane_id, v_shared.advanced(c * OUTPUT_CHUNK_COLS));
       }
-      tile_matmul(output_chunks[c], score_fragment, value_chunk);
+      fragment_matmul(output_chunks[c], score_fragment, value_chunk);
     }
   }
 
@@ -337,7 +337,7 @@ PUBLIC KERNEL(AttentionGemm)(
     inv_sum[r] = AccumType(1) / sum_score[r];
   }
   METAL_PRAGMA_UNROLL
-  for (int c = 0; c < N_OUT_CHUNKS; ++c) {
+  for (int c = 0; c < OUTPUT_CHUNKS; ++c) {
     output_chunks[c].row_bin_op(inv_sum, [](AccumType v, AccumType s) { return v * s; });
   }
 
@@ -347,10 +347,10 @@ PUBLIC KERNEL(AttentionGemm)(
     return;
   }
   METAL_PRAGMA_UNROLL
-  for (int c = 0; c < N_OUT_CHUNKS; ++c) {
-    device T* o_chunk = o + c * CHUNK_COLS;
+  for (int c = 0; c < OUTPUT_CHUNKS; ++c) {
+    device T* o_chunk = o + c * OUTPUT_CHUNK_COLS;
     if (ragged_q) {
-      const short2 dst_tile_dims = short2(CHUNK_COLS, params.q_rem - simdgroup_row_base);
+      const short2 dst_tile_dims = short2(OUTPUT_CHUNK_COLS, params.q_rem - simdgroup_row_base);
       output_chunks[c].store_safe(thread_context.simd_lane_id, o_chunk, int(params.o_strides[2]), dst_tile_dims);
     } else {
       output_chunks[c].store(thread_context.simd_lane_id, o_chunk, int(params.o_strides[2]));

@@ -60,7 +60,7 @@ METAL_FUNC auto gemm_loop(
       const int left_offset = transpose_a ? inner_k * leading_dimension_a : inner_k;
       const int right_offset = transpose_b ? inner_k : inner_k * leading_dimension_b;
 
-      auto left_src = tile_source(left_ptr + left_offset, leading_dimension_a);
+      auto left_src = fragment_source(left_ptr + left_offset, leading_dimension_a);
       if constexpr (!aligned_m) {
         const short row_limit = transpose_a ? SIMDGROUP_BLOCK_K : simdgroup_limit_m;
         const short col_limit = transpose_a ? simdgroup_limit_m : SIMDGROUP_BLOCK_K;
@@ -68,7 +68,7 @@ METAL_FUNC auto gemm_loop(
       }
       left_tile.load_from(thread_context.simd_lane_id, left_src);
 
-      auto right_src = tile_source(right_ptr + right_offset, leading_dimension_b);
+      auto right_src = fragment_source(right_ptr + right_offset, leading_dimension_b);
       if constexpr (!aligned_n) {
         const short row_limit = transpose_b ? simdgroup_limit_n : SIMDGROUP_BLOCK_K;
         const short col_limit = transpose_b ? SIMDGROUP_BLOCK_K : simdgroup_limit_n;
@@ -76,7 +76,7 @@ METAL_FUNC auto gemm_loop(
       }
       right_tile.load_from(thread_context.simd_lane_id, right_src);
 
-      MxuFragmentOps::template tile_matmul<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
+      MxuFragmentOps::template fragment_matmul<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
 
       (void)mxu_iteration_fence;
     }
@@ -105,14 +105,14 @@ METAL_FUNC auto gemm_loop(
 
       left_tile.load_from(
           thread_context.simd_lane_id,
-          tile_source(left_ptr + left_offset, leading_dimension_a).bounded(left_limits.y, left_limits.x)
+          fragment_source(left_ptr + left_offset, leading_dimension_a).bounded(left_limits.y, left_limits.x)
       );
       right_tile.load_from(
           thread_context.simd_lane_id,
-          tile_source(right_ptr + right_offset, leading_dimension_b).bounded(right_limits.y, right_limits.x)
+          fragment_source(right_ptr + right_offset, leading_dimension_b).bounded(right_limits.y, right_limits.x)
       );
 
-      MxuFragmentOps::template tile_matmul<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
+      MxuFragmentOps::template fragment_matmul<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
     }
   }
 

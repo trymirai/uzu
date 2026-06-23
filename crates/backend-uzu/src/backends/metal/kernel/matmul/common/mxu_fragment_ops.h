@@ -36,7 +36,7 @@ struct MxuFragmentOps {
   template <typename U>
   using ThreadVector = typename metal::vec<U, ELEMENTS_PER_THREAD>;
 
-  // MPP has no valid 16x16x16 op; tile_matmul pairs fragments into 16x32.
+  // MPP has no valid 16x16x16 op; fragment_matmul pairs fragments into 16x32.
   template <typename CType, typename AType, typename BType, bool transpose_a, bool transpose_b, typename MarshalInputs>
   METAL_FUNC static void mma_impl(
       thread ThreadVector<CType>& output_0,
@@ -127,39 +127,43 @@ struct MxuFragmentOps {
     );
   }
 
-  template <bool transpose_a, bool transpose_b, class OutputTile, class LeftTile, class RightTile>
-  METAL_FUNC static void tile_matmul(thread OutputTile& output, thread LeftTile& left, thread RightTile& right) {
-    constexpr ushort left_tile_m = transpose_a ? LeftTile::TILE_COLS : LeftTile::TILE_ROWS;
-    constexpr ushort tile_m = OutputTile::TILE_ROWS;
-    static_assert(left_tile_m == tile_m, "tile matmul: M dimensions do not match");
+  template <bool transpose_a, bool transpose_b, class OutputFragment, class LeftFragment, class RightFragment>
+  METAL_FUNC static void fragment_matmul(
+      thread OutputFragment& output,
+      thread LeftFragment& left,
+      thread RightFragment& right
+  ) {
+    constexpr ushort left_rows = transpose_a ? LeftFragment::COL_FRAGMENTS : LeftFragment::ROW_FRAGMENTS;
+    constexpr ushort rows = OutputFragment::ROW_FRAGMENTS;
+    static_assert(left_rows == rows, "fragment matmul: M dimensions do not match");
 
-    constexpr ushort right_tile_n = transpose_b ? RightTile::TILE_ROWS : RightTile::TILE_COLS;
-    constexpr ushort tile_n = OutputTile::TILE_COLS;
-    static_assert(right_tile_n == tile_n, "tile matmul: N dimensions do not match");
+    constexpr ushort right_cols = transpose_b ? RightFragment::ROW_FRAGMENTS : RightFragment::COL_FRAGMENTS;
+    constexpr ushort cols = OutputFragment::COL_FRAGMENTS;
+    static_assert(right_cols == cols, "fragment matmul: N dimensions do not match");
 
-    constexpr ushort left_tile_k = transpose_a ? LeftTile::TILE_ROWS : LeftTile::TILE_COLS;
-    constexpr ushort tile_k = transpose_b ? RightTile::TILE_COLS : RightTile::TILE_ROWS;
-    static_assert(left_tile_k == tile_k, "tile matmul: K dimensions do not match");
+    constexpr ushort left_depth = transpose_a ? LeftFragment::ROW_FRAGMENTS : LeftFragment::COL_FRAGMENTS;
+    constexpr ushort depth = transpose_b ? RightFragment::COL_FRAGMENTS : RightFragment::ROW_FRAGMENTS;
+    static_assert(left_depth == depth, "fragment matmul: K dimensions do not match");
 
     // Other shapes silently emit no MMAs.
     static_assert(
-        (tile_n % 2 == 0) || (tile_n == 1 && tile_m % 2 == 0),
-        "MXU tile_matmul requires even N, or N==1 with even M (MPP pairing)"
+        (cols % 2 == 0) || (cols == 1 && rows % 2 == 0),
+        "MXU fragment_matmul requires even N, or N==1 with even M (MPP pairing)"
     );
 
     constexpr auto transpose_left = metal::bool_constant<transpose_a>{};
     constexpr auto transpose_right = metal::bool_constant<transpose_b>{};
 
-    if constexpr (tile_n == 1 && tile_m % 2 == 0) {
+    if constexpr (cols == 1 && rows % 2 == 0) {
       METAL_PRAGMA_UNROLL
-      for (ushort row = 0; row < tile_m; row += 2) {
+      for (ushort row = 0; row < rows; row += 2) {
         METAL_PRAGMA_UNROLL
-        for (ushort col = 0; col < tile_n; ++col) {
+        for (ushort col = 0; col < cols; ++col) {
           METAL_PRAGMA_UNROLL
-          for (ushort k = 0; k < tile_k; ++k) {
-            mma<typename OutputTile::ElementType,
-                typename LeftTile::ElementType,
-                typename RightTile::ElementType,
+          for (ushort k = 0; k < depth; ++k) {
+            mma<typename OutputFragment::ElementType,
+                typename LeftFragment::ElementType,
+                typename RightFragment::ElementType,
                 transpose_a,
                 transpose_b>(
                 output.fragment_at(row, col),
@@ -173,16 +177,16 @@ struct MxuFragmentOps {
           }
         }
       }
-    } else if constexpr (tile_n % 2 == 0) {
+    } else if constexpr (cols % 2 == 0) {
       METAL_PRAGMA_UNROLL
-      for (ushort row = 0; row < tile_m; ++row) {
+      for (ushort row = 0; row < rows; ++row) {
         METAL_PRAGMA_UNROLL
-        for (ushort col = 0; col < tile_n; col += 2) {
+        for (ushort col = 0; col < cols; col += 2) {
           METAL_PRAGMA_UNROLL
-          for (ushort k = 0; k < tile_k; ++k) {
-            mma<typename OutputTile::ElementType,
-                typename LeftTile::ElementType,
-                typename RightTile::ElementType,
+          for (ushort k = 0; k < depth; ++k) {
+            mma<typename OutputFragment::ElementType,
+                typename LeftFragment::ElementType,
+                typename RightFragment::ElementType,
                 transpose_a,
                 transpose_b>(
                 output.fragment_at(row, col),

@@ -76,11 +76,11 @@ struct ThreadgroupTile {
 
     METAL_PRAGMA_UNROLL
     for (ushort k_block_index = 0; k_block_index < BLOCK_DEPTH; k_block_index += SIMDGROUP_BLOCK_SIZE) {
-      tile_load<AT, SIMDGROUPS_PER_ROW, 1, A_STRIDE_ROW, A_STRIDE_INNER>(a_fragment, a_shared);
+      fragment_load<AT, SIMDGROUPS_PER_ROW, 1, A_STRIDE_ROW, A_STRIDE_INNER>(a_fragment, a_shared);
 
-      tile_load<BT, 1, SIMDGROUPS_PER_COLUMN, B_STRIDE_INNER, B_STRIDE_COL>(b_fragment, b_shared);
+      fragment_load<BT, 1, SIMDGROUPS_PER_COLUMN, B_STRIDE_INNER, B_STRIDE_COL>(b_fragment, b_shared);
 
-      tile_matmul(c_fragment, a_fragment, b_fragment);
+      fragment_matmul(c_fragment, a_fragment, b_fragment);
 
       a_shared += TILE_STRIDE_A;
       b_shared += TILE_STRIDE_B;
@@ -89,18 +89,18 @@ struct ThreadgroupTile {
 
   METAL_FUNC void store_result(device DT* D, const int leading_dimension_d) {
     METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < decltype(c_fragment)::ELEMENTS_PER_TILE; i++) {
+    for (ushort i = 0; i < decltype(c_fragment)::ELEMENTS_PER_FRAGMENT; i++) {
       c_fragment.elements()[i] = Epilogue::apply(c_fragment.elements()[i]);
     }
 
     D += simdgroup_row_offset * leading_dimension_d + simdgroup_col_offset;
 
-    tile_store<DT, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>(c_fragment, D, leading_dimension_d);
+    fragment_store<DT, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>(c_fragment, D, leading_dimension_d);
   }
 
   METAL_FUNC void store_result_safe(device DT* D, const int leading_dimension_d, short2 destination_tile_dimensions) {
     METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < decltype(c_fragment)::ELEMENTS_PER_TILE; i++) {
+    for (ushort i = 0; i < decltype(c_fragment)::ELEMENTS_PER_FRAGMENT; i++) {
       c_fragment.elements()[i] = Epilogue::apply(c_fragment.elements()[i]);
     }
 
@@ -110,7 +110,7 @@ struct ThreadgroupTile {
     if (destination_tile_dimensions.x <= 0 || destination_tile_dimensions.y <= 0)
       return;
 
-    tile_store_safe<DT, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>(
+    fragment_store_safe<DT, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>(
         c_fragment,
         D,
         leading_dimension_d,

@@ -127,7 +127,7 @@ struct MxuMmaCore {
         uzu::matmul::Fragment<BT, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps> right_tile;
 
         const int left_offset = inner_k;
-        auto left_src = uzu::matmul::tile_source(a_simdgroup + left_offset, leading_dimension_a);
+        auto left_src = uzu::matmul::fragment_source(a_simdgroup + left_offset, leading_dimension_a);
         if constexpr (!ALIGNED_M) {
           left_src = left_src.bounded(simdgroup_limit_m, SIMDGROUP_BLOCK_K);
         }
@@ -135,10 +135,10 @@ struct MxuMmaCore {
 
         right_tile.load_from(
             thread_context.simd_lane_id,
-            uzu::matmul::tile_source(b_shared_simdgroup + inner_k, int(SHARED_STRIDE_B))
+            uzu::matmul::fragment_source(b_shared_simdgroup + inner_k, int(SHARED_STRIDE_B))
         );
 
-        uzu::matmul::MxuFragmentOps::template tile_matmul<false, true>(accumulator, left_tile, right_tile);
+        uzu::matmul::MxuFragmentOps::template fragment_matmul<false, true>(accumulator, left_tile, right_tile);
       }
 
       a_simdgroup += QUANT_BK;
@@ -326,25 +326,20 @@ struct MxuMmaCore {
                   if (apply_scale) {
                     const AccumulatorType scale = AccumulatorType(params->ab_scale);
                     METAL_PRAGMA_UNROLL
-                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE; i++) {
+                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_FRAGMENT; i++) {
                       accumulator_tile.elements()[i] *= scale;
                     }
                   }
 
                   if (apply_accumulate) {
                     uzu::matmul::Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps> existing_output;
-                    if constexpr (aligned_m.value && aligned_n.value) {
-                      existing_output.load(thread_context.simd_lane_id, d_simdgroup, int(params->leading_dimension_d));
-                    } else {
-                      existing_output.load_safe(
-                          thread_context.simd_lane_id,
-                          d_simdgroup,
-                          int(params->leading_dimension_d),
-                          short2(simdgroup_limit_n, simdgroup_limit_m)
-                      );
+                    auto output_src = uzu::matmul::fragment_source(d_simdgroup, int(params->leading_dimension_d));
+                    if constexpr (!(aligned_m.value && aligned_n.value)) {
+                      output_src = output_src.bounded(simdgroup_limit_m, simdgroup_limit_n);
                     }
+                    existing_output.load_from(thread_context.simd_lane_id, output_src);
                     METAL_PRAGMA_UNROLL
-                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE; i++) {
+                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_FRAGMENT; i++) {
                       accumulator_tile.elements()[i] += AccumulatorType(existing_output.elements()[i]);
                     }
                   }

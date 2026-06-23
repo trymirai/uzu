@@ -12,7 +12,7 @@ namespace uzu {
 namespace matmul {
 
 template <typename Ptr>
-struct TileSource {
+struct FragmentSource {
   Ptr base;
   int row_stride;
   int col_stride;
@@ -20,14 +20,14 @@ struct TileSource {
   short col_bound;
   bool ragged;
 
-  METAL_FUNC TileSource advanced(int elements) const thread {
-    TileSource out = *this;
+  METAL_FUNC FragmentSource advanced(int elements) const thread {
+    FragmentSource out = *this;
     out.base += elements;
     return out;
   }
 
-  METAL_FUNC TileSource bounded(short rows, short cols) const thread {
-    TileSource out = *this;
+  METAL_FUNC FragmentSource bounded(short rows, short cols) const thread {
+    FragmentSource out = *this;
     out.row_bound = rows;
     out.col_bound = cols;
     out.ragged = true;
@@ -36,11 +36,11 @@ struct TileSource {
 };
 
 template <typename Ptr>
-METAL_FUNC TileSource<Ptr> tile_source(Ptr base, int row_stride, int col_stride = 1) {
-  return TileSource<Ptr>{base, row_stride, col_stride, 0, 0, false};
+METAL_FUNC FragmentSource<Ptr> fragment_source(Ptr base, int row_stride, int col_stride = 1) {
+  return FragmentSource<Ptr>{base, row_stride, col_stride, 0, 0, false};
 }
 
-template <typename T, ushort TILE_ROWS_, ushort TILE_COLS_, class Ops>
+template <typename T, ushort ROW_FRAGMENTS_, ushort COL_FRAGMENTS_, class Ops>
 struct Fragment {
   using FragmentOpsType = Ops;
   using ElementType = T;
@@ -61,14 +61,14 @@ struct Fragment {
       "(elements() relies on it)"
   );
 
-  METAL_CONST ushort TILE_ROWS = TILE_ROWS_;
-  METAL_CONST ushort TILE_COLS = TILE_COLS_;
+  METAL_CONST ushort ROW_FRAGMENTS = ROW_FRAGMENTS_;
+  METAL_CONST ushort COL_FRAGMENTS = COL_FRAGMENTS_;
 
   METAL_CONST ushort FRAGMENT_ROWS = ushort(Ops::FRAGMENT_ROWS);
   METAL_CONST ushort FRAGMENT_COLS = ushort(Ops::FRAGMENT_COLS);
 
-  METAL_CONST ushort NUM_FRAGS = TILE_ROWS * TILE_COLS;
-  METAL_CONST ushort ELEMENTS_PER_TILE = NUM_FRAGS * Ops::ELEMENTS_PER_THREAD;
+  METAL_CONST ushort NUM_FRAGS = ROW_FRAGMENTS * COL_FRAGMENTS;
+  METAL_CONST ushort ELEMENTS_PER_FRAGMENT = NUM_FRAGS * Ops::ELEMENTS_PER_THREAD;
 
   ThreadVectorType fragment_data[NUM_FRAGS];
 
@@ -87,7 +87,7 @@ struct Fragment {
   }
 
   METAL_FUNC constexpr thread ThreadVectorType& fragment_at(const ushort row_index, const ushort col_index) {
-    return fragment_data[row_index * TILE_COLS + col_index];
+    return fragment_data[row_index * COL_FRAGMENTS + col_index];
   }
 
   template <bool transpose>
@@ -109,10 +109,11 @@ struct Fragment {
   METAL_FUNC void for_each_element(const ushort simd_lane_id, Fn fn) thread {
     const short2 position = get_position(simd_lane_id);
     thread ElementType* data = elements();
-    for_each_fragment([&](auto tile_row, auto tile_col) {
-      const short row_base = position.y + short(tile_row.value) * FRAGMENT_ROWS;
-      const short col_base = position.x + short(tile_col.value) * FRAGMENT_COLS;
-      const ushort frag_base = (tile_row.value * TILE_COLS + tile_col.value) * Ops::ELEMENTS_PER_THREAD;
+    for_each_fragment([&](auto fragment_row, auto fragment_col) {
+      const short row_base = position.y + short(fragment_row.value) * FRAGMENT_ROWS;
+      const short col_base = position.x + short(fragment_col.value) * FRAGMENT_COLS;
+      const ushort frag_base =
+          (fragment_row.value * COL_FRAGMENTS + fragment_col.value) * Ops::ELEMENTS_PER_THREAD;
       METAL_PRAGMA_UNROLL
       for (ushort i = 0; i < Ops::THREAD_ELEMENT_ROWS; ++i) {
         METAL_PRAGMA_UNROLL
@@ -130,13 +131,13 @@ struct Fragment {
   METAL_FUNC void row_reduce(thread Acc* out, const Acc identity, Fn op) thread {
     thread ElementType* data = elements();
     METAL_PRAGMA_UNROLL
-    for (ushort tr = 0; tr < TILE_ROWS; ++tr) {
+    for (ushort tr = 0; tr < ROW_FRAGMENTS; ++tr) {
       METAL_PRAGMA_UNROLL
       for (ushort i = 0; i < Ops::THREAD_ELEMENT_ROWS; ++i) {
         Acc acc = identity;
         METAL_PRAGMA_UNROLL
-        for (ushort tc = 0; tc < TILE_COLS; ++tc) {
-          const ushort frag_base = (tr * TILE_COLS + tc) * Ops::ELEMENTS_PER_THREAD;
+        for (ushort tc = 0; tc < COL_FRAGMENTS; ++tc) {
+          const ushort frag_base = (tr * COL_FRAGMENTS + tc) * Ops::ELEMENTS_PER_THREAD;
           METAL_PRAGMA_UNROLL
           for (ushort j = 0; j < Ops::THREAD_ELEMENT_COLS; ++j) {
             acc = op(acc, Acc(data[frag_base + i * Ops::THREAD_ELEMENT_COLS + j]));
@@ -153,13 +154,13 @@ struct Fragment {
   METAL_FUNC void row_bin_op(const thread Acc* row_vals, Fn fn) thread {
     thread ElementType* data = elements();
     METAL_PRAGMA_UNROLL
-    for (ushort tr = 0; tr < TILE_ROWS; ++tr) {
+    for (ushort tr = 0; tr < ROW_FRAGMENTS; ++tr) {
       METAL_PRAGMA_UNROLL
       for (ushort i = 0; i < Ops::THREAD_ELEMENT_ROWS; ++i) {
         const Acc rv = row_vals[tr * Ops::THREAD_ELEMENT_ROWS + i];
         METAL_PRAGMA_UNROLL
-        for (ushort tc = 0; tc < TILE_COLS; ++tc) {
-          const ushort frag_base = (tr * TILE_COLS + tc) * Ops::ELEMENTS_PER_THREAD;
+        for (ushort tc = 0; tc < COL_FRAGMENTS; ++tc) {
+          const ushort frag_base = (tr * COL_FRAGMENTS + tc) * Ops::ELEMENTS_PER_THREAD;
           METAL_PRAGMA_UNROLL
           for (ushort j = 0; j < Ops::THREAD_ELEMENT_COLS; ++j) {
             const ushort e = frag_base + i * Ops::THREAD_ELEMENT_COLS + j;
@@ -170,55 +171,8 @@ struct Fragment {
     }
   }
 
-  template <
-      class Ptr,
-      class RowStride,
-      class ColStride = Int<1>,
-      class TileRowStride = Int<1>,
-      class TileColStride = Int<1>>
-  METAL_FUNC void load(
-      const ushort simd_lane_id,
-      Ptr source,
-      RowStride row_stride,
-      ColStride col_stride = {},
-      TileRowStride tile_row_stride = {},
-      TileColStride tile_col_stride = {}
-  ) thread {
-    transfer<LOAD, UNSAFE>(
-        simd_lane_id,
-        source,
-        row_stride,
-        col_stride,
-        Int<0>{},
-        Int<0>{},
-        tile_row_stride,
-        tile_col_stride
-    );
-  }
-
-  template <class Ptr, class TileRowStride = Int<1>, class TileColStride = Int<1>>
-  METAL_FUNC void load_safe(
-      const ushort simd_lane_id,
-      Ptr source,
-      const int leading_dimension,
-      const short2 tile_dimensions,
-      TileRowStride tile_row_stride = {},
-      TileColStride tile_col_stride = {}
-  ) thread {
-    transfer<LOAD, SAFE>(
-        simd_lane_id,
-        source,
-        leading_dimension,
-        Int<1>{},
-        tile_dimensions.y,
-        tile_dimensions.x,
-        tile_row_stride,
-        tile_col_stride
-    );
-  }
-
   template <class Ptr>
-  METAL_FUNC void load_from(const ushort simd_lane_id, TileSource<Ptr> src) thread {
+  METAL_FUNC void load_from(const ushort simd_lane_id, FragmentSource<Ptr> src) thread {
     if (src.ragged) {
       transfer<LOAD, SAFE>(
           simd_lane_id,
@@ -248,15 +202,15 @@ struct Fragment {
       class Ptr,
       class RowStride,
       class ColStride = Int<1>,
-      class TileRowStride = Int<1>,
-      class TileColStride = Int<1>>
+      class FragmentRowStride = Int<1>,
+      class FragmentColStride = Int<1>>
   METAL_FUNC void store(
       const ushort simd_lane_id,
       Ptr destination,
       RowStride row_stride,
       ColStride col_stride = {},
-      TileRowStride tile_row_stride = {},
-      TileColStride tile_col_stride = {}
+      FragmentRowStride fragment_row_stride = {},
+      FragmentColStride fragment_col_stride = {}
   ) thread {
     transfer<STORE, UNSAFE>(
         simd_lane_id,
@@ -265,19 +219,19 @@ struct Fragment {
         col_stride,
         Int<0>{},
         Int<0>{},
-        tile_row_stride,
-        tile_col_stride
+        fragment_row_stride,
+        fragment_col_stride
     );
   }
 
-  template <class Ptr, class TileRowStride = Int<1>, class TileColStride = Int<1>>
+  template <class Ptr, class FragmentRowStride = Int<1>, class FragmentColStride = Int<1>>
   METAL_FUNC void store_safe(
       const ushort simd_lane_id,
       Ptr destination,
       const int leading_dimension,
       const short2 tile_dimensions,
-      TileRowStride tile_row_stride = {},
-      TileColStride tile_col_stride = {}
+      FragmentRowStride fragment_row_stride = {},
+      FragmentColStride fragment_col_stride = {}
   ) thread {
     transfer<STORE, SAFE>(
         simd_lane_id,
@@ -286,8 +240,8 @@ struct Fragment {
         Int<1>{},
         tile_dimensions.y,
         tile_dimensions.x,
-        tile_row_stride,
-        tile_col_stride
+        fragment_row_stride,
+        fragment_col_stride
     );
   }
 
@@ -299,8 +253,8 @@ private:
 
   template <class Fn>
   METAL_FUNC void for_each_fragment(Fn fn) thread {
-    const_for_loop<0, TILE_ROWS, 1>([&](auto row_index) {
-      const_for_loop<0, TILE_COLS, 1>([&](auto col_index) { fn(row_index, col_index); });
+    const_for_loop<0, ROW_FRAGMENTS, 1>([&](auto row_index) {
+      const_for_loop<0, COL_FRAGMENTS, 1>([&](auto col_index) { fn(row_index, col_index); });
     });
   }
 
@@ -312,8 +266,8 @@ private:
       class ColStride,
       class RowLimit,
       class ColLimit,
-      class TileRowStride,
-      class TileColStride>
+      class FragmentRowStride,
+      class FragmentColStride>
   METAL_FUNC void transfer(
       const ushort simd_lane_id,
       Ptr ptr,
@@ -321,8 +275,8 @@ private:
       ColStride col_stride,
       RowLimit row_limit,
       ColLimit col_limit,
-      TileRowStride tile_row_stride,
-      TileColStride tile_col_stride
+      FragmentRowStride fragment_row_stride,
+      FragmentColStride fragment_col_stride
   ) thread {
     using U = PointerElementType<Ptr>;
     constexpr bool col_stride_is_one = metal::is_same_v<ColStride, Int<1>>;
@@ -332,10 +286,10 @@ private:
     const auto local_row_limit = row_limit - position.y;
     const auto local_col_limit = col_limit - position.x;
 
-    for_each_fragment([&](auto tile_row, auto tile_col) {
-      thread auto& frag = fragment_at(tile_row.value, tile_col.value);
-      const auto row_base = tile_row.value * FRAGMENT_ROWS * tile_row_stride;
-      const auto col_base = tile_col.value * FRAGMENT_COLS * tile_col_stride;
+    for_each_fragment([&](auto fragment_row, auto fragment_col) {
+      thread auto& frag = fragment_at(fragment_row.value, fragment_col.value);
+      const auto row_base = fragment_row.value * FRAGMENT_ROWS * fragment_row_stride;
+      const auto col_base = fragment_col.value * FRAGMENT_COLS * fragment_col_stride;
 
       METAL_PRAGMA_UNROLL
       for (ushort i = 0; i < Ops::THREAD_ELEMENT_ROWS; i++) {
@@ -368,14 +322,23 @@ private:
   }
 };
 
-template <bool transpose_a = false, bool transpose_b = false, class OutputTile, class LeftTile, class RightTile>
-METAL_FUNC void tile_matmul(thread OutputTile& output, thread LeftTile& left, thread RightTile& right) {
+template <
+    bool transpose_a = false,
+    bool transpose_b = false,
+    class OutputFragment,
+    class LeftFragment,
+    class RightFragment>
+METAL_FUNC void fragment_matmul(
+    thread OutputFragment& output,
+    thread LeftFragment& left,
+    thread RightFragment& right
+) {
   static_assert(
-      metal::is_same_v<typename OutputTile::FragmentOpsType, typename LeftTile::FragmentOpsType> &&
-          metal::is_same_v<typename OutputTile::FragmentOpsType, typename RightTile::FragmentOpsType>,
-      "tile_matmul requires output, left, and right tiles to use the same FragmentOps"
+      metal::is_same_v<typename OutputFragment::FragmentOpsType, typename LeftFragment::FragmentOpsType> &&
+          metal::is_same_v<typename OutputFragment::FragmentOpsType, typename RightFragment::FragmentOpsType>,
+      "fragment_matmul requires output, left, and right fragments to use the same FragmentOps"
   );
-  OutputTile::FragmentOpsType::template tile_matmul<transpose_a, transpose_b>(output, left, right);
+  OutputFragment::FragmentOpsType::template fragment_matmul<transpose_a, transpose_b>(output, left, right);
 }
 
 } // namespace matmul
