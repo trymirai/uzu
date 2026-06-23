@@ -34,7 +34,7 @@ struct SimdgroupFragmentOps {
     static_assert(LeftFragment::ROW_FRAGMENTS == rows, "fragment matmul: M dimensions do not match");
     static_assert(RightFragment::COL_FRAGMENTS == cols, "fragment matmul: N dimensions do not match");
     static_assert(RightFragment::ROW_FRAGMENTS == depth, "fragment matmul: K dimensions do not match");
-    using Sg = SimdgroupMultiplyAccumulate<typename OutputFragment::ElementType, FRAGMENT_ROWS, FRAGMENT_COLS>;
+    using Sg = SimdgroupMMA<typename OutputFragment::ElementType, FRAGMENT_ROWS, FRAGMENT_COLS>;
 
     METAL_PRAGMA_UNROLL
     for (ushort m = 0; m < rows; ++m) {
@@ -43,7 +43,7 @@ struct SimdgroupFragmentOps {
         const ushort col = (m % 2) ? (cols - 1 - n) : n;
         METAL_PRAGMA_UNROLL
         for (ushort k = 0; k < depth; ++k) {
-          Sg::multiply_accumulate(
+          Sg::mma(
               output.fragment_at(m, col),
               left.fragment_at(m, k),
               right.fragment_at(k, col),
@@ -59,7 +59,7 @@ template <typename U, int SIMDGROUP_STRIDE_X, int SIMDGROUP_STRIDE_Y, int STRIDE
 METAL_FUNC void fragment_load(thread FragT& frag, const threadgroup U* source) {
   constexpr ushort fragment_rows = SimdgroupFragmentOps::FRAGMENT_ROWS;
   constexpr ushort fragment_cols = SimdgroupFragmentOps::FRAGMENT_COLS;
-  using Sg = SimdgroupMultiplyAccumulate<typename FragT::ElementType, fragment_rows, fragment_cols>;
+  using Sg = SimdgroupMMA<typename FragT::ElementType, fragment_rows, fragment_cols>;
   METAL_PRAGMA_UNROLL
   for (ushort i = 0; i < FragT::ROW_FRAGMENTS; ++i) {
     METAL_PRAGMA_UNROLL
@@ -80,7 +80,7 @@ template <typename U, int SIMDGROUP_STRIDE_X, int SIMDGROUP_STRIDE_Y, typename F
 METAL_FUNC void fragment_store(thread FragT& frag, device U* destination, const int leading_dimension) {
   constexpr ushort fragment_rows = SimdgroupFragmentOps::FRAGMENT_ROWS;
   constexpr ushort fragment_cols = SimdgroupFragmentOps::FRAGMENT_COLS;
-  using Sg = SimdgroupMultiplyAccumulate<typename FragT::ElementType, fragment_rows, fragment_cols>;
+  using Sg = SimdgroupMMA<typename FragT::ElementType, fragment_rows, fragment_cols>;
   METAL_PRAGMA_UNROLL
   for (ushort i = 0; i < FragT::ROW_FRAGMENTS; ++i) {
     METAL_PRAGMA_UNROLL
@@ -106,7 +106,7 @@ METAL_FUNC void fragment_store_safe(
 ) {
   constexpr ushort fragment_rows = SimdgroupFragmentOps::FRAGMENT_ROWS;
   constexpr ushort fragment_cols = SimdgroupFragmentOps::FRAGMENT_COLS;
-  using Sg = SimdgroupMultiplyAccumulate<typename FragT::ElementType, fragment_rows, fragment_cols>;
+  using Sg = SimdgroupMMA<typename FragT::ElementType, fragment_rows, fragment_cols>;
   METAL_PRAGMA_UNROLL
   for (int i = 0; i < FragT::ROW_FRAGMENTS; ++i) {
     METAL_PRAGMA_UNROLL

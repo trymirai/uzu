@@ -26,8 +26,7 @@ template <
     typename Epilogue = TransformNone<DT, AccumulatorType>>
 struct ThreadgroupTile {
   METAL_CONST ushort SIMDGROUP_BLOCK_SIZE = 8;
-  using SimdgroupMultiplyAccumulateType =
-      SimdgroupMultiplyAccumulate<AccumulatorType, SIMDGROUP_BLOCK_SIZE, SIMDGROUP_BLOCK_SIZE>;
+  using SimdgroupMMAType = SimdgroupMMA<AccumulatorType, SIMDGROUP_BLOCK_SIZE, SIMDGROUP_BLOCK_SIZE>;
 
   METAL_CONST ushort TILE_ROW_STRIDE = SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW;
   METAL_CONST ushort TILE_COL_STRIDE = SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
@@ -58,8 +57,7 @@ struct ThreadgroupTile {
     ushort tile_row_base = SIMDGROUP_BLOCK_SIZE * (thread_context.simdgroup_index / SIMDGROUPS_PER_COLUMN);
     ushort tile_col_base = SIMDGROUP_BLOCK_SIZE * (thread_context.simdgroup_index % SIMDGROUPS_PER_COLUMN);
 
-    const ushort2 simdgroup_coordinates =
-        ushort2(SimdgroupMultiplyAccumulateType::get_lane_coordinates(thread_context.simd_lane_id));
+    const ushort2 simdgroup_coordinates = ushort2(SimdgroupMMAType::get_lane_coordinates(thread_context.simd_lane_id));
     simdgroup_row_offset = simdgroup_coordinates.y;
     simdgroup_col_offset = simdgroup_coordinates.x;
 
@@ -70,7 +68,7 @@ struct ThreadgroupTile {
     simdgroup_col_offset += tile_col_base;
   }
 
-  METAL_FUNC void multiply_accumulate(const threadgroup AT* a_shared, const threadgroup BT* b_shared) {
+  METAL_FUNC void matmul(const threadgroup AT* a_shared, const threadgroup BT* b_shared) {
     a_shared += a_shared_offset;
     b_shared += b_shared_offset;
 

@@ -11,17 +11,17 @@ METAL_CONST int SIMDGROUP_MMA_ROWS = 8;
 METAL_CONST int SIMDGROUP_MMA_COLS = 8;
 
 ///////////////////////////////////////////////////////////////////////////////
-// SimdgroupMultiplyAccumulate - stateless traits/ops for 8x8 simdgroup_matrix
+// SimdgroupMMA - stateless traits/ops for 8x8 simdgroup_matrix
 ///////////////////////////////////////////////////////////////////////////////
 
 template <typename T, int ROWS_, int COLS_>
-struct SimdgroupMultiplyAccumulate {
+struct SimdgroupMMA {
   static_assert(ROWS_ == SIMDGROUP_MMA_ROWS, "Only 8 x 8 fragment matrices are currently supported");
   static_assert(COLS_ == SIMDGROUP_MMA_COLS, "Only 8 x 8 fragment matrices are currently supported");
 };
 
 template <typename T>
-struct SimdgroupMultiplyAccumulate<T, SIMDGROUP_MMA_ROWS, SIMDGROUP_MMA_COLS> {
+struct SimdgroupMMA<T, SIMDGROUP_MMA_ROWS, SIMDGROUP_MMA_COLS> {
   METAL_CONST int ROWS = SIMDGROUP_MMA_ROWS;
   METAL_CONST int COLS = SIMDGROUP_MMA_COLS;
   METAL_CONST int THREAD_ELEMENT_COUNT = (ROWS * COLS) / METAL_SIMD_SIZE;
@@ -30,7 +30,7 @@ struct SimdgroupMultiplyAccumulate<T, SIMDGROUP_MMA_ROWS, SIMDGROUP_MMA_COLS> {
 
   static_assert(
       THREAD_ELEMENT_ROWS * THREAD_ELEMENT_COLS == THREAD_ELEMENT_COUNT,
-      "SimdgroupMultiplyAccumulate shape is not consistent with element count"
+      "SimdgroupMMA shape is not consistent with element count"
   );
 
   typedef metal::simdgroup_matrix<T, ROWS, COLS> SimdgroupMatrixType;
@@ -141,7 +141,7 @@ struct SimdgroupMultiplyAccumulate<T, SIMDGROUP_MMA_ROWS, SIMDGROUP_MMA_COLS> {
     }
   }
 
-  METAL_FUNC static constexpr void multiply_accumulate(
+  METAL_FUNC static constexpr void mma(
       thread ThreadDataType& D,
       thread ThreadDataType& A,
       thread ThreadDataType& B,
@@ -156,12 +156,12 @@ struct SimdgroupMultiplyAccumulate<T, SIMDGROUP_MMA_ROWS, SIMDGROUP_MMA_COLS> {
     reinterpret_cast<thread ThreadDataType&>(B_mat.thread_elements()) = B;
     reinterpret_cast<thread ThreadDataType&>(C_mat.thread_elements()) = C;
 
-    multiply_accumulate(D_mat, A_mat, B_mat, C_mat);
+    mma(D_mat, A_mat, B_mat, C_mat);
 
     D = reinterpret_cast<thread ThreadDataType&>(D_mat.thread_elements());
   }
 
-  METAL_FUNC static constexpr void multiply_accumulate(
+  METAL_FUNC static constexpr void mma(
       thread SimdgroupMatrixType& D,
       thread SimdgroupMatrixType& A,
       thread SimdgroupMatrixType& B,

@@ -70,7 +70,7 @@ PUBLIC KERNEL(AttentionGemm)(
     threadgroup T q_smem[QSMEM_SIZE],
     threadgroup T kv_smem[KVSMEM_SIZE],
     const ThreadContext thread_context,
-    const uint q_tile_idx GROUPS(suffix_length.div_ceil(BLOCK_QUERY_ROWS)),
+    const uint q_tile_idx GROUPS(suffix_length.div_ceil(4 * if USE_ACCELERATOR { 16 } else { 8 })),
     const uint head_idx GROUPS(num_heads),
     const uint batch_idx GROUPS(1),
     const uint lid THREADS(128)
