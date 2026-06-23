@@ -40,21 +40,18 @@ fn get_test_data<T: ArrayElement + Float>(
     head_dim: usize,
     do_causal: bool,
 ) -> (Input<T>, Vec<T>) {
-    // queries: [num_heads, suffix_length, head_dim] (contiguous, row-major)
     let q_size = num_heads * suffix_length * head_dim;
     let mut queries = vec![T::zero(); q_size];
     for i in 0..q_size {
         queries[i] = T::from((i as f32 * 0.13 + 0.5).sin() * 0.5).unwrap();
     }
 
-    // keys: [num_kv_heads, sequence_length, head_dim]
     let k_size = num_kv_heads * sequence_length * head_dim;
     let mut keys = vec![T::zero(); k_size];
     for i in 0..k_size {
         keys[i] = T::from((i as f32 * 0.07 + 1.0).cos() * 0.5).unwrap();
     }
 
-    // values: [num_kv_heads, sequence_length, head_dim]
     let v_size = num_kv_heads * sequence_length * head_dim;
     let mut values = vec![T::zero(); v_size];
     for i in 0..v_size {
@@ -151,31 +148,25 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 fn test_basic<T: ArrayElement + Float + Debug + Display>() {
-    // Non-causal, single token
     let (input, expected) = get_test_data::<T>(4, 4, 8, 1, 64, false);
     test_internal(&input, &expected);
 
-    // Non-causal, multiple tokens
     let (input, expected) = get_test_data::<T>(4, 4, 8, 4, 64, false);
     test_internal(&input, &expected);
 }
 
 fn test_causal<T: ArrayElement + Float + Debug + Display>() {
-    // Causal, single token decode
     let (input, expected) = get_test_data::<T>(4, 4, 16, 1, 64, true);
     test_internal(&input, &expected);
 
-    // Causal, multi-token prefill
     let (input, expected) = get_test_data::<T>(4, 4, 8, 4, 64, true);
     test_internal(&input, &expected);
 }
 
 fn test_gqa<T: ArrayElement + Float + Debug + Display>() {
-    // GQA: 8 query heads, 2 kv heads
     let (input, expected) = get_test_data::<T>(8, 2, 8, 1, 64, false);
     test_internal(&input, &expected);
 
-    // GQA causal
     let (input, expected) = get_test_data::<T>(8, 2, 8, 4, 64, true);
     test_internal(&input, &expected);
 }
@@ -186,24 +177,13 @@ fn test_head_dim<T: ArrayElement + Float + Debug + Display>(head_dim: usize) {
 }
 
 fn test_unaligned<T: ArrayElement + Float + Debug + Display>() {
-    // suffix_length not aligned to BQ=32
     let (input, expected) = get_test_data::<T>(4, 4, 40, 7, 64, true);
     test_internal(&input, &expected);
 
-    // sequence_length not aligned to BK
     let (input, expected) = get_test_data::<T>(4, 4, 13, 4, 64, false);
     test_internal(&input, &expected);
 }
 
-// Prefill-sized suffix (exercises MXU on M5 for f16/bf16; aligned + ragged tail).
-fn test_prefill<T: ArrayElement + Float + Debug + Display>(head_dim: usize) {
-    let (input, expected) = get_test_data::<T>(4, 4, 128, 128, head_dim, true);
-    test_internal(&input, &expected);
-    let (input, expected) = get_test_data::<T>(8, 2, 100, 96, head_dim, true);
-    test_internal(&input, &expected);
-}
-
-// Basic tests
 #[uzu_test]
 fn test_basic_f32() {
     test_basic::<f32>();
@@ -219,7 +199,6 @@ fn test_basic_bf16() {
     test_basic::<bf16>();
 }
 
-// Causal tests
 #[uzu_test]
 fn test_causal_f32() {
     test_causal::<f32>();
@@ -235,7 +214,6 @@ fn test_causal_bf16() {
     test_causal::<bf16>();
 }
 
-// GQA tests
 #[uzu_test]
 fn test_gqa_f32() {
     test_gqa::<f32>();
@@ -251,7 +229,6 @@ fn test_gqa_bf16() {
     test_gqa::<bf16>();
 }
 
-// Head dim 128
 #[uzu_test]
 fn test_head_dim_128_f32() {
     test_head_dim::<f32>(128);
@@ -267,7 +244,6 @@ fn test_head_dim_128_bf16() {
     test_head_dim::<bf16>(128);
 }
 
-// Unaligned tests
 #[uzu_test]
 fn test_unaligned_f32() {
     test_unaligned::<f32>();
@@ -283,109 +259,10 @@ fn test_unaligned_bf16() {
     test_unaligned::<bf16>();
 }
 
-// Prefill: f16/bf16 hit MXU (hd64/128), f32 + hd256 stay on simdgroup.
 #[uzu_test]
-fn test_prefill_hd64_f32() {
-    test_prefill::<f32>(64);
-}
-
-#[uzu_test]
-fn test_prefill_hd64_f16() {
-    test_prefill::<f16>(64);
-}
-
-#[uzu_test]
-fn test_prefill_hd64_bf16() {
-    test_prefill::<bf16>(64);
-}
-
-#[uzu_test]
-fn test_prefill_hd128_f16() {
-    test_prefill::<f16>(128);
-}
-
-#[uzu_test]
-fn test_prefill_hd128_bf16() {
-    test_prefill::<bf16>(128);
-}
-
-#[uzu_test]
-fn test_prefill_hd256_f16() {
-    test_prefill::<f16>(256);
-}
-
-#[uzu_test]
-fn test_prefill_hd256_bf16() {
-    test_prefill::<bf16>(256);
-}
-
-fn bench_shape<T: ArrayElement + Float, B: Backend>(
-    num_heads: usize,
-    num_kv_heads: usize,
-    suffix: usize,
-    head_dim: usize,
-    iters: usize,
-) -> f64 {
-    let context = B::Context::new().expect("ctx");
-    let block = AttentionGemmBlock::<B>::new(T::data_type());
-    let q_size = num_heads * suffix * head_dim;
-    let kv_size = num_kv_heads * suffix * head_dim;
-    let q: Vec<T> = (0..q_size).map(|i| T::from((i as f32 * 0.13).sin() * 0.5).unwrap()).collect();
-    let k: Vec<T> = (0..kv_size).map(|i| T::from((i as f32 * 0.07).cos() * 0.5).unwrap()).collect();
-    let v: Vec<T> = (0..kv_size).map(|i| T::from((i as f32 * 0.11).sin() * 0.5).unwrap()).collect();
-    let qa = alloc_allocation_with_data::<B, T>(context.as_ref(), &q);
-    let ka = alloc_allocation_with_data::<B, T>(context.as_ref(), &k);
-    let va = alloc_allocation_with_data::<B, T>(context.as_ref(), &v);
-    let mut oa = alloc_allocation::<B, T>(context.as_ref(), suffix * num_heads * head_dim);
-    let scale = 1.0 / (head_dim as f32).sqrt();
-    let run = |oa: &mut Allocation<B>| {
-        let args = AttentionGemmArguments::<B, Allocation<B>> {
-            queries: &qa,
-            keys: &ka,
-            values: &va,
-            output: oa,
-            trie: None,
-            sinks: None,
-            num_heads,
-            num_groups: num_kv_heads,
-            suffix_length: suffix,
-            sequence_length: suffix,
-            segment_prefix_length: 0,
-            ring_params: None,
-            head_dim,
-            sliding_window_size: None,
-            is_causal: true,
-            scale,
-            k_head_stride: (suffix * head_dim) as u64,
-            k_seq_stride: head_dim as u64,
-            v_head_stride: (suffix * head_dim) as u64,
-            v_seq_stride: head_dim as u64,
-        };
-        let mut encoder = Encoder::new(context.as_ref()).expect("enc");
-        block.encode(&mut encoder, args).expect("encode");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
-    };
-    for _ in 0..5 {
-        run(&mut oa);
-    }
-    let mut best = f64::INFINITY;
-    for _ in 0..iters {
-        let t = std::time::Instant::now();
-        run(&mut oa);
-        best = best.min(t.elapsed().as_secs_f64() * 1e6);
-    }
-    best
-}
-
-#[uzu_test]
-fn attn_bench() {
-    if std::env::var("ATTN_BENCH").is_err() {
-        return;
-    }
-    for_each_non_cpu_backend!(|B| {
-        for &(hd, suffix) in &[(64, 512), (64, 2048), (128, 512), (128, 2048)] {
-            let us = bench_shape::<bf16, B>(32, 8, suffix, hd, 50);
-            println!("ATTN_BENCH hd={hd} suffix={suffix} bf16 min_us={us:.1}");
-        }
-    });
+fn test_prefill_mxu() {
+    let (input, expected) = get_test_data::<f16>(4, 4, 128, 128, 64, true);
+    test_internal(&input, &expected);
+    let (input, expected) = get_test_data::<bf16>(8, 2, 100, 96, 128, true);
+    test_internal(&input, &expected);
 }

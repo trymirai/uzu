@@ -8,14 +8,10 @@ using namespace metal;
 namespace uzu {
 namespace matmul {
 
-// FragmentOps for the 8x8 simdgroup_matrix (pre-M5): lets Fragment<T,R,C,
-// SimdgroupFragmentOps> share Fragment's load/store/for_each_element with the
-// simdgroup backend. The 8x8 MMA + lane layout live in SimdgroupMultiplyAccumulate.
 struct SimdgroupFragmentOps {
   METAL_CONST ushort FRAGMENT_ROWS = 8;
   METAL_CONST ushort FRAGMENT_COLS = 8;
 
-  // FragmentOps conformance (Fragment::transfer / for_each_element rely on these).
   METAL_CONST ushort ELEMENTS_PER_THREAD = (FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE;
   METAL_CONST ushort THREAD_ELEMENT_ROWS = 1;
   METAL_CONST ushort THREAD_ELEMENT_COLS = 2;
@@ -24,9 +20,7 @@ struct SimdgroupFragmentOps {
   template <typename U>
   using ThreadVector = typename metal::vec<U, ELEMENTS_PER_THREAD>;
 
-  // output += left @ right, sub-tile by sub-tile. Serpentine column order
-  // matches the chain kernel so register reuse is identical. Transpose is
-  // handled at load time -> only the non-transposed form is supported.
+  // Serpentine order matches the chain kernel's register reuse.
   template <bool transpose_a, bool transpose_b, class OutputTile, class LeftTile, class RightTile>
   METAL_FUNC static void tile_matmul(thread OutputTile& output, thread LeftTile& left, thread RightTile& right) {
     static_assert(!transpose_a && !transpose_b, "SimdgroupFragmentOps::tile_matmul: transpose not supported");
@@ -56,6 +50,66 @@ struct SimdgroupFragmentOps {
     }
   }
 };
+
+template <typename U, int SIMDGROUP_STRIDE_X, int SIMDGROUP_STRIDE_Y, int STRIDE_X, int STRIDE_Y, typename FragT>
+METAL_FUNC void tile_load(thread FragT& frag, const threadgroup U* source) {
+  using Sg = SimdgroupMultiplyAccumulate<typename FragT::ElementType, 8, 8>;
+  METAL_PRAGMA_UNROLL
+  for (ushort i = 0; i < FragT::TILE_ROWS; ++i) {
+    METAL_PRAGMA_UNROLL
+    for (ushort j = 0; j < FragT::TILE_COLS; ++j) {
+      Sg::load(
+          frag.fragment_at(i, j),
+          &(source[(i * 8) * SIMDGROUP_STRIDE_X * STRIDE_X + (j * 8) * SIMDGROUP_STRIDE_Y * STRIDE_Y]),
+          STRIDE_X,
+          STRIDE_Y
+      );
+    }
+  }
+}
+
+template <typename U, int SIMDGROUP_STRIDE_X, int SIMDGROUP_STRIDE_Y, typename FragT>
+METAL_FUNC void tile_store(thread FragT& frag, device U* destination, const int leading_dimension) {
+  using Sg = SimdgroupMultiplyAccumulate<typename FragT::ElementType, 8, 8>;
+  METAL_PRAGMA_UNROLL
+  for (ushort i = 0; i < FragT::TILE_ROWS; ++i) {
+    METAL_PRAGMA_UNROLL
+    for (ushort j = 0; j < FragT::TILE_COLS; ++j) {
+      Sg::store(
+          frag.fragment_at(i, j),
+          &(destination[(i * 8) * SIMDGROUP_STRIDE_X * leading_dimension + (j * 8) * SIMDGROUP_STRIDE_Y]),
+          leading_dimension,
+          1
+      );
+    }
+  }
+}
+
+template <typename U, int SIMDGROUP_STRIDE_X, int SIMDGROUP_STRIDE_Y, typename FragT>
+METAL_FUNC void tile_store_safe(
+    thread FragT& frag,
+    device U* destination,
+    const int leading_dimension,
+    const short2 destination_tile_dimensions
+) {
+  using Sg = SimdgroupMultiplyAccumulate<typename FragT::ElementType, 8, 8>;
+  METAL_PRAGMA_UNROLL
+  for (int i = 0; i < FragT::TILE_ROWS; ++i) {
+    METAL_PRAGMA_UNROLL
+    for (int j = 0; j < FragT::TILE_COLS; ++j) {
+      Sg::store_safe(
+          frag.fragment_at(i, j),
+          destination,
+          leading_dimension,
+          1,
+          destination_tile_dimensions.y,
+          destination_tile_dimensions.x,
+          (i * 8) * SIMDGROUP_STRIDE_X,
+          (j * 8) * SIMDGROUP_STRIDE_Y
+      );
+    }
+  }
+}
 
 } // namespace matmul
 } // namespace uzu

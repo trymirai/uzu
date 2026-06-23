@@ -1,16 +1,13 @@
 #pragma once
 
 #include "../../common/thread_context.h"
-#include "simdgroup_fragment.h"
+#include "fragment.h"
+#include "simdgroup_fragment_ops.h"
 
 using namespace metal;
 
 namespace uzu {
 namespace matmul {
-
-///////////////////////////////////////////////////////////////////////////////
-// ThreadgroupTile - manages the GEMM computation for a threadgroup
-///////////////////////////////////////////////////////////////////////////////
 
 template <
     typename AT,
@@ -121,9 +118,6 @@ struct ThreadgroupTile {
     );
   }
 
-  // Visit each accumulator element with its tile-local (row_offset, col_offset)
-  // and intra-element index k. (row_offset, col_offset + k) is relative to this
-  // simdgroup's origin; add simdgroup_row/col_offset for global coordinates.
   template <class Fn>
   METAL_FUNC void for_each_output(Fn fn) {
     thread AccumulatorType* data = c_fragment.elements();

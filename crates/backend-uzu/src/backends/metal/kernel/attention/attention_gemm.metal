@@ -1,9 +1,10 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
+#include "../matmul/common/fragment.h"
 #include "../matmul/common/loader.h"
 #include "../matmul/common/mxu_fragment_ops.h"
-#include "../matmul/common/simdgroup_fragment.h"
+#include "../matmul/common/simdgroup_fragment_ops.h"
 #include "../generated/ring.h"
 #include "../generated/trie.h"
 #include "../generated/attention.h"
@@ -22,21 +23,16 @@ struct TransformScale {
   METAL_FUNC T apply(T x) const { return scale * x; }
 };
 
-// MXU fragments are 16x16, simdgroup 8x8. 4 simdgroups (128 threads) per Q-block.
 #define FRAG_ROWS (USE_ACCELERATOR ? 16 : 8)
 #define BLOCK_QUERY_ROWS (4 * FRAG_ROWS)
 #define SIMDGROUPS_PER_ROW 4
 #define SIMDGROUPS_PER_COLUMN 1
 
-// MXU holds Q register-resident (head-dim always <= 8 frags there); the simdgroup
-// path stages Q in q_smem like main (resident Q + chunked PV add register pressure
-// that regresses small GPUs). QSMEM_SIZE is sized only on the simdgroup variant.
+// Resident Q regresses simdgroup GPUs; keep it MXU-only.
 #define Q_IS_RESIDENT (USE_ACCELERATOR)
 #define QSMEM_SIZE (Q_IS_RESIDENT ? 1 : (BLOCK_QUERY_ROWS * (int(BD) + 16 / int(sizeof(T)))))
 
-// MXU reads K/V straight from device (L2 absorbs the re-reads). Simdgroup stages
-// the K/V block in threadgroup memory (one block; V overwrites K) -- direct reads
-// regress small-cache GPUs (M1). kv_smem is sized only on the simdgroup variant.
+// Direct K/V reads regress small-cache simdgroup GPUs; keep them MXU-only.
 #define KVSMEM_SIZE (USE_ACCELERATOR ? 1 : (int(BK) * (int(BD) + 16 / int(sizeof(T)))))
 
 template <typename T, uint BK, uint BD, bool USE_ACCELERATOR>
@@ -44,9 +40,7 @@ VARIANTS(T, float, half, bfloat)
 VARIANTS(BK, 16, 32)
 VARIANTS(BD, 64, 128, 256)
 VARIANTS(USE_ACCELERATOR, false, true)
-// MXU dispatch gate (mirrors encodable_block::attention::gemm): BK==32 (even
-// KEY_GRID_COLS for MPP pairing), bf16/f16 (f32 MXU is reduced-precision), head_dim
-// <= 128 (BD=256 busts tg-mem). Pins the never-dispatched MXU variants out.
+// Match the Rust dispatch gate and skip never-dispatched MXU variants.
 CONSTRAINT(!USE_ACCELERATOR || BK == 32)
 CONSTRAINT(!USE_ACCELERATOR || T != "float")
 CONSTRAINT(!USE_ACCELERATOR || BD != 256)
@@ -77,7 +71,6 @@ PUBLIC KERNEL(AttentionGemm)(
     const uint batch_idx GROUPS(1),
     const uint lid THREADS(128)
 ) {
-  // Move each base pointer to this (batch, head, q-tile). Strides are in elements.
   q += batch_idx * params.q_strides[0] + head_idx * params.q_strides[1] +
        q_tile_idx * int64_t(BLOCK_QUERY_ROWS) * params.q_strides[2];
 
@@ -97,13 +90,10 @@ PUBLIC KERNEL(AttentionGemm)(
   const int value_source_stride = int(params.v_strides[2]);
 
   using AccumType = float;
-  // One frontend, two GEMM backends: MXU 16x16 tensor units (M5) vs simdgroup 8x8.
-  // Everything below is layout-generic through Fragment/tile_matmul/row_reduce.
   using Ops = metal::conditional_t<USE_ACCELERATOR, MxuFragmentOps, SimdgroupFragmentOps>;
   constexpr short SIMDGROUP_BLOCK_SIZE = Ops::FRAGMENT_ROWS;
 
-  // MXU matmuls run in the input dtype with f32 accumulate (bf16 tensor throughput
-  // is ~2x f32); simdgroup multiply_accumulate needs matched types, so it stays f32.
+  // MXU uses input dtype with f32 accumulate; simdgroup MMA needs matched types.
   using InputType = metal::conditional_t<USE_ACCELERATOR, T, AccumType>;
 
   constexpr int SIMDGROUPS_PER_THREADGROUP = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
@@ -120,14 +110,10 @@ PUBLIC KERNEL(AttentionGemm)(
   static_assert(QUERY_GRID_ROWS == 1, "Expected QUERY_GRID_ROWS == 1");
   static_assert(!USE_ACCELERATOR || KEY_GRID_COLS % 2 == 0, "MXU QK needs even N (KEY_GRID_COLS)");
 
-  // query_frags[dd] is one head-dim slice; resident (MXU) holds all, staged (simd)
-  // reuses slot 0. See Q_IS_RESIDENT.
   constexpr int Q_FRAG_COUNT = Q_IS_RESIDENT ? HEAD_DIM_GRID_COLS : 1;
   Fragment<InputType, QUERY_GRID_ROWS, 1, Ops> query_frags[Q_FRAG_COUNT];
   Fragment<InputType, 1, KEY_GRID_COLS, Ops> key_fragment;
   Fragment<AccumType, QUERY_GRID_ROWS, KEY_GRID_COLS, Ops> score_fragment;
-  // MXU streams V in 2-frag head-dim chunks; simdgroup uses one full chunk (single
-  // full-V PV, matching main). VCHUNK=2 keeps the MXU N tile even.
   constexpr int VCHUNK = USE_ACCELERATOR ? 2 : HEAD_DIM_GRID_COLS;
   static_assert(HEAD_DIM_GRID_COLS % VCHUNK == 0, "head-dim must split into VCHUNK frags");
   static_assert(!USE_ACCELERATOR || VCHUNK % 2 == 0, "MXU PV needs even N (VCHUNK)");
@@ -140,18 +126,15 @@ PUBLIC KERNEL(AttentionGemm)(
     output_chunks[c].clear();
   }
 
-  // This simdgroup's query-row origin; Fragment::load/store add the per-lane offset.
   const short simdgroup_row_base = SIMDGROUP_BLOCK_SIZE * QUERY_GRID_ROWS * short(thread_context.simdgroup_index);
   constexpr short head_dim_tile_stride = SIMDGROUP_BLOCK_SIZE;
 
-  // Load Q once and fold in the softmax scale.
   const bool ragged_q = (!align_q && int(q_tile_idx) == params.nq_aligned);
   constexpr short query_leading_dimension = BD + 16 / sizeof(T);
   threadgroup T* query_shared = q_smem;
   const short query_shared_offset = simdgroup_row_base * query_leading_dimension;
 
   if constexpr (Q_IS_RESIDENT) {
-    // Q tile rows = queries (query_source_stride), cols = head-dim (contiguous).
     auto q_src = tile_source(q + int64_t(simdgroup_row_base) * query_source_stride, query_source_stride);
     if (ragged_q) {
       q_src = q_src.bounded(params.q_rem - simdgroup_row_base, SIMDGROUP_BLOCK_SIZE);
@@ -177,8 +160,7 @@ PUBLIC KERNEL(AttentionGemm)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
-  // Online-softmax state, one entry per query row this lane owns. neg_inf is
-  // finite (not -INFINITY) so masked scores survive exp2 as 0 (see normalize).
+  // Finite neg_inf keeps fully masked rows from producing NaN.
   const AccumType neg_inf = static_cast<AccumType>(-1e9f) * M_LOG2E_F;
   constexpr int ROWS_PER_LANE = QUERY_GRID_ROWS * Ops::THREAD_ELEMENT_ROWS;
   const AccumType init_max = has_sinks ? AccumType(M_LOG2E_F * static_cast<AccumType>(sinks[head_idx])) : -INFINITY;
@@ -201,7 +183,6 @@ PUBLIC KERNEL(AttentionGemm)(
   const int prefix_length = params.q_off;
   const int suffix_position = is_kv_cache_ring ? int(ring_params.ring_length) : prefix_length;
 
-  // Simdgroup path stages K/V blocks in kv_smem (MXU reads device direct).
   constexpr short kv_leading_dimension = BD + 16 / sizeof(T);
   threadgroup T* kv_shared = kv_smem;
 
@@ -210,9 +191,6 @@ PUBLIC KERNEL(AttentionGemm)(
     const device T* k_block = k + int64_t(kb) * int(BK) * key_source_stride;
     score_fragment.clear();
 
-    // S = Q @ K^T, sliced per head-dim frag. MXU reads K from device (natural
-    // [keys, head-dim], coalesced) and transposes in the MMA (transpose_b).
-    // Simdgroup stages the block into kv_smem and reads K^T from shared.
     auto k_dev = tile_source(k_block, key_source_stride);
     if (tail_k) {
       k_dev = k_dev.bounded(params.k_rem, SIMDGROUP_BLOCK_SIZE);
@@ -226,13 +204,11 @@ PUBLIC KERNEL(AttentionGemm)(
           thread_context
       );
     }
-    // K^T from shared: rows = head-dim (contiguous), cols = keys (leading dim).
     auto k_shared = tile_source(kv_shared, 1, kv_leading_dimension);
     auto q_shared_src = tile_source(query_shared + query_shared_offset, query_leading_dimension);
 
     METAL_PRAGMA_UNROLL
     for (short dd = 0; dd < HEAD_DIM_GRID_COLS; dd++) {
-      // Resolve this Q head-dim slice (resident in registers, or staged in shared).
       if constexpr (!Q_IS_RESIDENT) {
         query_frags[0].load_from(thread_context.simd_lane_id, q_shared_src.advanced(dd * head_dim_tile_stride));
       }
@@ -250,10 +226,6 @@ PUBLIC KERNEL(AttentionGemm)(
       }
     }
 
-    // Masking (col = key within block, row = query within tile). Fast path for
-    // plain causal: a key is kept iff key <= prefix_length + q_rel, so only the
-    // diagonal block and the ragged-K tail touch scores; interior blocks skip it.
-    // trie/ring/sliding use the general should_use_key path.
     {
       const bool apply_tail = (!align_k && kb == params.nk_aligned);
       const int k_rem = params.k_rem;
@@ -305,10 +277,8 @@ PUBLIC KERNEL(AttentionGemm)(
       }
     }
 
-    // Online softmax update for this block (one state entry per query row this
-    // lane owns; ROWS_PER_LANE == 1 on simdgroup, == 2 on MXU).
     AccumType block_max[ROWS_PER_LANE];
-    score_fragment.template row_reduce<MaxOp>(block_max, -INFINITY);
+    score_fragment.row_reduce(block_max, -INFINITY, [](AccumType a, AccumType b) { return metal::max(a, b); });
 
     AccumType new_max[ROWS_PER_LANE];
     AccumType factor[ROWS_PER_LANE];
@@ -320,25 +290,20 @@ PUBLIC KERNEL(AttentionGemm)(
       sum_score[r] *= factor[r];
     }
 
-    // S <- exp2(S - new_max[row])
     score_fragment.row_bin_op(new_max, [](AccumType v, AccumType m) { return fast::exp2(v - m); });
 
     AccumType block_sum[ROWS_PER_LANE];
-    score_fragment.template row_reduce<SumOp>(block_sum, AccumType(0));
+    score_fragment.row_reduce(block_sum, AccumType(0), [](AccumType a, AccumType b) { return a + b; });
     METAL_PRAGMA_UNROLL
     for (int r = 0; r < ROWS_PER_LANE; ++r) {
       sum_score[r] += block_sum[r];
     }
 
-    // Rescale output accumulator by the per-row factor.
     METAL_PRAGMA_UNROLL
     for (int c = 0; c < N_OUT_CHUNKS; ++c) {
       output_chunks[c].row_bin_op(factor, [](AccumType v, AccumType f) { return v * f; });
     }
 
-    // output += score @ V, streamed one head-dim chunk at a time. MXU reads V from
-    // device (PV is score(f32) @ V(bf16) -> f32, mixed like MLX's NAX). Simdgroup
-    // stages V into kv_smem (overwriting K) and reads it back from shared.
     const device T* v_block = v + int64_t(kb) * int(BK) * value_source_stride;
     auto v_dev = tile_source(v_block, value_source_stride);
     if (tail_k) {
@@ -366,8 +331,6 @@ PUBLIC KERNEL(AttentionGemm)(
     }
   }
 
-  // Normalize by 1/sum_score. sum_score is never exactly 0 (masked scores use a
-  // finite neg_inf -> exp2(0)=1; a fully-masked row yields mean(V), not NaN).
   AccumType inv_sum[ROWS_PER_LANE];
   METAL_PRAGMA_UNROLL
   for (int r = 0; r < ROWS_PER_LANE; ++r) {
@@ -378,8 +341,6 @@ PUBLIC KERNEL(AttentionGemm)(
     output_chunks[c].row_bin_op(inv_sum, [](AccumType v, AccumType s) { return v * s; });
   }
 
-  // Store each output chunk straight to device (head-dim never ragged, so only the
-  // query rows are bounds-checked). No barrier: each simdgroup owns its own rows.
   o += int64_t(simdgroup_row_base) * params.o_strides[2];
 
   if (ragged_q && params.q_rem <= int(simdgroup_row_base)) {

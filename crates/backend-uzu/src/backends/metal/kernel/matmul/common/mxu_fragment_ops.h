@@ -36,14 +36,7 @@ struct MxuFragmentOps {
   template <typename U>
   using ThreadVector = typename metal::vec<U, ELEMENTS_PER_THREAD>;
 
-  // NOTE: no single-sub-tile mma here. MPP requires M, N, or K == 32 for a
-  // cooperative-input matmul2d, so a 16x16x16 op is invalid; MXU kernels must go
-  // through tile_matmul (where N = head-dim >= 32 on the PV) instead.
-
-  // Runs a 16x32 MPP matmul accumulating into (output_0 | output_1). The caller
-  // supplies a `marshal_inputs` callable that copies its fragments into the
-  // cooperative left/right tensors; the descriptor and output marshalling are
-  // shared between all call shapes.
+  // MPP has no valid 16x16x16 op; tile_matmul pairs fragments into 16x32.
   template <typename CType, typename AType, typename BType, bool transpose_a, bool transpose_b, typename MarshalInputs>
   METAL_FUNC static void mma_impl(
       thread ThreadVector<CType>& output_0,
@@ -86,7 +79,6 @@ struct MxuFragmentOps {
     }
   }
 
-  // N-paired: output is two columns, left is one fragment, right is two.
   template <typename CType, typename AType, typename BType, bool transpose_a = false, bool transpose_b = false>
   METAL_FUNC static void mma(
       thread ThreadVector<CType>& output_col_0,
@@ -111,7 +103,6 @@ struct MxuFragmentOps {
     );
   }
 
-  // M-paired: output is two rows, left is two fragments, right is one.
   template <typename CType, typename AType, typename BType, bool transpose_a = false, bool transpose_b = false>
   METAL_FUNC static void mma(
       thread ThreadVector<CType>& output_row_0,
@@ -150,9 +141,7 @@ struct MxuFragmentOps {
     constexpr ushort tile_k = transpose_b ? RightTile::TILE_COLS : RightTile::TILE_ROWS;
     static_assert(left_tile_k == tile_k, "tile matmul: K dimensions do not match");
 
-    // MPP pairs cooperative inputs, so a tile is only emitted when N is even
-    // (N-paired) or N==1 with even M (M-paired). Any other shape would silently
-    // produce no MMAs -- reject it at compile time instead.
+    // Other shapes silently emit no MMAs.
     static_assert(
         (tile_n % 2 == 0) || (tile_n == 1 && tile_m % 2 == 0),
         "MXU tile_matmul requires even N, or N==1 with even M (MPP pairing)"

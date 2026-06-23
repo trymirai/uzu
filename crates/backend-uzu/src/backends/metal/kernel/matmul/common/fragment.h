@@ -11,25 +11,6 @@ using namespace metal;
 namespace uzu {
 namespace matmul {
 
-// Reduction functors for Fragment::row_reduce.
-struct MaxOp {
-  template <typename A>
-  METAL_FUNC A operator()(const A a, const A b) const thread {
-    return metal::max(a, b);
-  }
-};
-struct SumOp {
-  template <typename A>
-  METAL_FUNC A operator()(const A a, const A b) const thread {
-    return a + b;
-  }
-};
-
-// A logical 2D tile in memory for Fragment::load_from. Ptr (device/threadgroup)
-// carries the address space and element type. col_stride==1 is contiguous; a
-// sequence stride in col_stride encodes a transposed read (Kᵀ on simdgroup). When
-// ragged, load_from bounds-checks against (row_bound, col_bound). See
-// docs/tileloader-design.md.
 template <typename Ptr>
 struct TileSource {
   Ptr base;
@@ -39,14 +20,12 @@ struct TileSource {
   short col_bound;
   bool ragged;
 
-  // Bump base by `elements` (head-dim slices are contiguous in either orientation).
   METAL_FUNC TileSource advanced(int elements) const thread {
     TileSource out = *this;
     out.base += elements;
     return out;
   }
 
-  // Mark a ragged load with explicit valid extents (rows, cols of the fragment).
   METAL_FUNC TileSource bounded(short rows, short cols) const thread {
     TileSource out = *this;
     out.row_bound = rows;
@@ -56,21 +35,10 @@ struct TileSource {
   }
 };
 
-// Build a full (unchecked) TileSource. row_stride between logical rows; col_stride
-// between logical cols (1 = contiguous).
 template <typename Ptr>
 METAL_FUNC TileSource<Ptr> tile_source(Ptr base, int row_stride, int col_stride = 1) {
   return TileSource<Ptr>{base, row_stride, col_stride, 0, 0, false};
 }
-
-///////////////////////////////////////////////////////////////////////////////
-// Fragment - a thread-private tile of values arranged as TILE_ROWS x TILE_COLS
-// sub-tiles. Ops provides the sub-tile shape constants and the MMA primitive;
-// Fragment itself owns lane positioning and device<->register transfer.
-// Ops (the FragmentOps concept) provides the sub-tile shape (FRAGMENT_ROWS/COLS,
-// ELEMENTS_PER_THREAD, THREAD_ELEMENT_*), a packed ThreadVector<U>, and
-// tile_matmul. See MxuFragmentOps / SimdgroupFragmentOps.
-///////////////////////////////////////////////////////////////////////////////
 
 template <typename T, ushort TILE_ROWS_, ushort TILE_COLS_, class Ops>
 struct Fragment {
@@ -104,10 +72,6 @@ struct Fragment {
 
   ThreadVectorType fragment_data[NUM_FRAGS];
 
-  // Stateless: no thread context stored. simd_lane_id is a free hardware
-  // intrinsic ([[thread_index_in_simdgroup]]) passed to the positioning methods
-  // (load/store/for_each_element) on demand. Lane origin (row, col) within an
-  // 8x8 sub-tile depends only on Ops::THREAD_ELEMENT_COLS.
   METAL_FUNC static constexpr short2 get_position(const ushort simd_lane_id) {
     const short quad = simd_lane_id / 4;
     const short row = (quad & 4) + (simd_lane_id / 2) % 4;
@@ -141,11 +105,6 @@ struct Fragment {
 
   METAL_FUNC thread ElementType* elements() { return reinterpret_cast<thread ElementType*>(fragment_data); }
 
-  // Apply fn(row, col, value) to every element this lane owns, with (row, col)
-  // the element's logical position in the TILE_ROWS*FRAGMENT_ROWS x
-  // TILE_COLS*FRAGMENT_COLS tile. Use for coordinate-dependent epilogues
-  // (bias, decay, ancestor masks); coordinate-free epilogues use elements().
-  // Bounds are the caller's concern: skip out-of-range (row, col) inside fn.
   template <class Fn>
   METAL_FUNC void for_each_element(const ushort simd_lane_id, Fn fn) thread {
     const short2 position = get_position(simd_lane_id);
@@ -166,16 +125,9 @@ struct Fragment {
     });
   }
 
-  // In-register row reduction (softmax max/sum etc). Reduces every column of
-  // each row this lane owns and broadcasts the result across the row's column-
-  // lanes, so afterwards every lane holds its rows' fully-reduced value.
-  //
-  // out has TILE_ROWS * THREAD_ELEMENT_ROWS entries (the rows this lane owns).
-  // A row's columns live in lanes differing in bits {0,3} for both the 8x8
-  // (simdgroup) and 16x16 (MXU) layouts, hence the fixed shuffle_xor {1, 8}.
-  template <class Op, typename Acc>
-  METAL_FUNC void row_reduce(thread Acc* out, const Acc identity) thread {
-    Op op;
+  // Row lanes differ in bits {0,3} for both simdgroup and MXU layouts.
+  template <typename Acc, class Fn>
+  METAL_FUNC void row_reduce(thread Acc* out, const Acc identity, Fn op) thread {
     thread ElementType* data = elements();
     METAL_PRAGMA_UNROLL
     for (ushort tr = 0; tr < TILE_ROWS; ++tr) {
@@ -197,10 +149,6 @@ struct Fragment {
     }
   }
 
-  // Apply fn(element, row_vals[row]) to every element, broadcasting a per-row
-  // value (the inverse of row_reduce). row_vals is indexed like row_reduce's
-  // out: TILE_ROWS * THREAD_ELEMENT_ROWS entries. Used for softmax exp(S - max)
-  // and the per-row output rescale — layout-generic across both backends.
   template <typename Acc, class Fn>
   METAL_FUNC void row_bin_op(const thread Acc* row_vals, Fn fn) thread {
     thread ElementType* data = elements();
@@ -222,11 +170,6 @@ struct Fragment {
     }
   }
 
-  // Unsafe load: copy a (TILE_ROWS * FRAGMENT_ROWS) x (TILE_COLS *
-  // FRAGMENT_COLS) block from device memory into fragment registers. ColStride
-  // defaults to the compile-time constant 1 so that the row-major fast path
-  // triggers when the caller omits it. Tile strides control the gap between
-  // sub-tiles.
   template <
       class Ptr,
       class RowStride,
@@ -253,7 +196,6 @@ struct Fragment {
     );
   }
 
-  // Safe load: col_stride is implicitly 1; out-of-bounds elements become T(0).
   template <class Ptr, class TileRowStride = Int<1>, class TileColStride = Int<1>>
   METAL_FUNC void load_safe(
       const ushort simd_lane_id,
@@ -275,9 +217,6 @@ struct Fragment {
     );
   }
 
-  // Load from a TileSource: one entry point that dispatches safe/unsafe from
-  // `ragged` and applies the row/col strides (transpose is encoded as col_stride,
-  // address space rides on the pointer). The unifying load primitive.
   template <class Ptr>
   METAL_FUNC void load_from(const ushort simd_lane_id, TileSource<Ptr> src) thread {
     if (src.ragged) {
@@ -305,7 +244,6 @@ struct Fragment {
     }
   }
 
-  // Unsafe store: mirror of load. Same defaults apply.
   template <
       class Ptr,
       class RowStride,
@@ -332,7 +270,6 @@ struct Fragment {
     );
   }
 
-  // Safe store: col_stride is implicitly 1; out-of-bounds elements are skipped.
   template <class Ptr, class TileRowStride = Int<1>, class TileColStride = Int<1>>
   METAL_FUNC void store_safe(
       const ushort simd_lane_id,
@@ -367,15 +304,6 @@ private:
     });
   }
 
-  // Unified memory transfer between device memory and fragment registers.
-  //
-  // IS_LOAD  - true to read into fragment_data, false to write back.
-  // IS_SAFE  - true to bounds-check each element against (row_limit,
-  // col_limit);
-  //            on load, out-of-bounds elements become T(0); on store, skipped.
-  //
-  // When ColStride is a compile-time 1, the column-stride multiplication is
-  // elided to help the compiler collapse strength-reduced addressing.
   template <
       bool IS_LOAD,
       bool IS_SAFE,
@@ -440,9 +368,6 @@ private:
   }
 };
 
-// Backend-agnostic MMA: output += a @ b. Infers the backend (MXU vs simdgroup)
-// from the tile's FragmentOpsType, so a kernel templated on the tile type calls
-// the same tile_matmul on every chip.
 template <bool transpose_a = false, bool transpose_b = false, class OutputTile, class LeftTile, class RightTile>
 METAL_FUNC void tile_matmul(thread OutputTile& output, thread LeftTile& left, thread RightTile& right) {
   static_assert(

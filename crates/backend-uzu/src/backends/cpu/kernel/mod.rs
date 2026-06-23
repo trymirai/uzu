@@ -1,10 +1,4 @@
-use crate::backends::{
-    common::{
-        AsBufferRangeRef, Buffer, Encoder, Kernels,
-        kernel::attention_gemm::{AttentionGemmArguments, AttentionGemmBackendBlock, GeneratedAttentionGemmBlock},
-    },
-    cpu::Cpu,
-};
+use crate::backends::{common::Kernels, cpu::Cpu};
 
 mod activation;
 mod attention;
@@ -36,26 +30,9 @@ include!(concat!(env!("OUT_DIR"), "/cpu/dsl.rs"));
 
 pub struct CpuKernels;
 
-impl AttentionGemmBackendBlock for GeneratedAttentionGemmBlock<CpuKernels> {
-    type Backend = Cpu;
-
-    fn new(data_type: crate::data_type::DataType) -> Self {
-        GeneratedAttentionGemmBlock::new(data_type)
-    }
-
-    fn encode<KVBuf: AsBufferRangeRef<Buffer: Buffer<Backend = Cpu>>>(
-        &self,
-        encoder: &mut Encoder<Cpu>,
-        args: AttentionGemmArguments<Cpu, KVBuf>,
-    ) -> Result<(), crate::backends::cpu::error::CpuError> {
-        self.encode_with_accelerator(false, encoder, args)
-    }
-}
-
 impl Kernels for CpuKernels {
     type Backend = Cpu;
 
     autogen_kernels!();
-    type AttentionGemmBlock = GeneratedAttentionGemmBlock<CpuKernels>;
     type MatmulKernel = matmul::MatmulCpuKernel;
 }

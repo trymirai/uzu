@@ -8,10 +8,6 @@ using namespace metal;
 namespace uzu {
 namespace matmul {
 
-///////////////////////////////////////////////////////////////////////////////
-// Threadgroup Loader - loads tiles from device memory to threadgroup memory
-///////////////////////////////////////////////////////////////////////////////
-
 template <
     typename T,
     ushort THREADGROUP_TILE_ROWS,
@@ -117,12 +113,6 @@ struct ThreadgroupLoader {
   METAL_FUNC void next() { source += tile_stride; }
 };
 
-// Cooperatively stage a [ROWS, COLS] block from device into shared memory (smem,
-// leading dimension LD), bracketed by barriers so the buffer can be reused safely
-// (the barrier-before lets a prior block's readers finish before this overwrites).
-// The generic "staged load": any kernel/operand stages a tile, then reads register
-// fragments from smem via Fragment::load_from. `valid_rows < ROWS` does a bounds-
-// safe load (ragged tail), zero-filling the rest.
 template <ushort ROWS, ushort COLS, ushort LD, ushort THREADGROUP_SIZE, typename T>
 METAL_FUNC void stage_tile(
     const device T* source,
