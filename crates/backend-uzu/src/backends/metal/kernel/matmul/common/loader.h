@@ -114,25 +114,6 @@ struct ThreadgroupLoader {
   METAL_FUNC void next() { source += tile_stride; }
 };
 
-template <ushort ROWS, ushort COLS, ushort LD, ushort THREADGROUP_SIZE, typename T>
-METAL_FUNC void stage_tile(
-    const device T* source,
-    const int source_leading_dimension,
-    threadgroup T* smem,
-    const short valid_rows,
-    const thread ThreadContext& thread_context
-) {
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-  ThreadgroupLoader<T, ROWS, COLS, LD, 0, THREADGROUP_SIZE>
-      loader(source, source_leading_dimension, smem, thread_context);
-  if (valid_rows < short(ROWS)) {
-    loader.load_safe(short2(COLS, valid_rows));
-  } else {
-    loader.load_unsafe();
-  }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-}
-
 struct DeviceBlockStorage {};
 struct ThreadgroupBlockStorage {};
 
@@ -184,13 +165,15 @@ struct BlockSource<T, ROWS, COLS, SHARED_LEADING_DIMENSION, THREADGROUP_SIZE, Th
         thread_context(thread_context_), shared_source(fragment_source(shared_, SHARED_LEADING_DIMENSION)) {}
 
   METAL_FUNC void prepare() const thread {
-    stage_tile<ROWS, COLS, SHARED_LEADING_DIMENSION, THREADGROUP_SIZE>(
-        source,
-        source_leading_dimension,
-        shared_source.base,
-        valid_rows,
-        thread_context
-    );
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    ThreadgroupLoader<T, ROWS, COLS, SHARED_LEADING_DIMENSION, 0, THREADGROUP_SIZE>
+        loader(source, source_leading_dimension, shared_source.base, thread_context);
+    if (valid_rows < short(ROWS)) {
+      loader.load_safe(short2(COLS, valid_rows));
+    } else {
+      loader.load_unsafe();
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
   template <class FragmentT>

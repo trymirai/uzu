@@ -340,7 +340,7 @@ struct MxuMmaCore {
                   }
 
                   if (apply_bias) {
-                    accumulator_tile.map(thread_context.simd_lane_id, [&](short, short col, auto value) {
+                    accumulator_tile.map_coords(thread_context.simd_lane_id, [&](short, short col, auto value) {
                       if constexpr (aligned_n.value) {
                         return value + AccumulatorType(bias_simdgroup[col]);
                       } else {

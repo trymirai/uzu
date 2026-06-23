@@ -127,7 +127,7 @@ struct Fragment {
   }
 
   template <class Fn>
-  METAL_FUNC void map(const ushort simd_lane_id, Fn fn) thread {
+  METAL_FUNC void map_coords(const ushort simd_lane_id, Fn fn) thread {
     const short2 position = get_position(simd_lane_id);
     thread ElementType* data = elements();
     for_each_fragment([&](auto fragment_row, auto fragment_col) {

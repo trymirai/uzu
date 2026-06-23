@@ -143,7 +143,9 @@ PUBLIC KERNEL(AttentionGemm)(
     METAL_PRAGMA_UNROLL
     for (short dd = 0; dd < HEAD_DIM_FRAGMENTS; dd++) {
       query_frags[dd].load_from(thread_context.simd_lane_id, q_src.advanced(dd * head_dim_fragment_stride));
-      query_frags[dd].map(thread_context.simd_lane_id, [&](short, short, InputType v) { return v * query_scale; });
+      query_frags[dd].map_coords(thread_context.simd_lane_id, [&](short, short, InputType v) {
+        return v * query_scale;
+      });
     }
   } else {
     using QueryLoader = ThreadgroupLoader<
@@ -226,7 +228,7 @@ PUBLIC KERNEL(AttentionGemm)(
     if (!is_trie && !is_kv_cache_ring && !is_sliding_window) {
       const bool diag = is_causal && ((int(kb) + 1) * int(BK) - 1 > prefix_length + q_base);
       if (tail_k || diag) {
-        score_fragment.map(thread_context.simd_lane_id, [&](short row, short col, AccumType v) {
+        score_fragment.map_coords(thread_context.simd_lane_id, [&](short row, short col, AccumType v) {
           if (tail_k && int(col) >= k_rem) {
             return masked_score;
           }
@@ -237,7 +239,7 @@ PUBLIC KERNEL(AttentionGemm)(
         });
       }
     } else {
-      score_fragment.map(thread_context.simd_lane_id, [&](short row, short col, AccumType v) {
+      score_fragment.map_coords(thread_context.simd_lane_id, [&](short row, short col, AccumType v) {
         if (tail_k && int(col) >= k_rem) {
           return masked_score;
         }
