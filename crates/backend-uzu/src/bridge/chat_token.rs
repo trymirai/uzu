@@ -2,6 +2,7 @@ use std::{
     any::Any,
     path::PathBuf,
     pin::Pin,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
 };
 
@@ -23,28 +24,30 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     backends::common::Backend,
-    bridge::container::Container,
     encodable_block::sampling::{SamplingMethod as UzuSamplingMethod, SamplingProcessingOrder},
     engine::{
         Engine,
         language_model::{
             LanguageModel,
             state::LanguageModelState,
-            stream::{LanguageModelStreamError, LanguageModelStreamOptions},
+            stream::{LanguageModelStreamOptions, sync::LanguageModelStreamer},
         },
     },
 };
 
 pub struct UzuChatTokenLlmInstance<B: Backend> {
-    model: Container<LanguageModel<B>>,
+    model: Arc<Mutex<LanguageModel<B>>>,
 }
+
+unsafe impl<B: Backend> Send for UzuChatTokenLlmInstance<B> {}
+unsafe impl<B: Backend> Sync for UzuChatTokenLlmInstance<B> {}
 
 impl<B: Backend> UzuChatTokenLlmInstance<B> {
     pub fn new(model_path: String) -> Result<Self, Error> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model = engine.load_language_model(&PathBuf::from(model_path)).map_err(|err| err.to_string())?;
         Ok(Self {
-            model: Container::new(model),
+            model: Arc::new(Mutex::new(model)),
         })
     }
 }
@@ -57,13 +60,12 @@ impl<B: Backend> LlmInstance for UzuChatTokenLlmInstance<B> {
     fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn LlmInstanceState>, Error>> + Send + '_>> {
         let result = self
             .model
-            .value
             .lock()
             .map_err(|err| Error::from(err.to_string()))
             .and_then(|model| {
                 model.create_empty_state(model.recommended_context_length()).map_err(|err| Error::from(err.to_string()))
             })
-            .map(|state| Box::new(Container::new(state)) as Box<dyn LlmInstanceState>);
+            .map(|state| UzuChatTokenLlmInstanceState::new(state).clone_boxed());
         Box::pin(async move { result })
     }
 
@@ -74,8 +76,8 @@ impl<B: Backend> LlmInstance for UzuChatTokenLlmInstance<B> {
         config: Self::StreamConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, Error>> + Send + 'a>> {
-        let state = match state.as_any_mut().downcast_mut::<Container<LanguageModelState<B>>>() {
-            Some(state) => state.clone(),
+        let state = match state.as_any_mut().downcast_mut::<UzuChatTokenLlmInstanceState<B>>() {
+            Some(state) => state.value.clone(),
             None => return error_stream("unexpected state type for uzu chat token instance".to_string()),
         };
         match UzuChatTokenStream::new(self.model.clone(), state, input, config) {
@@ -87,46 +89,39 @@ impl<B: Backend> LlmInstance for UzuChatTokenLlmInstance<B> {
     }
 }
 
-struct UzuChatTokenStream<B: Backend> {
-    iterator: Box<dyn Iterator<Item = Result<u64, LanguageModelStreamError<B>>> + 'static>,
-    state: Container<LanguageModelState<B>>,
-    stop_token_ids: Box<[u64]>,
-    max_length: Option<usize>,
+struct UzuChatTokenStream<'a, B: Backend> {
+    streamer: LanguageModelStreamer<'a>,
+    model: Arc<Mutex<LanguageModel<B>>>,
+    state: Arc<Mutex<LanguageModelState<B>>>,
     finished: bool,
 }
 
-impl<B: Backend> UzuChatTokenStream<B> {
+impl<'a, B: Backend> UzuChatTokenStream<'a, B> {
     pub fn new(
-        model: Container<LanguageModel<B>>,
-        state: Container<LanguageModelState<B>>,
+        model: Arc<Mutex<LanguageModel<B>>>,
+        state: Arc<Mutex<LanguageModelState<B>>>,
         input: &Vec<u64>,
         config: ChatReplyConfig,
     ) -> Result<Self, Error> {
-        let model_guard = model.value.lock().map_err(|err| Error::from(err.to_string()))?;
+        let model_guard = model.lock().map_err(|err| Error::from(err.to_string()))?;
+        let state_guard = state.lock().map_err(|err| Error::from(err.to_string()))?;
 
         let options = Self::get_stream_options(&model_guard, config);
-        let max_length = model_guard.recommended_context_length();
-        let stop_token_ids = model_guard.generation_config().stop_token_ids.clone();
-
-        let mut state_guard = state.value.lock().map_err(|err| Error::from(err.to_string()))?;
-        let iterator: Box<dyn Iterator<Item = Result<u64, LanguageModelStreamError<B>>> + '_> =
-            Box::new(model_guard.stream(input, &mut state_guard, options).map_err(|err| Error::from(err.to_string()))?);
-        let iterator: Box<dyn Iterator<Item = Result<u64, LanguageModelStreamError<B>>> + 'static> =
-            unsafe { std::mem::transmute(iterator) };
+        let streamer =
+            LanguageModelStreamer::new(input, &state_guard, options).map_err(|err| Error::from(err.to_string()))?;
 
         drop(model_guard);
         drop(state_guard);
 
         Ok(Self {
-            iterator,
+            streamer,
+            model,
             state,
-            stop_token_ids,
-            max_length,
             finished: false,
         })
     }
 
-    fn get_stream_options<'a>(
+    fn get_stream_options(
         model: &LanguageModel<B>,
         config: ChatReplyConfig,
     ) -> LanguageModelStreamOptions<'a> {
@@ -173,61 +168,81 @@ impl<B: Backend> UzuChatTokenStream<B> {
     }
 }
 
-unsafe impl<B: Backend> Send for UzuChatTokenStream<B> {}
+unsafe impl<'a, B: Backend> Send for UzuChatTokenStream<'a, B> {}
 
-impl<B: Backend> Stream for UzuChatTokenStream<B> {
+impl<'a, B: Backend> Stream for UzuChatTokenStream<'a, B> {
     type Item = Result<ChatTokenStreamOutput, Error>;
 
     fn poll_next(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         _cx: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
         if self.finished {
             return Poll::Ready(None);
         }
+        let self_mut = self.get_mut();
 
-        if let Some(max_length) = self.max_length {
-            let result = match self.state.value.lock() {
-                Ok(state) => Ok(state.tokens().len() >= max_length),
-                Err(err) => Err(Error::from(err.to_string())),
-            };
-            match result {
-                Ok(true) => {
-                    self.finished = true;
-                    return Poll::Ready(None);
-                },
-                Ok(false) => {},
+        let step_result = {
+            let model = match self_mut.model.lock() {
+                Ok(model) => model,
                 Err(err) => {
-                    self.finished = true;
-                    return Poll::Ready(Some(Err(err)));
+                    self_mut.finished = true;
+                    return Poll::Ready(Some(Err(Error::from(err.to_string()))));
                 },
-            }
-        }
+            };
 
-        let item = match self.iterator.next() {
-            Some(Ok(token)) => {
-                if self.stop_token_ids.contains(&token) {
-                    self.finished = true;
+            if let Some(max_length) = model.recommended_context_length() {
+                let result = match self_mut.state.lock() {
+                    Ok(state) => Ok(state.tokens().len() >= max_length),
+                    Err(err) => Err(Error::from(err.to_string())),
+                };
+                match result {
+                    Ok(true) => {
+                        self_mut.finished = true;
+                        return Poll::Ready(None);
+                    },
+                    Ok(false) => {},
+                    Err(err) => {
+                        self_mut.finished = true;
+                        return Poll::Ready(Some(Err(err)));
+                    },
                 }
-                Some(Ok(token))
-            },
-            Some(Err(err)) => {
-                self.finished = true;
-                Some(Err(Error::from(err.to_string())))
-            },
-            None => {
-                self.finished = true;
-                None
-            },
+            }
+
+            let mut state = match self_mut.state.lock() {
+                Ok(state) => state,
+                Err(err) => {
+                    self_mut.finished = true;
+                    return Poll::Ready(Some(Err(Error::from(err.to_string()))));
+                },
+            };
+            self_mut.streamer.step(&model, &mut state).map_err(|err| Error::from(err.to_string()))
         };
 
-        Poll::Ready(item)
+        Poll::Ready(step_result.transpose())
     }
 }
 
-impl<B: Backend> LlmInstanceState for Container<LanguageModelState<B>> {
+struct UzuChatTokenLlmInstanceState<B: Backend> {
+    value: Arc<Mutex<LanguageModelState<B>>>,
+}
+
+impl<B: Backend> UzuChatTokenLlmInstanceState<B> {
+    fn new(value: LanguageModelState<B>) -> Self {
+        Self {
+            value: Arc::new(Mutex::new(value)),
+        }
+    }
+}
+
+unsafe impl<B: Backend> Send for UzuChatTokenLlmInstanceState<B> {}
+unsafe impl<B: Backend> Sync for UzuChatTokenLlmInstanceState<B> {}
+
+impl<B: Backend> LlmInstanceState for UzuChatTokenLlmInstanceState<B> {
     fn clone_boxed(&self) -> Box<dyn LlmInstanceState> {
-        Box::new(self.clone())
+        Box::new(Self {
+            value: self.value.clone(),
+        })
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

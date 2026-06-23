@@ -1,4 +1,5 @@
 mod ring;
+pub mod sync;
 
 use thiserror::Error;
 
