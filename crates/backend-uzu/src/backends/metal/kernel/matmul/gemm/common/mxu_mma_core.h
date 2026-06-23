@@ -138,7 +138,7 @@ struct MxuMmaCore {
             uzu::matmul::fragment_source(b_shared_simdgroup + inner_k, int(SHARED_STRIDE_B))
         );
 
-        uzu::matmul::MxuFragmentOps::template fragment_matmul<false, true>(accumulator, left_tile, right_tile);
+        uzu::matmul::MxuFragmentOps::template fragment_mma<false, true>(accumulator, left_tile, right_tile);
       }
 
       a_simdgroup += QUANT_BK;
@@ -325,10 +325,7 @@ struct MxuMmaCore {
 
                   if (apply_scale) {
                     const AccumulatorType scale = AccumulatorType(params->ab_scale);
-                    METAL_PRAGMA_UNROLL
-                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_FRAGMENT; i++) {
-                      accumulator_tile.elements()[i] *= scale;
-                    }
+                    accumulator_tile.map([&](auto value) { return value * scale; });
                   }
 
                   if (apply_accumulate) {
@@ -338,25 +335,21 @@ struct MxuMmaCore {
                       output_src = output_src.bounded(simdgroup_limit_m, simdgroup_limit_n);
                     }
                     existing_output.load_from(thread_context.simd_lane_id, output_src);
-                    METAL_PRAGMA_UNROLL
-                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_FRAGMENT; i++) {
-                      accumulator_tile.elements()[i] += AccumulatorType(existing_output.elements()[i]);
-                    }
+                    thread DT* existing_data = existing_output.elements();
+                    accumulator_tile.map([&](auto value) { return value + AccumulatorType(*(existing_data++)); });
                   }
 
                   if (apply_bias) {
-                    accumulator_tile.for_each_element(
-                        thread_context.simd_lane_id,
-                        [&](short, short col, thread auto& value) {
-                          if constexpr (aligned_n.value) {
-                            value += AccumulatorType(bias_simdgroup[col]);
-                          } else {
-                            if (col < simdgroup_limit_n) {
-                              value += AccumulatorType(bias_simdgroup[col]);
-                            }
-                          }
+                    accumulator_tile.map(thread_context.simd_lane_id, [&](short, short col, auto value) {
+                      if constexpr (aligned_n.value) {
+                        return value + AccumulatorType(bias_simdgroup[col]);
+                      } else {
+                        if (col < simdgroup_limit_n) {
+                          return value + AccumulatorType(bias_simdgroup[col]);
                         }
-                    );
+                        return value;
+                      }
+                    });
                   }
 
                   if constexpr (aligned_m.value && aligned_n.value) {

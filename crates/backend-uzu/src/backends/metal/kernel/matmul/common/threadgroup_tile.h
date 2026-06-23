@@ -78,7 +78,7 @@ struct ThreadgroupTile {
 
       fragment_load<BT, 1, SIMDGROUPS_PER_COLUMN, B_STRIDE_INNER, B_STRIDE_COL>(b_fragment, b_shared);
 
-      fragment_matmul(c_fragment, a_fragment, b_fragment);
+      fragment_mma(c_fragment, a_fragment, b_fragment);
 
       a_shared += TILE_STRIDE_A;
       b_shared += TILE_STRIDE_B;
@@ -86,10 +86,7 @@ struct ThreadgroupTile {
   }
 
   METAL_FUNC void store_result(device DT* D, const int leading_dimension_d) {
-    METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < decltype(c_fragment)::ELEMENTS_PER_FRAGMENT; i++) {
-      c_fragment.elements()[i] = Epilogue::apply(c_fragment.elements()[i]);
-    }
+    c_fragment.map([](AccumulatorType value) { return Epilogue::apply(value); });
 
     D += simdgroup_row_offset * leading_dimension_d + simdgroup_col_offset;
 
@@ -97,10 +94,7 @@ struct ThreadgroupTile {
   }
 
   METAL_FUNC void store_result_safe(device DT* D, const int leading_dimension_d, short2 destination_tile_dimensions) {
-    METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < decltype(c_fragment)::ELEMENTS_PER_FRAGMENT; i++) {
-      c_fragment.elements()[i] = Epilogue::apply(c_fragment.elements()[i]);
-    }
+    c_fragment.map([](AccumulatorType value) { return Epilogue::apply(value); });
 
     D += simdgroup_row_offset * leading_dimension_d + simdgroup_col_offset;
     destination_tile_dimensions -= short2(simdgroup_col_offset, simdgroup_row_offset);

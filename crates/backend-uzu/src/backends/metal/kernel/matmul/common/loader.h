@@ -2,6 +2,7 @@
 
 #include "../../common/defines.h"
 #include "../../common/thread_context.h"
+#include "fragment.h"
 
 using namespace metal;
 
@@ -131,6 +132,72 @@ METAL_FUNC void stage_tile(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 }
+
+struct DeviceBlockStorage {};
+struct ThreadgroupBlockStorage {};
+
+template <typename T, ushort ROWS, ushort COLS, ushort SHARED_LEADING_DIMENSION, ushort THREADGROUP_SIZE, class Storage>
+struct BlockSource;
+
+template <typename T, ushort ROWS, ushort COLS, ushort SHARED_LEADING_DIMENSION, ushort THREADGROUP_SIZE>
+struct BlockSource<T, ROWS, COLS, SHARED_LEADING_DIMENSION, THREADGROUP_SIZE, DeviceBlockStorage> {
+  FragmentSource<const device T*> source;
+  ushort simd_lane_id;
+
+  METAL_FUNC BlockSource(
+      const device T* source_,
+      const int source_leading_dimension_,
+      threadgroup T*,
+      const short valid_rows_,
+      const thread ThreadContext& thread_context_
+  )
+      : source(fragment_source(source_, source_leading_dimension_)), simd_lane_id(thread_context_.simd_lane_id) {
+    if (valid_rows_ < short(ROWS)) {
+      source = source.bounded(valid_rows_, COLS);
+    }
+  }
+
+  METAL_FUNC void prepare() const thread {}
+
+  template <class FragmentT>
+  METAL_FUNC void load(thread FragmentT& frag, const int offset) const thread {
+    frag.load_from(simd_lane_id, source.advanced(offset));
+  }
+};
+
+template <typename T, ushort ROWS, ushort COLS, ushort SHARED_LEADING_DIMENSION, ushort THREADGROUP_SIZE>
+struct BlockSource<T, ROWS, COLS, SHARED_LEADING_DIMENSION, THREADGROUP_SIZE, ThreadgroupBlockStorage> {
+  const device T* source;
+  int source_leading_dimension;
+  short valid_rows;
+  ThreadContext thread_context;
+  FragmentSource<threadgroup T*> shared_source;
+
+  METAL_FUNC BlockSource(
+      const device T* source_,
+      const int source_leading_dimension_,
+      threadgroup T* shared_,
+      const short valid_rows_,
+      const thread ThreadContext& thread_context_
+  )
+      : source(source_), source_leading_dimension(source_leading_dimension_), valid_rows(valid_rows_),
+        thread_context(thread_context_), shared_source(fragment_source(shared_, SHARED_LEADING_DIMENSION)) {}
+
+  METAL_FUNC void prepare() const thread {
+    stage_tile<ROWS, COLS, SHARED_LEADING_DIMENSION, THREADGROUP_SIZE>(
+        source,
+        source_leading_dimension,
+        shared_source.base,
+        valid_rows,
+        thread_context
+    );
+  }
+
+  template <class FragmentT>
+  METAL_FUNC void load(thread FragmentT& frag, const int offset) const thread {
+    frag.load_from(thread_context.simd_lane_id, shared_source.advanced(offset));
+  }
+};
 
 } // namespace matmul
 } // namespace uzu

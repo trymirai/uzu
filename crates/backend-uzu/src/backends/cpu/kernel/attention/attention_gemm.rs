@@ -11,8 +11,8 @@ use crate::{
 #[variants(T, f32, f16, bf16)]
 #[variants(BK, 16, 32)]
 #[variants(BD, 64, 128, 256)]
-#[variants(USE_ACCELERATOR, false)]
-pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32, const USE_ACCELERATOR: bool>(
+#[variants(USE_MXU, false)]
+pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32, const USE_MXU: bool>(
     q: *const T,
     k: *const T,
     v: *const T,

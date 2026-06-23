@@ -57,16 +57,16 @@ impl<B: Backend> AttentionGemmBlock<B> {
         args: AttentionGemmArguments<B, KVBuf>,
     ) -> Result<(), B::Error> {
         let head_dim = args.head_dim;
-        let use_accelerator = encoder.context().supports_mxu()
+        let use_mxu = encoder.context().supports_mxu()
             && self.data_type != DataType::F32
             && head_dim <= 128
             && args.suffix_length >= 64;
-        let bk = if use_accelerator || head_dim < 128 {
+        let bk = if use_mxu || head_dim < 128 {
             32
         } else {
             16
         };
-        let bq = if use_accelerator {
+        let bq = if use_mxu {
             64
         } else {
             BQ
@@ -81,7 +81,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
         let key = KernelKey {
             bk,
             head_dim,
-            use_accelerator,
+            use_mxu,
             align_q,
             align_k,
             is_kv_cache_ring,
@@ -100,7 +100,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
                     self.data_type,
                     bk as u32,
                     head_dim as u32,
-                    use_accelerator,
+                    use_mxu,
                     align_q,
                     align_k,
                     is_kv_cache_ring,
@@ -161,7 +161,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
 struct KernelKey {
     bk: usize,
     head_dim: usize,
-    use_accelerator: bool,
+    use_mxu: bool,
     align_q: bool,
     align_k: bool,
     is_kv_cache_ring: bool,

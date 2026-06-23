@@ -1,6 +1,7 @@
 #pragma once
 
 #include "defines.h"
+#include "loader.h"
 #include "simdgroup_multiply_accumulate.h"
 
 using namespace metal;
@@ -11,6 +12,8 @@ namespace matmul {
 struct SimdgroupFragmentOps {
   METAL_CONST ushort FRAGMENT_ROWS = SIMDGROUP_MMA_ROWS;
   METAL_CONST ushort FRAGMENT_COLS = SIMDGROUP_MMA_COLS;
+  METAL_CONST bool READ_TRANSPOSE_SWAPS_SOURCE_STRIDES = true;
+  using BlockStorage = ThreadgroupBlockStorage;
 
   METAL_CONST ushort ELEMENTS_PER_THREAD = (FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE;
   METAL_CONST ushort THREAD_ELEMENT_ROWS = 1;
@@ -22,12 +25,12 @@ struct SimdgroupFragmentOps {
 
   // Serpentine order matches the chain kernel's register reuse.
   template <bool transpose_a, bool transpose_b, class OutputFragment, class LeftFragment, class RightFragment>
-  METAL_FUNC static void fragment_matmul(
+  METAL_FUNC static void fragment_mma(
       thread OutputFragment& output,
       thread LeftFragment& left,
       thread RightFragment& right
   ) {
-    static_assert(!transpose_a && !transpose_b, "SimdgroupFragmentOps::fragment_matmul: transpose not supported");
+    static_assert(!transpose_a && !transpose_b, "SimdgroupFragmentOps::fragment_mma: transpose not supported");
     constexpr ushort rows = OutputFragment::ROW_FRAGMENTS;
     constexpr ushort cols = OutputFragment::COL_FRAGMENTS;
     constexpr ushort depth = LeftFragment::COL_FRAGMENTS;

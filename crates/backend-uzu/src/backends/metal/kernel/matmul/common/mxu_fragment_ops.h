@@ -9,6 +9,7 @@
 using namespace uzu;
 
 #include "defines.h"
+#include "loader.h"
 
 #include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
 
@@ -23,6 +24,8 @@ METAL_CONST ushort MXU_MMA_COLS = 16;
 struct MxuFragmentOps {
   METAL_CONST ushort FRAGMENT_ROWS = MXU_MMA_ROWS;
   METAL_CONST ushort FRAGMENT_COLS = MXU_MMA_COLS;
+  METAL_CONST bool READ_TRANSPOSE_SWAPS_SOURCE_STRIDES = false;
+  using BlockStorage = DeviceBlockStorage;
 
   METAL_CONST ushort ELEMENTS_PER_THREAD = (FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE;
 
@@ -39,7 +42,7 @@ struct MxuFragmentOps {
   template <typename U>
   using ThreadVector = typename metal::vec<U, ELEMENTS_PER_THREAD>;
 
-  // MPP has no valid 16x16x16 op; fragment_matmul pairs fragments into 16x32.
+  // MPP has no valid 16x16x16 op; fragment_mma pairs fragments into 16x32.
   template <typename CType, typename AType, typename BType, bool transpose_a, bool transpose_b, typename MarshalInputs>
   METAL_FUNC static void mma_impl(
       thread ThreadVector<CType>& output_0,
@@ -131,7 +134,7 @@ struct MxuFragmentOps {
   }
 
   template <bool transpose_a, bool transpose_b, class OutputFragment, class LeftFragment, class RightFragment>
-  METAL_FUNC static void fragment_matmul(
+  METAL_FUNC static void fragment_mma(
       thread OutputFragment& output,
       thread LeftFragment& left,
       thread RightFragment& right
@@ -148,10 +151,9 @@ struct MxuFragmentOps {
     constexpr ushort depth = transpose_b ? RightFragment::COL_FRAGMENTS : RightFragment::ROW_FRAGMENTS;
     static_assert(left_depth == depth, "fragment matmul: K dimensions do not match");
 
-    // Other shapes silently emit no MMAs.
     static_assert(
         (cols % 2 == 0) || (cols == 1 && rows % 2 == 0),
-        "MXU fragment_matmul requires even N, or N==1 with even M (MPP pairing)"
+        "MXU fragment_mma requires even N, or N==1 with even M (MPP pairing)"
     );
 
     constexpr auto transpose_left = metal::bool_constant<transpose_a>{};

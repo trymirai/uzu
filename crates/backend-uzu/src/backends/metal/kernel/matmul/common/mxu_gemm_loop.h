@@ -76,7 +76,7 @@ METAL_FUNC auto gemm_loop(
       }
       right_tile.load_from(thread_context.simd_lane_id, right_src);
 
-      MxuFragmentOps::template fragment_matmul<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
+      MxuFragmentOps::template fragment_mma<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
 
       (void)mxu_iteration_fence;
     }
@@ -112,7 +112,7 @@ METAL_FUNC auto gemm_loop(
           fragment_source(right_ptr + right_offset, leading_dimension_b).bounded(right_limits.y, right_limits.x)
       );
 
-      MxuFragmentOps::template fragment_matmul<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
+      MxuFragmentOps::template fragment_mma<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
     }
   }
 

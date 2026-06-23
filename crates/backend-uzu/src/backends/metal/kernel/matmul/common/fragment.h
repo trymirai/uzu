@@ -40,7 +40,16 @@ METAL_FUNC FragmentSource<Ptr> fragment_source(Ptr base, int row_stride, int col
   return FragmentSource<Ptr>{base, row_stride, col_stride, 0, 0, false};
 }
 
-template <typename T, ushort ROW_FRAGMENTS_, ushort COL_FRAGMENTS_, class Ops>
+struct ReadDirect {};
+struct ReadTranspose {};
+
+template <
+    typename T,
+    ushort ROW_FRAGMENTS_,
+    ushort COL_FRAGMENTS_,
+    class Ops,
+    class ReadPolicy = ReadDirect,
+    bool MMA_TRANSPOSE_ = false>
 struct Fragment {
   using FragmentOpsType = Ops;
   using ElementType = T;
@@ -71,6 +80,7 @@ struct Fragment {
   METAL_CONST ushort ELEMENTS_PER_FRAGMENT = NUM_FRAGS * Ops::ELEMENTS_PER_THREAD;
   METAL_CONST ushort ROW_REDUCE_LANE_XOR_0 = 1;
   METAL_CONST ushort ROW_REDUCE_LANE_XOR_1 = 8;
+  METAL_CONST bool MMA_TRANSPOSE = MMA_TRANSPOSE_;
 
   ThreadVectorType fragment_data[NUM_FRAGS];
 
@@ -108,7 +118,16 @@ struct Fragment {
   METAL_FUNC thread ElementType* elements() { return reinterpret_cast<thread ElementType*>(fragment_data); }
 
   template <class Fn>
-  METAL_FUNC void for_each_element(const ushort simd_lane_id, Fn fn) thread {
+  METAL_FUNC void map(Fn fn) thread {
+    thread ElementType* data = elements();
+    METAL_PRAGMA_UNROLL
+    for (ushort i = 0; i < ELEMENTS_PER_FRAGMENT; i++) {
+      data[i] = ElementType(fn(data[i]));
+    }
+  }
+
+  template <class Fn>
+  METAL_FUNC void map(const ushort simd_lane_id, Fn fn) thread {
     const short2 position = get_position(simd_lane_id);
     thread ElementType* data = elements();
     for_each_fragment([&](auto fragment_row, auto fragment_col) {
@@ -121,7 +140,8 @@ struct Fragment {
         for (ushort j = 0; j < Ops::THREAD_ELEMENT_COLS; ++j) {
           const short row = row_base + short(i) * Ops::THREAD_ELEMENT_ROW_STRIDE;
           const short col = col_base + short(j);
-          fn(row, col, data[frag_base + i * Ops::THREAD_ELEMENT_COLS + j]);
+          thread ElementType& value = data[frag_base + i * Ops::THREAD_ELEMENT_COLS + j];
+          value = ElementType(fn(row, col, value));
         }
       }
     });
@@ -152,7 +172,7 @@ struct Fragment {
   }
 
   template <typename Acc, class Fn>
-  METAL_FUNC void row_bin_op(const thread Acc* row_vals, Fn fn) thread {
+  METAL_FUNC void map_rows(const thread Acc* row_vals, Fn fn) thread {
     thread ElementType* data = elements();
     METAL_PRAGMA_UNROLL
     for (ushort tr = 0; tr < ROW_FRAGMENTS; ++tr) {
@@ -174,6 +194,15 @@ struct Fragment {
 
   template <class Ptr>
   METAL_FUNC void load_from(const ushort simd_lane_id, FragmentSource<Ptr> src) thread {
+    if constexpr (metal::is_same_v<ReadPolicy, ReadTranspose> && Ops::READ_TRANSPOSE_SWAPS_SOURCE_STRIDES) {
+      const int row_stride = src.row_stride;
+      src.row_stride = src.col_stride;
+      src.col_stride = row_stride;
+      const short row_bound = src.row_bound;
+      src.row_bound = src.col_bound;
+      src.col_bound = row_bound;
+    }
+
     if (src.ragged) {
       transfer<LOAD, SAFE>(
           simd_lane_id,
@@ -323,19 +352,33 @@ private:
   }
 };
 
-template <
-    bool transpose_a = false,
-    bool transpose_b = false,
-    class OutputFragment,
-    class LeftFragment,
-    class RightFragment>
-METAL_FUNC void fragment_matmul(thread OutputFragment& output, thread LeftFragment& left, thread RightFragment& right) {
+template <class Ops, class Read>
+struct OperandFragmentTraits {
+  METAL_CONST bool READ_TRANSPOSE = metal::is_same_v<Read, ReadTranspose>;
+  METAL_CONST bool MMA_TRANSPOSE = READ_TRANSPOSE && !Ops::READ_TRANSPOSE_SWAPS_SOURCE_STRIDES;
+};
+
+template <typename T, ushort ROW_FRAGMENTS, ushort COL_FRAGMENTS, class Ops, class Read = ReadDirect>
+using OperandFragment = Fragment<
+    T,
+    OperandFragmentTraits<Ops, Read>::MMA_TRANSPOSE ? COL_FRAGMENTS : ROW_FRAGMENTS,
+    OperandFragmentTraits<Ops, Read>::MMA_TRANSPOSE ? ROW_FRAGMENTS : COL_FRAGMENTS,
+    Ops,
+    Read,
+    OperandFragmentTraits<Ops, Read>::MMA_TRANSPOSE>;
+
+template <class OutputFragment, class LeftFragment, class RightFragment>
+METAL_FUNC void fragment_mma(thread OutputFragment& output, thread LeftFragment& left, thread RightFragment& right) {
   static_assert(
       metal::is_same_v<typename OutputFragment::FragmentOpsType, typename LeftFragment::FragmentOpsType> &&
           metal::is_same_v<typename OutputFragment::FragmentOpsType, typename RightFragment::FragmentOpsType>,
-      "fragment_matmul requires output, left, and right fragments to use the same FragmentOps"
+      "fragment_mma requires output, left, and right fragments to use the same FragmentOps"
   );
-  OutputFragment::FragmentOpsType::template fragment_matmul<transpose_a, transpose_b>(output, left, right);
+  OutputFragment::FragmentOpsType::template fragment_mma<LeftFragment::MMA_TRANSPOSE, RightFragment::MMA_TRANSPOSE>(
+      output,
+      left,
+      right
+  );
 }
 
 } // namespace matmul
