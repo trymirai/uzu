@@ -20,6 +20,10 @@ pub struct LanguageModelStreamer<'a> {
 }
 
 impl<'a> LanguageModelStreamer<'a> {
+    pub fn is_stopped(&self) -> bool {
+        self.stopped
+    }
+
     pub fn new<B: Backend>(
         input: &[u64],
         state: &LanguageModelState<B>,

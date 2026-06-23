@@ -17,7 +17,7 @@ use shoji::{
     },
     types::{
         basic::{SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy},
-        session::chat::{ChatConfig, ChatReplyConfig},
+        session::chat::{ChatConfig, ChatReplyConfig, ChatReplyFinishReason},
     },
 };
 use tokio_util::sync::CancellationToken;
@@ -194,22 +194,9 @@ impl<'a, B: Backend> Stream for UzuChatTokenStream<'a, B> {
                 },
             };
 
-            if let Some(max_length) = model.recommended_context_length() {
-                let result = match self_mut.state.lock() {
-                    Ok(state) => Ok(state.tokens().len() >= max_length),
-                    Err(err) => Err(Error::from(err.to_string())),
-                };
-                match result {
-                    Ok(true) => {
-                        self_mut.finished = true;
-                        return Poll::Ready(None);
-                    },
-                    Ok(false) => {},
-                    Err(err) => {
-                        self_mut.finished = true;
-                        return Poll::Ready(Some(Err(err)));
-                    },
-                }
+            if self_mut.streamer.is_stopped() {
+                self_mut.finished = true;
+                return Poll::Ready(None);
             }
 
             let mut state = match self_mut.state.lock() {
@@ -219,10 +206,18 @@ impl<'a, B: Backend> Stream for UzuChatTokenStream<'a, B> {
                     return Poll::Ready(Some(Err(Error::from(err.to_string()))));
                 },
             };
+
+            if model.recommended_context_length().is_some_and(|max_length| state.tokens().len() >= max_length) {
+                self_mut.finished = true;
+                return Poll::Ready(Some(Ok(ChatTokenStreamOutput::Finished(
+                    ChatReplyFinishReason::ContextLimitReached,
+                ))));
+            }
+
             self_mut.streamer.step(&model, &mut state).map_err(|err| Error::from(err.to_string()))
         };
 
-        Poll::Ready(step_result.transpose())
+        Poll::Ready(step_result.map(|token| token.map(ChatTokenStreamOutput::Token)).transpose())
     }
 }
 

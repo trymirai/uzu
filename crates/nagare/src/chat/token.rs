@@ -11,7 +11,7 @@ use shoji::{
         backend::{
             Error as BackendError,
             chat_message::{Output, ToolCallState},
-            chat_token::{Backend, Instance},
+            chat_token::{Backend, Instance, StreamOutput as TokenStreamOutput},
         },
     },
     types::{
@@ -118,7 +118,7 @@ impl Session {
                 }
 
                 match state.backend_stream.next().await {
-                    Some(Ok(token)) => {
+                    Some(Ok(TokenStreamOutput::Token(token))) => {
                         state.output_token_count = state.output_token_count.saturating_add(1);
                         if let Err(error) = state.encoding.decode(vec![token as TokenId]) {
                             state.finished = true;
@@ -137,6 +137,11 @@ impl Session {
                         }
                         Some((Ok(state.output.clone()), state))
                     },
+                    Some(Ok(TokenStreamOutput::Finished(finish_reason))) => {
+                        state.output.finish_reason = Some(finish_reason);
+                        state.finished = true;
+                        Some((Ok(state.output.clone()), state))
+                    },
                     Some(Err(error)) => {
                         state.finished = true;
                         Some((
@@ -147,13 +152,8 @@ impl Session {
                         ))
                     },
                     None => {
-                        state.output.finish_reason = Some(if cancellation.is_cancelled() {
-                            ChatReplyFinishReason::Cancelled
-                        } else if token_limit.is_some_and(|limit| state.output_token_count >= limit) {
-                            ChatReplyFinishReason::Length
-                        } else {
-                            ChatReplyFinishReason::Stop
-                        });
+                        state.output.finish_reason =
+                            Some(Self::stream_end_finish_reason(&cancellation, token_limit, state.output_token_count));
                         state.finished = true;
                         Some((Ok(state.output.clone()), state))
                     },
@@ -191,6 +191,20 @@ impl Session {
         }
     }
 
+    fn stream_end_finish_reason(
+        cancellation: &CancellationToken,
+        token_limit: Option<u32>,
+        output_token_count: u32,
+    ) -> ChatReplyFinishReason {
+        if cancellation.is_cancelled() {
+            ChatReplyFinishReason::Cancelled
+        } else if token_limit.is_some_and(|limit| output_token_count >= limit) {
+            ChatReplyFinishReason::Length
+        } else {
+            ChatReplyFinishReason::Stop
+        }
+    }
+
     fn get_encoding_config(model: &Model) -> Result<Config, io::Error> {
         let family: &ModelFamily =
             model.family.as_ref().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing model family"))?;
@@ -221,9 +235,38 @@ impl Session {
 }
 
 struct TokenStreamState<'a> {
-    backend_stream: Pin<Box<dyn Stream<Item = Result<u64, BackendError>> + Send + 'a>>,
+    backend_stream: Pin<Box<dyn Stream<Item = Result<TokenStreamOutput, BackendError>> + Send + 'a>>,
     encoding: &'a mut Encoding,
     output: Output,
     output_token_count: u32,
     finished: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_end_finish_reason_reports_cancelled() {
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        assert_eq!(Session::stream_end_finish_reason(&cancellation, None, 0), ChatReplyFinishReason::Cancelled);
+    }
+
+    #[test]
+    fn stream_end_finish_reason_reports_length_after_token_limit() {
+        assert_eq!(
+            Session::stream_end_finish_reason(&CancellationToken::new(), Some(3), 3),
+            ChatReplyFinishReason::Length
+        );
+    }
+
+    #[test]
+    fn stream_end_finish_reason_reports_stop_for_plain_stream_end() {
+        assert_eq!(
+            Session::stream_end_finish_reason(&CancellationToken::new(), Some(3), 2),
+            ChatReplyFinishReason::Stop
+        );
+    }
 }
