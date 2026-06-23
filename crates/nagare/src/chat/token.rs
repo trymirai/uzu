@@ -111,6 +111,11 @@ impl Session {
                 if state.finished {
                     return None;
                 }
+                if token_limit == Some(0) {
+                    state.output.finish_reason = Some(ChatReplyFinishReason::Length);
+                    state.finished = true;
+                    return Some((Ok(state.output.clone()), state));
+                }
 
                 match state.backend_stream.next().await {
                     Some(Ok(token)) => {
@@ -124,7 +129,12 @@ impl Session {
                                 state,
                             ));
                         }
+
                         state.output = Self::build_message_output(state.encoding.state().messages.last());
+                        if token_limit.is_some_and(|limit| state.output_token_count >= limit) {
+                            state.output.finish_reason = Some(ChatReplyFinishReason::Length);
+                            state.finished = true;
+                        }
                         Some((Ok(state.output.clone()), state))
                     },
                     Some(Err(error)) => {

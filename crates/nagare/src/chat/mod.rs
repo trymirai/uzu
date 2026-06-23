@@ -240,7 +240,6 @@ impl ChatSession {
                 match partial_output {
                     Ok(backend_output) => {
                         let message = build_message(&backend_output);
-                        // TODO agolokoz: maybe move to session.stream()
                         let output = ChatReply {
                             message: message.clone(),
                             stats: backend_output.stats.clone(),
