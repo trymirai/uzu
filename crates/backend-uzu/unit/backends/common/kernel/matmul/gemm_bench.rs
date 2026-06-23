@@ -14,7 +14,7 @@ use crate::{
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
-        metal::{GemmDispatchPath, Metal},
+        metal::{DeviceExt, GemmDispatchPath, Metal},
     },
     tests::{
         matmul::{bench_fp_gemm_shapes, iter_encode_loop},
@@ -33,7 +33,7 @@ fn bench_gemm(c: &mut Criterion) {
     )
     .expect("MatmulKernel");
 
-    let paths: &[(&str, GemmDispatchPath)] = if context.supports_mxu() {
+    let paths: &[(&str, GemmDispatchPath)] = if context.device.supports_mxu() {
         &[("GEMM", GemmDispatchPath::Simdgroup), ("GEMM_MXU", GemmDispatchPath::Mxu)]
     } else {
         &[("GEMM", GemmDispatchPath::Simdgroup)]

@@ -127,18 +127,16 @@ struct MxuMmaCore {
         uzu::matmul::Fragment<BT, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps> right_tile;
 
         const int left_offset = inner_k;
-        if constexpr (ALIGNED_M) {
-          left_tile.load(thread_context.simd_lane_id, a_simdgroup + left_offset, leading_dimension_a);
-        } else {
-          left_tile.load_safe(
-              thread_context.simd_lane_id,
-              a_simdgroup + left_offset,
-              leading_dimension_a,
-              short2(SIMDGROUP_BLOCK_K, simdgroup_limit_m)
-          );
+        auto left_src = uzu::matmul::tile_source(a_simdgroup + left_offset, leading_dimension_a);
+        if constexpr (!ALIGNED_M) {
+          left_src = left_src.bounded(simdgroup_limit_m, SIMDGROUP_BLOCK_K);
         }
+        left_tile.load_from(thread_context.simd_lane_id, left_src);
 
-        right_tile.load(thread_context.simd_lane_id, b_shared_simdgroup + inner_k, int(SHARED_STRIDE_B));
+        right_tile.load_from(
+            thread_context.simd_lane_id,
+            uzu::matmul::tile_source(b_shared_simdgroup + inner_k, int(SHARED_STRIDE_B))
+        );
 
         uzu::matmul::MxuFragmentOps::template tile_matmul<false, true>(accumulator, left_tile, right_tile);
       }

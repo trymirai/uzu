@@ -11,10 +11,8 @@ use crate::{
 #[variants(T, f32, f16, bf16)]
 #[variants(BK, 16, 32)]
 #[variants(BD, 64, 128, 256)]
-// USE_MXU selects the Metal GEMM backend (M5 tensor units vs simdgroup). The CPU
-// reference is identical either way, so it is ignored here.
-#[variants(USE_MXU, false, true)]
-pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32, const USE_MXU: bool>(
+#[variants(USE_ACCELERATOR, false)]
+pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32, const USE_ACCELERATOR: bool>(
     q: *const T,
     k: *const T,
     v: *const T,

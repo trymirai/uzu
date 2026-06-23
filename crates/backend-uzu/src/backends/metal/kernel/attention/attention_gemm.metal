@@ -23,7 +23,7 @@ struct TransformScale {
 };
 
 // MXU fragments are 16x16, simdgroup 8x8. 4 simdgroups (128 threads) per Q-block.
-#define FRAG_ROWS (USE_MXU ? 16 : 8)
+#define FRAG_ROWS (USE_ACCELERATOR ? 16 : 8)
 #define BLOCK_QUERY_ROWS (4 * FRAG_ROWS)
 #define SIMDGROUPS_PER_ROW 4
 #define SIMDGROUPS_PER_COLUMN 1
@@ -31,25 +31,25 @@ struct TransformScale {
 // MXU holds Q register-resident (head-dim always <= 8 frags there); the simdgroup
 // path stages Q in q_smem like main (resident Q + chunked PV add register pressure
 // that regresses small GPUs). QSMEM_SIZE is sized only on the simdgroup variant.
-#define Q_IS_RESIDENT (USE_MXU)
+#define Q_IS_RESIDENT (USE_ACCELERATOR)
 #define QSMEM_SIZE (Q_IS_RESIDENT ? 1 : (BLOCK_QUERY_ROWS * (int(BD) + 16 / int(sizeof(T)))))
 
 // MXU reads K/V straight from device (L2 absorbs the re-reads). Simdgroup stages
 // the K/V block in threadgroup memory (one block; V overwrites K) -- direct reads
 // regress small-cache GPUs (M1). kv_smem is sized only on the simdgroup variant.
-#define KVSMEM_SIZE (USE_MXU ? 1 : (int(BK) * (int(BD) + 16 / int(sizeof(T)))))
+#define KVSMEM_SIZE (USE_ACCELERATOR ? 1 : (int(BK) * (int(BD) + 16 / int(sizeof(T)))))
 
-template <typename T, uint BK, uint BD, bool USE_MXU>
+template <typename T, uint BK, uint BD, bool USE_ACCELERATOR>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(BK, 16, 32)
 VARIANTS(BD, 64, 128, 256)
-VARIANTS(USE_MXU, false, true)
+VARIANTS(USE_ACCELERATOR, false, true)
 // MXU dispatch gate (mirrors encodable_block::attention::gemm): BK==32 (even
 // KEY_GRID_COLS for MPP pairing), bf16/f16 (f32 MXU is reduced-precision), head_dim
 // <= 128 (BD=256 busts tg-mem). Pins the never-dispatched MXU variants out.
-CONSTRAINT(!USE_MXU || BK == 32)
-CONSTRAINT(!USE_MXU || T != "float")
-CONSTRAINT(!USE_MXU || BD != 256)
+CONSTRAINT(!USE_ACCELERATOR || BK == 32)
+CONSTRAINT(!USE_ACCELERATOR || T != "float")
+CONSTRAINT(!USE_ACCELERATOR || BD != 256)
 PUBLIC KERNEL(AttentionGemm)(
     const device T* q,
     const device T* k,
@@ -72,7 +72,7 @@ PUBLIC KERNEL(AttentionGemm)(
     threadgroup T q_smem[QSMEM_SIZE],
     threadgroup T kv_smem[KVSMEM_SIZE],
     const ThreadContext thread_context,
-    const uint q_tile_idx GROUPS(suffix_length.div_ceil(4 * if USE_MXU { 16 } else { 8 })),
+    const uint q_tile_idx GROUPS(suffix_length.div_ceil(4 * if USE_ACCELERATOR { 16 } else { 8 })),
     const uint head_idx GROUPS(num_heads),
     const uint batch_idx GROUPS(1),
     const uint lid THREADS(128)
@@ -99,12 +99,12 @@ PUBLIC KERNEL(AttentionGemm)(
   using AccumType = float;
   // One frontend, two GEMM backends: MXU 16x16 tensor units (M5) vs simdgroup 8x8.
   // Everything below is layout-generic through Fragment/tile_matmul/row_reduce.
-  using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps, SimdgroupFragmentOps>;
+  using Ops = metal::conditional_t<USE_ACCELERATOR, MxuFragmentOps, SimdgroupFragmentOps>;
   constexpr short SIMDGROUP_BLOCK_SIZE = Ops::FRAGMENT_ROWS;
 
   // MXU matmuls run in the input dtype with f32 accumulate (bf16 tensor throughput
   // is ~2x f32); simdgroup multiply_accumulate needs matched types, so it stays f32.
-  using InputType = metal::conditional_t<USE_MXU, T, AccumType>;
+  using InputType = metal::conditional_t<USE_ACCELERATOR, T, AccumType>;
 
   constexpr int SIMDGROUPS_PER_THREADGROUP = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
   static_assert(
@@ -118,7 +118,7 @@ PUBLIC KERNEL(AttentionGemm)(
   constexpr int HEAD_DIM_GRID_COLS = BD / SIMDGROUP_BLOCK_SIZE;
 
   static_assert(QUERY_GRID_ROWS == 1, "Expected QUERY_GRID_ROWS == 1");
-  static_assert(!USE_MXU || KEY_GRID_COLS % 2 == 0, "MXU QK needs even N (KEY_GRID_COLS)");
+  static_assert(!USE_ACCELERATOR || KEY_GRID_COLS % 2 == 0, "MXU QK needs even N (KEY_GRID_COLS)");
 
   // query_frags[dd] is one head-dim slice; resident (MXU) holds all, staged (simd)
   // reuses slot 0. See Q_IS_RESIDENT.
@@ -128,9 +128,9 @@ PUBLIC KERNEL(AttentionGemm)(
   Fragment<AccumType, QUERY_GRID_ROWS, KEY_GRID_COLS, Ops> score_fragment;
   // MXU streams V in 2-frag head-dim chunks; simdgroup uses one full chunk (single
   // full-V PV, matching main). VCHUNK=2 keeps the MXU N tile even.
-  constexpr int VCHUNK = USE_MXU ? 2 : HEAD_DIM_GRID_COLS;
+  constexpr int VCHUNK = USE_ACCELERATOR ? 2 : HEAD_DIM_GRID_COLS;
   static_assert(HEAD_DIM_GRID_COLS % VCHUNK == 0, "head-dim must split into VCHUNK frags");
-  static_assert(!USE_MXU || VCHUNK % 2 == 0, "MXU PV needs even N (VCHUNK)");
+  static_assert(!USE_ACCELERATOR || VCHUNK % 2 == 0, "MXU PV needs even N (VCHUNK)");
   constexpr int N_OUT_CHUNKS = HEAD_DIM_GRID_COLS / VCHUNK;
   constexpr short CHUNK_COLS = VCHUNK * SIMDGROUP_BLOCK_SIZE;
   Fragment<AccumType, QUERY_GRID_ROWS, VCHUNK, Ops> output_chunks[N_OUT_CHUNKS];
@@ -217,7 +217,7 @@ PUBLIC KERNEL(AttentionGemm)(
     if (tail_k) {
       k_dev = k_dev.bounded(params.k_rem, SIMDGROUP_BLOCK_SIZE);
     }
-    if constexpr (!USE_MXU) {
+    if constexpr (!USE_ACCELERATOR) {
       stage_tile<BK, BD, kv_leading_dimension, SIMDGROUPS_PER_THREADGROUP * 32>(
           k_block,
           key_source_stride,
@@ -238,7 +238,7 @@ PUBLIC KERNEL(AttentionGemm)(
       }
       const short q_idx = Q_IS_RESIDENT ? dd : 0;
 
-      if constexpr (USE_MXU) {
+      if constexpr (USE_ACCELERATOR) {
         Fragment<InputType, KEY_GRID_COLS, 1, Ops> key_block;
         key_block.load_from(thread_context.simd_lane_id, k_dev.advanced(dd * head_dim_tile_stride));
         simdgroup_barrier(mem_flags::mem_none);
@@ -344,7 +344,7 @@ PUBLIC KERNEL(AttentionGemm)(
     if (tail_k) {
       v_dev = v_dev.bounded(params.k_rem, CHUNK_COLS);
     }
-    if constexpr (!USE_MXU) {
+    if constexpr (!USE_ACCELERATOR) {
       stage_tile<BK, BD, kv_leading_dimension, SIMDGROUPS_PER_THREADGROUP * 32>(
           v_block,
           value_source_stride,
@@ -357,7 +357,7 @@ PUBLIC KERNEL(AttentionGemm)(
     METAL_PRAGMA_UNROLL
     for (int c = 0; c < N_OUT_CHUNKS; ++c) {
       Fragment<InputType, KEY_GRID_COLS, VCHUNK, Ops> value_chunk;
-      if constexpr (USE_MXU) {
+      if constexpr (USE_ACCELERATOR) {
         value_chunk.load_from(thread_context.simd_lane_id, v_dev.advanced(c * CHUNK_COLS));
       } else {
         value_chunk.load_from(thread_context.simd_lane_id, v_shared.advanced(c * CHUNK_COLS));

@@ -173,8 +173,6 @@ struct Fragment {
   // out has TILE_ROWS * THREAD_ELEMENT_ROWS entries (the rows this lane owns).
   // A row's columns live in lanes differing in bits {0,3} for both the 8x8
   // (simdgroup) and 16x16 (MXU) layouts, hence the fixed shuffle_xor {1, 8}.
-  // ponytail: shuffle offsets hardcoded to the two shipping layouts; derive from
-  // Ops if a third layout with a different lane topology ever appears.
   template <class Op, typename Acc>
   METAL_FUNC void row_reduce(thread Acc* out, const Acc identity) thread {
     Op op;
@@ -447,6 +445,11 @@ private:
 // the same tile_matmul on every chip.
 template <bool transpose_a = false, bool transpose_b = false, class OutputTile, class LeftTile, class RightTile>
 METAL_FUNC void tile_matmul(thread OutputTile& output, thread LeftTile& left, thread RightTile& right) {
+  static_assert(
+      metal::is_same_v<typename OutputTile::FragmentOpsType, typename LeftTile::FragmentOpsType> &&
+          metal::is_same_v<typename OutputTile::FragmentOpsType, typename RightTile::FragmentOpsType>,
+      "tile_matmul requires output, left, and right tiles to use the same FragmentOps"
+  );
   OutputTile::FragmentOpsType::template tile_matmul<transpose_a, transpose_b>(output, left, right);
 }
 

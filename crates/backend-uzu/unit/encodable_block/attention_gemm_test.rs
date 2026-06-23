@@ -319,8 +319,6 @@ fn test_prefill_hd256_bf16() {
     test_prefill::<bf16>(256);
 }
 
-// ponytail: gated micro-bench, only runs when ATTN_BENCH=1. Times the block
-// encode for prefill shapes; used for fleet base-vs-current comparison.
 fn bench_shape<T: ArrayElement + Float, B: Backend>(
     num_heads: usize,
     num_kv_heads: usize,

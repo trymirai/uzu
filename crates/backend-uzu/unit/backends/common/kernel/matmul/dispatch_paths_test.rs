@@ -14,7 +14,7 @@ use crate::{
             Backend, Context,
             kernel::{Kernels, matmul::MatmulKernel},
         },
-        metal::{GemmDispatchPath, Metal, MetalContext},
+        metal::{DeviceExt, GemmDispatchPath, Metal, MetalContext},
     },
     tests::{
         assert::assert_eq_float,
@@ -24,7 +24,7 @@ use crate::{
 
 fn gemm_paths_for_hw(context: &MetalContext) -> Vec<GemmDispatchPath> {
     let mut paths = vec![GemmDispatchPath::Simdgroup];
-    if context.supports_mxu() {
+    if context.device.supports_mxu() {
         paths.push(GemmDispatchPath::Mxu);
     }
     paths
@@ -182,7 +182,7 @@ fn gemv_fp_output_transforms_bf16() {
 fn small_m_mxu_tiles_parity() {
     use crate::tests::matmul::Shape;
     let context = MetalContext::new().expect("Metal context");
-    if !context.supports_mxu() {
+    if !context.device.supports_mxu() {
         return;
     }
     let mut bf16_kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
