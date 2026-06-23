@@ -39,11 +39,12 @@ impl ChatTokenLlmInstanceProvider for UzuLlmBackend {
     fn instance(
         &self,
         reference: String,
-        _config: ChatConfig,
+        config: ChatConfig,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn ChatTokenLlmInstance>, Error>> + Send + '_>> {
         Box::pin(async move {
             let instance = select_backend!(
-                UzuChatTokenLlmInstance::<B>::new(reference).map(|i| Box::new(i) as Box<dyn ChatTokenLlmInstance>),
+                UzuChatTokenLlmInstance::<B>::new(reference, config)
+                    .map(|i| Box::new(i) as Box<dyn ChatTokenLlmInstance>),
                 Error::from("Unable to open any backend")
             )?;
             Ok(instance)

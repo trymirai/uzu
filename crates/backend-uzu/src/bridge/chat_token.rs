@@ -17,7 +17,7 @@ use shoji::{
     },
     types::{
         basic::{SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy},
-        session::chat::ChatReplyConfig,
+        session::chat::{ChatConfig, ChatReplyConfig},
     },
 };
 use tokio_util::sync::CancellationToken;
@@ -43,7 +43,10 @@ unsafe impl<B: Backend> Send for UzuChatTokenLlmInstance<B> {}
 unsafe impl<B: Backend> Sync for UzuChatTokenLlmInstance<B> {}
 
 impl<B: Backend> UzuChatTokenLlmInstance<B> {
-    pub fn new(model_path: String) -> Result<Self, Error> {
+    pub fn new(
+        model_path: String,
+        config: ChatConfig,
+    ) -> Result<Self, Error> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model = engine.load_language_model(&PathBuf::from(model_path)).map_err(|err| err.to_string())?;
         Ok(Self {
