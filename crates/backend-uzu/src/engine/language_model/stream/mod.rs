@@ -55,7 +55,8 @@ impl<B: Backend> LanguageModel<B> {
         input: &[u64],
         state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions<'a>,
-    ) -> Result<impl Iterator<Item = Result<u64, LanguageModelStreamError<B>>>, LanguageModelStreamError<B>> {
+    ) -> Result<impl Iterator<Item = Result<u64, LanguageModelStreamError<B>>> + Send + Sync, LanguageModelStreamError<B>>
+    {
         LanguageModelStream::new(self, input, state, options)
     }
 }

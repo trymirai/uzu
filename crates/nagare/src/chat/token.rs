@@ -101,7 +101,9 @@ impl Session {
         self.encoding.encode(new_messages.to_vec()).map_err(|err| ChatSessionError::Backend {
             message: err.to_string(),
         })?;
-        Ok(self.encoding.state().tokens[tokens_offset..].iter().map(|token| token.id as u64).collect::<Vec<u64>>())
+        let tokens =
+            self.encoding.state().tokens[tokens_offset..].iter().map(|token| token.id as u64).collect::<Vec<u64>>();
+        Ok(tokens)
     }
 
     fn build_output(
@@ -139,6 +141,11 @@ impl Session {
                 _ => None,
             })
             .collect();
+
+        // stats:
+        // duration: let start = Instant before next + after next,
+        // tts: Instant after first token - start
+        //
 
         Ok(Output {
             reasoning: message.reasoning(),

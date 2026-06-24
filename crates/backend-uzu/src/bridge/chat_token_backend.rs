@@ -11,6 +11,7 @@ use shoji::{
     },
     types::session::chat::{ChatConfig, ChatReplyConfig},
 };
+use tokenizers::Tokenizer;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -24,14 +25,18 @@ use crate::{
         Engine,
         language_model::{
             LanguageModel,
-            stream::{LanguageModelStreamError, LanguageModelStreamOptions},
+            stream::{LanguageModelStreamOptions, LanguageModelStreamSpeculatorOptions},
         },
     },
+    speculators::speculator::Speculator,
 };
 
 pub struct UzuChatTokenBackendInstance<B: Backend> {
     model: SyncShared<LanguageModel<B>>,
     config: ChatConfig,
+    tokenizer: Tokenizer,
+    stop_token_ids: Vec<i32>,
+    speculator: Option<Box<dyn Speculator>>,
 }
 
 impl<B: Backend> UzuChatTokenBackendInstance<B> {
@@ -42,9 +47,22 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
         let model = engine.load_language_model(&model_path).map_err(|err| err.to_string())?;
+        let tokenizer = Tokenizer::from_file(model_path.join("tokenizer.json"))
+            .map_err(|err| BackendError::from(err.to_string()))?;
+        let stop_token_ids = model.generation_config().stop_token_ids.iter().map(|id| *id as i32).collect();
+
+        let speculator = if let Some(ref preset) = config.speculation_preset.as_ref() {
+            Some(get_speculator(preset, &tokenizer).map_err(|err| BackendError::from(err))?)
+        } else {
+            None
+        };
+
         Ok(Self {
             model: SyncShared::new(model),
             config,
+            tokenizer,
+            stop_token_ids,
+            speculator,
         })
     }
 }
@@ -84,25 +102,42 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             Err(err) => return error_stream(err.to_string()),
         };
 
+        let mut grammar_opt = if let Some(grammar_config) = config.grammar {
+            match get_grammar::<B>(grammar_config, &self.tokenizer, &self.stop_token_ids) {
+                Ok(grammar) => Some(grammar),
+                Err(err) => return error_stream(err.to_string()),
+            }
+        } else {
+            None
+        };
+
+        let spec_options = if let Some(ref speculator) = self.speculator {
+            Some(LanguageModelStreamSpeculatorOptions {
+                speculator: speculator.as_ref(),
+                speculation_budget: 0,
+                trie_creation_config: Default::default(),
+            })
+        } else {
+            None
+        };
+
         let iterator_options = LanguageModelStreamOptions {
             sampling_method: get_sampling_method::<B>(&model_guard, &config.sampling_policy),
-            grammar: get_grammar::<B>(config.grammar),
-            speculator: get_speculator(self.config.speculation_preset.clone()),
+            grammar: grammar_opt.as_deref_mut(),
+            speculator: spec_options,
         };
-        let iterator: Box<dyn Iterator<Item = Result<u64, LanguageModelStreamError<B>>>> =
-            match model_guard.stream(input, &mut state_guard, iterator_options) {
-                Ok(iter) => match config.token_limit {
-                    Some(limit) => Box::new(iter.take(limit as usize)),
-                    None => Box::new(iter),
-                },
-                Err(err) => return error_stream(err.to_string()),
-            };
 
-        // TODO agolokoz: replace with async streaming
+        let iterator = match model_guard.stream(input, &mut state_guard, iterator_options) {
+            Ok(iter) => iter,
+            Err(err) => return error_stream(err.to_string()),
+        };
+
+        // // TODO agolokoz: replace with async streaming
         let mut tokens = Vec::<u64>::new();
         for result in iterator {
             match result {
                 Ok(token) => {
+                    // TODO agolokoz: move stop token ids checking to nagare
                     tokens.push(token);
                     if model_guard.generation_config().stop_token_ids.contains(&token) {
                         break;
@@ -114,9 +149,38 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             }
         }
 
+        // box pin?
+        // struct {
+        // guard
+        // guard
+        // stream
+        // }
+        // transmute
+
         let stream = stream::iter(tokens)
             .map(|token| Result::<u64, BackendError>::Ok(token))
             .take_until(cancel_token.cancelled_owned());
         Box::pin(stream)
     }
 }
+
+// struct UzuTokenStream<B> {
+//     model_guard: Pin<Box<MutexGuard<'static, LanguageModel<B>>>>,
+//     state_guard: Pin<Box<MutexGuard<'static, LanguageModelState<B>>>>,
+//     iterator: Pin<Box<dyn Stream<Item = Result<ChatTokenStreamOutput, BackendError>> + Send + Sync + 'static>>,
+// }
+//
+// impl<B: Backend> UzuTokenStream<B> {
+//     pub fn new(
+//         model_guard: MutexGuard<'static, LanguageModel<B>>,
+//         state_guard: MutexGuard<'static, LanguageModelState<B>>,
+//         iterator: Pin<Box<dyn Stream<Item = Result<ChatTokenStreamOutput, BackendError>> + Send + Sync + 'static>>,
+//     ) -> Pin<Box<Self>> {
+//         // todo: transumte + add comment
+//         Box::pin(Self {
+//             model_guard: Box::pin(model_guard),
+//             state_guard: Box::pin(state_guard),
+//             iterator,
+//         })
+//     }
+// }

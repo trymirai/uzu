@@ -5,17 +5,25 @@ use shoji::{
     traits::backend::{Error as BackendError, chat_token::StreamOutput as ChatTokenStreamOutput},
     types::{
         basic::{
-            ContextLength, Grammar as ShojiGrammar, SamplingMethod as ShojiSamplingMethod,
+            ContextLength, Grammar as ShojiGrammar, Grammar, SamplingMethod as ShojiSamplingMethod,
             SamplingPolicy as ShojiSamplingPolicy,
         },
         session::chat::ChatSpeculationPreset,
     },
 };
+use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::Backend,
     encodable_block::sampling::{SamplingMethod as UzuSamplingMethod, SamplingProcessingOrder},
-    engine::language_model::{LanguageModel, grammar::CompiledGrammar, stream::LanguageModelStreamSpeculatorOptions},
+    engine::language_model::{
+        LanguageModel,
+        grammar::{CompiledGrammar, GrammarConfig, GrammarError},
+    },
+    speculators::{
+        empty_speculator::EmptySpeculator, fixed_token_speculator::FixedTokensSpeculator,
+        prompt_lookup_speculator::PromptLookupSpeculator, speculator::Speculator,
+    },
 };
 
 pub fn error_stream<'a>(
@@ -26,22 +34,23 @@ pub fn error_stream<'a>(
     }))
 }
 
-pub fn get_grammar<'a, B: Backend>(_grammar: Option<ShojiGrammar>) -> Option<&'a mut dyn CompiledGrammar> {
-    // TODO agolokoz: implement
-    // grammar.map(|grammar| {
-    //     let config = match grammar {
-    //         Grammar::JsonAny {
-    //             ..
-    //         } => GrammarConfig::builtin_json(),
-    //         Grammar::JsonSchema {
-    //             schema,
-    //         } => GrammarConfig::json_schema_simple(schema),
-    //         Grammar::Regex {
-    //             pattern,
-    //         } => GrammarConfig::regex(pattern, false),
-    //     };
-    // })
-    None
+pub fn get_grammar<'a, B: Backend>(
+    grammar: ShojiGrammar,
+    tokenizer: &Tokenizer,
+    stop_token_ids: &[i32],
+) -> Result<Box<dyn CompiledGrammar>, GrammarError> {
+    let config = match grammar {
+        Grammar::JsonAny {
+            ..
+        } => GrammarConfig::builtin_json(),
+        Grammar::JsonSchema {
+            schema,
+        } => GrammarConfig::json_schema_simple(schema),
+        Grammar::Regex {
+            pattern,
+        } => GrammarConfig::regex(pattern, false),
+    };
+    <dyn CompiledGrammar>::new(&config, tokenizer, None, Some(stop_token_ids))
 }
 
 pub fn get_max_context_length<B: Backend>(
@@ -96,10 +105,30 @@ pub fn get_sampling_method<B: Backend>(
 }
 
 pub fn get_speculator<'a>(
-    _speculation_preset: Option<ChatSpeculationPreset>
-) -> Option<LanguageModelStreamSpeculatorOptions<'a>> {
-    // TODO agolokoz: implement
-    // speculation_preset.map(|speculation| {
-    // })
-    None
+    preset: &ChatSpeculationPreset,
+    tokenizer: &Tokenizer,
+) -> Result<Box<dyn Speculator>, BackendError> {
+    let speculator: Box<dyn Speculator> = match preset {
+        ChatSpeculationPreset::GeneralChat {
+            ..
+        } => Box::new(EmptySpeculator {}),
+        ChatSpeculationPreset::Summarization {
+            ..
+        } => Box::new(PromptLookupSpeculator::new_with_params(3)),
+        ChatSpeculationPreset::Classification {
+            feature,
+        } => {
+            let proposals = feature
+                .values
+                .iter()
+                .map(|value| {
+                    let encoding = tokenizer.encode(value.as_str(), false).map_err(|err| BackendError::from(err))?;
+                    let ids = encoding.get_ids().iter().map(|&id| id as u64).collect::<Vec<_>>();
+                    Ok(ids)
+                })
+                .collect::<Result<Vec<Vec<u64>>, BackendError>>()?;
+            Box::new(FixedTokensSpeculator::new(proposals))
+        },
+    };
+    Ok(speculator)
 }
