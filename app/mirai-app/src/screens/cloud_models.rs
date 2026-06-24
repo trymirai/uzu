@@ -8,7 +8,7 @@ use gpui::{
 use uzu::types::model::Model;
 
 use crate::{
-    components::{Button, ButtonKind, ButtonSize, Icon, IconEl},
+    components::{Button, ButtonKind, ButtonSize, Icon, IconEl, VendorIcon},
     models_store::ModelsStore,
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
 };
@@ -108,13 +108,20 @@ impl Render for CloudModelsView {
                     current_vendor = Some(vm.vendor.clone());
                     list = list.child(
                         div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
                             .pt_4()
                             .pb_1()
                             .px_3()
-                            .text_xs()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text_muted)
-                            .child(vm.vendor.clone()),
+                            .child(VendorIcon::new(vm.vendor.clone()).size(16.))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(theme.text_muted)
+                                    .child(vm.vendor.clone()),
+                            ),
                     );
                 }
                 list = list.child(self.row(cx, vm));

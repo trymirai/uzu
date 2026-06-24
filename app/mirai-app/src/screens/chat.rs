@@ -17,7 +17,7 @@ use uzu::{
 };
 
 use crate::{
-    components::{Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, TextInput},
+    components::{Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, TextInput, VendorIcon},
     engine,
     models_store::ModelsStore,
     persistence::{self, StoredChat, StoredMessage},
@@ -146,13 +146,13 @@ impl ChatView {
         }
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
-        let installed: Vec<(String, String)> = self
+        let installed: Vec<(String, String, String)> = self
             .store
             .read(cx)
             .rows
             .iter()
             .filter(|r| r.is_installed())
-            .map(|r| (r.id().to_string(), r.name()))
+            .map(|r| (r.id().to_string(), r.name(), r.vendor().unwrap_or_default()))
             .collect();
 
         let mut list = div()
@@ -171,18 +171,20 @@ impl ChatView {
                     .child("No installed models — download one in Local Models."),
             );
         } else {
-            for (id, name) in installed {
+            for (id, name, vendor) in installed {
                 list = list.child(
                     div()
                         .id(gpui::SharedString::from(format!("pick-{id}")))
                         .flex()
                         .items_center()
+                        .gap_2()
                         .h(px(40.))
                         .px_3()
                         .rounded_md()
                         .text_color(theme.text)
                         .cursor(gpui::CursorStyle::PointingHand)
                         .hover(move |s| s.bg(hover))
+                        .child(VendorIcon::new(vendor).size(18.))
                         .child(name)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(model) = this
