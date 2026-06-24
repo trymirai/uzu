@@ -1,0 +1,10 @@
+---
+source: ui-kit/src/components/markdown.rs
+expression: "describe_inline(\"A **bold** word, *italic*, `code`, and a [link](https://example.com).\")"
+---
+text: "A bold word, italic, code, and a link."
+  run 2..6 bold "bold"
+  run 13..19 italic "italic"
+  run 21..25 code "code"
+  run 33..37 link "link"
+  link 33..37 -> https://example.com

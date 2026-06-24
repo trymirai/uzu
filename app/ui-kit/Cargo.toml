@@ -13,3 +13,6 @@ path = "src/lib.rs"
 [dependencies]
 gpui = { path = "../../external/zed/crates/gpui" }
 unicode-segmentation = "1"
+
+[dev-dependencies]
+insta = "1"

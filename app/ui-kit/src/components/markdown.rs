@@ -340,3 +340,93 @@ fn inline_runs(
 
     (out, runs, links)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Classify a highlight run by its style alone, so snapshots stay
+    /// theme- and color-independent.
+    fn kind(style: &HighlightStyle) -> &'static str {
+        if style.background_color.is_some() {
+            "code"
+        } else if style.font_weight == Some(FontWeight::BOLD) {
+            "bold"
+        } else if style.font_style == Some(FontStyle::Italic) {
+            "italic"
+        } else if style.color.is_some() {
+            "link"
+        } else {
+            "plain"
+        }
+    }
+
+    /// Readable structural dump of one inline line.
+    fn describe_inline(line: &str) -> String {
+        let (text, runs, links) = inline_runs(line, &Theme::dark());
+        let mut out = format!("text: {text:?}\n");
+        for (range, style) in &runs {
+            out += &format!(
+                "  run {}..{} {} {:?}\n",
+                range.start,
+                range.end,
+                kind(style),
+                &text[range.clone()]
+            );
+        }
+        for (range, url) in &links {
+            out += &format!("  link {}..{} -> {url}\n", range.start, range.end);
+        }
+        out
+    }
+
+    fn describe_blocks(text: &str) -> String {
+        let mut out = String::new();
+        for block in parse_blocks(text) {
+            match block {
+                Block::Text(t) => out += &format!("[text] {t:?}\n"),
+                Block::Code { lang, code } => out += &format!("[code:{lang}] {code:?}\n"),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn inline_styles_parse() {
+        insta::assert_snapshot!(describe_inline(
+            "A **bold** word, *italic*, `code`, and a [link](https://example.com)."
+        ));
+    }
+
+    #[test]
+    fn fenced_code_block_splits_from_prose() {
+        insta::assert_snapshot!(describe_blocks(
+            "Here is code:\n```rust\nfn main() {}\n```\nDone."
+        ));
+    }
+
+    // Mid-stream tokens commonly leave a marker open; it must still style to EOL.
+    #[test]
+    fn unclosed_bold_consumes_to_end() {
+        let (text, runs, _) = inline_runs("half **bold", &Theme::dark());
+        assert_eq!(text, "half bold");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(kind(&runs[0].1), "bold");
+    }
+
+    #[test]
+    fn link_url_is_captured() {
+        let (text, _, links) = inline_runs("[uzu](https://github.com/trymirai/uzu)", &Theme::dark());
+        assert_eq!(text, "uzu");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].1, "https://github.com/trymirai/uzu");
+    }
+
+    // A `[text]` with no `(url)` is not a link: emit the brackets literally.
+    #[test]
+    fn bracket_without_paren_is_literal() {
+        let (text, _, links) = inline_runs("see [note] here", &Theme::dark());
+        assert_eq!(text, "see [note] here");
+        assert!(links.is_empty());
+    }
+}
