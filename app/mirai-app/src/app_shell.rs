@@ -143,11 +143,19 @@ impl MiraiApp {
         .detach();
 
         // First run shows onboarding; afterwards land on Local Models (matching
-        // Electron mirai-chat's launch redirect).
-        let route = if persistence::has_seen_welcome() {
-            Route::LocalModels
-        } else {
-            Route::Welcome
+        // Electron mirai-chat's launch redirect). `MIRAI_SCREEN` overrides the
+        // landing route for visual-QA/screenshot automation.
+        let route = match std::env::var("MIRAI_SCREEN").ok().as_deref() {
+            Some("chat") => Route::Chat(None),
+            Some("chats") => Route::Chats,
+            Some("local") => Route::LocalModels,
+            Some("cloud") => Route::CloudModels,
+            Some("routers") => Route::Routers,
+            Some("tts") => Route::Tts,
+            Some("settings") => Route::Settings,
+            Some("welcome") => Route::Welcome,
+            _ if persistence::has_seen_welcome() => Route::LocalModels,
+            _ => Route::Welcome,
         };
 
         Self {
