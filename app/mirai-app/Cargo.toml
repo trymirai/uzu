@@ -1,0 +1,32 @@
+[package]
+name = "mirai-app"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "mirai-app"
+path = "src/main.rs"
+
+[dependencies]
+# Local LLM inference engine (this repo). Metal backend only for now; grammar /
+# structured-output (capability-grammar, a heavy C++ xgrammar build) is added
+# later when needed.
+uzu = { path = "../../crates/uzu", default-features = false, features = ["backend-metal"] }
+
+# GPUI UI framework + platform entry point + Tokio bridge, from the local Zed
+# checkout. `font-kit` on gpui_platform is required for glyph rasterization.
+gpui = { path = "../../external/zed/crates/gpui" }
+gpui_platform = { path = "../../external/zed/crates/gpui_platform", features = ["font-kit"] }
+gpui_tokio = { path = "../../external/zed/crates/gpui_tokio" }
+
+# Mirai design system (theme + reusable components), mirroring the structure of
+# @trymirai-schemas/ui-kit. The app builds its UI from this crate.
+ui-kit = { path = "../ui-kit" }
+
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
