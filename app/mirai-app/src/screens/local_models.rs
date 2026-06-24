@@ -9,7 +9,7 @@ use gpui::{
 use uzu::{storage::types::DownloadPhase, types::model::Model};
 
 use crate::{
-    components::{ConfirmModal, Icon, IconButton, IconEl, TextInput, VendorIcon},
+    components::{ConfirmModal, Icon, IconButton, IconEl, Loader, TextInput, VendorIcon},
     models_store::ModelsStore,
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
 };
@@ -553,17 +553,22 @@ impl Render for LocalModelsView {
 }
 
 impl LocalModelsView {
-    fn empty_message(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn empty_message(&self, cx: &Context<Self>) -> gpui::AnyElement {
         let theme = cx.theme().clone();
         let store = self.store.read(cx);
-        let msg = if store.loading {
-            "Loading models…".to_string()
-        } else if let Some(err) = &store.error {
-            format!("Failed to load models: {err}")
-        } else {
-            "No models".to_string()
+        if store.loading {
+            return div()
+                .py_8()
+                .flex()
+                .justify_center()
+                .child(Loader::new().label("Loading models…"))
+                .into_any_element();
+        }
+        let msg = match &store.error {
+            Some(err) => format!("Failed to load models: {err}"),
+            None => "No models".to_string(),
         };
-        div().py_8().text_color(theme.text_muted).child(msg)
+        div().py_8().text_color(theme.text_muted).child(msg).into_any_element()
     }
 }
 

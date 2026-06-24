@@ -11,7 +11,9 @@ use uzu::{
 };
 
 use crate::{
-    components::{Button, ButtonKind, ButtonSize, Icon, IconButton, IconEl, InputEvent, TextInput},
+    components::{
+        Button, ButtonKind, ButtonSize, Icon, IconButton, IconEl, InputEvent, Loader, TextInput,
+    },
     engine,
     models_store::ModelsStore,
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
@@ -256,13 +258,15 @@ impl Render for RoutersView {
 
         let mut list = div().flex().flex_col().gap_1();
         if routers.is_empty() {
-            list = list.child(
-                div().py_6().text_color(theme.text_muted).child(if loading {
-                    "Loading routers…"
-                } else {
-                    "No router models available."
-                }),
-            );
+            if loading {
+                list = list.child(
+                    div().py_6().flex().justify_center().child(Loader::new().label("Loading routers…")),
+                );
+            } else {
+                list = list.child(
+                    div().py_6().text_color(theme.text_muted).child("No router models available."),
+                );
+            }
         } else {
             for vm in &routers {
                 let selected = selected_id.as_deref() == Some(vm.id.as_str());

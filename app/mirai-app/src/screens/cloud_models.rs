@@ -8,7 +8,7 @@ use gpui::{
 use uzu::types::model::Model;
 
 use crate::{
-    components::{Button, ButtonKind, ButtonSize, Icon, IconEl, VendorIcon},
+    components::{Button, ButtonKind, ButtonSize, Icon, IconEl, Loader, VendorIcon},
     models_store::ModelsStore,
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
 };
@@ -95,12 +95,15 @@ impl Render for CloudModelsView {
 
         let mut list = div().flex().flex_col().gap_1().pb_6();
         if models.is_empty() {
-            let msg = if loading {
-                "Loading…".to_string()
+            if loading {
+                list = list.child(
+                    div().py_8().flex().justify_center().child(Loader::new().label("Loading…")),
+                );
             } else {
-                "No cloud models. Set provider API keys (e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY) before launching.".to_string()
-            };
-            list = list.child(div().py_8().text_color(theme.text_muted).child(msg));
+                list = list.child(div().py_8().text_color(theme.text_muted).child(
+                    "No cloud models. Set provider API keys (e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY) before launching.",
+                ));
+            }
         } else {
             let mut current_vendor: Option<String> = None;
             for vm in &models {

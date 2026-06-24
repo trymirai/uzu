@@ -17,7 +17,9 @@ use uzu::{
 };
 
 use crate::{
-    components::{Button, ButtonKind, ButtonSize, Icon, IconButton, IconEl, InputEvent, TextInput},
+    components::{
+        Button, ButtonKind, ButtonSize, Icon, IconButton, IconEl, InputEvent, Loader, TextInput,
+    },
     engine,
     models_store::ModelsStore,
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
@@ -303,13 +305,15 @@ impl Render for TtsView {
 
         let mut list = div().flex().flex_col().gap_1();
         if models.is_empty() {
-            list = list.child(
-                div().py_6().text_color(theme.text_muted).child(if loading {
-                    "Loading voice models…"
-                } else {
-                    "No voice models available."
-                }),
-            );
+            if loading {
+                list = list.child(
+                    div().py_6().flex().justify_center().child(Loader::new().label("Loading voice models…")),
+                );
+            } else {
+                list = list.child(
+                    div().py_6().text_color(theme.text_muted).child("No voice models available."),
+                );
+            }
         } else {
             for vm in &models {
                 let selected = selected_id.as_deref() == Some(vm.id.as_str());
