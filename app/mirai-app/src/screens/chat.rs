@@ -39,13 +39,47 @@ enum SamplingMode {
     Stochastic,
 }
 
-struct ChatMsg {
-    role: Role,
+/// One generated version of an assistant reply (regenerate keeps the prior
+/// ones so they can be paged through). User messages have exactly one.
+#[derive(Clone, Default)]
+struct Version {
     text: String,
     reasoning: Option<String>,
     tps: Option<f32>,
     tokens: Option<u32>,
     error: bool,
+}
+
+struct ChatMsg {
+    role: Role,
+    versions: Vec<Version>,
+    current: usize,
+}
+
+impl ChatMsg {
+    fn user(text: String) -> Self {
+        Self {
+            role: Role::User,
+            versions: vec![Version { text, ..Default::default() }],
+            current: 0,
+        }
+    }
+
+    fn assistant(version: Version) -> Self {
+        Self {
+            role: Role::Assistant,
+            versions: vec![version],
+            current: 0,
+        }
+    }
+
+    fn cur(&self) -> &Version {
+        &self.versions[self.current]
+    }
+
+    fn cur_mut(&mut self) -> &mut Version {
+        &mut self.versions[self.current]
+    }
 }
 
 /// Messages bridged from the Tokio reply stream to the UI.
@@ -271,11 +305,14 @@ impl ChatView {
                 } else {
                     Role::User
                 },
-                text: m.text,
-                reasoning: m.reasoning,
-                tps: m.tps,
-                tokens: m.tokens,
-                error: false,
+                versions: vec![Version {
+                    text: m.text,
+                    reasoning: m.reasoning,
+                    tps: m.tps,
+                    tokens: m.tokens,
+                    error: false,
+                }],
+                current: 0,
             })
             .collect();
         self.chat_id = Some(stored.id);
@@ -299,21 +336,21 @@ impl ChatView {
             .messages
             .iter()
             .find(|m| m.role == Role::User)
-            .map(|m| truncate(&m.text, 48))
+            .map(|m| truncate(&m.cur().text, 48))
             .unwrap_or_else(|| "New chat".to_string());
         let messages = self
             .messages
             .iter()
-            .filter(|m| !m.error && !m.text.is_empty())
+            .filter(|m| !m.cur().error && !m.cur().text.is_empty())
             .map(|m| StoredMessage {
                 role: match m.role {
                     Role::User => "user".to_string(),
                     Role::Assistant => "assistant".to_string(),
                 },
-                text: m.text.clone(),
-                reasoning: m.reasoning.clone(),
-                tps: m.tps,
-                tokens: m.tokens,
+                text: m.cur().text.clone(),
+                reasoning: m.cur().reasoning.clone(),
+                tps: m.cur().tps,
+                tokens: m.cur().tokens,
             })
             .collect();
         persistence::save_chat(&StoredChat {
@@ -519,72 +556,66 @@ impl ChatView {
         if text.is_empty() {
             return;
         }
-        self.messages.push(ChatMsg {
-            role: Role::User,
-            text,
-            reasoning: None,
-            tps: None,
-            tokens: None,
-            error: false,
-        });
+        self.messages.push(ChatMsg::user(text));
         self.run_inference(cx);
     }
 
-    /// Re-run the last turn, replacing the trailing assistant reply.
+    /// Start a fresh assistant reply for the latest turn.
+    fn run_inference(&mut self, cx: &mut Context<Self>) {
+        self.messages.push(ChatMsg::assistant(Version::default()));
+        self.streaming = true;
+        self.spawn_reply(cx);
+    }
+
+    /// Re-run the last turn as a new version of the trailing assistant message,
+    /// keeping prior version(s) so they can be paged through.
     fn regenerate(&mut self, cx: &mut Context<Self>) {
         if self.streaming {
             return;
         }
-        if matches!(self.messages.last().map(|m| m.role), Some(Role::Assistant)) {
-            self.messages.pop();
-        }
-        if !self.messages.iter().any(|m| m.role == Role::User) {
+        let Some(last) = self.messages.last_mut() else {
+            return;
+        };
+        if last.role != Role::Assistant {
             return;
         }
-        self.run_inference(cx);
+        last.versions.push(Version::default());
+        last.current = last.versions.len() - 1;
+        self.streaming = true;
+        self.spawn_reply(cx);
     }
 
-    /// Resolve the model, build the request from current history, and stream a
-    /// reply into a fresh trailing assistant message.
-    fn run_inference(&mut self, cx: &mut Context<Self>) {
+    /// Resolve the model, build the request from the conversation (excluding the
+    /// trailing assistant placeholder), and stream into its current version.
+    fn spawn_reply(&mut self, cx: &mut Context<Self>) {
         let Some(model) = self.resolved_model(cx) else {
-            self.messages.push(ChatMsg {
-                role: Role::Assistant,
-                text: "No local model installed yet. Open Local Models to download one."
-                    .to_string(),
-                reasoning: None,
-                tps: None,
-                tokens: None,
-                error: true,
-            });
+            if let Some(last) = self.messages.last_mut() {
+                let v = last.cur_mut();
+                v.text = "No local model installed yet. Open Local Models to download one."
+                    .to_string();
+                v.error = true;
+            }
+            self.streaming = false;
             cx.notify();
             return;
         };
         self.model = Some(model.clone());
         self.loaded_model = Some(model.name());
 
-        // Build the conversation: optional global-instructions system message,
-        // then everything so far, excluding errors.
+        // Global instructions + prior messages, excluding the trailing assistant
+        // placeholder being filled and any errored turns.
         let mut history: Vec<ChatMessage> = Vec::new();
         let instructions = persistence::global_instructions();
         if !instructions.trim().is_empty() {
             history.push(ChatMessage::system().with_text(instructions));
         }
-        history.extend(self.messages.iter().filter(|m| !m.error).map(|m| match m.role {
-            Role::User => ChatMessage::user().with_text(m.text.clone()),
-            Role::Assistant => ChatMessage::assistant().with_text(m.text.clone()),
-        }));
-
-        // Placeholder assistant message that fills in as tokens stream.
-        self.messages.push(ChatMsg {
-            role: Role::Assistant,
-            text: String::new(),
-            reasoning: None,
-            tps: None,
-            tokens: None,
-            error: false,
-        });
-        self.streaming = true;
+        let upto = self.messages.len().saturating_sub(1);
+        history.extend(self.messages[..upto].iter().filter(|m| !m.cur().error).map(
+            |m| match m.role {
+                Role::User => ChatMessage::user().with_text(m.cur().text.clone()),
+                Role::Assistant => ChatMessage::assistant().with_text(m.cur().text.clone()),
+            },
+        ));
 
         let Some(engine) = engine::try_engine(cx) else {
             self.apply_stream(StreamMsg::Error("engine unavailable".to_string()), cx);
@@ -669,10 +700,11 @@ impl ChatView {
             } => {
                 if let Some(last) = self.messages.last_mut() {
                     if last.role == Role::Assistant {
-                        last.text = text;
-                        last.reasoning = reasoning;
-                        last.tps = tps;
-                        last.tokens = tokens;
+                        let v = last.cur_mut();
+                        v.text = text;
+                        v.reasoning = reasoning;
+                        v.tps = tps;
+                        v.tokens = tokens;
                     }
                 }
                 self.scroll.scroll_to_bottom();
@@ -684,9 +716,12 @@ impl ChatView {
                 // If the model produced no text, show a notice rather than an
                 // empty bubble stuck on "…".
                 if let Some(last) = self.messages.last_mut() {
-                    if last.role == Role::Assistant && !last.error && last.text.is_empty() {
-                        last.text = "(The model returned no text.)".to_string();
-                        last.error = true;
+                    if last.role == Role::Assistant {
+                        let v = last.cur_mut();
+                        if !v.error && v.text.is_empty() {
+                            v.text = "(The model returned no text.)".to_string();
+                            v.error = true;
+                        }
                     }
                 }
                 self.save();
@@ -695,8 +730,9 @@ impl ChatView {
             StreamMsg::Error(err) => {
                 if let Some(last) = self.messages.last_mut() {
                     if last.role == Role::Assistant {
-                        last.text = format!("Error: {err}");
-                        last.error = true;
+                        let v = last.cur_mut();
+                        v.text = format!("Error: {err}");
+                        v.error = true;
                     }
                 }
                 self.streaming = false;
@@ -832,6 +868,7 @@ impl Render for ChatView {
             let last_idx = self.messages.len().saturating_sub(1);
             for (idx, msg) in self.messages.iter().enumerate() {
                 let is_last = idx == last_idx;
+                let cur = msg.cur();
                 column = column.child(match msg.role {
                     Role::User => div()
                         .flex()
@@ -844,7 +881,7 @@ impl Render for ChatView {
                                 .rounded_lg()
                                 .bg(theme.bg_hover)
                                 .text_color(theme.text)
-                                .child(msg.text.clone()),
+                                .child(cur.text.clone()),
                         )
                         .into_any_element(),
                     Role::Assistant => {
@@ -852,7 +889,7 @@ impl Render for ChatView {
 
                         // Reasoning ("thinking") panel (hidden when the setting is off).
                         if show_reasoning {
-                            if let Some(reasoning) = &msg.reasoning {
+                            if let Some(reasoning) = &cur.reasoning {
                                 if !reasoning.trim().is_empty() {
                                 block = block.child(
                                     div()
@@ -886,25 +923,25 @@ impl Render for ChatView {
                         }
 
                         // Body (markdown for assistant prose + code blocks).
-                        let body = if msg.error {
+                        let body = if cur.error {
                             div()
                                 .text_color(theme.error)
-                                .child(msg.text.clone())
+                                .child(cur.text.clone())
                                 .into_any_element()
-                        } else if msg.text.is_empty() && streaming {
+                        } else if cur.text.is_empty() && streaming {
                             Loader::new().label("Generating…").into_any_element()
                         } else {
                             div()
                                 .text_color(theme.text)
-                                .child(crate::components::markdown::markdown(&msg.text, &theme, idx))
+                                .child(crate::components::markdown::markdown(&cur.text, &theme, idx))
                                 .into_any_element()
                         };
                         block = block.child(body);
 
                         // Perf stats footer.
-                        if !streaming && (msg.tokens.is_some() || msg.tps.is_some()) {
-                            let tps = msg.tps.map(|t| format!("{t:.0} tok/s")).unwrap_or_default();
-                            let toks = msg
+                        if !streaming && (cur.tokens.is_some() || cur.tps.is_some()) {
+                            let tps = cur.tps.map(|t| format!("{t:.0} tok/s")).unwrap_or_default();
+                            let toks = cur
                                 .tokens
                                 .map(|t| format!("{t} tokens"))
                                 .unwrap_or_default();
@@ -919,9 +956,50 @@ impl Render for ChatView {
                             );
                         }
 
+                        // Version pager (shown once a turn has been regenerated).
+                        if !streaming && msg.versions.len() > 1 {
+                            let total = msg.versions.len();
+                            let cur_n = msg.current + 1;
+                            block = block.child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .pt_1()
+                                    .text_xs()
+                                    .text_color(theme.text_muted)
+                                    .child(
+                                        div()
+                                            .id(gpui::SharedString::from(format!("ver-prev-{idx}")))
+                                            .cursor(gpui::CursorStyle::PointingHand)
+                                            .child("◀")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if let Some(m) = this.messages.get_mut(idx) {
+                                                    m.current = m.current.saturating_sub(1);
+                                                }
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(format!("{cur_n}/{total}"))
+                                    .child(
+                                        div()
+                                            .id(gpui::SharedString::from(format!("ver-next-{idx}")))
+                                            .cursor(gpui::CursorStyle::PointingHand)
+                                            .child("▶")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if let Some(m) = this.messages.get_mut(idx) {
+                                                    let max = m.versions.len().saturating_sub(1);
+                                                    m.current = (m.current + 1).min(max);
+                                                }
+                                                cx.notify();
+                                            })),
+                                    ),
+                            );
+                        }
+
                         // Actions (copy always; regenerate on the last message).
-                        if !streaming && !msg.error && !msg.text.is_empty() {
-                            let copy_text = msg.text.clone();
+                        if !streaming && !cur.error && !cur.text.is_empty() {
+                            let copy_text = cur.text.clone();
                             let mut actions = div().flex().items_center().gap_3().pt_1();
                             actions = actions.child(
                                 div()
