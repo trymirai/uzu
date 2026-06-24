@@ -86,11 +86,21 @@ impl Session {
                 });
             },
         };
+
         let encoding = &mut self.encoding;
         let stop_token_ids = &self.stop_token_ids;
         self.instance
-            .stream(&self.input_tokens, self.state.as_mut(), config, cancel_token)
-            .map(move |event| Self::build_output(encoding, stop_token_ids, event))
+            .stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone())
+            .map(move |event| {
+                Self::build_output(
+                    encoding,
+                    stop_token_ids,
+                    &config,
+                    event,
+                    cancel_token,
+                    self.instance.max_context_length(),
+                )
+            })
             .boxed()
     }
 
@@ -115,7 +125,10 @@ impl Session {
     fn build_output(
         encoding: &mut Encoding,
         stop_token_ids: &[u64],
+        config: &ChatReplyConfig,
         event: Result<StreamOutput, Error>,
+        cancel_token: CancellationToken,
+        max_context_length: Option<usize>,
     ) -> Result<Output, ChatSessionError> {
         if let Err(err) = event {
             return Err(ChatSessionError::Backend {
@@ -149,16 +162,28 @@ impl Session {
             })
             .collect();
 
-        let mut finish_reason: Option<ChatReplyFinishReason> = None;
-        if stop_token_ids.contains(&token) {
-            finish_reason = Some(ChatReplyFinishReason::Stop);
-        }
+        let tokens_count = encoding.state().tokens.len();
+        let finish_reason = if cancel_token.is_cancelled() {
+            Some(ChatReplyFinishReason::Cancelled)
+        } else if stop_token_ids.contains(&token) {
+            Some(ChatReplyFinishReason::Stop)
+        } else if let Some(token_limit) = config.token_limit
+            && tokens_count >= token_limit as usize
+        {
+            Some(ChatReplyFinishReason::Length)
+        } else if let Some(length) = max_context_length
+            && tokens_count >= length
+        {
+            Some(ChatReplyFinishReason::ContextLimitReached)
+        } else {
+            None
+        };
+        // TODO agolokoz: ask about ToolCalls and Rejected
 
         Ok(Output {
             reasoning: message.reasoning(),
             text: message.text(),
             tool_calls: tool_calls_states,
-            // TODO agolokoz: fill
             finish_reason,
             // TODO agolokoz: fillstats:
             // duration: let start = Instant before next + after next,

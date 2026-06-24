@@ -41,6 +41,7 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     tokenizer: Tokenizer,
     stop_token_ids: Vec<i32>,
     speculator: Option<Box<dyn Speculator>>,
+    max_context_length: Option<usize>,
 }
 
 impl<B: Backend> UzuChatTokenBackendInstance<B> {
@@ -51,9 +52,11 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
         let model = engine.load_language_model(&model_path).map_err(|err| err.to_string())?;
+
         // TODO agolokoz: pass tokenizer
         let tokenizer = Tokenizer::from_file(model_path.join("tokenizer.json"))
             .map_err(|err| BackendError::from(err.to_string()))?;
+
         let stop_token_ids = model.generation_config().stop_token_ids.iter().map(|id| *id as i32).collect();
 
         let speculator = if let Some(ref preset) = config.speculation_preset.as_ref() {
@@ -62,12 +65,15 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             None
         };
 
+        let max_context_length = get_max_context_length(&model, config.context_length.clone());
+
         Ok(Self {
             model: SyncShared::new(model),
             config,
             tokenizer,
             stop_token_ids,
             speculator,
+            max_context_length,
         })
     }
 }
@@ -88,10 +94,6 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         })
     }
 
-    fn stop_token_ids(&self) -> Option<Box<[u64]>> {
-        Some(self.stop_token_ids.iter().map(|id| *id as u64).collect())
-    }
-
     fn stream<'a>(
         &'a self,
         input: &'a Self::StreamInput,
@@ -104,6 +106,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             Some(state) => state.value.clone(),
             None => return error_stream("unexpected state type for uzu chat token instance".to_string()),
         };
+        let token_limit = config.token_limit.map(|count| count as usize).unwrap_or(usize::MAX);
 
         let stream = async_stream::stream! {
             let mut grammar = if let Some(grammar_config) = config.grammar {
@@ -151,9 +154,16 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                 },
             };
 
+            let mut token_count = 0usize;
             for result in iterator {
                 match result {
-                    Ok(token) => yield Ok(token),
+                    Ok(token) => {
+                        yield Ok(token);
+                        token_count += 1;
+                        if token_count >= token_limit {
+                            return;
+                        }
+                    },
                     Err(err) => {
                         yield Err(BackendError::from(err.to_string()));
                         return;
@@ -163,6 +173,14 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         };
 
         Box::pin(AssertSend(stream).take_until(cancel_token.cancelled_owned()))
+    }
+
+    fn max_context_length(&self) -> Option<usize> {
+        self.max_context_length
+    }
+
+    fn stop_token_ids(&self) -> Option<Box<[u64]>> {
+        Some(self.stop_token_ids.iter().map(|id| *id as u64).collect())
     }
 }
 
