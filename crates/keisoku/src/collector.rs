@@ -29,6 +29,10 @@ pub struct Collector {
     smc: Option<crate::smc::Smc>,
     #[cfg(target_vendor = "apple")]
     temperature_reader: Option<crate::client::SensorReader>,
+    #[cfg(target_vendor = "apple")]
+    voltage_reader: Option<crate::client::SensorReader>,
+    #[cfg(target_vendor = "apple")]
+    current_reader: Option<crate::client::SensorReader>,
 }
 
 impl Default for Collector {
@@ -50,6 +54,10 @@ impl Collector {
             smc: crate::smc::Smc::new(),
             #[cfg(target_vendor = "apple")]
             temperature_reader: crate::client::SensorReader::new(SensorKind::Temperature),
+            #[cfg(target_vendor = "apple")]
+            voltage_reader: crate::client::SensorReader::new(SensorKind::Voltage),
+            #[cfg(target_vendor = "apple")]
+            current_reader: crate::client::SensorReader::new(SensorKind::Current),
         }
     }
 
@@ -75,6 +83,14 @@ impl Collector {
         let sensors = self.temperature_reader.as_mut().map(crate::client::SensorReader::read).unwrap_or_default();
         #[cfg(not(target_vendor = "apple"))]
         let sensors = crate::sensors(SensorKind::Temperature);
+        #[cfg(target_vendor = "apple")]
+        let voltage = self.voltage_reader.as_mut().map(crate::client::SensorReader::read).unwrap_or_default();
+        #[cfg(not(target_vendor = "apple"))]
+        let voltage = crate::sensors(SensorKind::Voltage);
+        #[cfg(target_vendor = "apple")]
+        let current = self.current_reader.as_mut().map(crate::client::SensorReader::read).unwrap_or_default();
+        #[cfg(not(target_vendor = "apple"))]
+        let current = crate::sensors(SensorKind::Current);
         let temperatures = (!sensors.is_empty()).then(|| temperatures_from(&sensors));
         Snapshot {
             elapsed: Milliseconds(0),
@@ -89,6 +105,8 @@ impl Collector {
             temperatures,
             thermal_pressure,
             sensors,
+            voltage,
+            current,
         }
     }
 
