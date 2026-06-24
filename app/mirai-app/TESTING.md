@@ -34,10 +34,12 @@ and assert the GPUI output matches mirai-chat's for the same input.
 GPUI ships `#[gpui::test]` + `TestAppContext`, which simulate platform input
 (clicks, keystrokes) and advance the executor without a real window server, so
 they run on CI. Use these for behavior that isn't reachable as a pure function:
-the version pager buttons, segmented-control selection, composer submit. Pattern
-reference: the tests under `external/zed/crates/gpui`. Views that need the uzu
-engine can't run here (no model on CI) — keep that logic in Layer 1 by extracting
-pure helpers, as `chat.rs` now does.
+the version pager buttons, segmented-control selection, composer submit. A
+working example lives in `ui-kit/src/lib.rs` (`interaction_tests` — clicks a
+rendered element and asserts its handler fired); it needs gpui's `test-support`
+feature, enabled there as a dev-dependency. Views that need the uzu engine can't
+run here (no model on CI) — keep that logic in Layer 1 by extracting pure
+helpers, as `chat.rs` now does.
 
 ## Layer 3 — Visual regression (needs a display)
 
