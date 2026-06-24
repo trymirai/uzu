@@ -69,7 +69,7 @@ impl EventEmitter<LocalModelsEvent> for LocalModelsView {}
 
 impl LocalModelsView {
     pub fn new(store: Entity<ModelsStore>, cx: &mut Context<Self>) -> Self {
-        let search = cx.new(|cx| TextInput::new(cx, "Search…"));
+        let search = cx.new(|cx| TextInput::new(cx, "Search families"));
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
         cx.observe(&search, |_, _, cx| cx.notify()).detach();
         Self {
