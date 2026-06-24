@@ -17,7 +17,7 @@ use uzu::{
 };
 
 use crate::{
-    components::{Icon, IconButton, IconEl, InputEvent, SegmentedControl, TextInput},
+    components::{Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, TextInput},
     engine,
     models_store::ModelsStore,
     persistence::{self, StoredChat, StoredMessage},
@@ -890,10 +890,7 @@ impl Render for ChatView {
                                 .child(msg.text.clone())
                                 .into_any_element()
                         } else if msg.text.is_empty() && streaming {
-                            div()
-                                .text_color(theme.text_muted)
-                                .child("…")
-                                .into_any_element()
+                            Loader::new().label("Generating…").into_any_element()
                         } else {
                             div()
                                 .text_color(theme.text)
