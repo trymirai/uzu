@@ -118,6 +118,22 @@ struct SummarizationView: View {
                         )
                     }
                     metricRow(
+                        label: "Memory used:",
+                        value: ReplyStatsFormat.memory(stats.memoryUsedBytes)
+                    )
+                    metricRow(
+                        label: ReplyStatsFormat.powerLabel,
+                        value: ReplyStatsFormat.power(average: stats.averagePackagePower, maximum: stats.maxPackagePower)
+                    )
+                    metricRow(
+                        label: "Energy:",
+                        value: ReplyStatsFormat.energy(stats.packageEnergy)
+                    )
+                    metricRow(
+                        label: "Energy / token:",
+                        value: ReplyStatsFormat.energyPerToken(joules: stats.packageEnergy, tokens: stats.tokensCount)
+                    )
+                    metricRow(
                         label: "Total time:",
                         value: String(format: "%.3f s", stats.totalTime)
                     )
@@ -212,7 +228,10 @@ struct SummarizationView: View {
                 .font(.monoCaption12)
                 .foregroundStyle(MiraiAsset.secondary.swiftUIColor)
             Text(value)
-                .font(.monoBody16)
+                .font(.monoCaption12Semibold)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
     }
 
