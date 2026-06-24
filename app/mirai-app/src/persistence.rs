@@ -157,3 +157,68 @@ pub fn set_global_instructions(text: &str) {
         let _ = fs::write(global_instructions_path(), text);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_chat() -> StoredChat {
+        StoredChat {
+            id: "abc123".into(),
+            title: "What is 2+2?".into(),
+            model_name: Some("Qwen/Qwen3-0.6B".into()),
+            created_at: 1_700_000_000_000,
+            updated_at: 1_700_000_005_000,
+            messages: vec![
+                StoredMessage {
+                    role: "user".into(),
+                    text: "What is 2+2?".into(),
+                    reasoning: None,
+                    tps: None,
+                    tokens: None,
+                },
+                StoredMessage {
+                    role: "assistant".into(),
+                    text: "**2 + 2** equals **4**.".into(),
+                    reasoning: Some("The user asks a simple sum.".into()),
+                    tps: Some(42.5),
+                    tokens: Some(12),
+                },
+            ],
+        }
+    }
+
+    // Golden file format: a change here means existing on-disk chats may no
+    // longer round-trip. Review the snapshot diff before accepting.
+    #[test]
+    fn chat_json_format_is_stable() {
+        insta::assert_json_snapshot!(sample_chat());
+    }
+
+    #[test]
+    fn chat_round_trips() {
+        let chat = sample_chat();
+        let json = serde_json::to_string(&chat).unwrap();
+        let back: StoredChat = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, chat.id);
+        assert_eq!(back.messages.len(), 2);
+        assert_eq!(back.messages[1].tokens, Some(12));
+    }
+
+    // Optional fields must default when absent (older files / mirai-chat).
+    #[test]
+    fn legacy_message_without_optionals_parses() {
+        let json = r#"{"role":"assistant","text":"hi"}"#;
+        let msg: StoredMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.text, "hi");
+        assert!(msg.reasoning.is_none());
+        assert!(msg.tps.is_none());
+    }
+
+    #[test]
+    fn settings_default_to_dark_with_reasoning() {
+        let s = AppSettings::default();
+        assert!(s.dark_mode);
+        assert!(s.reasoning);
+    }
+}
