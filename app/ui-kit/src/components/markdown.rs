@@ -1,12 +1,12 @@
 //! Markdown for chat bodies, mirroring ui-kit's `MarkdownRenderer`: code blocks
-//! (with copy), headings, lists, blockquotes, inline bold/italic/code/links.
-//! No tables/math/syntax-highlight yet; links are styled, not clickable.
+//! (with copy), headings, lists, blockquotes, inline bold/italic/code/links
+//! (clickable). No tables/math/syntax-highlight yet.
 
 use std::ops::Range;
 
 use gpui::{
-    AnyElement, ClipboardItem, CursorStyle, FontStyle, FontWeight, HighlightStyle, IntoElement,
-    SharedString, StyledText, div, prelude::*, px,
+    AnyElement, ClipboardItem, CursorStyle, FontStyle, FontWeight, HighlightStyle, InteractiveText,
+    IntoElement, SharedString, StyledText, div, prelude::*, px,
 };
 
 use crate::{
@@ -62,6 +62,7 @@ fn parse_blocks(text: &str) -> Vec<Block> {
 /// unique per message so code-block copy buttons get stable, non-colliding ids.
 pub fn markdown(text: &str, theme: &Theme, id_seed: usize) -> AnyElement {
     let mut col = div().flex().flex_col().gap_2();
+    let mut line_no = 0usize;
 
     for (bi, block) in parse_blocks(text).into_iter().enumerate() {
         col = col.child(match block {
@@ -73,7 +74,9 @@ pub fn markdown(text: &str, theme: &Theme, id_seed: usize) -> AnyElement {
                     if line.trim().is_empty() {
                         p = p.child(div().h(px(6.)));
                     } else {
-                        p = p.child(render_line(line, theme));
+                        let lid = id_seed.wrapping_mul(100_000).wrapping_add(line_no);
+                        line_no += 1;
+                        p = p.child(render_line(line, theme, lid));
                     }
                 }
                 p.into_any_element()
@@ -148,42 +151,40 @@ fn code_block(lang: &str, code: &str, theme: &Theme, uid: usize) -> AnyElement {
 }
 
 /// Render one prose line: headings (`#`), unordered (`- `/`* `) and ordered
-/// (`N. `) list items, blockquotes (`> `), and inline styling.
-fn render_line(line: &str, theme: &Theme) -> AnyElement {
+/// (`N. `) list items, blockquotes (`> `), and inline styling. `id` keeps link
+/// hit-targets unique.
+fn render_line(line: &str, theme: &Theme, id: usize) -> AnyElement {
     let trimmed = line.trim_start();
 
     // Heading: leading #'s followed by a space.
     let hashes = trimmed.chars().take_while(|c| *c == '#').count();
     if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
-        let (text, runs) = inline_runs(trimmed[hashes + 1..].trim_start(), theme);
         return div()
             .text_lg()
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(theme.text)
-            .child(StyledText::new(text).with_highlights(runs))
+            .child(text_el(trimmed[hashes + 1..].trim_start(), theme, id))
             .into_any_element();
     }
 
     // Blockquote.
     if let Some(rest) = trimmed.strip_prefix("> ").or_else(|| trimmed.strip_prefix(">")) {
-        let (text, runs) = inline_runs(rest.trim_start(), theme);
         return div()
             .border_l_2()
             .border_color(theme.border)
             .pl_3()
             .text_color(theme.text_muted)
-            .child(StyledText::new(text).with_highlights(runs))
+            .child(text_el(rest.trim_start(), theme, id))
             .into_any_element();
     }
 
     // Unordered list item.
     if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
-        let (text, runs) = inline_runs(rest, theme);
         return div()
             .flex()
             .gap_2()
             .child(div().text_color(theme.text_muted).child("•"))
-            .child(StyledText::new(text).with_highlights(runs))
+            .child(text_el(rest, theme, id))
             .into_any_element();
     }
 
@@ -191,24 +192,46 @@ fn render_line(line: &str, theme: &Theme) -> AnyElement {
     let digits = trimmed.chars().take_while(|c| c.is_ascii_digit()).count();
     if digits > 0 && trimmed[digits..].starts_with(". ") {
         let num = trimmed[..digits].to_string();
-        let (text, runs) = inline_runs(&trimmed[digits + 2..], theme);
         return div()
             .flex()
             .gap_2()
             .child(div().text_color(theme.text_muted).child(format!("{num}.")))
-            .child(StyledText::new(text).with_highlights(runs))
+            .child(text_el(&trimmed[digits + 2..], theme, id))
             .into_any_element();
     }
 
-    let (text, runs) = inline_runs(line, theme);
-    StyledText::new(text).with_highlights(runs).into_any_element()
+    text_el(line, theme, id)
+}
+
+/// Inline text for one line: a `StyledText`, upgraded to an `InteractiveText`
+/// (clickable links opening in the browser) when it contains `[text](url)`.
+fn text_el(line: &str, theme: &Theme, id: usize) -> AnyElement {
+    let (text, runs, links) = inline_runs(line, theme);
+    let styled = StyledText::new(text).with_highlights(runs);
+    if links.is_empty() {
+        return styled.into_any_element();
+    }
+    let urls: Vec<String> = links.iter().map(|(_, u)| u.clone()).collect();
+    let ranges: Vec<Range<usize>> = links.into_iter().map(|(r, _)| r).collect();
+    InteractiveText::new(SharedString::from(format!("md-link-{id}")), styled)
+        .on_click(ranges, move |ix, _, cx| {
+            if let Some(url) = urls.get(ix) {
+                cx.open_url(url);
+            }
+        })
+        .into_any_element()
 }
 
 /// Parse `**bold**`, `*italic*`, `` `code` ``, and `[text](url)` links into plain
 /// text + styled ranges. Unclosed markers (common mid-stream) consume to end.
-fn inline_runs(line: &str, theme: &Theme) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
+#[allow(clippy::type_complexity)]
+fn inline_runs(
+    line: &str,
+    theme: &Theme,
+) -> (String, Vec<(Range<usize>, HighlightStyle)>, Vec<(Range<usize>, String)>) {
     let mut out = String::new();
     let mut runs: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+    let mut links: Vec<(Range<usize>, String)> = Vec::new();
     let mut chars = line.chars().peekable();
 
     while let Some(c) = chars.next() {
@@ -245,11 +268,13 @@ fn inline_runs(line: &str, theme: &Theme) -> (String, Vec<(Range<usize>, Highlig
                 }
                 if found_close && chars.peek() == Some(&'(') {
                     chars.next(); // '('
+                    let mut url = String::new();
                     while let Some(&nc) = chars.peek() {
                         chars.next();
                         if nc == ')' {
                             break;
                         }
+                        url.push(nc);
                     }
                     let start = out.len();
                     out.push_str(&link_text);
@@ -260,6 +285,7 @@ fn inline_runs(line: &str, theme: &Theme) -> (String, Vec<(Range<usize>, Highlig
                             ..Default::default()
                         },
                     ));
+                    links.push((start..out.len(), url));
                 } else {
                     // Not a link: emit literally.
                     out.push('[');
@@ -312,5 +338,5 @@ fn inline_runs(line: &str, theme: &Theme) -> (String, Vec<(Range<usize>, Highlig
         }
     }
 
-    (out, runs)
+    (out, runs, links)
 }
