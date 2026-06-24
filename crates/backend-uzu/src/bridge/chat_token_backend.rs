@@ -1,6 +1,6 @@
 use std::{path::PathBuf, pin::Pin};
 
-use futures::{Stream, StreamExt, TryStreamExt, stream};
+use futures::{Stream, StreamExt, stream};
 use shoji::{
     traits::{
         State,
@@ -17,7 +17,7 @@ use crate::{
     backends::common::Backend,
     bridge::{
         chat_token_state::UzuChatTokenBackendInstanceState,
-        helpers::{get_grammar, get_max_context_length, get_sampling_method, get_speculator},
+        helpers::{error_stream, get_grammar, get_max_context_length, get_sampling_method, get_speculator},
         sync_shared::SyncShared,
     },
     engine::{
@@ -102,21 +102,21 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         let mut tokens = Vec::<u64>::new();
         for result in iterator {
             match result {
-                Ok(token) => tokens.push(token),
+                Ok(token) => {
+                    tokens.push(token);
+                    if model_guard.generation_config().stop_token_ids.contains(&token) {
+                        break;
+                    }
+                },
                 Err(err) => {
                     return error_stream(err.to_string());
                 },
             }
         }
-        let stream = stream::iter(tokens).map(|token| Result::<u64, BackendError>::Ok(token));
+
+        let stream = stream::iter(tokens)
+            .map(|token| Result::<u64, BackendError>::Ok(token))
+            .take_until(cancel_token.cancelled_owned());
         Box::pin(stream)
     }
-}
-
-fn error_stream<'a>(
-    message: String
-) -> Pin<Box<dyn Stream<Item = Result<ChatTokenStreamOutput, BackendError>> + Send + 'a>> {
-    Box::pin(stream::once(async move {
-        Err::<ChatTokenStreamOutput, BackendError>(Box::<dyn std::error::Error + Send + Sync>::from(message))
-    }))
 }

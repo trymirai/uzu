@@ -1,9 +1,15 @@
-use shoji::types::{
-    basic::{
-        ContextLength, Grammar as ShojiGrammar, SamplingMethod as ShojiSamplingMethod,
-        SamplingPolicy as ShojiSamplingPolicy,
+use std::pin::Pin;
+
+use futures::{Stream, stream};
+use shoji::{
+    traits::backend::{Error as BackendError, chat_token::StreamOutput as ChatTokenStreamOutput},
+    types::{
+        basic::{
+            ContextLength, Grammar as ShojiGrammar, SamplingMethod as ShojiSamplingMethod,
+            SamplingPolicy as ShojiSamplingPolicy,
+        },
+        session::chat::ChatSpeculationPreset,
     },
-    session::chat::ChatSpeculationPreset,
 };
 
 use crate::{
@@ -11,6 +17,14 @@ use crate::{
     encodable_block::sampling::{SamplingMethod as UzuSamplingMethod, SamplingProcessingOrder},
     engine::language_model::{LanguageModel, grammar::CompiledGrammar, stream::LanguageModelStreamSpeculatorOptions},
 };
+
+pub fn error_stream<'a>(
+    message: String
+) -> Pin<Box<dyn Stream<Item = Result<ChatTokenStreamOutput, BackendError>> + Send + 'a>> {
+    Box::pin(stream::once(async move {
+        Err::<ChatTokenStreamOutput, BackendError>(Box::<dyn std::error::Error + Send + Sync>::from(message))
+    }))
+}
 
 pub fn get_grammar<'a, B: Backend>(_grammar: Option<ShojiGrammar>) -> Option<&'a mut dyn CompiledGrammar> {
     // TODO agolokoz: implement

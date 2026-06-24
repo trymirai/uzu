@@ -1,4 +1,5 @@
 mod error;
+mod helpers;
 pub mod message;
 pub mod token;
 
@@ -102,7 +103,7 @@ impl ChatSession {
 
         let instance = tokio::spawn(async move {
             if let Some(token_backend) = backend.as_chat_via_token_capable() {
-                token::Session::new(token_backend, config, reference).await.map(Instance::Token)
+                token::Session::new(token_backend, config, reference, &model).await.map(Instance::Token)
             } else if let Some(message_backend) = backend.as_chat_via_message_capable() {
                 message::Session::new(message_backend, config, reference).await.map(Instance::Message)
             } else {
