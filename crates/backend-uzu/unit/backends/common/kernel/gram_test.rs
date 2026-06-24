@@ -23,9 +23,10 @@ fn get_output<B: Backend>(
     k_heads: u32,
     value_heads: u32,
     head_k_dim: u32,
+    use_mxu: bool,
 ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let context = B::Context::new().expect("Failed to create Context");
-    let kernel = <<B as Backend>::Kernels as Kernels>::BuildTreeGramKernel::new(&context, DataType::F32)
+    let kernel = <<B as Backend>::Kernels as Kernels>::BuildTreeGramKernel::new(&context, DataType::F32, use_mxu)
         .expect("Failed to create BuildTreeGramKernel");
 
     let output_len = batch_size as usize * value_heads as usize * tree_size as usize * tree_size as usize;
@@ -105,26 +106,35 @@ fn test_build_tree_gram_matches_cpu() {
             k_heads as u32,
             value_heads as u32,
             head_k_dim as u32,
+            false,
         );
 
         for_each_non_cpu_backend!(|B| {
-            let actual = get_output::<B>(
-                &q,
-                &k,
-                &trie,
-                &prefix,
-                &beta,
-                scale,
-                batch_size as u32,
-                tree_size as u32,
-                k_heads as u32,
-                value_heads as u32,
-                head_k_dim as u32,
-            );
-            let msg = format!("backend {} tree_size {tree_size}", std::any::type_name::<B>());
-            assert_eq_float::<f32>(&expected.0, &actual.0, 5e-3, &format!("a_mat {msg}"));
-            assert_eq_float::<f32>(&expected.1, &actual.1, 5e-3, &format!("qkd {msg}"));
-            assert_eq_float::<f32>(&expected.2, &actual.2, 1e-2, &format!("ainv {msg}"));
+            for use_mxu in [false, true] {
+                let actual = get_output::<B>(
+                    &q,
+                    &k,
+                    &trie,
+                    &prefix,
+                    &beta,
+                    scale,
+                    batch_size as u32,
+                    tree_size as u32,
+                    k_heads as u32,
+                    value_heads as u32,
+                    head_k_dim as u32,
+                    use_mxu,
+                );
+                let path = if use_mxu {
+                    "mxu"
+                } else {
+                    "simdgroup"
+                };
+                let msg = format!("backend {} {path} tree_size {tree_size}", std::any::type_name::<B>());
+                assert_eq_float::<f32>(&expected.0, &actual.0, 5e-3, &format!("a_mat {msg}"));
+                assert_eq_float::<f32>(&expected.1, &actual.1, 5e-3, &format!("qkd {msg}"));
+                assert_eq_float::<f32>(&expected.2, &actual.2, 1e-2, &format!("ainv {msg}"));
+            }
         });
     }
 }

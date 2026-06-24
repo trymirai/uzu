@@ -19,7 +19,8 @@ use crate::{array::ArrayElement, backends::common::gpu_types::trie::TrieNode};
 // scale = 1/sqrt(K). exp(G_i-G_j) <= 1 for real ancestor pairs; clamp masked-out junk before exp if you fuse the mask.
 #[kernel(BuildTreeGram)]
 #[variants(T, f32, f16, bf16)]
-pub fn build_tree_gram<T: ArrayElement + Float>(
+#[variants(USE_MXU, false)]
+pub fn build_tree_gram<T: ArrayElement + Float, const USE_MXU: bool>(
     q: *const T,
     k: *const T,
     trie: *const TrieNode,
@@ -89,32 +90,38 @@ pub fn build_tree_gram<T: ArrayElement + Float>(
                 }
             }
 
-            // Step 4: ainv[batch,hv] = (I + A)^-1, reusing the A block just written.
-            // I+A is unit-lower-triangular -> exact forward substitution:
-            //   X = I;  X[i,j] = -sum_{k=j..i-1} A[i,k] * X[k,j]   (j < i)
-            for i in 0..tree_size {
-                for j in 0..tree_size {
-                    unsafe {
-                        *ainv.add(mat_base + i * tree_size + j) = if i == j {
-                            1.0
-                        } else {
-                            0.0
-                        };
-                    }
+            invert_tree_gram_matrix(a_mat, ainv, mat_base, tree_size);
+        }
+    }
+}
+
+fn invert_tree_gram_matrix(
+    a_mat: *const f32,
+    ainv: *mut f32,
+    mat_base: usize,
+    tree_size: usize,
+) {
+    for i in 0..tree_size {
+        for j in 0..tree_size {
+            unsafe {
+                *ainv.add(mat_base + i * tree_size + j) = if i == j {
+                    1.0
+                } else {
+                    0.0
+                };
+            }
+        }
+    }
+    for i in 0..tree_size {
+        for j in 0..i {
+            let mut s = 0.0f32;
+            for kx in j..i {
+                unsafe {
+                    s += *a_mat.add(mat_base + i * tree_size + kx) * *ainv.add(mat_base + kx * tree_size + j);
                 }
             }
-            for i in 0..tree_size {
-                for j in 0..i {
-                    let mut s = 0.0f32;
-                    for kx in j..i {
-                        unsafe {
-                            s += *a_mat.add(mat_base + i * tree_size + kx) * *ainv.add(mat_base + kx * tree_size + j);
-                        }
-                    }
-                    unsafe {
-                        *ainv.add(mat_base + i * tree_size + j) = -s;
-                    }
-                }
+            unsafe {
+                *ainv.add(mat_base + i * tree_size + j) = -s;
             }
         }
     }
