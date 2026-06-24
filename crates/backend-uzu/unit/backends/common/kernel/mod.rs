@@ -4,6 +4,7 @@ mod audio;
 mod delta_net_test;
 mod embedding;
 mod gated_act_mul_test;
+mod gram_test;
 mod hadamard_transform_test;
 mod kv_cache_update_test;
 mod layer_norm_test;
