@@ -1,10 +1,10 @@
-//! Settings screen: appearance + reasoning toggles, global instructions, about.
-//! (Profile / Privacy / Connectors tabs and auto-eject are later refinements.)
+//! Settings screen: tabbed (General / Privacy / About). Connectors and
+//! auto-eject are later refinements.
 
 use gpui::{Context, Entity, FontWeight, IntoElement, Render, Window, div, prelude::*, px};
 
 use crate::{
-    components::{InputEvent, TextInput, Toggle},
+    components::{InputEvent, SegmentedControl, TextInput, Toggle},
     persistence, settings_state,
     theme::{self, ActiveTheme, Theme, layout::CONTENT_MAX_WIDTH},
 };
@@ -17,8 +17,16 @@ enum SettingKind {
     Reasoning,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsTab {
+    General,
+    Privacy,
+    About,
+}
+
 pub struct SettingsView {
     instructions: Entity<TextInput>,
+    tab: SettingsTab,
 }
 
 impl SettingsView {
@@ -34,7 +42,10 @@ impl SettingsView {
         })
         .detach();
         settings_state::observe(cx, |_, cx| cx.notify()).detach();
-        Self { instructions }
+        Self {
+            instructions,
+            tab: SettingsTab::General,
+        }
     }
 
     fn flip(&mut self, kind: SettingKind, cx: &mut Context<Self>) {
@@ -145,21 +156,61 @@ impl Render for SettingsView {
             .bg(theme.card)
             .child(self.instructions.clone());
 
-        let about = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.text)
-                    .child("Mirai"),
+        let content = match self.tab {
+            SettingsTab::General => div()
+                .flex()
+                .flex_col()
+                .child(self.section(cx, "General", general))
+                .child(self.section(cx, "Global instructions", instructions_box))
+                .into_any_element(),
+            SettingsTab::Privacy => {
+                let body = div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(div().text_sm().text_color(theme.text).child(
+                        "All data is processed and stored locally on your device.",
+                    ))
+                    .child(div().text_xs().text_color(theme.text_muted).child(
+                        "Models run on-device — your conversations never leave your machine.",
+                    ));
+                self.section(cx, "Privacy", body).into_any_element()
+            }
+            SettingsTab::About => {
+                let body = div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(div().text_sm().text_color(theme.text).child("Mirai"))
+                    .child(div().text_xs().text_color(theme.text_muted).child(format!(
+                        "Version {APP_VERSION}"
+                    )))
+                    .child(link_row("about-uzu", "uzu engine on GitHub", "https://github.com/trymirai/uzu", &theme));
+                self.section(cx, "About", body).into_any_element()
+            }
+        };
+
+        let tabs = SegmentedControl::new("settings-tabs", self.tab as usize)
+            .segment(
+                "General",
+                cx.listener(|this, _, _, cx| {
+                    this.tab = SettingsTab::General;
+                    cx.notify();
+                }),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(format!("Version {APP_VERSION}")),
+            .segment(
+                "Privacy",
+                cx.listener(|this, _, _, cx| {
+                    this.tab = SettingsTab::Privacy;
+                    cx.notify();
+                }),
+            )
+            .segment(
+                "About",
+                cx.listener(|this, _, _, cx| {
+                    this.tab = SettingsTab::About;
+                    cx.notify();
+                }),
             );
 
         div()
@@ -181,14 +232,29 @@ impl Render for SettingsView {
                     .child(
                         div()
                             .pt_10()
-                            .pb_2()
+                            .pb_3()
                             .text_xl()
                             .font_weight(FontWeight::MEDIUM)
                             .child("Settings"),
                     )
-                    .child(self.section(cx, "General", general))
-                    .child(self.section(cx, "Global instructions", instructions_box))
-                    .child(self.section(cx, "About", about)),
+                    .child(div().max_w(px(360.)).child(tabs))
+                    .child(content),
             )
     }
+}
+
+/// A clickable About-tab row that opens `url` in the browser.
+fn link_row(id: &'static str, label: &'static str, url: &'static str, theme: &Theme) -> impl IntoElement {
+    let hover = theme.bg_hover;
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .py_1()
+        .text_sm()
+        .text_color(theme.info)
+        .cursor(gpui::CursorStyle::PointingHand)
+        .hover(move |s| s.bg(hover))
+        .on_click(move |_, _, cx| cx.open_url(url))
+        .child(label)
 }
