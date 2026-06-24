@@ -10,8 +10,8 @@ use shoji::{
         },
         session::chat::{
             ChatConfig as ShojiChatConfig, ChatMessage as ShojiMessage, ChatMessageList, ChatReplyConfig,
-            ChatReplyFinishReason as ShojiFinishReason, ChatReplyStats as ShojiStats, ChatRole as ShojiRole,
-            ChatSpeculationPreset as ShojiSpeculationPreset,
+            ChatReplyFinishReason as ShojiFinishReason, ChatReplyPowerStats as ShojiPowerStats,
+            ChatReplyStats as ShojiStats, ChatRole as ShojiRole, ChatSpeculationPreset as ShojiSpeculationPreset,
         },
     },
 };
@@ -195,6 +195,18 @@ fn build_stats(stats: &Stats) -> ShojiStats {
     let time_to_first_token = Some(stats.prefill_stats.duration);
     let prefill_tokens_per_second = Some(stats.prefill_stats.processed_tokens_per_second);
     let generate_tokens_per_second = stats.generate_stats.as_ref().map(|step| step.tokens_per_second);
+    let power_stats = stats.power_stats.as_ref().map(|power| ShojiPowerStats {
+        samples_count: power.samples_count.min(i64::MAX as u64) as i64,
+        average_cpu_watts: power.average_cpu_watts,
+        average_gpu_watts: power.average_gpu_watts,
+        average_gpu_sram_watts: power.average_gpu_sram_watts,
+        average_ane_watts: power.average_ane_watts,
+        average_ram_watts: power.average_ram_watts,
+        average_total_watts: power.average_total_watts,
+        average_package_watts: power.average_package_watts,
+        max_package_watts: power.max_package_watts,
+        energy_joules: power.energy_joules,
+    });
     ShojiStats {
         duration: stats.total_stats.duration,
         time_to_first_token,
@@ -202,6 +214,8 @@ fn build_stats(stats: &Stats) -> ShojiStats {
         generate_tokens_per_second,
         tokens_count_input: Some(stats.total_stats.tokens_count_input as u32),
         tokens_count_output: Some(stats.total_stats.tokens_count_output as u32),
+        memory_used_bytes: stats.memory_used_bytes.map(|value| value.min(i64::MAX as u64) as i64),
+        power_stats,
     }
 }
 

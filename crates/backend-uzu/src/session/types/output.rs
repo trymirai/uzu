@@ -43,6 +43,8 @@ impl Output {
                     duration,
                     ..self.stats.total_stats.clone()
                 },
+                memory_used_bytes: self.stats.memory_used_bytes,
+                power_stats: self.stats.power_stats.clone(),
             },
             finish_reason: self.finish_reason.clone(),
         }

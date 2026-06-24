@@ -48,6 +48,8 @@ objc2-foundation = { workspace = true, optional = true }
 bytesize = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 obfstr = { workspace = true, optional = true }
+# Power telemetry: macOS reads SoC IOReport; iOS reports HID charger "wall" power.
+keisoku.workspace = true
 
 [dev-dependencies]
 test-tag.workspace = true
