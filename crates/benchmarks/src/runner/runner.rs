@@ -69,7 +69,10 @@ impl Runner {
             }
             let output = session.run(input.clone(), run_config, Option::<fn(Output) -> bool>::None)?;
 
-            let memory_used = session.peak_memory_usage();
+            let memory_used =
+                output.stats.memory_used_bytes.map(|value| value as usize).or_else(|| session.peak_memory_usage());
+            let power_stats = output.stats.power_stats.clone();
+            let generate_tokens_per_second = output.stats.generate_stats.as_ref().map(|stats| stats.tokens_per_second);
 
             let result = TaskResult {
                 task: self.task.clone(),
@@ -78,11 +81,12 @@ impl Runner {
                 timestamp,
                 data_type,
                 memory_used,
+                power_stats,
                 tokens_count_input: output.stats.total_stats.tokens_count_input,
                 tokens_count_output: output.stats.total_stats.tokens_count_output,
                 time_to_first_token: output.stats.prefill_stats.duration,
                 prompt_tokens_per_second: output.stats.prefill_stats.processed_tokens_per_second,
-                generate_tokens_per_second: output.stats.generate_stats.map(|stats| stats.tokens_per_second),
+                generate_tokens_per_second,
                 text: output.text.original,
             };
             results.push(result);

@@ -1,4 +1,4 @@
-use backend_uzu::data_type::DataType;
+use backend_uzu::{data_type::DataType, session::types::PowerStats};
 use serde::{Deserialize, Serialize};
 
 use crate::runner::types::{Device, Task};
@@ -11,6 +11,7 @@ pub struct Result {
     pub timestamp: u64,
     pub data_type: DataType,
     pub memory_used: Option<usize>,
+    pub power_stats: Option<PowerStats>,
     pub tokens_count_input: u64,
     pub tokens_count_output: u64,
     pub time_to_first_token: f64,
