@@ -160,7 +160,7 @@ pub struct ChatView {
 
 impl ChatView {
     pub fn new(store: Entity<ModelsStore>, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| TextInput::new(cx, "Message Mirai…"));
+        let input = cx.new(|cx| TextInput::new(cx, "Add message…"));
         cx.subscribe(&input, |this, _input, event, cx| match event {
             InputEvent::Submit(text) => this.send(text.clone(), cx),
         })
@@ -874,24 +874,14 @@ impl Render for ChatView {
             column = column.child(
                 div()
                     .flex()
-                    .flex_col()
                     .items_center()
                     .justify_center()
-                    .gap_3()
-                    .pt_16()
-                    .child(IconEl::new(Icon::Logo, theme.text).size(40.))
-                    .child(
-                        div()
-                            .text_xl()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child("Ask anything"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.text_muted)
-                            .child(format!("Chatting with {model_name}")),
-                    ),
+                    .gap_2()
+                    .pt(px(220.))
+                    .text_sm()
+                    .text_color(theme.text_muted)
+                    .child("Start your new private and local conversation")
+                    .child(IconEl::new(Icon::Logo, theme.text_muted).size(13.)),
             );
         } else {
             let last_idx = self.messages.len().saturating_sub(1);
@@ -1122,62 +1112,75 @@ impl Render for ChatView {
                             .w_full()
                             .max_w(px(CONTENT_MAX_WIDTH))
                             .px_6()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            // Model selector + generation-settings gear.
+                            // Composer box: input on top, controls on a row below,
+                            // mirroring mirai-chat's single rounded container.
                             .child(
                                 div()
                                     .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .child(
-                                        div()
-                                            .id("model-trigger")
-                                            .flex()
-                                            .items_center()
-                                            .gap_1()
-                                            .cursor(gpui::CursorStyle::PointingHand)
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.model_picker_open = !this.model_picker_open;
-                                                cx.notify();
-                                            }))
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(theme.text_muted)
-                                                    .child(format!("Model: {model_name}")),
-                                            )
-                                            .child(
-                                                IconEl::new(Icon::ChevronDown, theme.text_muted)
-                                                    .size(13.),
-                                            ),
-                                    )
-                                    .child(
-                                        IconButton::new("gen-settings", Icon::Settings)
-                                            .color(theme.text_muted)
-                                            .icon_size(14.)
-                                            .hit_size(22.)
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.gen_settings_open = !this.gen_settings_open;
-                                                cx.notify();
-                                            })),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
+                                    .flex_col()
                                     .gap_2()
                                     .w_full()
                                     .px_3()
-                                    .py_2()
+                                    .py_3()
                                     .rounded_xl()
                                     .border_1()
                                     .border_color(theme.border)
                                     .bg(theme.card)
-                                    .child(div().flex_1().child(self.input.clone()))
-                                    .child(send_button),
+                                    .child(div().w_full().child(self.input.clone()))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .child(
+                                                IconButton::new("gen-settings", Icon::Settings)
+                                                    .color(theme.text_muted)
+                                                    .icon_size(14.)
+                                                    .hit_size(22.)
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.gen_settings_open =
+                                                            !this.gen_settings_open;
+                                                        cx.notify();
+                                                    })),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        div()
+                                                            .id("model-trigger")
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_1()
+                                                            .cursor(gpui::CursorStyle::PointingHand)
+                                                            .on_click(cx.listener(
+                                                                |this, _, _, cx| {
+                                                                    this.model_picker_open =
+                                                                        !this.model_picker_open;
+                                                                    cx.notify();
+                                                                },
+                                                            ))
+                                                            .child(
+                                                                div()
+                                                                    .text_xs()
+                                                                    .text_color(theme.text_muted)
+                                                                    .child(format!(
+                                                                        "Model: {model_name}"
+                                                                    )),
+                                                            )
+                                                            .child(
+                                                                IconEl::new(
+                                                                    Icon::ChevronDown,
+                                                                    theme.text_muted,
+                                                                )
+                                                                .size(13.),
+                                                            ),
+                                                    )
+                                                    .child(send_button),
+                                            ),
+                                    ),
                             ),
                     ),
             )
