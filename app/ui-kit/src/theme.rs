@@ -1,16 +1,11 @@
-//! Design system: the Mirai color palette (ported from mirai-chat's
-//! `tailwind.config.js`), bundled fonts, layout constants, and a `cx.theme()`
-//! accessor backed by a GPUI global. Dark mode is the default, matching
-//! mirai-chat.
+//! Theme tokens (ported from `@trymirai-schemas/ui-kit`), bundled fonts, layout
+//! constants, and a `cx.theme()` accessor. Dark by default.
 
 use std::{borrow::Cow, sync::Arc};
 
 use gpui::{App, Context, Global, Hsla, Subscription, rgb, rgba};
 
-/// Bundled font family names. These MUST match the family name embedded in the
-/// `.ttf` files under `assets/fonts/` (verified with fonttools), not the file
-/// names. Both are variable fonts, so any `FontWeight` works against the `wght`
-/// axis.
+/// Family names embedded in the `.ttf` files (not the file names); variable fonts.
 pub const FONT_SANS: &str = "Inter Variable";
 pub const FONT_MONO: &str = "Geist Mono";
 
@@ -37,8 +32,7 @@ fn hex(c: u32) -> Hsla {
     rgb(c).into()
 }
 
-/// `0xRRGGBBAA` → `Hsla`. Used for the ui-kit alpha-based border tokens
-/// (`--color-border-*`, `--color-border-outlined*`).
+/// `0xRRGGBBAA` → `Hsla` (for ui-kit's alpha border tokens).
 #[inline]
 fn hexa(c: u32) -> Hsla {
     rgba(c).into()
@@ -78,11 +72,7 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Dark palette mapped to `@trymirai-schemas/ui-kit` tokens (`palette.css` +
-    /// `semantic.css`, dark): surfaces from the gray ramp (`--color-background`
-    /// `#0b0b0b`, `surface-elevated` gray-50 `#0f0f0f`), softer text
-    /// (`text-primary` gray-1200 `#eee`), and alpha-white borders. Sidebar is
-    /// kept slightly darker than content (ui-kit has no distinct sidebar token).
+    /// Dark palette, mapped to ui-kit tokens (`palette.css` / `semantic.css`).
     pub fn dark() -> Self {
         Self {
             dark: true,
@@ -137,8 +127,7 @@ struct GlobalTheme(Arc<Theme>);
 
 impl Global for GlobalTheme {}
 
-/// Extension trait giving `cx.theme()` on any `App`/`Context`/`Window` context
-/// that derefs to `App`. Mirrors Zed's `ActiveTheme` pattern.
+/// `cx.theme()` accessor (mirrors Zed's `ActiveTheme`).
 pub trait ActiveTheme {
     fn theme(&self) -> &Arc<Theme>;
 }
@@ -149,21 +138,18 @@ impl ActiveTheme for App {
     }
 }
 
-/// Registers bundled fonts and installs the default (dark) theme. Call once at
-/// startup, before opening a window.
+/// Register fonts and install the default (dark) theme. Call once at startup.
 pub fn init(cx: &mut App) {
     register_fonts(cx);
     cx.set_global(GlobalTheme(Arc::new(Theme::dark())));
 }
 
-/// Swaps the active palette (e.g. from the Settings dark-mode toggle). Notifies
-/// global observers so views re-render.
+/// Swap the active palette; notifies observers.
 pub fn set_theme(cx: &mut App, theme: Theme) {
     cx.set_global(GlobalTheme(Arc::new(theme)));
 }
 
-/// Re-runs `on_change` whenever the active theme is swapped. The root view
-/// observes this and calls `cx.notify()` so the whole tree repaints.
+/// Run `on_change` whenever the palette is swapped.
 pub fn observe_theme<V: 'static>(
     cx: &mut Context<V>,
     mut on_change: impl FnMut(&mut V, &mut Context<V>) + 'static,

@@ -1,6 +1,4 @@
-//! Spinner + optional label, mirroring mirai-chat's `Loader` (it uses a Rive
-//! animation; GPUI has none, so we rotate a ¾-arc SVG via `with_animation`).
-//! Used for "waiting for the model" / "generating" / initializing states.
+//! Spinner + optional label (a rotated SVG), mirroring ui-kit's `Loader`.
 
 use std::time::Duration;
 

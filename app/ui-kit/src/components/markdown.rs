@@ -1,8 +1,6 @@
-//! Markdown rendering for chat message bodies, mirroring ui-kit's
-//! `MarkdownRenderer`. Renders fenced code blocks (language label + copy button)
-//! and prose: headings, unordered/ordered lists, blockquotes, and inline
-//! bold/italic/code/links. Tables, math, and syntax highlighting are not yet
-//! supported (a later refinement). Links are styled but not yet clickable.
+//! Markdown for chat bodies, mirroring ui-kit's `MarkdownRenderer`: code blocks
+//! (with copy), headings, lists, blockquotes, inline bold/italic/code/links.
+//! No tables/math/syntax-highlight yet; links are styled, not clickable.
 
 use std::ops::Range;
 

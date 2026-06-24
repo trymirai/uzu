@@ -1,7 +1,5 @@
-//! Segmented control: a horizontal row of mutually-exclusive options with one
-//! highlighted segment. Mirrors mirai-chat's `SegmentedControl` (sampling mode,
-//! settings tabs). Each segment carries its own click handler so callers can use
-//! `cx.listener(...)` directly.
+//! Segmented control (one highlighted option), mirroring ui-kit's
+//! `SegmentedControl`. Each segment carries its own click handler.
 
 use gpui::{
     App, ClickEvent, CursorStyle, ElementId, FontWeight, IntoElement, RenderOnce, SharedString,

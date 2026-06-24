@@ -1,7 +1,5 @@
-//! Mirai design system as a standalone crate, mirroring the structure of
-//! `@trymirai-schemas/ui-kit`: theme tokens (palette, typography, layout) plus
-//! the reusable GPUI components built on them. `mirai-app` builds its entire UI
-//! from this crate, so components stay free of any app/engine dependencies.
+//! Mirai design system (theme + GPUI components), mirroring
+//! `@trymirai-schemas/ui-kit`. The app builds its UI from this crate.
 
 pub mod components;
 pub mod theme;
