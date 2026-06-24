@@ -86,7 +86,7 @@ let appTarget: Target = .target(
         ],
     ]),
     sources: ["Sources/**"],
-    resources: [.glob(pattern: "Resources/**", excluding: ["Resources/Playground.entitlements"])],
+    resources: [.glob(pattern: "Resources/**", excluding: ["Resources/Playground.entitlements", "Resources/Playground-macOS.entitlements"])],
     scripts: [crashlyticsScript],
     dependencies: [
         .package(product: "Uzu"),
@@ -97,6 +97,8 @@ let appTarget: Target = .target(
     ],
     settings: .settings(base: [
         "CODE_SIGN_ENTITLEMENTS": "Resources/Playground.entitlements",
+        // macOS needs to be unsandboxed to read IOReport/SMC power; iOS stays sandboxed.
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": "Resources/Playground-macOS.entitlements",
         "DERIVED_SOURCES_DIR": "$(SRCROOT)/Generated",
         // Generate debug symbols for both the stub and the debug dylib
         "COPY_PHASE_STRIP": "NO",
