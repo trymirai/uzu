@@ -2,7 +2,10 @@
 //! I/O (files are small, saved per exchange). mirai-chat's markdown format for
 //! cross-app interop is a follow-up.
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -108,6 +111,18 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// A file's modification time in epoch-ms, or 0. Used as the timestamp fallback
+/// when reading a markdown chat whose dates aren't in our format.
+fn file_mtime_ms(path: &Path) -> u64 {
+    use std::time::UNIX_EPOCH;
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 pub fn save_chat(chat: &StoredChat) {
     let dir = chats_dir();
     if fs::create_dir_all(&dir).is_err() {
@@ -116,28 +131,65 @@ pub fn save_chat(chat: &StoredChat) {
     if let Ok(json) = serde_json::to_string_pretty(chat) {
         let _ = fs::write(dir.join(format!("{}.json", chat.id)), json);
     }
+    // Human-readable mirror for cross-app interop with mirai-chat. Loading still
+    // prefers the JSON, so a bad mirror can't corrupt the stored chat.
+    let _ = fs::write(dir.join(format!("{}.md", chat.id)), serialize_markdown(chat));
 }
 
 pub fn load_chat(id: &str) -> Option<StoredChat> {
-    let bytes = fs::read(chats_dir().join(format!("{id}.json"))).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    let dir = chats_dir();
+    if let Ok(bytes) = fs::read(dir.join(format!("{id}.json"))) {
+        if let Ok(chat) = serde_json::from_slice(&bytes) {
+            return Some(chat);
+        }
+    }
+    // Fall back to a markdown file (e.g. one authored by mirai-chat).
+    let md_path = dir.join(format!("{id}.md"));
+    let text = fs::read_to_string(&md_path).ok()?;
+    parse_markdown(&text, id, file_mtime_ms(&md_path))
 }
 
 pub fn delete_chat(id: &str) {
-    let _ = fs::remove_file(chats_dir().join(format!("{id}.json")));
+    let dir = chats_dir();
+    let _ = fs::remove_file(dir.join(format!("{id}.json")));
+    let _ = fs::remove_file(dir.join(format!("{id}.md")));
 }
 
-/// All saved chats, newest first.
+/// All saved chats, newest first. JSON files are authoritative; markdown files
+/// with no JSON sibling (e.g. imported from mirai-chat) are parsed in too.
 pub fn list_chats() -> Vec<StoredChat> {
+    let dir = chats_dir();
     let mut chats: Vec<StoredChat> = Vec::new();
-    if let Ok(entries) = fs::read_dir(chats_dir()) {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("json") {
                 if let Ok(bytes) = fs::read(&path) {
                     if let Ok(chat) = serde_json::from_slice::<StoredChat>(&bytes) {
+                        seen.insert(chat.id.clone());
                         chats.push(chat);
                     }
+                }
+            }
+        }
+    }
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if seen.contains(stem) {
+                continue;
+            }
+            if let Ok(text) = fs::read_to_string(&path) {
+                if let Some(chat) = parse_markdown(&text, stem, file_mtime_ms(&path)) {
+                    chats.push(chat);
                 }
             }
         }
