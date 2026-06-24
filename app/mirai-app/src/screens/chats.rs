@@ -2,12 +2,12 @@
 //! per row.
 
 use gpui::{
-    Context, CursorStyle, EventEmitter, FontWeight, IntoElement, Render, SharedString, Window, div,
-    prelude::*, px,
+    Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString,
+    Window, div, prelude::*, px,
 };
 
 use crate::{
-    components::{ConfirmModal, Icon, IconButton},
+    components::{ConfirmModal, Icon, IconButton, IconEl, TextInput},
     persistence::{self, StoredChat},
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
 };
@@ -19,6 +19,7 @@ pub enum ChatsEvent {
 
 pub struct ChatsView {
     chats: Vec<StoredChat>,
+    search: Entity<TextInput>,
     /// (id, title) of a chat pending delete confirmation.
     confirm_delete: Option<(String, String)>,
 }
@@ -26,9 +27,12 @@ pub struct ChatsView {
 impl EventEmitter<ChatsEvent> for ChatsView {}
 
 impl ChatsView {
-    pub fn new(_cx: &mut Context<Self>) -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let search = cx.new(|cx| TextInput::new(cx, "Search chats…"));
+        cx.observe(&search, |_, _, cx| cx.notify()).detach();
         Self {
             chats: persistence::list_chats(),
+            search,
             confirm_delete: None,
         }
     }
@@ -97,21 +101,33 @@ impl Render for ChatsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
 
+        let query = self.search.read(cx).text().to_lowercase();
+        let query = query.trim();
+
         let mut list = div().flex().flex_col().gap_1().pb_6();
         if self.chats.is_empty() {
             list = list.child(
-                div()
-                    .py_8()
-                    .text_color(theme.text_muted)
-                    .child("No saved chats yet."),
+                div().py_8().text_color(theme.text_muted).child("No saved chats yet."),
             );
         } else {
-            // Clone ids/data already inside row(); iterate by reference.
+            // row() clones the ids it needs, so iterate by reference.
             let chats = std::mem::take(&mut self.chats);
+            let mut shown = 0usize;
             for chat in &chats {
-                list = list.child(self.row(cx, chat));
+                let hit = query.is_empty()
+                    || chat.title.to_lowercase().contains(query)
+                    || chat.model_name.as_deref().is_some_and(|m| m.to_lowercase().contains(query));
+                if hit {
+                    list = list.child(self.row(cx, chat));
+                    shown += 1;
+                }
             }
             self.chats = chats;
+            if shown == 0 {
+                list = list.child(
+                    div().py_8().text_color(theme.text_muted).child("No chats match your search."),
+                );
+            }
         }
 
         let modal = self.confirm_delete.clone().map(|(id, title)| {
@@ -151,6 +167,22 @@ impl Render for ChatsView {
                             .text_xl()
                             .font_weight(FontWeight::MEDIUM)
                             .child("Chat history"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .w_full()
+                            .mb_3()
+                            .px_3()
+                            .py_2()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(theme.card)
+                            .child(IconEl::new(Icon::Search, theme.text_muted).size(14.))
+                            .child(self.search.clone()),
                     )
                     .child(
                         div()
