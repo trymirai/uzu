@@ -38,6 +38,7 @@ itertools.workspace = true
 schemars.workspace = true
 rustix.workspace = true
 futures.workspace = true
+async-stream.workspace = true
 tokio-util.workspace = true
 
 xgrammar = { workspace = true, optional = true }

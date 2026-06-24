@@ -466,6 +466,7 @@ name = "backend-uzu"
 version = "0.5.12"
 dependencies = [
  "anyhow",
+ "async-stream",
  "async-trait",
  "bindgen",
  "bitflags 2.13.0",
