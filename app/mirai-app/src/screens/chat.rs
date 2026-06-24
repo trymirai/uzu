@@ -82,6 +82,41 @@ impl ChatMsg {
     }
 }
 
+/// The conversation to send for a reply: prior turns only — the trailing
+/// assistant placeholder being filled is dropped, as are any errored turns —
+/// each as its current version's `(role, text)`.
+fn conversation_for_request(messages: &[ChatMsg]) -> Vec<(Role, String)> {
+    let upto = messages.len().saturating_sub(1);
+    messages[..upto]
+        .iter()
+        .filter(|m| !m.cur().error)
+        .map(|m| (m.role, m.cur().text.clone()))
+        .collect()
+}
+
+/// Map the UI sampling mode + params to a uzu `SamplingMethod`. `Default`
+/// leaves it to the model's own config (`None`); a param of 0 means "off".
+fn sampling_method(
+    mode: SamplingMode,
+    temperature: f32,
+    top_k: u32,
+    top_p: f32,
+    min_p: f32,
+) -> Option<SamplingMethod> {
+    match mode {
+        SamplingMode::Default => None,
+        SamplingMode::Argmax => Some(SamplingMethod::Greedy {}),
+        SamplingMode::Stochastic => Some(SamplingMethod::Stochastic {
+            temperature: Some(temperature as f64),
+            top_k: (top_k > 0).then_some(top_k as i64),
+            top_p: (top_p > 0.0).then_some(top_p as f64),
+            min_p: (min_p > 0.0).then_some(min_p as f64),
+            repetition_penalty: None,
+            suffix_repetition_length: None,
+        }),
+    }
+}
+
 /// Messages bridged from the Tokio reply stream to the UI.
 enum StreamMsg {
     Started(CancelToken),
@@ -609,11 +644,10 @@ impl ChatView {
         if !instructions.trim().is_empty() {
             history.push(ChatMessage::system().with_text(instructions));
         }
-        let upto = self.messages.len().saturating_sub(1);
-        history.extend(self.messages[..upto].iter().filter(|m| !m.cur().error).map(
-            |m| match m.role {
-                Role::User => ChatMessage::user().with_text(m.cur().text.clone()),
-                Role::Assistant => ChatMessage::assistant().with_text(m.cur().text.clone()),
+        history.extend(conversation_for_request(&self.messages).into_iter().map(
+            |(role, text)| match role {
+                Role::User => ChatMessage::user().with_text(text),
+                Role::Assistant => ChatMessage::assistant().with_text(text),
             },
         ));
 
@@ -622,20 +656,15 @@ impl ChatView {
             return;
         };
 
-        let sampling_method = match self.sampling_mode {
-            SamplingMode::Default => None,
-            SamplingMode::Argmax => Some(SamplingMethod::Greedy {}),
-            SamplingMode::Stochastic => Some(SamplingMethod::Stochastic {
-                temperature: Some(self.temperature as f64),
-                top_k: (self.top_k > 0).then_some(self.top_k as i64),
-                top_p: (self.top_p > 0.0).then_some(self.top_p as f64),
-                min_p: (self.min_p > 0.0).then_some(self.min_p as f64),
-                repetition_penalty: None,
-                suffix_repetition_length: None,
-            }),
-        };
+        let method = sampling_method(
+            self.sampling_mode,
+            self.temperature,
+            self.top_k,
+            self.top_p,
+            self.min_p,
+        );
         let mut reply_config = ChatReplyConfig::default();
-        if let Some(method) = sampling_method {
+        if let Some(method) = method {
             reply_config = reply_config.with_sampling_method(method);
         }
         let reply_config = reply_config
