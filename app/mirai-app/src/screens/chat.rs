@@ -895,7 +895,7 @@ impl Render for ChatView {
                         } else {
                             div()
                                 .text_color(theme.text)
-                                .child(crate::components::markdown::markdown(&msg.text, &theme))
+                                .child(crate::components::markdown::markdown(&msg.text, &theme, idx))
                                 .into_any_element()
                         };
                         block = block.child(body);

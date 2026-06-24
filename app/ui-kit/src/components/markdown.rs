@@ -1,56 +1,74 @@
-//! Minimal markdown rendering for chat message bodies. Splits text into fenced
-//! code blocks (rendered monospace in a card) and prose (line-preserving). Inline
-//! styling (bold/italic/links) is a later refinement.
+//! Markdown rendering for chat message bodies, mirroring ui-kit's
+//! `MarkdownRenderer`. Renders fenced code blocks (language label + copy button)
+//! and prose: headings, unordered/ordered lists, blockquotes, and inline
+//! bold/italic/code/links. Tables, math, and syntax highlighting are not yet
+//! supported (a later refinement). Links are styled but not yet clickable.
 
 use std::ops::Range;
 
 use gpui::{
-    AnyElement, FontStyle, FontWeight, HighlightStyle, IntoElement, StyledText, div, prelude::*, px,
+    AnyElement, ClipboardItem, CursorStyle, FontStyle, FontWeight, HighlightStyle, IntoElement,
+    SharedString, StyledText, div, prelude::*, px,
 };
 
-use crate::theme::{FONT_MONO, Theme};
+use crate::{
+    components::icon::{Icon, IconEl},
+    theme::{FONT_MONO, Theme},
+};
 
 enum Block {
     Text(String),
-    Code(String),
+    Code { lang: String, code: String },
 }
 
 fn parse_blocks(text: &str) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut in_code = false;
+    let mut lang = String::new();
     let mut buf = String::new();
-
-    let flush = |blocks: &mut Vec<Block>, buf: &mut String, in_code: bool| {
-        if in_code {
-            blocks.push(Block::Code(buf.trim_end_matches('\n').to_string()));
-        } else if !buf.trim().is_empty() {
-            blocks.push(Block::Text(buf.trim_matches('\n').to_string()));
-        }
-        buf.clear();
-    };
 
     for line in text.lines() {
         if line.trim_start().starts_with("```") {
-            flush(&mut blocks, &mut buf, in_code);
-            in_code = !in_code;
+            if in_code {
+                blocks.push(Block::Code {
+                    lang: std::mem::take(&mut lang),
+                    code: buf.trim_end_matches('\n').to_string(),
+                });
+                buf.clear();
+                in_code = false;
+            } else {
+                if !buf.trim().is_empty() {
+                    blocks.push(Block::Text(buf.trim_matches('\n').to_string()));
+                }
+                buf.clear();
+                lang = line.trim_start().trim_start_matches('`').trim().to_string();
+                in_code = true;
+            }
             continue;
         }
         buf.push_str(line);
         buf.push('\n');
     }
-    flush(&mut blocks, &mut buf, in_code);
+    if in_code {
+        blocks.push(Block::Code {
+            lang,
+            code: buf.trim_end_matches('\n').to_string(),
+        });
+    } else if !buf.trim().is_empty() {
+        blocks.push(Block::Text(buf.trim_matches('\n').to_string()));
+    }
     blocks
 }
 
-/// Renders `text` as a vertical stack of prose + code blocks.
-pub fn markdown(text: &str, theme: &Theme) -> AnyElement {
+/// Renders `text` as a vertical stack of prose + code blocks. `id_seed` must be
+/// unique per message so code-block copy buttons get stable, non-colliding ids.
+pub fn markdown(text: &str, theme: &Theme, id_seed: usize) -> AnyElement {
     let mut col = div().flex().flex_col().gap_2();
 
-    for block in parse_blocks(text) {
+    for (bi, block) in parse_blocks(text).into_iter().enumerate() {
         col = col.child(match block {
             // Prose: one element per line so single newlines (lists, breaks)
-            // survive, while each line still wraps. Inline bold/italic/code +
-            // headings + bullets are rendered per line.
+            // survive, while each line still wraps.
             Block::Text(prose) => {
                 let mut p = div().flex().flex_col().gap_1();
                 for line in prose.split('\n') {
@@ -62,30 +80,77 @@ pub fn markdown(text: &str, theme: &Theme) -> AnyElement {
                 }
                 p.into_any_element()
             }
-            Block::Code(code) => {
-                let mut body = div()
-                    .font_family(FONT_MONO)
-                    .text_size(px(12.))
-                    .text_color(theme.text)
-                    .bg(theme.bg_sub)
-                    .border_1()
-                    .border_color(theme.border)
-                    .rounded_lg()
-                    .p_3()
-                    .flex()
-                    .flex_col();
-                for line in code.split('\n') {
-                    body = body.child(div().child(line.to_string()));
-                }
-                body.into_any_element()
-            }
+            Block::Code { lang, code } => code_block(&lang, &code, theme, id_seed * 64 + bi),
         });
     }
     col.into_any_element()
 }
 
-/// Render one prose line: headings (`#`), bullets (`- `/`* `), and inline
-/// bold/italic/code.
+/// A fenced code block: header (language label + copy button) over a monospace
+/// body, mirroring ui-kit's code-block styling.
+fn code_block(lang: &str, code: &str, theme: &Theme, uid: usize) -> AnyElement {
+    let label = if lang.trim().is_empty() {
+        "code".to_string()
+    } else {
+        lang.trim().to_string()
+    };
+    let code_for_copy = code.to_string();
+
+    let header = div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px_3()
+        .py_1()
+        .border_b_1()
+        .border_color(theme.border)
+        .child(div().text_size(px(11.)).text_color(theme.text_muted).child(label))
+        .child(
+            div()
+                .id(SharedString::from(format!("md-copy-{uid}")))
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .cursor(CursorStyle::PointingHand)
+                .text_size(px(11.))
+                .text_color(theme.text_muted)
+                .hover(|s| s.text_color(theme.text))
+                .child(IconEl::new(Icon::Copy, theme.text_muted).size(12.))
+                .child("Copy")
+                .on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(code_for_copy.clone()));
+                }),
+        );
+
+    let mut body = div()
+        .font_family(FONT_MONO)
+        .text_size(px(12.))
+        .text_color(theme.text)
+        .p_3()
+        .flex()
+        .flex_col();
+    for line in code.split('\n') {
+        body = body.child(div().child(line.to_string()));
+    }
+
+    div()
+        .flex()
+        .flex_col()
+        .bg(theme.bg_sub)
+        .border_1()
+        .border_color(theme.border)
+        .rounded_lg()
+        .overflow_hidden()
+        .child(header)
+        .child(body)
+        .into_any_element()
+}
+
+/// Render one prose line: headings (`#`), unordered (`- `/`* `) and ordered
+/// (`N. `) list items, blockquotes (`> `), and inline styling.
 fn render_line(line: &str, theme: &Theme) -> AnyElement {
     let trimmed = line.trim_start();
 
@@ -101,7 +166,19 @@ fn render_line(line: &str, theme: &Theme) -> AnyElement {
             .into_any_element();
     }
 
-    // Bullet list item.
+    // Blockquote.
+    if let Some(rest) = trimmed.strip_prefix("> ").or_else(|| trimmed.strip_prefix(">")) {
+        let (text, runs) = inline_runs(rest.trim_start(), theme);
+        return div()
+            .border_l_2()
+            .border_color(theme.border)
+            .pl_3()
+            .text_color(theme.text_muted)
+            .child(StyledText::new(text).with_highlights(runs))
+            .into_any_element();
+    }
+
+    // Unordered list item.
     if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
         let (text, runs) = inline_runs(rest, theme);
         return div()
@@ -112,13 +189,25 @@ fn render_line(line: &str, theme: &Theme) -> AnyElement {
             .into_any_element();
     }
 
+    // Ordered list item: `N. `.
+    let digits = trimmed.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits > 0 && trimmed[digits..].starts_with(". ") {
+        let num = trimmed[..digits].to_string();
+        let (text, runs) = inline_runs(&trimmed[digits + 2..], theme);
+        return div()
+            .flex()
+            .gap_2()
+            .child(div().text_color(theme.text_muted).child(format!("{num}.")))
+            .child(StyledText::new(text).with_highlights(runs))
+            .into_any_element();
+    }
+
     let (text, runs) = inline_runs(line, theme);
     StyledText::new(text).with_highlights(runs).into_any_element()
 }
 
-/// Parse `**bold**`, `*italic*`, and `` `code` `` into plain text + styled
-/// ranges (byte offsets into the returned string). Unclosed markers (common
-/// mid-stream) consume to end of line.
+/// Parse `**bold**`, `*italic*`, `` `code` ``, and `[text](url)` links into plain
+/// text + styled ranges. Unclosed markers (common mid-stream) consume to end.
 fn inline_runs(line: &str, theme: &Theme) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
     let mut out = String::new();
     let mut runs: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
@@ -143,6 +232,44 @@ fn inline_runs(line: &str, theme: &Theme) -> (String, Vec<(Range<usize>, Highlig
                         ..Default::default()
                     },
                 ));
+            }
+            '[' => {
+                // [text](url) → blue link text (url dropped; not yet clickable).
+                let mut link_text = String::new();
+                let mut found_close = false;
+                while let Some(&nc) = chars.peek() {
+                    chars.next();
+                    if nc == ']' {
+                        found_close = true;
+                        break;
+                    }
+                    link_text.push(nc);
+                }
+                if found_close && chars.peek() == Some(&'(') {
+                    chars.next(); // '('
+                    while let Some(&nc) = chars.peek() {
+                        chars.next();
+                        if nc == ')' {
+                            break;
+                        }
+                    }
+                    let start = out.len();
+                    out.push_str(&link_text);
+                    runs.push((
+                        start..out.len(),
+                        HighlightStyle {
+                            color: Some(theme.info),
+                            ..Default::default()
+                        },
+                    ));
+                } else {
+                    // Not a link: emit literally.
+                    out.push('[');
+                    out.push_str(&link_text);
+                    if found_close {
+                        out.push(']');
+                    }
+                }
             }
             '*' if chars.peek() == Some(&'*') => {
                 chars.next(); // second '*'
