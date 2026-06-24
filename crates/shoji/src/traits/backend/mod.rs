@@ -3,7 +3,7 @@ pub mod chat_token;
 pub mod classification;
 pub mod text_to_speech;
 
-use std::pin::Pin;
+use std::{any::Any, pin::Pin};
 
 use futures::Stream;
 use tokio_util::sync::CancellationToken;
@@ -49,4 +49,6 @@ pub trait Instance: Send + Sync {
 
 pub trait State: Send + Sync + 'static {
     fn clone_boxed(&self) -> Box<dyn State>;
+
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
