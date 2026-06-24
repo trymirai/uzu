@@ -53,11 +53,26 @@ fn print_summary(results: &[BenchmarkResult]) -> Result<()> {
         results.iter().map(|result| result.prompt_tokens_per_second).collect::<Vec<f64>>();
     let generate_tokens_per_second_list =
         results.iter().filter_map(|result| result.generate_tokens_per_second).collect::<Vec<f64>>();
+    let average_package_power_list = results
+        .iter()
+        .filter_map(|result| result.power_stats.as_ref().map(|power| power.average_package_watts))
+        .collect::<Vec<f64>>();
+    let max_package_power_list = results
+        .iter()
+        .filter_map(|result| result.power_stats.as_ref().map(|power| power.max_package_watts))
+        .collect::<Vec<f64>>();
+    let package_energy_list = results
+        .iter()
+        .filter_map(|result| result.power_stats.as_ref().map(|power| power.energy_joules))
+        .collect::<Vec<f64>>();
 
     let memory_used_metric = calculate_metric(&memory_used_list);
     let time_to_first_token_metric = calculate_metric(&time_to_first_token_list);
     let prompt_tokens_per_second_metric = calculate_metric(&prompt_tokens_per_second_list);
     let generate_tokens_per_second_metric = calculate_metric(&generate_tokens_per_second_list);
+    let average_package_power_metric = calculate_metric(&average_package_power_list);
+    let max_package_power_metric = calculate_metric(&max_package_power_list);
+    let package_energy_metric = calculate_metric(&package_energy_list);
 
     let mut table = Table::new();
     table
@@ -68,7 +83,10 @@ fn print_summary(results: &[BenchmarkResult]) -> Result<()> {
         .add_row(vec!["Used memory, GB", memory_used_metric.as_str()])
         .add_row(vec!["TTFT, s", time_to_first_token_metric.as_str()])
         .add_row(vec!["Prompt, t/s", prompt_tokens_per_second_metric.as_str()])
-        .add_row(vec!["Generate, t/s", generate_tokens_per_second_metric.as_str()]);
+        .add_row(vec!["Generate, t/s", generate_tokens_per_second_metric.as_str()])
+        .add_row(vec!["Avg package power, W", average_package_power_metric.as_str()])
+        .add_row(vec!["Max package power, W", max_package_power_metric.as_str()])
+        .add_row(vec!["Package energy, J", package_energy_metric.as_str()]);
 
     let Some(column) = table.column_mut(1) else {
         bail!("Benchmark summary table value column is missing");
