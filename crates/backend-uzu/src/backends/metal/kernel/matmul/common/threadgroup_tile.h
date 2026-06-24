@@ -66,6 +66,8 @@ struct ThreadgroupTile {
 
     simdgroup_row_offset += tile_row_base;
     simdgroup_col_offset += tile_col_base;
+
+    c_fragment.clear();
   }
 
   METAL_FUNC void matmul(const threadgroup AT* a_shared, const threadgroup BT* b_shared) {
