@@ -3,6 +3,7 @@ pub mod classification_session;
 pub mod config;
 pub mod helpers;
 pub mod parameter;
+mod power_recorder;
 #[cfg(metal_backend)]
 mod tts_session;
 pub mod types;

@@ -26,6 +26,7 @@ use crate::{
         config::{DecodingConfig, RunConfig},
         helpers::{InputProcessor, InputProcessorDefault, OutputParser, is_directory_fits_ram},
         parameter::{ConfigResolvableValue, ContextMode, SamplingMethod},
+        power_recorder::PowerRecorder,
         types::{Error, FinishReason, Input, Output, RunStats, Stats, StepStats, TotalStats},
     },
 };
@@ -208,6 +209,7 @@ impl ChatSession {
         progress: Option<impl Fn(Output) -> bool>,
     ) -> Result<Output, Error> {
         let run_start = Instant::now();
+        let power_recorder = PowerRecorder::start();
         let text = self.input_processor.process(&input, config.enable_thinking, config.tokens_limit > 0)?;
         let tokens: Vec<u64> = self
             .tokenizer
@@ -288,11 +290,17 @@ impl ChatSession {
         };
 
         if !prefill_should_continue || prefill_finish_reason.is_some() {
-            if prefill_should_continue {
-                return Ok(prefill_output);
+            let output = if prefill_should_continue {
+                prefill_output
             } else {
-                return Ok(prefill_output.clone_with_finish_reason(Some(FinishReason::Cancelled)));
-            }
+                prefill_output.clone_with_finish_reason(Some(FinishReason::Cancelled))
+            };
+            let output = output.clone_with_duration(run_start.elapsed().as_secs_f64());
+            return Ok(Self::attach_runtime_stats(
+                output,
+                language_model_generator.peak_memory_usage(),
+                power_recorder,
+            ));
         }
 
         let can_use_async = language_model_generator.generate_suffix_length() == 1 && compiled_grammar.is_none();
@@ -320,7 +328,8 @@ impl ChatSession {
             )?
         };
 
-        Ok(generate_output.clone_with_duration(run_start.elapsed().as_secs_f64()))
+        let output = generate_output.clone_with_duration(run_start.elapsed().as_secs_f64());
+        Ok(Self::attach_runtime_stats(output, language_model_generator.peak_memory_usage(), power_recorder))
     }
 
     fn run_sync_generate(
@@ -646,7 +655,19 @@ impl ChatSession {
             prefill_stats,
             generate_stats,
             total_stats,
+            memory_used_bytes: None,
+            power_stats: None,
         }
+    }
+
+    fn attach_runtime_stats(
+        mut output: Output,
+        memory_used: Option<usize>,
+        power_recorder: PowerRecorder,
+    ) -> Output {
+        output.stats.memory_used_bytes = memory_used.map(|value| value as u64);
+        output.stats.power_stats = power_recorder.stop(output.stats.total_stats.duration);
+        output
     }
 
     pub fn peak_memory_usage(&self) -> Option<usize> {
