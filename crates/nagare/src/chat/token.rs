@@ -14,7 +14,7 @@ use shoji::{
     types::{
         basic::TokenId,
         model::Model,
-        session::chat::{ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig},
+        session::chat::{ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason},
     },
 };
 use tokio_util::sync::CancellationToken;
@@ -29,6 +29,7 @@ pub struct Session {
     state: Box<dyn State>,
     encoding: Encoding,
     input_tokens: Vec<u64>,
+    stop_token_ids: Box<[u64]>,
 }
 
 impl Session {
@@ -48,12 +49,16 @@ impl Session {
         let encoding = get_encoding(reference, model).map_err(|err| ChatSessionError::Loading {
             message: err.to_string(),
         })?;
+        let stop_token_ids = instance.stop_token_ids().ok_or_else(|| ChatSessionError::Loading {
+            message: "stop_token_ids is None".to_string(),
+        })?;
 
         Ok(Self {
             instance,
             state,
             encoding,
             input_tokens: Vec::new(),
+            stop_token_ids,
         })
     }
 
@@ -82,9 +87,10 @@ impl Session {
             },
         };
         let encoding = &mut self.encoding;
+        let stop_token_ids = &self.stop_token_ids;
         self.instance
             .stream(&self.input_tokens, self.state.as_mut(), config, cancel_token)
-            .map(move |event| Self::build_output(encoding, event))
+            .map(move |event| Self::build_output(encoding, stop_token_ids, event))
             .boxed()
     }
 
@@ -108,6 +114,7 @@ impl Session {
 
     fn build_output(
         encoding: &mut Encoding,
+        stop_token_ids: &[u64],
         event: Result<StreamOutput, Error>,
     ) -> Result<Output, ChatSessionError> {
         if let Err(err) = event {
@@ -142,18 +149,21 @@ impl Session {
             })
             .collect();
 
-        // stats:
-        // duration: let start = Instant before next + after next,
-        // tts: Instant after first token - start
-        //
+        let mut finish_reason: Option<ChatReplyFinishReason> = None;
+        if stop_token_ids.contains(&token) {
+            finish_reason = Some(ChatReplyFinishReason::Stop);
+        }
 
         Ok(Output {
             reasoning: message.reasoning(),
             text: message.text(),
             tool_calls: tool_calls_states,
             // TODO agolokoz: fill
-            finish_reason: None,
-            // TODO agolokoz: fill
+            finish_reason,
+            // TODO agolokoz: fillstats:
+            // duration: let start = Instant before next + after next,
+            // tts: Instant after first token - start
+            //
             stats: Default::default(),
         })
     }

@@ -51,6 +51,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
         let model = engine.load_language_model(&model_path).map_err(|err| err.to_string())?;
+        // TODO agolokoz: pass tokenizer
         let tokenizer = Tokenizer::from_file(model_path.join("tokenizer.json"))
             .map_err(|err| BackendError::from(err.to_string()))?;
         let stop_token_ids = model.generation_config().stop_token_ids.iter().map(|id| *id as i32).collect();
@@ -85,6 +86,10 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                 .map_err(|err| BackendError::from(err.to_string()))
                 .map(|state| UzuChatTokenBackendInstanceState::new(state).clone_boxed())
         })
+    }
+
+    fn stop_token_ids(&self) -> Option<Box<[u64]>> {
+        Some(self.stop_token_ids.iter().map(|id| *id as u64).collect())
     }
 
     fn stream<'a>(
