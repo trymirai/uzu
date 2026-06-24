@@ -158,6 +158,207 @@ pub fn set_global_instructions(text: &str) {
     }
 }
 
+// ---- mirai-chat-compatible markdown chat-file format -----------------------
+//
+// Mirrors external/mirai-chat's `storage/markdown` so chat files interoperate: a
+// metadata header, then per-message blocks delimited by `## 👤/🤖` headers and
+// HTML-comment sentinels (START_CONTENT, START_COT, START_PERF). We persist a
+// single (current) version per message, matching `StoredMessage`; when reading a
+// multi-version mirai-chat block we keep the active version.
+
+/// Serialize a chat to the mirai-chat markdown format.
+pub fn serialize_markdown(chat: &StoredChat) -> String {
+    let date = fmt_utc(chat.created_at);
+    let mut out = String::new();
+    out.push_str(&format!("# {}\n\n", chat.title));
+    out.push_str(&format!("**Model:** {}\n", chat.model_name.as_deref().unwrap_or("Unknown")));
+    out.push_str(&format!("**Created:** {}\n", fmt_utc(chat.created_at)));
+    out.push_str(&format!("**Updated:** {}\n", fmt_utc(chat.updated_at)));
+    out.push_str(&format!("**Messages:** {}\n\n---\n\n", chat.messages.len()));
+
+    for (i, m) in chat.messages.iter().enumerate() {
+        let (icon, who) = if m.role == "assistant" {
+            ("🤖", "Assistant")
+        } else {
+            ("👤", "User")
+        };
+        let model = if m.role == "assistant" {
+            chat.model_name.as_deref().map(|n| format!(" ({n})")).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        out.push_str(&format!("## {icon} {who}{model} - {date}\n\n"));
+        out.push_str(&format!("<!-- ID: msg-{i} -->\n"));
+
+        let mut perf: Vec<String> = Vec::new();
+        if let Some(tps) = m.tps.filter(|v| *v > 0.0) {
+            perf.push(format!("**TPS:** {}", tps.round() as i64));
+        }
+        if let Some(tok) = m.tokens.filter(|v| *v > 0) {
+            perf.push(format!("**TokensOut:** {tok}"));
+        }
+        if !perf.is_empty() {
+            out.push_str("<!-- START_PERF -->\n");
+            for line in &perf {
+                out.push_str(line);
+                out.push('\n');
+            }
+            out.push_str("<!-- END_PERF -->\n");
+        }
+        if let Some(cot) = m.reasoning.as_deref().filter(|s| !s.is_empty()) {
+            out.push_str("<!-- START_COT -->\n");
+            out.push_str(cot);
+            out.push_str("\n<!-- END_COT -->\n");
+        }
+        out.push_str("<!-- START_CONTENT -->\n");
+        out.push_str(&m.text);
+        out.push_str("\n<!-- END_CONTENT -->\n\n---\n\n");
+    }
+    out
+}
+
+/// Parse a mirai-chat markdown chat file. `fallback_ms` is used for any
+/// timestamp that isn't in our `YYYY-MM-DD HH:MM UTC` form (e.g. mirai-chat's
+/// locale dates). Returns `None` only if no title/messages can be found.
+pub fn parse_markdown(md: &str, id: &str, fallback_ms: u64) -> Option<StoredChat> {
+    let title = first_line_prefixed(md, "# ")?.trim().to_string();
+    let model_name = first_line_prefixed(md, "**Model:** ")
+        .map(|s| s.trim().to_string())
+        .filter(|s| s != "Unknown");
+    let created_at =
+        first_line_prefixed(md, "**Created:** ").and_then(parse_utc).unwrap_or(fallback_ms);
+    let updated_at =
+        first_line_prefixed(md, "**Updated:** ").and_then(parse_utc).unwrap_or(fallback_ms);
+
+    let mut messages = Vec::new();
+    for block in message_blocks(md) {
+        let role = if block.starts_with("## 🤖") { "assistant" } else { "user" };
+        let scope = active_version_slice(block);
+        let Some(text) = between(scope, "<!-- START_CONTENT -->\n", "\n<!-- END_CONTENT -->") else {
+            continue;
+        };
+        let reasoning = between(scope, "<!-- START_COT -->\n", "\n<!-- END_COT -->")
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty());
+        messages.push(StoredMessage {
+            role: role.to_string(),
+            text: text.to_string(),
+            reasoning,
+            tps: perf_value(scope, "TPS").map(|v| v as f32),
+            tokens: perf_value(scope, "TokensOut").map(|v| v as u32),
+        });
+    }
+    if messages.is_empty() {
+        return None;
+    }
+    Some(StoredChat { id: id.to_string(), title, model_name, created_at, updated_at, messages })
+}
+
+/// The first line with `prefix` stripped (whole remainder of that line).
+fn first_line_prefixed<'a>(md: &'a str, prefix: &str) -> Option<&'a str> {
+    md.lines().find_map(|l| l.strip_prefix(prefix))
+}
+
+/// Slice between (after) `start` and (before) `end`, first occurrence.
+fn between<'a>(text: &'a str, start: &str, end: &str) -> Option<&'a str> {
+    let s = text.find(start)? + start.len();
+    let e = text[s..].find(end)? + s;
+    Some(&text[s..e])
+}
+
+/// Byte ranges of each `## 👤/🤖` message block in document order.
+fn message_blocks(md: &str) -> Vec<&str> {
+    let mut starts = Vec::new();
+    let mut idx = 0;
+    for line in md.split_inclusive('\n') {
+        let t = line.trim_end_matches('\n');
+        if t.starts_with("## 👤") || t.starts_with("## 🤖") {
+            starts.push(idx);
+        }
+        idx += line.len();
+    }
+    starts
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| &md[s..starts.get(i + 1).copied().unwrap_or(md.len())])
+        .collect()
+}
+
+/// For a multi-version block (`#### Version N`), the slice of the active version
+/// (the one marked `⭐ ACTIVE`, else the first). Single-version blocks pass
+/// through unchanged.
+fn active_version_slice(block: &str) -> &str {
+    if !block.contains("#### Version") {
+        return block;
+    }
+    let mut starts = Vec::new();
+    let mut idx = 0;
+    for line in block.split_inclusive('\n') {
+        if line.trim_end().starts_with("#### Version") {
+            starts.push(idx);
+        }
+        idx += line.len();
+    }
+    let seg = |i: usize| &block[starts[i]..starts.get(i + 1).copied().unwrap_or(block.len())];
+    let active = (0..starts.len()).find(|&i| seg(i).contains("⭐ ACTIVE")).unwrap_or(0);
+    if starts.is_empty() { block } else { seg(active) }
+}
+
+/// `**LABEL:** <number>` (optional trailing `s`) anywhere in `text`.
+fn perf_value(text: &str, label: &str) -> Option<f64> {
+    let needle = format!("**{label}:** ");
+    text.lines()
+        .find_map(|l| l.trim().strip_prefix(needle.as_str()))
+        .and_then(|v| v.trim().trim_end_matches('s').parse::<f64>().ok())
+}
+
+/// Epoch-ms → `YYYY-MM-DD HH:MM UTC` (minute granularity).
+fn fmt_utc(ms: u64) -> String {
+    let secs = (ms / 1000) as i64;
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    let rem = secs.rem_euclid(86_400);
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02} UTC", rem / 3600, (rem % 3600) / 60)
+}
+
+/// Parse `YYYY-MM-DD HH:MM[ UTC]` back to epoch-ms; `None` for other formats.
+fn parse_utc(s: &str) -> Option<u64> {
+    let s = s.trim().trim_end_matches("UTC").trim();
+    let (date, time) = s.split_once(' ')?;
+    let mut dp = date.split('-');
+    let y: i64 = dp.next()?.parse().ok()?;
+    let mo: i64 = dp.next()?.parse().ok()?;
+    let d: i64 = dp.next()?.parse().ok()?;
+    let mut tp = time.split(':');
+    let h: i64 = tp.next()?.parse().ok()?;
+    let mi: i64 = tp.next()?.parse().ok()?;
+    let secs = days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60;
+    (secs >= 0).then(|| secs as u64 * 1000)
+}
+
+// Howard Hinnant's civil<->days algorithms (proleptic Gregorian, days from the
+// 1970 epoch). Used only for the markdown date fields.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +421,106 @@ mod tests {
         let s = AppSettings::default();
         assert!(s.dark_mode);
         assert!(s.reasoning);
+    }
+
+    // Minute-aligned timestamps so the YYYY-MM-DD HH:MM round-trip is exact.
+    fn md_sample() -> StoredChat {
+        let mut chat = sample_chat();
+        chat.created_at = 1_700_000_040_000;
+        chat.updated_at = 1_700_000_100_000;
+        chat
+    }
+
+    #[test]
+    fn utc_date_round_trips() {
+        let ms = 1_700_000_040_000;
+        assert_eq!(fmt_utc(ms), "2023-11-14 22:14 UTC");
+        assert_eq!(parse_utc(&fmt_utc(ms)), Some(ms));
+    }
+
+    #[test]
+    fn markdown_round_trips() {
+        let chat = md_sample();
+        let back = parse_markdown(&serialize_markdown(&chat), "abc123", 0).expect("parse");
+        assert_eq!(back.title, chat.title);
+        assert_eq!(back.model_name, chat.model_name);
+        assert_eq!(back.created_at, chat.created_at);
+        assert_eq!(back.updated_at, chat.updated_at);
+        assert_eq!(back.messages.len(), 2);
+        assert_eq!(back.messages[0].role, "user");
+        assert_eq!(back.messages[0].text, "What is 2+2?");
+        assert_eq!(back.messages[1].text, "**2 + 2** equals **4**.");
+        assert_eq!(back.messages[1].reasoning.as_deref(), Some("The user asks a simple sum."));
+        assert_eq!(back.messages[1].tokens, Some(12));
+        assert_eq!(back.messages[1].tps, Some(43.0)); // 42.5 rounds to 43 on write
+    }
+
+    // Golden on-disk markdown format. Mirrors mirai-chat's sentinels.
+    #[test]
+    fn markdown_format_is_stable() {
+        insta::assert_snapshot!(serialize_markdown(&md_sample()));
+    }
+
+    // A hand-written mirai-chat file: locale dates (unparseable → fallback) and a
+    // multi-version block whose ACTIVE version must win.
+    #[test]
+    fn parses_mirai_chat_multi_version_block() {
+        let md = "\
+# Sky color
+
+**Model:** Qwen/Qwen3-0.6B
+**Created:** Apr 29, 2025, 10:36:00 AM
+**Updated:** Apr 29, 2025, 10:37:00 AM
+**Messages:** 2
+
+---
+
+## 👤 User - Apr 29, 2025, 10:36:00 AM
+
+<!-- ID: msg-a -->
+<!-- START_CONTENT -->
+Why is the sky blue?
+<!-- END_CONTENT -->
+
+---
+
+## 🤖 Assistant (Qwen/Qwen3-0.6B) - Apr 29, 2025, 10:37:00 AM
+
+<!-- ID: msg-b -->
+### 📝 Versions (2)
+
+#### Version 1
+<!-- VID: v1 -->
+**Time:** Apr 29, 2025, 10:37:00 AM
+<!-- START_CONTENT -->
+First take.
+<!-- END_CONTENT -->
+
+#### Version 2 ⭐ ACTIVE
+<!-- VID: v2 -->
+**Time:** Apr 29, 2025, 10:38:00 AM
+<!-- START_PERF -->
+**TPS:** 50
+**TokensOut:** 7
+<!-- END_PERF -->
+<!-- START_COT -->
+Rayleigh scattering.
+<!-- END_COT -->
+<!-- START_CONTENT -->
+Because of Rayleigh scattering.
+<!-- END_CONTENT -->
+
+---
+";
+        let chat = parse_markdown(md, "sky", 999).expect("parse");
+        assert_eq!(chat.title, "Sky color");
+        assert_eq!(chat.model_name.as_deref(), Some("Qwen/Qwen3-0.6B"));
+        assert_eq!(chat.created_at, 999); // locale date isn't our format → fallback
+        assert_eq!(chat.messages.len(), 2);
+        assert_eq!(chat.messages[0].text, "Why is the sky blue?");
+        assert_eq!(chat.messages[1].text, "Because of Rayleigh scattering.");
+        assert_eq!(chat.messages[1].reasoning.as_deref(), Some("Rayleigh scattering."));
+        assert_eq!(chat.messages[1].tokens, Some(7));
+        assert_eq!(chat.messages[1].tps, Some(50.0));
     }
 }
