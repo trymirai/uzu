@@ -1,9 +1,6 @@
-//! Local Models — two-level browser matching mirai-chat:
-//!   1. Family list: one row per model family (vendor, counts, size range,
-//!      "Mirai quantizations" badge), tap to drill in.
-//!   2. Family detail: Installed + Available sections (name / size / quantization),
-//!      with download / pause / resume / delete. Tapping an installed model
-//!      starts a chat with it.
+//! Local Models — two-level browser matching mirai-chat: a family list, then a
+//! family detail (Installed/Available, download/pause/resume/delete; tapping an
+//! installed model starts a chat).
 
 use gpui::{
     Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString,

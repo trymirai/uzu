@@ -31,8 +31,7 @@ enum Role {
     Assistant,
 }
 
-/// Sampling mode, mirroring mirai-chat's Default / Argmax / Stochastic segmented
-/// control. `Default` defers to the model's generation config.
+/// Sampling mode (mirrors ui-kit). `Default` uses the model's own config.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SamplingMode {
     Default,

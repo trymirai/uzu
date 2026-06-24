@@ -1,9 +1,6 @@
-//! Chat persistence. Each chat is one JSON file under the OS data dir
-//! (`~/Library/Application Support/Mirai/chats/<id>.json` on macOS). Files are
-//! small and saved per completed exchange, so synchronous I/O is fine.
-//!
-//! (mirai-chat stores chats as human-readable Markdown with HTML-comment
-//! sentinels; matching that exact format for cross-app interop is a follow-up.)
+//! Chat persistence: one JSON file per chat under the OS data dir. Synchronous
+//! I/O (files are small, saved per exchange). mirai-chat's markdown format for
+//! cross-app interop is a follow-up.
 
 use std::{fs, path::PathBuf};
 

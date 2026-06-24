@@ -1,9 +1,6 @@
-//! Shared model catalog + live download state, as a GPUI entity.
-//!
-//! Loads chat-capable models from the uzu engine, subscribes once to the
-//! engine's global download-state broadcast, and exposes download / pause /
-//! resume / delete actions. Views (Local Models screen, chat model selector,
-//! footer) hold the `Entity<ModelsStore>` and observe it.
+//! Shared model catalog + live download state as a GPUI entity. Loads models
+//! from the engine, follows its download broadcast, and exposes download /
+//! pause / resume / delete. Views hold an `Entity<ModelsStore>` and observe it.
 
 use futures::{StreamExt, channel::mpsc};
 use gpui::Context;

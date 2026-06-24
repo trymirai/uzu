@@ -1,9 +1,5 @@
-//! Asset source for SVG icons. GPUI's `svg().path("icons/foo.svg")` resolves
-//! through the `AssetSource` registered via `application().with_assets`.
-//!
-//! Backed by the on-disk `assets/` directory (located via `CARGO_MANIFEST_DIR`).
-//! In dev this means adding/editing icons needs no rebuild. For a shipped bundle
-//! this should be swapped for an embedded source.
+//! `AssetSource` serving SVG icons from the on-disk `assets/` dir
+//! (`CARGO_MANIFEST_DIR`). Swap for an embedded source when shipping.
 
 use std::{borrow::Cow, fs, io::ErrorKind, path::PathBuf};
 
