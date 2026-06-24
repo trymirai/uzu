@@ -700,6 +700,7 @@ impl ChatView {
                 }
                 self.streaming = false;
                 self.cancel = None;
+                crate::toast::push(cx, "Inference failed", crate::toast::ToastKind::Error);
                 cx.notify();
             }
         }
