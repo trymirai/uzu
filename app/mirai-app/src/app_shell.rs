@@ -3,8 +3,8 @@
 //! `Route` field on the root view, switched via `cx.listener` + `cx.notify()`.
 
 use gpui::{
-    AnyElement, Context, CursorStyle, Entity, FontWeight, IntoElement, Render, Window, div,
-    prelude::*, px,
+    AnyElement, Context, CursorStyle, Entity, FontWeight, IntoElement, Render, SharedString,
+    Window, div, prelude::*, px,
 };
 
 use crate::{
@@ -77,6 +77,8 @@ pub struct MiraiApp {
     routers: Entity<RoutersView>,
     tts: Entity<TtsView>,
     cloud: Entity<CloudModelsView>,
+    /// Cached recent chats for the sidebar list; refreshed on navigation.
+    recent_chats: Vec<persistence::StoredChat>,
 }
 
 impl MiraiApp {
@@ -159,6 +161,7 @@ impl MiraiApp {
             routers,
             tts,
             cloud,
+            recent_chats: persistence::list_chats(),
         }
     }
 
@@ -169,6 +172,7 @@ impl MiraiApp {
             Route::Chats => self.chats.update(cx, |chats, cx| chats.reload(cx)),
             _ => {}
         }
+        self.recent_chats = persistence::list_chats();
         self.route = route;
         cx.notify();
     }
@@ -176,6 +180,7 @@ impl MiraiApp {
     fn open_chat(&mut self, id: String, cx: &mut Context<Self>) {
         if let Some(stored) = persistence::load_chat(&id) {
             self.chat.update(cx, |chat, cx| chat.load_stored(stored, cx));
+            self.recent_chats = persistence::list_chats();
             self.route = Route::Chat(Some(id));
             cx.notify();
         }
@@ -305,8 +310,8 @@ impl MiraiApp {
                         section == Section::Tts,
                     )),
             )
-            // Spacer (future: saved-chats list).
-            .child(div().flex_1())
+            // Recent chats fill the space between nav and the pinned Settings.
+            .child(self.render_recent_chats(cx))
             // Settings pinned to the bottom.
             .child(div().pb_2().child(self.nav_item(
                 cx,
@@ -316,6 +321,57 @@ impl MiraiApp {
                 Route::Settings,
                 section == Section::Settings,
             )))
+    }
+
+    /// Scrollable list of recent chats in the sidebar (mirai-chat parity).
+    fn render_recent_chats(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let hover_bg = theme.bg_hover;
+        let active = match &self.route {
+            Route::Chat(Some(id)) => Some(id.clone()),
+            _ => None,
+        };
+
+        let mut col = div()
+            .id("recent-chats")
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .overflow_y_scroll()
+            .px_2()
+            .pt_2();
+
+        if self.recent_chats.is_empty() {
+            return col
+                .child(div().px_2().text_xs().text_color(theme.text_muted).child("No chats yet"))
+                .into_any_element();
+        }
+
+        col = col.child(div().px_2().pb_1().text_xs().text_color(theme.text_muted).child("Recent"));
+        for chat in &self.recent_chats {
+            let id = chat.id.clone();
+            let is_active = active.as_deref() == Some(chat.id.as_str());
+            let fg = if is_active { theme.text } else { theme.text_muted };
+            let bg = if is_active { theme.bg_hover } else { gpui::transparent_black() };
+            col = col.child(
+                div()
+                    .id(SharedString::from(format!("recent-{}", chat.id)))
+                    .h(px(30.))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .rounded_md()
+                    .bg(bg)
+                    .text_sm()
+                    .text_color(fg)
+                    .cursor(CursorStyle::PointingHand)
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_chat(id.clone(), cx)))
+                    .child(truncate_title(&chat.title)),
+            );
+        }
+        col.into_any_element()
     }
 
     fn render_content(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -378,6 +434,15 @@ impl MiraiApp {
             .text_size(px(11.))
             .child(left)
             .child(div().child(format!("v{APP_VERSION}")))
+    }
+}
+
+fn truncate_title(s: &str) -> String {
+    let s = s.trim();
+    if s.chars().count() <= 26 {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(26).collect::<String>())
     }
 }
 
