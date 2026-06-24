@@ -9,6 +9,7 @@ pub mod modal;
 pub mod segmented_control;
 pub mod text_input;
 pub mod toggle;
+pub mod vendor_icon;
 
 pub use button::{Button, ButtonKind, ButtonSize};
 pub use icon::{Icon, IconEl};
@@ -18,3 +19,4 @@ pub use modal::ConfirmModal;
 pub use segmented_control::SegmentedControl;
 pub use text_input::{InputEvent, TextInput};
 pub use toggle::Toggle;
+pub use vendor_icon::VendorIcon;

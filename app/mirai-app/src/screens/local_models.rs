@@ -9,7 +9,7 @@ use gpui::{
 use uzu::{storage::types::DownloadPhase, types::model::Model};
 
 use crate::{
-    components::{ConfirmModal, Icon, IconButton, IconEl, TextInput},
+    components::{ConfirmModal, Icon, IconButton, IconEl, TextInput, VendorIcon},
     models_store::ModelsStore,
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
 };
@@ -225,7 +225,7 @@ impl LocalModelsView {
             .cursor(CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(move |this, _, _, cx| this.open_family(key.clone(), cx)))
-            .child(IconEl::new(Icon::Models, theme.text_muted).size(20.))
+            .child(VendorIcon::new(fam.vendor.clone()).size(20.))
             .child(
                 div()
                     .flex_1()
@@ -422,6 +422,7 @@ impl Render for LocalModelsView {
                             .color(theme.text_muted)
                             .on_click(cx.listener(|this, _, _, cx| this.back_to_families(cx))),
                     )
+                    .child(VendorIcon::new(title.1.clone()).size(22.))
                     .child(
                         div()
                             .text_xl()
