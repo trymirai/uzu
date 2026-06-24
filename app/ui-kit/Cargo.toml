@@ -1,0 +1,15 @@
+# Mirai design-system crate: theme tokens + reusable GPUI components, ported to
+# render like `@trymirai-schemas/ui-kit`. `mirai-app` builds its UI from here.
+[package]
+name = "ui-kit"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "ui_kit"
+path = "src/lib.rs"
+
+[dependencies]
+gpui = { path = "../../external/zed/crates/gpui" }
+unicode-segmentation = "1"
