@@ -1185,3 +1185,108 @@ impl Render for ChatView {
             .children(self.gen_settings_overlay(cx))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(role: Role, text: &str, error: bool) -> ChatMsg {
+        ChatMsg {
+            role,
+            versions: vec![Version { text: text.into(), error, ..Default::default() }],
+            current: 0,
+        }
+    }
+
+    #[test]
+    fn user_message_has_single_version() {
+        let m = ChatMsg::user("hi".into());
+        assert_eq!(m.versions.len(), 1);
+        assert_eq!(m.current, 0);
+        assert_eq!(m.cur().text, "hi");
+    }
+
+    // Regenerate pushes a new version and points `current` at it, keeping priors
+    // reachable via the pager.
+    #[test]
+    fn regenerate_keeps_prior_versions() {
+        let mut m = ChatMsg::assistant(Version { text: "v0".into(), ..Default::default() });
+        m.versions.push(Version { text: "v1".into(), ..Default::default() });
+        m.current = m.versions.len() - 1;
+        assert_eq!(m.versions.len(), 2);
+        assert_eq!(m.cur().text, "v1");
+        m.current = 0;
+        assert_eq!(m.cur().text, "v0");
+    }
+
+    #[test]
+    fn request_excludes_trailing_placeholder() {
+        let messages = vec![
+            msg(Role::User, "q1", false),
+            msg(Role::Assistant, "a1", false),
+            msg(Role::User, "q2", false),
+            msg(Role::Assistant, "", false), // placeholder being filled
+        ];
+        let convo = conversation_for_request(&messages);
+        assert_eq!(convo.len(), 3);
+        assert_eq!(convo[0].1, "q1");
+        assert_eq!(convo[2].1, "q2");
+    }
+
+    #[test]
+    fn request_drops_errored_turns() {
+        let messages = vec![
+            msg(Role::User, "q1", false),
+            msg(Role::Assistant, "boom", true), // errored — excluded from history
+            msg(Role::User, "q2", false),
+            msg(Role::Assistant, "", false),
+        ];
+        let convo = conversation_for_request(&messages);
+        assert_eq!(convo.len(), 2);
+        assert_eq!(convo[0].1, "q1");
+        assert_eq!(convo[1].1, "q2");
+    }
+
+    #[test]
+    fn request_empty_when_only_placeholder() {
+        assert!(conversation_for_request(&[msg(Role::Assistant, "", false)]).is_empty());
+    }
+
+    #[test]
+    fn default_mode_leaves_sampling_to_model() {
+        assert!(sampling_method(SamplingMode::Default, 0.7, 0, 0.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn argmax_mode_is_greedy() {
+        assert!(matches!(
+            sampling_method(SamplingMode::Argmax, 0.7, 40, 0.9, 0.1),
+            Some(SamplingMethod::Greedy {})
+        ));
+    }
+
+    #[test]
+    fn stochastic_zero_params_are_off() {
+        match sampling_method(SamplingMode::Stochastic, 0.7, 0, 0.0, 0.0) {
+            Some(SamplingMethod::Stochastic { temperature, top_k, top_p, min_p, .. }) => {
+                assert_eq!(temperature, Some(0.7f32 as f64));
+                assert_eq!(top_k, None);
+                assert_eq!(top_p, None);
+                assert_eq!(min_p, None);
+            }
+            _ => panic!("expected stochastic"),
+        }
+    }
+
+    #[test]
+    fn stochastic_nonzero_params_pass_through() {
+        match sampling_method(SamplingMode::Stochastic, 0.8, 40, 0.9, 0.05) {
+            Some(SamplingMethod::Stochastic { top_k, top_p, min_p, .. }) => {
+                assert_eq!(top_k, Some(40));
+                assert_eq!(top_p, Some(0.9f32 as f64));
+                assert!(min_p.unwrap() > 0.0);
+            }
+            _ => panic!("expected stochastic"),
+        }
+    }
+}
