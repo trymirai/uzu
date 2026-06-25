@@ -186,7 +186,6 @@ impl Session {
         } else {
             None
         };
-        // TODO: what about ToolCalls and Rejected?
 
         Ok(Output {
             reasoning: message.reasoning(),
