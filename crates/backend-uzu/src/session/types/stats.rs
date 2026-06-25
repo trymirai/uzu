@@ -26,8 +26,15 @@ impl PowerStats {
         let mut total = 0.0;
         let mut package = 0.0;
         let mut max_package = 0.0_f64;
+        let mut energy_joules = 0.0;
+        let mut previous_elapsed_secs = 0.0;
 
         for snapshot in &session.snapshots {
+            // Integrate energy over the real time each sample spans (sampling overhead makes
+            // the gap longer than the nominal interval), so energy tracks wall-clock.
+            let elapsed_secs = snapshot.elapsed.value() as f64 / 1000.0;
+            let window_secs = (elapsed_secs - previous_elapsed_secs).max(0.0);
+            previous_elapsed_secs = elapsed_secs;
             // Prefer SoC IOReport power (macOS); fall back to HID charger "wall" power on iOS (per-component stays 0).
             let wall_watts = match snapshot.power.as_ref() {
                 Some(power) => {
@@ -51,6 +58,7 @@ impl PowerStats {
             samples_count += 1;
             package += wall_watts;
             max_package = max_package.max(wall_watts);
+            energy_joules += wall_watts * window_secs;
         }
 
         if samples_count == 0 {
@@ -58,10 +66,6 @@ impl PowerStats {
         }
 
         let sample_count = samples_count as f64;
-        let average_package_watts = package / sample_count;
-        // Integrate over the actual sampled window (each sample covers `interval`) rather
-        // than the generation duration, so averaged watts and the energy window match.
-        let interval_secs = session.interval.value() as f64 / 1000.0;
         Some(Self {
             samples_count,
             average_cpu_watts: cpu / sample_count,
@@ -70,9 +74,9 @@ impl PowerStats {
             average_ane_watts: ane / sample_count,
             average_ram_watts: ram / sample_count,
             average_total_watts: total / sample_count,
-            average_package_watts,
+            average_package_watts: package / sample_count,
             max_package_watts: max_package,
-            energy_joules: package * interval_secs,
+            energy_joules,
         })
     }
 }
