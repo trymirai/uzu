@@ -9,11 +9,36 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
-    AnyWindowHandle, App, AppContext, Entity, HeadlessAppContext, Platform, Render, Window, px,
-    size,
+    AnyView, AnyWindowHandle, App, AppContext, Context, Entity, HeadlessAppContext, Hsla, Platform,
+    Render, Window, div, prelude::*, px, size,
 };
 
-use crate::{assets, components, screens, settings_state, theme, toast};
+use crate::{
+    assets, components, screens, settings_state,
+    theme::{self, ActiveTheme, FONT_SANS},
+    toast,
+};
+
+/// Wraps a screen in the same root context the real app provides — background,
+/// default text color, and font family — so views that inherit those (e.g.
+/// titles without an explicit `text_color`) render correctly headlessly.
+struct SnapshotRoot {
+    inner: AnyView,
+    bg: Hsla,
+    fg: Hsla,
+}
+
+impl Render for SnapshotRoot {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .bg(self.bg)
+            .text_color(self.fg)
+            .font_family(FONT_SANS)
+            .text_size(px(14.))
+            .child(self.inner.clone())
+    }
+}
 
 /// Render `view` into a `width`×`height` offscreen window and save it as
 /// `target/ui-snapshots/<name>.png`.
@@ -38,7 +63,13 @@ fn render_png<V: Render + 'static>(
         components::text_input::register(app);
     });
 
-    let window = cx.open_window(size(px(width), px(height)), build).expect("open offscreen window");
+    let window = cx
+        .open_window(size(px(width), px(height)), |window, app| {
+            let inner: AnyView = build(window, app).into();
+            let theme = app.theme().clone();
+            app.new(|_| SnapshotRoot { inner, bg: theme.bg, fg: theme.text })
+        })
+        .expect("open offscreen window");
     let handle: AnyWindowHandle = window.into();
     // Draw twice with the scheduler drained in between, so async asset/font
     // loading and layout settle before we capture the frame.
