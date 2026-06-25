@@ -25,7 +25,7 @@ struct TransformScale {
 
 template <typename T, uint BK, uint BD, bool USE_MXU>
 struct AttentionGemmLayout {
-  using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps, SimdgroupFragmentOps>;
+  using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
 
   METAL_CONST int FRAGMENT_ROWS = Ops::FRAGMENT_ROWS;
   METAL_CONST int SIMDGROUPS_PER_THREADGROUP = 4;
