@@ -22,15 +22,14 @@ if let Some(power) = snapshot.power {
 let recorder = keisoku::start(keisoku::Config {
     interval: std::time::Duration::from_millis(100),
 });
-recorder.mark("decode_start");          // optional labeled timestamps
 // ... do work ...
-let session = recorder.stop();          // joins the sampler thread
-session.write_json("power.json").unwrap();
+let session = recorder.stop();          // stops the sampler, returns what it collected
+let samples = session.snapshots.len();
 ```
 
 ## What you get back
 
-- `Session { device, interval, snapshots, markers }` — `to_json()` / `write_json(path)`.
+- `Session { interval, snapshots }` — the snapshots sampled between `start` and `stop`.
 - `Snapshot { elapsed, power, memory, cpu, gpu, neural_engine, bandwidth, temperatures, .. }`.
 - `PowerMetrics { cpu, gpu, gpu_sram, ane, ram, total, package }` — all `Watts`.
 - `Device { chip, gpu_cores, performance_cores, efficiency_cores, ram_total, os }`.

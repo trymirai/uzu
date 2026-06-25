@@ -27,7 +27,7 @@ pub use metrics::{
     BandwidthMetrics, BatteryMetrics, CpuMetrics, Fan, FanMetrics, GpuMetrics, MemoryMetrics, NeuralEngineMetrics,
     PowerMetrics, Temperatures, ThermalPressure,
 };
-pub use recorder::{Config, Device, Marker, RecorderHandle, Session, start};
+pub use recorder::{Config, Device, RecorderHandle, Session, start};
 pub use sensor::{Sensor, SensorKind, current_sensors, thermal_sensors, voltage_sensors};
 pub use snapshot::Snapshot;
 pub use units::{Bytes, Celsius, GigabytesPerSecond, Megahertz, Milliseconds, Percent, Rpm, Watts};
