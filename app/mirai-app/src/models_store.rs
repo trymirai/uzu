@@ -56,7 +56,7 @@ impl ModelRow {
     /// Remote provider/family logo URL from the model's metadata, preferring the
     /// given theme. `None` when the family has no icons.
     pub fn icon_url(&self, prefer_dark: bool) -> Option<String> {
-        let icons = &self.model.family.as_ref()?.metadata.icons;
+        let icons = &self.model.family.as_ref()?.vendor.metadata.icons;
         let want = if prefer_dark { ImageTheme::Dark } else { ImageTheme::Light };
         icons
             .iter()
