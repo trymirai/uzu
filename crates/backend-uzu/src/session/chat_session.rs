@@ -295,9 +295,9 @@ impl ChatSession {
             } else {
                 prefill_output.clone_with_finish_reason(Some(FinishReason::Cancelled))
             };
-            let output = output.clone_with_duration(run_start.elapsed().as_secs_f64());
             return Ok(Self::attach_runtime_stats(
                 output,
+                run_start.elapsed().as_secs_f64(),
                 language_model_generator.peak_memory_usage(),
                 power_recorder,
             ));
@@ -328,8 +328,12 @@ impl ChatSession {
             )?
         };
 
-        let output = generate_output.clone_with_duration(run_start.elapsed().as_secs_f64());
-        Ok(Self::attach_runtime_stats(output, language_model_generator.peak_memory_usage(), power_recorder))
+        Ok(Self::attach_runtime_stats(
+            generate_output,
+            run_start.elapsed().as_secs_f64(),
+            language_model_generator.peak_memory_usage(),
+            power_recorder,
+        ))
     }
 
     fn run_sync_generate(
@@ -662,9 +666,11 @@ impl ChatSession {
 
     fn attach_runtime_stats(
         mut output: Output,
+        duration: f64,
         memory_used: Option<usize>,
         power_recorder: PowerRecorder,
     ) -> Output {
+        output.stats.total_stats.duration = duration;
         output.stats.memory_used_bytes = memory_used.map(|value| value as u64);
         output.stats.power_stats = power_recorder.stop();
         output
