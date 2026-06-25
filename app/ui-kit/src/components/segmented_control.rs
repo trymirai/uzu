@@ -77,7 +77,8 @@ impl RenderOnce for SegmentedControl {
                 .child(seg.label);
 
             if is_sel {
-                cell = cell.bg(theme.card).text_color(theme.text).font_weight(FontWeight::MEDIUM);
+                // Active segment is a light pill with dark text (mirai-chat parity).
+                cell = cell.bg(gpui::white()).text_color(theme.bg).font_weight(FontWeight::MEDIUM);
             } else {
                 let hover = theme.bg_hover;
                 cell = cell.text_color(theme.text_muted).hover(move |s| s.bg(hover));
