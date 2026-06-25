@@ -8,6 +8,8 @@ mod persistence;
 mod screens;
 mod settings_state;
 mod toast;
+#[cfg(test)]
+mod ui_snapshot;
 
 // Design system lives in the `ui-kit` crate; re-export under the old paths.
 pub(crate) use ui_kit::{components, theme};
