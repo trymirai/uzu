@@ -5,7 +5,7 @@ use shoji::{
     traits::backend::{Error as BackendError, chat_token::StreamOutput as ChatTokenStreamOutput},
     types::{
         basic::{
-            ContextLength, Grammar as ShojiGrammar, Grammar, SamplingMethod as ShojiSamplingMethod,
+            ContextLength, Grammar as ShojiGrammar, SamplingMethod as ShojiSamplingMethod,
             SamplingPolicy as ShojiSamplingPolicy,
         },
         session::chat::ChatSpeculationPreset,
@@ -15,10 +15,10 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::Backend,
-    encodable_block::sampling::{SamplingMethod as UzuSamplingMethod, SamplingProcessingOrder},
+    encodable_block::sampling::SamplingMethod as UzuSamplingMethod,
     engine::language_model::{
         LanguageModel,
-        grammar::{CompiledGrammar, GrammarConfig, GrammarError},
+        grammar::{Grammar as UzuGrammar, GrammarConfig, GrammarError},
     },
     speculators::{
         empty_speculator::EmptySpeculator, fixed_token_speculator::FixedTokensSpeculator,
@@ -38,19 +38,19 @@ pub fn get_grammar<'a, B: Backend>(
     grammar: ShojiGrammar,
     tokenizer: &Tokenizer,
     stop_token_ids: &[i32],
-) -> Result<Box<dyn CompiledGrammar>, GrammarError> {
+) -> Result<Box<dyn UzuGrammar>, GrammarError> {
     let config = match grammar {
-        Grammar::JsonAny {
+        ShojiGrammar::JsonAny {
             ..
         } => GrammarConfig::builtin_json(),
-        Grammar::JsonSchema {
+        ShojiGrammar::JsonSchema {
             schema,
         } => GrammarConfig::json_schema_simple(schema),
-        Grammar::Regex {
+        ShojiGrammar::Regex {
             pattern,
         } => GrammarConfig::regex(pattern, false),
     };
-    <dyn CompiledGrammar>::new(&config, tokenizer, None, Some(stop_token_ids))
+    <dyn UzuGrammar>::new(&config, tokenizer, None, Some(stop_token_ids))
 }
 
 pub fn get_max_context_length<B: Backend>(
@@ -98,7 +98,6 @@ pub fn get_sampling_method<B: Backend>(
                 min_p: min_p.map(|value| value as f32),
                 repetition_penalty: repetition_penalty.map(|value| value as f32),
                 suffix_repetition_length: suffix_repetition_length.map(|value| value as usize),
-                processing_order: SamplingProcessingOrder::TemperatureThenFilters,
             },
         },
     }
