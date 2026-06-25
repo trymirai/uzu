@@ -5,7 +5,8 @@
 
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    Context, Entity, FontWeight, IntoElement, Render, ScrollHandle, Window, div, prelude::*, px,
+    Anchor, Context, Entity, FontWeight, IntoElement, Render, ScrollHandle, Window, anchored,
+    deferred, div, prelude::*, px,
 };
 use uzu::{
     session::chat::ChatSessionStreamChunk,
@@ -307,43 +308,49 @@ impl ChatView {
             }
         }
 
+        // Anchored popover opening upward from the model trigger (mirai-chat
+        // parity); closes on an outside click. Placed as a child of the trigger.
         Some(
-            div()
-                .id("model-picker-backdrop")
-                .absolute()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(gpui::black().opacity(0.5))
-                .occlude()
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.model_picker_open = false;
-                    cx.notify();
-                }))
-                .child(
-                    div()
-                        .occlude()
-                        .w(px(360.))
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .p_3()
-                        .rounded_xl()
-                        .bg(theme.card)
-                        .border_1()
-                        .border_color(theme.border)
-                        .child(
-                            div()
-                                .pb_1()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(theme.text)
-                                .child("Choose a model"),
-                        )
-                        .child(list),
-                )
-                .into_any_element(),
+            deferred(
+                anchored()
+                    .anchor(Anchor::BottomLeft)
+                    .snap_to_window_with_margin(px(8.))
+                    .child(
+                        div()
+                            .occlude()
+                            .w(px(320.))
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .p_2()
+                            .rounded_xl()
+                            .bg(theme.card)
+                            .border_1()
+                            .border_color(theme.border)
+                            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                this.model_picker_open = false;
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .px_1()
+                                    .pb_1()
+                                    .text_xs()
+                                    .text_color(theme.text_muted)
+                                    .child("Choose a model"),
+                            )
+                            .child(list),
+                    ),
+            )
+            .priority(1)
+            .into_any_element(),
         )
+    }
+
+    /// Open the model picker (used by the trigger and visual tests).
+    pub fn open_model_picker(&mut self, cx: &mut Context<Self>) {
+        self.model_picker_open = true;
+        cx.notify();
     }
 
     /// Reset to a fresh, unsaved conversation (keeps the selected model).
@@ -1184,33 +1191,43 @@ impl Render for ChatView {
                                                     .gap_2()
                                                     .child(
                                                         div()
-                                                            .id("model-trigger")
-                                                            .flex()
-                                                            .items_center()
-                                                            .gap_1()
-                                                            .cursor(gpui::CursorStyle::PointingHand)
-                                                            .on_click(cx.listener(
-                                                                |this, _, _, cx| {
-                                                                    this.model_picker_open =
-                                                                        !this.model_picker_open;
-                                                                    cx.notify();
-                                                                },
-                                                            ))
+                                                            .relative()
                                                             .child(
                                                                 div()
-                                                                    .text_xs()
-                                                                    .text_color(theme.text_muted)
-                                                                    .child(format!(
-                                                                        "Model: {model_name}"
-                                                                    )),
+                                                                    .id("model-trigger")
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap_1()
+                                                                    .cursor(
+                                                                        gpui::CursorStyle::PointingHand,
+                                                                    )
+                                                                    .on_click(cx.listener(
+                                                                        |this, _, _, cx| {
+                                                                            this.model_picker_open =
+                                                                                !this
+                                                                                    .model_picker_open;
+                                                                            cx.notify();
+                                                                        },
+                                                                    ))
+                                                                    .child(
+                                                                        div()
+                                                                            .text_xs()
+                                                                            .text_color(
+                                                                                theme.text_muted,
+                                                                            )
+                                                                            .child(format!(
+                                                                                "Model: {model_name}"
+                                                                            )),
+                                                                    )
+                                                                    .child(
+                                                                        IconEl::new(
+                                                                            Icon::ChevronDown,
+                                                                            theme.text_muted,
+                                                                        )
+                                                                        .size(13.),
+                                                                    ),
                                                             )
-                                                            .child(
-                                                                IconEl::new(
-                                                                    Icon::ChevronDown,
-                                                                    theme.text_muted,
-                                                                )
-                                                                .size(13.),
-                                                            ),
+                                                            .children(self.model_picker_overlay(cx)),
                                                     )
                                                     .child(send_button),
                                             ),
@@ -1218,7 +1235,6 @@ impl Render for ChatView {
                             ),
                     ),
             )
-            .children(self.model_picker_overlay(cx))
             .children(self.gen_settings_overlay(cx))
     }
 }
