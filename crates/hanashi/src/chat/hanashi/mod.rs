@@ -133,6 +133,10 @@ impl EncodingTrait for Encoding {
         self.update_messages_from_parser_state()?;
         Ok(())
     }
+
+    fn tokenizer(&self) -> Option<&Tokenizer> {
+        Some(&self.tokenizer)
+    }
 }
 
 impl Encoding {

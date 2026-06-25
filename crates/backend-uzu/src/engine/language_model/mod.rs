@@ -140,4 +140,8 @@ impl<B: Backend> LanguageModel<B> {
             suffix_repetition_length: self.generation_config.suffix_repetition_length,
         }
     }
+
+    pub fn generation_config(&self) -> &GenerationConfig {
+        &self.generation_config
+    }
 }

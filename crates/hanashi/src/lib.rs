@@ -1,3 +1,5 @@
+use tokenizers::Tokenizer;
+
 pub mod chat;
 
 pub trait Encoding {
@@ -25,4 +27,6 @@ pub trait Encoding {
         &mut self,
         value: Self::Output,
     ) -> Result<(), Self::Error>;
+
+    fn tokenizer(&self) -> Option<&Tokenizer>;
 }

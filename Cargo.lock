@@ -466,6 +466,7 @@ name = "backend-uzu"
 version = "0.5.12"
 dependencies = [
  "anyhow",
+ "async-stream",
  "async-trait",
  "bindgen",
  "bitflags 2.13.0",
@@ -6200,6 +6201,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio-util",
  "tsify",
  "uniffi",

@@ -503,3 +503,5 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
         // TODO:
     }
 }
+
+unsafe impl<'a, B: Backend> Send for LanguageModelStream<'a, B> {}

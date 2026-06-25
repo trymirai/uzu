@@ -7,7 +7,7 @@ mod error;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use backend_remote::openai::Backend as OpenAIBackend;
-use backend_uzu::inference::Backend as UzuBackend;
+use backend_uzu::bridge::UzuLlmBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
 pub use download_manager::DownloadManagerType;
@@ -115,7 +115,7 @@ impl Engine {
         engine.spawn_storage_listener().await;
 
         {
-            let uzu_backend = UzuBackend::new();
+            let uzu_backend = UzuLlmBackend::new();
             let uzu_backend_identifier = uzu_backend.identifier();
             let uzu_backend_version = uzu_backend.version();
 

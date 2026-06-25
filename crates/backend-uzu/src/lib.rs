@@ -10,6 +10,7 @@ mod trie;
 mod utils;
 
 pub mod backends;
+pub mod bridge;
 pub mod data_type;
 
 pub mod engine;
