@@ -9,7 +9,7 @@ use gpui::{
     anchored, deferred, div, prelude::*, px,
 };
 use uzu::{
-    session::chat::ChatSessionStreamChunk,
+    session::chat::{ChatSession, ChatSessionStreamChunk},
     types::{
         basic::{CancelToken, SamplingMethod},
         model::Model,
@@ -122,6 +122,8 @@ fn sampling_method(
 /// Messages bridged from the Tokio reply stream to the UI.
 enum StreamMsg {
     Started(CancelToken),
+    Session(ChatSession),
+    DropSession,
     Update {
         text: String,
         reasoning: Option<String>,
@@ -171,6 +173,8 @@ pub struct ChatView {
     max_tokens: u32,
     chat_title: String,
     title_pending: bool,
+    session: Option<ChatSession>,
+    session_model_id: Option<String>,
 }
 
 impl EventEmitter<ChatEvent> for ChatView {}
@@ -213,7 +217,14 @@ impl ChatView {
             max_tokens: 0,
             chat_title: String::new(),
             title_pending: false,
+            session: None,
+            session_model_id: None,
         }
+    }
+
+    fn clear_session(&mut self) {
+        self.session = None;
+        self.session_model_id = None;
     }
 
     /// The model the footer shows as loaded (None → "No model loaded").
@@ -232,6 +243,7 @@ impl ChatView {
         self.streaming = false;
         self.cancel = None;
         self.loaded_model = None;
+        self.clear_session();
         cx.notify();
     }
 
@@ -262,6 +274,7 @@ impl ChatView {
             .child(name)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.model = Some(model.clone());
+                this.clear_session();
                 this.model_picker_open = false;
                 cx.notify();
             }))
@@ -380,6 +393,7 @@ impl ChatView {
         self.title_pending = false;
         self.streaming = false;
         self.cancel = None;
+        self.clear_session();
         cx.notify();
     }
 
@@ -418,6 +432,7 @@ impl ChatView {
         self.model = None;
         self.streaming = false;
         self.cancel = None;
+        self.clear_session();
         // Opening a saved chat lands on its most recent message.
         self.pin_to_bottom();
         cx.notify();
@@ -440,7 +455,7 @@ impl ChatView {
             .clone()
             .unwrap_or_else(|| format!("chat-{}", self.created_at));
         self.chat_id = Some(id.clone());
-        let title = if self.chat_title.is_empty() {
+        let title = if title_gen::is_placeholder(&self.chat_title) {
             self.messages
                 .iter()
                 .find(|m| m.role == Role::User)
@@ -750,17 +765,35 @@ impl ChatView {
         let reply_config = reply_config
             .with_token_limit((self.max_tokens > 0).then_some(self.max_tokens));
 
+        let model_id = model.identifier.clone();
+        let cached_session = self
+            .session
+            .as_ref()
+            .filter(|_| self.session_model_id.as_deref() == Some(&model_id))
+            .cloned();
+
         let (tx, mut rx) = mpsc::unbounded::<StreamMsg>();
 
         // Producer: run uzu on the Tokio runtime, never touching view state.
         gpui_tokio::Tokio::spawn(cx, async move {
-            let session = match engine.chat(model, ChatConfig::default()).await {
-                Ok(session) => session,
-                Err(err) => {
-                    let _ = tx.unbounded_send(StreamMsg::Error(err.to_string()));
-                    return;
-                }
+            let session = match cached_session {
+                Some(session) => session,
+                None => match engine.chat(model.clone(), ChatConfig::default()).await {
+                    Ok(session) => {
+                        let _ = tx.unbounded_send(StreamMsg::Session(session.clone()));
+                        session
+                    }
+                    Err(err) => {
+                        let _ = tx.unbounded_send(StreamMsg::Error(err.to_string()));
+                        return;
+                    }
+                },
             };
+            if let Err(err) = session.reset().await {
+                let _ = tx.unbounded_send(StreamMsg::DropSession);
+                let _ = tx.unbounded_send(StreamMsg::Error(format!("{err:?}")));
+                return;
+            }
             let stream = session.reply_with_stream(history, reply_config).await;
             let _ = tx.unbounded_send(StreamMsg::Started(stream.cancel_token()));
             while let Some(chunk) = stream.next().await {
@@ -801,6 +834,11 @@ impl ChatView {
     fn apply_stream(&mut self, msg: StreamMsg, cx: &mut Context<Self>) {
         match msg {
             StreamMsg::Started(token) => self.cancel = Some(token),
+            StreamMsg::Session(session) => {
+                self.session = Some(session);
+                self.session_model_id = self.model.as_ref().map(|m| m.identifier.clone());
+            }
+            StreamMsg::DropSession => self.clear_session(),
             StreamMsg::Update {
                 text,
                 reasoning,
@@ -879,31 +917,20 @@ impl ChatView {
         };
         self.title_pending = false;
 
-        if let Some(fallback) = title_gen::vendor_fallback_title(&model) {
-            self.chat_title = fallback.to_string();
-            self.save();
-            cx.emit(ChatEvent::Updated);
-            cx.notify();
-            return;
-        }
-
         let Some(engine) = engine::try_engine(cx) else {
             return;
         };
         let (tx, mut rx) = mpsc::unbounded::<Result<String, String>>();
         gpui_tokio::Tokio::spawn(cx, async move {
-            let result = title_gen::generate(&engine, model, &user_text).await;
-            let _ = tx.unbounded_send(result);
+            let _ = tx.unbounded_send(title_gen::run(&engine, model, &user_text).await);
         })
         .detach();
         cx.spawn(async move |this, cx| {
-            if let Some(result) = rx.next().await {
+            if let Some(Ok(title)) = rx.next().await {
                 let _ = this.update(cx, |view, cx| {
-                    if let Ok(title) = result {
-                        view.chat_title = title;
-                        view.save();
-                        cx.emit(ChatEvent::Updated);
-                    }
+                    view.chat_title = title;
+                    view.save();
+                    cx.emit(ChatEvent::Updated);
                     cx.notify();
                 });
             }

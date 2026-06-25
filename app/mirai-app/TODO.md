@@ -32,7 +32,7 @@ Offscreen snapshot suite is green (14 screens + logic/unit tests).
 - ✅ Model picker, generation settings (temperature, max tokens, sampling modes)
 - ✅ Multiline composer (Shift+Enter)
 - **P2** ~~Title generation via LLM~~ (after first reply; vendor fallbacks)
-- **P2** Session reuse / context caching (fresh session each send today)
+- **P2** ~~Session reuse / context caching~~ (reuse loaded session; reset + full history each turn)
 - **P3** File attachments, streaming shimmer, empty-state suggestions
 
 ## Chats / History
