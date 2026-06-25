@@ -16,8 +16,6 @@ use crate::{
 
 const DISCORD_URL: &str = "https://discord.com/invite/gUhyn6Rb7x";
 
-const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-
 #[derive(Clone, Copy)]
 enum SettingKind {
     Reasoning,
@@ -543,59 +541,104 @@ impl SettingsView {
 
     fn about_content(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
+        let text = theme.text;
+        let muted = theme.text_muted;
+        let hover = theme.bg_hover;
+        let border = theme.border;
+
+        // One cell of the horizontal Website | GitHub | Vision | Docs band.
+        let cell = |id: &'static str, label: &'static str, url: &'static str| {
+            div()
+                .id(id)
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_between()
+                .h(px(52.))
+                .px_4()
+                .cursor(CursorStyle::PointingHand)
+                .hover(move |s| s.bg(hover))
+                .on_click(move |_, _, cx| cx.open_url(url))
+                .child(div().text_sm().text_color(text).child(label))
+                .child(IconEl::new(Icon::ChevronRight, muted).size(14.))
+        };
+        let vsep = || div().w(px(1.)).h(px(24.)).bg(border);
+
+        // Header + links band, grouped in one rounded card.
+        let header_card = div()
+            .rounded_lg()
+            .border_1()
+            .border_color(border)
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p_4()
+                    .child(IconEl::new(Icon::Heart, theme.info).size(22.))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(text)
+                            .child(
+                                "Done by a team who share a vision for accessible and powerful \
+                                 local AI.",
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(cell("about-website", "Website", "https://trymirai.com/"))
+                    .child(vsep())
+                    .child(cell("about-github", "GitHub", "https://github.com/trymirai"))
+                    .child(vsep())
+                    .child(cell("about-vision", "Vision", "https://trymirai.com/about-us"))
+                    .child(vsep())
+                    .child(cell("about-docs", "Docs", "https://docs.trymirai.com/")),
+            );
+
         div()
             .flex()
             .flex_col()
             .gap_3()
-            .child(div().text_sm().text_color(theme.text).child(
-                "Done by a team who share a vision for accessible and powerful local AI.",
-            ))
+            .child(header_card)
             .child(
                 div()
-                    .flex()
-                    .gap_4()
-                    .child(link_row("about-website", "Website", "https://trymirai.com/", &theme))
-                    .child(link_row("about-github", "GitHub", "https://github.com/trymirai", &theme))
-                    .child(link_row("about-vision", "Vision", "https://trymirai.com/about-us", &theme))
-                    .child(link_row("about-docs", "Docs", "https://docs.trymirai.com/", &theme)),
-            )
-            .child(self.divider(cx))
-            .child(
-                div()
-                    .pt_1()
+                    .pt_6()
                     .text_xs()
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme.text_muted)
+                    .text_color(muted)
                     .child("Our products"),
             )
             .child(product_row(
                 "prod-platform",
                 "Mirai platform",
-                "A web console to set up the SDK for your product",
+                "a web console where you can set up the SDK for your product",
                 "https://platform.trymirai.com",
                 &theme,
             ))
+            .child(self.divider(cx))
             .child(product_row(
                 "prod-cli",
                 "Command-line interface",
-                "Interactively message a model or start a local server",
+                "that allows you to interactively send messages to a model or start a local server",
                 "https://docs.trymirai.com/overview/cli",
                 &theme,
             ))
+            .child(self.divider(cx))
             .child(product_row(
                 "prod-engine",
                 "Rust inference engine",
-                "Designed to run models on specific hardware",
+                "designed to run models on specific hardware",
                 "https://github.com/trymirai/uzu",
                 &theme,
             ))
-            .child(
-                div()
-                    .pt_2()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(format!("Version {APP_VERSION}")),
-            )
             .into_any_element()
     }
 }
@@ -686,21 +729,6 @@ fn legal_row(id: &'static str, label: &'static str, url: &'static str, theme: &T
         .on_click(move |_, _, cx| cx.open_url(url))
         .child(div().text_sm().text_color(text).child(label))
         .child(IconEl::new(Icon::ChevronRight, muted).size(16.))
-}
-
-fn link_row(id: &'static str, label: &'static str, url: &'static str, theme: &Theme) -> impl IntoElement {
-    let hover = theme.bg_hover;
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .py_1()
-        .text_sm()
-        .text_color(theme.info)
-        .cursor(gpui::CursorStyle::PointingHand)
-        .hover(move |s| s.bg(hover))
-        .on_click(move |_, _, cx| cx.open_url(url))
-        .child(label)
 }
 
 /// A product row (title + description + chevron) linking to `url`.
