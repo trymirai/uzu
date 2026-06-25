@@ -338,36 +338,24 @@ impl ChatView {
         for_message: Option<usize>,
     ) -> gpui::AnyElement {
         let theme = cx.theme().clone();
-        // Badge pill: "Local" in muted green, "Cloud" in info blue — small
-        // rounded pill matching Electron's model-selector badge.
-        let (badge_text, badge_color) = if is_local {
-            ("Local", theme.success)
-        } else {
-            ("Cloud", theme.info)
-        };
+        // Plain muted label — matches Electron's model-selector styling.
         let badge = div()
             .flex_none()
-            .px_1p5()
-            .py_0p5()
-            .rounded_md()
-            .border_1()
-            .border_color(badge_color.opacity(0.4))
-            .text_size(px(10.))
-            .text_color(badge_color)
-            .child(badge_text);
+            .text_size(px(12.))
+            .text_color(theme.text_muted)
+            .child(if is_local { "Local" } else { "Cloud" });
 
         div()
             .id(gpui::SharedString::from(format!("pick-{id}")))
             .flex()
             .items_center()
-            .gap_2()
+            .gap_3()
             .w_full()
-            .px(px(14.))
-            .py_2()
-            .rounded_md()
+            .px_4()
+            .h(px(48.))
             .cursor(gpui::CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover))
-            .child(VendorIcon::new(vendor).size(20.).icon_url(icon_url))
+            .child(VendorIcon::new(vendor).size(22.).icon_url(icon_url))
             .child(
                 div()
                     .flex_1()
@@ -431,52 +419,42 @@ impl ChatView {
 
         div()
             .occlude()
-            .min_w(px(280.))
-            .max_w(px(420.))
+            .w(px(520.))
             .flex()
             .flex_col()
-            .rounded_md()
+            .rounded_xl()
             .bg(theme.card)
             .border_1()
             .border_color(theme.border)
             .child(
                 div()
-                    .p(px(6.))
+                    .py_2()
                     .child(list),
             )
+            .child(div().h_px().bg(theme.border))
             .child(
                 div()
-                    .h_px()
-                    .bg(theme.border),
-            )
-            .child(
-                div()
-                    .p(px(10.))
+                    .id("model-picker-more")
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .w_full()
+                    .px_4()
+                    .h(px(48.))
+                    .cursor(gpui::CursorStyle::PointingHand)
+                    .hover(move |s| s.bg(hover))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.close_popovers();
+                        cx.emit(ChatEvent::OpenLocalModels);
+                        cx.notify();
+                    }))
                     .child(
                         div()
-                            .id("model-picker-more")
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .w_full()
-                            .px(px(14.))
-                            .py_2()
-                            .rounded_md()
-                            .cursor(gpui::CursorStyle::PointingHand)
-                            .hover(move |s| s.bg(hover))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.close_popovers();
-                                cx.emit(ChatEvent::OpenLocalModels);
-                                cx.notify();
-                            }))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.text)
-                                    .child("More local models"),
-                            )
-                            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(16.)),
-                    ),
+                            .text_sm()
+                            .text_color(theme.text)
+                            .child("More local models"),
+                    )
+                    .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(16.)),
             )
             .into_any_element()
     }
