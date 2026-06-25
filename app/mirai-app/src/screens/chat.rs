@@ -1507,35 +1507,64 @@ impl Render for ChatView {
 
                             let mut right = div().flex().items_center().gap_4();
                             right = right.child(
-                                div()
-                                    .id(gpui::SharedString::from(format!("msg-model-{idx}")))
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .px(px(6.))
-                                    .py_1()
-                                    .rounded_md()
-                                    .cursor(gpui::CursorStyle::PointingHand)
-                                    .hover(|s| s.bg(theme.bg_hover))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.msg_model_picker_open =
-                                            if this.msg_model_picker_open == Some(idx) {
-                                                None
-                                            } else {
-                                                Some(idx)
-                                            };
-                                        this.model_picker_open = false;
-                                        this.perf_open_msg = None;
-                                        this.file_upload_open = false;
+                                {
+                                    let is_open = self.msg_model_picker_open == Some(idx);
+                                    let msg_picker = self.model_picker_panel(cx, Some(idx));
+                                    let close = cx.listener(|this, _, _, cx| {
+                                        this.msg_model_picker_open = None;
                                         cx.notify();
-                                    }))
-                                    .child(IconEl::new(Icon::ModelMenu, theme.text_muted).size(14.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .text_color(theme.text_muted)
-                                            .child("Model"),
-                                    ),
+                                    });
+                                    let btn_bg = if is_open { theme.bg_hover } else { gpui::transparent_black() };
+                                    div()
+                                        .relative()
+                                        .child(
+                                            div()
+                                                .id(gpui::SharedString::from(format!("msg-model-{idx}")))
+                                                .flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .px(px(6.))
+                                                .py_1()
+                                                .rounded_md()
+                                                .bg(btn_bg)
+                                                .cursor(gpui::CursorStyle::PointingHand)
+                                                .hover(|s| s.bg(theme.bg_hover))
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.msg_model_picker_open =
+                                                        if this.msg_model_picker_open == Some(idx) {
+                                                            None
+                                                        } else {
+                                                            Some(idx)
+                                                        };
+                                                    this.model_picker_open = false;
+                                                    this.perf_open_msg = None;
+                                                    this.file_upload_open = false;
+                                                    cx.notify();
+                                                }))
+                                                .child(IconEl::new(Icon::ModelMenu, theme.text_muted).size(14.))
+                                                .child(
+                                                    div()
+                                                        .text_size(px(13.))
+                                                        .text_color(theme.text_muted)
+                                                        .child("Model"),
+                                                ),
+                                        )
+                                        .when(is_open, |el| {
+                                            el.child(
+                                                deferred(
+                                                    anchored()
+                                                        .anchor(Anchor::BottomRight)
+                                                        .snap_to_window_with_margin(px(8.))
+                                                        .child(
+                                                            div()
+                                                                .on_mouse_down_out(close)
+                                                                .child(msg_picker),
+                                                        ),
+                                                )
+                                                .priority(1),
+                                            )
+                                        })
+                                },
                             );
                             if show_perf {
                                 right = right.child(
@@ -1573,19 +1602,6 @@ impl Render for ChatView {
                                 );
                             }
 
-                            if self.msg_model_picker_open == Some(idx) {
-                                block = block.child(
-                                    div()
-                                        .flex()
-                                        .justify_end()
-                                        .pr_6()
-                                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                                            this.msg_model_picker_open = None;
-                                            cx.notify();
-                                        }))
-                                        .child(self.model_picker_panel(cx, Some(idx))),
-                                );
-                            }
                             if self.perf_open_msg == Some(idx) {
                                 block = block.child(
                                     div()
