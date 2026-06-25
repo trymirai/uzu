@@ -316,6 +316,22 @@ fn render_chat_messages() {
     });
 }
 
+#[test]
+fn render_chat_perf() {
+    // Shows the Performance popover open on the first assistant message.
+    render_png("chat-perf", 1200.0, 800.0, |_, cx| {
+        let store = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
+        let cloud = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
+        let chat = cx.new(|cx| screens::ChatView::new(store, cloud, cx));
+        chat.update(cx, |c, cx| {
+            c.load_stored(sample_stored_chat(), cx);
+            // message index 1 is the assistant reply with tps stats
+            c.open_perf_panel(1, cx);
+        });
+        chat
+    });
+}
+
 /// A long conversation that overflows the viewport, used to verify the
 /// composer does not overlap the scrolled-to-bottom message content.
 fn tall_stored_chat() -> StoredChat {

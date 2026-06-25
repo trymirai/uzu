@@ -479,35 +479,40 @@ impl ChatView {
                 .flex()
                 .flex_col()
                 .items_center()
+                .gap_1()
                 .child(
                     div()
-                        .text_size(px(15.))
+                        .text_size(px(22.))
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(theme.text)
                         .child(value),
                 )
                 .child(
                     div()
-                        .mt_1()
                         .text_size(px(11.))
                         .text_color(theme.text_muted)
                         .child(label),
                 )
         };
+        let sep = || div().w_px().h(px(40.)).bg(theme.border).self_center();
         Some(
             div()
                 .occlude()
-                .p(px(10.))
-                .rounded_md()
+                .py_4()
+                .px_6()
+                .rounded_xl()
                 .bg(theme.card)
                 .border_1()
                 .border_color(theme.border)
                 .child(
                     div()
-                        .grid()
-                        .grid_cols(3)
-                        .gap_3()
+                        .flex()
+                        .items_center()
+                        .gap_6()
                         .child(stat("—".into(), "T to 1st token"))
+                        .child(sep())
                         .child(stat(tps, "№ of t/s"))
+                        .child(sep())
                         .child(stat("—".into(), "Total time")),
                 )
                 .into_any_element(),
@@ -577,6 +582,12 @@ impl ChatView {
     pub fn open_model_picker(&mut self, cx: &mut Context<Self>) {
         self.close_popovers();
         self.model_picker_open = true;
+        cx.notify();
+    }
+
+    pub fn open_perf_panel(&mut self, msg_idx: usize, cx: &mut Context<Self>) {
+        self.close_popovers();
+        self.perf_open_msg = Some(msg_idx);
         cx.notify();
     }
 
@@ -1567,53 +1578,63 @@ impl Render for ChatView {
                                 },
                             );
                             if show_perf {
+                                let perf_open = self.perf_open_msg == Some(idx);
+                                let perf_btn_bg = if perf_open { theme.bg_hover } else { gpui::transparent_black() };
+                                let perf_close = cx.listener(|this, _, _, cx| {
+                                    this.perf_open_msg = None;
+                                    cx.notify();
+                                });
+                                let perf_panel = self.performance_panel(idx, cur, cx);
                                 right = right.child(
                                     div()
-                                        .id(gpui::SharedString::from(format!("msg-perf-{idx}")))
-                                        .flex()
-                                        .items_center()
-                                        .gap_2()
-                                        .px(px(6.))
-                                        .py_1()
-                                        .rounded_md()
-                                        .cursor(gpui::CursorStyle::PointingHand)
-                                        .hover(|s| s.bg(theme.bg_hover))
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.perf_open_msg =
-                                                if this.perf_open_msg == Some(idx) {
-                                                    None
-                                                } else {
-                                                    Some(idx)
-                                                };
-                                            this.model_picker_open = false;
-                                            this.msg_model_picker_open = None;
-                                            this.file_upload_open = false;
-                                            cx.notify();
-                                        }))
-                                        .child(
-                                            IconEl::new(Icon::Performance, theme.text_muted).size(14.),
-                                        )
+                                        .relative()
                                         .child(
                                             div()
-                                                .text_size(px(13.))
-                                                .text_color(theme.text_muted)
-                                                .child("Performance"),
-                                        ),
-                                );
-                            }
-
-                            if self.perf_open_msg == Some(idx) {
-                                block = block.child(
-                                    div()
-                                        .flex()
-                                        .justify_end()
-                                        .pr_6()
-                                        .pb_2()
-                                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                                            this.perf_open_msg = None;
-                                            cx.notify();
-                                        }))
-                                        .children(self.performance_panel(idx, cur, cx)),
+                                                .id(gpui::SharedString::from(format!("msg-perf-{idx}")))
+                                                .flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .px(px(6.))
+                                                .py_1()
+                                                .rounded_md()
+                                                .bg(perf_btn_bg)
+                                                .cursor(gpui::CursorStyle::PointingHand)
+                                                .hover(|s| s.bg(theme.bg_hover))
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.perf_open_msg =
+                                                        if this.perf_open_msg == Some(idx) {
+                                                            None
+                                                        } else {
+                                                            Some(idx)
+                                                        };
+                                                    this.model_picker_open = false;
+                                                    this.msg_model_picker_open = None;
+                                                    this.file_upload_open = false;
+                                                    cx.notify();
+                                                }))
+                                                .child(IconEl::new(Icon::Performance, theme.text_muted).size(14.))
+                                                .child(
+                                                    div()
+                                                        .text_size(px(13.))
+                                                        .text_color(theme.text_muted)
+                                                        .child("Performance"),
+                                                ),
+                                        )
+                                        .when(perf_open, |el| {
+                                            el.children(perf_panel.map(|panel| {
+                                                deferred(
+                                                    anchored()
+                                                        .anchor(Anchor::BottomRight)
+                                                        .snap_to_window_with_margin(px(8.))
+                                                        .child(
+                                                            div()
+                                                                .on_mouse_down_out(perf_close)
+                                                                .child(panel),
+                                                        ),
+                                                )
+                                                .priority(1)
+                                            }))
+                                        }),
                                 );
                             }
 
