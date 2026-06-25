@@ -1,19 +1,21 @@
 //! Settings screen: tabbed (General / Privacy / About). Connectors and
 //! auto-eject are later refinements.
 
-use gpui::{Context, Entity, FontWeight, IntoElement, Render, Window, div, prelude::*, px};
+use gpui::{
+    AnyElement, Context, CursorStyle, Entity, FontWeight, IntoElement, Render, Window, div,
+    prelude::*, px,
+};
 
 use crate::{
-    components::{InputEvent, SegmentedControl, TextInput, Toggle},
+    components::{Icon, IconEl, InputEvent, SegmentedControl, TextInput, Toggle},
     persistence, settings_state,
-    theme::{self, ActiveTheme, Theme, layout::CONTENT_MAX_WIDTH},
+    theme::{ActiveTheme, Theme, layout::CONTENT_MAX_WIDTH},
 };
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Clone, Copy)]
 enum SettingKind {
-    DarkMode,
     Reasoning,
 }
 
@@ -26,6 +28,7 @@ enum SettingsTab {
 
 pub struct SettingsView {
     instructions: Entity<TextInput>,
+    instructions_open: bool,
     tab: SettingsTab,
 }
 
@@ -44,22 +47,80 @@ impl SettingsView {
         settings_state::observe(cx, |_, cx| cx.notify()).detach();
         Self {
             instructions,
+            instructions_open: false,
             tab: SettingsTab::General,
         }
+    }
+
+    /// Expandable "Add instructions to all chats" card (mirai-chat parity),
+    /// shared in spirit with the Chats screen.
+    fn instructions_card(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let hover = theme.bg_hover;
+        let open = self.instructions_open;
+
+        let header = div()
+            .id("settings-instr-card")
+            .flex()
+            .items_center()
+            .gap_3()
+            .px_4()
+            .py_3()
+            .cursor(CursorStyle::PointingHand)
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.instructions_open = !this.instructions_open;
+                cx.notify();
+            }))
+            .child(IconEl::new(if open { Icon::Close } else { Icon::Plus }, theme.text).size(16.))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.text)
+                            .child("Add instructions to all chats"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child("Tailor the way the model responds"),
+                    ),
+            );
+
+        let mut card = div()
+            .w_full()
+            .rounded_lg()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.card)
+            .child(header);
+
+        if open {
+            card = card.child(
+                div().px_4().pb_3().child(
+                    div()
+                        .w_full()
+                        .px_3()
+                        .py_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.bg)
+                        .child(self.instructions.clone()),
+                ),
+            );
+        }
+        card.into_any_element()
     }
 
     fn flip(&mut self, kind: SettingKind, cx: &mut Context<Self>) {
         let mut settings = settings_state::current(cx);
         match kind {
-            SettingKind::DarkMode => {
-                settings.dark_mode = !settings.dark_mode;
-                let next = if settings.dark_mode {
-                    Theme::dark()
-                } else {
-                    Theme::light()
-                };
-                theme::set_theme(cx, next);
-            }
             SettingKind::Reasoning => settings.reasoning = !settings.reasoning,
         }
         settings_state::set(cx, settings);
@@ -126,42 +187,22 @@ impl Render for SettingsView {
         let theme = cx.theme().clone();
         let settings = settings_state::current(cx);
 
-        let general = div()
-            .flex()
-            .flex_col()
-            .child(self.toggle_row(
-                cx,
-                "Dark mode",
-                "Use the dark color scheme",
-                settings.dark_mode,
-                SettingKind::DarkMode,
-            ))
-            .child(self.toggle_row(
-                cx,
-                "Show reasoning",
-                "Display the model's chain-of-thought",
-                settings.reasoning,
-                SettingKind::Reasoning,
-            ));
-
-        let instructions_box = div()
-            .flex()
-            .items_center()
-            .w_full()
-            .px_3()
-            .py_2()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.card)
-            .child(self.instructions.clone());
+        let general = div().flex().flex_col().child(self.toggle_row(
+            cx,
+            "Default reasoning mode",
+            "Let reasoning models think by default. You can override this for each model.",
+            settings.reasoning,
+            SettingKind::Reasoning,
+        ));
 
         let content = match self.tab {
             SettingsTab::General => div()
                 .flex()
                 .flex_col()
-                .child(self.section(cx, "General", general))
-                .child(self.section(cx, "Global instructions", instructions_box))
+                .gap_2()
+                .pt_6()
+                .child(self.instructions_card(cx))
+                .child(general)
                 .into_any_element(),
             SettingsTab::Privacy => {
                 let body = div()
@@ -206,7 +247,7 @@ impl Render for SettingsView {
                 }),
             )
             .segment(
-                "About",
+                "About Mirai",
                 cx.listener(|this, _, _, cx| {
                     this.tab = SettingsTab::About;
                     cx.notify();
@@ -231,6 +272,8 @@ impl Render for SettingsView {
                     .px_6()
                     .child(
                         div()
+                            .w_full()
+                            .text_center()
                             .pt_10()
                             .pb_3()
                             .text_xl()
