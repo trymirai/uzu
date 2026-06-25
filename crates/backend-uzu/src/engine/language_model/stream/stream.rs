@@ -505,5 +505,3 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
 }
 
 unsafe impl<'a, B: Backend> Send for LanguageModelStream<'a, B> {}
-
-unsafe impl<'a, B: Backend> Sync for LanguageModelStream<'a, B> {}

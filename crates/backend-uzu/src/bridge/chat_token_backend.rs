@@ -106,20 +106,10 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         let token_limit = config.token_limit.map(|count| count as usize).unwrap_or(usize::MAX);
 
         let stream = async_stream::stream! {
-            let mut grammar = if let Some(grammar_config) = config.grammar {
-                match get_grammar::<B>(grammar_config, &self.tokenizer, &self.stop_token_ids) {
-                    Ok(grammar) => Some(grammar),
-                    Err(err) => {
-                        yield Err(BackendError::from(err.to_string()));
-                        return
-                    }
-                }
-            } else {
-                None
-            };
             let spec_options = self.speculator.as_ref().map(|speculator| LanguageModelStreamSpeculatorOptions {
                 speculator: speculator.as_ref(),
-                speculation_budget: 0,
+                // TODO: pass actual value
+                speculation_budget: 1,
                 trie_creation_config: Default::default(),
             });
 
@@ -138,9 +128,21 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                 },
             };
 
+            let grammar = if let Some(grammar_config) = config.grammar {
+                match get_grammar::<B>(grammar_config, &self.tokenizer, &self.stop_token_ids) {
+                    Ok(grammar) => Some(grammar),
+                    Err(err) => {
+                        yield Err(BackendError::from(err.to_string()));
+                        return
+                    }
+                }
+            } else {
+                None
+            };
+
             let options = LanguageModelStreamOptions {
                 sampling_method: get_sampling_method::<B>(&model_guard, &config.sampling_policy),
-                grammar: grammar.as_deref_mut(),
+                grammar,
                 speculator: spec_options,
             };
             let iterator = match model_guard.stream(input, &mut state_guard, options) {

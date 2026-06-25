@@ -176,7 +176,7 @@ impl Session {
         } else if state.stop_token_ids.contains(&token) {
             Some(ChatReplyFinishReason::Stop)
         } else if let Some(token_limit) = state.config.token_limit
-            && tokens_count >= token_limit as usize
+            && state.total_tokens_output >= token_limit as usize
         {
             Some(ChatReplyFinishReason::Length)
         } else if let Some(length) = state.max_context_length
@@ -186,7 +186,7 @@ impl Session {
         } else {
             None
         };
-        // TODO agolokoz: ask about ToolCalls and Rejected
+        // TODO: what about ToolCalls and Rejected?
 
         Ok(Output {
             reasoning: message.reasoning(),

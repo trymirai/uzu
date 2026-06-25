@@ -23,7 +23,7 @@ pub struct LanguageModelStreamSpeculatorOptions<'a> {
 
 pub struct LanguageModelStreamOptions<'a> {
     pub sampling_method: SamplingMethod,
-    pub grammar: Option<&'a mut dyn Grammar>,
+    pub grammar: Option<Box<dyn Grammar>>,
     pub speculator: Option<LanguageModelStreamSpeculatorOptions<'a>>,
 }
 
@@ -55,10 +55,8 @@ impl<B: Backend> LanguageModel<B> {
         input: &[u64],
         state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions<'a>,
-    ) -> Result<
-        impl Iterator<Item = Result<u64, LanguageModelStreamError<B>>> + Send + Sync + 'a,
-        LanguageModelStreamError<B>,
-    > {
+    ) -> Result<impl Iterator<Item = Result<u64, LanguageModelStreamError<B>>> + Send + 'a, LanguageModelStreamError<B>>
+    {
         LanguageModelStream::new(self, input, state, options)
     }
 }
