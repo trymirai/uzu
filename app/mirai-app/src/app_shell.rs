@@ -95,8 +95,9 @@ impl MiraiApp {
         toast::observe(cx, |_, cx| cx.notify()).detach();
 
         let models = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
+        let cloud_store = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
         let local_models = cx.new(|cx| LocalModelsView::new(models.clone(), cx));
-        let chat = cx.new(|cx| ChatView::new(models.clone(), cx));
+        let chat = cx.new(|cx| ChatView::new(models.clone(), cloud_store.clone(), cx));
 
         // Tapping an installed local model starts a chat with it.
         cx.subscribe(&local_models, |this, _view, event, cx| match event {
@@ -115,7 +116,6 @@ impl MiraiApp {
         let routers = cx.new(|cx| RoutersView::new(routers_store, cx));
         let tts_store = cx.new(|cx| ModelsStore::new(ModelKind::TextToSpeech, cx));
         let tts = cx.new(|cx| TtsView::new(tts_store, cx));
-        let cloud_store = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
         let cloud = cx.new(|cx| CloudModelsView::new(cloud_store, cx));
 
         // Chatting with a cloud model picked on the Cloud Models screen.

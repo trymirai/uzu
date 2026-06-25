@@ -132,6 +132,8 @@ enum StreamMsg {
 
 pub struct ChatView {
     store: Entity<ModelsStore>,
+    /// Cloud chat models, shown alongside local ones in the model picker.
+    cloud_store: Entity<ModelsStore>,
     input: Entity<TextInput>,
     messages: Vec<ChatMsg>,
     model: Option<Model>,
@@ -159,16 +161,22 @@ pub struct ChatView {
 }
 
 impl ChatView {
-    pub fn new(store: Entity<ModelsStore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        store: Entity<ModelsStore>,
+        cloud_store: Entity<ModelsStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let input = cx.new(|cx| TextInput::new(cx, "Add message…"));
         cx.subscribe(&input, |this, _input, event, cx| match event {
             InputEvent::Submit(text) => this.send(text.clone(), cx),
         })
         .detach();
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
+        cx.observe(&cloud_store, |_, _, cx| cx.notify()).detach();
         settings_state::observe(cx, |_, cx| cx.notify()).detach();
         Self {
             store,
+            cloud_store,
             input,
             messages: Vec::new(),
             model: None,
@@ -209,19 +217,59 @@ impl ChatView {
     }
 
     /// Overlay listing installed local models; picking one pins it for this chat.
+    /// One row in the model picker; selecting it pins the model and closes.
+    fn picker_row(
+        &self,
+        cx: &mut Context<Self>,
+        id: String,
+        model: Model,
+        name: String,
+        vendor: String,
+        hover: gpui::Hsla,
+    ) -> gpui::AnyElement {
+        let theme = cx.theme().clone();
+        div()
+            .id(gpui::SharedString::from(format!("pick-{id}")))
+            .flex()
+            .items_center()
+            .gap_2()
+            .h(px(40.))
+            .px_3()
+            .rounded_md()
+            .text_color(theme.text)
+            .cursor(gpui::CursorStyle::PointingHand)
+            .hover(move |s| s.bg(hover))
+            .child(VendorIcon::new(vendor).size(18.))
+            .child(name)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.model = Some(model.clone());
+                this.model_picker_open = false;
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
     fn model_picker_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         if !self.model_picker_open {
             return None;
         }
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
-        let installed: Vec<(String, String, String)> = self
+        type Entry = (String, Model, String, String);
+        let local: Vec<Entry> = self
             .store
             .read(cx)
             .rows
             .iter()
             .filter(|r| r.is_installed())
-            .map(|r| (r.id().to_string(), r.name(), r.vendor().unwrap_or_default()))
+            .map(|r| (r.id().to_string(), r.model.clone(), r.name(), r.vendor().unwrap_or_default()))
+            .collect();
+        let cloud: Vec<Entry> = self
+            .cloud_store
+            .read(cx)
+            .rows
+            .iter()
+            .map(|r| (r.id().to_string(), r.model.clone(), r.name(), r.vendor().unwrap_or_default()))
             .collect();
 
         let mut list = div()
@@ -231,45 +279,31 @@ impl ChatView {
             .gap_1()
             .max_h(px(360.))
             .overflow_y_scroll();
-        if installed.is_empty() {
+        if local.is_empty() && cloud.is_empty() {
             list = list.child(
                 div()
                     .p_3()
                     .text_sm()
                     .text_color(theme.text_muted)
-                    .child("No installed models — download one in Local Models."),
+                    .child("No models yet — download one in Local Models."),
             );
         } else {
-            for (id, name, vendor) in installed {
+            for (id, model, name, vendor) in local {
+                list = list.child(self.picker_row(cx, id, model, name, vendor, hover));
+            }
+            if !cloud.is_empty() {
                 list = list.child(
                     div()
-                        .id(gpui::SharedString::from(format!("pick-{id}")))
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .h(px(40.))
                         .px_3()
-                        .rounded_md()
-                        .text_color(theme.text)
-                        .cursor(gpui::CursorStyle::PointingHand)
-                        .hover(move |s| s.bg(hover))
-                        .child(VendorIcon::new(vendor).size(18.))
-                        .child(name)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(model) = this
-                                .store
-                                .read(cx)
-                                .rows
-                                .iter()
-                                .find(|r| r.id() == id)
-                                .map(|r| r.model.clone())
-                            {
-                                this.model = Some(model);
-                            }
-                            this.model_picker_open = false;
-                            cx.notify();
-                        })),
+                        .pt_2()
+                        .pb_1()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child("Cloud"),
                 );
+                for (id, model, name, vendor) in cloud {
+                    list = list.child(self.picker_row(cx, id, model, name, vendor, hover));
+                }
             }
         }
 
