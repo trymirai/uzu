@@ -4368,6 +4368,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "gpui_tokio",
+ "image",
  "insta",
  "serde",
  "serde_json",

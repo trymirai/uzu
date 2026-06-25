@@ -37,3 +37,5 @@ insta = { version = "1", features = ["json"] }
 # PNG via Metal, no window / OS screenshot). test-support unlocks the API.
 gpui = { path = "../../external/zed/crates/gpui", features = ["test-support"] }
 gpui_platform = { path = "../../external/zed/crates/gpui_platform", features = ["test-support", "font-kit"] }
+# PNG decode for comparing renders against committed golden baselines.
+image = "0.25"

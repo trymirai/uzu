@@ -6,7 +6,11 @@
 //! `target/ui-snapshots/`. Individual views are rendered standalone so the
 //! engine is never required.
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use gpui::{
     AnyView, AnyWindowHandle, App, AppContext, Context, Entity, HeadlessAppContext, Hsla, Platform,
@@ -91,6 +95,7 @@ fn render_png<V: Render + 'static>(
     let path = dir.join(format!("{name}.png"));
     image.save(&path).expect("save png");
     eprintln!("ui-snapshot: wrote {} ({}x{})", path.display(), image.width(), image.height());
+    compare_baseline(name, &path);
     path
 }
 
@@ -151,8 +156,37 @@ fn render_png_with_engine<V: Render + 'static>(
     let path = dir.join(format!("{name}.png"));
     image.save(&path).expect("save png");
     eprintln!("ui-snapshot: wrote {} ({}x{})", path.display(), image.width(), image.height());
+    compare_baseline(name, &path);
     drop(runtime);
     path
+}
+
+/// Compare a freshly rendered PNG against the committed golden baseline under
+/// `tests/ui-baselines/`. Set `UPDATE_BASELINES=1` (or when no baseline exists)
+/// to refresh. Tolerates tiny anti-aliasing noise; fails on layout changes.
+fn compare_baseline(name: &str, rendered: &Path) {
+    let baseline =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/ui-baselines").join(format!("{name}.png"));
+    if std::env::var("UPDATE_BASELINES").is_ok() || !baseline.exists() {
+        std::fs::create_dir_all(baseline.parent().unwrap()).ok();
+        std::fs::copy(rendered, &baseline).expect("write baseline");
+        eprintln!("ui-snapshot: baseline {} updated", name);
+        return;
+    }
+    let a = image::open(rendered).expect("open rendered").to_rgba8();
+    let b = image::open(&baseline).expect("open baseline").to_rgba8();
+    assert_eq!((a.width(), a.height()), (b.width(), b.height()), "{name}: dimensions differ");
+    let total = (a.width() * a.height()).max(1) as usize;
+    let diff = a
+        .pixels()
+        .zip(b.pixels())
+        .filter(|(pa, pb)| pa.0.iter().zip(pb.0.iter()).any(|(x, y)| x.abs_diff(*y) > 8))
+        .count();
+    let pct = diff as f64 / total as f64 * 100.0;
+    assert!(
+        pct < 0.5,
+        "{name}: {pct:.3}% pixels differ ({diff}/{total}) — run UPDATE_BASELINES=1 to refresh"
+    );
 }
 
 #[test]
