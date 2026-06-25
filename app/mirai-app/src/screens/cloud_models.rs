@@ -53,7 +53,7 @@ impl CloudModelsView {
         };
         cx.spawn(async move |this, cx| {
             let list = provider_keys::configured_providers(&engine).await;
-            this.update(cx, |view, cx| {
+            let _ = this.update(cx, |view, cx| {
                 view.configured.clear();
                 for (provider, on) in list {
                     view.configured.insert(provider.id, on);

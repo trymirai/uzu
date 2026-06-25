@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use gpui::{App, AppContext, Context, Global, IntoElement, SharedString, Subscription, div, prelude::*, px};
+use gpui::{App, Context, Global, IntoElement, SharedString, Subscription, div, prelude::*, px};
 
 use crate::theme::ActiveTheme;
 

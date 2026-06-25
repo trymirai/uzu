@@ -88,10 +88,6 @@ impl ModelRow {
     pub fn is_installed(&self) -> bool {
         matches!(self.phase(), DownloadPhase::Downloaded {})
     }
-
-    pub fn is_downloading(&self) -> bool {
-        matches!(self.phase(), DownloadPhase::Downloading {})
-    }
 }
 
 pub struct ModelsStore {
