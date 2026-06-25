@@ -16,6 +16,7 @@ use gpui::{
 use crate::{
     assets, components,
     models_store::{ModelKind, ModelsStore},
+    persistence::{StoredChat, StoredMessage},
     screens, settings_state,
     theme::{self, ActiveTheme, FONT_SANS},
     toast,
@@ -180,5 +181,76 @@ fn render_chat() {
         let store = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
         let cloud = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
         cx.new(|cx| screens::ChatView::new(store, cloud, cx))
+    });
+}
+
+/// A two-message conversation exercising markdown (bold, code block, list,
+/// inline code), reasoning, and perf stats.
+fn sample_stored_chat() -> StoredChat {
+    StoredChat {
+        id: "sample".into(),
+        title: "Sample".into(),
+        model_name: Some("Qwen3.5 0.8B".into()),
+        created_at: 0,
+        updated_at: 0,
+        messages: vec![
+            StoredMessage {
+                role: "user".into(),
+                text: "What is 2+2, and show a code example?".into(),
+                reasoning: None,
+                tps: None,
+                tokens: None,
+            },
+            StoredMessage {
+                role: "assistant".into(),
+                text: "**2 + 2 = 4**.\n\nHere's a quick example:\n\n```python\nprint(2 + 2)\n```\n\n- It is basic arithmetic\n- The result is `4`".into(),
+                reasoning: Some("The user asks a simple sum.".into()),
+                tps: Some(42.0),
+                tokens: Some(18),
+            },
+        ],
+    }
+}
+
+#[test]
+fn render_chat_messages() {
+    render_png("chat-messages", 1200.0, 800.0, |_, cx| {
+        let store = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
+        let cloud = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
+        let chat = cx.new(|cx| screens::ChatView::new(store, cloud, cx));
+        chat.update(cx, |c, cx| c.load_stored(sample_stored_chat(), cx));
+        chat
+    });
+}
+
+#[test]
+fn render_welcome() {
+    render_png("welcome", 1200.0, 800.0, |_, cx| cx.new(screens::WelcomeView::new));
+}
+
+#[test]
+#[ignore = "boots a real engine; run explicitly with --ignored"]
+fn render_tts() {
+    render_png_with_engine("tts", 1200.0, 800.0, |_, cx| {
+        let store = cx.new(|cx| ModelsStore::new(ModelKind::TextToSpeech, cx));
+        cx.new(|cx| screens::TtsView::new(store, cx))
+    });
+}
+
+#[test]
+#[ignore = "boots a real engine; run explicitly with --ignored"]
+fn render_cloud() {
+    render_png_with_engine("cloud", 1200.0, 800.0, |_, cx| {
+        let store = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
+        cx.new(|cx| screens::CloudModelsView::new(store, cx))
+    });
+}
+
+#[test]
+#[ignore = "boots a real engine; run explicitly with --ignored"]
+fn render_routers() {
+    render_png_with_engine("routers", 1200.0, 800.0, |_, cx| {
+        let store = cx.new(|cx| ModelsStore::new(ModelKind::Classification, cx));
+        cx.new(|cx| screens::RoutersView::new(store, cx))
     });
 }
