@@ -13,20 +13,19 @@ enum ReplyStatsFormat {
         #endif
     }
 
-    static func power(average: Double?, maximum: Double?) -> String {
-        guard let average, let maximum else { return placeholder }
+    // Power/energy values are uncertain on iOS (and unset until a run completes), so the
+    // caller renders these rows only when the values are present — these just format.
+    static func power(average: Double, maximum: Double) -> String {
         let avg = measurement.string(from: Measurement(value: average, unit: UnitPower.watts))
         let peak = measurement.string(from: Measurement(value: maximum, unit: UnitPower.watts))
         return "\(avg) avg · \(peak) peak"
     }
 
-    static func energy(_ joules: Double?) -> String {
-        guard let joules else { return placeholder }
-        return measurement.string(from: Measurement(value: joules, unit: UnitEnergy.joules))
+    static func energy(_ joules: Double) -> String {
+        measurement.string(from: Measurement(value: joules, unit: UnitEnergy.joules))
     }
 
-    static func energyPerToken(joules: Double?, tokens: Int?) -> String {
-        guard let joules, let tokens, tokens > 0 else { return placeholder }
+    static func energyPerToken(joules: Double, tokens: Int) -> String {
         let value = number.string(from: NSNumber(value: joules / Double(tokens))) ?? placeholder
         return "\(value) J/tok"
     }

@@ -140,18 +140,21 @@ struct ClassificationView: View {
                         label: "Memory used:",
                         value: ReplyStatsFormat.memory(stats.memoryUsedBytes)
                     )
-                    metricRow(
-                        label: ReplyStatsFormat.powerLabel,
-                        value: ReplyStatsFormat.power(average: stats.averagePackagePower, maximum: stats.maxPackagePower)
-                    )
-                    metricRow(
-                        label: "Energy:",
-                        value: ReplyStatsFormat.energy(stats.packageEnergy)
-                    )
-                    metricRow(
-                        label: "Energy / token:",
-                        value: ReplyStatsFormat.energyPerToken(joules: stats.packageEnergy, tokens: stats.tokensCount)
-                    )
+                    if let average = stats.averagePackagePower, let peak = stats.maxPackagePower {
+                        metricRow(
+                            label: ReplyStatsFormat.powerLabel,
+                            value: ReplyStatsFormat.power(average: average, maximum: peak)
+                        )
+                    }
+                    if let energy = stats.packageEnergy {
+                        metricRow(label: "Energy:", value: ReplyStatsFormat.energy(energy))
+                    }
+                    if let energy = stats.packageEnergy, let tokens = stats.tokensCount, tokens > 0 {
+                        metricRow(
+                            label: "Energy / token:",
+                            value: ReplyStatsFormat.energyPerToken(joules: energy, tokens: tokens)
+                        )
+                    }
                     metricRow(
                         label: "Total time:",
                         value: String(format: "%.3f s", stats.totalTime)
