@@ -1,5 +1,4 @@
-//! Chat history screen: lists saved chats (newest first), open on click, delete
-//! per row, rename in selection mode.
+//! Chat history: saved chats, search, bulk delete, rename in selection mode.
 
 use std::collections::HashSet;
 
@@ -29,7 +28,7 @@ pub struct ChatsView {
     instructions_open: bool,
     rename_input: Entity<TextInput>,
     rename_open: bool,
-    rename_error: Option<String>,
+    rename_error: Option<&'static str>,
     confirm_delete: Option<(String, String)>,
     selection_mode: bool,
     selected: HashSet<String>,
@@ -57,11 +56,6 @@ impl ChatsView {
         .detach();
 
         let rename_input = cx.new(|cx| TextInput::new(cx, "Enter chat name"));
-        cx.observe(&rename_input, |this, _, cx| {
-            this.rename_error = None;
-            cx.notify();
-        })
-        .detach();
         cx.subscribe(&rename_input, |this, _, event, cx| {
             if matches!(event, InputEvent::Submit(_)) {
                 this.confirm_rename(cx);
@@ -105,7 +99,7 @@ impl ChatsView {
         let text = self.rename_input.read(cx).text();
         match validate_rename_name(&text) {
             Err(msg) => {
-                self.rename_error = Some(msg.to_string());
+                self.rename_error = Some(msg);
                 cx.notify();
             }
             Ok(title) => {
@@ -113,7 +107,7 @@ impl ChatsView {
                     self.close_rename(cx);
                     self.reload(cx);
                 } else {
-                    self.rename_error = Some("Failed to rename chat".into());
+                    self.rename_error = Some("failed to rename chat");
                     cx.notify();
                 }
             }
@@ -125,7 +119,7 @@ impl ChatsView {
             return None;
         }
         let theme = cx.theme().clone();
-        let error = self.rename_error.clone();
+        let error = self.rename_error;
 
         Some(
             div()
@@ -183,8 +177,6 @@ impl ChatsView {
         )
     }
 
-    /// Expandable "Add instructions to all chats" card (mirai-chat parity). The
-    /// editor persists to the global-instructions store on Enter.
     fn instructions_card(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
