@@ -1,6 +1,4 @@
-//! Local Models — two-level browser matching mirai-chat: a family list, then a
-//! family detail (Installed/Available, download/pause/resume/delete; tapping an
-//! installed model starts a chat).
+//! Local model families and family detail (download, chat).
 
 use gpui::{
     Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString,
@@ -10,6 +8,9 @@ use uzu::{storage::types::DownloadPhase, types::model::Model};
 
 use crate::{
     components::{ConfirmModal, Icon, IconButton, IconEl, Loader, TextInput, VendorIcon},
+    device_info,
+    model_recommend,
+    model_sort::{self, ModelSort},
     models_store::ModelsStore,
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
 };
@@ -19,14 +20,17 @@ pub enum LocalModelsEvent {
     UseModel(Model),
 }
 
+#[derive(Clone)]
 struct ModelVm {
     id: String,
     name: String,
     size: String,
+    bytes: i64,
     quant: String,
     phase: DownloadPhase,
     progress: f32,
     is_mirai: bool,
+    recommended: bool,
 }
 
 impl ModelVm {
@@ -48,6 +52,7 @@ struct FamilyVm {
     icon_url: Option<String>,
     range: Option<String>,
     has_mirai: bool,
+    last_installed_at: u64,
     models: Vec<ModelVm>,
 }
 
@@ -60,10 +65,12 @@ impl FamilyVm {
 pub struct LocalModelsView {
     store: Entity<ModelsStore>,
     search: Entity<TextInput>,
-    /// Family identifier being viewed in detail (None = family list).
     selected_family: Option<String>,
-    /// (id, name) pending delete confirmation.
     confirm_delete: Option<(String, String)>,
+    device_label: String,
+    recommended_id: Option<String>,
+    sort: ModelSort,
+    sort_open: bool,
 }
 
 impl EventEmitter<LocalModelsEvent> for LocalModelsView {}
@@ -73,12 +80,28 @@ impl LocalModelsView {
         let search = cx.new(|cx| TextInput::new(cx, "Search families"));
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
         cx.observe(&search, |_, _, cx| cx.notify()).detach();
+        Self::spawn_recommend(cx);
         Self {
             store,
             search,
             selected_family: None,
             confirm_delete: None,
+            device_label: device_info::description(),
+            recommended_id: None,
+            sort: ModelSort::default(),
+            sort_open: false,
         }
+    }
+
+    fn spawn_recommend(cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let id = model_recommend::fetch_repo_id().await;
+            let _ = this.update(cx, |view, cx| {
+                view.recommended_id = id;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub fn open_family(&mut self, key: String, cx: &mut Context<Self>) {
@@ -93,17 +116,21 @@ impl LocalModelsView {
         cx.notify();
     }
 
-    /// Group the store's models into families, preserving first-seen order.
     fn families(&self, cx: &Context<Self>) -> Vec<FamilyVm> {
         let store = self.store.read(cx);
+        let recommended_id = self.recommended_id.as_deref();
         let mut order: Vec<String> = Vec::new();
         let mut families: std::collections::HashMap<String, FamilyVm> = Default::default();
+        let mut recommended_family: Option<String> = None;
 
         for row in &store.rows {
             let (key, name, vendor) = match &row.model.family {
                 Some(f) => (f.identifier.clone(), f.name(), f.vendor.name()),
                 None => ("other".to_string(), "Other".to_string(), String::new()),
             };
+            if recommended_id == Some(row.id()) {
+                recommended_family = Some(key.clone());
+            }
             let quant = quant_label(&row.model);
             let is_mirai = row
                 .model
@@ -114,22 +141,23 @@ impl LocalModelsView {
                         || q.identifier.to_lowercase().contains("mirai")
                 })
                 .unwrap_or(false);
-            // Prefer the actual download size (total_bytes) when known, else the
-            // registry's nominal properties size.
             let bytes = row
                 .state
                 .as_ref()
                 .map(|s| s.total_bytes)
                 .filter(|b| *b > 0)
                 .unwrap_or_else(|| row.size_bytes());
+            let installed_at = store.installed_at(row.id());
             let vm = ModelVm {
                 id: row.id().to_string(),
                 name: row.name(),
                 size: format_size(bytes),
+                bytes,
                 quant,
                 phase: row.phase(),
                 progress: row.progress(),
                 is_mirai,
+                recommended: recommended_id == Some(row.id()),
             };
             let entry = families.entry(key.clone()).or_insert_with(|| {
                 order.push(key.clone());
@@ -140,19 +168,20 @@ impl LocalModelsView {
                     icon_url: row.icon_url(true),
                     range: None,
                     has_mirai: false,
+                    last_installed_at: 0,
                     models: Vec::new(),
                 }
             });
             entry.has_mirai = entry.has_mirai || is_mirai;
+            entry.last_installed_at = entry.last_installed_at.max(installed_at);
             entry.models.push(vm);
         }
 
-        // Compute parameter-count range per family (parsed from model names).
         for fam in families.values_mut() {
             let mut params: Vec<f64> = fam
                 .models
                 .iter()
-                .filter_map(|m| parse_params(&m.name))
+                .filter_map(|m| model_sort::parse_params(&m.name))
                 .collect();
             params.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             if let (Some(min), Some(max)) = (params.first(), params.last()) {
@@ -164,10 +193,40 @@ impl LocalModelsView {
             }
         }
 
-        order
+        let mut list: Vec<FamilyVm> = order
             .into_iter()
             .filter_map(|k| families.remove(&k))
-            .collect()
+            .collect();
+
+        let rec_key = recommended_family;
+        list.sort_by(|a, b| {
+            let rank = |f: &FamilyVm| -> u8 {
+                if f.has_mirai {
+                    0
+                } else if rec_key.as_deref() == Some(f.key.as_str()) {
+                    1
+                } else if f.last_installed_at > 0 {
+                    2
+                } else {
+                    3
+                }
+            };
+            rank(a)
+                .cmp(&rank(b))
+                .then_with(|| match (rank(a), rank(b)) {
+                    (2, 2) => b.last_installed_at.cmp(&a.last_installed_at),
+                    _ => a.name.cmp(&b.name),
+                })
+        });
+        list
+    }
+
+    fn sort_models(&self, models: &mut [ModelVm]) {
+        match self.sort {
+            ModelSort::Size => models.sort_by(|a, b| a.bytes.cmp(&b.bytes).then_with(|| model_sort::sort_by_name(&a.name, &b.name))),
+            ModelSort::Name => models.sort_by(|a, b| model_sort::sort_by_name(&a.name, &b.name)),
+            ModelSort::Newest => models.sort_by(|a, b| model_sort::sort_by_newest(&a.name, &b.name)),
+        }
     }
 
     fn chip(&self, text: String, accent: bool, cx: &Context<Self>) -> impl IntoElement {
@@ -272,9 +331,18 @@ impl LocalModelsView {
             .size(20.)
             .icon_url(icon_url.map(|u| u.to_string()));
         let name_label = div()
-            .text_sm()
-            .text_color(theme.text)
-            .child(vm.name.clone());
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.text)
+                    .child(vm.name.clone()),
+            )
+            .when(vm.recommended, |el| {
+                el.child(self.chip("Recommended".to_string(), true, cx))
+            });
         let info = if vm.installed() {
             let chat_id = id.clone();
             div()
@@ -397,6 +465,119 @@ impl LocalModelsView {
             )
             .child(action)
     }
+
+    fn recommended_row(&self, cx: &mut Context<Self>, vm: &ModelVm, family_key: &str) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let hover = theme.bg_hover;
+        let key = family_key.to_string();
+        let name = vm.name.clone();
+        div()
+            .id("recommended-model")
+            .flex()
+            .items_center()
+            .gap_3()
+            .h(px(56.))
+            .px_4()
+            .mb_2()
+            .rounded_lg()
+            .border_1()
+            .border_color(theme.success.opacity(0.45))
+            .bg(theme.success.opacity(0.08))
+            .cursor(CursorStyle::PointingHand)
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(move |this, _, _, cx| this.open_family(key.clone(), cx)))
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.success)
+                            .child("Recommended for your device"),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.text)
+                            .child(name),
+                    ),
+            )
+            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(16.))
+    }
+
+    fn sort_control(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let hover = theme.bg_hover;
+        let label = self.sort.label();
+        let mut menu = div().flex().flex_col().gap_0p5();
+        for sort in [ModelSort::Size, ModelSort::Name, ModelSort::Newest] {
+            let active = self.sort == sort;
+            menu = menu.child(
+                div()
+                    .id(SharedString::from(format!("sort-{label}", label = sort.label())))
+                    .px_3()
+                    .py_1p5()
+                    .rounded_md()
+                    .text_sm()
+                    .text_color(if active { theme.text } else { theme.text_muted })
+                    .cursor(CursorStyle::PointingHand)
+                    .hover(move |s| s.bg(hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.sort = sort;
+                        this.sort_open = false;
+                        cx.notify();
+                    }))
+                    .child(sort.label()),
+            );
+        }
+        div()
+            .relative()
+            .child(
+                div()
+                    .id("sort-trigger")
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .h(px(32.))
+                    .px_2p5()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.card)
+                    .cursor(CursorStyle::PointingHand)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.sort_open = !this.sort_open;
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.text_muted)
+                            .child(format!("Sort: {label}")),
+                    )
+                    .child(IconEl::new(Icon::ChevronDown, theme.text_muted).size(14.)),
+            )
+            .when(self.sort_open, |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .top(px(36.))
+                        .right_0()
+                        .w(px(140.))
+                        .p_1()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.card)
+                        .shadow_md()
+                        .child(menu),
+                )
+            })
+    }
 }
 
 impl Render for LocalModelsView {
@@ -457,24 +638,53 @@ impl Render for LocalModelsView {
                     )
                     .into_any_element()
             }
-            None => div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(IconEl::new(Icon::Devices, theme.text).size(22.))
-                .child(
-                    div()
-                        .text_xl()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child("Choose local model to chat"),
-                )
-                .into_any_element(),
+            None => {
+                let mut header_col = div()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(IconEl::new(Icon::Devices, theme.text).size(22.))
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child("Choose local model to chat"),
+                            ),
+                    );
+                if !self.device_label.is_empty() {
+                    header_col = header_col.child(
+                        div()
+                            .pl(px(30.))
+                            .text_sm()
+                            .text_color(theme.text_muted)
+                            .child(self.device_label.clone()),
+                    );
+                }
+                header_col.into_any_element()
+            }
         };
+
+        let recommended = self.recommended_id.as_ref().and_then(|id| {
+            families.iter().find_map(|f| {
+                f.models
+                    .iter()
+                    .find(|m| &m.id == id)
+                    .map(|vm| (vm.clone(), f.key.clone()))
+            })
+        });
 
         // Body list.
         let mut list = div().flex().flex_col().gap_1().pb_6();
         match &selected {
             None => {
+                if let Some((vm, key)) = recommended {
+                    list = list.child(self.recommended_row(cx, &vm, &key));
+                }
                 let visible: Vec<&FamilyVm> = families
                     .iter()
                     .filter(|f| {
@@ -493,15 +703,17 @@ impl Render for LocalModelsView {
             }
             Some(key) => {
                 if let Some(fam) = families.iter().find(|f| &f.key == key) {
-                    let matched: Vec<&ModelVm> = fam
+                    let mut matched: Vec<ModelVm> = fam
                         .models
                         .iter()
                         .filter(|m| query.is_empty() || m.name.to_lowercase().contains(&query))
+                        .cloned()
                         .collect();
+                    self.sort_models(&mut matched);
                     let installed: Vec<&ModelVm> =
-                        matched.iter().copied().filter(|m| m.installed()).collect();
+                        matched.iter().filter(|m| m.installed()).collect();
                     let available: Vec<&ModelVm> =
-                        matched.iter().copied().filter(|m| !m.installed()).collect();
+                        matched.iter().filter(|m| !m.installed()).collect();
 
                     let vendor = fam.vendor.clone();
                     let icon_url = fam.icon_url.clone();
@@ -552,15 +764,24 @@ impl Render for LocalModelsView {
                                     .flex()
                                     .items_center()
                                     .gap_2()
-                                    .w(px(280.))
-                                    .h(px(32.))
-                                    .px_3()
-                                    .rounded_lg()
-                                    .border_1()
-                                    .border_color(theme.border)
-                                    .bg(theme.card)
-                                    .child(IconEl::new(Icon::Search, theme.text_muted).size(15.))
-                                    .child(div().flex_1().child(self.search.clone())),
+                                    .when(selected.is_some(), |el| {
+                                        el.child(self.sort_control(cx))
+                                    })
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .w(px(280.))
+                                            .h(px(32.))
+                                            .px_3()
+                                            .rounded_lg()
+                                            .border_1()
+                                            .border_color(theme.border)
+                                            .bg(theme.card)
+                                            .child(IconEl::new(Icon::Search, theme.text_muted).size(15.))
+                                            .child(div().flex_1().child(self.search.clone())),
+                                    ),
                             ),
                     )
                     .child(
@@ -620,31 +841,6 @@ fn quant_label(model: &Model) -> String {
         Some(q) => format!("{} · {}-bit", q.method.to_uppercase(), q.bits_per_weight),
         None => "Unquantized".to_string(),
     }
-}
-
-/// Parse a parameter count (in millions) from a model name token like `0.8B`,
-/// `4B`, `27B`, `800M`.
-fn parse_params(name: &str) -> Option<f64> {
-    for raw in name.split(|c: char| c == ' ' || c == '-') {
-        let token = raw.trim();
-        if let Some(num) = token
-            .strip_suffix('B')
-            .or_else(|| token.strip_suffix('b'))
-        {
-            if let Ok(v) = num.parse::<f64>() {
-                return Some(v * 1000.0);
-            }
-        }
-        if let Some(num) = token
-            .strip_suffix('M')
-            .or_else(|| token.strip_suffix('m'))
-        {
-            if let Ok(v) = num.parse::<f64>() {
-                return Some(v);
-            }
-        }
-    }
-    None
 }
 
 fn format_params(millions: f64) -> String {

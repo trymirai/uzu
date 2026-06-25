@@ -4,6 +4,7 @@
 
 use futures::{StreamExt, channel::mpsc};
 use gpui::Context;
+use std::{collections::HashMap, fs, path::PathBuf};
 use uzu::{
     storage::types::{DownloadPhase, DownloadState},
     types::{basic::ImageTheme, model::Model},
@@ -98,6 +99,7 @@ pub struct ModelsStore {
     pub rows: Vec<ModelRow>,
     pub loading: bool,
     pub error: Option<String>,
+    installed_at: HashMap<String, u64>,
 }
 
 impl ModelsStore {
@@ -109,6 +111,23 @@ impl ModelsStore {
             rows: Vec::new(),
             loading: true,
             error: None,
+            installed_at: load_installed_at(),
+        }
+    }
+
+    pub fn installed_at(&self, id: &str) -> u64 {
+        self.installed_at.get(id).copied().unwrap_or(0)
+    }
+
+    fn installed_at_path() -> PathBuf {
+        crate::persistence::mirai_data_dir().join("installed-at.json")
+    }
+
+    fn save_installed_at(map: &HashMap<String, u64>) {
+        if fs::create_dir_all(crate::persistence::mirai_data_dir()).is_ok()
+            && let Ok(json) = serde_json::to_string(map)
+        {
+            let _ = fs::write(Self::installed_at_path(), json);
         }
     }
 
@@ -186,8 +205,16 @@ impl ModelsStore {
                             row.state = Some(state);
                             let now_installed = row.is_installed();
                             let name = row.name();
+                            if !was_installed && now_installed {
+                                store
+                                    .installed_at
+                                    .insert(id.clone(), crate::persistence::now_ms());
+                                Self::save_installed_at(&store.installed_at);
+                            } else if was_installed && !now_installed {
+                                store.installed_at.remove(&id);
+                                Self::save_installed_at(&store.installed_at);
+                            }
                             cx.notify();
-                            // Notify on download completion.
                             if !was_installed && now_installed {
                                 crate::toast::push(
                                     cx,
@@ -243,4 +270,12 @@ impl ModelsStore {
         })
         .detach();
     }
+}
+
+fn load_installed_at() -> HashMap<String, u64> {
+    let path = ModelsStore::installed_at_path();
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }

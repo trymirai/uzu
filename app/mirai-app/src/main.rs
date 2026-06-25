@@ -3,7 +3,10 @@
 mod app_shell;
 mod assets;
 mod data_ops;
+mod device_info;
 mod engine;
+mod model_recommend;
+mod model_sort;
 mod models_store;
 mod native_dialog;
 mod persistence;

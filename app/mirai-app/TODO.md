@@ -45,7 +45,7 @@ Offscreen snapshot suite is green (14 screens + logic/unit tests).
 ## Local Models
 
 - ✅ Family list → detail, vendor icons, download/delete, Mirai quant styling
-- **P2** Sort dropdown, device header + recommended model row
+- **P2** ~~Sort dropdown, device header + recommended model row~~
 - **P3** Quantization / thinking badges on detail
 
 ## Cloud Models
