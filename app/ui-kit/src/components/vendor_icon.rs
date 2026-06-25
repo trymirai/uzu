@@ -42,36 +42,28 @@ impl RenderOnce for VendorIcon {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let name = self.vendor.trim();
         let size = self.size;
-        let initial = name
-            .chars()
-            .find(|c| c.is_alphanumeric())
-            .map(|c| c.to_ascii_uppercase().to_string())
-            .unwrap_or_else(|| "?".to_string());
+        let base = div().w(px(size)).h(px(size)).flex_none().rounded_md().overflow_hidden();
 
-        // Always render the colored initial as the base layer. When a remote
-        // logo URL is provided it overlays the letter — so while the image is
-        // loading (or if it fails) the branded color + initial shows instead
-        // of a blank square.
-        let mut el = div()
-            .w(px(size))
-            .h(px(size))
-            .flex_none()
-            .relative()
-            .rounded_md()
-            .overflow_hidden()
-            .bg(hsla(vendor_hue(name), 0.5, 0.45, 1.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_color(white())
-            .text_size(px(size * 0.5))
-            .font_weight(FontWeight::SEMIBOLD)
-            .child(initial);
-
-        if let Some(url) = self.icon_url {
-            el = el.child(img(url).absolute().size_full());
+        match self.icon_url {
+            // Remote logo: the brand asset has its own background — no tint behind it.
+            Some(url) => base.child(img(url).size_full()),
+            // No URL: colored initial as a stand-in.
+            None => {
+                let initial = name
+                    .chars()
+                    .find(|c| c.is_alphanumeric())
+                    .map(|c| c.to_ascii_uppercase().to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                base.bg(hsla(vendor_hue(name), 0.5, 0.45, 1.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(white())
+                    .text_size(px(size * 0.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(initial)
+            }
         }
-        el
     }
 }
 
