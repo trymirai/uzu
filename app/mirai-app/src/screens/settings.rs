@@ -24,6 +24,7 @@ enum SettingKind {
     RunOnStartup,
     ShowInMenuBar,
     AutoEject,
+    ShareUsage,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -134,6 +135,7 @@ impl SettingsView {
             SettingKind::RunOnStartup => settings.run_on_startup = !settings.run_on_startup,
             SettingKind::ShowInMenuBar => settings.show_in_menu_bar = !settings.show_in_menu_bar,
             SettingKind::AutoEject => settings.auto_eject = !settings.auto_eject,
+            SettingKind::ShareUsage => settings.share_usage_data = !settings.share_usage_data,
         }
         settings_state::set(cx, settings);
     }
@@ -206,6 +208,41 @@ impl SettingsView {
                     .child(div().text_xs().text_color(theme.text_muted).child(desc)),
             )
             .child(right)
+            .into_any_element()
+    }
+
+    /// A small bordered button (icon + label) for an action that isn't wired
+    /// up yet; clicking explains itself via a toast instead of doing nothing.
+    fn coming_soon_button(
+        &self,
+        cx: &mut Context<Self>,
+        id: &'static str,
+        icon: Icon,
+        label: &'static str,
+        msg: &'static str,
+    ) -> AnyElement {
+        let theme = cx.theme().clone();
+        let hover = theme.bg_hover;
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .gap_1()
+            .h(px(28.))
+            .px_3()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.card)
+            .text_xs()
+            .text_color(theme.text)
+            .cursor(CursorStyle::PointingHand)
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(move |_, _, _, cx| {
+                crate::toast::push(cx, msg, crate::toast::ToastKind::Info);
+            }))
+            .child(IconEl::new(icon, theme.text_muted).size(13.))
+            .child(label)
             .into_any_element()
     }
 
@@ -414,21 +451,44 @@ impl SettingsView {
 
     fn privacy_content(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
+        let settings = settings_state::current(cx);
+        // Built first so each only borrows `cx` once (not nested in action_row).
+        let export_chats = self.coming_soon_button(
+            cx,
+            "export-chats",
+            Icon::Download,
+            "Export",
+            "Chat export is coming soon",
+        );
+        let export_logs = self.coming_soon_button(
+            cx,
+            "export-logs",
+            Icon::Download,
+            "Export",
+            "Log export is coming soon",
+        );
+        let clear_data = self.coming_soon_button(
+            cx,
+            "clear-data",
+            Icon::Trash,
+            "Clear data",
+            "Clear data is coming soon",
+        );
         div()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap_1()
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_1()
+                    .gap_2()
                     .pb_2()
-                    .child(IconEl::new(Icon::Lock, theme.text).size(20.))
+                    .child(IconEl::new(Icon::Shield, theme.info).size(22.))
                     .child(
                         div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.text)
                             .child("All data is processed and stored locally on your device."),
                     )
@@ -440,17 +500,42 @@ impl SettingsView {
                     ),
             )
             .child(self.divider(cx))
-            .child(link_row(
+            .child(legal_row(
                 "terms",
                 "Terms of Service",
                 "https://artifacts.trymirai.com/legal/Mirai_Tech_Terms_of_Use.pdf",
                 &theme,
             ))
-            .child(link_row(
+            .child(legal_row(
                 "privacy-policy",
                 "Privacy Policy",
                 "https://artifacts.trymirai.com/legal/Mirai_Tech_Privacy_Policy.pdf",
                 &theme,
+            ))
+            .child(self.action_row(
+                cx,
+                "Export all your chats",
+                "As Markdown files in .zip archive",
+                export_chats,
+            ))
+            .child(self.action_row(
+                cx,
+                "Export logs",
+                "Save the current Mirai log file for debugging",
+                export_logs,
+            ))
+            .child(self.action_row(
+                cx,
+                "Clear data",
+                "Delete dialogs, generated audio, models, or logs",
+                clear_data,
+            ))
+            .child(self.toggle_row(
+                cx,
+                "Share anonymous usage data",
+                "Help us improve Mirai by sharing anonymous usage data.",
+                settings.share_usage_data,
+                SettingKind::ShareUsage,
             ))
             .child(self.feedback_footer(cx))
             .into_any_element()
@@ -582,6 +667,27 @@ impl Render for SettingsView {
 }
 
 /// A clickable text link that opens `url` in the browser.
+/// A full-width legal/document row: label on the left, chevron on the right,
+/// opening `url` on click (Privacy tab's Terms / Privacy entries).
+fn legal_row(id: &'static str, label: &'static str, url: &'static str, theme: &Theme) -> impl IntoElement {
+    let hover = theme.bg_hover;
+    let text = theme.text;
+    let muted = theme.text_muted;
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_between()
+        .py_3()
+        .px_2()
+        .rounded_md()
+        .cursor(gpui::CursorStyle::PointingHand)
+        .hover(move |s| s.bg(hover))
+        .on_click(move |_, _, cx| cx.open_url(url))
+        .child(div().text_sm().text_color(text).child(label))
+        .child(IconEl::new(Icon::ChevronRight, muted).size(16.))
+}
+
 fn link_row(id: &'static str, label: &'static str, url: &'static str, theme: &Theme) -> impl IntoElement {
     let hover = theme.bg_hover;
     div()

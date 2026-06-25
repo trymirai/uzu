@@ -76,6 +76,8 @@ pub struct AppSettings {
     pub auto_eject: bool,
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout_minutes: u32,
+    #[serde(default)]
+    pub share_usage_data: bool,
 }
 
 fn default_true() -> bool {
@@ -95,6 +97,7 @@ impl Default for AppSettings {
             show_in_menu_bar: false,
             auto_eject: false,
             idle_timeout_minutes: 2,
+            share_usage_data: false,
         }
     }
 }
