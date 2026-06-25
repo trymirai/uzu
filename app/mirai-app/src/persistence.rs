@@ -68,10 +68,22 @@ pub struct AppSettings {
     pub dark_mode: bool,
     #[serde(default = "default_true")]
     pub reasoning: bool,
+    #[serde(default)]
+    pub run_on_startup: bool,
+    #[serde(default)]
+    pub show_in_menu_bar: bool,
+    #[serde(default)]
+    pub auto_eject: bool,
+    #[serde(default = "default_idle_timeout")]
+    pub idle_timeout_minutes: u32,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_idle_timeout() -> u32 {
+    2
 }
 
 impl Default for AppSettings {
@@ -79,6 +91,10 @@ impl Default for AppSettings {
         Self {
             dark_mode: true,
             reasoning: true,
+            run_on_startup: false,
+            show_in_menu_bar: false,
+            auto_eject: false,
+            idle_timeout_minutes: 2,
         }
     }
 }

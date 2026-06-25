@@ -1,6 +1,7 @@
 //! Settings screen: an inner sidebar (General / Privacy / About Mirai) with a
-//! scrollable content panel, mirroring mirai-chat. OS-integration rows
-//! (run-on-startup, menu bar, global shortcut) are intentionally omitted.
+//! scrollable content panel, mirroring mirai-chat. The OS-integration rows
+//! (run-on-startup, menu bar, global shortcut) persist their preference; the
+//! native hooks behind them are tracked separately.
 
 use gpui::{
     AnyElement, Context, CursorStyle, Entity, FontWeight, IntoElement, Render, Window, div,
@@ -20,6 +21,9 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Clone, Copy)]
 enum SettingKind {
     Reasoning,
+    RunOnStartup,
+    ShowInMenuBar,
+    AutoEject,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -127,7 +131,17 @@ impl SettingsView {
         let mut settings = settings_state::current(cx);
         match kind {
             SettingKind::Reasoning => settings.reasoning = !settings.reasoning,
+            SettingKind::RunOnStartup => settings.run_on_startup = !settings.run_on_startup,
+            SettingKind::ShowInMenuBar => settings.show_in_menu_bar = !settings.show_in_menu_bar,
+            SettingKind::AutoEject => settings.auto_eject = !settings.auto_eject,
         }
+        settings_state::set(cx, settings);
+    }
+
+    fn bump_idle(&mut self, delta: i32, cx: &mut Context<Self>) {
+        let mut settings = settings_state::current(cx);
+        let next = settings.idle_timeout_minutes as i32 + delta;
+        settings.idle_timeout_minutes = next.clamp(1, 120) as u32;
         settings_state::set(cx, settings);
     }
 
@@ -162,6 +176,93 @@ impl SettingsView {
             .child(Toggle::new(title, on).on_click(move |_, _, cx| {
                 view.update(cx, |this, cx| this.flip(kind, cx));
             }))
+    }
+
+    /// A non-toggle row: title + description on the left, a control on the right.
+    fn action_row(
+        &self,
+        cx: &mut Context<Self>,
+        title: &'static str,
+        desc: &'static str,
+        right: AnyElement,
+    ) -> AnyElement {
+        let theme = cx.theme().clone();
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .py_3()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.text)
+                            .child(title),
+                    )
+                    .child(div().text_xs().text_color(theme.text_muted).child(desc)),
+            )
+            .child(right)
+            .into_any_element()
+    }
+
+    /// Indented "Idle timeout (minutes)" stepper, shown under Auto-eject.
+    fn idle_timeout_row(&self, cx: &mut Context<Self>, minutes: u32) -> AnyElement {
+        let theme = cx.theme().clone();
+        let border = theme.border;
+        let hover = theme.bg_hover;
+        let stepper = |id: &'static str, label: &'static str| {
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(24.))
+                .text_color(theme.text)
+                .cursor(CursorStyle::PointingHand)
+                .hover(move |s| s.bg(hover))
+                .child(label)
+        };
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .pb_3()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.text_muted)
+                    .child("Idle timeout (minutes)"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(border)
+                    .bg(theme.bg)
+                    .child(
+                        stepper("idle-dec", "−")
+                            .on_click(cx.listener(|this, _, _, cx| this.bump_idle(-1, cx))),
+                    )
+                    .child(
+                        div()
+                            .w(px(36.))
+                            .text_center()
+                            .text_sm()
+                            .text_color(theme.text)
+                            .child(format!("{minutes}")),
+                    )
+                    .child(
+                        stepper("idle-inc", "+")
+                            .on_click(cx.listener(|this, _, _, cx| this.bump_idle(1, cx))),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// Select a tab by index (0 General, 1 Privacy, 2 About) — used by visual tests.
@@ -213,9 +314,16 @@ impl SettingsView {
             .pt_4()
             .child(
                 div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child("Let us know your feedback or request a new feature"),
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(IconEl::new(Icon::Heart, theme.info).size(16.))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child("Let us know your feedback or request a new feature"),
+                    ),
             )
             .child(
                 Button::new("give-feedback", "Give Feedback")
@@ -228,7 +336,37 @@ impl SettingsView {
 
     fn general_content(&self, cx: &mut Context<Self>) -> AnyElement {
         let settings = settings_state::current(cx);
-        div()
+        let theme = cx.theme().clone();
+        let hover = theme.bg_hover;
+
+        // "Set shortcut" control. Global-shortcut capture isn't wired yet, so it
+        // explains itself when clicked rather than silently doing nothing.
+        let set_shortcut = div()
+            .id("set-shortcut")
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(28.))
+            .px_3()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.card)
+            .text_xs()
+            .text_color(theme.text)
+            .cursor(CursorStyle::PointingHand)
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(|_, _, _, cx| {
+                crate::toast::push(
+                    cx,
+                    "Global shortcut capture is coming soon",
+                    crate::toast::ToastKind::Info,
+                );
+            }))
+            .child("Set shortcut")
+            .into_any_element();
+
+        let mut col = div()
             .flex()
             .flex_col()
             .gap_3()
@@ -236,13 +374,42 @@ impl SettingsView {
             .child(self.divider(cx))
             .child(self.toggle_row(
                 cx,
+                "Run on startup",
+                "Automatically start Mirai when you log in to your computer",
+                settings.run_on_startup,
+                SettingKind::RunOnStartup,
+            ))
+            .child(self.toggle_row(
+                cx,
+                "Show in the menu bar",
+                "Mirai will be always available in your menu bar",
+                settings.show_in_menu_bar,
+                SettingKind::ShowInMenuBar,
+            ))
+            .child(self.action_row(
+                cx,
+                "Quick entry keyboard shortcut",
+                "Open Mirai from anywhere with a shortcut",
+                set_shortcut,
+            ))
+            .child(self.toggle_row(
+                cx,
                 "Default reasoning mode",
                 "Let reasoning models think by default. You can override this for each model.",
                 settings.reasoning,
                 SettingKind::Reasoning,
             ))
-            .child(self.feedback_footer(cx))
-            .into_any_element()
+            .child(self.toggle_row(
+                cx,
+                "Auto-eject models when idle",
+                "Automatically unload local models after inactivity",
+                settings.auto_eject,
+                SettingKind::AutoEject,
+            ));
+        if settings.auto_eject {
+            col = col.child(self.idle_timeout_row(cx, settings.idle_timeout_minutes));
+        }
+        col.child(self.feedback_footer(cx)).into_any_element()
     }
 
     fn privacy_content(&self, cx: &mut Context<Self>) -> AnyElement {
