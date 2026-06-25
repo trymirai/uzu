@@ -5,8 +5,8 @@
 
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    App, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render,
-    ScrollHandle, SharedString, Window, div, prelude::*, px,
+    Anchor, App, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement,
+    Render, ScrollHandle, SharedString, Window, anchored, deferred, div, prelude::*, px,
 };
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
@@ -1726,19 +1726,6 @@ impl Render for ChatView {
                                     .flex_col()
                                     .items_end()
                                     .gap_2()
-                                    .children(if self.model_picker_open {
-                                        Some(
-                                            div()
-                                                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                                                    this.model_picker_open = false;
-                                                    cx.notify();
-                                                }))
-                                                .child(self.model_picker_panel(cx, None))
-                                                .into_any_element(),
-                                        )
-                                    } else {
-                                        None
-                                    })
                                     // `MessageInput`: `gap-4 p-4 rounded-[8px]`.
                                     .child(
                                         div()
@@ -1809,52 +1796,69 @@ impl Render for ChatView {
                                                                 })),
                                                             );
                                                         }
+                                                        // Picker anchored to the trigger so it
+                                                        // floats above everything via deferred.
+                                                        let picker_close =
+                                                            cx.listener(|this, _, _, cx| {
+                                                                this.model_picker_open = false;
+                                                                cx.notify();
+                                                            });
+                                                        let picker_panel = self
+                                                            .model_picker_panel(cx, None);
                                                         controls = controls
                                                             .child(
                                                                 div()
-                                                                    .id("model-trigger")
-                                                                    .flex()
-                                                                    .items_center()
-                                                                    .gap_1()
-                                                                    .px(px(6.))
-                                                                    .cursor(
-                                                                        gpui::CursorStyle::PointingHand,
-                                                                    )
-                                                                    .on_click(cx.listener(
-                                                                        |this, _, _, cx| {
-                                                                            this.model_picker_open =
-                                                                                !this
-                                                                                    .model_picker_open;
-                                                                            if this.model_picker_open {
-                                                                                this.perf_open_msg = None;
-                                                                                this.msg_model_picker_open = None;
-                                                                                this.file_upload_open = false;
-                                                                            }
-                                                                            cx.notify();
-                                                                        },
-                                                                    ))
-                                                                    .when(has_model, |el| {
-                                                                        el.child(
-                                                                            VendorIcon::new(trigger_vendor.clone())
-                                                                                .size(16.)
-                                                                                .icon_url(trigger_icon_url.clone()),
-                                                                        )
-                                                                    })
+                                                                    .relative()
                                                                     .child(
                                                                         div()
-                                                                            .text_size(px(13.))
-                                                                            .text_color(
-                                                                                theme.text_muted,
+                                                                            .id("model-trigger")
+                                                                            .flex()
+                                                                            .items_center()
+                                                                            .gap_1()
+                                                                            .px(px(6.))
+                                                                            .cursor(gpui::CursorStyle::PointingHand)
+                                                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                                                this.model_picker_open = !this.model_picker_open;
+                                                                                if this.model_picker_open {
+                                                                                    this.perf_open_msg = None;
+                                                                                    this.msg_model_picker_open = None;
+                                                                                    this.file_upload_open = false;
+                                                                                }
+                                                                                cx.notify();
+                                                                            }))
+                                                                            .when(has_model, |el| {
+                                                                                el.child(
+                                                                                    VendorIcon::new(trigger_vendor.clone())
+                                                                                        .size(16.)
+                                                                                        .icon_url(trigger_icon_url.clone()),
+                                                                                )
+                                                                            })
+                                                                            .child(
+                                                                                div()
+                                                                                    .text_size(px(13.))
+                                                                                    .text_color(theme.text_muted)
+                                                                                    .child(model_name.clone()),
                                                                             )
-                                                                            .child(model_name.clone()),
+                                                                            .child(
+                                                                                IconEl::new(Icon::ChevronDown, theme.text_muted)
+                                                                                    .size(12.),
+                                                                            ),
                                                                     )
-                                                                    .child(
-                                                                        IconEl::new(
-                                                                            Icon::ChevronDown,
-                                                                            theme.text_muted,
+                                                                    .when(self.model_picker_open, |el| {
+                                                                        el.child(
+                                                                            deferred(
+                                                                                anchored()
+                                                                                    .anchor(Anchor::BottomRight)
+                                                                                    .snap_to_window_with_margin(px(8.))
+                                                                                    .child(
+                                                                                        div()
+                                                                                            .on_mouse_down_out(picker_close)
+                                                                                            .child(picker_panel),
+                                                                                    ),
+                                                                            )
+                                                                            .priority(1),
                                                                         )
-                                                                        .size(12.),
-                                                                    ),
+                                                                    }),
                                                             )
                                                             .child(send_button);
                                                         controls
