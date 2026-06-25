@@ -343,42 +343,32 @@ impl LocalModelsView {
             .when(vm.recommended, |el| {
                 el.child(self.chip("Recommended".to_string(), true, cx))
             });
-        let info = if vm.installed() {
-            let chat_id = id.clone();
-            div()
-                .id(SharedString::from(format!("use-{}", vm.id)))
-                .flex_1()
-                .flex()
-                .items_center()
-                .gap_2()
-                .h_full()
-                .cursor(CursorStyle::PointingHand)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(model) = this
-                        .store
-                        .read(cx)
-                        .rows
-                        .iter()
-                        .find(|r| r.id() == chat_id)
-                        .map(|r| r.model.clone())
-                    {
-                        cx.emit(LocalModelsEvent::UseModel(model));
-                    }
-                }))
-                .child(vendor_icon)
-                .child(name_label)
-                .into_any_element()
-        } else {
-            div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .gap_2()
-                .h_full()
-                .child(vendor_icon)
-                .child(name_label)
-                .into_any_element()
-        };
+        let chat_id = id.clone();
+        let info = div()
+            .id(SharedString::from(format!("use-{}", vm.id)))
+            .flex_1()
+            .flex()
+            .items_center()
+            .gap_2()
+            .h_full()
+            .when(vm.installed(), |el| {
+                el.cursor(CursorStyle::PointingHand)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(model) = this
+                            .store
+                            .read(cx)
+                            .rows
+                            .iter()
+                            .find(|r| r.id() == chat_id)
+                            .map(|r| r.model.clone())
+                        {
+                            cx.emit(LocalModelsEvent::UseModel(model));
+                        }
+                    }))
+            })
+            .child(vendor_icon)
+            .child(name_label)
+            .into_any_element();
 
         // Right action area (varies by phase).
         let action = if vm.installed() {

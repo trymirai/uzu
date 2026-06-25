@@ -397,6 +397,24 @@ impl ChatView {
     }
 
     /// One row in a model picker (`model-selector.tsx` ListboxOption layout).
+    /// Wraps `panel` in `deferred(anchored(corner).snap_to_window())` with a
+    /// mouse-down-out close handler — shared by all three popovers.
+    fn anchored_popover(
+        panel: impl gpui::IntoElement + 'static,
+        corner: Anchor,
+        close: impl Fn(&mut Self, &gpui::MouseDownEvent, &mut gpui::Window, &mut gpui::Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        deferred(
+            anchored()
+                .anchor(corner)
+                .snap_to_window_with_margin(px(8.))
+                .child(div().on_mouse_down_out(cx.listener(close)).child(panel)),
+        )
+        .priority(1)
+        .into_any_element()
+    }
+
     fn picker_row(
         &self,
         cx: &mut Context<Self>,
@@ -1207,6 +1225,7 @@ impl ChatView {
                     }
                 }
                 self.streaming = false;
+                self.waiting_for_model = false;
                 self.cancel = None;
                 crate::toast::push(cx, "Inference failed", crate::toast::ToastKind::Error);
                 cx.notify();
@@ -1219,6 +1238,7 @@ impl ChatView {
             token.cancel();
         }
         self.streaming = false;
+        self.waiting_for_model = false;
         self.cancel = None;
         cx.notify();
     }
@@ -1387,9 +1407,7 @@ impl Render for ChatView {
                     .child(IconEl::new(Icon::Logo, theme.text_muted).size(13.)),
             );
         } else {
-            let last_idx = self.messages.len().saturating_sub(1);
             for (idx, msg) in self.messages.iter().enumerate() {
-                let _is_last = idx == last_idx;
                 let cur = msg.cur();
                 column = column.child(match msg.role {
                     Role::User => div()
@@ -1599,10 +1617,6 @@ impl Render for ChatView {
                                 {
                                     let is_open = self.msg_model_picker_open == Some(idx);
                                     let msg_picker = self.model_picker_panel(cx, Some(idx));
-                                    let close = cx.listener(|this, _, _, cx| {
-                                        this.msg_model_picker_open = None;
-                                        cx.notify();
-                                    });
                                     let btn_bg = if is_open { theme.bg_hover } else { gpui::transparent_black() };
                                     div()
                                         .relative()
@@ -1619,15 +1633,9 @@ impl Render for ChatView {
                                                 .cursor(gpui::CursorStyle::PointingHand)
                                                 .hover(|s| s.bg(theme.bg_hover))
                                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.msg_model_picker_open =
-                                                        if this.msg_model_picker_open == Some(idx) {
-                                                            None
-                                                        } else {
-                                                            Some(idx)
-                                                        };
-                                                    this.model_picker_open = false;
-                                                    this.perf_open_msg = None;
-                                                    this.file_upload_open = false;
+                                                    let opening = this.msg_model_picker_open != Some(idx);
+                                                    this.close_popovers();
+                                                    if opening { this.msg_model_picker_open = Some(idx); }
                                                     cx.notify();
                                                 }))
                                                 .child(IconEl::new(Icon::ModelMenu, theme.text_muted).size(14.))
@@ -1639,29 +1647,18 @@ impl Render for ChatView {
                                                 ),
                                         )
                                         .when(is_open, |el| {
-                                            el.child(
-                                                deferred(
-                                                    anchored()
-                                                        .anchor(Anchor::BottomRight)
-                                                        .snap_to_window_with_margin(px(8.))
-                                                        .child(
-                                                            div()
-                                                                .on_mouse_down_out(close)
-                                                                .child(msg_picker),
-                                                        ),
-                                                )
-                                                .priority(1),
-                                            )
+                                            el.child(Self::anchored_popover(
+                                                msg_picker,
+                                                Anchor::BottomRight,
+                                                |this, _, _, cx| { this.msg_model_picker_open = None; cx.notify(); },
+                                                cx,
+                                            ))
                                         })
                                 },
                             );
                             if show_perf {
                                 let perf_open = self.perf_open_msg == Some(idx);
                                 let perf_btn_bg = if perf_open { theme.bg_hover } else { gpui::transparent_black() };
-                                let perf_close = cx.listener(|this, _, _, cx| {
-                                    this.perf_open_msg = None;
-                                    cx.notify();
-                                });
                                 let perf_panel = self.performance_panel(idx, cur, cx);
                                 right = right.child(
                                     div()
@@ -1679,15 +1676,9 @@ impl Render for ChatView {
                                                 .cursor(gpui::CursorStyle::PointingHand)
                                                 .hover(|s| s.bg(theme.bg_hover))
                                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.perf_open_msg =
-                                                        if this.perf_open_msg == Some(idx) {
-                                                            None
-                                                        } else {
-                                                            Some(idx)
-                                                        };
-                                                    this.model_picker_open = false;
-                                                    this.msg_model_picker_open = None;
-                                                    this.file_upload_open = false;
+                                                    let opening = this.perf_open_msg != Some(idx);
+                                                    this.close_popovers();
+                                                    if opening { this.perf_open_msg = Some(idx); }
                                                     cx.notify();
                                                 }))
                                                 .child(IconEl::new(Icon::Performance, theme.text_muted).size(14.))
@@ -1700,17 +1691,12 @@ impl Render for ChatView {
                                         )
                                         .when(perf_open, |el| {
                                             el.children(perf_panel.map(|panel| {
-                                                deferred(
-                                                    anchored()
-                                                        .anchor(Anchor::BottomRight)
-                                                        .snap_to_window_with_margin(px(8.))
-                                                        .child(
-                                                            div()
-                                                                .on_mouse_down_out(perf_close)
-                                                                .child(panel),
-                                                        ),
+                                                Self::anchored_popover(
+                                                    panel,
+                                                    Anchor::BottomRight,
+                                                    |this, _, _, cx| { this.perf_open_msg = None; cx.notify(); },
+                                                    cx,
                                                 )
-                                                .priority(1)
                                             }))
                                         }),
                                 );
@@ -1932,13 +1918,6 @@ impl Render for ChatView {
                                                                 })),
                                                             );
                                                         }
-                                                        // Picker anchored to the trigger so it
-                                                        // floats above everything via deferred.
-                                                        let picker_close =
-                                                            cx.listener(|this, _, _, cx| {
-                                                                this.model_picker_open = false;
-                                                                cx.notify();
-                                                            });
                                                         let picker_panel = self
                                                             .model_picker_panel(cx, None);
                                                         controls = controls
@@ -1954,12 +1933,9 @@ impl Render for ChatView {
                                                                             .px(px(6.))
                                                                             .cursor(gpui::CursorStyle::PointingHand)
                                                                             .on_click(cx.listener(|this, _, _, cx| {
-                                                                                this.model_picker_open = !this.model_picker_open;
-                                                                                if this.model_picker_open {
-                                                                                    this.perf_open_msg = None;
-                                                                                    this.msg_model_picker_open = None;
-                                                                                    this.file_upload_open = false;
-                                                                                }
+                                                                                let opening = !this.model_picker_open;
+                                                                                this.close_popovers();
+                                                                                if opening { this.model_picker_open = true; }
                                                                                 cx.notify();
                                                                             }))
                                                                             .when(has_model, |el| {
@@ -1981,19 +1957,12 @@ impl Render for ChatView {
                                                                             ),
                                                                     )
                                                                     .when(self.model_picker_open, |el| {
-                                                                        el.child(
-                                                                            deferred(
-                                                                                anchored()
-                                                                                    .anchor(Anchor::BottomRight)
-                                                                                    .snap_to_window_with_margin(px(8.))
-                                                                                    .child(
-                                                                                        div()
-                                                                                            .on_mouse_down_out(picker_close)
-                                                                                            .child(picker_panel),
-                                                                                    ),
-                                                                            )
-                                                                            .priority(1),
-                                                                        )
+                                                                        el.child(Self::anchored_popover(
+                                                                            picker_panel,
+                                                                            Anchor::BottomRight,
+                                                                            |this, _, _, cx| { this.model_picker_open = false; cx.notify(); },
+                                                                            cx,
+                                                                        ))
                                                                     }),
                                                             )
                                                             .child(send_button);
