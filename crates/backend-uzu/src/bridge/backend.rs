@@ -10,6 +10,7 @@ use shoji::{
     },
     types::session::chat::ChatConfig,
 };
+use tokenizers::Tokenizer;
 
 use crate::{TOOLCHAIN_VERSION, backends::select_backend, bridge::chat_token_backend::UzuChatTokenBackendInstance};
 
@@ -36,14 +37,15 @@ impl LlmBackend for UzuLlmBackend {
 }
 
 impl ChatTokenBackend for UzuLlmBackend {
-    fn instance(
-        &self,
+    fn instance<'a>(
+        &'a self,
         reference: String,
         config: ChatConfig,
-    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn ChatTokenInstance>, BackendError>> + Send + '_>> {
+        tokenizer: &'a Tokenizer,
+    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn ChatTokenInstance>, BackendError>> + Send + 'a>> {
         Box::pin(async move {
             let instance = select_backend!(
-                UzuChatTokenBackendInstance::<B>::new(reference, config)
+                UzuChatTokenBackendInstance::<B>::new(reference, config, tokenizer)
                     .map(|i| Box::new(i) as Box<dyn ChatTokenInstance>),
                 BackendError::from("Unable to open any backend")
             )?;

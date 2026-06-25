@@ -1,4 +1,4 @@
-use std::{collections::HashMap, pin::Pin, time::Instant};
+use std::{pin::Pin, time::Instant};
 
 use futures::{Stream, StreamExt};
 use hanashi::{Encoding as EncodingTrait, chat::Encoding};
@@ -41,15 +41,19 @@ impl Session {
         reference: String,
         model: &Model,
     ) -> Result<Self, ChatSessionError> {
+        let encoding = get_encoding(reference.clone(), model).map_err(|err| ChatSessionError::Loading {
+            message: err.to_string(),
+        })?;
+        let tokenizer = encoding.tokenizer().ok_or_else(|| ChatSessionError::Loading {
+            message: "tokenizer is empty".to_string(),
+        })?;
+
         let instance =
-            backend.instance(reference.clone(), config).await.map_err(|error| ChatSessionError::Backend {
+            backend.instance(reference, config, tokenizer).await.map_err(|error| ChatSessionError::Backend {
                 message: error.to_string(),
             })?;
         let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
-        })?;
-        let encoding = get_encoding(reference, model).map_err(|err| ChatSessionError::Loading {
-            message: err.to_string(),
         })?;
         let stop_token_ids = instance.stop_token_ids().ok_or_else(|| ChatSessionError::Loading {
             message: "stop_token_ids is None".to_string(),
