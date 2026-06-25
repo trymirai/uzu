@@ -135,11 +135,12 @@ impl MiraiApp {
         })
         .detach();
 
-        cx.subscribe(&chat, |this, _chat, event, cx| {
-            if matches!(event, ChatEvent::Updated) {
+        cx.subscribe(&chat, |this, _chat, event, cx| match event {
+            ChatEvent::Updated => {
                 this.recent_chats = persistence::list_chats();
                 cx.notify();
             }
+            ChatEvent::OpenLocalModels => this.navigate(Route::LocalModels, cx),
         })
         .detach();
 
@@ -493,7 +494,7 @@ impl MiraiApp {
         col.into_any_element()
     }
 
-    fn render_content(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_content(&self, _cx: &mut Context<Self>) -> AnyElement {
         match &self.route {
             Route::LocalModels => self.local_models.clone().into_any_element(),
             Route::CloudModels => self.cloud.clone().into_any_element(),
@@ -590,9 +591,16 @@ impl Render for MiraiApp {
                     .flex()
                     .flex_row()
                     .flex_1()
+                    .min_h_0()
                     .overflow_hidden()
                     .child(self.render_sidebar(cx))
-                    .child(self.render_content(cx)),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .child(self.render_content(cx)),
+                    ),
             )
             .child(self.render_footer(cx))
             .children(toast::render_overlay(cx))

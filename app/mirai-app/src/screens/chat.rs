@@ -5,8 +5,8 @@
 
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    Anchor, Context, Entity, EventEmitter, FontWeight, IntoElement, Render, ScrollHandle, Window,
-    anchored, deferred, div, prelude::*, px,
+    App, Context, Entity, EventEmitter, FontWeight, IntoElement, Render, ScrollHandle, Window,
+    div, prelude::*, px,
 };
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
@@ -25,6 +25,7 @@ use crate::{
     settings_state,
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
     title_gen,
+    toast::{self, ToastKind},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -136,6 +137,7 @@ enum StreamMsg {
 
 pub enum ChatEvent {
     Updated,
+    OpenLocalModels,
 }
 
 pub struct ChatView {
@@ -156,6 +158,11 @@ pub struct ChatView {
     /// the offset converge to the true bottom as `content_size` settles.
     pin_bottom_frames: u8,
     model_picker_open: bool,
+    /// Message index whose per-message model menu is open.
+    msg_model_picker_open: Option<usize>,
+    /// Message index whose performance popover is open (`None` = closed).
+    perf_open_msg: Option<usize>,
+    file_upload_open: bool,
     /// Name of the model the UI considers "loaded" (set once a chat runs).
     /// uzu has no unload API, so eject is a UI-level indicator/deselect.
     loaded_model: Option<String>,
@@ -178,6 +185,8 @@ pub struct ChatView {
 }
 
 impl EventEmitter<ChatEvent> for ChatView {}
+
+type ModelEntry = (String, Model, String, String);
 
 impl ChatView {
     pub fn new(
@@ -207,6 +216,9 @@ impl ChatView {
             scroll: ScrollHandle::new(),
             pin_bottom_frames: 0,
             model_picker_open: false,
+            msg_model_picker_open: None,
+            perf_open_msg: None,
+            file_upload_open: false,
             loaded_model: None,
             gen_settings_open: false,
             sampling_mode: SamplingMode::Default,
@@ -259,8 +271,47 @@ impl ChatView {
         cx.notify();
     }
 
-    /// Overlay listing installed local models; picking one pins it for this chat.
-    /// One row in the model picker; selecting it pins the model and closes.
+    fn close_popovers(&mut self) {
+        self.model_picker_open = false;
+        self.msg_model_picker_open = None;
+        self.perf_open_msg = None;
+        self.file_upload_open = false;
+    }
+
+    fn collect_model_entries(&self, cx: &App) -> (Vec<ModelEntry>, Vec<ModelEntry>) {
+        let local = self
+            .store
+            .read(cx)
+            .rows
+            .iter()
+            .filter(|r| r.is_installed())
+            .map(|r| {
+                (
+                    r.id().to_string(),
+                    r.model.clone(),
+                    r.name(),
+                    r.vendor().unwrap_or_default(),
+                )
+            })
+            .collect();
+        let cloud = self
+            .cloud_store
+            .read(cx)
+            .rows
+            .iter()
+            .map(|r| {
+                (
+                    r.id().to_string(),
+                    r.model.clone(),
+                    r.name(),
+                    r.vendor().unwrap_or_default(),
+                )
+            })
+            .collect();
+        (local, cloud)
+    }
+
+    /// One row in a model picker (`model-selector.tsx` ListboxOption layout).
     fn picker_row(
         &self,
         cx: &mut Context<Self>,
@@ -268,7 +319,9 @@ impl ChatView {
         model: Model,
         name: String,
         vendor: String,
+        badge: &'static str,
         hover: gpui::Hsla,
+        for_message: Option<usize>,
     ) -> gpui::AnyElement {
         let theme = cx.theme().clone();
         div()
@@ -276,122 +329,263 @@ impl ChatView {
             .flex()
             .items_center()
             .gap_2()
-            .h(px(40.))
-            .px_3()
+            .w_full()
+            .px(px(14.))
+            .py_2()
             .rounded_md()
-            .text_color(theme.text)
             .cursor(gpui::CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover))
             .child(VendorIcon::new(vendor).size(18.))
-            .child(name)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_sm()
+                    .text_color(theme.text)
+                    .child(name),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(px(10.))
+                    .text_color(theme.text_muted)
+                    .child(badge),
+            )
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.model = Some(model.clone());
-                this.clear_session();
-                this.model_picker_open = false;
-                cx.notify();
+                if let Some(msg_idx) = for_message {
+                    this.regenerate_at_with_model(msg_idx, Some(model.clone()), cx);
+                } else {
+                    this.model = Some(model.clone());
+                    this.clear_session();
+                    this.close_popovers();
+                    cx.notify();
+                }
             }))
             .into_any_element()
     }
 
-    fn model_picker_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        if !self.model_picker_open {
-            return None;
-        }
+    /// Shared model list + footer (`model-selector.tsx` ListboxOptions body).
+    fn model_picker_panel(
+        &self,
+        cx: &mut Context<Self>,
+        for_message: Option<usize>,
+    ) -> gpui::AnyElement {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
-        type Entry = (String, Model, String, String);
-        let local: Vec<Entry> = self
-            .store
-            .read(cx)
-            .rows
-            .iter()
-            .filter(|r| r.is_installed())
-            .map(|r| (r.id().to_string(), r.model.clone(), r.name(), r.vendor().unwrap_or_default()))
-            .collect();
-        let cloud: Vec<Entry> = self
-            .cloud_store
-            .read(cx)
-            .rows
-            .iter()
-            .map(|r| (r.id().to_string(), r.model.clone(), r.name(), r.vendor().unwrap_or_default()))
-            .collect();
+        let (local, cloud) = self.collect_model_entries(cx);
 
         let mut list = div()
             .id("model-picker-list")
             .flex()
             .flex_col()
-            .gap_1()
+            .gap_2()
             .max_h(px(360.))
             .overflow_y_scroll();
         if local.is_empty() && cloud.is_empty() {
             list = list.child(
                 div()
-                    .p_3()
+                    .px(px(14.))
+                    .py_2()
                     .text_sm()
                     .text_color(theme.text_muted)
-                    .child("No models yet — download one in Local Models."),
+                    .child("No models available"),
             );
         } else {
             for (id, model, name, vendor) in local {
-                list = list.child(self.picker_row(cx, id, model, name, vendor, hover));
+                list = list.child(self.picker_row(
+                    cx,
+                    id,
+                    model,
+                    name,
+                    vendor,
+                    "Local",
+                    hover,
+                    for_message,
+                ));
             }
-            if !cloud.is_empty() {
-                list = list.child(
-                    div()
-                        .px_3()
-                        .pt_2()
-                        .pb_1()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child("Cloud"),
-                );
-                for (id, model, name, vendor) in cloud {
-                    list = list.child(self.picker_row(cx, id, model, name, vendor, hover));
-                }
+            for (id, model, name, vendor) in cloud {
+                list = list.child(self.picker_row(
+                    cx,
+                    id,
+                    model,
+                    name,
+                    vendor,
+                    "Cloud",
+                    hover,
+                    for_message,
+                ));
             }
         }
 
-        // Anchored popover opening upward from the model trigger (mirai-chat
-        // parity); closes on an outside click. Placed as a child of the trigger.
-        Some(
-            deferred(
-                anchored()
-                    .anchor(Anchor::BottomLeft)
-                    .snap_to_window_with_margin(px(8.))
+        div()
+            .occlude()
+            .min_w(px(280.))
+            .max_w(px(420.))
+            .flex()
+            .flex_col()
+            .rounded_md()
+            .bg(theme.card)
+            .border_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .p(px(6.))
+                    .child(list),
+            )
+            .child(
+                div()
+                    .h_px()
+                    .bg(theme.border),
+            )
+            .child(
+                div()
+                    .p(px(10.))
                     .child(
                         div()
-                            .occlude()
-                            .w(px(320.))
+                            .id("model-picker-more")
                             .flex()
-                            .flex_col()
-                            .gap_1()
-                            .p_2()
-                            .rounded_xl()
-                            .bg(theme.card)
-                            .border_1()
-                            .border_color(theme.border)
-                            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                                this.model_picker_open = false;
+                            .items_center()
+                            .justify_between()
+                            .w_full()
+                            .px(px(14.))
+                            .py_2()
+                            .rounded_md()
+                            .cursor(gpui::CursorStyle::PointingHand)
+                            .hover(move |s| s.bg(hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.close_popovers();
+                                cx.emit(ChatEvent::OpenLocalModels);
                                 cx.notify();
                             }))
                             .child(
                                 div()
-                                    .px_1()
-                                    .pb_1()
-                                    .text_xs()
-                                    .text_color(theme.text_muted)
-                                    .child("Choose a model"),
+                                    .text_sm()
+                                    .text_color(theme.text)
+                                    .child("More local models"),
                             )
-                            .child(list),
+                            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(16.)),
                     ),
             )
-            .priority(1)
-            .into_any_element(),
+            .into_any_element()
+    }
+
+    fn performance_panel(
+        &self,
+        msg_idx: usize,
+        cur: &Version,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if self.perf_open_msg != Some(msg_idx) {
+            return None;
+        }
+        let theme = cx.theme().clone();
+        let tps = cur
+            .tps
+            .filter(|t| t.is_finite() && *t > 0.0)
+            .map(|t| format!("{}", t.round() as i64))
+            .unwrap_or_else(|| "—".into());
+        let stat = |value: String, label: &'static str| {
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .child(
+                    div()
+                        .text_size(px(15.))
+                        .text_color(theme.text)
+                        .child(value),
+                )
+                .child(
+                    div()
+                        .mt_1()
+                        .text_size(px(11.))
+                        .text_color(theme.text_muted)
+                        .child(label),
+                )
+        };
+        Some(
+            div()
+                .occlude()
+                .p(px(10.))
+                .rounded_md()
+                .bg(theme.card)
+                .border_1()
+                .border_color(theme.border)
+                .child(
+                    div()
+                        .grid()
+                        .grid_cols(3)
+                        .gap_3()
+                        .child(stat("—".into(), "T to 1st token"))
+                        .child(stat(tps, "№ of t/s"))
+                        .child(stat("—".into(), "Total time")),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn file_upload_panel(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if !self.file_upload_open {
+            return None;
+        }
+        let theme = cx.theme().clone();
+        let hover = theme.bg_hover;
+        Some(
+            div()
+                .occlude()
+                .rounded_md()
+                .bg(theme.card)
+                .border_1()
+                .border_color(theme.border)
+                .p(px(6.))
+                .child(
+                    div()
+                        .id("file-upload-option")
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .w(px(280.))
+                        .px(px(14.))
+                        .py_2()
+                        .rounded_md()
+                        .cursor(gpui::CursorStyle::PointingHand)
+                        .hover(move |s| s.bg(hover))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.file_upload_open = false;
+                            toast::push(
+                                cx,
+                                "File attachments are not available yet",
+                                ToastKind::Info,
+                            );
+                            cx.notify();
+                        }))
+                        .child(IconEl::new(Icon::Rename, theme.text_muted).size(16.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme.text)
+                                        .child("Upload a file"),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(theme.text_muted)
+                                        .child("Supports text files (TXT, MD, JSON, CSV, YAML)"),
+                                ),
+                        ),
+                )
+                .into_any_element(),
         )
     }
 
     /// Open the model picker (used by the trigger and visual tests).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn open_model_picker(&mut self, cx: &mut Context<Self>) {
+        self.close_popovers();
         self.model_picker_open = true;
         cx.notify();
     }
@@ -455,7 +649,18 @@ impl ChatView {
     /// has settled (a single `scroll_to_bottom` lands short — see the field).
     fn pin_to_bottom(&mut self) {
         self.scroll.scroll_to_bottom();
-        self.pin_bottom_frames = 4;
+        self.pin_bottom_frames = 8;
+    }
+
+    /// True when the user is at (or near) the bottom — used to avoid fighting
+    /// manual scroll during streaming.
+    fn should_auto_scroll(&self) -> bool {
+        let offset = self.scroll.offset();
+        let max = self.scroll.max_offset();
+        if max.y <= px(0.) {
+            return true;
+        }
+        offset.y <= -(max.y - px(32.))
     }
 
     fn save(&mut self) {
@@ -709,20 +914,32 @@ impl ChatView {
         self.spawn_reply(cx);
     }
 
-    /// Re-run the last turn as a new version of the trailing assistant message,
-    /// keeping prior version(s) so they can be paged through.
-    fn regenerate(&mut self, cx: &mut Context<Self>) {
+    /// Re-run an assistant turn (optionally switching model) as a new version.
+    fn regenerate_at_with_model(
+        &mut self,
+        msg_idx: usize,
+        model: Option<Model>,
+        cx: &mut Context<Self>,
+    ) {
         if self.streaming {
             return;
         }
-        let Some(last) = self.messages.last_mut() else {
+        let Some(msg) = self.messages.get(msg_idx) else {
             return;
         };
-        if last.role != Role::Assistant {
+        if msg.role != Role::Assistant {
             return;
         }
-        last.versions.push(Version::default());
-        last.current = last.versions.len() - 1;
+        if let Some(model) = model {
+            self.model = Some(model);
+            self.clear_session();
+        }
+        self.messages.truncate(msg_idx + 1);
+        if let Some(last) = self.messages.last_mut() {
+            last.versions.push(Version::default());
+            last.current = last.versions.len() - 1;
+        }
+        self.close_popovers();
         self.streaming = true;
         self.spawn_reply(cx);
     }
@@ -863,7 +1080,9 @@ impl ChatView {
                         v.tokens = tokens;
                     }
                 }
-                self.pin_to_bottom();
+                if self.should_auto_scroll() {
+                    self.pin_to_bottom();
+                }
                 cx.notify();
             }
             StreamMsg::Done => {
@@ -1043,10 +1262,11 @@ impl Render for ChatView {
         let model_name = self
             .resolved_model(cx)
             .map(|m| m.name())
-            .unwrap_or_else(|| "No model".to_string());
+            .unwrap_or_else(|| "Select model".to_string());
+        let has_model = self.resolved_model(cx).is_some();
 
-        // Message column.
-        let mut column = div().flex().flex_col().gap_5().py_6();
+        // Message column (`gap-4`, `pt-4`).
+        let mut column = div().flex().flex_col().gap_4().pt_4().w_full();
         if self.messages.is_empty() {
             column = column.child(
                 div()
@@ -1063,25 +1283,33 @@ impl Render for ChatView {
         } else {
             let last_idx = self.messages.len().saturating_sub(1);
             for (idx, msg) in self.messages.iter().enumerate() {
-                let is_last = idx == last_idx;
+                let _is_last = idx == last_idx;
                 let cur = msg.cur();
                 column = column.child(match msg.role {
                     Role::User => div()
-                        .flex()
-                        .justify_end()
-                        .child(
-                            div()
-                                .max_w(px(560.))
-                                .px_3()
-                                .py_2()
-                                .rounded_lg()
-                                .bg(theme.bg_hover)
-                                .text_color(theme.text)
-                                .child(cur.text.clone()),
-                        )
+                            .flex()
+                            .w_full()
+                            .justify_end()
+                            .child(
+                                div()
+                                    .max_w(px(560.))
+                                    .flex_shrink_0()
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_lg()
+                                    .bg(theme.bg_hover)
+                                    .text_color(theme.text)
+                                    .child(cur.text.clone()),
+                            )
                         .into_any_element(),
                     Role::Assistant => {
-                        let mut block = div().flex().flex_col().gap_2().w_full().min_w_0();
+                        let mut block = div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .w_full()
+                            .min_w_0()
+                            .pb_3();
 
                         // Reasoning ("thinking") panel (hidden when the setting is off).
                         if show_reasoning {
@@ -1111,6 +1339,7 @@ impl Render for ChatView {
                                             div()
                                                 .text_sm()
                                                 .text_color(theme.text_muted)
+                                                .overflow_hidden()
                                                 .child(reasoning.clone()),
                                         ),
                                 );
@@ -1136,40 +1365,34 @@ impl Render for ChatView {
                         };
                         block = block.child(body);
 
-                        // Perf stats footer.
-                        if !streaming && (cur.tokens.is_some() || cur.tps.is_some()) {
-                            let tps = cur.tps.map(|t| format!("{t:.0} tok/s")).unwrap_or_default();
-                            let toks = cur
-                                .tokens
-                                .map(|t| format!("{t} tokens"))
-                                .unwrap_or_default();
-                            block = block.child(
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .text_xs()
-                                    .text_color(theme.text_muted)
-                                    .child(toks)
-                                    .child(tps),
-                            );
-                        }
+                        // Actions (`mt-6 pr-6`, copy left, model + performance right).
+                        let has_reasoning = cur
+                            .reasoning
+                            .as_ref()
+                            .is_some_and(|r| !r.trim().is_empty());
+                        let show_actions = !streaming
+                            && (msg.versions.len() > 1
+                                || !cur.text.is_empty()
+                                || cur.error
+                                || has_reasoning);
+                        if show_actions {
+                            let copy_text = cur.text.clone();
+                            let show_perf = cur
+                                .tps
+                                .is_some_and(|t| t.is_finite() && t > 0.0)
+                                || cur.tokens.is_some_and(|t| t > 0);
 
-                        // Version pager (shown once a turn has been regenerated).
-                        if !streaming && msg.versions.len() > 1 {
-                            let total = msg.versions.len();
-                            let cur_n = msg.current + 1;
-                            block = block.child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .pt_1()
-                                    .text_xs()
-                                    .text_color(theme.text_muted)
+                            let mut left = div().flex().items_center().gap_1();
+                            if msg.versions.len() > 1 {
+                                let total = msg.versions.len();
+                                let cur_n = msg.current + 1;
+                                left = left
                                     .child(
                                         div()
                                             .id(gpui::SharedString::from(format!("ver-prev-{idx}")))
                                             .cursor(gpui::CursorStyle::PointingHand)
+                                            .text_xs()
+                                            .text_color(theme.text_muted)
                                             .child("◀")
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 if let Some(m) = this.messages.get_mut(idx) {
@@ -1178,11 +1401,18 @@ impl Render for ChatView {
                                                 cx.notify();
                                             })),
                                     )
-                                    .child(format!("{cur_n}/{total}"))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.text_muted)
+                                            .child(format!("{cur_n}/{total}")),
+                                    )
                                     .child(
                                         div()
                                             .id(gpui::SharedString::from(format!("ver-next-{idx}")))
                                             .cursor(gpui::CursorStyle::PointingHand)
+                                            .text_xs()
+                                            .text_color(theme.text_muted)
                                             .child("▶")
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 if let Some(m) = this.messages.get_mut(idx) {
@@ -1191,161 +1421,315 @@ impl Render for ChatView {
                                                 }
                                                 cx.notify();
                                             })),
-                                    ),
-                            );
-                        }
-
-                        // Actions (copy always; regenerate on the last message).
-                        if !streaming && !cur.error && !cur.text.is_empty() {
-                            let copy_text = cur.text.clone();
-                            let mut actions = div().flex().items_center().gap_3().pt_1();
-                            actions = actions.child(
-                                div()
-                                    .id(gpui::SharedString::from(format!("copy-{idx}")))
-                                    .flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .text_xs()
-                                    .text_color(theme.text_muted)
-                                    .cursor(gpui::CursorStyle::PointingHand)
+                                    );
+                            }
+                            if !cur.text.is_empty() || cur.error {
+                                left = left.child(
+                                    IconButton::new(
+                                        gpui::SharedString::from(format!("copy-{idx}")),
+                                        Icon::Copy,
+                                    )
+                                    .color(theme.text_muted)
+                                    .icon_size(14.)
+                                    .hit_size(24.)
                                     .on_click(cx.listener(move |_this, _, _, cx| {
                                         cx.write_to_clipboard(gpui::ClipboardItem::new_string(
                                             copy_text.clone(),
                                         ));
-                                    }))
-                                    .child(IconEl::new(Icon::Copy, theme.text_muted).size(12.))
-                                    .child("Copy"),
-                            );
-                            if is_last {
-                                actions = actions.child(
-                                    div()
-                                        .id("regenerate")
-                                        .flex()
-                                        .items_center()
-                                        .gap_1()
-                                        .text_xs()
-                                        .text_color(theme.text_muted)
-                                        .cursor(gpui::CursorStyle::PointingHand)
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.regenerate(cx)),
-                                        )
-                                        .child("↻ Regenerate"),
+                                    })),
                                 );
                             }
-                            block = block.child(actions);
+
+                            let mut right = div().flex().items_center().gap_4();
+                            right = right.child(
+                                div()
+                                    .id(gpui::SharedString::from(format!("msg-model-{idx}")))
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .px(px(6.))
+                                    .py_1()
+                                    .rounded_md()
+                                    .cursor(gpui::CursorStyle::PointingHand)
+                                    .hover(|s| s.bg(theme.bg_hover))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.msg_model_picker_open =
+                                            if this.msg_model_picker_open == Some(idx) {
+                                                None
+                                            } else {
+                                                Some(idx)
+                                            };
+                                        this.model_picker_open = false;
+                                        this.perf_open_msg = None;
+                                        this.file_upload_open = false;
+                                        cx.notify();
+                                    }))
+                                    .child(IconEl::new(Icon::ModelMenu, theme.text_muted).size(14.))
+                                    .child(
+                                        div()
+                                            .text_size(px(13.))
+                                            .text_color(theme.text_muted)
+                                            .child("Model"),
+                                    ),
+                            );
+                            if show_perf {
+                                right = right.child(
+                                    div()
+                                        .id(gpui::SharedString::from(format!("msg-perf-{idx}")))
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .px(px(6.))
+                                        .py_1()
+                                        .rounded_md()
+                                        .cursor(gpui::CursorStyle::PointingHand)
+                                        .hover(|s| s.bg(theme.bg_hover))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.perf_open_msg =
+                                                if this.perf_open_msg == Some(idx) {
+                                                    None
+                                                } else {
+                                                    Some(idx)
+                                                };
+                                            this.model_picker_open = false;
+                                            this.msg_model_picker_open = None;
+                                            this.file_upload_open = false;
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            IconEl::new(Icon::Performance, theme.text_muted).size(14.),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(13.))
+                                                .text_color(theme.text_muted)
+                                                .child("Performance"),
+                                        ),
+                                );
+                            }
+
+                            if self.msg_model_picker_open == Some(idx) {
+                                block = block.child(
+                                    div()
+                                        .flex()
+                                        .justify_end()
+                                        .pr_6()
+                                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                            this.msg_model_picker_open = None;
+                                            cx.notify();
+                                        }))
+                                        .child(self.model_picker_panel(cx, Some(idx))),
+                                );
+                            }
+                            if self.perf_open_msg == Some(idx) {
+                                block = block.child(
+                                    div()
+                                        .flex()
+                                        .justify_end()
+                                        .pr_6()
+                                        .pb_2()
+                                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                            this.perf_open_msg = None;
+                                            cx.notify();
+                                        }))
+                                        .children(self.performance_panel(idx, cur, cx)),
+                                );
+                            }
+
+                            block = block.child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .pt_6()
+                                    .pr_6()
+                                    .child(left)
+                                    .child(right),
+                            );
                         }
 
                         block.into_any_element()
                     }
                 });
             }
-            // Bottom clearance so the last message is never flush against (or
-            // hidden behind) the composer, and so the scrollable height covers
-            // the small text measure/paint slack. Included in `scroll_max`, so
-            // scroll-to-bottom reveals the full final message.
-            column = column.child(div().h(px(96.)).flex_none());
         }
 
-        // Composer send/stop button.
+        // Composer send/stop (`message-input.tsx`: filled label-title button, not accent).
         let send_button = if streaming {
-            IconButton::new("chat-stop", Icon::Stop)
-                .color(theme.text)
+            div()
+                .id("chat-stop")
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(24.))
+                .rounded_md()
+                .bg(theme.text)
+                .cursor(gpui::CursorStyle::PointingHand)
+                .hover(|s| s.bg(theme.button_border_hover))
                 .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
+                .child(IconEl::new(Icon::Stop, theme.text_inverse).size(14.))
+                .into_any_element()
         } else {
-            IconButton::new("chat-send", Icon::Send)
-                .color(theme.accent)
+            div()
+                .id("chat-send")
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(24.))
+                .rounded_md()
+                .bg(theme.text)
+                .cursor(gpui::CursorStyle::PointingHand)
+                .hover(|s| s.bg(theme.button_border_hover))
                 .on_click(cx.listener(|this, _, _, cx| this.submit_from_button(cx)))
+                .child(IconEl::new(Icon::Send, theme.text_inverse).size(16.))
+                .into_any_element()
         };
 
         div()
             .size_full()
+            .min_h_0()
             .relative()
             .flex()
             .flex_col()
-            .items_center()
-            // Scrollable message area.
             .child(
                 div()
-                    .id("chat-scroll")
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
                     .flex()
                     .flex_col()
+                    .px_5()
+                    .pt_4()
+                    .pb_5()
                     .items_center()
+                    // Scrollable message area (same flex pattern as `chats.rs` list).
                     .child(
                         div()
                             .w_full()
                             .max_w(px(CONTENT_MAX_WIDTH))
-                            // Without this the scroll's flex layout compresses
-                            // the content to the viewport height, so its measured
-                            // `content_size` underestimates the real height and
-                            // scroll-to-bottom lands short of the last message.
-                            .flex_shrink_0()
-                            .px_6()
-                            .child(column),
-                    ),
-            )
-            // Composer.
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .pb_4()
-                    .child(
-                        div()
-                            .w_full()
-                            .max_w(px(CONTENT_MAX_WIDTH))
-                            .px_6()
-                            // Composer box: input on top, controls on a row below,
-                            // mirroring mirai-chat's single rounded container.
+                            .flex_1()
+                            .min_h_0()
+                            .flex()
+                            .flex_col()
                             .child(
                                 div()
+                                    .id("chat-scroll")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .min_w_0()
+                                    .w_full()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.scroll)
+                                    .child(column),
+                            ),
+                    )
+                    // Composer (`flex-shrink-0`, max 800px — mirai-chat ChatPage).
+                    .child(
+                        div()
+                            .w_full()
+                            .flex_shrink_0()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(CONTENT_MAX_WIDTH))
                                     .flex()
                                     .flex_col()
+                                    .items_end()
                                     .gap_2()
-                                    .w_full()
-                                    .px_3()
-                                    .py_3()
-                                    .rounded_xl()
-                                    .border_1()
-                                    .border_color(theme.border)
-                                    .bg(theme.card)
-                                    .child(div().w_full().child(self.input.clone()))
+                                    .children(if self.model_picker_open {
+                                        Some(
+                                            div()
+                                                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                                    this.model_picker_open = false;
+                                                    cx.notify();
+                                                }))
+                                                .child(self.model_picker_panel(cx, None))
+                                                .into_any_element(),
+                                        )
+                                    } else {
+                                        None
+                                    })
+                                    // `MessageInput`: `gap-4 p-4 rounded-[8px]`.
                                     .child(
                                         div()
                                             .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .child(
-                                                IconButton::new("gen-settings", Icon::Settings)
-                                                    .color(theme.text_muted)
-                                                    .icon_size(14.)
-                                                    .hit_size(22.)
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.gen_settings_open =
-                                                            !this.gen_settings_open;
-                                                        cx.notify();
-                                                    })),
-                                            )
+                                            .flex_col()
+                                            .gap_4()
+                                            .w_full()
+                                            .p_4()
+                                            .rounded_lg()
+                                            .border_1()
+                                            .border_color(theme.border)
+                                            .bg(theme.card)
+                                            .child(div().w_full().child(self.input.clone()))
                                             .child(
                                                 div()
                                                     .flex()
                                                     .items_center()
-                                                    .gap_2()
+                                                    .justify_between()
                                                     .child(
                                                         div()
-                                                            .relative()
+                                                            .flex()
+                                                            .flex_col()
+                                                            .items_start()
+                                                            .gap_2()
+                                                            .children(self.file_upload_panel(cx))
+                                                            .child(
+                                                                div()
+                                                                    .id("file-upload-trigger")
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .px(px(6.))
+                                                                    .py_1()
+                                                                    .rounded_md()
+                                                                    .cursor(gpui::CursorStyle::PointingHand)
+                                                                    .hover(|s| s.bg(theme.bg_hover))
+                                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                                        this.file_upload_open =
+                                                                            !this.file_upload_open;
+                                                                        if this.file_upload_open {
+                                                                            this.model_picker_open = false;
+                                                                            this.msg_model_picker_open = None;
+                                                                            this.perf_open_msg = None;
+                                                                        }
+                                                                        cx.notify();
+                                                                    }))
+                                                                    .child(
+                                                                        IconEl::new(Icon::Plus, theme.text_muted)
+                                                                            .size(16.),
+                                                                    ),
+                                                            ),
+                                                    )
+                                                    .child({
+                                                        let mut controls =
+                                                            div().flex().items_center().gap(px(10.));
+                                                        if has_model {
+                                                            controls = controls.child(
+                                                                IconButton::new(
+                                                                    "gen-settings",
+                                                                    Icon::Settings,
+                                                                )
+                                                                .color(theme.text_muted)
+                                                                .icon_size(18.)
+                                                                .hit_size(32.)
+                                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                                    this.gen_settings_open =
+                                                                        !this.gen_settings_open;
+                                                                    cx.notify();
+                                                                })),
+                                                            );
+                                                        }
+                                                        controls = controls
                                                             .child(
                                                                 div()
                                                                     .id("model-trigger")
                                                                     .flex()
                                                                     .items_center()
                                                                     .gap_1()
+                                                                    .px(px(6.))
                                                                     .cursor(
                                                                         gpui::CursorStyle::PointingHand,
                                                                     )
@@ -1354,30 +1738,33 @@ impl Render for ChatView {
                                                                             this.model_picker_open =
                                                                                 !this
                                                                                     .model_picker_open;
+                                                                            if this.model_picker_open {
+                                                                                this.perf_open_msg = None;
+                                                                                this.msg_model_picker_open = None;
+                                                                                this.file_upload_open = false;
+                                                                            }
                                                                             cx.notify();
                                                                         },
                                                                     ))
                                                                     .child(
                                                                         div()
-                                                                            .text_xs()
+                                                                            .text_size(px(13.))
                                                                             .text_color(
                                                                                 theme.text_muted,
                                                                             )
-                                                                            .child(format!(
-                                                                                "Model: {model_name}"
-                                                                            )),
+                                                                            .child(model_name.clone()),
                                                                     )
                                                                     .child(
                                                                         IconEl::new(
                                                                             Icon::ChevronDown,
                                                                             theme.text_muted,
                                                                         )
-                                                                        .size(13.),
+                                                                        .size(16.),
                                                                     ),
                                                             )
-                                                            .children(self.model_picker_overlay(cx)),
-                                                    )
-                                                    .child(send_button),
+                                                            .child(send_button);
+                                                        controls
+                                                    }),
                                             ),
                                     ),
                             ),
