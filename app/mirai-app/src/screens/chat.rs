@@ -170,6 +170,7 @@ impl ChatView {
         let input = cx.new(|cx| TextInput::new(cx, "Add message…").multiline(true, 1, 8));
         cx.subscribe(&input, |this, _input, event, cx| match event {
             InputEvent::Submit(text) => this.send(text.clone(), cx),
+            InputEvent::Changed(_) => {}
         })
         .detach();
         cx.observe(&store, |_, _, cx| cx.notify()).detach();

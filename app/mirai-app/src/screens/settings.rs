@@ -34,14 +34,16 @@ pub struct SettingsView {
 
 impl SettingsView {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let instructions =
-            cx.new(|cx| TextInput::new(cx, "Instructions applied to every chat…"));
+        let instructions = cx
+            .new(|cx| TextInput::new(cx, "Instructions applied to every chat…").multiline(false, 3, 6));
         let current = persistence::global_instructions();
         if !current.is_empty() {
             instructions.update(cx, |input, cx| input.set_text(current, cx));
         }
         cx.subscribe(&instructions, |_this, _input, event, _cx| match event {
-            InputEvent::Submit(text) => persistence::set_global_instructions(text),
+            InputEvent::Submit(text) | InputEvent::Changed(text) => {
+                persistence::set_global_instructions(text)
+            }
         })
         .detach();
         settings_state::observe(cx, |_, cx| cx.notify()).detach();

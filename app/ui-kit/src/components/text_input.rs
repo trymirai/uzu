@@ -49,6 +49,8 @@ pub fn register(cx: &mut App) {
 /// Emitted to the owning view.
 pub enum InputEvent {
     Submit(String),
+    /// Content changed on every edit — used for autosave (e.g. instructions).
+    Changed(String),
 }
 
 pub struct TextInput {
@@ -408,6 +410,7 @@ impl EntityInputHandler for TextInput {
                 .into();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.marked_range.take();
+        cx.emit(InputEvent::Changed(self.content.to_string()));
         cx.notify();
     }
 

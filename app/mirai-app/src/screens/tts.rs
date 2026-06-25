@@ -56,6 +56,7 @@ impl TtsView {
         let input = cx.new(|cx| TextInput::new(cx, "Text to speak…"));
         cx.subscribe(&input, |this, _input, event, cx| match event {
             InputEvent::Submit(text) => this.generate(text.clone(), cx),
+            InputEvent::Changed(_) => {}
         })
         .detach();
         cx.observe(&store, |_, _, cx| cx.notify()).detach();

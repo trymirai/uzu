@@ -47,6 +47,7 @@ impl RoutersView {
         let input = cx.new(|cx| TextInput::new(cx, "Text to classify…"));
         cx.subscribe(&input, |this, _input, event, cx| match event {
             InputEvent::Submit(text) => this.classify(text.clone(), cx),
+            InputEvent::Changed(_) => {}
         })
         .detach();
         cx.observe(&store, |_, _, cx| cx.notify()).detach();

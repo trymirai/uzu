@@ -43,13 +43,16 @@ impl ChatsView {
         let search = cx.new(|cx| TextInput::new(cx, "Search chats…"));
         cx.observe(&search, |_, _, cx| cx.notify()).detach();
 
-        let instructions = cx.new(|cx| TextInput::new(cx, "Tailor the way the model responds"));
+        let instructions =
+            cx.new(|cx| TextInput::new(cx, "Tailor the way the model responds").multiline(false, 3, 6));
         let current = persistence::global_instructions();
         if !current.is_empty() {
             instructions.update(cx, |input, cx| input.set_text(current, cx));
         }
         cx.subscribe(&instructions, |_this, _input, event, _cx| match event {
-            InputEvent::Submit(text) => persistence::set_global_instructions(text),
+            InputEvent::Submit(text) | InputEvent::Changed(text) => {
+                persistence::set_global_instructions(text)
+            }
         })
         .detach();
 
