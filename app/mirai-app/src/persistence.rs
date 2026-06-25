@@ -33,12 +33,31 @@ pub struct StoredChat {
 }
 
 fn mirai_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Ok(guard) = TEST_DATA_DIR.lock() {
+        if let Some(path) = guard.as_ref() {
+            return path.clone();
+        }
+    }
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("Mirai")
 }
 
-fn chats_dir() -> PathBuf {
+#[cfg(test)]
+static TEST_DATA_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Point persistence at a temp directory for deterministic snapshot tests.
+#[cfg(test)]
+pub fn set_test_data_dir(path: Option<PathBuf>) {
+    *TEST_DATA_DIR.lock().expect("test data dir lock") = path;
+}
+
+pub fn mirai_data_dir() -> PathBuf {
+    mirai_dir()
+}
+
+pub fn chats_dir() -> PathBuf {
     mirai_dir().join("chats")
 }
 
@@ -117,7 +136,7 @@ pub fn save_settings(settings: &AppSettings) {
     }
 }
 
-fn global_instructions_path() -> PathBuf {
+pub(crate) fn global_instructions_path() -> PathBuf {
     chats_dir().join("global-instructions.txt")
 }
 
@@ -381,6 +400,11 @@ fn perf_value(text: &str, label: &str) -> Option<f64> {
     text.lines()
         .find_map(|l| l.trim().strip_prefix(needle.as_str()))
         .and_then(|v| v.trim().trim_end_matches('s').parse::<f64>().ok())
+}
+
+/// Epoch-ms → `YYYY-MM-DD HH:MM UTC` (minute granularity).
+pub fn fmt_utc_public(ms: u64) -> String {
+    fmt_utc(ms)
 }
 
 /// Epoch-ms → `YYYY-MM-DD HH:MM UTC` (minute granularity).

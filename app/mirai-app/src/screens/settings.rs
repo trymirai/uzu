@@ -3,13 +3,17 @@
 //! (run-on-startup, menu bar, global shortcut) persist their preference; the
 //! native hooks behind them are tracked separately.
 
+use std::collections::HashSet;
+
 use gpui::{
-    AnyElement, Context, CursorStyle, Entity, FontWeight, IntoElement, Render, Window, div,
-    prelude::*, px,
+    AnyElement, Context, CursorStyle, Entity, FontWeight, IntoElement, Render, SharedString, Window,
+    div, prelude::*, px,
 };
 
 use crate::{
     components::{Button, ButtonKind, ButtonSize, Icon, IconEl, InputEvent, TextInput, Toggle},
+    data_ops::{self, CleanupCategory, CleanupPreview},
+    native_dialog,
     persistence, settings_state,
     theme::{ActiveTheme, Theme},
 };
@@ -32,10 +36,23 @@ enum SettingsTab {
     About,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClearDataStep {
+    Select,
+    Confirm,
+    Result,
+}
+
 pub struct SettingsView {
     instructions: Entity<TextInput>,
     instructions_open: bool,
     tab: SettingsTab,
+    clear_data_open: bool,
+    clear_data_step: ClearDataStep,
+    clear_data_selected: HashSet<CleanupCategory>,
+    clear_data_preview: CleanupPreview,
+    clear_data_results: Vec<(CleanupCategory, bool)>,
+    clear_data_busy: bool,
 }
 
 impl SettingsView {
@@ -57,7 +74,155 @@ impl SettingsView {
             instructions,
             instructions_open: false,
             tab: SettingsTab::General,
+            clear_data_open: false,
+            clear_data_step: ClearDataStep::Select,
+            clear_data_selected: CleanupCategory::ALL.into_iter().collect(),
+            clear_data_preview: CleanupPreview::default(),
+            clear_data_results: Vec::new(),
+            clear_data_busy: false,
         }
+    }
+
+    fn open_clear_data(&mut self, cx: &mut Context<Self>) {
+        self.clear_data_open = true;
+        self.clear_data_step = ClearDataStep::Select;
+        self.clear_data_results.clear();
+        self.clear_data_busy = false;
+        self.clear_data_preview = data_ops::cleanup_preview_disk();
+        self.clear_data_selected = CleanupCategory::ALL.into_iter().collect();
+        if self.clear_data_preview.dialogs.count == 0 {
+            self.clear_data_selected.remove(&CleanupCategory::Dialogs);
+        }
+        if self.clear_data_preview.files.count == 0 {
+            self.clear_data_selected.remove(&CleanupCategory::Files);
+        }
+        if self.clear_data_preview.logs_size_bytes == 0 {
+            self.clear_data_selected.remove(&CleanupCategory::Logs);
+        }
+        cx.notify();
+
+        if let Some(engine) = data_ops::try_engine_from_app(cx) {
+            let view = cx.entity();
+            cx.spawn(async move |_, cx| {
+                let models = data_ops::model_cleanup_stats(&engine).await;
+                view.update(cx, |this, cx| {
+                    if !this.clear_data_open {
+                        return;
+                    }
+                    this.clear_data_preview.models = models;
+                    if this.clear_data_preview.models.count == 0 {
+                        this.clear_data_selected.remove(&CleanupCategory::Models);
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+    }
+
+    fn close_clear_data(&mut self, cx: &mut Context<Self>) {
+        self.clear_data_open = false;
+        self.clear_data_busy = false;
+        cx.notify();
+    }
+
+    fn toggle_clear_category(&mut self, cat: CleanupCategory, cx: &mut Context<Self>) {
+        if self.clear_data_selected.contains(&cat) {
+            self.clear_data_selected.remove(&cat);
+        } else {
+            self.clear_data_selected.insert(cat);
+        }
+        cx.notify();
+    }
+
+    fn run_clear_data(&mut self, cx: &mut Context<Self>) {
+        let selected: Vec<CleanupCategory> = CleanupCategory::ALL
+            .into_iter()
+            .filter(|c| self.clear_data_selected.contains(c))
+            .collect();
+        if selected.is_empty() {
+            return;
+        }
+        self.clear_data_busy = true;
+        cx.notify();
+
+        let engine = data_ops::try_engine_from_app(cx);
+        let view = cx.entity();
+        cx.spawn(async move |_, cx| {
+            let results = data_ops::execute_cleanup(engine.as_ref(), &selected).await;
+            view.update(cx, |this, cx| {
+                this.clear_data_busy = false;
+                this.clear_data_results = results;
+                this.clear_data_step = ClearDataStep::Result;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn export_chats(&mut self, cx: &mut Context<Self>) {
+        let Some(data) = data_ops::export_chats_zip() else {
+            crate::toast::push(cx, "No chats to export", crate::toast::ToastKind::Info);
+            return;
+        };
+        let default_name = data_ops::export_zip_default_name();
+        let Some(path) = native_dialog::save_file("Export chats", &default_name, "zip", "ZIP archive")
+        else {
+            return;
+        };
+        if native_dialog::write_bytes(&path, &data) {
+            crate::toast::push(cx, "Chats exported", crate::toast::ToastKind::Info);
+        } else {
+            crate::toast::push(cx, "Export failed", crate::toast::ToastKind::Error);
+        }
+    }
+
+    fn export_logs(&mut self, cx: &mut Context<Self>) {
+        let Some(data) = data_ops::read_log_bytes() else {
+            crate::toast::push(cx, "No log file found", crate::toast::ToastKind::Info);
+            return;
+        };
+        let Some(path) =
+            native_dialog::save_file("Export logs", "mirai.log", "log", "Log file")
+        else {
+            return;
+        };
+        if native_dialog::write_bytes(&path, &data) {
+            crate::toast::push(cx, "Logs exported", crate::toast::ToastKind::Info);
+        } else {
+            crate::toast::push(cx, "Export failed", crate::toast::ToastKind::Error);
+        }
+    }
+
+    fn action_button(
+        &self,
+        cx: &mut Context<Self>,
+        id: &'static str,
+        icon: Icon,
+        label: &'static str,
+        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let theme = cx.theme().clone();
+        let hover = theme.bg_hover;
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .gap_1()
+            .h(px(28.))
+            .px_3()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.card)
+            .text_xs()
+            .text_color(theme.text)
+            .cursor(CursorStyle::PointingHand)
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
+            .child(IconEl::new(icon, theme.text_muted).size(13.))
+            .child(label)
+            .into_any_element()
     }
 
     /// Expandable "Add instructions to all chats" card (mirai-chat parity),
@@ -206,41 +371,6 @@ impl SettingsView {
                     .child(div().text_xs().text_color(theme.text_muted).child(desc)),
             )
             .child(right)
-            .into_any_element()
-    }
-
-    /// A small bordered button (icon + label) for an action that isn't wired
-    /// up yet; clicking explains itself via a toast instead of doing nothing.
-    fn coming_soon_button(
-        &self,
-        cx: &mut Context<Self>,
-        id: &'static str,
-        icon: Icon,
-        label: &'static str,
-        msg: &'static str,
-    ) -> AnyElement {
-        let theme = cx.theme().clone();
-        let hover = theme.bg_hover;
-        div()
-            .id(id)
-            .flex()
-            .items_center()
-            .gap_1()
-            .h(px(28.))
-            .px_3()
-            .rounded_md()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.card)
-            .text_xs()
-            .text_color(theme.text)
-            .cursor(CursorStyle::PointingHand)
-            .hover(move |s| s.bg(hover))
-            .on_click(cx.listener(move |_, _, _, cx| {
-                crate::toast::push(cx, msg, crate::toast::ToastKind::Info);
-            }))
-            .child(IconEl::new(icon, theme.text_muted).size(13.))
-            .child(label)
             .into_any_element()
     }
 
@@ -450,28 +580,15 @@ impl SettingsView {
     fn privacy_content(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let settings = settings_state::current(cx);
-        // Built first so each only borrows `cx` once (not nested in action_row).
-        let export_chats = self.coming_soon_button(
-            cx,
-            "export-chats",
-            Icon::Download,
-            "Export",
-            "Chat export is coming soon",
-        );
-        let export_logs = self.coming_soon_button(
-            cx,
-            "export-logs",
-            Icon::Download,
-            "Export",
-            "Log export is coming soon",
-        );
-        let clear_data = self.coming_soon_button(
-            cx,
-            "clear-data",
-            Icon::Trash,
-            "Clear data",
-            "Clear data is coming soon",
-        );
+        let export_chats = self.action_button(cx, "export-chats", Icon::Download, "Export", |this, cx| {
+            this.export_chats(cx);
+        });
+        let export_logs = self.action_button(cx, "export-logs", Icon::Download, "Export", |this, cx| {
+            this.export_logs(cx);
+        });
+        let clear_data = self.action_button(cx, "clear-data", Icon::Trash, "Clear data", |this, cx| {
+            this.open_clear_data(cx);
+        });
         div()
             .flex()
             .flex_col()
@@ -641,6 +758,217 @@ impl SettingsView {
             ))
             .into_any_element()
     }
+
+    fn clear_data_modal(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.clear_data_open {
+            return None;
+        }
+        let theme = cx.theme().clone();
+        let preview = self.clear_data_preview.clone();
+        let selected = self.clear_data_selected.clone();
+        let busy = self.clear_data_busy;
+        let step = self.clear_data_step;
+
+        let checkbox_row = |cat: CleanupCategory| {
+            let checked = selected.contains(&cat);
+            let desc = data_ops::category_description(cat, &preview);
+            let box_color = if checked { theme.info } else { theme.border };
+            div()
+                .id(SharedString::from(format!("clear-cat-{:?}", cat)))
+                .flex()
+                .items_start()
+                .gap_3()
+                .pb_2()
+                .cursor(CursorStyle::PointingHand)
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle_clear_category(cat, cx)))
+                .child(
+                    div()
+                        .mt(px(2.))
+                        .size(px(14.))
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(box_color)
+                        .bg(if checked { theme.info.opacity(0.15) } else { gpui::transparent_black() })
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_xs()
+                        .text_color(theme.info)
+                        .child(if checked { "✓" } else { "" }),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(theme.text)
+                                .child(cat.label()),
+                        )
+                        .child(div().text_xs().text_color(theme.text_muted).child(desc)),
+                )
+        };
+
+        let (title, body, footer): (SharedString, AnyElement, AnyElement) = match step {
+            ClearDataStep::Select => {
+                let selected_count = CleanupCategory::ALL
+                    .iter()
+                    .filter(|c| selected.contains(c))
+                    .count();
+                let review = Button::new("clear-review", "Review")
+                    .kind(ButtonKind::Danger)
+                    .size(ButtonSize::Small)
+                    .disabled(selected_count == 0 || busy)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.clear_data_step = ClearDataStep::Confirm;
+                        cx.notify();
+                    }));
+                let cancel = Button::new("clear-cancel", "Cancel")
+                    .kind(ButtonKind::Secondary)
+                    .size(ButtonSize::Small)
+                    .on_click(cx.listener(|this, _, _, cx| this.close_clear_data(cx)));
+                (
+                    "Clear data".into(),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme.text_muted)
+                                .child("Select the data categories you want to permanently delete."),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .children(CleanupCategory::ALL.map(checkbox_row)),
+                        )
+                        .into_any_element(),
+                    div().flex().justify_end().gap_2().child(cancel).child(review).into_any_element(),
+                )
+            }
+            ClearDataStep::Confirm => {
+                let cats: Vec<CleanupCategory> = CleanupCategory::ALL
+                    .into_iter()
+                    .filter(|c| selected.contains(c))
+                    .collect();
+                let summary = confirm_summary(&cats);
+                let delete = Button::new("clear-delete", "Delete")
+                    .kind(ButtonKind::Danger)
+                    .size(ButtonSize::Small)
+                    .disabled(busy)
+                    .on_click(cx.listener(|this, _, _, cx| this.run_clear_data(cx)));
+                let back = Button::new("clear-back", "Back")
+                    .kind(ButtonKind::Secondary)
+                    .size(ButtonSize::Small)
+                    .disabled(busy)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.clear_data_step = ClearDataStep::Select;
+                        cx.notify();
+                    }));
+                let cancel = Button::new("clear-cancel", "Cancel")
+                    .kind(ButtonKind::Secondary)
+                    .size(ButtonSize::Small)
+                    .disabled(busy)
+                    .on_click(cx.listener(|this, _, _, cx| this.close_clear_data(cx)));
+                (
+                    "Are you sure?".into(),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme.text_muted)
+                                .child(format!(
+                                    "This will permanently delete: {summary}. This action cannot be undone."
+                                )),
+                        )
+                        .into_any_element(),
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(cancel)
+                        .child(back)
+                        .child(delete)
+                        .into_any_element(),
+                )
+            }
+            ClearDataStep::Result => {
+                let close = Button::new("clear-close", "Close")
+                    .kind(ButtonKind::Primary)
+                    .size(ButtonSize::Small)
+                    .on_click(cx.listener(|this, _, _, cx| this.close_clear_data(cx)));
+                let mut lines = div().flex().flex_col().gap_2();
+                for cat in CleanupCategory::ALL.iter().filter(|c| selected.contains(c)) {
+                    let done = self
+                        .clear_data_results
+                        .iter()
+                        .find(|(c, _)| c == cat)
+                        .is_some_and(|(_, ok)| *ok);
+                    let mark = if done { "✓" } else { "✗" };
+                    let status = if done { "cleared" } else { "failed" };
+                    lines = lines.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().text_sm().child(mark))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(if done { theme.text } else { theme.text_muted })
+                                    .child(format!("{} {status}", cat.label())),
+                            ),
+                    );
+                }
+                (
+                    "Done".into(),
+                    lines.into_any_element(),
+                    div().flex().justify_end().gap_2().child(close).into_any_element(),
+                )
+            }
+        };
+
+        Some(
+            div()
+                .absolute()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::black().opacity(0.5))
+                .occlude()
+                .child(
+                    div()
+                        .w(px(400.))
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .p_4()
+                        .rounded_xl()
+                        .bg(theme.card)
+                        .border_1()
+                        .border_color(theme.border)
+                        .child(
+                            div()
+                                .text_color(theme.text)
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(title),
+                        )
+                        .child(body)
+                        .child(footer),
+                )
+                .into_any_element(),
+        )
+    }
 }
 
 impl Render for SettingsView {
@@ -667,8 +995,11 @@ impl Render for SettingsView {
             .child(self.nav_item(cx, "Privacy", SettingsTab::Privacy))
             .child(self.nav_item(cx, "About Mirai", SettingsTab::About));
 
-        div()
+        let modal = self.clear_data_modal(cx);
+
+        let mut root = div()
             .size_full()
+            .relative()
             .flex()
             .flex_col()
             // Title bar spanning the full width, above the sidebar + content.
@@ -705,7 +1036,25 @@ impl Render for SettingsView {
                             .py_4()
                             .child(content),
                     ),
-            )
+            );
+        if let Some(modal) = modal {
+            root = root.child(modal);
+        }
+        root
+    }
+}
+
+fn confirm_summary(categories: &[CleanupCategory]) -> String {
+    let labels: Vec<&str> = categories.iter().map(|c| c.label()).collect();
+    match labels.len() {
+        0 => String::new(),
+        1 => labels[0].to_string(),
+        2 => format!("{} and {}", labels[0], labels[1]),
+        _ => format!(
+            "{}, and {}",
+            labels[..labels.len() - 1].join(", "),
+            labels[labels.len() - 1]
+        ),
     }
 }
 

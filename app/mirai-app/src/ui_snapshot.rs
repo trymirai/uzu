@@ -20,7 +20,7 @@ use gpui::{
 use crate::{
     assets, components,
     models_store::{ModelKind, ModelsStore},
-    persistence::{StoredChat, StoredMessage},
+    persistence::{self, StoredChat, StoredMessage},
     screens, settings_state,
     theme::{self, ActiveTheme, FONT_SANS},
     toast,
@@ -223,7 +223,48 @@ fn render_local_models() {
 
 #[test]
 fn render_chats() {
+    let dir = std::env::temp_dir().join(format!("mirai-chats-snapshot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    persistence::set_test_data_dir(Some(dir.clone()));
+
+    let fixtures = [
+        persistence::StoredChat {
+            id: "fixture-a".into(),
+            title: "What is Rust?".into(),
+            model_name: Some("Qwen3.5 0.8B".into()),
+            created_at: 1_700_000_040_000,
+            updated_at: 1_700_000_100_000,
+            messages: vec![persistence::StoredMessage {
+                role: "user".into(),
+                text: "What is Rust?".into(),
+                reasoning: None,
+                tps: None,
+                tokens: None,
+            }],
+        },
+        persistence::StoredChat {
+            id: "fixture-b".into(),
+            title: "Sky color".into(),
+            model_name: Some("Qwen3.5 0.8B".into()),
+            created_at: 1_700_000_200_000,
+            updated_at: 1_700_000_300_000,
+            messages: vec![persistence::StoredMessage {
+                role: "user".into(),
+                text: "Why is the sky blue?".into(),
+                reasoning: None,
+                tps: None,
+                tokens: None,
+            }],
+        },
+    ];
+    for chat in fixtures {
+        persistence::save_chat(&chat);
+    }
+
     render_png("chats", 1200.0, 800.0, |_, cx| cx.new(screens::ChatsView::new));
+
+    persistence::set_test_data_dir(None);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -1,87 +1,86 @@
 # mirai-app (GPUI) — what's left to implement
 
-Status: the core AI feature set is built and runs (chat, cloud, routers, TTS,
-model management, history, settings, welcome). This lists what remains versus
-the Electron mirai-chat app, roughly prioritized: **P1** high-value, **P2**
-medium, **P3** nice-to-have.
+Status: core AI features run (chat, cloud, routers, TTS, model management, history,
+settings, welcome). Settings UI matches mirai-chat for General / Privacy / About.
+Offscreen snapshot suite is green (14 screens + logic/unit tests).
 
-## ⚠️ Verification gaps (do first — not code, but unknown-good)
-- Live **chat streaming**, **classify**, and **TTS audio** have never been driven by a human (no UI input automation; screen kept locking). Confirm they actually work on a real message/text.
-- **Cloud Models**, **Routers**, **TTS** screens not visually verified yet (Local Models / Chat / Settings / Welcome were).
-- **Light mode** never visually checked.
+## Verification
+
+- **Automated (headless):** `cargo test -p mirai-app -p ui-kit` from `app/` — logic
+  snapshots, chat request helpers, markdown golden output, 14 UI PNG baselines
+  (5 engine snapshots via `cargo test -p mirai-app -- --ignored`).
+- **Manual:** live chat streaming, classify, TTS audio playback, light mode, pixel
+  parity vs Electron (different rasterizer — compare layout, not raw pixels).
+
+## Settings — done vs remaining
+
+| Item | Status |
+|------|--------|
+| Inner sidebar (General / Privacy / About Mirai) | ✅ |
+| Instructions card, OS prefs, reasoning, auto-eject UI | ✅ |
+| Privacy export chats (zip + save dialog) | ✅ |
+| Privacy export logs | ✅ |
+| Clear data modal (dialogs / audio / models / logs) | ✅ |
+| Share usage data toggle (persists, no telemetry backend) | preference only |
+| Run on startup / menu bar / global shortcut | preference only — needs macOS hooks |
+| Auto-eject idle timer | preference only — needs engine unload API |
 
 ## Chat
-- ✅ **DONE** (partial) — inline **bold/italic/inline-code** (via `StyledText` highlights) + **headings** + **bullets**. Still TODO: links, tables, math, blockquotes, numbered lists, inline-code monospace (HighlightStyle has no font-family).
-- ✅ **DONE** (partial) — per-message **Copy** button. Still TODO: code-block syntax highlighting + per-code-block copy button.
-- ✅ **DONE** (partial) — **Regenerate** (↻ on the last assistant message; re-runs the last turn, replacing the reply). Still TODO: message **versions** (keep + switch between regenerations).
-- ✅ **DONE** — model selector in the composer (clickable "Model: …" trigger → overlay list of installed local models). Could later become an anchored popover instead of a centered overlay.
-- **P2** **Multiline composer** (today single-line). Shift+Enter newline, autosize.
-- **P2** **Title generation** via LLM (today: first user message truncated).
-- **P2** Session reuse / context caching — today each send creates a fresh `ChatSession` and re-sends the full history (re-prefills every turn).
-- **P3** File attachments (images/files) + context-window limit checks.
-- **P3** Streaming text shimmer/animation; empty-state suggestions.
+
+- ✅ Markdown rendering (bold/italic/code/links, lists, headings, blockquotes, code blocks + copy)
+- ✅ Message versions + regenerate pager
+- ✅ Model picker, generation settings (temperature, max tokens, sampling modes)
+- ✅ Multiline composer (Shift+Enter)
+- **P2** Title generation via LLM (today: first user message truncated)
+- **P2** Session reuse / context caching (fresh session each send today)
+- **P3** File attachments, streaming shimmer, empty-state suggestions
 
 ## Chats / History
-- **P1** Sidebar **recent-chats list** (mirai-chat shows saved chats in the sidebar; today only the Chats screen).
-- **P2** **Search** chats, **rename**, **multi-select + bulk delete** (today: single delete only).
-- **P2** Global Instructions editor on the Chats page (today only in Settings).
-- **P3** Export all chats to zip.
-- **P3** mirai-chat **Markdown chat-file format** interop (today JSON-per-chat under `~/Library/Application Support/Mirai/chats/`).
+
+- ✅ Sidebar recent chats, search, bulk delete, global instructions card
+- ✅ Markdown chat-file interop (`.md` mirror on save; load JSON or markdown)
+- **P2** Rename chat modal
+- **P3** Export all chats from Chats page (Settings export exists)
 
 ## Local Models
-- ✅ **DONE** — redesigned to match mirai-chat: two-level **family list → family detail** (Installed/Available sections, name/size/quantization, Mirai-quantization accents, "Mirai quantizations" badge, model/installed counts, param range). **Tapping an installed model starts a chat** (`LocalModelsEvent::UseModel`). Search filters families (top) / models (detail).
-- **P2** Bundle **per-vendor icons** (today a generic glyph for all families).
-- **P2** **Sort** dropdown (newest / size / name).
-- ✅ **DONE** — delete-confirm modal (Local Models & Chats now confirm before deleting).
-- **P2** Device header ("for your Mac…") + **recommended model** row (needs SDK endpoint + device memory; no uzu API).
-- **P3** Quantization / "thinking" badges, model detail.
+
+- ✅ Family list → detail, vendor icons, download/delete, Mirai quant styling
+- **P2** Sort dropdown, device header + recommended model row
+- **P3** Quantization / thinking badges on detail
 
 ## Cloud Models
-- **P1** Runtime **API-key entry** (connectors) + engine re-config (today: keys only via env at startup; screen shows a hint when none).
-- **P3** Vendor icons.
 
-## Routers
-- **P2** Router **detail page** / per-router config; recommended-threshold display.
-- **P3** Local vs API router distinction.
+- ✅ Runtime API-key entry (Connect providers UI, keychain persist, hot registry reload)
+- **P3** Additional vendor polish
 
-## Text-to-Speech
-- ⛔ **BLOCKED by uzu API** — generation settings (language/speaker/voice/seed/speed/temperature/etc.) are NOT exposable: uzu's `session.synthesize(input: String)` takes only text, and `engine.text_to_speech(model)` takes only the model — no config struct exists in `shoji`. Needs uzu to add a TTS config (like ChatReplyConfig) first.
-- **P1** **Generated-audio history** (list, replay, save/export wav).
-- **P2** **Reference-voice recording** (mic capture).
-- **P2** Multiline/large text input + **char counter/limit**; file upload for text.
-- **P2** Playback controls (scrubber, pause/resume, progress) — today just play/stop.
+## Routers / TTS
 
-## Settings
-- ✅ **DONE** — reasoning toggle now hides/shows the chat reasoning panel (via a shared `settings_state` global). NOTE: uzu's `ChatConfig`/`ChatReplyConfig` have no enable-thinking flag, so this is correctly a UI control, not an inference one.
-- **P2** **Auto-eject** idle timeout (unload resident model after N min) — needs runtime session tracking; drives the footer Eject button.
-- **P2** Tabbed layout (General / Profile / Privacy / Connectors / About) — today single scroll page.
-- **P3** Privacy tab (analytics opt-in, clear data), Profile tab, Connectors tab.
-- **P3** run-on-startup, show-in-menu-bar, quick-entry shortcut toggles.
+- ✅ Screens + engine integration (basic)
+- ⛔ TTS generation settings blocked by uzu API (no config struct on synthesize)
+- **P1** TTS generated-audio history (persist + replay)
+- **P2** Reference-voice recording, playback scrubber
 
-## App shell / footer
-- ✅ **DONE** (UI-level) — footer shows the loaded model + an **Eject** button (stops generation, clears the indicator). NOTE: uzu has no unload API, so eject does NOT free GPU memory — it's a UI deselect. A true unload needs an `Engine::unload`/eviction API in uzu.
-- **P2** **Window dragging** by the top bar (traffic lights are inset, but the titlebar drag region isn't wired).
-- **P3** Sidebar collapse/toggle; "Apps" item (disabled placeholder in mirai-chat).
+## App shell
 
-## Missing reusable components
-- ✅ **DONE** — `ConfirmModal` (dim backdrop + card + Cancel/Confirm); used for delete-confirm in Local Models & Chats. Still need: rename modal, clear-data dialog (reuse it).
-- **P1** **Dropdown / Select / Popover** (model selector, sort, settings).
-- ✅ **DONE** — **Toast** notifications (`toast.rs` global; top-right, auto-dismiss). Wired to fire on model-download completion. (Could also fire on download/inference errors.)
-- **P2** **Loader / spinner** (mirai-chat uses a Rive animation).
-- **P2** **CopyButton**, **Checkbox** (welcome analytics opt-in), **Tooltip**, multiline **Textarea**.
+- ✅ Footer model indicator + Eject (UI deselect; no GPU unload in uzu yet)
+- **P2** Window drag region on title bar
+- **P3** Sidebar collapse, Apps placeholder
 
 ## Engine / inference
-- ✅ **DONE** (partial) — **temperature** + **max-tokens** steppers (gear in the composer → overlay), wired to `ChatReplyConfig` (`SamplingMethod::Stochastic` + `with_token_limit`). Still TODO: top-p / top-k / repetition-penalty, and **seed** (via `ChatConfig::with_sampling_seed`).
-- **P2** Enable-thinking / reasoning-effort control wired through `ChatConfig`/`ChatReplyConfig`.
-- **P2** Single-resident-session eviction coordination across chat/router/tts (mirai-chat's runtime ownership).
-- **P3** Structured output / grammar (build currently drops `capability-grammar`; re-enable + a JSON-schema UI).
 
-## System integration (Phase E — mostly deferred by design)
-- **P2** Global **quick-entry keyboard shortcut**; **run-on-startup**.
-- **P3** Menu-bar/tray + dock recent chats (basic app menu + ⌘Q done).
-- **P3** (Likely N/A for this rebuild) Auto-update (GCS), Amplitude analytics, Sentry crash reporting, Google auth.
+- ✅ Temperature + max-tokens + stochastic/argmax modes
+- **P2** top-p / top-k / repetition-penalty / seed
+- **P2** Single-resident-session eviction across chat/router/tts
+- **P3** Structured output / grammar UI
+
+## System integration (deferred)
+
+- **P2** Global quick-entry shortcut capture, login item, menu-bar agent
+- **P3** Auto-update, analytics, Sentry, Google auth (likely N/A for native rebuild)
 
 ## Design / polish
-- **P2** Animations (welcome logo reveal, fade-in/slide-up), custom thin scrollbars.
-- **P2** 0.5px borders (today 1px), exact spacing/radius pass vs mirai-chat.
-- **P3** Bundle a real Mirai logo (today flattened single-color mark) + vendor icons.
+
+- **P2** Animations, thin scrollbars, 0.5px border pass
+- **P3** Full Mirai wordmark asset bundle
+
+See [TESTING.md](TESTING.md) for the three-layer verification strategy.

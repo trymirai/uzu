@@ -2,9 +2,12 @@
 
 mod app_shell;
 mod assets;
+mod data_ops;
 mod engine;
 mod models_store;
+mod native_dialog;
 mod persistence;
+mod provider_keys;
 mod screens;
 mod settings_state;
 mod toast;
@@ -32,8 +35,11 @@ fn main() {
         .expect("failed to build Tokio runtime");
     let handle = runtime.handle().clone();
 
-    let engine = runtime
-        .block_on(async { uzu::engine::Engine::new(uzu::engine::EngineConfig::default()).await });
+    let engine = runtime.block_on(async {
+        let config = uzu::engine::EngineConfig::default()
+            .with_application_identifier(provider_keys::APPLICATION_ID.to_string());
+        uzu::engine::Engine::new(config).await
+    });
 
     application()
         // Real HTTP client so the image cache can fetch remote provider icons.
