@@ -946,7 +946,7 @@ impl Render for ChatView {
                         )
                         .into_any_element(),
                     Role::Assistant => {
-                        let mut block = div().flex().flex_col().gap_2().w_full();
+                        let mut block = div().flex().flex_col().gap_2().w_full().min_w_0();
 
                         // Reasoning ("thinking") panel (hidden when the setting is off).
                         if show_reasoning {
@@ -993,6 +993,8 @@ impl Render for ChatView {
                             Loader::new().label("Generating…").into_any_element()
                         } else {
                             div()
+                                .w_full()
+                                .min_w_0()
                                 .text_color(theme.text)
                                 .child(crate::components::markdown::markdown(&cur.text, &theme, idx))
                                 .into_any_element()

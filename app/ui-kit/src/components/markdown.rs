@@ -61,7 +61,7 @@ fn parse_blocks(text: &str) -> Vec<Block> {
 /// Renders `text` as a vertical stack of prose + code blocks. `id_seed` must be
 /// unique per message so code-block copy buttons get stable, non-colliding ids.
 pub fn markdown(text: &str, theme: &Theme, id_seed: usize) -> AnyElement {
-    let mut col = div().flex().flex_col().gap_2();
+    let mut col = div().flex().flex_col().w_full().min_w_0().gap_2();
     let mut line_no = 0usize;
 
     for (bi, block) in parse_blocks(text).into_iter().enumerate() {
@@ -69,7 +69,7 @@ pub fn markdown(text: &str, theme: &Theme, id_seed: usize) -> AnyElement {
             // Prose: one element per line so single newlines (lists, breaks)
             // survive, while each line still wraps.
             Block::Text(prose) => {
-                let mut p = div().flex().flex_col().gap_1();
+                let mut p = div().flex().flex_col().w_full().min_w_0().gap_1();
                 for line in prose.split('\n') {
                     if line.trim().is_empty() {
                         p = p.child(div().h(px(6.)));
@@ -140,6 +140,8 @@ fn code_block(lang: &str, code: &str, theme: &Theme, uid: usize) -> AnyElement {
     div()
         .flex()
         .flex_col()
+        .w_full()
+        .min_w_0()
         .bg(theme.bg_sub)
         .border_1()
         .border_color(theme.border)

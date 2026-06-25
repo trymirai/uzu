@@ -237,7 +237,7 @@ fn sample_stored_chat() -> StoredChat {
             },
             StoredMessage {
                 role: "assistant".into(),
-                text: "**2 + 2 = 4**.\n\nHere's a quick example:\n\n```python\nprint(2 + 2)\n```\n\n- It is basic arithmetic\n- The result is `4`".into(),
+                text: "**2 + 2 = 4**. This is a deliberately long sentence intended to exceed the content column width so we can verify the assistant message body wraps to the available width instead of overflowing outside the visible area like it used to.\n\n```python\nprint(2 + 2)  # a long code comment that extends well past the content column to confirm code blocks stay constrained\n```\n\n- It is basic arithmetic\n- The result is `4`".into(),
                 reasoning: Some("The user asks a simple sum.".into()),
                 tps: Some(42.0),
                 tokens: Some(18),
