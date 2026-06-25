@@ -1,13 +1,18 @@
 //! Chat history screen: lists saved chats (newest first), open on click, delete
 //! per row.
 
+use std::collections::HashSet;
+
 use gpui::{
-    Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString,
-    Window, div, prelude::*, px,
+    AnyElement, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render,
+    SharedString, Window, div, prelude::*, px,
 };
 
 use crate::{
-    components::{ConfirmModal, Icon, IconButton, IconEl, InputEvent, TextInput},
+    components::{
+        Button, ButtonKind, ButtonSize, ConfirmModal, Icon, IconButton, IconEl, InputEvent,
+        TextInput,
+    },
     persistence::{self, StoredChat},
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
 };
@@ -25,6 +30,10 @@ pub struct ChatsView {
     instructions_open: bool,
     /// (id, title) of a chat pending delete confirmation.
     confirm_delete: Option<(String, String)>,
+    /// Multi-select state ("Select" mode for bulk delete).
+    selection_mode: bool,
+    selected: HashSet<String>,
+    confirm_bulk_delete: bool,
 }
 
 impl EventEmitter<ChatsEvent> for ChatsView {}
@@ -50,12 +59,15 @@ impl ChatsView {
             instructions,
             instructions_open: false,
             confirm_delete: None,
+            selection_mode: false,
+            selected: HashSet::new(),
+            confirm_bulk_delete: false,
         }
     }
 
     /// Expandable "Add instructions to all chats" card (mirai-chat parity). The
     /// editor persists to the global-instructions store on Enter.
-    fn instructions_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn instructions_card(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
         let open = self.instructions_open;
@@ -122,7 +134,7 @@ impl ChatsView {
                 ),
             );
         }
-        card
+        card.into_any_element()
     }
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
@@ -130,10 +142,16 @@ impl ChatsView {
         cx.notify();
     }
 
-    fn row(&self, cx: &mut Context<Self>, chat: &StoredChat) -> impl IntoElement {
+    fn row(
+        &self,
+        cx: &mut Context<Self>,
+        chat: &StoredChat,
+        selection_mode: bool,
+        selected: bool,
+    ) -> AnyElement {
         let theme = cx.theme().clone();
         let hover_bg = theme.bg_hover;
-        let open_id = chat.id.clone();
+        let click_id = chat.id.clone();
         let delete_id = chat.id.clone();
         let delete_title = chat.title.clone();
         let count = chat.messages.len();
@@ -142,7 +160,40 @@ impl ChatsView {
             None => format!("{count} messages"),
         };
 
-        div()
+        // Selection checkbox (built from primitives — no Checkbox component yet).
+        let mut checkbox = div()
+            .size(px(18.))
+            .flex_none()
+            .rounded(px(4.))
+            .border_1()
+            .border_color(theme.border)
+            .flex()
+            .items_center()
+            .justify_center();
+        if selected {
+            checkbox =
+                checkbox.bg(theme.info).child(IconEl::new(Icon::Check, theme.card).size(12.));
+        }
+
+        let mut left = div().flex().items_center().gap_3();
+        if selection_mode {
+            left = left.child(checkbox);
+        }
+        left = left.child(
+            div()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.text)
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(chat.title.clone()),
+                )
+                .child(div().text_xs().text_color(theme.text_muted).child(subtitle)),
+        );
+
+        let mut row = div()
             .id(SharedString::from(chat.id.clone()))
             .flex()
             .items_center()
@@ -153,35 +204,147 @@ impl ChatsView {
             .rounded_lg()
             .cursor(CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover_bg))
-            .on_click(cx.listener(move |_this, _, _, cx| {
-                cx.emit(ChatsEvent::Open(open_id.clone()));
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.selection_mode {
+                    if !this.selected.remove(&click_id) {
+                        this.selected.insert(click_id.clone());
+                    }
+                    cx.notify();
+                } else {
+                    cx.emit(ChatsEvent::Open(click_id.clone()));
+                }
             }))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.text)
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(chat.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child(subtitle),
-                    ),
-            )
-            .child(
+            .child(left);
+
+        if !selection_mode {
+            row = row.child(
                 IconButton::new(SharedString::from(format!("del-{}", chat.id)), Icon::Trash)
                     .color(theme.text_muted)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.confirm_delete = Some((delete_id.clone(), delete_title.clone()));
                         cx.notify();
                     })),
-            )
+            );
+        }
+        row.into_any_element()
+    }
+
+    /// "Your chats" row (search + Select), or the selection toolbar in select
+    /// mode (select-all · count · Delete · exit), mirroring mirai-chat.
+    fn toolbar(&self, cx: &mut Context<Self>, filtered: Vec<String>, empty: bool) -> AnyElement {
+        let theme = cx.theme().clone();
+
+        if self.selection_mode {
+            let total = filtered.len();
+            let count = self.selected.len();
+            let all = total > 0 && count == total;
+
+            let mut select_all = div()
+                .id("select-all")
+                .size(px(18.))
+                .flex_none()
+                .rounded(px(4.))
+                .border_1()
+                .border_color(theme.border)
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor(CursorStyle::PointingHand)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.selected.len() == filtered.len() && !filtered.is_empty() {
+                        this.selected.clear();
+                    } else {
+                        this.selected = filtered.iter().cloned().collect();
+                    }
+                    cx.notify();
+                }));
+            if all {
+                select_all =
+                    select_all.bg(theme.info).child(IconEl::new(Icon::Check, theme.card).size(12.));
+            }
+
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .mb_3()
+                .child(
+                    div().flex().items_center().gap_3().child(select_all).child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.text_muted)
+                            .child(format!("{count} selected")),
+                    ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Button::new("bulk-delete", "Delete")
+                                .kind(ButtonKind::Danger)
+                                .size(ButtonSize::Small)
+                                .disabled(count == 0)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if !this.selected.is_empty() {
+                                        this.confirm_bulk_delete = true;
+                                        cx.notify();
+                                    }
+                                })),
+                        )
+                        .child(
+                            IconButton::new("sel-exit", Icon::Close)
+                                .color(theme.text_muted)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.selection_mode = false;
+                                    this.selected.clear();
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .mb_3()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.text)
+                        .child("Your chats"),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_3()
+                        .py_2()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.card)
+                        .child(IconEl::new(Icon::Search, theme.text_muted).size(14.))
+                        .child(self.search.clone()),
+                )
+                .child(
+                    Button::new("select-mode", "Select")
+                        .kind(ButtonKind::Secondary)
+                        .size(ButtonSize::Small)
+                        .disabled(empty)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.selection_mode = true;
+                            this.selected.clear();
+                            cx.notify();
+                        })),
+                )
+                .into_any_element()
+        }
     }
 }
 
@@ -192,31 +355,37 @@ impl Render for ChatsView {
         let query = self.search.read(cx).text().to_lowercase();
         let query = query.trim();
 
+        let chats = std::mem::take(&mut self.chats);
+        let chats_empty = chats.is_empty();
+        let hit = |chat: &StoredChat| {
+            query.is_empty()
+                || chat.title.to_lowercase().contains(query)
+                || chat.model_name.as_deref().is_some_and(|m| m.to_lowercase().contains(query))
+        };
+        let filtered: Vec<String> = chats.iter().filter(|c| hit(c)).map(|c| c.id.clone()).collect();
+        let toolbar = self.toolbar(cx, filtered, chats_empty);
+
         let mut list = div().flex().flex_col().gap_1().pb_6();
-        if self.chats.is_empty() {
+        if chats_empty {
             list = list.child(
                 div().py_8().text_color(theme.text_muted).child("No saved chats yet."),
             );
         } else {
-            // row() clones the ids it needs, so iterate by reference.
-            let chats = std::mem::take(&mut self.chats);
             let mut shown = 0usize;
             for chat in &chats {
-                let hit = query.is_empty()
-                    || chat.title.to_lowercase().contains(query)
-                    || chat.model_name.as_deref().is_some_and(|m| m.to_lowercase().contains(query));
-                if hit {
-                    list = list.child(self.row(cx, chat));
+                if hit(chat) {
+                    let selected = self.selected.contains(&chat.id);
+                    list = list.child(self.row(cx, chat, self.selection_mode, selected));
                     shown += 1;
                 }
             }
-            self.chats = chats;
             if shown == 0 {
                 list = list.child(
                     div().py_8().text_color(theme.text_muted).child("No chats match your search."),
                 );
             }
         }
+        self.chats = chats;
 
         let modal = self.confirm_delete.clone().map(|(id, title)| {
             ConfirmModal::new("Delete chat", format!("Delete \"{title}\"? This can't be undone."))
@@ -231,6 +400,28 @@ impl Render for ChatsView {
                     this.confirm_delete = None;
                     cx.notify();
                 }))
+        });
+
+        let bulk_modal = self.confirm_bulk_delete.then(|| {
+            let n = self.selected.len();
+            ConfirmModal::new(
+                "Delete chats",
+                format!("Delete {n} selected chat(s)? This can't be undone."),
+            )
+            .confirm_label("Delete")
+            .danger(true)
+            .on_confirm(cx.listener(|this, _, _, cx| {
+                for id in this.selected.drain() {
+                    persistence::delete_chat(&id);
+                }
+                this.confirm_bulk_delete = false;
+                this.selection_mode = false;
+                this.reload(cx);
+            }))
+            .on_cancel(cx.listener(|this, _, _, cx| {
+                this.confirm_bulk_delete = false;
+                cx.notify();
+            }))
         });
 
         div()
@@ -257,22 +448,7 @@ impl Render for ChatsView {
                             .child("Chat history"),
                     )
                     .child(self.instructions_card(cx))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .w_full()
-                            .mb_3()
-                            .px_3()
-                            .py_2()
-                            .rounded_lg()
-                            .border_1()
-                            .border_color(theme.border)
-                            .bg(theme.card)
-                            .child(IconEl::new(Icon::Search, theme.text_muted).size(14.))
-                            .child(self.search.clone()),
-                    )
+                    .child(toolbar)
                     .child(
                         div()
                             .id("chats-list")
@@ -283,5 +459,6 @@ impl Render for ChatsView {
                     ),
             )
             .children(modal)
+            .children(bulk_modal)
     }
 }
