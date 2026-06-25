@@ -6,7 +6,7 @@ use futures::{StreamExt, channel::mpsc};
 use gpui::Context;
 use uzu::{
     storage::types::{DownloadPhase, DownloadState},
-    types::model::Model,
+    types::{basic::ImageTheme, model::Model},
 };
 
 use crate::engine;
@@ -51,6 +51,18 @@ impl ModelRow {
 
     pub fn vendor(&self) -> Option<String> {
         self.model.family.as_ref().map(|f| f.vendor.name())
+    }
+
+    /// Remote provider/family logo URL from the model's metadata, preferring the
+    /// given theme. `None` when the family has no icons.
+    pub fn icon_url(&self, prefer_dark: bool) -> Option<String> {
+        let icons = &self.model.family.as_ref()?.metadata.icons;
+        let want = if prefer_dark { ImageTheme::Dark } else { ImageTheme::Light };
+        icons
+            .iter()
+            .find(|i| i.theme == want)
+            .or_else(|| icons.first())
+            .map(|i| i.url.clone())
     }
 
     pub fn size_bytes(&self) -> i64 {

@@ -45,6 +45,7 @@ struct FamilyVm {
     key: String,
     name: String,
     vendor: String,
+    icon_url: Option<String>,
     range: Option<String>,
     has_mirai: bool,
     models: Vec<ModelVm>,
@@ -80,7 +81,7 @@ impl LocalModelsView {
         }
     }
 
-    fn open_family(&mut self, key: String, cx: &mut Context<Self>) {
+    pub fn open_family(&mut self, key: String, cx: &mut Context<Self>) {
         self.selected_family = Some(key);
         self.search.update(cx, |i, cx| i.clear(cx));
         cx.notify();
@@ -136,6 +137,7 @@ impl LocalModelsView {
                     key: key.clone(),
                     name,
                     vendor,
+                    icon_url: row.icon_url(true),
                     range: None,
                     has_mirai: false,
                     models: Vec::new(),
@@ -225,7 +227,7 @@ impl LocalModelsView {
             .cursor(CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(move |this, _, _, cx| this.open_family(key.clone(), cx)))
-            .child(VendorIcon::new(fam.vendor.clone()).size(20.))
+            .child(VendorIcon::new(fam.vendor.clone()).size(20.).icon_url(fam.icon_url.clone()))
             .child(
                 div()
                     .flex_1()
@@ -356,9 +358,9 @@ impl LocalModelsView {
             .h(px(52.))
             .px_4()
             .rounded_lg()
-            .when(vm.is_mirai, |el| {
-                el.border_l_2().border_color(theme.success)
-            })
+            // Mirai-quantized rows get a full green tint (mirai-chat parity),
+            // not just a left edge.
+            .when(vm.is_mirai, |el| el.bg(theme.success.opacity(0.12)))
             .hover(move |s| s.bg(hover))
             .child(info)
             .child(
@@ -411,8 +413,8 @@ impl Render for LocalModelsView {
                 let title = families
                     .iter()
                     .find(|f| &f.key == key)
-                    .map(|f| (f.name.clone(), f.vendor.clone()))
-                    .unwrap_or_else(|| ("Models".to_string(), String::new()));
+                    .map(|f| (f.name.clone(), f.vendor.clone(), f.icon_url.clone()))
+                    .unwrap_or_else(|| ("Models".to_string(), String::new(), None));
                 div()
                     .flex()
                     .items_center()
@@ -422,7 +424,7 @@ impl Render for LocalModelsView {
                             .color(theme.text_muted)
                             .on_click(cx.listener(|this, _, _, cx| this.back_to_families(cx))),
                     )
-                    .child(VendorIcon::new(title.1.clone()).size(22.))
+                    .child(VendorIcon::new(title.1.clone()).size(22.).icon_url(title.2.clone()))
                     .child(
                         div()
                             .text_xl()

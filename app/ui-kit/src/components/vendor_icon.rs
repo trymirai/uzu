@@ -1,15 +1,19 @@
-//! Vendor badge: the vendor's initial on a deterministic per-vendor color.
-//! Used where ui-kit shows a vendor logo — we avoid bundling third-party brand
-//! assets, so this is a neutral, distinct-per-vendor stand-in.
+//! Vendor badge: the provider's remote logo when available (loaded by URL from
+//! the engine's model metadata), falling back to the vendor's initial on a
+//! deterministic per-vendor color. The colored initial is always rendered as a
+//! base, so offline / before-load it shows a neutral stand-in (no bundled
+//! third-party brand assets).
 
 use gpui::{
-    App, FontWeight, IntoElement, RenderOnce, SharedString, Window, div, hsla, prelude::*, px, white,
+    App, FontWeight, IntoElement, RenderOnce, SharedString, Window, div, hsla, img, prelude::*, px,
+    white,
 };
 
 #[derive(IntoElement)]
 pub struct VendorIcon {
     vendor: SharedString,
     size: f32,
+    icon_url: Option<SharedString>,
 }
 
 impl VendorIcon {
@@ -17,11 +21,19 @@ impl VendorIcon {
         Self {
             vendor: vendor.into(),
             size: 20.0,
+            icon_url: None,
         }
     }
 
     pub fn size(mut self, size: f32) -> Self {
         self.size = size;
+        self
+    }
+
+    /// Remote logo URL (from the model's vendor/family metadata). When set and
+    /// reachable, it's overlaid on the fallback initial.
+    pub fn icon_url(mut self, url: Option<impl Into<SharedString>>) -> Self {
+        self.icon_url = url.map(Into::into);
         self
     }
 }
@@ -34,19 +46,33 @@ impl RenderOnce for VendorIcon {
             .find(|c| c.is_alphanumeric())
             .map(|c| c.to_ascii_uppercase().to_string())
             .unwrap_or_else(|| "?".to_string());
-        div()
-            .w(px(self.size))
-            .h(px(self.size))
+        let size = self.size;
+        let mut el = div()
+            .w(px(size))
+            .h(px(size))
             .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
+            .relative()
             .rounded_md()
+            .overflow_hidden()
             .bg(hsla(vendor_hue(name), 0.5, 0.45, 1.0))
-            .text_color(white())
-            .text_size(px(self.size * 0.5))
-            .font_weight(FontWeight::SEMIBOLD)
-            .child(initial)
+            // Fallback initial, centered.
+            .child(
+                div()
+                    .absolute()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(white())
+                    .text_size(px(size * 0.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(initial),
+            );
+        if let Some(url) = self.icon_url {
+            // Overlaid remote logo; covers the initial once loaded.
+            el = el.child(img(url).absolute().size_full());
+        }
+        el
     }
 }
 

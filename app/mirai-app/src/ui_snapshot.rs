@@ -13,8 +13,8 @@ use std::{
 };
 
 use gpui::{
-    AnyView, AnyWindowHandle, App, AppContext, Context, Entity, HeadlessAppContext, Hsla, Platform,
-    Render, Window, div, prelude::*, px, size,
+    AnyView, AnyWindowHandle, App, AppContext, Context, Entity, HeadlessAppContext, Hsla, Render,
+    Window, div, prelude::*, px, size,
 };
 
 use crate::{
@@ -83,7 +83,7 @@ fn render_png<V: Render + 'static>(
     for _ in 0..2 {
         cx.run_until_parked();
         cx.update_window(handle, |_, window, app| {
-            window.draw(app);
+            let _ = window.draw(app);
         })
         .expect("draw window");
     }
@@ -144,7 +144,7 @@ fn render_png_with_engine<V: Render + 'static>(
     for _ in 0..3 {
         cx.run_until_parked();
         cx.update_window(handle_w, |_, window, app| {
-            window.draw(app);
+            let _ = window.draw(app);
         })
         .expect("draw window");
         std::thread::sleep(Duration::from_millis(300));
