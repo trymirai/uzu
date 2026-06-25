@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     backends::common::{
-        Allocation, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
+        Allocation, AsBufferRangeRef, Backend, Buffer, Context, Encoder, Kernels,
         gpu_types::{AttnParams, ring::RingParams},
         kernel::AttentionGemmKernel,
     },
@@ -23,21 +23,17 @@ pub struct AttentionGemmArguments<'a, B: Backend, KVBuf: AsBufferRangeRef> {
     pub sinks: Option<&'a Allocation<B>>,
     pub num_heads: usize,
     pub num_groups: usize,
-    pub suffix_length: usize,         // qL
-    pub sequence_length: usize,       // kL (prefix + suffix)
-    pub segment_prefix_length: usize, // qL_off
+    pub suffix_length: usize,
+    pub sequence_length: usize,
+    pub segment_prefix_length: usize,
     pub ring_params: Option<RingParams>,
     pub head_dim: usize,
     pub sliding_window_size: Option<usize>,
     pub is_causal: bool,
     pub scale: f32,
-    /// Element stride between kv-heads (groups) in the K buffer.
     pub k_head_stride: u64,
-    /// Element stride between tokens in the K buffer.
     pub k_seq_stride: u64,
-    /// Element stride between kv-heads (groups) in the V buffer.
     pub v_head_stride: u64,
-    /// Element stride between tokens in the V buffer.
     pub v_seq_stride: u64,
 }
 
@@ -60,13 +56,22 @@ impl<B: Backend> AttentionGemmBlock<B> {
         encoder: &mut Encoder<B>,
         args: AttentionGemmArguments<B, KVBuf>,
     ) -> Result<(), B::Error> {
-        let bk: usize = if args.head_dim < 128 {
+        let head_dim = args.head_dim;
+        let use_mxu = encoder.context().supports_mxu()
+            && self.data_type != DataType::F32
+            && head_dim <= 128
+            && args.suffix_length >= 64;
+        let bk = if use_mxu || head_dim < 128 {
             32
         } else {
             16
         };
-        let head_dim = args.head_dim;
-        let align_q = args.suffix_length.is_multiple_of(BQ);
+        let bq = if use_mxu {
+            64
+        } else {
+            BQ
+        };
+        let align_q = args.suffix_length.is_multiple_of(bq);
         let align_k = args.sequence_length.is_multiple_of(bk);
         let is_kv_cache_ring = args.ring_params.is_some();
         let is_causal = args.is_causal;
@@ -76,6 +81,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
         let key = KernelKey {
             bk,
             head_dim,
+            use_mxu,
             align_q,
             align_k,
             is_kv_cache_ring,
@@ -94,6 +100,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
                     self.data_type,
                     bk as u32,
                     head_dim as u32,
+                    use_mxu,
                     align_q,
                     align_k,
                     is_kv_cache_ring,
@@ -106,15 +113,12 @@ impl<B: Backend> AttentionGemmBlock<B> {
             },
         };
 
-        // Params (all strides in elements)
         let q_head_stride = (args.suffix_length * head_dim) as u64;
         let q_seq_stride = head_dim as u64;
-
         let o_head_stride = head_dim as u64;
         let o_seq_stride = (args.num_heads * head_dim) as u64;
-
         let nk = args.sequence_length.div_ceil(bk);
-        let nq_aligned = args.suffix_length / BQ;
+        let nq_aligned = args.suffix_length / bq;
         let nk_aligned = args.sequence_length / bk;
 
         let params = AttnParams {
@@ -128,7 +132,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
             k_len: args.sequence_length as u32,
             q_off: args.segment_prefix_length as u32,
             nq_aligned: nq_aligned as u32,
-            q_rem: (args.suffix_length - nq_aligned * BQ) as u32,
+            q_rem: (args.suffix_length - nq_aligned * bq) as u32,
             nk: nk as u32,
             nk_aligned: nk_aligned as u32,
             k_rem: (args.sequence_length - nk_aligned * bk) as u32,
@@ -157,6 +161,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
 struct KernelKey {
     bk: usize,
     head_dim: usize,
+    use_mxu: bool,
     align_q: bool,
     align_k: bool,
     is_kv_cache_ring: bool,

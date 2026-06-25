@@ -49,4 +49,8 @@ pub trait Context: Sized {
     fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error>;
 
     fn sparse_buffers_supported(&self) -> bool;
+
+    fn supports_mxu(&self) -> bool {
+        false
+    }
 }

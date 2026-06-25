@@ -1,8 +1,10 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
+#include "../matmul/common/fragment.h"
 #include "../matmul/common/loader.h"
-#include "../matmul/common/simdgroup_fragment.h"
+#include "../matmul/common/mxu_fragment_ops.h"
+#include "../matmul/common/simdgroup_fragment_ops.h"
 #include "../generated/ring.h"
 #include "../generated/trie.h"
 #include "../generated/attention.h"
@@ -21,30 +23,27 @@ struct TransformScale {
   METAL_FUNC T apply(T x) const { return scale * x; }
 };
 
-template <typename T>
-METAL_FUNC T row_reduce_max(T v) {
-  // SimdgroupMultiplyAccumulate::get_lane_coordinates mapping groups lanes for
-  // a row as: {lane, lane^1, lane^8, (lane^1)^8}. Reduce in two steps.
-  v = metal::max(v, simd_shuffle_xor(v, 1));
-  v = metal::max(v, simd_shuffle_xor(v, 8));
-  return v;
-}
+template <typename T, uint BK, uint BD, bool USE_MXU>
+struct AttentionGemmLayout {
+  using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
 
-template <typename T>
-METAL_FUNC T row_reduce_sum(T v) {
-  v += simd_shuffle_xor(v, 1);
-  v += simd_shuffle_xor(v, 8);
-  return v;
-}
+  METAL_CONST int FRAGMENT_ROWS = Ops::FRAGMENT_ROWS;
+  METAL_CONST int SIMDGROUPS_PER_THREADGROUP = 4;
+  METAL_CONST int BLOCK_QUERY_ROWS = SIMDGROUPS_PER_THREADGROUP * FRAGMENT_ROWS;
+  METAL_CONST int ROW_ALIGNMENT_BYTES = 16;
+  METAL_CONST int ROW_PADDING_ELEMENTS = ROW_ALIGNMENT_BYTES / int(sizeof(T));
+  METAL_CONST int Q_SMEM_SIZE = USE_MXU ? 1 : (BLOCK_QUERY_ROWS * (int(BD) + ROW_PADDING_ELEMENTS));
+  METAL_CONST int KV_SMEM_SIZE = USE_MXU ? 1 : (int(BK) * (int(BD) + ROW_PADDING_ELEMENTS));
+};
 
-#define BLOCK_QUERY_ROWS 32
-#define SIMDGROUPS_PER_ROW 4
-#define SIMDGROUPS_PER_COLUMN 1
-
-template <typename T, uint BK, uint BD>
+template <typename T, uint BK, uint BD, bool USE_MXU>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(BK, 16, 32)
 VARIANTS(BD, 64, 128, 256)
+VARIANTS(USE_MXU, false, true)
+CONSTRAINT(!USE_MXU || BK == 32)
+CONSTRAINT(!USE_MXU || T != "float")
+CONSTRAINT(!USE_MXU || BD != 256)
 PUBLIC KERNEL(AttentionGemm)(
     const device T* q,
     const device T* k,
@@ -64,19 +63,24 @@ PUBLIC KERNEL(AttentionGemm)(
     const bool is_trie SPECIALIZE,
     const bool is_sliding_window SPECIALIZE,
     const bool has_sinks SPECIALIZE,
-    threadgroup T q_smem[BLOCK_QUERY_ROWS * (BD + 16 / sizeof(T))],
-    threadgroup T kv_smem[BK * (BD + 16 / sizeof(T))],
+    threadgroup T q_smem[AttentionGemmLayout<T, BK, BD, USE_MXU>::Q_SMEM_SIZE],
+    threadgroup T kv_smem[AttentionGemmLayout<T, BK, BD, USE_MXU>::KV_SMEM_SIZE],
     const ThreadContext thread_context,
-    const uint q_tile_idx GROUPS(suffix_length.div_ceil(BLOCK_QUERY_ROWS)),
+    const uint q_tile_idx GROUPS(suffix_length.div_ceil(if USE_MXU { 64 } else { 32 })),
     const uint head_idx GROUPS(num_heads),
     const uint batch_idx GROUPS(1),
     const uint lid THREADS(128)
 ) {
-  // -------------------------------------------------------------------------
-  // Pointer setup (all strides are in elements)
-  // q_tile_idx: query tile index (BLOCK_QUERY_ROWS rows)
-  // head_idx: query head index
-  // batch_idx: batch index (currently 1 in uzu, but kept for completeness)
+  using AccumType = float;
+  using Layout = AttentionGemmLayout<T, BK, BD, USE_MXU>;
+  using Ops = typename Layout::Ops;
+  constexpr short FRAGMENT_ROWS = Layout::FRAGMENT_ROWS;
+  constexpr int BLOCK_QUERY_ROWS = Layout::BLOCK_QUERY_ROWS;
+  constexpr int ROW_PADDING_ELEMENTS = Layout::ROW_PADDING_ELEMENTS;
+  constexpr int SIMDGROUPS_PER_THREADGROUP = Layout::SIMDGROUPS_PER_THREADGROUP;
+  constexpr bool QUERY_IS_RESIDENT = USE_MXU;
+
+  using InputType = metal::conditional_t<USE_MXU, T, AccumType>;
 
   q += batch_idx * params.q_strides[0] + head_idx * params.q_strides[1] +
        q_tile_idx * int64_t(BLOCK_QUERY_ROWS) * params.q_strides[2];
@@ -92,329 +96,249 @@ PUBLIC KERNEL(AttentionGemm)(
     trie += batch_idx * suffix_length;
   }
 
-  // -------------------------------------------------------------------------
-  // Threadgroup memory
-  constexpr short query_padding = 16 / sizeof(T);
-  constexpr short key_padding = 16 / sizeof(T);
-  constexpr short value_padding = 16 / sizeof(T);
-
-  constexpr short query_leading_dimension = BD + query_padding;
-  constexpr short key_leading_dimension = BD + key_padding;
-  constexpr short value_leading_dimension = BD + value_padding;
-
-  threadgroup T* query_shared = q_smem;
-  threadgroup T* key_shared = kv_smem;
-  threadgroup T* value_shared = kv_smem;
-
-  //
-  // -------------------------------------------------------------------------
-  // Block loaders
-  using QueryLoader = ThreadgroupLoader<
-      T,
-      BLOCK_QUERY_ROWS,
-      BD,
-      query_leading_dimension,
-      1,
-      SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * 32>;
-
-  using KeyLoader =
-      ThreadgroupLoader<T, BK, BD, key_leading_dimension, 0, SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * 32>;
-
-  using ValueLoader =
-      ThreadgroupLoader<T, BK, BD, value_leading_dimension, 0, SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * 32>;
-
   const int query_source_stride = int(params.q_strides[2]);
   const int key_source_stride = int(params.k_strides[2]);
   const int value_source_stride = int(params.v_strides[2]);
 
-  thread QueryLoader query_loader(q, query_source_stride, query_shared, thread_context);
-  thread KeyLoader key_loader(k, key_source_stride, key_shared, thread_context);
-  thread ValueLoader value_loader(v, value_source_stride, value_shared, thread_context);
+  constexpr int QUERY_ROW_FRAGMENTS = 1;
+  constexpr int KEY_COL_FRAGMENTS = BK / FRAGMENT_ROWS;
+  constexpr int HEAD_DIM_FRAGMENTS = BD / FRAGMENT_ROWS;
 
-  TransformScale<T> ts(static_cast<T>(params.scale * M_LOG2E_F));
+  static_assert(!USE_MXU || KEY_COL_FRAGMENTS % 2 == 0, "MXU QK needs even N (KEY_COL_FRAGMENTS)");
 
-  // -------------------------------------------------------------------------
-  // MMA tiles
-  constexpr short SIMDGROUP_BLOCK_SIZE = 8;
-  using AccumType = float;
-  using SimdgroupMultiplyAccumulateType =
-      SimdgroupMultiplyAccumulate<AccumType, SIMDGROUP_BLOCK_SIZE, SIMDGROUP_BLOCK_SIZE>;
+  constexpr int QUERY_FRAGMENT_COUNT = QUERY_IS_RESIDENT ? HEAD_DIM_FRAGMENTS : 1;
+  using QueryFragment = OperandFragment<InputType, QUERY_ROW_FRAGMENTS, 1, Ops>;
+  using KeyFragment = OperandFragment<InputType, 1, KEY_COL_FRAGMENTS, Ops, ReadTranspose>;
+  using ScoreFragment = Fragment<AccumType, QUERY_ROW_FRAGMENTS, KEY_COL_FRAGMENTS, Ops>;
+  QueryFragment query_frags[QUERY_FRAGMENT_COUNT];
+  ScoreFragment score_fragment;
+  constexpr int VALUE_COL_FRAGMENTS = USE_MXU ? 2 : HEAD_DIM_FRAGMENTS;
+  static_assert(HEAD_DIM_FRAGMENTS % VALUE_COL_FRAGMENTS == 0, "head-dim must split into VALUE_COL_FRAGMENTS frags");
+  static_assert(!USE_MXU || VALUE_COL_FRAGMENTS % 2 == 0, "MXU PV needs even N (VALUE_COL_FRAGMENTS)");
+  constexpr int OUTPUT_CHUNKS = HEAD_DIM_FRAGMENTS / VALUE_COL_FRAGMENTS;
+  constexpr short OUTPUT_CHUNK_COLS = VALUE_COL_FRAGMENTS * FRAGMENT_ROWS;
+  using ValueFragment = OperandFragment<InputType, KEY_COL_FRAGMENTS, VALUE_COL_FRAGMENTS, Ops>;
+  using OutputFragment = Fragment<AccumType, QUERY_ROW_FRAGMENTS, VALUE_COL_FRAGMENTS, Ops>;
+  OutputFragment output_chunks[OUTPUT_CHUNKS];
 
-  constexpr int SIMDGROUPS_PER_THREADGROUP = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
-  static_assert(
-      BLOCK_QUERY_ROWS >= (SIMDGROUPS_PER_THREADGROUP * SIMDGROUP_BLOCK_SIZE) &&
-          BLOCK_QUERY_ROWS % (SIMDGROUPS_PER_THREADGROUP * SIMDGROUP_BLOCK_SIZE) == 0,
-      "Each simdgroup must host at least 1 simdgroup matrix along Q sequence."
-  );
+  METAL_PRAGMA_UNROLL
+  for (int c = 0; c < OUTPUT_CHUNKS; ++c) {
+    output_chunks[c].clear();
+  }
 
-  // Q sequence multiply-accumulate blocks per simdgroup (QUERY_GRID_ROWS == 1
-  // for the 32-row block layout)
-  constexpr int QUERY_GRID_ROWS = BLOCK_QUERY_ROWS / (SIMDGROUPS_PER_THREADGROUP * SIMDGROUP_BLOCK_SIZE);
-  constexpr int KEY_GRID_COLS = BK / SIMDGROUP_BLOCK_SIZE;
-  constexpr int HEAD_DIM_GRID_COLS = BD / SIMDGROUP_BLOCK_SIZE;
+  const short simdgroup_row_base = FRAGMENT_ROWS * QUERY_ROW_FRAGMENTS * short(thread_context.simdgroup_index);
+  constexpr short head_dim_fragment_stride = FRAGMENT_ROWS;
 
-  static_assert(QUERY_GRID_ROWS == 1, "Expected QUERY_GRID_ROWS == 1");
+  const bool ragged_q = (!align_q && int(q_tile_idx) == params.nq_aligned);
+  constexpr short query_leading_dimension = BD + ROW_PADDING_ELEMENTS;
+  threadgroup T* query_shared = q_smem;
+  const short query_shared_offset = simdgroup_row_base * query_leading_dimension;
 
-  SimdgroupFragment<AccumType, QUERY_GRID_ROWS, 1, SimdgroupMultiplyAccumulateType> query_fragment;
-  SimdgroupFragment<AccumType, 1, KEY_GRID_COLS, SimdgroupMultiplyAccumulateType> key_fragment;
-  SimdgroupFragment<AccumType, QUERY_GRID_ROWS, KEY_GRID_COLS, SimdgroupMultiplyAccumulateType> score_fragment;
-  SimdgroupFragment<AccumType, 1, 1, SimdgroupMultiplyAccumulateType> value_fragment;
-  SimdgroupFragment<AccumType, QUERY_GRID_ROWS, HEAD_DIM_GRID_COLS, SimdgroupMultiplyAccumulateType> output_fragment;
-
-  output_fragment.clear();
-
-  // -------------------------------------------------------------------------
-  // Lane coordinates and pointer offsets
-  const short2 lane_coordinates = SimdgroupMultiplyAccumulateType::get_lane_coordinates(thread_context.simd_lane_id);
-  const short lane_row = lane_coordinates.y;
-  const short lane_col = lane_coordinates.x;
-
-  const short simdgroup_row_base = SIMDGROUP_BLOCK_SIZE * QUERY_GRID_ROWS * short(thread_context.simdgroup_index);
-
-  const short query_shared_offset = (simdgroup_row_base + lane_row) * query_leading_dimension + lane_col;
-  constexpr short query_tile_stride = SIMDGROUP_BLOCK_SIZE;
-
-  const short key_shared_offset = lane_col * key_leading_dimension + lane_row;
-  constexpr short key_tile_stride = SIMDGROUP_BLOCK_SIZE;
-
-  const short value_shared_offset = lane_row * value_leading_dimension + lane_col;
-
-  // -------------------------------------------------------------------------
-  // Load Q block once (and apply scaling)
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-
-  if (!align_q && int(q_tile_idx) == params.nq_aligned) {
-    query_loader.load_safe(short2(BD, params.q_rem));
+  if constexpr (QUERY_IS_RESIDENT) {
+    auto q_src = fragment_source(q + int64_t(simdgroup_row_base) * query_source_stride, query_source_stride);
+    if (ragged_q) {
+      q_src = q_src.bounded(params.q_rem - simdgroup_row_base, FRAGMENT_ROWS);
+    }
+    const InputType query_scale = static_cast<InputType>(params.scale * M_LOG2E_F);
+    METAL_PRAGMA_UNROLL
+    for (short dd = 0; dd < HEAD_DIM_FRAGMENTS; dd++) {
+      query_frags[dd].load_from(thread_context.simd_lane_id, q_src.advanced(dd * head_dim_fragment_stride));
+      query_frags[dd].map_coords(thread_context.simd_lane_id, [&](short, short, InputType v) {
+        return v * query_scale;
+      });
+    }
   } else {
-    query_loader.load_unsafe();
+    using QueryLoader = ThreadgroupLoader<
+        T,
+        BLOCK_QUERY_ROWS,
+        BD,
+        query_leading_dimension,
+        1,
+        SIMDGROUPS_PER_THREADGROUP * METAL_SIMD_SIZE>;
+    thread QueryLoader query_loader(q, query_source_stride, query_shared, thread_context);
+    if (ragged_q) {
+      query_loader.load_safe(short2(BD, params.q_rem));
+    } else {
+      query_loader.load_unsafe();
+    }
+    query_loader.apply_inplace_op(TransformScale<T>(static_cast<T>(params.scale * M_LOG2E_F)));
+    threadgroup_barrier(mem_flags::mem_threadgroup);
   }
-  query_loader.apply_inplace_op(ts);
 
-  // -------------------------------------------------------------------------
-  // Streaming softmax state for this row (shared across lanes in a row)
-  const AccumType neg_inf = static_cast<AccumType>(-1e9f) * M_LOG2E_F;
-  AccumType max_score = -INFINITY;
-  AccumType sum_score = AccumType(0);
-
-  if (has_sinks) {
-    max_score = M_LOG2E_F * static_cast<AccumType>(sinks[head_idx]);
-    sum_score = AccumType(1);
+  const AccumType masked_score = static_cast<AccumType>(-1e9f) * M_LOG2E_F;
+  constexpr int ROWS_PER_LANE = QUERY_ROW_FRAGMENTS * Ops::THREAD_ELEMENT_ROWS;
+  const AccumType init_max = has_sinks ? AccumType(M_LOG2E_F * static_cast<AccumType>(sinks[head_idx])) : -INFINITY;
+  const AccumType init_sum = has_sinks ? AccumType(1) : AccumType(0);
+  AccumType max_score[ROWS_PER_LANE];
+  AccumType sum_score[ROWS_PER_LANE];
+  METAL_PRAGMA_UNROLL
+  for (int r = 0; r < ROWS_PER_LANE; ++r) {
+    max_score[r] = init_max;
+    sum_score[r] = init_sum;
   }
 
-  // Determine K block loop limit (causal can early-stop)
   uint32_t kb_lim = params.nk;
   if (is_causal) {
     const int q_max = (int(q_tile_idx) + 1) * BLOCK_QUERY_ROWS + params.q_off;
-    kb_lim = (q_max + BK - 1) / BK;
-    kb_lim = min(params.nk, kb_lim);
+    kb_lim = min(params.nk, uint32_t((q_max + BK - 1) / BK));
   }
 
-  const int q_rel = int(q_tile_idx) * BLOCK_QUERY_ROWS + int(simdgroup_row_base) + int(lane_row); // [0, q_len)
-
+  const int q_base = int(q_tile_idx) * BLOCK_QUERY_ROWS + int(simdgroup_row_base);
   const int prefix_length = params.q_off;
-
   const int suffix_position = is_kv_cache_ring ? int(ring_params.ring_length) : prefix_length;
+  using KVBlockSource = BlockSource<
+      T,
+      BK,
+      BD,
+      BD + ROW_PADDING_ELEMENTS,
+      SIMDGROUPS_PER_THREADGROUP * METAL_SIMD_SIZE,
+      typename Ops::BlockStorage>;
+  threadgroup T* kv_shared = kv_smem;
 
-  const int query_position =
-      (is_trie && q_rel < params.q_len) ? suffix_position + int(trie[q_rel].height) : suffix_position + q_rel;
-
-  // Loop over KV blocks
   for (int kb = 0; kb < kb_lim; kb++) {
-    // Load K block
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (!align_k && kb == params.nk_aligned) {
-      key_loader.load_safe(short2(BD, params.k_rem));
-    } else {
-      key_loader.load_unsafe();
-    }
-
-    // Compute S = Q @ K^T for this block
+    const bool tail_k = (!align_k && kb == params.nk_aligned);
+    const short valid_k_rows = tail_k ? short(params.k_rem) : short(BK);
+    const device T* k_block = k + int64_t(kb) * int(BK) * key_source_stride;
     score_fragment.clear();
 
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+    KVBlockSource key_source{
+        k_block,
+        key_source_stride,
+        kv_shared,
+        valid_k_rows,
+        thread_context,
+    };
+    key_source.prepare();
+    auto q_shared_src = fragment_source(query_shared + query_shared_offset, query_leading_dimension);
 
     METAL_PRAGMA_UNROLL
-    for (short dd = 0; dd < HEAD_DIM_GRID_COLS; dd++) {
-      simdgroup_barrier(mem_flags::mem_none);
-
-      query_fragment.template load<T, 1, 1, query_leading_dimension, 1>(
-          &query_shared[query_shared_offset + dd * query_tile_stride]
-      );
-      key_fragment.template load<T, 1, 1, 1, key_leading_dimension>(
-          &key_shared[key_shared_offset + dd * key_tile_stride]
-      );
-
-      simdgroup_barrier(mem_flags::mem_none);
-      tile_multiply_accumulate(score_fragment, query_fragment, key_fragment, score_fragment);
-    }
-
-    // Mask out tail keys for the last (unaligned) K block
-    if (!align_k && kb == params.nk_aligned) {
-      const int k_rem = params.k_rem;
-      METAL_PRAGMA_UNROLL
-      for (short j = 0; j < KEY_GRID_COLS; j++) {
-        thread auto& frag = score_fragment.multiply_accumulate_at(0, j);
-        const int col0 = int(lane_col) + int(j) * SIMDGROUP_BLOCK_SIZE;
-        if (col0 >= k_rem) {
-          frag[0] = neg_inf;
-        }
-        if ((col0 + 1) >= k_rem) {
-          frag[1] = neg_inf;
-        }
+    for (short dd = 0; dd < HEAD_DIM_FRAGMENTS; dd++) {
+      if constexpr (!QUERY_IS_RESIDENT) {
+        query_frags[0].load_from(thread_context.simd_lane_id, q_shared_src.advanced(dd * head_dim_fragment_stride));
       }
+      const short q_idx = QUERY_IS_RESIDENT ? dd : 0;
+
+      KeyFragment key_fragment;
+      key_source.load(key_fragment, dd * head_dim_fragment_stride);
+      simdgroup_barrier(mem_flags::mem_none);
+      fragment_mma(score_fragment, query_frags[q_idx], key_fragment);
     }
 
-    // Unified masking: causal, trie, ring, sliding window
-    if (q_rel < params.q_len) {
-      METAL_PRAGMA_UNROLL
-      for (short j = 0; j < KEY_GRID_COLS; j++) {
-        thread auto& frag = score_fragment.multiply_accumulate_at(0, j);
-        const int col_base = kb * BK + int(lane_col) + int(j) * SIMDGROUP_BLOCK_SIZE;
-
-        const int k0 = col_base;
-        const int k1 = col_base + 1;
-
-        if (k0 < params.k_len && !should_use_key(
-                                     ring_params,
-                                     trie,
-                                     sliding_window_size,
-                                     q_rel,
-                                     prefix_length,
-                                     suffix_position,
-                                     query_position,
-                                     k0,
-                                     is_kv_cache_ring,
-                                     is_causal,
-                                     is_trie,
-                                     is_sliding_window
-                                 ))
-          frag[0] = neg_inf;
-
-        if (k1 < params.k_len && !should_use_key(
-                                     ring_params,
-                                     trie,
-                                     sliding_window_size,
-                                     q_rel,
-                                     prefix_length,
-                                     suffix_position,
-                                     query_position,
-                                     k1,
-                                     is_kv_cache_ring,
-                                     is_causal,
-                                     is_trie,
-                                     is_sliding_window
-                                 ))
-          frag[1] = neg_inf;
+    const int k_rem = params.k_rem;
+    if (!is_trie && !is_kv_cache_ring && !is_sliding_window) {
+      const bool diag = is_causal && ((int(kb) + 1) * int(BK) - 1 > prefix_length + q_base);
+      if (tail_k || diag) {
+        score_fragment.map_coords(thread_context.simd_lane_id, [&](short row, short col, AccumType v) {
+          if (tail_k && int(col) >= k_rem) {
+            return masked_score;
+          }
+          if (diag && (kb * int(BK) + int(col)) > prefix_length + q_base + int(row)) {
+            return masked_score;
+          }
+          return v;
+        });
       }
-    }
-
-    // Load V block (overwriting K in shared memory)
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (!align_k && kb == params.nk_aligned) {
-      value_loader.load_safe(short2(BD, params.k_rem));
     } else {
-      value_loader.load_unsafe();
-    }
-
-    // -----------------------------------------------------------------------
-    // Streaming softmax update for this block
-
-    // Row max for this block
-    AccumType block_max_local = -INFINITY;
-    METAL_PRAGMA_UNROLL
-    for (short j = 0; j < KEY_GRID_COLS; j++) {
-      const thread auto& frag = score_fragment.multiply_accumulate_at(0, j);
-      block_max_local = metal::max(block_max_local, frag[0]);
-      block_max_local = metal::max(block_max_local, frag[1]);
-    }
-    const AccumType block_max = row_reduce_max(block_max_local);
-
-    const AccumType new_max = metal::max(max_score, block_max);
-    const AccumType factor = fast::exp2(max_score - new_max);
-    max_score = new_max;
-
-    // Rescale running sum
-    sum_score *= factor;
-
-    // exp2(S - new_max) and row sum
-    AccumType block_sum_local = AccumType(0);
-    METAL_PRAGMA_UNROLL
-    for (short j = 0; j < KEY_GRID_COLS; j++) {
-      thread auto& frag = score_fragment.multiply_accumulate_at(0, j);
-      frag[0] = fast::exp2(frag[0] - new_max);
-      frag[1] = fast::exp2(frag[1] - new_max);
-      block_sum_local += frag[0] + frag[1];
-    }
-    const AccumType block_sum = row_reduce_sum(block_sum_local);
-    sum_score += block_sum;
-
-    // Rescale output accumulator
-    METAL_PRAGMA_UNROLL
-    for (short id = 0; id < HEAD_DIM_GRID_COLS; id++) {
-      thread auto& frag = output_fragment.multiply_accumulate_at(0, id);
-      frag[0] *= factor;
-      frag[1] *= factor;
-    }
-
-    // Accumulate output: output_fragment += score_fragment * Vblock
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    METAL_PRAGMA_UNROLL
-    for (short id = 0; id < HEAD_DIM_GRID_COLS; id++) {
-      METAL_PRAGMA_UNROLL
-      for (short ik = 0; ik < KEY_GRID_COLS; ik++) {
-        if constexpr (BD == 128) {
-          simdgroup_barrier(mem_flags::mem_none);
+      score_fragment.map_coords(thread_context.simd_lane_id, [&](short row, short col, AccumType v) {
+        if (tail_k && int(col) >= k_rem) {
+          return masked_score;
         }
-
-        const short kk = ik * SIMDGROUP_BLOCK_SIZE;
-        const short dd = id * SIMDGROUP_BLOCK_SIZE;
-
-        value_fragment.template load<T, 1, 1, value_leading_dimension, 1>(
-            &value_shared[value_shared_offset + kk * value_leading_dimension + dd]
-        );
-
-        if constexpr (BD == 128) {
-          simdgroup_barrier(mem_flags::mem_none);
+        const int q_rel = q_base + int(row);
+        if (q_rel >= int(params.q_len)) {
+          return v;
         }
-
-        SimdgroupMultiplyAccumulateType::multiply_accumulate(
-            output_fragment.multiply_accumulate_at(0, id),
-            score_fragment.multiply_accumulate_at(0, ik),
-            value_fragment.multiply_accumulate_at(0, 0),
-            output_fragment.multiply_accumulate_at(0, id)
-        );
-      }
+        const int key = kb * BK + int(col);
+        if (key >= int(params.k_len)) {
+          return v;
+        }
+        const int query_position = is_trie ? suffix_position + int(trie[q_rel].height) : suffix_position + q_rel;
+        if (!should_use_key(
+                ring_params,
+                trie,
+                sliding_window_size,
+                q_rel,
+                prefix_length,
+                suffix_position,
+                query_position,
+                key,
+                is_kv_cache_ring,
+                is_causal,
+                is_trie,
+                is_sliding_window
+            )) {
+          return masked_score;
+        }
+        return v;
+      });
     }
 
-    // Prepare for next iteration
-    key_loader.next();
-    value_loader.next();
+    AccumType block_max[ROWS_PER_LANE];
+    score_fragment.row_reduce(block_max, -INFINITY, [](AccumType a, AccumType b) { return metal::max(a, b); });
+
+    AccumType new_max[ROWS_PER_LANE];
+    AccumType factor[ROWS_PER_LANE];
+    METAL_PRAGMA_UNROLL
+    for (int r = 0; r < ROWS_PER_LANE; ++r) {
+      new_max[r] = metal::max(max_score[r], block_max[r]);
+      factor[r] = fast::exp2(max_score[r] - new_max[r]);
+      max_score[r] = new_max[r];
+      sum_score[r] *= factor[r];
+    }
+
+    score_fragment.map_rows(new_max, [](AccumType v, AccumType m) { return fast::exp2(v - m); });
+
+    AccumType block_sum[ROWS_PER_LANE];
+    score_fragment.row_reduce(block_sum, AccumType(0), [](AccumType a, AccumType b) { return a + b; });
+    METAL_PRAGMA_UNROLL
+    for (int r = 0; r < ROWS_PER_LANE; ++r) {
+      sum_score[r] += block_sum[r];
+    }
+
+    METAL_PRAGMA_UNROLL
+    for (int c = 0; c < OUTPUT_CHUNKS; ++c) {
+      output_chunks[c].map_rows(factor, [](AccumType v, AccumType f) { return v * f; });
+    }
+
+    const device T* v_block = v + int64_t(kb) * int(BK) * value_source_stride;
+    KVBlockSource value_source{
+        v_block,
+        value_source_stride,
+        kv_shared,
+        valid_k_rows,
+        thread_context,
+    };
+    value_source.prepare();
+    METAL_PRAGMA_UNROLL
+    for (int c = 0; c < OUTPUT_CHUNKS; ++c) {
+      ValueFragment value_chunk;
+      value_source.load(value_chunk, c * OUTPUT_CHUNK_COLS);
+      fragment_mma(output_chunks[c], score_fragment, value_chunk);
+    }
   }
 
-  // -------------------------------------------------------------------------
-  // Normalize output by sum_score (avoid div-by-zero for masked-out rows)
-  const AccumType inv_sum = AccumType(1) / sum_score;
+  AccumType inv_sum[ROWS_PER_LANE];
   METAL_PRAGMA_UNROLL
-  for (short id = 0; id < HEAD_DIM_GRID_COLS; id++) {
-    thread auto& frag = output_fragment.multiply_accumulate_at(0, id);
-    frag[0] *= inv_sum;
-    frag[1] *= inv_sum;
+  for (int r = 0; r < ROWS_PER_LANE; ++r) {
+    inv_sum[r] = AccumType(1) / sum_score[r];
+  }
+  METAL_PRAGMA_UNROLL
+  for (int c = 0; c < OUTPUT_CHUNKS; ++c) {
+    output_chunks[c].map_rows(inv_sum, [](AccumType v, AccumType s) { return v * s; });
   }
 
-  threadgroup_barrier(mem_flags::mem_none);
+  o += int64_t(simdgroup_row_base) * params.o_strides[2];
 
-  // Store results (O is row-major with row-stride params.o_strides[2])
-  o += int64_t(simdgroup_row_base + lane_row) * params.o_strides[2] + int64_t(lane_col);
-
-  if (!align_q && int(q_tile_idx) == params.nq_aligned) {
-    const short2 dst_tile_dims = short2(BD - lane_col, params.q_rem - (simdgroup_row_base + lane_row));
-
-    if (dst_tile_dims.x <= 0 || dst_tile_dims.y <= 0) {
-      return;
+  if (ragged_q && params.q_rem <= int(simdgroup_row_base)) {
+    return;
+  }
+  METAL_PRAGMA_UNROLL
+  for (int c = 0; c < OUTPUT_CHUNKS; ++c) {
+    device T* o_chunk = o + c * OUTPUT_CHUNK_COLS;
+    if (ragged_q) {
+      const short2 dst_tile_dims = short2(OUTPUT_CHUNK_COLS, params.q_rem - simdgroup_row_base);
+      output_chunks[c].store_safe(thread_context.simd_lane_id, o_chunk, int(params.o_strides[2]), dst_tile_dims);
+    } else {
+      output_chunks[c].store(thread_context.simd_lane_id, o_chunk, int(params.o_strides[2]));
     }
-
-    output_fragment.template store_safe<T, 1, 1>(o, int(params.o_strides[2]), dst_tile_dims);
-  } else {
-    output_fragment.template store<T, 1, 1>(o, int(params.o_strides[2]));
   }
 }
