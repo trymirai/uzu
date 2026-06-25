@@ -670,6 +670,7 @@ impl ChatView {
         cx.notify();
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn open_perf_panel(&mut self, msg_idx: usize, cx: &mut Context<Self>) {
         self.close_popovers();
         self.perf_open_msg = Some(msg_idx);
