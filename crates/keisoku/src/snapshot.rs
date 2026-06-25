@@ -35,7 +35,9 @@ impl Snapshot {
     /// Charger watts from matched HID voltage×current rails (e.g. `Charger VQ0u`×`IQ0u`); estimate, unlike the IOReport [`Snapshot::power`].
     pub fn rail_power(&self) -> Option<Watts> {
         use crate::component::Component;
-        // Ceiling to discard mismatched-unit pairs; real charging stays far below.
+        // Use the power magnitude so battery discharge (negative current when unplugged)
+        // counts too; the ceiling discards mismatched-unit pairs (real charge/discharge
+        // stays far below it).
         const MAX_PLAUSIBLE_WATTS: f64 = 1000.0;
         let split = |name: &str| name.rsplit_once(' ').map(|(area, code)| (area.to_owned(), code.to_owned()));
         let is_battery_rail = |sensor: &&Sensor| matches!(sensor.component, Component::Charger | Component::Battery);
@@ -53,7 +55,7 @@ impl Snapshot {
                     continue;
                 };
                 if aarea == varea && acode.strip_prefix('I') == Some(rail) {
-                    let watts = volts.value * amps.value;
+                    let watts = (volts.value * amps.value).abs();
                     if (0.0..=MAX_PLAUSIBLE_WATTS).contains(&watts) {
                         best = best.max(watts);
                     }
