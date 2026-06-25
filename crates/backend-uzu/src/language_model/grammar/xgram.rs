@@ -277,5 +277,5 @@ impl From<DataType> for DLDataType {
 }
 
 #[cfg(test)]
-#[path = "../../../unit/language_model/grammar/xgram_test.rs"]
+#[path = "../../../tests/unit/language_model/grammar/xgram_test.rs"]
 mod tests;
