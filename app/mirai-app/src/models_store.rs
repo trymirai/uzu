@@ -94,6 +94,7 @@ impl ModelRow {
 }
 
 pub struct ModelsStore {
+    kind: ModelKind,
     pub rows: Vec<ModelRow>,
     pub loading: bool,
     pub error: Option<String>,
@@ -104,10 +105,19 @@ impl ModelsStore {
         Self::spawn_load(kind, cx);
         Self::spawn_watch(cx);
         Self {
+            kind,
             rows: Vec::new(),
             loading: true,
             error: None,
         }
+    }
+
+    /// Re-fetch the catalog from the engine (e.g. after adding a cloud provider).
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        self.loading = true;
+        self.error = None;
+        cx.notify();
+        Self::spawn_load(self.kind, cx);
     }
 
     /// Loads the matching model catalog + initial download states.
