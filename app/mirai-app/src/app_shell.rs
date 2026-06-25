@@ -3,8 +3,8 @@
 //! `Route` field on the root view, switched via `cx.listener` + `cx.notify()`.
 
 use gpui::{
-    AnyElement, Context, CursorStyle, Entity, FontWeight, IntoElement, Render, SharedString,
-    Window, div, prelude::*, px,
+    AnyElement, Context, CursorStyle, Entity, IntoElement, Render, SharedString, Window, div,
+    prelude::*, px,
 };
 
 use crate::{
@@ -284,23 +284,9 @@ impl MiraiApp {
             .bg(theme.bg_sidebar)
             .border_r_1()
             .border_color(theme.border)
-            // Header — top padding clears the macOS traffic lights at y≈18.
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .pt_10()
-                    .pb_3()
-                    .px_4()
-                    .child(IconEl::new(Icon::Logo, theme.text).size(20.))
-                    .child(
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child("Mirai"),
-                    ),
-            )
+            // Empty header spacer to clear the macOS traffic lights at y≈18
+            // (the Electron app shows no logo/name in the sidebar).
+            .child(div().h(px(52.)))
             // Primary navigation.
             .child(
                 div()
