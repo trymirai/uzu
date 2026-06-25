@@ -36,6 +36,8 @@ fn main() {
         .block_on(async { uzu::engine::Engine::new(uzu::engine::EngineConfig::default()).await });
 
     application()
+        // Real HTTP client so the image cache can fetch remote provider icons.
+        .with_http_client(std::sync::Arc::new(reqwest_client::ReqwestClient::new()))
         .with_assets(assets::Assets::new())
         .run(move |cx: &mut App| {
             theme::init(cx);

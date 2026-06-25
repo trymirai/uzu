@@ -19,6 +19,8 @@ uzu = { path = "../../crates/uzu", default-features = false, features = ["backen
 gpui = { path = "../../external/zed/crates/gpui" }
 gpui_platform = { path = "../../external/zed/crates/gpui_platform", features = ["font-kit"] }
 gpui_tokio = { path = "../../external/zed/crates/gpui_tokio" }
+# HTTP client for loading remote provider-icon images via gpui's image cache.
+reqwest_client = { path = "../../external/zed/crates/reqwest_client" }
 
 # Mirai design system (theme + reusable components), mirroring the structure of
 # @trymirai-schemas/ui-kit. The app builds its UI from this crate.
