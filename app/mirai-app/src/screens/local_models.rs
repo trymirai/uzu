@@ -255,12 +255,22 @@ impl LocalModelsView {
             .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(16.))
     }
 
-    fn model_row(&self, cx: &mut Context<Self>, vm: &ModelVm) -> impl IntoElement {
+    fn model_row(
+        &self,
+        cx: &mut Context<Self>,
+        vm: &ModelVm,
+        vendor: &str,
+        icon_url: Option<&str>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
         let id = vm.id.clone();
 
-        // Left info area — clickable to start a chat when installed.
+        // Left info area — clickable to start a chat when installed. Shows the
+        // provider logo (same as the family list), not a generic glyph.
+        let vendor_icon = VendorIcon::new(vendor.to_string())
+            .size(20.)
+            .icon_url(icon_url.map(|u| u.to_string()));
         let name_label = div()
             .text_sm()
             .text_color(theme.text)
@@ -287,7 +297,7 @@ impl LocalModelsView {
                         cx.emit(LocalModelsEvent::UseModel(model));
                     }
                 }))
-                .child(IconEl::new(Icon::Models, theme.text_muted).size(18.))
+                .child(vendor_icon)
                 .child(name_label)
                 .into_any_element()
         } else {
@@ -297,7 +307,7 @@ impl LocalModelsView {
                 .items_center()
                 .gap_2()
                 .h_full()
-                .child(IconEl::new(Icon::Models, theme.text_muted).size(18.))
+                .child(vendor_icon)
                 .child(name_label)
                 .into_any_element()
         };
@@ -365,6 +375,7 @@ impl LocalModelsView {
             .h(px(52.))
             .px_4()
             .rounded_lg()
+            .cursor(CursorStyle::PointingHand)
             // Mirai-quantized rows get a full green tint (mirai-chat parity),
             // not just a left edge.
             .when(vm.is_mirai, |el| el.bg(theme.success.opacity(0.12)))
@@ -492,16 +503,20 @@ impl Render for LocalModelsView {
                     let available: Vec<&ModelVm> =
                         matched.iter().copied().filter(|m| !m.installed()).collect();
 
+                    let vendor = fam.vendor.clone();
+                    let icon_url = fam.icon_url.clone();
                     if !installed.is_empty() {
                         list = list.child(section_header("Installed models", &theme));
                         for vm in installed {
-                            list = list.child(self.model_row(cx, vm));
+                            list =
+                                list.child(self.model_row(cx, vm, &vendor, icon_url.as_deref()));
                         }
                     }
                     if !available.is_empty() {
                         list = list.child(section_header("Available models", &theme));
                         for vm in available {
-                            list = list.child(self.model_row(cx, vm));
+                            list =
+                                list.child(self.model_row(cx, vm, &vendor, icon_url.as_deref()));
                         }
                     }
                 }
