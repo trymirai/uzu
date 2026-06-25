@@ -84,12 +84,7 @@ struct Fragment {
 
   ThreadVectorType fragment_data[NUM_FRAGS];
 
-  METAL_FUNC static constexpr short2 get_position(const ushort simd_lane_id) {
-    const short quad = simd_lane_id / 4;
-    const short row = (quad & 4) + (simd_lane_id / 2) % 4;
-    const short col = ((quad & 2) + simd_lane_id % 2) * Ops::THREAD_ELEMENT_COLS;
-    return short2{col, row};
-  }
+  METAL_FUNC static constexpr short2 get_position(const ushort simd_lane_id) { return Ops::get_position(simd_lane_id); }
 
   METAL_FUNC constexpr void clear() {
     METAL_PRAGMA_UNROLL
@@ -128,21 +123,19 @@ struct Fragment {
 
   template <class Fn>
   METAL_FUNC void map_coords(const ushort simd_lane_id, Fn fn) thread {
-    const short2 position = get_position(simd_lane_id);
     thread ElementType* data = elements();
+    const short2 position = get_position(simd_lane_id);
     for_each_fragment([&](auto fragment_row, auto fragment_col) {
+      const ushort frag_base = (fragment_row.value * COL_FRAGMENTS + fragment_col.value) * Ops::ELEMENTS_PER_THREAD;
       const short row_base = position.y + short(fragment_row.value) * FRAGMENT_ROWS;
       const short col_base = position.x + short(fragment_col.value) * FRAGMENT_COLS;
-      const ushort frag_base = (fragment_row.value * COL_FRAGMENTS + fragment_col.value) * Ops::ELEMENTS_PER_THREAD;
       METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < Ops::THREAD_ELEMENT_ROWS; ++i) {
-        METAL_PRAGMA_UNROLL
-        for (ushort j = 0; j < Ops::THREAD_ELEMENT_COLS; ++j) {
-          const short row = row_base + short(i) * Ops::THREAD_ELEMENT_ROW_STRIDE;
-          const short col = col_base + short(j);
-          thread ElementType& value = data[frag_base + i * Ops::THREAD_ELEMENT_COLS + j];
-          value = ElementType(fn(row, col, value));
-        }
+      for (ushort element_index = 0; element_index < Ops::ELEMENTS_PER_THREAD; ++element_index) {
+        const short2 element_offset = Ops::get_element_offset(element_index);
+        const short row = row_base + element_offset.y;
+        const short col = col_base + element_offset.x;
+        thread ElementType& value = data[frag_base + element_index];
+        value = ElementType(fn(row, col, value));
       }
     });
   }
@@ -310,7 +303,6 @@ private:
   ) thread {
     using U = PointerElementType<Ptr>;
     constexpr bool col_stride_is_one = metal::is_same_v<ColStride, Int<1>>;
-
     const short2 position = get_position(simd_lane_id);
     ptr += position.y * row_stride + position.x * col_stride;
     const auto local_row_limit = row_limit - position.y;
@@ -322,29 +314,26 @@ private:
       const auto col_base = fragment_col.value * FRAGMENT_COLS * fragment_col_stride;
 
       METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < Ops::THREAD_ELEMENT_ROWS; i++) {
-        const auto row = row_base + i * Ops::THREAD_ELEMENT_ROW_STRIDE;
-        METAL_PRAGMA_UNROLL
-        for (ushort j = 0; j < Ops::THREAD_ELEMENT_COLS; j++) {
-          const ushort element_index = i * Ops::THREAD_ELEMENT_COLS + j;
-          const auto col = col_base + j;
-          const auto offset = col_stride_is_one ? (row * row_stride + col) : (row * row_stride + col * col_stride);
+      for (ushort element_index = 0; element_index < Ops::ELEMENTS_PER_THREAD; element_index++) {
+        const short2 element_offset = Ops::get_element_offset(element_index);
+        const auto row = row_base + element_offset.y;
+        const auto col = col_base + element_offset.x;
+        const auto offset = col_stride_is_one ? (row * row_stride + col) : (row * row_stride + col * col_stride);
 
-          if constexpr (IS_LOAD) {
-            if constexpr (IS_SAFE) {
-              const bool in_bounds = (row < local_row_limit) && (col < local_col_limit);
-              frag[element_index] = in_bounds ? static_cast<T>(ptr[offset]) : T(0);
-            } else {
-              frag[element_index] = static_cast<T>(ptr[offset]);
-            }
+        if constexpr (IS_LOAD) {
+          if constexpr (IS_SAFE) {
+            const bool in_bounds = (row < local_row_limit) && (col < local_col_limit);
+            frag[element_index] = in_bounds ? static_cast<T>(ptr[offset]) : T(0);
           } else {
-            if constexpr (IS_SAFE) {
-              if ((row < local_row_limit) && (col < local_col_limit)) {
-                ptr[offset] = static_cast<U>(frag[element_index]);
-              }
-            } else {
+            frag[element_index] = static_cast<T>(ptr[offset]);
+          }
+        } else {
+          if constexpr (IS_SAFE) {
+            if ((row < local_row_limit) && (col < local_col_limit)) {
               ptr[offset] = static_cast<U>(frag[element_index]);
             }
+          } else {
+            ptr[offset] = static_cast<U>(frag[element_index]);
           }
         }
       }
@@ -375,6 +364,20 @@ METAL_FUNC void fragment_mma(thread OutputFragment& output, thread LeftFragment&
       "fragment_mma requires output, left, and right fragments to use the same FragmentOps"
   );
   OutputFragment::FragmentOpsType::template fragment_mma<LeftFragment::MMA_TRANSPOSE, RightFragment::MMA_TRANSPOSE>(
+      output,
+      left,
+      right
+  );
+}
+
+template <class OutputFragment, class LeftFragment, class RightFragment>
+METAL_FUNC void fragment_mm(thread OutputFragment& output, thread LeftFragment& left, thread RightFragment& right) {
+  static_assert(
+      metal::is_same_v<typename OutputFragment::FragmentOpsType, typename LeftFragment::FragmentOpsType> &&
+          metal::is_same_v<typename OutputFragment::FragmentOpsType, typename RightFragment::FragmentOpsType>,
+      "fragment_mm requires output, left, and right fragments to use the same FragmentOps"
+  );
+  OutputFragment::FragmentOpsType::template fragment_mm<LeftFragment::MMA_TRANSPOSE, RightFragment::MMA_TRANSPOSE>(
       output,
       left,
       right

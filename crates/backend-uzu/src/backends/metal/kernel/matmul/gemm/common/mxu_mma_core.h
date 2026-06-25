@@ -42,9 +42,9 @@ struct MxuMmaCore {
       THREADGROUP_BLOCK_K_FP % SIMDGROUP_BLOCK_K == 0,
       "FP THREADGROUP_BLOCK_K must be a multiple of SIMDGROUP_BLOCK_K"
   );
-  METAL_CONST ushort TILES_M = SIMDGROUP_BLOCK_M / uzu::matmul::MxuFragmentOps::FRAGMENT_ROWS;
-  METAL_CONST ushort TILES_N = SIMDGROUP_BLOCK_N / uzu::matmul::MxuFragmentOps::FRAGMENT_COLS;
-  METAL_CONST ushort TILES_K = SIMDGROUP_BLOCK_K / uzu::matmul::MxuFragmentOps::FRAGMENT_ROWS;
+  METAL_CONST ushort TILES_M = SIMDGROUP_BLOCK_M / uzu::matmul::MxuFragmentOps<>::FRAGMENT_ROWS;
+  METAL_CONST ushort TILES_N = SIMDGROUP_BLOCK_N / uzu::matmul::MxuFragmentOps<>::FRAGMENT_COLS;
+  METAL_CONST ushort TILES_K = SIMDGROUP_BLOCK_K / uzu::matmul::MxuFragmentOps<>::FRAGMENT_ROWS;
 
   METAL_CONST ushort QUANT_BK = (B_PROLOGUE == GemmBPrologueKind::FullPrecision) ? 0 : GROUP_SIZE;
   METAL_CONST ushort PADDING_B = 16 / sizeof(BT);
@@ -90,7 +90,7 @@ struct MxuMmaCore {
       (BITS > 0) ? BITS : 4,
       true>;
 
-  using AccumFragment = uzu::matmul::Fragment<AccumulatorType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>;
+  using AccumFragment = uzu::matmul::Fragment<AccumulatorType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps<>>;
 
   template <bool ALIGNED_M, bool ALIGNED_N, typename Loader>
   static METAL_FUNC AccumFragment quant_k_loop(
@@ -123,8 +123,8 @@ struct MxuMmaCore {
 
       METAL_PRAGMA_NO_UNROLL
       for (int inner_k = 0; inner_k < QUANT_BK; inner_k += SIMDGROUP_BLOCK_K) {
-        uzu::matmul::Fragment<AT, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps> left_tile;
-        uzu::matmul::Fragment<BT, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps> right_tile;
+        uzu::matmul::Fragment<AT, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps<>> left_tile;
+        uzu::matmul::Fragment<BT, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps<>> right_tile;
 
         const int left_offset = inner_k;
         auto left_src = uzu::matmul::fragment_source(a_simdgroup + left_offset, leading_dimension_a);
@@ -138,7 +138,7 @@ struct MxuMmaCore {
             uzu::matmul::fragment_source(b_shared_simdgroup + inner_k, int(SHARED_STRIDE_B))
         );
 
-        uzu::matmul::MxuFragmentOps::template fragment_mma<false, true>(accumulator, left_tile, right_tile);
+        uzu::matmul::MxuFragmentOps<>::template fragment_mma<false, true>(accumulator, left_tile, right_tile);
       }
 
       a_simdgroup += QUANT_BK;
@@ -329,7 +329,7 @@ struct MxuMmaCore {
                   }
 
                   if (apply_accumulate) {
-                    uzu::matmul::Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps> existing_output;
+                    uzu::matmul::Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps<>> existing_output;
                     auto output_src = uzu::matmul::fragment_source(d_simdgroup, int(params->leading_dimension_d));
                     if constexpr (!(aligned_m.value && aligned_n.value)) {
                       output_src = output_src.bounded(simdgroup_limit_m, simdgroup_limit_n);
