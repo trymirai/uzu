@@ -155,6 +155,8 @@ pub struct ChatView {
     messages: Vec<ChatMsg>,
     model: Option<Model>,
     streaming: bool,
+    /// True between "send" and the first `Started` token — model is loading.
+    waiting_for_model: bool,
     cancel: Option<CancelToken>,
     chat_id: Option<String>,
     created_at: u64,
@@ -217,6 +219,7 @@ impl ChatView {
             messages: Vec::new(),
             model: None,
             streaming: false,
+            waiting_for_model: false,
             cancel: None,
             chat_id: None,
             created_at: persistence::now_ms(),
@@ -922,6 +925,7 @@ impl ChatView {
         let model_name = self.model.as_ref().map(|m| m.name());
         self.messages.push(ChatMsg::assistant(Version { model_name, ..Default::default() }));
         self.streaming = true;
+        self.waiting_for_model = true;
         self.spawn_reply(cx);
     }
 
@@ -1070,7 +1074,10 @@ impl ChatView {
 
     fn apply_stream(&mut self, msg: StreamMsg, cx: &mut Context<Self>) {
         match msg {
-            StreamMsg::Started(token) => self.cancel = Some(token),
+            StreamMsg::Started(token) => {
+                self.cancel = Some(token);
+                self.waiting_for_model = false;
+            }
             StreamMsg::Session(session) => {
                 if let Some(id) = self.model.as_ref().map(|m| m.identifier.clone()) {
                     self.store_session(session, &id);
@@ -1105,6 +1112,7 @@ impl ChatView {
             }
             StreamMsg::Done => {
                 self.streaming = false;
+                self.waiting_for_model = false;
                 self.cancel = None;
                 // If the model produced no text, show a notice rather than an
                 // empty bubble stuck on "…".
@@ -1405,7 +1413,12 @@ impl Render for ChatView {
                                 .child(cur.text.clone())
                                 .into_any_element()
                         } else if cur.text.is_empty() && streaming {
-                            Loader::new().label("Generating…").into_any_element()
+                            let label = if self.waiting_for_model {
+                                "Waiting for model…"
+                            } else {
+                                "Generating…"
+                            };
+                            Loader::new().label(label).into_any_element()
                         } else {
                             div()
                                 .w_full()
