@@ -431,6 +431,7 @@ impl SettingsView {
     }
 
     /// Select a tab by index (0 General, 1 Privacy, 2 About) — used by visual tests.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn select_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         self.tab = match index {
             1 => SettingsTab::Privacy,
