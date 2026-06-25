@@ -263,6 +263,19 @@ fn render_welcome() {
 }
 
 #[test]
+fn render_textarea() {
+    // Multiline TextInput with seeded content — verifies multi-row rendering,
+    // auto-grow, and cursor placement (the composer's editor).
+    render_png("textarea", 600.0, 200.0, |_, cx| {
+        let input = cx.new(|cx| components::TextInput::new(cx, "Type…").multiline(true, 3, 8));
+        input.update(cx, |t, cx| {
+            t.set_text("First line of a longer message\nSecond line\nThird line here", cx)
+        });
+        input
+    });
+}
+
+#[test]
 #[ignore = "boots a real engine; run explicitly with --ignored"]
 fn render_tts() {
     render_png_with_engine("tts", 1200.0, 800.0, |_, cx| {

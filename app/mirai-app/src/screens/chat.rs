@@ -166,7 +166,7 @@ impl ChatView {
         cloud_store: Entity<ModelsStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input = cx.new(|cx| TextInput::new(cx, "Add message…"));
+        let input = cx.new(|cx| TextInput::new(cx, "Add message…").multiline(true, 1, 8));
         cx.subscribe(&input, |this, _input, event, cx| match event {
             InputEvent::Submit(text) => this.send(text.clone(), cx),
         })
