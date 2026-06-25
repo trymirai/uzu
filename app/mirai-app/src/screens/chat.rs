@@ -5,8 +5,8 @@
 
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    Anchor, Context, Entity, FontWeight, IntoElement, Render, ScrollHandle, Window, anchored,
-    deferred, div, prelude::*, px,
+    Anchor, Context, Entity, EventEmitter, FontWeight, IntoElement, Render, ScrollHandle, Window,
+    anchored, deferred, div, prelude::*, px,
 };
 use uzu::{
     session::chat::ChatSessionStreamChunk,
@@ -24,6 +24,7 @@ use crate::{
     persistence::{self, StoredChat, StoredMessage},
     settings_state,
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
+    title_gen,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -131,6 +132,10 @@ enum StreamMsg {
     Error(String),
 }
 
+pub enum ChatEvent {
+    Updated,
+}
+
 pub struct ChatView {
     store: Entity<ModelsStore>,
     /// Cloud chat models, shown alongside local ones in the model picker.
@@ -164,7 +169,11 @@ pub struct ChatView {
     min_p: f32,
     /// Max output tokens; 0 = unlimited.
     max_tokens: u32,
+    chat_title: String,
+    title_pending: bool,
 }
+
+impl EventEmitter<ChatEvent> for ChatView {}
 
 impl ChatView {
     pub fn new(
@@ -202,6 +211,8 @@ impl ChatView {
             top_p: 0.95,
             min_p: 0.05,
             max_tokens: 0,
+            chat_title: String::new(),
+            title_pending: false,
         }
     }
 
@@ -365,6 +376,8 @@ impl ChatView {
         self.messages.clear();
         self.chat_id = None;
         self.created_at = persistence::now_ms();
+        self.chat_title.clear();
+        self.title_pending = false;
         self.streaming = false;
         self.cancel = None;
         cx.notify();
@@ -400,7 +413,9 @@ impl ChatView {
             .collect();
         self.chat_id = Some(stored.id);
         self.created_at = stored.created_at;
-        self.model = None; // re-resolved on next send
+        self.chat_title = stored.title;
+        self.title_pending = false;
+        self.model = None;
         self.streaming = false;
         self.cancel = None;
         // Opening a saved chat lands on its most recent message.
@@ -425,12 +440,15 @@ impl ChatView {
             .clone()
             .unwrap_or_else(|| format!("chat-{}", self.created_at));
         self.chat_id = Some(id.clone());
-        let title = self
-            .messages
-            .iter()
-            .find(|m| m.role == Role::User)
-            .map(|m| truncate(&m.cur().text, 48))
-            .unwrap_or_else(|| "New chat".to_string());
+        let title = if self.chat_title.is_empty() {
+            self.messages
+                .iter()
+                .find(|m| m.role == Role::User)
+                .map(|m| truncate(&m.cur().text, 48))
+                .unwrap_or_else(|| "New chat".to_string())
+        } else {
+            self.chat_title.clone()
+        };
         let messages = self
             .messages
             .iter()
@@ -649,7 +667,11 @@ impl ChatView {
         if text.is_empty() {
             return;
         }
+        let first_user = !self.messages.iter().any(|m| m.role == Role::User);
         self.messages.push(ChatMsg::user(text));
+        if first_user {
+            self.title_pending = true;
+        }
         self.run_inference(cx);
     }
 
@@ -812,6 +834,7 @@ impl ChatView {
                     }
                 }
                 self.save();
+                self.maybe_generate_title(cx);
                 cx.notify();
             }
             StreamMsg::Error(err) => {
@@ -837,6 +860,55 @@ impl ChatView {
         self.streaming = false;
         self.cancel = None;
         cx.notify();
+    }
+
+    fn maybe_generate_title(&mut self, cx: &mut Context<Self>) {
+        if !self.title_pending {
+            return;
+        }
+        let Some(model) = self.model.clone() else {
+            return;
+        };
+        let Some(user_text) = self
+            .messages
+            .iter()
+            .find(|m| m.role == Role::User)
+            .map(|m| m.cur().text.clone())
+        else {
+            return;
+        };
+        self.title_pending = false;
+
+        if let Some(fallback) = title_gen::vendor_fallback_title(&model) {
+            self.chat_title = fallback.to_string();
+            self.save();
+            cx.emit(ChatEvent::Updated);
+            cx.notify();
+            return;
+        }
+
+        let Some(engine) = engine::try_engine(cx) else {
+            return;
+        };
+        let (tx, mut rx) = mpsc::unbounded::<Result<String, String>>();
+        gpui_tokio::Tokio::spawn(cx, async move {
+            let result = title_gen::generate(&engine, model, &user_text).await;
+            let _ = tx.unbounded_send(result);
+        })
+        .detach();
+        cx.spawn(async move |this, cx| {
+            if let Some(result) = rx.next().await {
+                let _ = this.update(cx, |view, cx| {
+                    if let Ok(title) = result {
+                        view.chat_title = title;
+                        view.save();
+                        cx.emit(ChatEvent::Updated);
+                    }
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     fn submit_from_button(&mut self, cx: &mut Context<Self>) {

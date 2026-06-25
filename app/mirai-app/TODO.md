@@ -31,7 +31,7 @@ Offscreen snapshot suite is green (14 screens + logic/unit tests).
 - ✅ Message versions + regenerate pager
 - ✅ Model picker, generation settings (temperature, max tokens, sampling modes)
 - ✅ Multiline composer (Shift+Enter)
-- **P2** Title generation via LLM (today: first user message truncated)
+- **P2** ~~Title generation via LLM~~ (after first reply; vendor fallbacks)
 - **P2** Session reuse / context caching (fresh session each send today)
 - **P3** File attachments, streaming shimmer, empty-state suggestions
 

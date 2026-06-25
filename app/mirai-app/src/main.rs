@@ -10,6 +10,7 @@ mod persistence;
 mod provider_keys;
 mod screens;
 mod settings_state;
+mod title_gen;
 mod toast;
 mod tts_history;
 #[cfg(test)]

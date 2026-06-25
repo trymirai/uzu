@@ -12,7 +12,7 @@ use crate::{
     models_store::{ModelKind, ModelsStore},
     persistence, settings_state, toast,
     screens::{
-        ChatView, ChatsEvent, ChatsView, CloudEvent, CloudModelsView, LocalModelsEvent,
+        ChatView, ChatEvent, ChatsEvent, ChatsView, CloudEvent, CloudModelsView, LocalModelsEvent,
         LocalModelsView, RoutersView, SettingsView, TtsView, WelcomeEvent, WelcomeView,
     },
     theme::{
@@ -132,6 +132,14 @@ impl MiraiApp {
         // Opening a saved chat from the history screen.
         cx.subscribe(&chats, |this, _chats, event, cx| match event {
             ChatsEvent::Open(id) => this.open_chat(id.clone(), cx),
+        })
+        .detach();
+
+        cx.subscribe(&chat, |this, _chat, event, cx| {
+            if matches!(event, ChatEvent::Updated) {
+                this.recent_chats = persistence::list_chats();
+                cx.notify();
+            }
         })
         .detach();
 

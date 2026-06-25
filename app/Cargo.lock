@@ -4418,6 +4418,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "gpui_tokio",
+ "hound",
  "image",
  "insta",
  "reqwest_client",

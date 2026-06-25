@@ -9,7 +9,7 @@ pub mod settings;
 pub mod tts;
 pub mod welcome;
 
-pub use chat::ChatView;
+pub use chat::{ChatEvent, ChatView};
 pub use chats::{ChatsEvent, ChatsView};
 pub use cloud_models::{CloudEvent, CloudModelsView};
 pub use local_models::{LocalModelsEvent, LocalModelsView};
