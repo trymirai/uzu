@@ -5,8 +5,8 @@
 
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    App, Context, Entity, EventEmitter, FontWeight, IntoElement, Render, ScrollHandle, Window,
-    div, prelude::*, px,
+    App, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render,
+    ScrollHandle, SharedString, Window, div, prelude::*, px,
 };
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
@@ -57,6 +57,9 @@ struct ChatMsg {
     role: Role,
     versions: Vec<Version>,
     current: usize,
+    /// Whether the reasoning panel is collapsed. Starts expanded (false) while
+    /// streaming; auto-collapses once the reply body text starts arriving.
+    reasoning_collapsed: bool,
 }
 
 impl ChatMsg {
@@ -65,6 +68,7 @@ impl ChatMsg {
             role: Role::User,
             versions: vec![Version { text, ..Default::default() }],
             current: 0,
+            reasoning_collapsed: false,
         }
     }
 
@@ -73,6 +77,7 @@ impl ChatMsg {
             role: Role::Assistant,
             versions: vec![version],
             current: 0,
+            reasoning_collapsed: false,
         }
     }
 
@@ -629,6 +634,8 @@ impl ChatView {
                     error: false,
                 }],
                 current: 0,
+                // Loaded chats collapse reasoning by default — they're already done.
+                reasoning_collapsed: true,
             })
             .collect();
         self.chat_id = Some(stored.id);
@@ -1073,11 +1080,17 @@ impl ChatView {
             } => {
                 if let Some(last) = self.messages.last_mut() {
                     if last.role == Role::Assistant {
+                        let had_text = !last.cur().text.is_empty();
                         let v = last.cur_mut();
                         v.text = text;
                         v.reasoning = reasoning;
                         v.tps = tps;
                         v.tokens = tokens;
+                        // Auto-collapse reasoning once the reply body starts
+                        // arriving (mirrors Electron behaviour).
+                        if !had_text && !last.cur().text.is_empty() {
+                            last.reasoning_collapsed = true;
+                        }
                     }
                 }
                 if self.should_auto_scroll() {
@@ -1315,8 +1328,36 @@ impl Render for ChatView {
                         if show_reasoning {
                             if let Some(reasoning) = &cur.reasoning {
                                 if !reasoning.trim().is_empty() {
-                                block = block.child(
-                                    div()
+                                    let collapsed = msg.reasoning_collapsed;
+                                    let chevron = if collapsed {
+                                        Icon::ChevronRight
+                                    } else {
+                                        Icon::ChevronDown
+                                    };
+                                    // Toggle on header click.
+                                    let header = div()
+                                        .id(SharedString::from(format!("think-hdr-{idx}")))
+                                        .flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .text_xs()
+                                        .text_color(theme.text_muted)
+                                        .cursor(CursorStyle::PointingHand)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            if let Some(m) = this.messages.get_mut(idx) {
+                                                m.reasoning_collapsed = !m.reasoning_collapsed;
+                                                cx.notify();
+                                            }
+                                        }))
+                                        .child(IconEl::new(Icon::Thinking, theme.text_muted).size(13.))
+                                        .child(if streaming && cur.text.is_empty() {
+                                            "Thinking…"
+                                        } else {
+                                            "Thinking"
+                                        })
+                                        .child(IconEl::new(chevron, theme.text_muted).size(11.));
+
+                                    let mut panel = div()
                                         .flex()
                                         .flex_col()
                                         .gap_1()
@@ -1325,24 +1366,21 @@ impl Render for ChatView {
                                         .bg(theme.bg_sub)
                                         .border_l_2()
                                         .border_color(theme.border)
-                                        .child(
+                                        .child(header);
+
+                                    if !collapsed {
+                                        // Body capped at 180 px; overflow is hidden so
+                                        // very long reasoning blocks don't dominate.
+                                        panel = panel.child(
                                             div()
-                                                .flex()
-                                                .items_center()
-                                                .gap_1()
-                                                .text_xs()
-                                                .text_color(theme.text_muted)
-                                                .child(IconEl::new(Icon::Thinking, theme.text_muted).size(13.))
-                                                .child("Thinking"),
-                                        )
-                                        .child(
-                                            div()
+                                                .max_h(px(180.))
+                                                .overflow_hidden()
                                                 .text_sm()
                                                 .text_color(theme.text_muted)
-                                                .overflow_hidden()
                                                 .child(reasoning.clone()),
-                                        ),
-                                );
+                                        );
+                                    }
+                                    block = block.child(panel);
                                 }
                             }
                         }
@@ -1783,6 +1821,7 @@ mod tests {
             role,
             versions: vec![Version { text: text.into(), error, ..Default::default() }],
             current: 0,
+            reasoning_collapsed: false,
         }
     }
 
