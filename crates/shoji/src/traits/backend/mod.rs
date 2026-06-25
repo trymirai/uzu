@@ -45,14 +45,6 @@ pub trait Instance: Send + Sync {
         config: Self::StreamConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, Error>> + Send + 'a>>;
-
-    fn max_context_length(&self) -> Option<usize> {
-        None
-    }
-
-    fn stop_token_ids(&self) -> Option<Box<[u64]>> {
-        None
-    }
 }
 
 pub trait State: Send + Sync + 'static {

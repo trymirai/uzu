@@ -10,7 +10,10 @@ use shoji::{
         State,
         backend::{
             Error as BackendError, Instance as BackendInstance,
-            chat_token::{StreamInput as ChatTokenStreamInput, StreamOutput as ChatTokenStreamOutput},
+            chat_token::{
+                Instance as ChatTokenBackendInstance, StreamInput as ChatTokenStreamInput,
+                StreamOutput as ChatTokenStreamOutput,
+            },
         },
     },
     types::session::chat::{ChatConfig, ChatReplyConfig},
@@ -173,7 +176,9 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         Box::pin(AssertSend(stream).take_until(cancel_token.cancelled_owned()))
     }
+}
 
+impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
     fn max_context_length(&self) -> Option<usize> {
         self.max_context_length
     }

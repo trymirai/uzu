@@ -22,9 +22,7 @@ pub trait Backend: Send + Sync {
 pub trait Instance:
     InstanceTrait<StreamConfig = ChatReplyConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
 {
-}
+    fn max_context_length(&self) -> Option<usize>;
 
-impl<T> Instance for T where
-    T: InstanceTrait<StreamConfig = ChatReplyConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
-{
+    fn stop_token_ids(&self) -> Option<Box<[u64]>>;
 }

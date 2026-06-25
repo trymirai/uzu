@@ -8,7 +8,7 @@ use shoji::{
         backend::{
             Error,
             chat_message::{Output, ToolCallState},
-            chat_token::{Backend, Instance, StreamInput, StreamOutput},
+            chat_token::{Backend, Instance as ChatTokenBackendInstance, StreamInput, StreamOutput},
         },
     },
     types::{
@@ -27,7 +27,7 @@ use crate::chat::{
 };
 
 pub struct Session {
-    instance: Box<dyn Instance>,
+    instance: Box<dyn ChatTokenBackendInstance>,
     state: Box<dyn State>,
     encoding: Encoding,
     input_tokens: Vec<u64>,
