@@ -174,10 +174,22 @@ fn render_line(line: &str, theme: &Theme, id: usize) -> AnyElement {
     // Heading: leading #'s followed by a space.
     let hashes = trimmed.chars().take_while(|c| *c == '#').count();
     if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
+        // h1=24px h2=20px h3=18px h4–h6=14px (body size), matching Electron.
+        let size = match hashes {
+            1 => px(24.),
+            2 => px(20.),
+            3 => px(18.),
+            _ => px(14.),
+        };
+        let weight = if hashes <= 3 {
+            FontWeight::SEMIBOLD
+        } else {
+            FontWeight::MEDIUM
+        };
         return prose_wrap(
             div()
-                .text_lg()
-                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(size)
+                .font_weight(weight)
                 .text_color(theme.text)
                 .child(text_el(trimmed[hashes + 1..].trim_start(), theme, id))
                 .into_any_element(),
