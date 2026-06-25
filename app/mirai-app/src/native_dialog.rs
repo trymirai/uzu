@@ -1,5 +1,3 @@
-//! Native save-file dialogs (macOS / desktop).
-
 use std::path::PathBuf;
 
 pub fn save_file(title: &str, default_name: &str, extension: &str, type_label: &str) -> Option<PathBuf> {

@@ -1,5 +1,3 @@
-//! Export and cleanup helpers for the Settings → Privacy actions.
-
 use std::{
     fs,
     io::{Cursor, Write},
@@ -11,7 +9,7 @@ use uzu::{
     storage::types::DownloadPhase,
 };
 
-use crate::{engine, persistence};
+use crate::persistence;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CleanupCategory {
@@ -307,8 +305,4 @@ pub async fn execute_cleanup(
         results.push((cat, ok));
     }
     results
-}
-
-pub fn try_engine_from_app(cx: &gpui::App) -> Option<Engine> {
-    engine::try_engine(cx)
 }

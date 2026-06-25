@@ -1,6 +1,3 @@
-//! Cloud Models screen: remote chat models from providers configured via API
-//! keys. Keys persist in the OS keychain and registries reload without restart.
-
 use std::collections::HashMap;
 
 use gpui::{

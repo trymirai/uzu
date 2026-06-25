@@ -16,7 +16,7 @@ use crate::engine;
 pub enum ModelKind {
     /// Local (downloadable) chat models.
     Chat,
-    /// Remote/cloud chat models (require provider API keys at startup).
+    /// Remote/cloud chat models (loaded when a provider key is configured).
     CloudChat,
     Classification,
     TextToSpeech,

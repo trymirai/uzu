@@ -13,7 +13,7 @@ use gpui::{
 use crate::{
     components::{Button, ButtonKind, ButtonSize, Icon, IconEl, InputEvent, TextInput, Toggle},
     data_ops::{self, CleanupCategory, CleanupPreview},
-    native_dialog,
+    engine, native_dialog,
     persistence, settings_state,
     theme::{ActiveTheme, Theme},
 };
@@ -101,7 +101,7 @@ impl SettingsView {
         }
         cx.notify();
 
-        if let Some(engine) = data_ops::try_engine_from_app(cx) {
+        if let Some(engine) = engine::try_engine(cx) {
             let view = cx.entity();
             cx.spawn(async move |_, cx| {
                 let models = data_ops::model_cleanup_stats(&engine).await;
@@ -146,7 +146,7 @@ impl SettingsView {
         self.clear_data_busy = true;
         cx.notify();
 
-        let engine = data_ops::try_engine_from_app(cx);
+        let engine = engine::try_engine(cx);
         let view = cx.entity();
         cx.spawn(async move |_, cx| {
             let results = data_ops::execute_cleanup(engine.as_ref(), &selected).await;
@@ -663,7 +663,6 @@ impl SettingsView {
         let hover = theme.bg_hover;
         let border = theme.border;
 
-        // One cell of the horizontal Website | GitHub | Vision | Docs band.
         let cell = |id: &'static str, label: &'static str, url: &'static str| {
             div()
                 .id(id)
@@ -681,7 +680,6 @@ impl SettingsView {
         };
         let vsep = || div().w(px(1.)).h(px(24.)).bg(border);
 
-        // Header + links band, grouped in one rounded card.
         let header_card = div()
             .rounded_lg()
             .border_1()
@@ -1058,9 +1056,6 @@ fn confirm_summary(categories: &[CleanupCategory]) -> String {
     }
 }
 
-/// A clickable text link that opens `url` in the browser.
-/// A full-width legal/document row: label on the left, chevron on the right,
-/// opening `url` on click (Privacy tab's Terms / Privacy entries).
 fn legal_row(id: &'static str, label: &'static str, url: &'static str, theme: &Theme) -> impl IntoElement {
     let hover = theme.bg_hover;
     let text = theme.text;

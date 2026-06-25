@@ -1,6 +1,3 @@
-//! Runtime cloud-provider API keys: persist in the uzu Settings keychain and
-//! hot-add/remove OpenAI-compatible registries without restarting the app.
-
 use uzu::{
     engine::{config::{
         KEY_ANTHROPIC_API_KEY, KEY_BASETEN_API_KEY, KEY_GEMINI_API_KEY, KEY_OPENAI_API_KEY,
@@ -86,7 +83,6 @@ pub async fn configured_providers(engine: &Engine) -> Vec<(&'static CloudProvide
     out
 }
 
-/// Save (or clear) a provider key and sync the engine registry immediately.
 pub async fn set_provider_key(
     engine: &Engine,
     provider_id: &str,
