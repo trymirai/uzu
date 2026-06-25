@@ -172,17 +172,21 @@ impl LocalModelsView {
 
     fn chip(&self, text: String, accent: bool, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let (fg, bg) = if accent {
-            (theme.success, theme.bg_sub)
+        // Outlined pill (mirai-chat parity): green border+tint for accent chips,
+        // a hairline border for neutral ones.
+        let (fg, bg, border) = if accent {
+            (theme.success, theme.success.opacity(0.08), theme.success.opacity(0.45))
         } else {
-            (theme.text_muted, theme.bg_sub)
+            (theme.text_muted, theme.bg_sub, theme.border)
         };
         div()
             .flex()
             .items_center()
-            .h(px(24.))
-            .px_2()
-            .rounded_md()
+            .h(px(26.))
+            .px_2p5()
+            .rounded_lg()
+            .border_1()
+            .border_color(border)
             .bg(bg)
             .text_color(fg)
             .text_xs()
