@@ -666,7 +666,7 @@ impl ChatSession {
         power_recorder: PowerRecorder,
     ) -> Output {
         output.stats.memory_used_bytes = memory_used.map(|value| value as u64);
-        output.stats.power_stats = power_recorder.stop(output.stats.total_stats.duration);
+        output.stats.power_stats = power_recorder.stop();
         output
     }
 

@@ -16,10 +16,7 @@ pub struct PowerStats {
 
 #[cfg(target_vendor = "apple")]
 impl PowerStats {
-    pub(crate) fn from_keisoku_session(
-        session: &keisoku::Session,
-        duration: f64,
-    ) -> Option<Self> {
+    pub(crate) fn from_keisoku_session(session: &keisoku::Session) -> Option<Self> {
         let mut samples_count = 0_u64;
         let mut cpu = 0.0;
         let mut gpu = 0.0;
@@ -62,6 +59,9 @@ impl PowerStats {
 
         let sample_count = samples_count as f64;
         let average_package_watts = package / sample_count;
+        // Integrate over the actual sampled window (each sample covers `interval`) rather
+        // than the generation duration, so averaged watts and the energy window match.
+        let interval_secs = session.interval.value() as f64 / 1000.0;
         Some(Self {
             samples_count,
             average_cpu_watts: cpu / sample_count,
@@ -72,7 +72,7 @@ impl PowerStats {
             average_total_watts: total / sample_count,
             average_package_watts,
             max_package_watts: max_package,
-            energy_joules: average_package_watts * duration.max(0.0),
+            energy_joules: package * interval_secs,
         })
     }
 }

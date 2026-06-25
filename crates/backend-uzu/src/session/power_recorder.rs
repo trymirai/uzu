@@ -23,18 +23,14 @@ impl PowerRecorder {
         }
     }
 
-    pub(crate) fn stop(
-        self,
-        duration: f64,
-    ) -> Option<PowerStats> {
+    pub(crate) fn stop(self) -> Option<PowerStats> {
         #[cfg(target_vendor = "apple")]
         {
-            PowerStats::from_keisoku_session(&self.handle.stop(), duration)
+            PowerStats::from_keisoku_session(&self.handle.stop())
         }
 
         #[cfg(not(target_vendor = "apple"))]
         {
-            let _ = duration;
             None
         }
     }
