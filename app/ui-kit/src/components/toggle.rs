@@ -34,7 +34,10 @@ impl Toggle {
 impl RenderOnce for Toggle {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let track = if self.on { theme.accent } else { theme.bg_sub_hover };
+        // White-when-on (mirai-chat parity); dark knob for contrast on the white
+        // track, white knob on the muted off-track.
+        let track = if self.on { gpui::white() } else { theme.bg_sub_hover };
+        let knob = if self.on { theme.bg } else { gpui::white() };
         let mut el = div()
             .id(self.id)
             .w(px(40.))
@@ -50,7 +53,7 @@ impl RenderOnce for Toggle {
                     .left(px(if self.on { 20. } else { 2. }))
                     .size(px(18.))
                     .rounded_full()
-                    .bg(gpui::white()),
+                    .bg(knob),
             );
         if let Some(handler) = self.on_click {
             el = el.on_click(move |event, window, cx| handler(event, window, cx));
