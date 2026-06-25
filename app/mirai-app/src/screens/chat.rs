@@ -172,6 +172,9 @@ pub struct ChatView {
     /// Message index whose performance popover is open (`None` = closed).
     perf_open_msg: Option<usize>,
     file_upload_open: bool,
+    /// Files attached to the next outgoing message: (display_name, extension, content).
+    /// Appended as fenced code blocks when the message is sent, then cleared.
+    attached_files: Vec<(String, String, String)>,
     /// Name of the model the UI considers "loaded" (set once a chat runs).
     /// uzu has no unload API, so eject is a UI-level indicator/deselect.
     loaded_model: Option<String>,
@@ -230,6 +233,7 @@ impl ChatView {
             msg_model_picker_open: None,
             perf_open_msg: None,
             file_upload_open: false,
+            attached_files: Vec::new(),
             loaded_model: None,
             gen_settings_open: false,
             sampling_mode: SamplingMode::Default,
@@ -287,6 +291,74 @@ impl ChatView {
         self.msg_model_picker_open = None;
         self.perf_open_msg = None;
         self.file_upload_open = false;
+    }
+
+    /// Open a native file-picker, read the selected file(s) as UTF-8 text and
+    /// add them to `attached_files`. Max 5 files, 256 KB each (matching Electron).
+    fn pick_file(&mut self, cx: &mut Context<Self>) {
+        const MAX_SIZE: u64 = 256 * 1024; // 256 KB
+        const MAX_FILES: usize = 5;
+        const SUPPORTED: &[&str] = &[
+            "txt", "md", "markdown", "json", "csv", "tsv", "yaml", "yml",
+            "py", "js", "ts", "tsx", "jsx", "rs", "html", "css", "xml",
+        ];
+
+        if self.attached_files.len() >= MAX_FILES {
+            toast::push(cx, "Maximum 5 files per message", ToastKind::Info);
+            return;
+        }
+
+        let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Attach text file".into()),
+        });
+
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = rx.await else { return; };
+            for path in paths.iter().take(MAX_FILES) {
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("txt")
+                    .to_lowercase();
+                if !SUPPORTED.contains(&ext.as_str()) {
+                    let _ = this.update(cx, |_, cx| {
+                        toast::push(cx, format!("Unsupported file type: .{ext}"), ToastKind::Info);
+                    });
+                    continue;
+                }
+                let meta = std::fs::metadata(path);
+                if meta.map(|m| m.len()).unwrap_or(0) > MAX_SIZE {
+                    let _ = this.update(cx, |_, cx| {
+                        toast::push(cx, "File too large (max 256 KB)", ToastKind::Info);
+                    });
+                    continue;
+                }
+                match std::fs::read_to_string(path) {
+                    Ok(content) => {
+                        let name = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("file")
+                            .to_string();
+                        let _ = this.update(cx, |this, cx| {
+                            if this.attached_files.len() < MAX_FILES {
+                                this.attached_files.push((name, ext, content));
+                                cx.notify();
+                            }
+                        });
+                    }
+                    Err(_) => {
+                        let _ = this.update(cx, |_, cx| {
+                            toast::push(cx, "Could not read file", ToastKind::Info);
+                        });
+                    }
+                }
+            }
+        })
+        .detach();
     }
 
     fn collect_model_entries(&self, cx: &App) -> (Vec<ModelEntry>, Vec<ModelEntry>) {
@@ -539,7 +611,7 @@ impl ChatView {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .w(px(280.))
+                        .w(px(300.))
                         .px(px(14.))
                         .py_2()
                         .rounded_md()
@@ -547,12 +619,7 @@ impl ChatView {
                         .hover(move |s| s.bg(hover))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.file_upload_open = false;
-                            toast::push(
-                                cx,
-                                "File attachments are not available yet",
-                                ToastKind::Info,
-                            );
-                            cx.notify();
+                            this.pick_file(cx);
                         }))
                         .child(IconEl::new(Icon::Rename, theme.text_muted).size(16.))
                         .child(
@@ -569,7 +636,7 @@ impl ChatView {
                                     div()
                                         .text_size(px(11.))
                                         .text_color(theme.text_muted)
-                                        .child("Supports text files (TXT, MD, JSON, CSV, YAML)"),
+                                        .child("TXT · MD · JSON · CSV · YAML · PY · JS · TS · RS"),
                                 ),
                         ),
                 )
@@ -600,6 +667,7 @@ impl ChatView {
         self.title_pending = false;
         self.streaming = false;
         self.cancel = None;
+        self.attached_files.clear();
         self.clear_session();
         cx.notify();
     }
@@ -900,11 +968,21 @@ impl ChatView {
             return;
         }
         let text = text.trim().to_string();
-        if text.is_empty() {
+        if text.is_empty() && self.attached_files.is_empty() {
             return;
         }
+        // Append attached files as fenced code blocks (Electron parity).
+        let full_text = if self.attached_files.is_empty() {
+            text
+        } else {
+            let mut s = text;
+            for (name, ext, content) in self.attached_files.drain(..) {
+                s.push_str(&format!("\n\n```{ext}\n# {name}\n{content}\n```"));
+            }
+            s
+        };
         let first_user = !self.messages.iter().any(|m| m.role == Role::User);
-        self.messages.push(ChatMsg::user(text));
+        self.messages.push(ChatMsg::user(full_text));
         if first_user {
             self.title_pending = true;
         }
@@ -1754,6 +1832,49 @@ impl Render for ChatView {
                                             .border_color(theme.border)
                                             .bg(theme.card)
                                             .child(div().w_full().child(self.input.clone()))
+                                            // Attached-file chips — each shows the filename
+                                            // and an × to remove it before sending.
+                                            .when(!self.attached_files.is_empty(), |el| {
+                                                let chips = self.attached_files.iter().enumerate().map(|(i, (name, ext, _))| {
+                                                    let label = format!("{name} .{ext}");
+                                                    div()
+                                                        .id(SharedString::from(format!("attach-{i}")))
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .px_2()
+                                                        .py_0p5()
+                                                        .rounded_md()
+                                                        .bg(theme.bg_hover)
+                                                        .border_1()
+                                                        .border_color(theme.border)
+                                                        .text_size(px(11.))
+                                                        .text_color(theme.text_muted)
+                                                        .child(IconEl::new(Icon::Rename, theme.text_muted).size(11.))
+                                                        .child(label)
+                                                        .child(
+                                                            div()
+                                                                .id(SharedString::from(format!("attach-rm-{i}")))
+                                                                .cursor(gpui::CursorStyle::PointingHand)
+                                                                .text_color(theme.text_muted)
+                                                                .child("×")
+                                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                                    if i < this.attached_files.len() {
+                                                                        this.attached_files.remove(i);
+                                                                        cx.notify();
+                                                                    }
+                                                                })),
+                                                        )
+                                                        .into_any_element()
+                                                }).collect::<Vec<_>>();
+                                                el.child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_wrap()
+                                                        .gap_1()
+                                                        .children(chips),
+                                                )
+                                            })
                                             .child(
                                                 div()
                                                     .flex()
