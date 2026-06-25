@@ -11,6 +11,7 @@ mod provider_keys;
 mod screens;
 mod settings_state;
 mod toast;
+mod tts_history;
 #[cfg(test)]
 mod ui_snapshot;
 

@@ -57,7 +57,7 @@ Offscreen snapshot suite is green (14 screens + logic/unit tests).
 
 - ✅ Screens + engine integration (basic)
 - ⛔ TTS generation settings blocked by uzu API (no config struct on synthesize)
-- **P1** TTS generated-audio history (persist + replay)
+- ✅ TTS generated-audio history (persist + replay)
 - **P2** Reference-voice recording, playback scrubber
 
 ## App shell

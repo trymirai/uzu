@@ -9,7 +9,7 @@ use uzu::{
     storage::types::DownloadPhase,
 };
 
-use crate::persistence;
+use crate::{persistence, tts_history};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CleanupCategory {
@@ -237,6 +237,7 @@ pub fn clear_dialogs() -> bool {
 }
 
 pub fn clear_generated_audio() -> bool {
+    tts_history::clear_all();
     let dir = tts_audio_dir();
     let Ok(entries) = fs::read_dir(&dir) else {
         return true;

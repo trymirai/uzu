@@ -1,10 +1,9 @@
-//! Text-to-Speech screen: list TTS models with download/select, type text, and
-//! synthesize + stream playback through uzu's rodio-backed `Player`.
-//! (Generation settings, reference-voice recording, and history are deferred.)
+//! Text-to-speech: voice models, synthesize, playback, and history.
 
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    Context, CursorStyle, Entity, FontWeight, IntoElement, Render, Window, div, prelude::*, px,
+    Context, CursorStyle, Entity, FontWeight, IntoElement, Render, SharedString, Window, div,
+    prelude::*, px,
 };
 use uzu::{
     player::Player,
@@ -23,6 +22,7 @@ use crate::{
     engine,
     models_store::ModelsStore,
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
+    tts_history::{self, TtsHistoryEntry},
 };
 
 enum TtsMsg {
@@ -49,6 +49,12 @@ pub struct TtsView {
     generating: bool,
     cancel: Option<CancelToken>,
     error: Option<String>,
+    history: Vec<TtsHistoryEntry>,
+    playing_id: Option<String>,
+    pending_batches: Vec<PcmBatch>,
+    gen_text: Option<String>,
+    gen_model: Option<Model>,
+    gen_vendor: Option<String>,
 }
 
 impl TtsView {
@@ -68,7 +74,17 @@ impl TtsView {
             generating: false,
             cancel: None,
             error: None,
+            history: tts_history::list(),
+            playing_id: None,
+            pending_batches: Vec::new(),
+            gen_text: None,
+            gen_model: None,
+            gen_vendor: None,
         }
+    }
+
+    fn reload_history(&mut self) {
+        self.history = tts_history::list();
     }
 
     fn resolved_model(&self, cx: &Context<Self>) -> Option<Model> {
@@ -98,6 +114,17 @@ impl TtsView {
         self.selected = Some(model.clone());
         self.generating = true;
         self.error = None;
+        self.playing_id = None;
+        self.pending_batches.clear();
+        self.gen_text = Some(text.clone());
+        self.gen_model = Some(model.clone());
+        self.gen_vendor = self
+            .store
+            .read(cx)
+            .rows
+            .iter()
+            .find(|r| r.model.identifier == model.identifier)
+            .and_then(|r| r.vendor().map(|v| v.to_string()));
         cx.notify();
 
         let Some(engine) = engine::try_engine(cx) else {
@@ -146,7 +173,7 @@ impl TtsView {
         match msg {
             TtsMsg::Started(token) => self.cancel = Some(token),
             TtsMsg::Batch(batch) => {
-                // Lazily open the audio device, then stream the batch to it.
+                self.pending_batches.push(batch.clone());
                 if self.player.is_none() {
                     match Player::new() {
                         Ok(player) => self.player = Some(player),
@@ -167,26 +194,111 @@ impl TtsView {
             TtsMsg::Done => {
                 self.generating = false;
                 self.cancel = None;
+                if self.error.is_none() {
+                    if let (Some(model), Some(text)) = (&self.gen_model, &self.gen_text) {
+                        let vendor = self.gen_vendor.as_deref().unwrap_or("Other");
+                        if tts_history::save_generation(model, vendor, text, &self.pending_batches).is_some() {
+                            self.reload_history();
+                        }
+                    }
+                }
+                self.pending_batches.clear();
+                self.gen_text = None;
+                self.gen_model = None;
+                self.gen_vendor = None;
                 cx.notify();
             }
             TtsMsg::Error(err) => {
                 self.error = Some(err);
                 self.generating = false;
                 self.cancel = None;
+                self.pending_batches.clear();
+                self.gen_text = None;
+                self.gen_model = None;
+                self.gen_vendor = None;
                 cx.notify();
             }
         }
+    }
+
+    fn ensure_player(&mut self) -> bool {
+        if self.player.is_some() {
+            return true;
+        }
+        match Player::new() {
+            Ok(player) => {
+                self.player = Some(player);
+                true
+            }
+            Err(err) => {
+                self.error = Some(format!("audio: {err}"));
+                false
+            }
+        }
+    }
+
+    fn play_history(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.playing_id.as_deref() == Some(id) {
+            self.stop_playback(cx);
+            return;
+        }
+        let Some(batch) = tts_history::load_pcm(id) else {
+            self.error = Some("audio file missing".into());
+            cx.notify();
+            return;
+        };
+        if let Some(player) = &self.player {
+            player.stop();
+        }
+        if !self.ensure_player() {
+            cx.notify();
+            return;
+        }
+        if let Some(player) = &self.player {
+            if player.append_pcm_batch(batch).is_err() {
+                self.error = Some("playback failed".into());
+                cx.notify();
+                return;
+            }
+        }
+        self.playing_id = Some(id.to_string());
+        self.error = None;
+        cx.notify();
+    }
+
+    fn stop_playback(&mut self, cx: &mut Context<Self>) {
+        if let Some(player) = &self.player {
+            player.stop();
+        }
+        self.playing_id = None;
+        cx.notify();
+    }
+
+    fn delete_history(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.playing_id.as_deref() == Some(id) {
+            self.stop_playback(cx);
+        }
+        tts_history::delete(id);
+        self.reload_history();
+        cx.notify();
+    }
+
+    fn restore_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.set_text(text, cx));
+        cx.notify();
     }
 
     fn stop(&mut self, cx: &mut Context<Self>) {
         if let Some(token) = &self.cancel {
             token.cancel();
         }
-        if let Some(player) = &self.player {
-            player.stop();
-        }
+        self.stop_playback(cx);
         self.generating = false;
         self.cancel = None;
+        self.pending_batches.clear();
+        self.gen_text = None;
+        self.gen_model = None;
+        self.gen_vendor = None;
         cx.notify();
     }
 
@@ -272,6 +384,90 @@ impl TtsView {
             )
             .child(control)
     }
+
+    fn history_row(&self, cx: &mut Context<Self>, entry: &TtsHistoryEntry) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let hover = theme.bg_hover;
+        let playing = self.playing_id.as_deref() == Some(entry.id.as_str());
+        let preview = truncate_line(&entry.text, 72);
+        let id = entry.id.clone();
+        let play_id = id.clone();
+        let del_id = id.clone();
+        let restore = entry.text.clone();
+
+        div()
+            .id(SharedString::from(format!("hist-{}", entry.id)))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .min_h(px(52.))
+            .px_3()
+            .rounded_lg()
+            .hover(move |s| s.bg(hover))
+            .child(
+                div()
+                    .id(SharedString::from(format!("restore-{}", entry.id)))
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .cursor(CursorStyle::PointingHand)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.restore_text(&restore, cx);
+                    }))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.text)
+                            .overflow_hidden()
+                            .child(preview),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child(format!("{} · {}", entry.model_name, entry.vendor)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!("play-{}", entry.id)),
+                            if playing { Icon::Stop } else { Icon::Speech },
+                        )
+                        .color(theme.text_muted)
+                        .disabled(self.generating)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if playing {
+                                this.stop_playback(cx);
+                            } else {
+                                this.play_history(&play_id, cx);
+                            }
+                        })),
+                    )
+                    .child(
+                        IconButton::new(SharedString::from(format!("del-hist-{}", entry.id)), Icon::Trash)
+                            .color(theme.text_muted)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.delete_history(&del_id, cx);
+                            })),
+                    ),
+            )
+    }
+}
+
+fn truncate_line(text: &str, max: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max {
+        return trimmed.to_string();
+    }
+    trimmed.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
 }
 
 impl Render for TtsView {
@@ -406,6 +602,35 @@ impl Render for TtsView {
                             .children(status.map(|(text, color)| {
                                 div().text_sm().text_color(color).child(text)
                             })),
+                    )
+                    .child(
+                        div()
+                            .pt_8()
+                            .pb_6()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(theme.text)
+                                    .child("History"),
+                            )
+                            .child(if self.history.is_empty() {
+                                div()
+                                    .py_4()
+                                    .text_sm()
+                                    .text_color(theme.text_muted)
+                                    .child("No generations yet.")
+                                    .into_any_element()
+                            } else {
+                                let mut rows = div().flex().flex_col().gap_1();
+                                for entry in &self.history {
+                                    rows = rows.child(self.history_row(cx, entry));
+                                }
+                                rows.into_any_element()
+                            }),
                     ),
             )
     }
