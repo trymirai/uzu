@@ -1,0 +1,22 @@
+[package]
+name = "kanka"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Generic obfuscated dlsym bindings for private Apple framework APIs"
+
+[lib]
+name = "kanka"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2-core-foundation.workspace = true
+obfstr.workspace = true
+libc.workspace = true

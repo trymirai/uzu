@@ -105,7 +105,7 @@ struct MxuMmaCore {
       thread Loader& loader_b,
       const thread ThreadContext& thread_context
   ) {
-    AccumFragment accumulator(thread_context);
+    AccumFragment accumulator;
     accumulator.clear();
 
     threadgroup BT* b_shared_simdgroup = b_shared + tile_col_offset * SHARED_STRIDE_B;
@@ -123,20 +123,22 @@ struct MxuMmaCore {
 
       METAL_PRAGMA_NO_UNROLL
       for (int inner_k = 0; inner_k < QUANT_BK; inner_k += SIMDGROUP_BLOCK_K) {
-        uzu::matmul::Fragment<AT, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps> left_tile(thread_context);
-        uzu::matmul::Fragment<BT, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps> right_tile(thread_context);
+        uzu::matmul::Fragment<AT, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps> left_tile;
+        uzu::matmul::Fragment<BT, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps> right_tile;
 
         const int left_offset = inner_k;
-        if constexpr (ALIGNED_M) {
-          left_tile.load(a_simdgroup + left_offset, leading_dimension_a);
-        } else {
-          left_tile
-              .load_safe(a_simdgroup + left_offset, leading_dimension_a, short2(SIMDGROUP_BLOCK_K, simdgroup_limit_m));
+        auto left_src = uzu::matmul::fragment_source(a_simdgroup + left_offset, leading_dimension_a);
+        if constexpr (!ALIGNED_M) {
+          left_src = left_src.bounded(simdgroup_limit_m, SIMDGROUP_BLOCK_K);
         }
+        left_tile.load_from(thread_context.simd_lane_id, left_src);
 
-        right_tile.load(b_shared_simdgroup + inner_k, int(SHARED_STRIDE_B));
+        right_tile.load_from(
+            thread_context.simd_lane_id,
+            uzu::matmul::fragment_source(b_shared_simdgroup + inner_k, int(SHARED_STRIDE_B))
+        );
 
-        uzu::matmul::MxuFragmentOps::template tile_matmul<false, true>(accumulator, left_tile, right_tile);
+        uzu::matmul::MxuFragmentOps::template fragment_mma<false, true>(accumulator, left_tile, right_tile);
       }
 
       a_simdgroup += QUANT_BK;
@@ -210,8 +212,6 @@ struct MxuMmaCore {
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
 
     const device BT* bias_simdgroup = output_bias + size_t(block_col) + size_t(tile_col_offset);
-    using FragType = uzu::matmul::Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>;
-    const short2 thread_position = FragType::get_position(thread_context);
 
     auto dispatch_aligned_k = [&](auto body) {
       if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
@@ -325,62 +325,38 @@ struct MxuMmaCore {
 
                   if (apply_scale) {
                     const AccumulatorType scale = AccumulatorType(params->ab_scale);
-                    METAL_PRAGMA_UNROLL
-                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE; i++) {
-                      accumulator_tile.elements()[i] *= scale;
-                    }
+                    accumulator_tile.map([&](auto value) { return value * scale; });
                   }
 
                   if (apply_accumulate) {
-                    uzu::matmul::Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps> existing_output(
-                        thread_context
-                    );
-                    if constexpr (aligned_m.value && aligned_n.value) {
-                      existing_output.load(d_simdgroup, int(params->leading_dimension_d));
-                    } else {
-                      existing_output.load_safe(
-                          d_simdgroup,
-                          int(params->leading_dimension_d),
-                          short2(simdgroup_limit_n, simdgroup_limit_m)
-                      );
+                    uzu::matmul::Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps> existing_output;
+                    auto output_src = uzu::matmul::fragment_source(d_simdgroup, int(params->leading_dimension_d));
+                    if constexpr (!(aligned_m.value && aligned_n.value)) {
+                      output_src = output_src.bounded(simdgroup_limit_m, simdgroup_limit_n);
                     }
-                    METAL_PRAGMA_UNROLL
-                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE; i++) {
-                      accumulator_tile.elements()[i] += AccumulatorType(existing_output.elements()[i]);
-                    }
+                    existing_output.load_from(thread_context.simd_lane_id, output_src);
+                    thread DT* existing_data = existing_output.elements();
+                    accumulator_tile.map([&](auto value) { return value + AccumulatorType(*(existing_data++)); });
                   }
 
                   if (apply_bias) {
-                    METAL_PRAGMA_UNROLL
-                    for (ushort tile_row = 0; tile_row < TILES_M; ++tile_row) {
-                      METAL_PRAGMA_UNROLL
-                      for (ushort tile_col = 0; tile_col < TILES_N; ++tile_col) {
-                        thread auto& frag = accumulator_tile.fragment_at(tile_row, tile_col);
-                        const short col_base =
-                            short(tile_col * uzu::matmul::MxuFragmentOps::FRAGMENT_COLS + thread_position.x);
-                        METAL_PRAGMA_UNROLL
-                        for (ushort i = 0; i < uzu::matmul::MxuFragmentOps::THREAD_ELEMENT_ROWS; ++i) {
-                          METAL_PRAGMA_UNROLL
-                          for (ushort j = 0; j < uzu::matmul::MxuFragmentOps::THREAD_ELEMENT_COLS; ++j) {
-                            const ushort element_index = i * uzu::matmul::MxuFragmentOps::THREAD_ELEMENT_COLS + j;
-                            const short col_local = short(col_base + j);
-                            if constexpr (aligned_n.value) {
-                              frag[element_index] += AccumulatorType(bias_simdgroup[col_local]);
-                            } else {
-                              if (col_local < simdgroup_limit_n) {
-                                frag[element_index] += AccumulatorType(bias_simdgroup[col_local]);
-                              }
-                            }
-                          }
+                    accumulator_tile.map_coords(thread_context.simd_lane_id, [&](short, short col, auto value) {
+                      if constexpr (aligned_n.value) {
+                        return value + AccumulatorType(bias_simdgroup[col]);
+                      } else {
+                        if (col < simdgroup_limit_n) {
+                          return value + AccumulatorType(bias_simdgroup[col]);
                         }
+                        return value;
                       }
-                    }
+                    });
                   }
 
                   if constexpr (aligned_m.value && aligned_n.value) {
-                    accumulator_tile.store(d_simdgroup, int(params->leading_dimension_d));
+                    accumulator_tile.store(thread_context.simd_lane_id, d_simdgroup, int(params->leading_dimension_d));
                   } else {
                     accumulator_tile.store_safe(
+                        thread_context.simd_lane_id,
                         d_simdgroup,
                         int(params->leading_dimension_d),
                         short2(simdgroup_limit_n, simdgroup_limit_m)

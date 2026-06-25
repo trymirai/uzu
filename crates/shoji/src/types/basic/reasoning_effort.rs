@@ -20,6 +20,7 @@ impl ReasoningEffort {
         match value {
             "none" => Ok(ReasoningEffort::Disabled),
             "minimal" => Ok(ReasoningEffort::Low),
+            "xhigh" => Ok(ReasoningEffort::High),
             other => Self::from_str(other),
         }
     }
@@ -80,6 +81,7 @@ mod tests {
     fn from_openai_maps_openai_specific_levels() {
         assert_eq!(ReasoningEffort::from_openai("none"), Ok(ReasoningEffort::Disabled));
         assert_eq!(ReasoningEffort::from_openai("minimal"), Ok(ReasoningEffort::Low));
+        assert_eq!(ReasoningEffort::from_openai("xhigh"), Ok(ReasoningEffort::High));
     }
 
     #[test]
@@ -97,8 +99,9 @@ mod tests {
     #[test]
     fn from_openai_inverts_backend_remote_mapping() {
         // Mirrors crates/backend-remote/src/openai/bridging/reasoning_effort.rs:
-        // Disabled <-> "none", Low <-> "minimal"/"low".
+        // Disabled <-> "none", Low <-> "minimal"/"low", High <-> "high"/"xhigh".
         assert_eq!(ReasoningEffort::from_openai("none"), Ok(ReasoningEffort::Disabled));
         assert_eq!(ReasoningEffort::from_openai("minimal"), Ok(ReasoningEffort::Low));
+        assert_eq!(ReasoningEffort::from_openai("xhigh"), Ok(ReasoningEffort::High));
     }
 }

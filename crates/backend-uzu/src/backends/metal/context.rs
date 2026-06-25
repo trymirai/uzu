@@ -262,4 +262,8 @@ impl Context for MetalContext {
     fn sparse_buffers_supported(&self) -> bool {
         self.device.supports_placement_sparse_resources()
     }
+
+    fn supports_mxu(&self) -> bool {
+        self.supports_mxu()
+    }
 }

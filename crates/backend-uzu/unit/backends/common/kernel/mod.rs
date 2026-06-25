@@ -11,6 +11,8 @@ mod logit_soft_cap_test;
 mod matmul;
 mod moe;
 mod pooling;
+mod prefix_beta_bench;
+mod prefix_beta_test;
 mod qk_unpack_test;
 mod qkv_norm_test;
 mod rms_norm_bench;

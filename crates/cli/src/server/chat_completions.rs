@@ -11,7 +11,7 @@ use rocket::{
     http::Status,
     post,
     response::{
-        Responder,
+        Responder, status,
         stream::{Event, EventStream},
     },
     serde::json::Json,
@@ -37,30 +37,6 @@ pub struct OaiMessage {
     pub content: String,
 }
 
-#[derive(Deserialize, Clone)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ResponseFormat {
-    Text {},
-    JsonObject {},
-    JsonSchema {
-        json_schema: serde_json::Value,
-    },
-}
-
-impl ResponseFormat {
-    fn to_grammar(&self) -> Option<Grammar> {
-        match self {
-            ResponseFormat::Text {} => None,
-            ResponseFormat::JsonObject {} => Some(Grammar::JsonAny {}),
-            ResponseFormat::JsonSchema {
-                json_schema,
-            } => Some(Grammar::JsonSchema {
-                schema: json_schema.to_string(),
-            }),
-        }
-    }
-}
-
 #[derive(Deserialize)]
 pub struct ChatCompletionRequest {
     pub messages: Vec<OaiMessage>,
@@ -76,13 +52,29 @@ pub struct ChatCompletionRequest {
     pub top_p: Option<f64>,
     #[serde(default)]
     pub top_k: Option<i64>,
+    // Raw value (not typed) so a bad response_format is our 400, not Rocket's 422.
     #[serde(default)]
-    pub response_format: Option<ResponseFormat>,
+    pub response_format: Option<serde_json::Value>,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
     #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    Text,
+    JsonObject,
+    JsonSchema {
+        json_schema: JsonSchemaFormat,
+    },
+}
+
+#[derive(Deserialize)]
+pub struct JsonSchemaFormat {
+    pub schema: serde_json::Value,
 }
 
 #[derive(Serialize, Clone)]
@@ -107,21 +99,6 @@ pub struct ChatCompletionResponse {
     pub model: String,
     pub choices: Vec<ChatCompletionChoice>,
     pub usage: ChatCompletionUsage,
-}
-
-#[derive(Serialize, Clone)]
-pub struct ChatCompletionErrorBody {
-    pub message: String,
-    pub r#type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub param: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-}
-
-#[derive(Serialize, Clone)]
-pub struct ChatCompletionErrorResponse {
-    pub error: ChatCompletionErrorBody,
 }
 
 #[derive(Serialize)]
@@ -150,10 +127,24 @@ struct ChatCompletionChunk {
     usage: Option<ChatCompletionUsage>,
 }
 
+#[derive(Serialize)]
+pub struct OaiErrorResponse {
+    error: OaiError,
+}
+
+#[derive(Serialize)]
+struct OaiError {
+    message: String,
+    #[serde(rename = "type")]
+    kind: String,
+    param: Option<String>,
+    code: Option<String>,
+}
+
 pub enum ChatCompletionResult {
     Json(Json<ChatCompletionResponse>),
-    Error(Status, Json<ChatCompletionErrorResponse>),
     Stream(EventStream<Pin<Box<dyn Stream<Item = Event> + Send>>>),
+    Error(status::Custom<Json<OaiErrorResponse>>),
 }
 
 impl<'r> Responder<'r, 'r> for ChatCompletionResult {
@@ -163,10 +154,8 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
     ) -> rocket::response::Result<'r> {
         match self {
             ChatCompletionResult::Json(json) => json.respond_to(request),
-            ChatCompletionResult::Error(status, json) => {
-                rocket::response::status::Custom(status, json).respond_to(request)
-            },
             ChatCompletionResult::Stream(stream) => stream.respond_to(request),
+            ChatCompletionResult::Error(error) => error.respond_to(request),
         }
     }
 }
@@ -196,17 +185,89 @@ fn to_chat_messages(
     chat_messages
 }
 
-fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
-    let token_limit = request.max_completion_tokens.or(request.max_tokens);
-    let grammar = request.response_format.as_ref().and_then(ResponseFormat::to_grammar);
-    let config = ChatReplyConfig::default().with_token_limit(token_limit).with_grammar(grammar);
+#[derive(Debug, PartialEq, Eq)]
+enum ResponseFormatError {
+    GrammarUnsupported,
+    InvalidResponseFormat(String),
+    InvalidJsonSchema(String),
+}
 
-    if request.temperature.is_some_and(|temperature| temperature <= 0.0) {
-        return config.with_sampling_method(SamplingMethod::Greedy {});
+impl ResponseFormatError {
+    fn message(&self) -> String {
+        match self {
+            ResponseFormatError::GrammarUnsupported => {
+                "response_format with JSON constraints requires building mirai server with capability-grammar"
+                    .to_string()
+            },
+            ResponseFormatError::InvalidResponseFormat(detail) => {
+                format!("response_format is not a recognized object: {detail}")
+            },
+            ResponseFormatError::InvalidJsonSchema(detail) => {
+                format!("response_format.json_schema.schema is not a valid JSON Schema: {detail}")
+            },
+        }
     }
 
-    if request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some() {
-        return config.with_sampling_method(SamplingMethod::Stochastic {
+    fn code(&self) -> &'static str {
+        match self {
+            ResponseFormatError::GrammarUnsupported => "unsupported_response_format",
+            ResponseFormatError::InvalidResponseFormat(_) => "invalid_response_format",
+            ResponseFormatError::InvalidJsonSchema(_) => "invalid_json_schema",
+        }
+    }
+}
+
+fn request_error_response(error: ResponseFormatError) -> ChatCompletionResult {
+    bad_request_response(error.message(), Some("response_format"), Some(error.code()))
+}
+
+fn bad_request_response(
+    message: impl Into<String>,
+    param: Option<&str>,
+    code: Option<&str>,
+) -> ChatCompletionResult {
+    ChatCompletionResult::Error(status::Custom(
+        Status::BadRequest,
+        Json(OaiErrorResponse {
+            error: OaiError {
+                message: message.into(),
+                kind: "invalid_request_error".to_string(),
+                param: param.map(str::to_string),
+                code: code.map(str::to_string),
+            },
+        }),
+    ))
+}
+
+fn with_response_format_grammar(
+    config: ChatReplyConfig,
+    grammar: Grammar,
+) -> Result<ChatReplyConfig, ResponseFormatError> {
+    if !cfg!(feature = "capability-grammar") {
+        return Err(ResponseFormatError::GrammarUnsupported);
+    }
+
+    Ok(config.with_grammar(Some(grammar)))
+}
+
+fn json_schema_grammar(json_schema: &JsonSchemaFormat) -> Result<Grammar, ResponseFormatError> {
+    jsonschema::meta::validate(&json_schema.schema)
+        .map_err(|error| ResponseFormatError::InvalidJsonSchema(error.to_string()))?;
+    let schema = serde_json::to_string(&json_schema.schema)
+        .map_err(|error| ResponseFormatError::InvalidResponseFormat(error.to_string()))?;
+    Ok(Grammar::JsonSchema {
+        schema,
+    })
+}
+
+fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig, ResponseFormatError> {
+    let token_limit = request.max_completion_tokens.or(request.max_tokens);
+    let mut config = ChatReplyConfig::default().with_token_limit(token_limit);
+
+    if request.temperature.is_some_and(|temperature| temperature <= 0.0) {
+        config = config.with_sampling_method(SamplingMethod::Greedy {});
+    } else if request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some() {
+        config = config.with_sampling_method(SamplingMethod::Stochastic {
             temperature: request.temperature,
             top_k: request.top_k,
             top_p: request.top_p,
@@ -216,7 +277,23 @@ fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
         });
     }
 
-    config
+    let response_format = match &request.response_format {
+        Some(value) => Some(
+            serde_json::from_value::<ResponseFormat>(value.clone())
+                .map_err(|error| ResponseFormatError::InvalidResponseFormat(error.to_string()))?,
+        ),
+        None => None,
+    };
+
+    config = match response_format {
+        Some(ResponseFormat::JsonObject) => with_response_format_grammar(config, Grammar::JsonAny {})?,
+        Some(ResponseFormat::JsonSchema {
+            json_schema,
+        }) => with_response_format_grammar(config, json_schema_grammar(&json_schema)?)?,
+        Some(ResponseFormat::Text) | None => config,
+    };
+
+    Ok(config)
 }
 
 fn map_finish_reason(finish_reason: &ChatReplyFinishReason) -> String {
@@ -259,20 +336,6 @@ fn error_response(
             finish_reason: "stop".to_string(),
         }],
         usage: ChatCompletionUsage::default(),
-    }
-}
-
-fn bad_request_error(
-    message: impl Into<String>,
-    param: Option<&str>,
-) -> ChatCompletionErrorResponse {
-    ChatCompletionErrorResponse {
-        error: ChatCompletionErrorBody {
-            message: message.into(),
-            r#type: "invalid_request_error".to_string(),
-            param: param.map(str::to_string),
-            code: None,
-        },
     }
 }
 
@@ -468,16 +531,16 @@ pub async fn handle_chat_completions(
         Some(effort) => match ReasoningEffort::from_openai(effort) {
             Ok(value) => Some(value),
             Err(message) => {
-                return ChatCompletionResult::Error(
-                    Status::BadRequest,
-                    Json(bad_request_error(message, Some("reasoning_effort"))),
-                );
+                return bad_request_response(message, Some("reasoning_effort"), None);
             },
         },
         None => None,
     };
+    let config = match build_reply_config(&request) {
+        Ok(config) => config,
+        Err(error) => return request_error_response(error),
+    };
     let messages = to_chat_messages(&request.messages, reasoning_effort);
-    let config = build_reply_config(&request);
 
     if is_stream {
         let session = Arc::clone(&state.session);
@@ -493,109 +556,5 @@ pub async fn handle_chat_completions(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn parse(json: &str) -> ChatCompletionRequest {
-        serde_json::from_str(json).expect("valid request")
-    }
-
-    #[test]
-    fn json_object_response_format_maps_to_json_any() {
-        let request = parse(r#"{"messages":[],"response_format":{"type":"json_object"}}"#);
-        let grammar = request.response_format.as_ref().and_then(ResponseFormat::to_grammar);
-        assert_eq!(grammar, Some(Grammar::JsonAny {}));
-    }
-
-    #[test]
-    fn json_schema_response_format_carries_serialized_schema() {
-        let request = parse(
-            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"name":"country","strict":true,"schema":{"type":"object"}}}}"#,
-        );
-        let grammar = request.response_format.as_ref().and_then(ResponseFormat::to_grammar);
-        let expected_schema =
-            serde_json::from_str::<serde_json::Value>(r#"{"name":"country","strict":true,"schema":{"type":"object"}}"#)
-                .expect("valid json_schema payload")
-                .to_string();
-        assert_eq!(
-            grammar,
-            Some(Grammar::JsonSchema {
-                schema: expected_schema,
-            })
-        );
-    }
-
-    #[test]
-    fn json_schema_response_format_passes_through_arbitrary_payload() {
-        let request = parse(
-            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"foo":[1,2],"nested":{"enabled":true}}}}"#,
-        );
-        let grammar = request.response_format.as_ref().and_then(ResponseFormat::to_grammar);
-        let expected_schema = serde_json::from_str::<serde_json::Value>(r#"{"foo":[1,2],"nested":{"enabled":true}}"#)
-            .expect("valid json_schema payload")
-            .to_string();
-        assert_eq!(
-            grammar,
-            Some(Grammar::JsonSchema {
-                schema: expected_schema,
-            })
-        );
-    }
-
-    #[test]
-    fn text_response_format_produces_no_grammar() {
-        let request = parse(r#"{"messages":[],"response_format":{"type":"text"}}"#);
-        assert!(request.response_format.as_ref().and_then(ResponseFormat::to_grammar).is_none());
-    }
-
-    #[test]
-    fn absent_response_format_produces_no_grammar() {
-        let request = parse(r#"{"messages":[]}"#);
-        assert!(request.response_format.is_none());
-    }
-
-    #[test]
-    fn reasoning_effort_parses_known_levels() {
-        let request = parse(r#"{"messages":[],"reasoning_effort":"high"}"#);
-        let effort = request.reasoning_effort.as_deref().and_then(|value| ReasoningEffort::from_str(value).ok());
-        assert_eq!(effort, Some(ReasoningEffort::High));
-    }
-
-    #[test]
-    fn reasoning_effort_maps_openai_none_to_disabled() {
-        let request = parse(r#"{"messages":[],"reasoning_effort":"none"}"#);
-        let effort = request.reasoning_effort.as_deref().map(ReasoningEffort::from_openai);
-        assert_eq!(effort, Some(Ok(ReasoningEffort::Disabled)));
-    }
-
-    #[test]
-    fn reasoning_effort_maps_openai_minimal_to_low() {
-        let request = parse(r#"{"messages":[],"reasoning_effort":"minimal"}"#);
-        let effort = request.reasoning_effort.as_deref().map(ReasoningEffort::from_openai);
-        assert_eq!(effort, Some(Ok(ReasoningEffort::Low)));
-    }
-
-    #[test]
-    fn reasoning_effort_rejects_unknown_value() {
-        let request = parse(r#"{"messages":[],"reasoning_effort":"turbo"}"#);
-        let effort = request.reasoning_effort.as_deref().map(ReasoningEffort::from_openai);
-        assert!(matches!(effort, Some(Err(_))));
-    }
-
-    #[test]
-    fn reasoning_effort_attaches_to_last_message_only() {
-        let messages = vec![
-            OaiMessage {
-                role: "system".to_string(),
-                content: "sys".to_string(),
-            },
-            OaiMessage {
-                role: "user".to_string(),
-                content: "hi".to_string(),
-            },
-        ];
-        let chat_messages = to_chat_messages(&messages, Some(ReasoningEffort::Disabled));
-        assert_eq!(chat_messages[0].reasoning_effort(), None);
-        assert_eq!(chat_messages[1].reasoning_effort(), Some(ReasoningEffort::Disabled));
-    }
-}
+#[path = "../../unit/server/chat_completions_test.rs"]
+mod tests;

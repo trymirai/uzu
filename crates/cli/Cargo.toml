@@ -30,6 +30,7 @@ comfy-table.workspace = true
 indicatif.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+jsonschema.workspace = true
 rocket.workspace = true
 uuid.workspace = true
 tokio-stream.workspace = true
