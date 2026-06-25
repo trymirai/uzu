@@ -8,9 +8,9 @@ use gpui::{
 };
 
 use crate::{
-    components::{Icon, IconEl},
+    components::{Icon, IconEl, Toggle},
     models_store::{ModelKind, ModelsStore},
-    persistence, toast,
+    persistence, settings_state, toast,
     screens::{
         ChatView, ChatsEvent, ChatsView, CloudEvent, CloudModelsView, LocalModelsEvent,
         LocalModelsView, RoutersView, SettingsView, TtsView, WelcomeEvent, WelcomeView,
@@ -79,6 +79,8 @@ pub struct MiraiApp {
     cloud: Entity<CloudModelsView>,
     /// Cached recent chats for the sidebar list; refreshed on navigation.
     recent_chats: Vec<persistence::StoredChat>,
+    /// Whether the bottom "Settings" menu is expanded (mirai-chat parity).
+    settings_menu_open: bool,
 }
 
 impl MiraiApp {
@@ -170,7 +172,19 @@ impl MiraiApp {
             tts,
             cloud,
             recent_chats: persistence::list_chats(),
+            settings_menu_open: false,
         }
+    }
+
+    /// Flip the color scheme and persist it (used by the settings menu).
+    fn toggle_dark_mode(&mut self, cx: &mut Context<Self>) {
+        let mut settings = settings_state::current(cx);
+        settings.dark_mode = !settings.dark_mode;
+        let next =
+            if settings.dark_mode { theme::Theme::dark() } else { theme::Theme::light() };
+        theme::set_theme(cx, next);
+        settings_state::set(cx, settings);
+        cx.notify();
     }
 
     /// Navigate to a route, running any side effects (reset/reload).
@@ -329,15 +343,109 @@ impl MiraiApp {
             )
             // Recent chats fill the space between nav and the pinned Settings.
             .child(self.render_recent_chats(cx))
-            // Settings pinned to the bottom.
-            .child(div().pb_2().child(self.nav_item(
-                cx,
-                "nav-settings",
-                Icon::Settings,
-                "Settings",
-                Route::Settings,
-                section == Section::Settings,
-            )))
+            // Settings menu pinned to the bottom; expands upward (mirai-chat parity).
+            .child(self.render_settings_menu(cx))
+    }
+
+    /// Bottom "Settings" row that expands an inline menu upward: external links,
+    /// a Settings entry, and a dark-mode toggle, mirroring mirai-chat.
+    fn render_settings_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let open = self.settings_menu_open;
+        let dark = settings_state::current(cx).dark_mode;
+        let hover = theme.bg_hover;
+
+        let mut wrap = div().flex().flex_col().border_t_1().border_color(theme.border);
+
+        if open {
+            // External links as text (no third-party brand logos).
+            let muted = theme.text_muted;
+            let link_hover = theme.text;
+            let mut links = div().flex().items_center().gap_4().px_4().pt_3().pb_2();
+            for (id, label, url) in [
+                ("lnk-github", "GitHub", "https://github.com/trymirai"),
+                ("lnk-x", "X", "https://x.com/trymirai"),
+                ("lnk-discord", "Discord", "https://discord.gg/trymirai"),
+            ] {
+                let url = url.to_string();
+                links = links.child(
+                    div()
+                        .id(id)
+                        .text_xs()
+                        .text_color(muted)
+                        .cursor(CursorStyle::PointingHand)
+                        .hover(move |s| s.text_color(link_hover))
+                        .on_click(move |_, _, cx| cx.open_url(&url))
+                        .child(label),
+                );
+            }
+            wrap = wrap
+                .child(links)
+                .child(
+                    div()
+                        .id("settings-open")
+                        .flex()
+                        .items_center()
+                        .h(px(34.))
+                        .px_4()
+                        .text_sm()
+                        .text_color(theme.text)
+                        .cursor(CursorStyle::PointingHand)
+                        .hover(move |s| s.bg(hover))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.settings_menu_open = false;
+                            this.navigate(Route::Settings, cx);
+                        }))
+                        .child("Settings"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .h(px(38.))
+                        .px_4()
+                        .text_sm()
+                        .text_color(theme.text)
+                        .child("Dark mode")
+                        .child(Toggle::new("dark-mode", dark).on_click(cx.listener(
+                            |this, _, _, cx| this.toggle_dark_mode(cx),
+                        ))),
+                );
+        }
+
+        wrap.child(
+            div()
+                .id("settings-trigger")
+                .flex()
+                .items_center()
+                .justify_between()
+                .h(px(40.))
+                .px_4()
+                .text_sm()
+                .text_color(theme.text)
+                .cursor(CursorStyle::PointingHand)
+                .hover(move |s| s.bg(hover))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.settings_menu_open = !this.settings_menu_open;
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(IconEl::new(Icon::Settings, theme.text).size(18.))
+                        .child("Settings"),
+                )
+                .child(
+                    IconEl::new(
+                        if open { Icon::ChevronUp } else { Icon::ChevronDown },
+                        theme.text_muted,
+                    )
+                    .size(14.),
+                ),
+        )
     }
 
     /// Scrollable list of recent chats in the sidebar (mirai-chat parity).
