@@ -224,6 +224,9 @@ impl ChatsView {
                 IconButton::new(SharedString::from(format!("del-{}", chat.id)), Icon::Trash)
                     .color(theme.text_muted)
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        // Don't let the click bubble to the row (which would open
+                        // the chat); just raise the delete-confirm modal.
+                        cx.stop_propagation();
                         this.confirm_delete = Some((delete_id.clone(), delete_title.clone()));
                         cx.notify();
                     })),
