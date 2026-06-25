@@ -6,7 +6,7 @@
 //! `target/ui-snapshots/`. Individual views are rendered standalone so the
 //! engine is never required.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use gpui::{
     AnyView, AnyWindowHandle, App, AppContext, Context, Entity, HeadlessAppContext, Hsla, Platform,
@@ -93,9 +93,79 @@ fn render_png<V: Render + 'static>(
     path
 }
 
+/// Like `render_png`, but boots a real uzu engine + Tokio bridge first so
+/// engine-backed screens (Local Models, TTS, Cloud, Routers) populate their
+/// model lists. Slower (engine init), and requires a working engine.
+fn render_png_with_engine<V: Render + 'static>(
+    name: &str,
+    width: f32,
+    height: f32,
+    build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+) -> PathBuf {
+    let runtime =
+        tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime");
+    let handle = runtime.handle().clone();
+    let engine = runtime
+        .block_on(async { uzu::engine::Engine::new(uzu::engine::EngineConfig::default()).await })
+        .expect("engine init");
+
+    let text_system = gpui_platform::current_platform(true).text_system();
+    let mut cx = HeadlessAppContext::with_platform(
+        text_system,
+        Arc::new(assets::Assets::new()),
+        gpui_platform::current_headless_renderer,
+    );
+    cx.update(|app| {
+        theme::init(app);
+        settings_state::init(app);
+        toast::init(app);
+        components::text_input::register(app);
+        gpui_tokio::init_from_handle(app, handle.clone());
+        crate::engine::init(app, engine.clone());
+    });
+
+    let window = cx
+        .open_window(size(px(width), px(height)), |window, app| {
+            let inner: AnyView = build(window, app).into();
+            let theme = app.theme().clone();
+            app.new(|_| SnapshotRoot { inner, bg: theme.bg, fg: theme.text })
+        })
+        .expect("open offscreen window");
+    let handle_w: AnyWindowHandle = window.into();
+
+    // Give the async model load time to run on Tokio, then pump + draw.
+    std::thread::sleep(Duration::from_secs(3));
+    for _ in 0..3 {
+        cx.run_until_parked();
+        cx.update_window(handle_w, |_, window, app| {
+            window.draw(app);
+        })
+        .expect("draw window");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+
+    let image = cx.capture_screenshot(handle_w).expect("render_to_image");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/ui-snapshots");
+    std::fs::create_dir_all(&dir).ok();
+    let path = dir.join(format!("{name}.png"));
+    image.save(&path).expect("save png");
+    eprintln!("ui-snapshot: wrote {} ({}x{})", path.display(), image.width(), image.height());
+    drop(runtime);
+    path
+}
+
 #[test]
 fn render_settings() {
     render_png("settings", 1200.0, 800.0, |_, cx| cx.new(screens::SettingsView::new));
+}
+
+#[test]
+#[ignore = "boots a real engine; run explicitly with --ignored"]
+fn render_local_models() {
+    render_png_with_engine("local-models", 1200.0, 800.0, |_, cx| {
+        let store = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
+        cx.new(|cx| screens::LocalModelsView::new(store, cx))
+    });
 }
 
 #[test]
