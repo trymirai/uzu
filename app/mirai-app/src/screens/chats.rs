@@ -7,7 +7,7 @@ use gpui::{
 };
 
 use crate::{
-    components::{ConfirmModal, Icon, IconButton, IconEl, TextInput},
+    components::{ConfirmModal, Icon, IconButton, IconEl, InputEvent, TextInput},
     persistence::{self, StoredChat},
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
 };
@@ -20,6 +20,9 @@ pub enum ChatsEvent {
 pub struct ChatsView {
     chats: Vec<StoredChat>,
     search: Entity<TextInput>,
+    /// Global-instructions editor behind the expandable card.
+    instructions: Entity<TextInput>,
+    instructions_open: bool,
     /// (id, title) of a chat pending delete confirmation.
     confirm_delete: Option<(String, String)>,
 }
@@ -30,11 +33,96 @@ impl ChatsView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| TextInput::new(cx, "Search chats…"));
         cx.observe(&search, |_, _, cx| cx.notify()).detach();
+
+        let instructions = cx.new(|cx| TextInput::new(cx, "Tailor the way the model responds"));
+        let current = persistence::global_instructions();
+        if !current.is_empty() {
+            instructions.update(cx, |input, cx| input.set_text(current, cx));
+        }
+        cx.subscribe(&instructions, |_this, _input, event, _cx| match event {
+            InputEvent::Submit(text) => persistence::set_global_instructions(text),
+        })
+        .detach();
+
         Self {
             chats: persistence::list_chats(),
             search,
+            instructions,
+            instructions_open: false,
             confirm_delete: None,
         }
+    }
+
+    /// Expandable "Add instructions to all chats" card (mirai-chat parity). The
+    /// editor persists to the global-instructions store on Enter.
+    fn instructions_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let hover = theme.bg_hover;
+        let open = self.instructions_open;
+
+        let header = div()
+            .id("instr-card")
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .px_4()
+            .py_3()
+            .cursor(CursorStyle::PointingHand)
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.instructions_open = !this.instructions_open;
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        IconEl::new(if open { Icon::Close } else { Icon::Plus }, theme.text)
+                            .size(16.),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.text)
+                            .child("Add instructions to all chats"),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child("Tailor the way the model responds"),
+            );
+
+        let mut card = div()
+            .w_full()
+            .mb_3()
+            .rounded_lg()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.card)
+            .child(header);
+
+        if open {
+            card = card.child(
+                div().px_4().pb_3().child(
+                    div()
+                        .w_full()
+                        .px_3()
+                        .py_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.bg)
+                        .child(self.instructions.clone()),
+                ),
+            );
+        }
+        card
     }
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
@@ -168,6 +256,7 @@ impl Render for ChatsView {
                             .font_weight(FontWeight::MEDIUM)
                             .child("Chat history"),
                     )
+                    .child(self.instructions_card(cx))
                     .child(
                         div()
                             .flex()
