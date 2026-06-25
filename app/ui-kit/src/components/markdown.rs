@@ -132,7 +132,10 @@ fn code_block(lang: &str, code: &str, theme: &Theme, uid: usize) -> AnyElement {
         .text_color(theme.text)
         .p_3()
         .flex()
-        .flex_col();
+        .flex_col()
+        .w_full()
+        .min_w_0()
+        .overflow_hidden();
     for line in code.split('\n') {
         body = body.child(div().child(line.to_string()));
     }
@@ -152,6 +155,16 @@ fn code_block(lang: &str, code: &str, theme: &Theme, uid: usize) -> AnyElement {
         .into_any_element()
 }
 
+/// Wrap prose so long lines wrap inside the chat column instead of overflowing.
+fn prose_wrap(el: AnyElement) -> AnyElement {
+    div()
+        .w_full()
+        .min_w_0()
+        .overflow_hidden()
+        .child(el)
+        .into_any_element()
+}
+
 /// Render one prose line: headings (`#`), unordered (`- `/`* `) and ordered
 /// (`N. `) list items, blockquotes (`> `), and inline styling. `id` keeps link
 /// hit-targets unique.
@@ -161,32 +174,44 @@ fn render_line(line: &str, theme: &Theme, id: usize) -> AnyElement {
     // Heading: leading #'s followed by a space.
     let hashes = trimmed.chars().take_while(|c| *c == '#').count();
     if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
-        return div()
-            .text_lg()
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(theme.text)
-            .child(text_el(trimmed[hashes + 1..].trim_start(), theme, id))
-            .into_any_element();
+        return prose_wrap(
+            div()
+                .text_lg()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.text)
+                .child(text_el(trimmed[hashes + 1..].trim_start(), theme, id))
+                .into_any_element(),
+        );
     }
 
     // Blockquote.
     if let Some(rest) = trimmed.strip_prefix("> ").or_else(|| trimmed.strip_prefix(">")) {
-        return div()
-            .border_l_2()
-            .border_color(theme.border)
-            .pl_3()
-            .text_color(theme.text_muted)
-            .child(text_el(rest.trim_start(), theme, id))
-            .into_any_element();
+        return prose_wrap(
+            div()
+                .border_l_2()
+                .border_color(theme.border)
+                .pl_3()
+                .text_color(theme.text_muted)
+                .child(text_el(rest.trim_start(), theme, id))
+                .into_any_element(),
+        );
     }
 
     // Unordered list item.
     if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
         return div()
             .flex()
+            .w_full()
+            .min_w_0()
             .gap_2()
-            .child(div().text_color(theme.text_muted).child("•"))
-            .child(text_el(rest, theme, id))
+            .child(div().flex_none().text_color(theme.text_muted).child("•"))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(text_el(rest, theme, id)),
+            )
             .into_any_element();
     }
 
@@ -196,13 +221,21 @@ fn render_line(line: &str, theme: &Theme, id: usize) -> AnyElement {
         let num = trimmed[..digits].to_string();
         return div()
             .flex()
+            .w_full()
+            .min_w_0()
             .gap_2()
-            .child(div().text_color(theme.text_muted).child(format!("{num}.")))
-            .child(text_el(&trimmed[digits + 2..], theme, id))
+            .child(div().flex_none().text_color(theme.text_muted).child(format!("{num}.")))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(text_el(&trimmed[digits + 2..], theme, id)),
+            )
             .into_any_element();
     }
 
-    text_el(line, theme, id)
+    prose_wrap(text_el(line, theme, id))
 }
 
 /// Inline text for one line: a `StyledText`, upgraded to an `InteractiveText`
