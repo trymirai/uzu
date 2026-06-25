@@ -41,38 +41,30 @@ impl VendorIcon {
 impl RenderOnce for VendorIcon {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let name = self.vendor.trim();
-        let initial = name
-            .chars()
-            .find(|c| c.is_alphanumeric())
-            .map(|c| c.to_ascii_uppercase().to_string())
-            .unwrap_or_else(|| "?".to_string());
         let size = self.size;
-        let mut el = div()
-            .w(px(size))
-            .h(px(size))
-            .flex_none()
-            .relative()
-            .rounded_md()
-            .overflow_hidden()
-            .bg(hsla(vendor_hue(name), 0.5, 0.45, 1.0))
-            // Fallback initial, centered.
-            .child(
-                div()
-                    .absolute()
-                    .size_full()
+        let base = div().w(px(size)).h(px(size)).flex_none().rounded_md().overflow_hidden();
+
+        match self.icon_url {
+            // Remote logo on its own — the brand assets carry their own
+            // background, so we don't tint behind them.
+            Some(url) => base.child(img(url).size_full()),
+            // Fallback: vendor initial on a deterministic per-vendor color.
+            None => {
+                let initial = name
+                    .chars()
+                    .find(|c| c.is_alphanumeric())
+                    .map(|c| c.to_ascii_uppercase().to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                base.bg(hsla(vendor_hue(name), 0.5, 0.45, 1.0))
                     .flex()
                     .items_center()
                     .justify_center()
                     .text_color(white())
                     .text_size(px(size * 0.5))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(initial),
-            );
-        if let Some(url) = self.icon_url {
-            // Overlaid remote logo; covers the initial once loaded.
-            el = el.child(img(url).absolute().size_full());
+                    .child(initial)
+            }
         }
-        el
     }
 }
 
