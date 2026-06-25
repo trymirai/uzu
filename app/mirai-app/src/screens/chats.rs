@@ -1,5 +1,5 @@
 //! Chat history screen: lists saved chats (newest first), open on click, delete
-//! per row.
+//! per row, rename in selection mode.
 
 use std::collections::HashSet;
 
@@ -25,12 +25,12 @@ pub enum ChatsEvent {
 pub struct ChatsView {
     chats: Vec<StoredChat>,
     search: Entity<TextInput>,
-    /// Global-instructions editor behind the expandable card.
     instructions: Entity<TextInput>,
     instructions_open: bool,
-    /// (id, title) of a chat pending delete confirmation.
+    rename_input: Entity<TextInput>,
+    rename_open: bool,
+    rename_error: Option<String>,
     confirm_delete: Option<(String, String)>,
-    /// Multi-select state ("Select" mode for bulk delete).
     selection_mode: bool,
     selected: HashSet<String>,
     confirm_bulk_delete: bool,
@@ -56,16 +56,131 @@ impl ChatsView {
         })
         .detach();
 
+        let rename_input = cx.new(|cx| TextInput::new(cx, "Enter chat name"));
+        cx.observe(&rename_input, |this, _, cx| {
+            this.rename_error = None;
+            cx.notify();
+        })
+        .detach();
+        cx.subscribe(&rename_input, |this, _, event, cx| {
+            if matches!(event, InputEvent::Submit(_)) {
+                this.confirm_rename(cx);
+            }
+        })
+        .detach();
+
         Self {
             chats: persistence::list_chats(),
             search,
             instructions,
             instructions_open: false,
+            rename_input,
+            rename_open: false,
+            rename_error: None,
             confirm_delete: None,
             selection_mode: false,
             selected: HashSet::new(),
             confirm_bulk_delete: false,
         }
+    }
+
+    fn open_rename(&mut self, title: &str, cx: &mut Context<Self>) {
+        self.rename_open = true;
+        self.rename_error = None;
+        self.rename_input.update(cx, |input, cx| input.set_text(title, cx));
+        cx.notify();
+    }
+
+    fn close_rename(&mut self, cx: &mut Context<Self>) {
+        self.rename_open = false;
+        self.rename_error = None;
+        cx.notify();
+    }
+
+    fn confirm_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.selected.iter().next().cloned().filter(|_| self.selected.len() == 1)
+        else {
+            return;
+        };
+        let text = self.rename_input.read(cx).text();
+        match validate_rename_name(&text) {
+            Err(msg) => {
+                self.rename_error = Some(msg.to_string());
+                cx.notify();
+            }
+            Ok(title) => {
+                if persistence::rename_chat(&id, &title) {
+                    self.close_rename(cx);
+                    self.reload(cx);
+                } else {
+                    self.rename_error = Some("Failed to rename chat".into());
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    fn rename_modal(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if !self.rename_open {
+            return None;
+        }
+        let theme = cx.theme().clone();
+        let error = self.rename_error.clone();
+
+        Some(
+            div()
+                .absolute()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::black().opacity(0.5))
+                .occlude()
+                .child(
+                    div()
+                        .w(px(400.))
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .p_4()
+                        .rounded_xl()
+                        .bg(theme.card)
+                        .border_1()
+                        .border_color(theme.border)
+                        .child(
+                            div()
+                                .text_color(theme.text)
+                                .font_weight(FontWeight::MEDIUM)
+                                .child("Rename chat"),
+                        )
+                        .child(self.rename_input.clone())
+                        .children(error.map(|msg| {
+                            div().text_xs().text_color(theme.error).child(msg)
+                        }))
+                        .child(
+                            div()
+                                .flex()
+                                .justify_end()
+                                .gap_2()
+                                .child(
+                                    Button::new("rename-cancel", "Cancel")
+                                        .kind(ButtonKind::Secondary)
+                                        .size(ButtonSize::Small)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.close_rename(cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("rename-save", "Save")
+                                        .kind(ButtonKind::Primary)
+                                        .size(ButtonSize::Small)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.confirm_rename(cx);
+                                        })),
+                                ),
+                        ),
+                ),
+        )
     }
 
     /// Expandable "Add instructions to all chats" card (mirai-chat parity). The
@@ -269,6 +384,47 @@ impl ChatsView {
                     select_all.bg(theme.info).child(IconEl::new(Icon::Check, theme.card).size(12.));
             }
 
+            let show_rename = count == 1 && !all;
+
+            let mut actions = div().flex().items_center().gap_2();
+            if show_rename {
+                let title = self
+                    .chats
+                    .iter()
+                    .find(|c| self.selected.contains(&c.id))
+                    .map(|c| c.title.clone())
+                    .unwrap_or_default();
+                actions = actions.child(
+                    IconButton::new("rename-one", Icon::Rename)
+                        .color(theme.text_muted)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_rename(&title, cx);
+                        })),
+                );
+            }
+            actions = actions
+                .child(
+                    Button::new("bulk-delete", "Delete")
+                        .kind(ButtonKind::Danger)
+                        .size(ButtonSize::Small)
+                        .disabled(count == 0)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if !this.selected.is_empty() {
+                                this.confirm_bulk_delete = true;
+                                cx.notify();
+                            }
+                        })),
+                )
+                .child(
+                    IconButton::new("sel-exit", Icon::Close)
+                        .color(theme.text_muted)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.selection_mode = false;
+                            this.selected.clear();
+                            cx.notify();
+                        })),
+                );
+
             div()
                 .flex()
                 .items_center()
@@ -282,33 +438,7 @@ impl ChatsView {
                             .child(format!("{count} selected")),
                     ),
                 )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            Button::new("bulk-delete", "Delete")
-                                .kind(ButtonKind::Danger)
-                                .size(ButtonSize::Small)
-                                .disabled(count == 0)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    if !this.selected.is_empty() {
-                                        this.confirm_bulk_delete = true;
-                                        cx.notify();
-                                    }
-                                })),
-                        )
-                        .child(
-                            IconButton::new("sel-exit", Icon::Close)
-                                .color(theme.text_muted)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.selection_mode = false;
-                                    this.selected.clear();
-                                    cx.notify();
-                                })),
-                        ),
-                )
+                .child(actions)
                 .into_any_element()
         } else {
             div()
@@ -466,5 +596,20 @@ impl Render for ChatsView {
             )
             .children(modal)
             .children(bulk_modal)
+            .children(self.rename_modal(cx))
     }
+}
+
+fn validate_rename_name(name: &str) -> Result<String, &'static str> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Name cannot be empty");
+    }
+    if trimmed.len() < 3 {
+        return Err("Name must be at least 3 characters long");
+    }
+    if trimmed.len() > 50 {
+        return Err("Name must be at most 50 characters long");
+    }
+    Ok(trimmed.to_string())
 }

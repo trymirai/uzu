@@ -39,7 +39,7 @@ Offscreen snapshot suite is green (14 screens + logic/unit tests).
 
 - ✅ Sidebar recent chats, search, bulk delete, global instructions card
 - ✅ Markdown chat-file interop (`.md` mirror on save; load JSON or markdown)
-- **P2** Rename chat modal
+- **P2** ~~Rename chat modal~~ (selection mode, single chat)
 - **P3** Export all chats from Chats page (Settings export exists)
 
 ## Local Models

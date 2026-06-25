@@ -193,6 +193,16 @@ pub fn delete_chat(id: &str) {
     let _ = fs::remove_file(dir.join(format!("{id}.md")));
 }
 
+pub fn rename_chat(id: &str, title: &str) -> bool {
+    let Some(mut chat) = load_chat(id) else {
+        return false;
+    };
+    chat.title = title.to_string();
+    chat.updated_at = now_ms();
+    save_chat(&chat);
+    true
+}
+
 /// All saved chats, newest first. JSON files are authoritative; markdown files
 /// with no JSON sibling (e.g. imported from mirai-chat) are parsed in too.
 pub fn list_chats() -> Vec<StoredChat> {
