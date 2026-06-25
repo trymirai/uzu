@@ -1,4 +1,4 @@
-//! Text-to-speech: voice models, synthesize, playback, and history.
+//! Text-to-speech screen.
 
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
@@ -41,6 +41,12 @@ struct TtsVm {
     progress: f32,
 }
 
+struct PendingGen {
+    text: String,
+    model: Model,
+    vendor: String,
+}
+
 pub struct TtsView {
     store: Entity<ModelsStore>,
     input: Entity<TextInput>,
@@ -52,9 +58,7 @@ pub struct TtsView {
     history: Vec<TtsHistoryEntry>,
     playing_id: Option<String>,
     pending_batches: Vec<PcmBatch>,
-    gen_text: Option<String>,
-    gen_model: Option<Model>,
-    gen_vendor: Option<String>,
+    pending_gen: Option<PendingGen>,
 }
 
 impl TtsView {
@@ -77,10 +81,24 @@ impl TtsView {
             history: tts_history::list(),
             playing_id: None,
             pending_batches: Vec::new(),
-            gen_text: None,
-            gen_model: None,
-            gen_vendor: None,
+            pending_gen: None,
         }
+    }
+
+    fn clear_gen(&mut self) {
+        self.pending_batches.clear();
+        self.pending_gen = None;
+    }
+
+    fn append_pcm(&mut self, batch: PcmBatch) -> Result<(), String> {
+        if self.player.is_none() {
+            self.player = Some(Player::new().map_err(|e| format!("audio: {e}"))?);
+        }
+        self.player
+            .as_ref()
+            .expect("player just opened")
+            .append_pcm_batch(batch)
+            .map_err(|e| format!("audio: {e}"))
     }
 
     fn reload_history(&mut self) {
@@ -116,15 +134,18 @@ impl TtsView {
         self.error = None;
         self.playing_id = None;
         self.pending_batches.clear();
-        self.gen_text = Some(text.clone());
-        self.gen_model = Some(model.clone());
-        self.gen_vendor = self
-            .store
-            .read(cx)
-            .rows
-            .iter()
-            .find(|r| r.model.identifier == model.identifier)
-            .and_then(|r| r.vendor().map(|v| v.to_string()));
+        self.pending_gen = Some(PendingGen {
+            text: text.clone(),
+            model: model.clone(),
+            vendor: self
+                .store
+                .read(cx)
+                .rows
+                .iter()
+                .find(|r| r.model.identifier == model.identifier)
+                .and_then(|r| r.vendor())
+                .unwrap_or_else(|| "Other".to_string()),
+        });
         cx.notify();
 
         let Some(engine) = engine::try_engine(cx) else {
@@ -174,65 +195,37 @@ impl TtsView {
             TtsMsg::Started(token) => self.cancel = Some(token),
             TtsMsg::Batch(batch) => {
                 self.pending_batches.push(batch.clone());
-                if self.player.is_none() {
-                    match Player::new() {
-                        Ok(player) => self.player = Some(player),
-                        Err(err) => {
-                            self.error = Some(format!("audio: {err}"));
-                            self.generating = false;
-                            cx.notify();
-                            return;
-                        }
-                    }
-                }
-                if let Some(player) = &self.player {
-                    if let Err(err) = player.append_pcm_batch(batch) {
-                        self.error = Some(format!("audio: {err}"));
-                    }
+                if let Err(err) = self.append_pcm(batch) {
+                    self.error = Some(err);
+                    self.generating = false;
                 }
             }
             TtsMsg::Done => {
                 self.generating = false;
                 self.cancel = None;
                 if self.error.is_none() {
-                    if let (Some(model), Some(text)) = (&self.gen_model, &self.gen_text) {
-                        let vendor = self.gen_vendor.as_deref().unwrap_or("Other");
-                        if tts_history::save_generation(model, vendor, text, &self.pending_batches).is_some() {
+                    if let Some(pending) = self.pending_gen.as_ref() {
+                        if tts_history::save_generation(
+                            &pending.model,
+                            &pending.vendor,
+                            &pending.text,
+                            &self.pending_batches,
+                        )
+                        .is_some()
+                        {
                             self.reload_history();
                         }
                     }
                 }
-                self.pending_batches.clear();
-                self.gen_text = None;
-                self.gen_model = None;
-                self.gen_vendor = None;
+                self.clear_gen();
                 cx.notify();
             }
             TtsMsg::Error(err) => {
                 self.error = Some(err);
                 self.generating = false;
                 self.cancel = None;
-                self.pending_batches.clear();
-                self.gen_text = None;
-                self.gen_model = None;
-                self.gen_vendor = None;
+                self.clear_gen();
                 cx.notify();
-            }
-        }
-    }
-
-    fn ensure_player(&mut self) -> bool {
-        if self.player.is_some() {
-            return true;
-        }
-        match Player::new() {
-            Ok(player) => {
-                self.player = Some(player);
-                true
-            }
-            Err(err) => {
-                self.error = Some(format!("audio: {err}"));
-                false
             }
         }
     }
@@ -250,16 +243,9 @@ impl TtsView {
         if let Some(player) = &self.player {
             player.stop();
         }
-        if !self.ensure_player() {
+        if self.append_pcm(batch).is_err() {
             cx.notify();
             return;
-        }
-        if let Some(player) = &self.player {
-            if player.append_pcm_batch(batch).is_err() {
-                self.error = Some("playback failed".into());
-                cx.notify();
-                return;
-            }
         }
         self.playing_id = Some(id.to_string());
         self.error = None;
@@ -295,10 +281,7 @@ impl TtsView {
         self.stop_playback(cx);
         self.generating = false;
         self.cancel = None;
-        self.pending_batches.clear();
-        self.gen_text = None;
-        self.gen_model = None;
-        self.gen_vendor = None;
+        self.clear_gen();
         cx.notify();
     }
 

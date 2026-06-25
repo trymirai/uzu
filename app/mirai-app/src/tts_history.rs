@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{fs, path::{Path, PathBuf}};
 
 use serde::{Deserialize, Serialize};
 use uzu::types::{basic::PcmBatch, model::Model};
@@ -15,7 +15,7 @@ pub struct TtsHistoryEntry {
     pub created_at: u64,
 }
 
-fn history_path() -> std::path::PathBuf {
+fn history_path() -> PathBuf {
     persistence::mirai_data_dir().join("tts-history.json")
 }
 
@@ -36,7 +36,7 @@ fn write_all(entries: &[TtsHistoryEntry]) {
     }
 }
 
-pub fn merge_batches(batches: &[PcmBatch]) -> Option<PcmBatch> {
+fn merge_batches(batches: &[PcmBatch]) -> Option<PcmBatch> {
     let first = batches.first()?;
     Some(PcmBatch {
         samples: batches.iter().flat_map(|b| b.samples.iter().copied()).collect(),
