@@ -233,6 +233,30 @@ impl MiraiApp {
             }))
     }
 
+    /// Disabled "Apps" nav row with a trailing "Soon" tag (mirai-chat parity).
+    fn apps_soon_item(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .h(px(34.))
+            .px_2()
+            .mx_2()
+            .rounded_md()
+            .text_color(theme.text_muted)
+            .text_sm()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(IconEl::new(Icon::Apps, theme.text_muted).size(18.))
+                    .child("Apps"),
+            )
+            .child(div().text_xs().text_color(theme.text_muted).child("Soon"))
+    }
+
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let section = self.route.section();
@@ -295,28 +319,13 @@ impl MiraiApp {
                     ))
                     .child(self.nav_item(
                         cx,
-                        "nav-cloud",
-                        Icon::ModelMenu,
-                        "Cloud Models",
-                        Route::CloudModels,
-                        section == Section::CloudModels,
-                    ))
-                    .child(self.nav_item(
-                        cx,
-                        "nav-routers",
-                        Icon::Routers,
-                        "Routers",
-                        Route::Routers,
-                        section == Section::Routers,
-                    ))
-                    .child(self.nav_item(
-                        cx,
                         "nav-tts",
                         Icon::Speech,
                         "Text to Speech",
                         Route::Tts,
                         section == Section::Tts,
-                    )),
+                    ))
+                    .child(self.apps_soon_item(cx)),
             )
             // Recent chats fill the space between nav and the pinned Settings.
             .child(self.render_recent_chats(cx))
