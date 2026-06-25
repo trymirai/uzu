@@ -352,6 +352,9 @@ impl LocalModelsView {
         };
 
         div()
+            // Stable id so hover state persists and updates on mouse-move
+            // (not only on scroll-triggered repaints).
+            .id(SharedString::from(format!("model-{}", vm.id)))
             .flex()
             .items_center()
             .gap_4()
