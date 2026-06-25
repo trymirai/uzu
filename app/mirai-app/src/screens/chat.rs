@@ -227,6 +227,18 @@ impl ChatView {
         self.session_model_id = None;
     }
 
+    fn cached_session(&self, model_id: &str) -> Option<ChatSession> {
+        self.session
+            .as_ref()
+            .filter(|_| self.session_model_id.as_deref() == Some(model_id))
+            .cloned()
+    }
+
+    fn store_session(&mut self, session: ChatSession, model_id: &str) {
+        self.session = Some(session);
+        self.session_model_id = Some(model_id.to_string());
+    }
+
     /// The model the footer shows as loaded (None → "No model loaded").
     pub fn loaded_model_name(&self) -> Option<String> {
         self.loaded_model.clone()
@@ -766,11 +778,7 @@ impl ChatView {
             .with_token_limit((self.max_tokens > 0).then_some(self.max_tokens));
 
         let model_id = model.identifier.clone();
-        let cached_session = self
-            .session
-            .as_ref()
-            .filter(|_| self.session_model_id.as_deref() == Some(&model_id))
-            .cloned();
+        let cached_session = self.cached_session(&model_id);
 
         let (tx, mut rx) = mpsc::unbounded::<StreamMsg>();
 
@@ -835,8 +843,9 @@ impl ChatView {
         match msg {
             StreamMsg::Started(token) => self.cancel = Some(token),
             StreamMsg::Session(session) => {
-                self.session = Some(session);
-                self.session_model_id = self.model.as_ref().map(|m| m.identifier.clone());
+                if let Some(id) = self.model.as_ref().map(|m| m.identifier.clone()) {
+                    self.store_session(session, &id);
+                }
             }
             StreamMsg::DropSession => self.clear_session(),
             StreamMsg::Update {
