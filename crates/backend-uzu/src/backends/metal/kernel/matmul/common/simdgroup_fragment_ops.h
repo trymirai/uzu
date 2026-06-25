@@ -23,7 +23,17 @@ struct SimdgroupFragmentOps {
   template <typename U>
   using ThreadVector = typename metal::vec<U, ELEMENTS_PER_THREAD>;
 
-  // Serpentine order matches the chain kernel's register reuse.
+  METAL_FUNC static constexpr short2 get_position(ushort simd_lane_id) {
+    const short quad = simd_lane_id / 4;
+    const short row = (quad & 4) + (simd_lane_id / 2) % 4;
+    const short col = ((quad & 2) + simd_lane_id % 2) * THREAD_ELEMENT_COLS;
+    return short2{col, row};
+  }
+
+  METAL_FUNC static constexpr short2 get_element_offset(ushort element_index) {
+    return short2{short(element_index), 0};
+  }
+
   template <bool transpose_a, bool transpose_b, class OutputFragment, class LeftFragment, class RightFragment>
   METAL_FUNC static void fragment_mma(
       thread OutputFragment& output,
@@ -55,6 +65,17 @@ struct SimdgroupFragmentOps {
         }
       }
     }
+  }
+
+  template <bool transpose_a, bool transpose_b, class OutputFragment, class LeftFragment, class RightFragment>
+  METAL_FUNC static void fragment_mm(
+      thread OutputFragment& output,
+      thread LeftFragment& left,
+      thread RightFragment& right
+  ) {
+    // simdgroup_multiply is slower here.
+    output.clear();
+    fragment_mma<transpose_a, transpose_b>(output, left, right);
   }
 };
 

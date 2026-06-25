@@ -33,9 +33,9 @@ METAL_FUNC auto gemm_loop(
     const short simdgroup_limit_n,
     const thread ThreadContext& thread_context
 ) {
-  constexpr ushort TILES_M = SIMDGROUP_BLOCK_M / MxuFragmentOps::FRAGMENT_ROWS;
-  constexpr ushort TILES_N = SIMDGROUP_BLOCK_N / MxuFragmentOps::FRAGMENT_COLS;
-  constexpr ushort TILES_K = SIMDGROUP_BLOCK_K / MxuFragmentOps::FRAGMENT_ROWS;
+  constexpr ushort TILES_M = SIMDGROUP_BLOCK_M / MxuFragmentOps<>::FRAGMENT_ROWS;
+  constexpr ushort TILES_N = SIMDGROUP_BLOCK_N / MxuFragmentOps<>::FRAGMENT_COLS;
+  constexpr ushort TILES_K = SIMDGROUP_BLOCK_K / MxuFragmentOps<>::FRAGMENT_ROWS;
 
   constexpr ushort LEFT_TILE_ROWS = transpose_a ? TILES_K : TILES_M;
   constexpr ushort LEFT_TILE_COLS = transpose_a ? TILES_M : TILES_K;
@@ -43,7 +43,7 @@ METAL_FUNC auto gemm_loop(
   constexpr ushort RIGHT_TILE_ROWS = transpose_b ? TILES_N : TILES_K;
   constexpr ushort RIGHT_TILE_COLS = transpose_b ? TILES_K : TILES_N;
 
-  Fragment<AccumulatorType, TILES_M, TILES_N, MxuFragmentOps> accumulator;
+  Fragment<AccumulatorType, TILES_M, TILES_N, MxuFragmentOps<>> accumulator;
   accumulator.clear();
 
   METAL_PRAGMA_NO_UNROLL
@@ -52,8 +52,8 @@ METAL_FUNC auto gemm_loop(
 
     METAL_PRAGMA_NO_UNROLL
     for (int inner_k = 0; inner_k < BLOCK_K; inner_k += SIMDGROUP_BLOCK_K) {
-      Fragment<AT, LEFT_TILE_ROWS, LEFT_TILE_COLS, MxuFragmentOps> left_tile;
-      Fragment<BT, RIGHT_TILE_ROWS, RIGHT_TILE_COLS, MxuFragmentOps> right_tile;
+      Fragment<AT, LEFT_TILE_ROWS, LEFT_TILE_COLS, MxuFragmentOps<>> left_tile;
+      Fragment<BT, RIGHT_TILE_ROWS, RIGHT_TILE_COLS, MxuFragmentOps<>> right_tile;
 
       volatile int mxu_iteration_fence;
 
@@ -76,7 +76,7 @@ METAL_FUNC auto gemm_loop(
       }
       right_tile.load_from(thread_context.simd_lane_id, right_src);
 
-      MxuFragmentOps::template fragment_mma<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
+      MxuFragmentOps<>::template fragment_mma<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
 
       (void)mxu_iteration_fence;
     }
@@ -92,8 +92,8 @@ METAL_FUNC auto gemm_loop(
 
     METAL_PRAGMA_NO_UNROLL
     for (int inner_k = 0; inner_k < remaining_k; inner_k += SIMDGROUP_BLOCK_K) {
-      Fragment<AT, LEFT_TILE_ROWS, LEFT_TILE_COLS, MxuFragmentOps> left_tile;
-      Fragment<BT, RIGHT_TILE_ROWS, RIGHT_TILE_COLS, MxuFragmentOps> right_tile;
+      Fragment<AT, LEFT_TILE_ROWS, LEFT_TILE_COLS, MxuFragmentOps<>> left_tile;
+      Fragment<BT, RIGHT_TILE_ROWS, RIGHT_TILE_COLS, MxuFragmentOps<>> right_tile;
 
       const short safe_k = max(short(0), short(remaining_k - inner_k));
 
@@ -112,7 +112,7 @@ METAL_FUNC auto gemm_loop(
           fragment_source(right_ptr + right_offset, leading_dimension_b).bounded(right_limits.y, right_limits.x)
       );
 
-      MxuFragmentOps::template fragment_mma<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
+      MxuFragmentOps<>::template fragment_mma<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
     }
   }
 
