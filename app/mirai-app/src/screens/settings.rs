@@ -1,5 +1,6 @@
-//! Settings screen: tabbed (General / Privacy / About). Connectors and
-//! auto-eject are later refinements.
+//! Settings screen: an inner sidebar (General / Privacy / About Mirai) with a
+//! scrollable content panel, mirroring mirai-chat. OS-integration rows
+//! (run-on-startup, menu bar, global shortcut) are intentionally omitted.
 
 use gpui::{
     AnyElement, Context, CursorStyle, Entity, FontWeight, IntoElement, Render, Window, div,
@@ -7,10 +8,12 @@ use gpui::{
 };
 
 use crate::{
-    components::{Icon, IconEl, InputEvent, SegmentedControl, TextInput, Toggle},
+    components::{Button, ButtonKind, ButtonSize, Icon, IconEl, InputEvent, TextInput, Toggle},
     persistence, settings_state,
-    theme::{ActiveTheme, Theme, layout::CONTENT_MAX_WIDTH},
+    theme::{ActiveTheme, Theme},
 };
+
+const DISCORD_URL: &str = "https://discord.com/invite/gUhyn6Rb7x";
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -161,134 +164,257 @@ impl SettingsView {
             }))
     }
 
-    fn section(
-        &self,
-        cx: &mut Context<Self>,
-        title: &'static str,
-        body: impl IntoElement,
-    ) -> impl IntoElement {
+    /// Select a tab by index (0 General, 1 Privacy, 2 About) — used by visual tests.
+    pub fn select_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.tab = match index {
+            1 => SettingsTab::Privacy,
+            2 => SettingsTab::About,
+            _ => SettingsTab::General,
+        };
+        cx.notify();
+    }
+
+    /// One inner-sidebar nav item.
+    fn nav_item(&self, cx: &mut Context<Self>, label: &'static str, tab: SettingsTab) -> AnyElement {
+        let theme = cx.theme().clone();
+        let active = self.tab == tab;
+        let hover = theme.bg_hover;
+        div()
+            .id(label)
+            .flex()
+            .items_center()
+            .h(px(32.))
+            .px_2()
+            .rounded_md()
+            .text_sm()
+            .text_color(if active { theme.text } else { theme.text_muted })
+            .bg(if active { theme.bg_hover } else { gpui::transparent_black() })
+            .cursor(CursorStyle::PointingHand)
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.tab = tab;
+                cx.notify();
+            }))
+            .child(label)
+            .into_any_element()
+    }
+
+    fn divider(&self, cx: &mut Context<Self>) -> AnyElement {
+        div().h(px(1.)).w_full().bg(cx.theme().border).into_any_element()
+    }
+
+    /// Feedback row shown at the foot of General / Privacy.
+    fn feedback_footer(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .pt_4()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child("Let us know your feedback or request a new feature"),
+            )
+            .child(
+                Button::new("give-feedback", "Give Feedback")
+                    .kind(ButtonKind::Secondary)
+                    .size(ButtonSize::Small)
+                    .on_click(|_, _, cx| cx.open_url(DISCORD_URL)),
+            )
+            .into_any_element()
+    }
+
+    fn general_content(&self, cx: &mut Context<Self>) -> AnyElement {
+        let settings = settings_state::current(cx);
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(self.instructions_card(cx))
+            .child(self.divider(cx))
+            .child(self.toggle_row(
+                cx,
+                "Default reasoning mode",
+                "Let reasoning models think by default. You can override this for each model.",
+                settings.reasoning,
+                SettingKind::Reasoning,
+            ))
+            .child(self.feedback_footer(cx))
+            .into_any_element()
+    }
+
+    fn privacy_content(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         div()
             .flex()
             .flex_col()
-            .pt_6()
+            .gap_2()
             .child(
                 div()
-                    .pb_1()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .pb_2()
+                    .child(IconEl::new(Icon::Lock, theme.text).size(20.))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.text)
+                            .child("All data is processed and stored locally on your device."),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child("Your privacy is built into the core of how Mirai runs."),
+                    ),
+            )
+            .child(self.divider(cx))
+            .child(link_row(
+                "terms",
+                "Terms of Service",
+                "https://artifacts.trymirai.com/legal/Mirai_Tech_Terms_of_Use.pdf",
+                &theme,
+            ))
+            .child(link_row(
+                "privacy-policy",
+                "Privacy Policy",
+                "https://artifacts.trymirai.com/legal/Mirai_Tech_Privacy_Policy.pdf",
+                &theme,
+            ))
+            .child(self.feedback_footer(cx))
+            .into_any_element()
+    }
+
+    fn about_content(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().text_sm().text_color(theme.text).child(
+                "Done by a team who share a vision for accessible and powerful local AI.",
+            ))
+            .child(
+                div()
+                    .flex()
+                    .gap_4()
+                    .child(link_row("about-website", "Website", "https://trymirai.com/", &theme))
+                    .child(link_row("about-github", "GitHub", "https://github.com/trymirai", &theme))
+                    .child(link_row("about-vision", "Vision", "https://trymirai.com/about-us", &theme))
+                    .child(link_row("about-docs", "Docs", "https://docs.trymirai.com/", &theme)),
+            )
+            .child(self.divider(cx))
+            .child(
+                div()
+                    .pt_1()
                     .text_xs()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.text_muted)
-                    .child(title),
+                    .child("Our products"),
             )
-            .child(body)
+            .child(product_row(
+                "prod-platform",
+                "Mirai platform",
+                "A web console to set up the SDK for your product",
+                "https://platform.trymirai.com",
+                &theme,
+            ))
+            .child(product_row(
+                "prod-cli",
+                "Command-line interface",
+                "Interactively message a model or start a local server",
+                "https://docs.trymirai.com/overview/cli",
+                &theme,
+            ))
+            .child(product_row(
+                "prod-engine",
+                "Rust inference engine",
+                "Designed to run models on specific hardware",
+                "https://github.com/trymirai/uzu",
+                &theme,
+            ))
+            .child(
+                div()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(format!("Version {APP_VERSION}")),
+            )
+            .into_any_element()
     }
 }
 
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let settings = settings_state::current(cx);
-
-        let general = div().flex().flex_col().child(self.toggle_row(
-            cx,
-            "Default reasoning mode",
-            "Let reasoning models think by default. You can override this for each model.",
-            settings.reasoning,
-            SettingKind::Reasoning,
-        ));
 
         let content = match self.tab {
-            SettingsTab::General => div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .pt_6()
-                .child(self.instructions_card(cx))
-                .child(general)
-                .into_any_element(),
-            SettingsTab::Privacy => {
-                let body = div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(div().text_sm().text_color(theme.text).child(
-                        "All data is processed and stored locally on your device.",
-                    ))
-                    .child(div().text_xs().text_color(theme.text_muted).child(
-                        "Models run on-device — your conversations never leave your machine.",
-                    ));
-                self.section(cx, "Privacy", body).into_any_element()
-            }
-            SettingsTab::About => {
-                let body = div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(div().text_sm().text_color(theme.text).child("Mirai"))
-                    .child(div().text_xs().text_color(theme.text_muted).child(format!(
-                        "Version {APP_VERSION}"
-                    )))
-                    .child(link_row("about-uzu", "uzu engine on GitHub", "https://github.com/trymirai/uzu", &theme));
-                self.section(cx, "About", body).into_any_element()
-            }
+            SettingsTab::General => self.general_content(cx),
+            SettingsTab::Privacy => self.privacy_content(cx),
+            SettingsTab::About => self.about_content(cx),
         };
 
-        let tabs = SegmentedControl::new("settings-tabs", self.tab as usize)
-            .segment(
-                "General",
-                cx.listener(|this, _, _, cx| {
-                    this.tab = SettingsTab::General;
-                    cx.notify();
-                }),
-            )
-            .segment(
-                "Privacy",
-                cx.listener(|this, _, _, cx| {
-                    this.tab = SettingsTab::Privacy;
-                    cx.notify();
-                }),
-            )
-            .segment(
-                "About Mirai",
-                cx.listener(|this, _, _, cx| {
-                    this.tab = SettingsTab::About;
-                    cx.notify();
-                }),
-            );
+        let nav = div()
+            .w(px(160.))
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p_2()
+            .border_r_1()
+            .border_color(theme.border)
+            .child(self.nav_item(cx, "General", SettingsTab::General))
+            .child(self.nav_item(cx, "Privacy", SettingsTab::Privacy))
+            .child(self.nav_item(cx, "About Mirai", SettingsTab::About));
 
         div()
             .size_full()
             .flex()
             .flex_col()
-            .items_center()
+            // Title bar spanning the full width, above the sidebar + content.
             .child(
                 div()
-                    .id("settings-scroll")
                     .w_full()
-                    .max_w(px(CONTENT_MAX_WIDTH))
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .overflow_y_scroll()
+                    .flex_none()
+                    .pt_10()
+                    .pb_3()
                     .px_6()
+                    .border_b_1()
+                    .border_color(theme.border)
                     .child(
                         div()
-                            .w_full()
-                            .text_center()
-                            .pt_10()
-                            .pb_3()
-                            .text_xl()
+                            .text_size(px(16.))
                             .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.text)
                             .child("Settings"),
-                    )
-                    .child(div().max_w(px(360.)).child(tabs))
-                    .child(content),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(nav)
+                    .child(
+                        div()
+                            .id("settings-content")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .px_6()
+                            .py_4()
+                            .child(content),
+                    ),
             )
     }
 }
 
-/// A clickable About-tab row that opens `url` in the browser.
+/// A clickable text link that opens `url` in the browser.
 fn link_row(id: &'static str, label: &'static str, url: &'static str, theme: &Theme) -> impl IntoElement {
     let hover = theme.bg_hover;
     div()
@@ -302,4 +428,36 @@ fn link_row(id: &'static str, label: &'static str, url: &'static str, theme: &Th
         .hover(move |s| s.bg(hover))
         .on_click(move |_, _, cx| cx.open_url(url))
         .child(label)
+}
+
+/// A product row (title + description + chevron) linking to `url`.
+fn product_row(
+    id: &'static str,
+    title: &'static str,
+    desc: &'static str,
+    url: &'static str,
+    theme: &Theme,
+) -> impl IntoElement {
+    let hover = theme.bg_hover;
+    let text = theme.text;
+    let muted = theme.text_muted;
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_between()
+        .py_2()
+        .px_2()
+        .rounded_md()
+        .cursor(gpui::CursorStyle::PointingHand)
+        .hover(move |s| s.bg(hover))
+        .on_click(move |_, _, cx| cx.open_url(url))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .child(div().text_sm().text_color(text).child(title))
+                .child(div().text_xs().text_color(muted).child(desc)),
+        )
+        .child(IconEl::new(Icon::ChevronRight, muted).size(14.))
 }

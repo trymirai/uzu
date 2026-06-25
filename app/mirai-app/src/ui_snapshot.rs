@@ -195,6 +195,24 @@ fn render_settings() {
 }
 
 #[test]
+fn render_settings_privacy() {
+    render_png("settings-privacy", 1200.0, 800.0, |_, cx| {
+        let v = cx.new(screens::SettingsView::new);
+        v.update(cx, |s, cx| s.select_tab(1, cx));
+        v
+    });
+}
+
+#[test]
+fn render_settings_about() {
+    render_png("settings-about", 1200.0, 800.0, |_, cx| {
+        let v = cx.new(screens::SettingsView::new);
+        v.update(cx, |s, cx| s.select_tab(2, cx));
+        v
+    });
+}
+
+#[test]
 #[ignore = "boots a real engine; run explicitly with --ignored"]
 fn render_local_models() {
     render_png_with_engine("local-models", 1200.0, 800.0, |_, cx| {
