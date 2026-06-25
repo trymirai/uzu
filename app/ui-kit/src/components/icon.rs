@@ -39,6 +39,7 @@ pub enum Icon {
     Error,
     Info,
     Code,
+    Devices,
     Spinner,
 }
 
@@ -78,6 +79,7 @@ impl Icon {
             Icon::Error => "icons/error.svg",
             Icon::Info => "icons/info.svg",
             Icon::Code => "icons/code.svg",
+            Icon::Devices => "icons/devices.svg",
             Icon::Spinner => "icons/spinner.svg",
         }
     }

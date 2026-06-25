@@ -450,7 +450,7 @@ impl Render for LocalModelsView {
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(IconEl::new(Icon::Models, theme.text).size(22.))
+                .child(IconEl::new(Icon::Devices, theme.text).size(22.))
                 .child(
                     div()
                         .text_xl()
