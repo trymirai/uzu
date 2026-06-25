@@ -42,12 +42,12 @@ impl RecorderHandle {
         // caller never waits for the in-flight ~interval sample (which would also span
         // post-work idle time). The detached worker exits on its next flag check.
         self.stop_flag.store(true, Ordering::Relaxed);
-        let (device, snapshots) = self
-            .recording
-            .lock()
-            .map(|recording| (recording.device.clone(), recording.snapshots.clone()))
-            .unwrap_or_default();
-        let markers = self.markers.lock().map(|markers| markers.clone()).unwrap_or_default();
+        // Move the buffers out rather than cloning; the detached worker won't read them.
+        let Recording {
+            device,
+            snapshots,
+        } = self.recording.lock().map(|mut recording| std::mem::take(&mut *recording)).unwrap_or_default();
+        let markers = self.markers.lock().map(|mut markers| std::mem::take(&mut *markers)).unwrap_or_default();
         Session {
             device,
             interval: Milliseconds(self.interval.as_millis() as u64),
