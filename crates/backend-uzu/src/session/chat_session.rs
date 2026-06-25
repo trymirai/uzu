@@ -293,7 +293,7 @@ impl ChatSession {
             let output = if prefill_should_continue {
                 prefill_output
             } else {
-                prefill_output.clone_with_finish_reason(Some(FinishReason::Cancelled))
+                prefill_output.with_finish_reason(Some(FinishReason::Cancelled))
             };
             return Ok(Self::attach_runtime_stats(
                 output,
@@ -386,7 +386,7 @@ impl ChatSession {
                 if generate_should_continue {
                     return Ok(generate_output);
                 } else {
-                    return Ok(generate_output.clone_with_finish_reason(Some(FinishReason::Cancelled)));
+                    return Ok(generate_output.with_finish_reason(Some(FinishReason::Cancelled)));
                 }
             }
         }

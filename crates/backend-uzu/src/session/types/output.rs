@@ -19,14 +19,11 @@ pub struct Output {
 }
 
 impl Output {
-    pub fn clone_with_finish_reason(
-        &self,
+    pub fn with_finish_reason(
+        mut self,
         finish_reason: Option<FinishReason>,
     ) -> Self {
-        Self {
-            text: self.text.clone(),
-            stats: self.stats.clone(),
-            finish_reason,
-        }
+        self.finish_reason = finish_reason;
+        self
     }
 }
