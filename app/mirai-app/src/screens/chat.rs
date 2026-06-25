@@ -51,6 +51,8 @@ struct Version {
     tps: Option<f32>,
     tokens: Option<u32>,
     error: bool,
+    /// Display name of the model that produced this version.
+    model_name: Option<String>,
 }
 
 struct ChatMsg {
@@ -632,6 +634,7 @@ impl ChatView {
                     tps: m.tps,
                     tokens: m.tokens,
                     error: false,
+                    ..Default::default()
                 }],
                 current: 0,
                 // Loaded chats collapse reasoning by default — they're already done.
@@ -916,7 +919,8 @@ impl ChatView {
 
     /// Start a fresh assistant reply for the latest turn.
     fn run_inference(&mut self, cx: &mut Context<Self>) {
-        self.messages.push(ChatMsg::assistant(Version::default()));
+        let model_name = self.model.as_ref().map(|m| m.name());
+        self.messages.push(ChatMsg::assistant(Version { model_name, ..Default::default() }));
         self.streaming = true;
         self.spawn_reply(cx);
     }
@@ -942,8 +946,9 @@ impl ChatView {
             self.clear_session();
         }
         self.messages.truncate(msg_idx + 1);
+        let model_name = self.model.as_ref().map(|m| m.name());
         if let Some(last) = self.messages.last_mut() {
-            last.versions.push(Version::default());
+            last.versions.push(Version { model_name, ..Default::default() });
             last.current = last.versions.len() - 1;
         }
         self.close_popovers();
@@ -1312,7 +1317,9 @@ impl Render for ChatView {
                                     .rounded_lg()
                                     .bg(theme.bg_hover)
                                     .text_color(theme.text)
-                                    .child(cur.text.clone()),
+                                    .child(crate::components::markdown::markdown(
+                                        &cur.text, &theme, idx,
+                                    )),
                             )
                         .into_any_element(),
                     Role::Assistant => {
@@ -1388,6 +1395,12 @@ impl Render for ChatView {
                         // Body (markdown for assistant prose + code blocks).
                         let body = if cur.error {
                             div()
+                                .p_3()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(theme.error.opacity(0.3))
+                                .bg(theme.error.opacity(0.08))
+                                .text_sm()
                                 .text_color(theme.error)
                                 .child(cur.text.clone())
                                 .into_any_element()
@@ -1441,9 +1454,19 @@ impl Render for ChatView {
                                     )
                                     .child(
                                         div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1()
                                             .text_xs()
                                             .text_color(theme.text_muted)
-                                            .child(format!("{cur_n}/{total}")),
+                                            .child(format!("{cur_n}/{total}"))
+                                            .when_some(cur.model_name.clone(), |el, name| {
+                                                el.child(
+                                                    div()
+                                                        .text_color(theme.text_muted.opacity(0.6))
+                                                        .child(format!("· {name}")),
+                                                )
+                                            }),
                                     )
                                     .child(
                                         div()
