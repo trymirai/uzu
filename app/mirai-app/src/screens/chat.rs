@@ -195,7 +195,8 @@ pub struct ChatView {
 
 impl EventEmitter<ChatEvent> for ChatView {}
 
-type ModelEntry = (String, Model, String, String);
+/// (id, model, display_name, vendor_name, icon_url)
+type ModelEntry = (String, Model, String, String, Option<String>);
 
 impl ChatView {
     pub fn new(
@@ -301,6 +302,7 @@ impl ChatView {
                     r.model.clone(),
                     r.name(),
                     r.vendor().unwrap_or_default(),
+                    r.icon_url(true),
                 )
             })
             .collect();
@@ -315,6 +317,7 @@ impl ChatView {
                     r.model.clone(),
                     r.name(),
                     r.vendor().unwrap_or_default(),
+                    r.icon_url(true),
                 )
             })
             .collect();
@@ -329,11 +332,30 @@ impl ChatView {
         model: Model,
         name: String,
         vendor: String,
-        badge: &'static str,
+        icon_url: Option<String>,
+        is_local: bool,
         hover: gpui::Hsla,
         for_message: Option<usize>,
     ) -> gpui::AnyElement {
         let theme = cx.theme().clone();
+        // Badge pill: "Local" in muted green, "Cloud" in info blue — small
+        // rounded pill matching Electron's model-selector badge.
+        let (badge_text, badge_color) = if is_local {
+            ("Local", theme.success)
+        } else {
+            ("Cloud", theme.info)
+        };
+        let badge = div()
+            .flex_none()
+            .px_1p5()
+            .py_0p5()
+            .rounded_md()
+            .border_1()
+            .border_color(badge_color.opacity(0.4))
+            .text_size(px(10.))
+            .text_color(badge_color)
+            .child(badge_text);
+
         div()
             .id(gpui::SharedString::from(format!("pick-{id}")))
             .flex()
@@ -345,7 +367,7 @@ impl ChatView {
             .rounded_md()
             .cursor(gpui::CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover))
-            .child(VendorIcon::new(vendor).size(18.))
+            .child(VendorIcon::new(vendor).size(20.).icon_url(icon_url))
             .child(
                 div()
                     .flex_1()
@@ -354,13 +376,7 @@ impl ChatView {
                     .text_color(theme.text)
                     .child(name),
             )
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(px(10.))
-                    .text_color(theme.text_muted)
-                    .child(badge),
-            )
+            .child(badge)
             .on_click(cx.listener(move |this, _, _, cx| {
                 if let Some(msg_idx) = for_message {
                     this.regenerate_at_with_model(msg_idx, Some(model.clone()), cx);
@@ -401,28 +417,14 @@ impl ChatView {
                     .child("No models available"),
             );
         } else {
-            for (id, model, name, vendor) in local {
+            for (id, model, name, vendor, icon_url) in local {
                 list = list.child(self.picker_row(
-                    cx,
-                    id,
-                    model,
-                    name,
-                    vendor,
-                    "Local",
-                    hover,
-                    for_message,
+                    cx, id, model, name, vendor, icon_url, true, hover, for_message,
                 ));
             }
-            for (id, model, name, vendor) in cloud {
+            for (id, model, name, vendor, icon_url) in cloud {
                 list = list.child(self.picker_row(
-                    cx,
-                    id,
-                    model,
-                    name,
-                    vendor,
-                    "Cloud",
-                    hover,
-                    for_message,
+                    cx, id, model, name, vendor, icon_url, false, hover, for_message,
                 ));
             }
         }
@@ -1285,11 +1287,22 @@ impl Render for ChatView {
             window.on_next_frame(move |_, cx| entity.update(cx, |_, cx| cx.notify()));
         }
         let show_reasoning = settings_state::current(cx).reasoning;
-        let model_name = self
-            .resolved_model(cx)
+        let resolved = self.resolved_model(cx);
+        let model_name = resolved
+            .as_ref()
             .map(|m| m.name())
             .unwrap_or_else(|| "Select model".to_string());
-        let has_model = self.resolved_model(cx).is_some();
+        let has_model = resolved.is_some();
+        // Icon URL for the trigger badge (prefer dark theme logo).
+        let trigger_icon_url: Option<String> = resolved.as_ref().and_then(|m| {
+            let icons = &m.family.as_ref()?.vendor.metadata.icons;
+            icons
+                .iter()
+                .find(|i| i.theme == uzu::types::basic::ImageTheme::Dark)
+                .or_else(|| icons.first())
+                .map(|i| i.url.clone())
+        });
+        let trigger_vendor = resolved.as_ref().and_then(|m| m.family.as_ref().map(|f| f.vendor.name())).unwrap_or_default();
 
         // Message column (`gap-4`, `pt-4`).
         let mut column = div().flex().flex_col().gap_4().pt_4().w_full();
@@ -1820,6 +1833,13 @@ impl Render for ChatView {
                                                                             cx.notify();
                                                                         },
                                                                     ))
+                                                                    .when(has_model, |el| {
+                                                                        el.child(
+                                                                            VendorIcon::new(trigger_vendor.clone())
+                                                                                .size(16.)
+                                                                                .icon_url(trigger_icon_url.clone()),
+                                                                        )
+                                                                    })
                                                                     .child(
                                                                         div()
                                                                             .text_size(px(13.))
@@ -1833,7 +1853,7 @@ impl Render for ChatView {
                                                                             Icon::ChevronDown,
                                                                             theme.text_muted,
                                                                         )
-                                                                        .size(16.),
+                                                                        .size(12.),
                                                                     ),
                                                             )
                                                             .child(send_button);
