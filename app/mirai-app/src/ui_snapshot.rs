@@ -275,6 +275,56 @@ fn render_chat_messages() {
     });
 }
 
+/// A long conversation that overflows the viewport, used to verify the
+/// composer does not overlap the scrolled-to-bottom message content.
+fn tall_stored_chat() -> StoredChat {
+    let mut messages = Vec::new();
+    for i in 0..6 {
+        messages.push(StoredMessage {
+            role: "user".into(),
+            text: format!("Question number {i}: tell me about a famous landmark."),
+            reasoning: None,
+            tps: None,
+            tokens: None,
+        });
+        messages.push(StoredMessage {
+            role: "assistant".into(),
+            text: format!(
+                "Answer {i}. Here is a comprehensive overview that spans several lines so the \
+                 conversation grows tall enough to overflow the viewport. The Eiffel Tower, \
+                 completed in 1889, is one of the most recognizable structures in the world. \
+                 The Plaza below it draws millions of visitors every year, and the surrounding \
+                 gardens are a popular destination for both tourists and locals alike."
+            ),
+            reasoning: None,
+            tps: Some(40.0),
+            tokens: Some(64),
+        });
+    }
+    StoredChat {
+        id: "tall".into(),
+        title: "Tall".into(),
+        model_name: Some("Qwen3.5 0.8B".into()),
+        created_at: 0,
+        updated_at: 0,
+        messages,
+    }
+}
+
+#[test]
+fn render_chat_overflow() {
+    // Tall chat scrolled to bottom (load_stored pins it there): the last
+    // message — text, perf stats, and actions — must sit above the composer
+    // with clearance, never behind it.
+    render_png("chat-overflow", 1200.0, 800.0, |_, cx| {
+        let store = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
+        let cloud = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
+        let chat = cx.new(|cx| screens::ChatView::new(store, cloud, cx));
+        chat.update(cx, |c, cx| c.load_stored(tall_stored_chat(), cx));
+        chat
+    });
+}
+
 #[test]
 fn render_welcome() {
     render_png("welcome", 1200.0, 800.0, |_, cx| cx.new(screens::WelcomeView::new));

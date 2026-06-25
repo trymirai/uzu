@@ -143,6 +143,11 @@ pub struct ChatView {
     chat_id: Option<String>,
     created_at: u64,
     scroll: ScrollHandle,
+    /// Frames remaining to keep re-pinning the scroll to the bottom. A single
+    /// `scroll_to_bottom()` lands short because wrapped-text height is only
+    /// final after the second layout pass; re-asserting for a few frames lets
+    /// the offset converge to the true bottom as `content_size` settles.
+    pin_bottom_frames: u8,
     model_picker_open: bool,
     /// Name of the model the UI considers "loaded" (set once a chat runs).
     /// uzu has no unload API, so eject is a UI-level indicator/deselect.
@@ -187,6 +192,7 @@ impl ChatView {
             chat_id: None,
             created_at: persistence::now_ms(),
             scroll: ScrollHandle::new(),
+            pin_bottom_frames: 0,
             model_picker_open: false,
             loaded_model: None,
             gen_settings_open: false,
@@ -397,7 +403,17 @@ impl ChatView {
         self.model = None; // re-resolved on next send
         self.streaming = false;
         self.cancel = None;
+        // Opening a saved chat lands on its most recent message.
+        self.pin_to_bottom();
         cx.notify();
+    }
+
+    /// Keep the message list pinned to the bottom for the next few frames so
+    /// the scroll offset converges to the true bottom once wrapped-text height
+    /// has settled (a single `scroll_to_bottom` lands short — see the field).
+    fn pin_to_bottom(&mut self) {
+        self.scroll.scroll_to_bottom();
+        self.pin_bottom_frames = 4;
     }
 
     fn save(&mut self) {
@@ -756,7 +772,7 @@ impl ChatView {
         })
         .detach();
 
-        self.scroll.scroll_to_bottom();
+        self.pin_to_bottom();
         cx.notify();
     }
 
@@ -778,7 +794,7 @@ impl ChatView {
                         v.tokens = tokens;
                     }
                 }
-                self.scroll.scroll_to_bottom();
+                self.pin_to_bottom();
                 cx.notify();
             }
             StreamMsg::Done => {
@@ -901,9 +917,20 @@ fn param_row(
 }
 
 impl Render for ChatView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let streaming = self.streaming;
+
+        // Re-pin the scroll to the bottom for a few frames after content
+        // changes: the first layout underestimates wrapped-text height, so a
+        // single `scroll_to_bottom` lands short. Each frame re-asserts and
+        // schedules the next until the offset converges to the true bottom.
+        if self.pin_bottom_frames > 0 {
+            self.pin_bottom_frames -= 1;
+            self.scroll.scroll_to_bottom();
+            let entity = cx.entity();
+            window.on_next_frame(move |_, cx| entity.update(cx, |_, cx| cx.notify()));
+        }
         let show_reasoning = settings_state::current(cx).reasoning;
         let model_name = self
             .resolved_model(cx)
@@ -1104,6 +1131,11 @@ impl Render for ChatView {
                     }
                 });
             }
+            // Bottom clearance so the last message is never flush against (or
+            // hidden behind) the composer, and so the scrollable height covers
+            // the small text measure/paint slack. Included in `scroll_max`, so
+            // scroll-to-bottom reveals the full final message.
+            column = column.child(div().h(px(96.)).flex_none());
         }
 
         // Composer send/stop button.
@@ -1139,6 +1171,11 @@ impl Render for ChatView {
                         div()
                             .w_full()
                             .max_w(px(CONTENT_MAX_WIDTH))
+                            // Without this the scroll's flex layout compresses
+                            // the content to the viewport height, so its measured
+                            // `content_size` underestimates the real height and
+                            // scroll-to-bottom lands short of the last message.
+                            .flex_shrink_0()
                             .px_6()
                             .child(column),
                     ),
