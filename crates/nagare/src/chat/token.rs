@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{collections::HashMap, pin::Pin, time::Instant};
 
 use futures::{Stream, StreamExt};
 use hanashi::{Encoding as EncodingTrait, chat::Encoding};
@@ -14,7 +14,9 @@ use shoji::{
     types::{
         basic::TokenId,
         model::Model,
-        session::chat::{ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason},
+        session::chat::{
+            ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats,
+        },
     },
 };
 use tokio_util::sync::CancellationToken;
@@ -78,6 +80,7 @@ impl Session {
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
+        let start = Instant::now();
         self.input_tokens = match self.build_input(input) {
             Ok(input) => input,
             Err(err) => {
@@ -87,20 +90,22 @@ impl Session {
             },
         };
 
-        let encoding = &mut self.encoding;
-        let stop_token_ids = &self.stop_token_ids;
+        let mut state = StreamingState {
+            config: config.clone(),
+            cancel_token: cancel_token.clone(),
+            encoding: &mut self.encoding,
+            max_context_length: self.instance.max_context_length(),
+            stop_token_ids: self.stop_token_ids.clone(),
+
+            time_start: start,
+            time_first_token: None,
+            total_tokens_input: self.input_tokens.len(),
+            total_tokens_output: 0,
+        };
+
         self.instance
-            .stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone())
-            .map(move |event| {
-                Self::build_output(
-                    encoding,
-                    stop_token_ids,
-                    &config,
-                    event,
-                    cancel_token,
-                    self.instance.max_context_length(),
-                )
-            })
+            .stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token)
+            .map(move |event| Self::build_output(event, &mut state))
             .boxed()
     }
 
@@ -123,27 +128,26 @@ impl Session {
     }
 
     fn build_output(
-        encoding: &mut Encoding,
-        stop_token_ids: &[u64],
-        config: &ChatReplyConfig,
         event: Result<StreamOutput, Error>,
-        cancel_token: CancellationToken,
-        max_context_length: Option<usize>,
+        state: &mut StreamingState,
     ) -> Result<Output, ChatSessionError> {
-        if let Err(err) = event {
+        let token = event.map_err(|err| ChatSessionError::Backend {
+            message: err.to_string(),
+        })?;
+
+        let now = Instant::now();
+        if state.total_tokens_output == 0 {
+            state.time_first_token = Some(now)
+        }
+        state.total_tokens_output += 1;
+
+        if let Err(err) = state.encoding.decode(vec![token as TokenId]) {
             return Err(ChatSessionError::Backend {
                 message: err.to_string(),
             });
         }
 
-        let token = event.unwrap();
-        if let Err(err) = encoding.decode(vec![token as TokenId]) {
-            return Err(ChatSessionError::Backend {
-                message: err.to_string(),
-            });
-        }
-
-        let message = match encoding.state().messages.last() {
+        let message = match state.encoding.state().messages.last() {
             Some(msg) => msg,
             None => return Ok(Output::default()),
         };
@@ -162,16 +166,16 @@ impl Session {
             })
             .collect();
 
-        let tokens_count = encoding.state().tokens.len();
-        let finish_reason = if cancel_token.is_cancelled() {
+        let tokens_count = state.encoding.state().tokens.len();
+        let finish_reason = if state.cancel_token.is_cancelled() {
             Some(ChatReplyFinishReason::Cancelled)
-        } else if stop_token_ids.contains(&token) {
+        } else if state.stop_token_ids.contains(&token) {
             Some(ChatReplyFinishReason::Stop)
-        } else if let Some(token_limit) = config.token_limit
+        } else if let Some(token_limit) = state.config.token_limit
             && tokens_count >= token_limit as usize
         {
             Some(ChatReplyFinishReason::Length)
-        } else if let Some(length) = max_context_length
+        } else if let Some(length) = state.max_context_length
             && tokens_count >= length
         {
             Some(ChatReplyFinishReason::ContextLimitReached)
@@ -185,11 +189,47 @@ impl Session {
             text: message.text(),
             tool_calls: tool_calls_states,
             finish_reason,
-            // TODO agolokoz: fillstats:
-            // duration: let start = Instant before next + after next,
-            // tts: Instant after first token - start
-            //
-            stats: Default::default(),
+            stats: state.get_stats(),
         })
+    }
+}
+
+struct StreamingState<'a> {
+    config: ChatReplyConfig,
+    cancel_token: CancellationToken,
+    encoding: &'a mut Encoding,
+    max_context_length: Option<usize>,
+    stop_token_ids: Box<[u64]>,
+
+    time_start: Instant,
+    time_first_token: Option<Instant>,
+    total_tokens_input: usize,
+    total_tokens_output: usize,
+}
+
+impl StreamingState<'_> {
+    fn get_stats(&self) -> ChatReplyStats {
+        let duration = Instant::now().duration_since(self.time_start).as_secs_f64();
+        let time_to_first_token = self.time_first_token.map(|time| time.duration_since(self.time_start).as_secs_f64());
+
+        let prefill_tokens_per_second = match time_to_first_token {
+            Some(ttft) if ttft > 0.0 => Some(self.total_tokens_input as f64 / ttft),
+            _ => None,
+        };
+        let generate_tokens_per_second = match time_to_first_token {
+            Some(ttft) if self.total_tokens_output > 0 && duration > ttft => {
+                Some((self.total_tokens_output - 1) as f64 / (duration - ttft))
+            },
+            _ => None,
+        };
+
+        ChatReplyStats {
+            duration,
+            time_to_first_token,
+            prefill_tokens_per_second,
+            generate_tokens_per_second,
+            tokens_count_input: Some(self.total_tokens_input as u32),
+            tokens_count_output: Some(self.total_tokens_output as u32),
+        }
     }
 }
