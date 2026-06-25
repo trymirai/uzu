@@ -14,7 +14,9 @@ use gpui::{
 };
 
 use crate::{
-    assets, components, screens, settings_state,
+    assets, components,
+    models_store::{ModelKind, ModelsStore},
+    screens, settings_state,
     theme::{self, ActiveTheme, FONT_SANS},
     toast,
 };
@@ -99,4 +101,14 @@ fn render_settings() {
 #[test]
 fn render_chats() {
     render_png("chats", 1200.0, 800.0, |_, cx| cx.new(screens::ChatsView::new));
+}
+
+#[test]
+fn render_chat() {
+    // Empty model stores (no engine) render the chat empty state + composer.
+    render_png("chat", 1200.0, 800.0, |_, cx| {
+        let store = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
+        let cloud = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
+        cx.new(|cx| screens::ChatView::new(store, cloud, cx))
+    });
 }
