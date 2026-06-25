@@ -605,7 +605,7 @@ impl Element for TextElement {
             let cursor_quad = if empty {
                 Some(fill(
                     Bounds::new(point(bounds.left(), bounds.top()), size(px(2.), line_height)),
-                    theme.accent,
+                    theme.text,
                 ))
             } else {
                 let cline = content[..cursor].matches('\n').count();
@@ -617,7 +617,7 @@ impl Element for TextElement {
                         point(bounds.left() + x, bounds.top() + line_height * cline as f32),
                         size(px(2.), line_height),
                     ),
-                    theme.accent,
+                    theme.text,
                 ))
             };
 
@@ -673,7 +673,7 @@ impl Element for TextElement {
                         point(bounds.left() + cursor_pos, bounds.top()),
                         size(px(2.), bounds.bottom() - bounds.top()),
                     ),
-                    theme.accent,
+                    theme.text,
                 )),
             )
         } else {
