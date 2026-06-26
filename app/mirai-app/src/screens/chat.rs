@@ -18,7 +18,10 @@ use uzu::{
 };
 
 use crate::{
-    components::{Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, TextInput, VendorIcon},
+    components::{
+        Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, TextInput, Toggle,
+        VendorIcon,
+    },
     engine,
     models_store::ModelsStore,
     persistence::{self, StoredChat, StoredMessage},
@@ -680,6 +683,12 @@ impl ChatView {
         cx.notify();
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn open_gen_settings(&mut self, cx: &mut Context<Self>) {
+        self.gen_settings_open = true;
+        cx.notify();
+    }
+
     #[cfg(test)]
     pub fn expand_reasoning(&mut self, msg_idx: usize, cx: &mut Context<Self>) {
         if let Some(m) = self.messages.get_mut(msg_idx) {
@@ -848,23 +857,89 @@ impl ChatView {
                     ),
             );
 
-        let mut card = div()
-            .occlude()
-            .w(px(320.))
+        // Title bar + current-model row + reasoning toggle (Electron drawer).
+        let resolved = self.resolved_model(cx);
+        let model_name =
+            resolved.as_ref().map(|m| m.name()).unwrap_or_else(|| "No model".to_string());
+        let vendor = resolved
+            .as_ref()
+            .and_then(|m| m.family.as_ref().map(|f| f.vendor.name()))
+            .unwrap_or_default();
+        let icon_url = resolved.as_ref().and_then(|m| {
+            let icons = &m.family.as_ref()?.vendor.metadata.icons;
+            icons
+                .iter()
+                .find(|i| i.theme == uzu::types::basic::ImageTheme::Dark)
+                .or_else(|| icons.first())
+                .map(|i| i.url.clone())
+        });
+        let reasoning_on = settings_state::current(cx).reasoning;
+
+        let header = div()
             .flex()
-            .flex_col()
-            .gap_3()
-            .p_4()
-            .rounded_xl()
-            .bg(theme.card)
-            .border_1()
-            .border_color(theme.border)
+            .items_center()
+            .justify_between()
             .child(
                 div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme.text)
-                    .child("Generation settings"),
+                    .text_lg()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(fg)
+                    .child("Edit parameters"),
             )
+            .child(
+                IconButton::new("gen-close", Icon::Close)
+                    .color(theme.text_muted)
+                    .icon_size(16.)
+                    .hit_size(28.)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.gen_settings_open = false;
+                        cx.notify();
+                    })),
+            );
+
+        let model_row = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(VendorIcon::new(vendor).size(20.).icon_url(icon_url))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_sm()
+                    .text_color(fg)
+                    .child(model_name),
+            )
+            .child(IconEl::new(Icon::ChevronDown, theme.text_muted).size(16.));
+
+        let reasoning_row = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(div().text_sm().text_color(fg).child("Reasoning"))
+            .child(Toggle::new("gen-reasoning", reasoning_on).on_click(|_, _, cx| {
+                let mut s = settings_state::current(cx);
+                s.reasoning = !s.reasoning;
+                settings_state::set(cx, s);
+            }));
+
+        let mut card = div()
+            .occlude()
+            .absolute()
+            .top_0()
+            .right_0()
+            .bottom_0()
+            .w(px(380.))
+            .flex()
+            .flex_col()
+            .gap_4()
+            .p_5()
+            .bg(theme.bg)
+            .border_l_1()
+            .border_color(theme.border)
+            .child(header)
+            .child(model_row)
             .child(mode_row);
 
         if self.sampling_mode == SamplingMode::Stochastic {
@@ -940,6 +1015,9 @@ impl ChatView {
                 ));
         }
 
+        // Divider + Reasoning toggle (always shown, like Electron).
+        card = card.child(div().h_px().bg(border)).child(reasoning_row);
+
         let tokens_str = if self.max_tokens == 0 {
             "∞".to_string()
         } else {
@@ -968,10 +1046,7 @@ impl ChatView {
                 .id("gen-settings-backdrop")
                 .absolute()
                 .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(gpui::black().opacity(0.5))
+                .bg(gpui::black().opacity(0.4))
                 .occlude()
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.gen_settings_open = false;

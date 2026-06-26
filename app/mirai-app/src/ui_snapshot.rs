@@ -456,6 +456,18 @@ fn render_model_picker() {
 
 #[test]
 #[ignore = "boots a real engine; run explicitly with --ignored"]
+fn render_gen_settings() {
+    render_png_with_engine("gen-settings", 1200.0, 800.0, |_, cx| {
+        let store = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
+        let cloud = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
+        let chat = cx.new(|cx| screens::ChatView::new(store, cloud, cx));
+        chat.update(cx, |c, cx| c.open_gen_settings(cx));
+        chat
+    });
+}
+
+#[test]
+#[ignore = "boots a real engine; run explicitly with --ignored"]
 fn render_tts() {
     render_png_with_engine("tts", 1200.0, 800.0, |_, cx| {
         let store = cx.new(|cx| ModelsStore::new(ModelKind::TextToSpeech, cx));
