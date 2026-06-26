@@ -42,6 +42,9 @@ pub enum Icon {
     Devices,
     Heart,
     Shield,
+    Github,
+    XSocial,
+    Discord,
     Spinner,
 }
 
@@ -84,6 +87,9 @@ impl Icon {
             Icon::Devices => "icons/devices.svg",
             Icon::Heart => "icons/heart.svg",
             Icon::Shield => "icons/shield.svg",
+            Icon::Github => "icons/github.svg",
+            Icon::XSocial => "icons/x.svg",
+            Icon::Discord => "icons/discord.svg",
             Icon::Spinner => "icons/spinner.svg",
         }
     }
