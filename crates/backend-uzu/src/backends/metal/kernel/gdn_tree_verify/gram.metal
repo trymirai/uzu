@@ -32,11 +32,17 @@ PUBLIC KERNEL(BuildTreeGram)(
     constant const uint& k_heads,
     constant const uint& value_heads,
     constant const uint& head_k_dim,
-    threadgroup float diagonal_a[TREE_GRAM_ROW_TILE * TREE_GRAM_ROW_TILE],
+    threadgroup float diagonal_a_tile[TREE_GRAM_ROW_TILE * TREE_GRAM_ROW_TILE],
+    threadgroup float row_prefix_tile[TREE_GRAM_ROW_TILE],
+    threadgroup float row_beta_tile[TREE_GRAM_ROW_TILE],
+    threadgroup uint row_token_tile[TREE_GRAM_ROW_TILE],
+    threadgroup float col_prefix_tile[TREE_GRAM_COL_TILE],
+    threadgroup uint col_subtree_start[TREE_GRAM_COL_TILE],
+    threadgroup uint col_subtree_end[TREE_GRAM_COL_TILE],
     const ThreadContext thread_context,
     const uint batch GROUPS(batch_size),
     const uint value_head GROUPS(value_heads),
-    const uint tile_idx GROUPS(tree_size.div_ceil(TREE_GRAM_ROW_TILE) * tree_size.div_ceil(TREE_GRAM_COL_TILE)),
+    const uint tile_index GROUPS(tree_size.div_ceil(TREE_GRAM_ROW_TILE) * tree_size.div_ceil(TREE_GRAM_COL_TILE)),
     const uint tid THREADS(TREE_GRAM_THREADS)
 ) {
   using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
@@ -48,18 +54,18 @@ PUBLIC KERNEL(BuildTreeGram)(
   using RightFragment = OperandFragment<InputType, 1, COL_FRAGMENTS, Ops, ReadTranspose>;
 
   const uint value_heads_per_key_head = value_heads / k_heads;
-  const uint key_head = value_head / value_heads_per_key_head;
-  const ulong qk_head_base = (((ulong)batch * (ulong)tree_size) * (ulong)k_heads + (ulong)key_head) * (ulong)head_k_dim;
-  const uint qk_row_stride = k_heads * head_k_dim;
-  const ulong prefix_base = ((ulong)batch * (ulong)tree_size) * (ulong)value_heads + (ulong)value_head;
-  const ulong trie_base = (ulong)batch * (ulong)tree_size;
-  const ulong mat_base = ((ulong)batch * (ulong)value_heads + (ulong)value_head) * (ulong)tree_size * (ulong)tree_size;
+  const uint key_head_index = value_head / value_heads_per_key_head;
+  const uint qk_token_stride = k_heads * head_k_dim;
+  const uint qk_key_head_offset = (batch * tree_size * k_heads + key_head_index) * head_k_dim;
+  const uint prefix_value_head_offset = batch * tree_size * value_heads + value_head;
+  const uint trie_batch_offset = batch * tree_size;
+  const uint matrix_head_offset = (batch * value_heads + value_head) * tree_size * tree_size;
 
   const uint col_tiles = (tree_size + TREE_GRAM_COL_TILE - 1) / TREE_GRAM_COL_TILE;
-  const uint row_tile_idx = tile_idx / col_tiles;
-  const uint col_tile_idx = tile_idx - row_tile_idx * col_tiles;
-  const uint row_base = row_tile_idx * TREE_GRAM_ROW_TILE;
-  const uint col_base = col_tile_idx * TREE_GRAM_COL_TILE;
+  const uint row_tile_index = tile_index / col_tiles;
+  const uint col_tile_index = tile_index - row_tile_index * col_tiles;
+  const uint tile_row_start = row_tile_index * TREE_GRAM_ROW_TILE;
+  const uint tile_col_start = col_tile_index * TREE_GRAM_COL_TILE;
   const ushort lane = thread_context.simd_lane_id;
 
   AccFragment kk_acc;
@@ -67,117 +73,127 @@ PUBLIC KERNEL(BuildTreeGram)(
   kk_acc.clear();
   qk_acc.clear();
 
-  for (uint k_base = 0; k_base < head_k_dim; k_base += Ops::FRAGMENT_ROWS) {
-    const uint k_rem = head_k_dim - k_base;
-    const ushort valid_k_cols = ushort(min(k_rem, uint(Ops::FRAGMENT_ROWS)));
+  for (uint k_block_start = 0; k_block_start < head_k_dim; k_block_start += Ops::FRAGMENT_ROWS) {
+    const uint k_remaining = head_k_dim - k_block_start;
+    const ushort valid_k_cols = ushort(min(k_remaining, uint(Ops::FRAGMENT_ROWS)));
 
-    if (row_base < tree_size) {
+    if (tile_row_start < tree_size) {
       LeftFragment k_left;
       LeftFragment q_left;
       RightFragment k_right;
 
-      const short row_limit = short(max(int(0), int(tree_size) - int(row_base)));
-      const short col_limit = short(max(int(0), int(tree_size) - int(col_base)));
+      const short row_limit = short(max(int(0), int(tree_size) - int(tile_row_start)));
+      const short col_limit = short(max(int(0), int(tree_size) - int(tile_col_start)));
 
-      const device T* k_rows = k + qk_head_base + (ulong)row_base * (ulong)qk_row_stride + (ulong)k_base;
-      const device T* q_rows = q + qk_head_base + (ulong)row_base * (ulong)qk_row_stride + (ulong)k_base;
-      const device T* k_col_ptr = k + qk_head_base + (ulong)col_base * (ulong)qk_row_stride + (ulong)k_base;
+      const uint qk_row_tile_offset = qk_key_head_offset + tile_row_start * qk_token_stride + k_block_start;
+      const uint qk_col_tile_offset = qk_key_head_offset + tile_col_start * qk_token_stride + k_block_start;
+      const device T* k_rows = k + qk_row_tile_offset;
+      const device T* q_rows = q + qk_row_tile_offset;
+      const device T* k_cols = k + qk_col_tile_offset;
 
-      k_left.load_from(lane, fragment_source(k_rows, int(qk_row_stride)).bounded(row_limit, short(valid_k_cols)));
-      q_left.load_from(lane, fragment_source(q_rows, int(qk_row_stride)).bounded(row_limit, short(valid_k_cols)));
-      k_right.load_from(lane, fragment_source(k_col_ptr, int(qk_row_stride)).bounded(col_limit, short(valid_k_cols)));
+      const bool full_k_tile = valid_k_cols == Ops::FRAGMENT_ROWS;
+      if (full_k_tile && tile_row_start + TREE_GRAM_ROW_TILE <= tree_size) {
+        k_left.load_from(lane, fragment_source(k_rows, int(qk_token_stride)));
+        q_left.load_from(lane, fragment_source(q_rows, int(qk_token_stride)));
+      } else {
+        k_left.load_from(lane, fragment_source(k_rows, int(qk_token_stride)).bounded(row_limit, short(valid_k_cols)));
+        q_left.load_from(lane, fragment_source(q_rows, int(qk_token_stride)).bounded(row_limit, short(valid_k_cols)));
+      }
+      if (full_k_tile && tile_col_start + TREE_GRAM_COL_TILE <= tree_size) {
+        k_right.load_from(lane, fragment_source(k_cols, int(qk_token_stride)));
+      } else {
+        k_right.load_from(lane, fragment_source(k_cols, int(qk_token_stride)).bounded(col_limit, short(valid_k_cols)));
+      }
 
       fragment_mma(kk_acc, k_left, k_right);
       fragment_mma(qk_acc, q_left, k_right);
     }
   }
 
-  if (row_base >= tree_size) {
+  if (tile_row_start >= tree_size) {
     return;
   }
 
-  const bool has_diagonal_block = col_base <= row_base && row_base < col_base + TREE_GRAM_COL_TILE;
-  const uint diagonal_col_offset = has_diagonal_block ? row_base - col_base : 0;
-  const uint diagonal_block_size = min(uint(TREE_GRAM_ROW_TILE), tree_size - row_base);
+  const bool has_diagonal_block =
+      tile_col_start <= tile_row_start && tile_row_start < tile_col_start + TREE_GRAM_COL_TILE;
+  const uint diagonal_col_offset = has_diagonal_block ? tile_row_start - tile_col_start : 0;
+  const uint diagonal_block_size = min(uint(TREE_GRAM_ROW_TILE), tree_size - tile_row_start);
 
-  kk_acc.map_coords(lane, [&](short row, short col, float kk) {
-    const uint i = row_base + uint(row);
-    const uint j = col_base + uint(col);
-    if (i >= tree_size || j >= tree_size) {
-      return 0.0f;
+  if (tid < TREE_GRAM_COL_TILE) {
+    const uint col_token = tile_col_start + tid;
+    if (col_token < tree_size) {
+      const TrieNode node = trie[trie_batch_offset + col_token];
+      col_subtree_start[tid] = node.trie_start;
+      col_subtree_end[tid] = node.trie_end;
+      col_prefix_tile[tid] = prefix[prefix_value_head_offset + col_token * value_heads];
+    } else {
+      col_subtree_start[tid] = 1;
+      col_subtree_end[tid] = 0;
+      col_prefix_tile[tid] = 0.0f;
     }
-    const TrieNode node = trie[trie_base + (ulong)j];
-    const bool incl = i >= node.trie_start && i <= node.trie_end;
-    const float prefix_i = prefix[prefix_base + (ulong)i * (ulong)value_heads];
-    const float prefix_j = prefix[prefix_base + (ulong)j * (ulong)value_heads];
-    const float beta_i = beta[prefix_base + (ulong)i * (ulong)value_heads];
-    const float a = incl && i != j ? beta_i * exp(prefix_i - prefix_j) * kk : 0.0f;
-    if (has_diagonal_block && uint(row) < diagonal_block_size && uint(col) >= diagonal_col_offset) {
-      const uint local_col = uint(col) - diagonal_col_offset;
-      if (local_col < diagonal_block_size) {
-        diagonal_a[uint(row) * TREE_GRAM_ROW_TILE + local_col] = a;
+  }
+  if (tid < TREE_GRAM_ROW_TILE) {
+    const uint row_token = tile_row_start + tid;
+    if (row_token < tree_size) {
+      row_token_tile[tid] = row_token;
+      row_prefix_tile[tid] = prefix[prefix_value_head_offset + row_token * value_heads];
+      row_beta_tile[tid] = beta[prefix_value_head_offset + row_token * value_heads];
+    } else {
+      row_token_tile[tid] = 0xffffffff;
+      row_prefix_tile[tid] = 0.0f;
+      row_beta_tile[tid] = 0.0f;
+    }
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+
+  kk_acc.zip_map_coords(lane, qk_acc, [&](short row, short col, float kk, float qk_dot) {
+    const uint local_row = uint(row);
+    const uint local_col = uint(col);
+    const uint row_token = row_token_tile[local_row];
+    const uint col_token = tile_col_start + local_col;
+    const bool col_contains_row = row_token >= col_subtree_start[local_col] && row_token <= col_subtree_end[local_col];
+    const float decay = exp(row_prefix_tile[local_row] - col_prefix_tile[local_col]);
+    const float a_value = col_contains_row && row_token != col_token ? row_beta_tile[local_row] * decay * kk : 0.0f;
+    const float qkd_value = col_contains_row ? scale * decay * qk_dot : 0.0f;
+    if (has_diagonal_block && local_row < diagonal_block_size && local_col >= diagonal_col_offset) {
+      const uint local_diag_col = local_col - diagonal_col_offset;
+      if (local_diag_col < diagonal_block_size) {
+        diagonal_a_tile[local_row * TREE_GRAM_ROW_TILE + local_diag_col] = a_value;
       }
     }
-    return a;
+    return float2(a_value, qkd_value);
   });
 
-  qk_acc.map_coords(lane, [&](short row, short col, float qk_dot) {
-    const uint i = row_base + uint(row);
-    const uint j = col_base + uint(col);
-    if (i >= tree_size || j >= tree_size) {
-      return 0.0f;
-    }
-    const TrieNode node = trie[trie_base + (ulong)j];
-    const bool incl = i >= node.trie_start && i <= node.trie_end;
-    const float prefix_i = prefix[prefix_base + (ulong)i * (ulong)value_heads];
-    const float prefix_j = prefix[prefix_base + (ulong)j * (ulong)value_heads];
-    if (!incl) {
-      return 0.0f;
-    }
-    return scale * exp(prefix_i - prefix_j) * qk_dot;
-  });
-
-  const uint tile_rows = min(uint(TREE_GRAM_ROW_TILE), tree_size - row_base);
-  const uint tile_cols = min(uint(TREE_GRAM_COL_TILE), tree_size - col_base);
+  const uint tile_rows = min(uint(TREE_GRAM_ROW_TILE), tree_size - tile_row_start);
+  const uint tile_cols = min(uint(TREE_GRAM_COL_TILE), tree_size - tile_col_start);
   const short2 tile_dims = short2(short(tile_cols), short(tile_rows));
-  kk_acc.store_safe(
-      lane,
-      a_mat + mat_base + (ulong)row_base * (ulong)tree_size + (ulong)col_base,
-      int(tree_size),
-      tile_dims
-  );
-  qk_acc.store_safe(
-      lane,
-      qkd + mat_base + (ulong)row_base * (ulong)tree_size + (ulong)col_base,
-      int(tree_size),
-      tile_dims
-  );
-
-  for (uint idx = tid; idx < tile_rows * tile_cols; idx += TREE_GRAM_THREADS) {
-    const uint i = row_base + idx / tile_cols;
-    const uint j = col_base + idx % tile_cols;
-    ainv[mat_base + (ulong)i * (ulong)tree_size + (ulong)j] = i == j ? 1.0f : 0.0f;
+  const uint matrix_tile_offset = matrix_head_offset + tile_row_start * tree_size + tile_col_start;
+  device float* a_tile = a_mat + matrix_tile_offset;
+  device float* qkd_tile = qkd + matrix_tile_offset;
+  if (tile_row_start + TREE_GRAM_ROW_TILE <= tree_size && tile_col_start + TREE_GRAM_COL_TILE <= tree_size) {
+    kk_acc.store(lane, a_tile, int(tree_size));
+    qk_acc.store(lane, qkd_tile, int(tree_size));
+  } else {
+    kk_acc.store_safe(lane, a_tile, int(tree_size), tile_dims);
+    qk_acc.store_safe(lane, qkd_tile, int(tree_size), tile_dims);
   }
 
-  // ponytail: only diagonal 16x16 inverse blocks are produced; downstream reads no off-block Ainv.
+  // Invert each diagonal block by column-wise forward substitution on I + A.
   if (has_diagonal_block) {
     threadgroup_barrier(mem_flags::mem_threadgroup);
     const uint block_size = diagonal_block_size;
     const uint j = tid;
     if (j < block_size) {
-      float xcol[16];
+      float xcol[16] = {};
+      xcol[j] = 1.0f;
       METAL_PRAGMA_UNROLL
       for (uint i = 0; i < 16; i++) {
-        if (i >= block_size || i < j) {
-          xcol[i] = 0.0f;
-        } else if (i == j) {
-          xcol[i] = 1.0f;
-        } else {
+        if (i > j && i < block_size) {
           float acc = 0.0f;
           METAL_PRAGMA_UNROLL
           for (uint prev_row = 0; prev_row < 16; prev_row++) {
             if (prev_row < i) {
-              acc += diagonal_a[i * TREE_GRAM_ROW_TILE + prev_row] * xcol[prev_row];
+              acc += diagonal_a_tile[i * TREE_GRAM_ROW_TILE + prev_row] * xcol[prev_row];
             }
           }
           xcol[i] = -acc;
@@ -186,7 +202,8 @@ PUBLIC KERNEL(BuildTreeGram)(
       METAL_PRAGMA_UNROLL
       for (uint i = 0; i < 16; i++) {
         if (i < block_size) {
-          ainv[mat_base + (ulong)(row_base + i) * (ulong)tree_size + (ulong)(row_base + j)] = xcol[i];
+          const uint ainv_offset = matrix_head_offset + (tile_row_start + i) * tree_size + tile_row_start + j;
+          ainv[ainv_offset] = xcol[i];
         }
       }
     }

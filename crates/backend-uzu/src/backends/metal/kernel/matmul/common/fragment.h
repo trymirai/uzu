@@ -140,6 +140,33 @@ struct Fragment {
     });
   }
 
+  template <class Other, class Fn>
+  METAL_FUNC void zip_map_coords(const ushort simd_lane_id, thread Other& other, Fn fn) thread {
+    static_assert(metal::is_same_v<FragmentOpsType, typename Other::FragmentOpsType>, "fragment ops must match");
+    static_assert(metal::is_same_v<ElementType, typename Other::ElementType>, "fragment element types must match");
+    static_assert(ROW_FRAGMENTS == Other::ROW_FRAGMENTS, "fragment row counts must match");
+    static_assert(COL_FRAGMENTS == Other::COL_FRAGMENTS, "fragment column counts must match");
+
+    thread ElementType* data = elements();
+    thread ElementType* other_data = other.elements();
+    const short2 position = get_position(simd_lane_id);
+    for_each_fragment([&](auto fragment_row, auto fragment_col) {
+      const ushort frag_base = (fragment_row.value * COL_FRAGMENTS + fragment_col.value) * Ops::ELEMENTS_PER_THREAD;
+      const short row_base = position.y + short(fragment_row.value) * FRAGMENT_ROWS;
+      const short col_base = position.x + short(fragment_col.value) * FRAGMENT_COLS;
+      METAL_PRAGMA_UNROLL
+      for (ushort element_index = 0; element_index < Ops::ELEMENTS_PER_THREAD; ++element_index) {
+        const short2 element_offset = Ops::get_element_offset(element_index);
+        const short row = row_base + element_offset.y;
+        const short col = col_base + element_offset.x;
+        const ushort index = frag_base + element_index;
+        const auto mapped = fn(row, col, data[index], other_data[index]);
+        data[index] = ElementType(mapped.x);
+        other_data[index] = ElementType(mapped.y);
+      }
+    });
+  }
+
   // Row lanes differ in bits {0,3} for both simdgroup and MXU layouts.
   template <typename Acc, class Fn>
   METAL_FUNC void row_reduce(thread Acc* out, const Acc identity, Fn op) thread {

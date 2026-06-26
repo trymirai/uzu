@@ -1,20 +1,23 @@
 use std::time::Duration;
 
-use backend_uzu::{
+use criterion::{BenchmarkId, Criterion};
+use half::bf16;
+use proc_macros::uzu_bench;
+
+use crate::{
     array::ArrayContextExt,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
+        common::{Allocation, Backend, Context, Kernels, kernel::BuildTreeGramKernel},
         metal::Metal,
     },
     data_type::DataType,
+    tests::matmul::iter_encode_loop_named,
 };
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use half::bf16;
 
 const K_HEADS: usize = 16;
 const VALUE_HEADS: usize = 48;
 const HEAD_K_DIM: usize = 128;
-const TREE_SIZES: &[usize] = &[33, 49, 64];
+const TREE_SIZES: &[usize] = &[33, 49, 64, 128, 256, 512];
 const BATCH_SIZES: &[usize] = &[1, 2, 4, 8];
 
 struct TreeGramBuffers {
@@ -103,6 +106,7 @@ fn make_buffers(
     )
 }
 
+#[uzu_bench]
 fn bench_build_tree_gram(c: &mut Criterion) {
     let context = <Metal as Backend>::Context::new().expect("metal context");
     let kernel_paths = if context.supports_mxu() {
@@ -121,16 +125,14 @@ fn bench_build_tree_gram(c: &mut Criterion) {
         for &batch_size in BATCH_SIZES {
             for &tree_size in TREE_SIZES {
                 let (mut buffers, scale) = make_buffers(&context, batch_size, tree_size);
-                let gram_flops = 4 * batch_size * VALUE_HEADS * tree_size * tree_size * HEAD_K_DIM;
-                let inverse_flops = batch_size * VALUE_HEADS * (tree_size * tree_size * tree_size - tree_size) / 3;
-                group.throughput(Throughput::Elements((gram_flops + inverse_flops) as u64));
+                let benchmark_path =
+                    format!("Metal/Kernel/GDNTreeVerify/BuildTreeGram/{kernel_path}/B{batch_size}_T{tree_size}");
                 group.bench_function(
                     BenchmarkId::from_parameter(format!(
                         "B{batch_size}_T{tree_size}_Hg{K_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}"
                     )),
                     |bencher| {
-                        bencher.iter(|| {
-                            let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+                        iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
                             kernel.encode(
                                 &buffers.q,
                                 &buffers.k,
@@ -146,9 +148,8 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                                 K_HEADS as u32,
                                 VALUE_HEADS as u32,
                                 HEAD_K_DIM as u32,
-                                &mut encoder,
+                                encoder,
                             );
-                            encoder.end_encoding().submit().wait_until_completed().unwrap();
                         });
                     },
                 );
@@ -157,6 +158,3 @@ fn bench_build_tree_gram(c: &mut Criterion) {
         group.finish();
     }
 }
-
-criterion_group!(benches, bench_build_tree_gram);
-criterion_main!(benches);
