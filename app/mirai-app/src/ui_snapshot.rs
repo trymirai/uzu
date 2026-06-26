@@ -18,6 +18,7 @@ use gpui::{
 };
 
 use crate::{
+    app_shell::MiraiApp,
     assets, components,
     models_store::{ModelKind, ModelsStore},
     persistence::{self, StoredChat, StoredMessage},
@@ -303,6 +304,16 @@ fn sample_stored_chat() -> StoredChat {
             },
         ],
     }
+}
+
+#[test]
+fn render_sidebar_settings() {
+    // Full app shell with the bottom Settings menu expanded.
+    render_png("sidebar-settings", 1200.0, 800.0, |_, cx| {
+        let app = cx.new(MiraiApp::new);
+        app.update(cx, |a, cx| a.open_settings_menu(cx));
+        app
+    });
 }
 
 #[test]

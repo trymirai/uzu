@@ -185,6 +185,12 @@ impl MiraiApp {
         }
     }
 
+    #[cfg(test)]
+    pub fn open_settings_menu(&mut self, cx: &mut Context<Self>) {
+        self.settings_menu_open = true;
+        cx.notify();
+    }
+
     /// Flip the color scheme and persist it (used by the settings menu).
     fn toggle_dark_mode(&mut self, cx: &mut Context<Self>) {
         let mut settings = settings_state::current(cx);
@@ -352,26 +358,63 @@ impl MiraiApp {
 
         let mut wrap = div().flex().flex_col().border_t_1().border_color(theme.border);
 
+        // Trigger at the top of the group; content expands below it.
+        wrap = wrap.child(
+            div()
+                .id("settings-trigger")
+                .flex()
+                .items_center()
+                .justify_between()
+                .h(px(40.))
+                .px_4()
+                .text_sm()
+                .text_color(theme.text)
+                .cursor(CursorStyle::PointingHand)
+                .hover(move |s| s.bg(hover))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.settings_menu_open = !this.settings_menu_open;
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(IconEl::new(Icon::Settings, theme.text).size(18.))
+                        .child("Settings"),
+                )
+                .child(
+                    IconEl::new(
+                        if open { Icon::ChevronUp } else { Icon::ChevronDown },
+                        theme.text_muted,
+                    )
+                    .size(14.),
+                ),
+        );
+
         if open {
-            // External links as text (no third-party brand logos).
             let muted = theme.text_muted;
             let link_hover = theme.text;
-            let mut links = div().flex().items_center().gap_4().px_4().pt_3().pb_2();
-            for (id, label, url) in [
-                ("lnk-github", "GitHub", "https://github.com/trymirai"),
-                ("lnk-x", "X", "https://x.com/trymirai"),
-                ("lnk-discord", "Discord", "https://discord.gg/trymirai"),
+            let mut links = div().flex().items_center().gap_4().px_4().pt_2().pb_2();
+            for (id, icon, url) in [
+                ("lnk-github", Icon::Github, "https://github.com/trymirai"),
+                ("lnk-x", Icon::XSocial, "https://x.com/trymirai"),
+                ("lnk-discord", Icon::Discord, "https://discord.gg/trymirai"),
             ] {
                 let url = url.to_string();
                 links = links.child(
                     div()
                         .id(id)
-                        .text_xs()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(28.))
+                        .rounded_md()
                         .text_color(muted)
                         .cursor(CursorStyle::PointingHand)
-                        .hover(move |s| s.text_color(link_hover))
+                        .hover(move |s| s.text_color(link_hover).bg(hover))
                         .on_click(move |_, _, cx| cx.open_url(&url))
-                        .child(label),
+                        .child(IconEl::new(icon, muted).size(18.)),
                 );
             }
             wrap = wrap
@@ -409,38 +452,7 @@ impl MiraiApp {
                 );
         }
 
-        wrap.child(
-            div()
-                .id("settings-trigger")
-                .flex()
-                .items_center()
-                .justify_between()
-                .h(px(40.))
-                .px_4()
-                .text_sm()
-                .text_color(theme.text)
-                .cursor(CursorStyle::PointingHand)
-                .hover(move |s| s.bg(hover))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.settings_menu_open = !this.settings_menu_open;
-                    cx.notify();
-                }))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(IconEl::new(Icon::Settings, theme.text).size(18.))
-                        .child("Settings"),
-                )
-                .child(
-                    IconEl::new(
-                        if open { Icon::ChevronUp } else { Icon::ChevronDown },
-                        theme.text_muted,
-                    )
-                    .size(14.),
-                ),
-        )
+        wrap
     }
 
     /// Scrollable list of recent chats in the sidebar (mirai-chat parity).
