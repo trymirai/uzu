@@ -493,7 +493,7 @@ impl SettingsView {
             )
             .child(
                 Button::new("give-feedback", "Give Feedback")
-                    .kind(ButtonKind::Secondary)
+                    .kind(ButtonKind::Primary)
                     .size(ButtonSize::Small)
                     .on_click(|_, _, cx| cx.open_url(DISCORD_URL)),
             )
@@ -505,8 +505,9 @@ impl SettingsView {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
 
-        // "Set shortcut" control. Global-shortcut capture isn't wired yet, so it
-        // explains itself when clicked rather than silently doing nothing.
+        // "Set shortcut": white (primary) button. Global-shortcut capture isn't
+        // wired yet, so it explains itself when clicked.
+        let shortcut_hover = theme.text.opacity(0.85);
         let set_shortcut = div()
             .id("set-shortcut")
             .flex()
@@ -515,13 +516,12 @@ impl SettingsView {
             .h(px(28.))
             .px_3()
             .rounded_md()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.card)
+            .bg(theme.text)
             .text_xs()
-            .text_color(theme.text)
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(theme.bg)
             .cursor(CursorStyle::PointingHand)
-            .hover(move |s| s.bg(hover))
+            .hover(move |s| s.bg(shortcut_hover))
             .on_click(cx.listener(|_, _, _, cx| {
                 crate::toast::push(
                     cx,
