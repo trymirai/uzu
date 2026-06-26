@@ -9,59 +9,12 @@ enum MessageRole {
     case assistant
 }
 
-struct MessageStats: Equatable {
-    let timeToFirstToken: Double
-    let tokensPerSecond: Double
-    let memoryUsedBytes: Int64?
-    let averagePackagePower: Double?
-    let maxPackagePower: Double?
-    let packageEnergy: Double?
-    let tokensCount: Int?
-    let totalTime: Double
-
-    init(
-        timeToFirstToken: Double,
-        tokensPerSecond: Double,
-        memoryUsedBytes: Int64?,
-        averagePackagePower: Double?,
-        maxPackagePower: Double?,
-        packageEnergy: Double?,
-        tokensCount: Int?,
-        totalTime: Double
-    ) {
-        self.timeToFirstToken = timeToFirstToken
-        self.tokensPerSecond = tokensPerSecond
-        self.memoryUsedBytes = memoryUsedBytes
-        self.averagePackagePower = averagePackagePower
-        self.maxPackagePower = maxPackagePower
-        self.packageEnergy = packageEnergy
-        self.tokensCount = tokensCount
-        self.totalTime = totalTime
-    }
-
-    init(stats: Uzu.ChatReplyStats) {
-        self.timeToFirstToken = stats.timeToFirstToken ?? 0.0
-        self.tokensPerSecond = stats.generateTokensPerSecond ?? 0.0
-        self.memoryUsedBytes = stats.memoryUsedBytes
-        self.averagePackagePower = stats.powerStats?.averagePackageWatts
-        self.maxPackagePower = stats.powerStats?.maxPackageWatts
-        self.packageEnergy = stats.powerStats?.energyJoules
-        self.tokensCount = Self.totalTokens(stats)
-        self.totalTime = stats.duration
-    }
-
-    private static func totalTokens(_ stats: Uzu.ChatReplyStats) -> Int? {
-        guard let input = stats.tokensCountInput, let output = stats.tokensCountOutput else { return nil }
-        return Int(input) + Int(output)
-    }
-}
-
 struct Message: Identifiable, Equatable {
     let id = UUID()
     let role: MessageRole
     var reasoning: String?
     var content: String
-    var stats: MessageStats? = nil
+    var stats: ReplyStats? = nil
 
     static func == (lhs: Message, rhs: Message) -> Bool {
         lhs.id == rhs.id && lhs.content == rhs.content && lhs.role == rhs.role
@@ -299,45 +252,7 @@ struct ChatView: View {
                     .font(.monoBody16)
                     .textSelection(.enabled)
                 if let stats = message.stats {
-                    Rectangle()
-                        .fill(MiraiAsset.cardBorder.swiftUIColor)
-                        .frame(height: 1)
-                        .padding(.vertical, 4)
-                    VStack(alignment: .leading, spacing: 4) {
-                        metricRow(
-                            label: "Time to first token:",
-                            value: String(format: "%.3f s", stats.timeToFirstToken)
-                        )
-                        if stats.tokensPerSecond > 0 {
-                            metricRow(
-                                label: "Tokens per second:",
-                                value: String(format: "%.3f t/s", stats.tokensPerSecond)
-                            )
-                        }
-                        metricRow(
-                            label: "Memory used:",
-                            value: ReplyStatsFormat.memory(stats.memoryUsedBytes)
-                        )
-                        if let average = stats.averagePackagePower, let peak = stats.maxPackagePower {
-                            metricRow(
-                                label: ReplyStatsFormat.powerLabel,
-                                value: ReplyStatsFormat.power(average: average, maximum: peak)
-                            )
-                        }
-                        if let energy = stats.packageEnergy {
-                            metricRow(label: "Energy:", value: ReplyStatsFormat.energy(energy))
-                        }
-                        if let energy = stats.packageEnergy, let tokens = stats.tokensCount, tokens > 0 {
-                            metricRow(
-                                label: "Energy / token:",
-                                value: ReplyStatsFormat.energyPerToken(joules: energy, tokens: tokens)
-                            )
-                        }
-                        metricRow(
-                            label: "Total time:",
-                            value: String(format: "%.3f s", stats.totalTime)
-                        )
-                    }
+                    ReplyStatsView(stats: stats)
                 }
             }
             Spacer(minLength: 64)
@@ -352,22 +267,6 @@ struct ChatView: View {
         audioController.pause()
         inputFocused = false
         viewModel.sendMessage()
-    }
-
-    // MARK: - Metric row helper
-
-    @ViewBuilder
-    private func metricRow(label: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(label)
-                .font(.monoCaption12)
-                .foregroundStyle(MiraiAsset.secondary.swiftUIColor)
-            Text(value)
-                .font(.monoCaption12Semibold)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
     }
 
 }

@@ -12,37 +12,11 @@ final class ClassificationModel {
         case error(Swift.Error)
     }
 
-    struct GenerationStats: Equatable {
-        let timeToFirstToken: Double
-        let tokensPerSecond: Double
-        let memoryUsedBytes: Int64?
-        let averagePackagePower: Double?
-        let maxPackagePower: Double?
-        let packageEnergy: Double?
-        let tokensCount: Int?
-        let totalTime: Double
-
-        init(stats: ChatReplyStats) {
-            self.timeToFirstToken = stats.timeToFirstToken ?? 0.0
-            self.tokensPerSecond = stats.generateTokensPerSecond ?? 0.0
-            self.memoryUsedBytes = stats.memoryUsedBytes
-            self.averagePackagePower = stats.powerStats?.averagePackageWatts
-            self.maxPackagePower = stats.powerStats?.maxPackageWatts
-            self.packageEnergy = stats.powerStats?.energyJoules
-            if let input = stats.tokensCountInput, let output = stats.tokensCountOutput {
-                self.tokensCount = Int(input) + Int(output)
-            } else {
-                self.tokensCount = nil
-            }
-            self.totalTime = stats.duration
-        }
-    }
-
     // MARK: - Observable Properties
     var viewState: ViewState = .idle
     var inputText: String = ""
     var resultText: String = ""
-    var stats: GenerationStats? = nil
+    var stats: ReplyStats? = nil
 
     // MARK: - Private
     private let identifier: String
