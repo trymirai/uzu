@@ -42,7 +42,7 @@ impl Snapshot {
         let split = |name: &str| name.rsplit_once(' ').map(|(area, code)| (area.to_owned(), code.to_owned()));
         let is_battery_rail = |sensor: &&Sensor| matches!(sensor.component, Component::Charger | Component::Battery);
 
-        let mut best = 0f64;
+        let mut total = 0f64;
         for volts in self.voltage.iter().filter(is_battery_rail) {
             let Some((varea, vcode)) = split(&volts.name) else {
                 continue;
@@ -57,11 +57,11 @@ impl Snapshot {
                 if aarea == varea && acode.strip_prefix('I') == Some(rail) {
                     let watts = (volts.value * amps.value).abs();
                     if (0.0..=MAX_PLAUSIBLE_WATTS).contains(&watts) {
-                        best = best.max(watts);
+                        total += watts;
                     }
                 }
             }
         }
-        (best > 0.0).then_some(Watts(best as f32))
+        (total > 0.0).then_some(Watts(total as f32))
     }
 }
