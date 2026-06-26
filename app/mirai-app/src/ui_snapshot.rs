@@ -306,6 +306,48 @@ fn sample_stored_chat() -> StoredChat {
 }
 
 #[test]
+fn render_chat_thinking() {
+    // Expanded reasoning panel with long content — verifies monospace text,
+    // the 180px cap, and the bottom fade gradient.
+    let reasoning = "Let me think about Paris.\n\
+        - Arc de Triomphe (Military).\n\
+        - Notre-Dame Cathedral.\n\
+        - The Sacré-Cœur Basilica.\n\
+        - Champs-Élysées (Fashion hub).\n\
+        Cuisine: mention French cuisine and specific dishes.\n\
+        Music: Jazz, classical, pop, hip-hop. Mention modern music venues.\n\
+        Architecture: Haussmann boulevards and the Eiffel Tower.\n\
+        Transport: the Metro and RER connect the center to the suburbs.";
+    let chat = StoredChat {
+        id: "think".into(),
+        title: "Thinking".into(),
+        model_name: Some("Qwen3.5 0.8B".into()),
+        created_at: 0,
+        updated_at: 0,
+        messages: vec![
+            StoredMessage { role: "user".into(), text: "Tell me about Paris".into(), reasoning: None, tps: None, tokens: None },
+            StoredMessage {
+                role: "assistant".into(),
+                text: "Paris is the capital of France.".into(),
+                reasoning: Some(reasoning.into()),
+                tps: Some(40.0),
+                tokens: Some(64),
+            },
+        ],
+    };
+    render_png("chat-thinking", 1200.0, 800.0, |_, cx| {
+        let store = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
+        let cloud = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
+        let view = cx.new(|cx| screens::ChatView::new(store, cloud, cx));
+        view.update(cx, |c, cx| {
+            c.load_stored(chat, cx);
+            c.expand_reasoning(1, cx);
+        });
+        view
+    });
+}
+
+#[test]
 fn render_chat_messages() {
     render_png("chat-messages", 1200.0, 800.0, |_, cx| {
         let store = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));

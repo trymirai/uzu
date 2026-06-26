@@ -23,7 +23,7 @@ use crate::{
     models_store::ModelsStore,
     persistence::{self, StoredChat, StoredMessage},
     settings_state,
-    theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
+    theme::{ActiveTheme, FONT_MONO, layout::CONTENT_MAX_WIDTH},
     title_gen,
     toast::{self, ToastKind},
 };
@@ -161,6 +161,8 @@ pub struct ChatView {
     chat_id: Option<String>,
     created_at: u64,
     scroll: ScrollHandle,
+    /// Auto-scrolls the streaming reasoning panel to its latest line.
+    reasoning_scroll: ScrollHandle,
     /// Frames remaining to keep re-pinning the scroll to the bottom. A single
     /// `scroll_to_bottom()` lands short because wrapped-text height is only
     /// final after the second layout pass; re-asserting for a few frames lets
@@ -228,6 +230,7 @@ impl ChatView {
             chat_id: None,
             created_at: persistence::now_ms(),
             scroll: ScrollHandle::new(),
+            reasoning_scroll: ScrollHandle::new(),
             pin_bottom_frames: 0,
             model_picker_open: false,
             msg_model_picker_open: None,
@@ -675,6 +678,14 @@ impl ChatView {
         self.close_popovers();
         self.perf_open_msg = Some(msg_idx);
         cx.notify();
+    }
+
+    #[cfg(test)]
+    pub fn expand_reasoning(&mut self, msg_idx: usize, cx: &mut Context<Self>) {
+        if let Some(m) = self.messages.get_mut(msg_idx) {
+            m.reasoning_collapsed = false;
+            cx.notify();
+        }
     }
 
     /// Reset to a fresh, unsaved conversation (keeps the selected model).
@@ -1196,6 +1207,8 @@ impl ChatView {
                 if self.should_auto_scroll() {
                     self.pin_to_bottom();
                 }
+                // Keep the live reasoning panel scrolled to its newest line.
+                self.reasoning_scroll.scroll_to_bottom();
                 cx.notify();
             }
             StreamMsg::Done => {
@@ -1408,7 +1421,9 @@ impl Render for ChatView {
                     .child(IconEl::new(Icon::Logo, theme.text_muted).size(13.)),
             );
         } else {
+            let msg_count = self.messages.len();
             for (idx, msg) in self.messages.iter().enumerate() {
+                let streaming_here = streaming && idx + 1 == msg_count;
                 let cur = msg.cur();
                 column = column.child(match msg.role {
                     Role::User => div()
@@ -1444,16 +1459,16 @@ impl Render for ChatView {
                                 if !reasoning.trim().is_empty() {
                                     let collapsed = msg.reasoning_collapsed;
                                     let chevron = if collapsed {
-                                        Icon::ChevronRight
-                                    } else {
                                         Icon::ChevronDown
+                                    } else {
+                                        Icon::ChevronUp
                                     };
-                                    // Toggle on header click.
+                                    // Header: label on the left, collapse chevron on the right.
                                     let header = div()
                                         .id(SharedString::from(format!("think-hdr-{idx}")))
                                         .flex()
                                         .items_center()
-                                        .gap_1()
+                                        .justify_between()
                                         .text_xs()
                                         .text_color(theme.text_muted)
                                         .cursor(CursorStyle::PointingHand)
@@ -1463,18 +1478,24 @@ impl Render for ChatView {
                                                 cx.notify();
                                             }
                                         }))
-                                        .child(IconEl::new(Icon::Thinking, theme.text_muted).size(13.))
-                                        .child(if streaming && cur.text.is_empty() {
-                                            "Thinking…"
-                                        } else {
-                                            "Thinking"
-                                        })
-                                        .child(IconEl::new(chevron, theme.text_muted).size(11.));
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_1()
+                                                .child(IconEl::new(Icon::Thinking, theme.text_muted).size(13.))
+                                                .child(if streaming_here {
+                                                    "thinking…"
+                                                } else {
+                                                    "Thoughts"
+                                                }),
+                                        )
+                                        .child(IconEl::new(chevron, theme.text_muted).size(12.));
 
                                     let mut panel = div()
                                         .flex()
                                         .flex_col()
-                                        .gap_1()
+                                        .gap_2()
                                         .p_3()
                                         .rounded_lg()
                                         .bg(theme.bg_sub)
@@ -1483,15 +1504,37 @@ impl Render for ChatView {
                                         .child(header);
 
                                     if !collapsed {
-                                        // Body capped at 180 px; overflow is hidden so
-                                        // very long reasoning blocks don't dominate.
+                                        // Monospace body capped at 180 px, scrollable, with a
+                                        // bottom fade so the cut-off blends into the panel.
+                                        // The live message auto-scrolls to its newest line.
+                                        let mut body = div()
+                                            .id(SharedString::from(format!("think-body-{idx}")))
+                                            .max_h(px(180.))
+                                            .overflow_y_scroll()
+                                            .font_family(FONT_MONO)
+                                            .text_size(px(12.))
+                                            .text_color(theme.text_muted)
+                                            .child(reasoning.clone());
+                                        if streaming_here {
+                                            body = body.track_scroll(&self.reasoning_scroll);
+                                        }
                                         panel = panel.child(
                                             div()
-                                                .max_h(px(180.))
-                                                .overflow_hidden()
-                                                .text_sm()
-                                                .text_color(theme.text_muted)
-                                                .child(reasoning.clone()),
+                                                .relative()
+                                                .child(body)
+                                                .child(
+                                                    div()
+                                                        .absolute()
+                                                        .bottom_0()
+                                                        .left_0()
+                                                        .right_0()
+                                                        .h(px(28.))
+                                                        .bg(gpui::linear_gradient(
+                                                            180.,
+                                                            gpui::linear_color_stop(theme.bg_sub.opacity(0.), 0.),
+                                                            gpui::linear_color_stop(theme.bg_sub, 1.),
+                                                        )),
+                                                ),
                                         );
                                     }
                                     block = block.child(panel);
