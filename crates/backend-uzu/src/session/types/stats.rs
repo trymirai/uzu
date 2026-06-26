@@ -18,69 +18,66 @@ pub struct PowerStats {
 impl PowerStats {
     pub(crate) fn from_keisoku_session(session: &keisoku::Session) -> Option<Self> {
         let mut samples_count = 0_u64;
-        // Joule accumulators: watts × window_secs for each component.
-        // Dividing by total_elapsed_secs gives the time-weighted average, so
-        // average_package_watts × total_elapsed_secs = energy_joules exactly.
-        let mut cpu_j = 0.0_f64;
-        let mut gpu_j = 0.0_f64;
-        let mut gpu_sram_j = 0.0_f64;
-        let mut ane_j = 0.0_f64;
-        let mut ram_j = 0.0_f64;
-        let mut total_j = 0.0_f64;
+        // Each accumulator integrates watts over time (watts × seconds); the time-weighted
+        // average is the integral divided by total_elapsed_secs.
+        let mut cpu_joules = 0.0_f64;
+        let mut gpu_joules = 0.0_f64;
+        let mut gpu_sram_joules = 0.0_f64;
+        let mut ane_joules = 0.0_f64;
+        let mut ram_joules = 0.0_f64;
+        let mut total_joules = 0.0_f64;
         let mut energy_joules = 0.0_f64;
-        let mut max_package = 0.0_f64;
+        let mut max_package_watts = 0.0_f64;
         let mut previous_elapsed_secs = 0.0_f64;
         let mut total_elapsed_secs = 0.0_f64;
 
         for snapshot in &session.snapshots {
+            // elapsed is stamped after each sample, so consecutive gaps partition the
+            // recording timeline without overlap.
             let elapsed_secs = snapshot.elapsed.value() as f64 / 1000.0;
-            // window_secs = duration this snapshot's readings were observed over.
-            // elapsed is stamped after each collector.sample() call, so consecutive
-            // gaps partition the recording timeline without overlap.
             let window_secs = (elapsed_secs - previous_elapsed_secs).max(0.0);
             previous_elapsed_secs = elapsed_secs;
 
             // Prefer SoC IOReport power (macOS); fall back to HID rail power on iOS.
             let wall_watts = match snapshot.power.as_ref() {
                 Some(power) => {
-                    cpu_j += power.cpu.value() as f64 * window_secs;
-                    gpu_j += power.gpu.value() as f64 * window_secs;
-                    gpu_sram_j += power.gpu_sram.value() as f64 * window_secs;
-                    ane_j += power.ane.value() as f64 * window_secs;
-                    ram_j += power.ram.value() as f64 * window_secs;
-                    total_j += power.total.value() as f64 * window_secs;
+                    cpu_joules += power.cpu.value() as f64 * window_secs;
+                    gpu_joules += power.gpu.value() as f64 * window_secs;
+                    gpu_sram_joules += power.gpu_sram.value() as f64 * window_secs;
+                    ane_joules += power.ane.value() as f64 * window_secs;
+                    ram_joules += power.ram.value() as f64 * window_secs;
+                    total_joules += power.total.value() as f64 * window_secs;
                     power.package.value() as f64
                 },
                 None => match snapshot.rail_power() {
-                    Some(watts) => {
-                        let watts = watts.value() as f64;
-                        total_j += watts * window_secs;
-                        watts
+                    Some(rail_watts) => {
+                        let rail_watts = rail_watts.value() as f64;
+                        total_joules += rail_watts * window_secs;
+                        rail_watts
                     },
                     None => continue,
                 },
             };
             samples_count += 1;
-            max_package = max_package.max(wall_watts);
+            max_package_watts = max_package_watts.max(wall_watts);
             energy_joules += wall_watts * window_secs;
             total_elapsed_secs = elapsed_secs;
         }
 
-        if samples_count == 0 {
+        if samples_count == 0 || total_elapsed_secs <= 0.0 {
             return None;
         }
 
-        let t = total_elapsed_secs;
         Some(Self {
             samples_count,
-            average_cpu_watts: cpu_j / t,
-            average_gpu_watts: gpu_j / t,
-            average_gpu_sram_watts: gpu_sram_j / t,
-            average_ane_watts: ane_j / t,
-            average_ram_watts: ram_j / t,
-            average_total_watts: total_j / t,
-            average_package_watts: energy_joules / t,
-            max_package_watts: max_package,
+            average_cpu_watts: cpu_joules / total_elapsed_secs,
+            average_gpu_watts: gpu_joules / total_elapsed_secs,
+            average_gpu_sram_watts: gpu_sram_joules / total_elapsed_secs,
+            average_ane_watts: ane_joules / total_elapsed_secs,
+            average_ram_watts: ram_joules / total_elapsed_secs,
+            average_total_watts: total_joules / total_elapsed_secs,
+            average_package_watts: energy_joules / total_elapsed_secs,
+            max_package_watts,
             energy_joules,
         })
     }
