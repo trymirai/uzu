@@ -106,14 +106,17 @@ pub fn get_sampling_method<B: Backend>(
 pub fn get_speculator<'a>(
     preset: &ChatSpeculationPreset,
     tokenizer: &Tokenizer,
-) -> Result<Box<dyn Speculator>, BackendError> {
-    let speculator: Box<dyn Speculator> = match preset {
+) -> Result<Option<(Box<dyn Speculator>, usize)>, BackendError> {
+    match preset {
         ChatSpeculationPreset::GeneralChat {
             ..
-        } => Box::new(EmptySpeculator {}),
+        } => Ok(None),
         ChatSpeculationPreset::Summarization {
             ..
-        } => Box::new(PromptLookupSpeculator::new_with_params(3)),
+        } => {
+            let speculator = Box::new(PromptLookupSpeculator::new_with_params(3));
+            Ok(Some((speculator, 16)))
+        },
         ChatSpeculationPreset::Classification {
             feature,
         } => {
@@ -126,8 +129,9 @@ pub fn get_speculator<'a>(
                     Ok(ids)
                 })
                 .collect::<Result<Vec<Vec<u64>>, BackendError>>()?;
-            Box::new(FixedTokensSpeculator::new(proposals))
+            let speculator = Box::new(FixedTokensSpeculator::new(proposals));
+            let budget = speculator.max_trie_nodes() + 1;
+            Ok(Some((speculator, budget)))
         },
-    };
-    Ok(speculator)
+    }
 }

@@ -43,7 +43,7 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     config: ChatConfig,
     tokenizer: Tokenizer,
     stop_token_ids: Vec<i32>,
-    speculator: Option<Box<dyn Speculator>>,
+    speculator: Option<(Box<dyn Speculator>, usize)>,
     max_context_length: Option<usize>,
 }
 
@@ -60,7 +60,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
         let stop_token_ids = model.generation_config().stop_token_ids.iter().map(|id| *id as i32).collect();
 
         let speculator = if let Some(ref preset) = config.speculation_preset.as_ref() {
-            Some(get_speculator(preset, &tokenizer).map_err(|err| BackendError::from(err))?)
+            get_speculator(preset, &tokenizer).map_err(|err| BackendError::from(err))?
         } else {
             None
         };
@@ -109,10 +109,9 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         let token_limit = config.token_limit.map(|count| count as usize).unwrap_or(usize::MAX);
 
         let stream = async_stream::stream! {
-            let spec_options = self.speculator.as_ref().map(|speculator| LanguageModelStreamSpeculatorOptions {
+            let spec_options = self.speculator.as_ref().map(|(speculator, budget)| LanguageModelStreamSpeculatorOptions {
                 speculator: speculator.as_ref(),
-                // TODO: pass actual value
-                speculation_budget: 1,
+                speculation_budget: *budget,
                 trie_creation_config: Default::default(),
             });
 
