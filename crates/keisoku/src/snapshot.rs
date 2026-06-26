@@ -32,36 +32,36 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// Charger watts from matched HID voltage×current rails (e.g. `Charger VQ0u`×`IQ0u`); estimate, unlike the IOReport [`Snapshot::power`].
+    /// Sum of charger/battery watts from matched HID voltage×current rails
+    /// (e.g. `Charger VQ0u`×`Charger IQ0u`). An estimate, unlike IOReport [`Snapshot::power`].
     pub fn rail_power(&self) -> Option<Watts> {
         use crate::component::Component;
-        // Use the power magnitude so battery discharge (negative current when unplugged)
-        // counts too; the ceiling discards mismatched-unit pairs (real charge/discharge
-        // stays far below it).
+        // Power magnitude so battery discharge (negative current when unplugged) counts too;
+        // the ceiling rejects mismatched-unit pairs, well above real charge/discharge.
         const MAX_PLAUSIBLE_WATTS: f64 = 1000.0;
-        let split = |name: &str| name.rsplit_once(' ').map(|(area, code)| (area.to_owned(), code.to_owned()));
+        let split_area_code = |name: &str| name.rsplit_once(' ').map(|(area, code)| (area.to_owned(), code.to_owned()));
         let is_battery_rail = |sensor: &&Sensor| matches!(sensor.component, Component::Charger | Component::Battery);
 
-        let mut total = 0f64;
-        for volts in self.voltage.iter().filter(is_battery_rail) {
-            let Some((varea, vcode)) = split(&volts.name) else {
+        let mut total_watts = 0f64;
+        for voltage_sensor in self.voltage.iter().filter(is_battery_rail) {
+            let Some((voltage_area, voltage_code)) = split_area_code(&voltage_sensor.name) else {
                 continue;
             };
-            let Some(rail) = vcode.strip_prefix('V').filter(|rail| !rail.is_empty()) else {
+            let Some(rail_code) = voltage_code.strip_prefix('V').filter(|code| !code.is_empty()) else {
                 continue;
             };
-            for amps in self.current.iter().filter(is_battery_rail) {
-                let Some((aarea, acode)) = split(&amps.name) else {
+            for current_sensor in self.current.iter().filter(is_battery_rail) {
+                let Some((current_area, current_code)) = split_area_code(&current_sensor.name) else {
                     continue;
                 };
-                if aarea == varea && acode.strip_prefix('I') == Some(rail) {
-                    let watts = (volts.value * amps.value).abs();
+                if current_area == voltage_area && current_code.strip_prefix('I') == Some(rail_code) {
+                    let watts = (voltage_sensor.value * current_sensor.value).abs();
                     if (0.0..=MAX_PLAUSIBLE_WATTS).contains(&watts) {
-                        total += watts;
+                        total_watts += watts;
                     }
                 }
             }
         }
-        (total > 0.0).then_some(Watts(total as f32))
+        (total_watts > 0.0).then_some(Watts(total_watts as f32))
     }
 }
