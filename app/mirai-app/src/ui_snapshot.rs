@@ -461,7 +461,10 @@ fn render_gen_settings() {
         let store = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
         let cloud = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
         let chat = cx.new(|cx| screens::ChatView::new(store, cloud, cx));
-        chat.update(cx, |c, cx| c.open_gen_settings(cx));
+        chat.update(cx, |c, cx| {
+            c.open_gen_settings(cx);
+            c.set_stochastic(cx);
+        });
         chat
     });
 }

@@ -19,14 +19,14 @@ use uzu::{
 
 use crate::{
     components::{
-        Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, TextInput, Toggle,
+        Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, Slider, TextInput, Toggle,
         VendorIcon,
     },
     engine,
     models_store::ModelsStore,
     persistence::{self, StoredChat, StoredMessage},
     settings_state,
-    theme::{ActiveTheme, FONT_MONO, layout::CONTENT_MAX_WIDTH},
+    theme::{ActiveTheme, FONT_MONO, Theme, layout::CONTENT_MAX_WIDTH},
     title_gen,
     toast::{self, ToastKind},
 };
@@ -690,6 +690,12 @@ impl ChatView {
     }
 
     #[cfg(test)]
+    pub fn set_stochastic(&mut self, cx: &mut Context<Self>) {
+        self.sampling_mode = SamplingMode::Stochastic;
+        cx.notify();
+    }
+
+    #[cfg(test)]
     pub fn expand_reasoning(&mut self, msg_idx: usize, cx: &mut Context<Self>) {
         if let Some(m) = self.messages.get_mut(msg_idx) {
             m.reasoning_collapsed = false;
@@ -943,76 +949,89 @@ impl ChatView {
             .child(mode_row);
 
         if self.sampling_mode == SamplingMode::Stochastic {
-            let off = |on: bool, v: String| if on { v } else { "off".to_string() };
-            card = card
-                .child(param_row(
-                    "Temperature",
-                    format!("{:.2}", self.temperature),
-                    "temp-dec",
-                    "temp-inc",
-                    border,
-                    fg,
-                    hover,
-                    cx.listener(|this, _, _, cx| {
-                        this.temperature = round2((this.temperature - 0.05).max(0.0));
+            let view = cx.entity();
+            // Temperature (0–2).
+            let v = view.clone();
+            card = card.child(slider_param(
+                "Temperature",
+                None,
+                format!("{}", round2(self.temperature)),
+                (self.temperature / 2.0).clamp(0., 1.),
+                "temp-slider",
+                &theme,
+                move |frac, _, cx| {
+                    v.update(cx, |this, cx| {
+                        this.temperature = round2(frac * 2.0);
                         cx.notify();
-                    }),
-                    cx.listener(|this, _, _, cx| {
-                        this.temperature = round2((this.temperature + 0.05).min(1.0));
+                    });
+                },
+            ));
+            // Top K (0–200).
+            let v = view.clone();
+            card = card.child(slider_param(
+                "Top K",
+                None,
+                self.top_k.to_string(),
+                (self.top_k as f32 / 200.0).clamp(0., 1.),
+                "topk-slider",
+                &theme,
+                move |frac, _, cx| {
+                    v.update(cx, |this, cx| {
+                        this.top_k = (frac * 200.0).round() as u32;
                         cx.notify();
-                    }),
-                ))
-                .child(param_row(
-                    "Top K",
-                    off(self.top_k > 0, self.top_k.to_string()),
-                    "topk-dec",
-                    "topk-inc",
-                    border,
-                    fg,
-                    hover,
-                    cx.listener(|this, _, _, cx| {
-                        this.top_k = this.top_k.saturating_sub(8);
+                    });
+                },
+            ));
+            // Top P (0–1) with on/off checkbox.
+            let v = view.clone();
+            let topp_box = param_checkbox("topp-cb", self.top_p > 0.0, &theme, {
+                let v = view.clone();
+                move |_, _, cx| {
+                    v.update(cx, |this, cx| {
+                        this.top_p = if this.top_p > 0.0 { 0.0 } else { 0.95 };
                         cx.notify();
-                    }),
-                    cx.listener(|this, _, _, cx| {
-                        this.top_k = (this.top_k + 8).min(500);
+                    });
+                }
+            });
+            card = card.child(slider_param(
+                "Top P",
+                Some(topp_box.into_any_element()),
+                format!("{}", round2(self.top_p)),
+                self.top_p.clamp(0., 1.),
+                "topp-slider",
+                &theme,
+                move |frac, _, cx| {
+                    v.update(cx, |this, cx| {
+                        this.top_p = round2(frac);
                         cx.notify();
-                    }),
-                ))
-                .child(param_row(
-                    "Top P",
-                    off(self.top_p > 0.0, format!("{:.2}", self.top_p)),
-                    "topp-dec",
-                    "topp-inc",
-                    border,
-                    fg,
-                    hover,
-                    cx.listener(|this, _, _, cx| {
-                        this.top_p = round2((this.top_p - 0.05).max(0.0));
+                    });
+                },
+            ));
+            // Min P (0–1) with on/off checkbox.
+            let v = view.clone();
+            let minp_box = param_checkbox("minp-cb", self.min_p > 0.0, &theme, {
+                let v = view.clone();
+                move |_, _, cx| {
+                    v.update(cx, |this, cx| {
+                        this.min_p = if this.min_p > 0.0 { 0.0 } else { 0.05 };
                         cx.notify();
-                    }),
-                    cx.listener(|this, _, _, cx| {
-                        this.top_p = round2((this.top_p + 0.05).min(1.0));
+                    });
+                }
+            });
+            card = card.child(slider_param(
+                "Min P",
+                Some(minp_box.into_any_element()),
+                format!("{}", round2(self.min_p)),
+                self.min_p.clamp(0., 1.),
+                "minp-slider",
+                &theme,
+                move |frac, _, cx| {
+                    v.update(cx, |this, cx| {
+                        this.min_p = round2(frac);
                         cx.notify();
-                    }),
-                ))
-                .child(param_row(
-                    "Min P",
-                    off(self.min_p > 0.0, format!("{:.2}", self.min_p)),
-                    "minp-dec",
-                    "minp-inc",
-                    border,
-                    fg,
-                    hover,
-                    cx.listener(|this, _, _, cx| {
-                        this.min_p = round2((this.min_p - 0.01).max(0.0));
-                        cx.notify();
-                    }),
-                    cx.listener(|this, _, _, cx| {
-                        this.min_p = round2((this.min_p + 0.01).min(1.0));
-                        cx.notify();
-                    }),
-                ));
+                    });
+                },
+            ));
         }
 
         // Divider + Reasoning toggle (always shown, like Electron).
@@ -1416,6 +1435,81 @@ fn step_button(
 /// Round a 0–1 sampling value to 2 decimals (avoids float drift across steps).
 fn round2(v: f32) -> f32 {
     (v * 100.0).round() / 100.0
+}
+
+/// Read-only numeric value box on the right of a parameter row.
+fn value_box(text: String, theme: &Theme) -> impl IntoElement {
+    div()
+        .min_w(px(76.))
+        .px_3()
+        .py_1p5()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.bg)
+        .text_sm()
+        .text_color(theme.text)
+        .child(text)
+}
+
+/// Small square checkbox used to enable/disable an optional sampling param.
+fn param_checkbox(
+    id: &'static str,
+    checked: bool,
+    theme: &Theme,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> impl IntoElement {
+    let mut b = div()
+        .id(id)
+        .size(px(18.))
+        .flex_none()
+        .rounded(px(4.))
+        .border_1()
+        .border_color(theme.border)
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor(gpui::CursorStyle::PointingHand)
+        .on_click(on_click);
+    if checked {
+        b = b.bg(theme.text).child(IconEl::new(Icon::Check, theme.bg).size(12.));
+    }
+    b
+}
+
+/// A sampling parameter: label (+ optional checkbox) and value box on top, a
+/// slider below. `frac` is the slider's normalized position; `on_change`
+/// receives the new fraction.
+#[allow(clippy::too_many_arguments)]
+fn slider_param(
+    label: &'static str,
+    checkbox: Option<gpui::AnyElement>,
+    value_text: String,
+    frac: f32,
+    slider_id: &'static str,
+    theme: &Theme,
+    on_change: impl Fn(f32, &mut Window, &mut gpui::App) + 'static,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().text_sm().text_color(theme.text).child(label))
+                        .children(checkbox),
+                )
+                .child(value_box(value_text, theme)),
+        )
+        .child(Slider::new(slider_id, frac).on_change(on_change))
 }
 
 /// A labeled −/+ stepper row used in the generation-settings panel.
