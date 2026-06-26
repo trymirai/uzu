@@ -10,141 +10,9 @@ using namespace metal;
 using namespace uzu::matmul;
 using namespace uzu::trie;
 
-#define TREE_GRAM_MAX_T 64
 #define TREE_GRAM_ROW_TILE 16
 #define TREE_GRAM_COL_TILE 32
-#define TREE_GRAM_MAT_THREADS METAL_SIMD_SIZE
-
-template <bool USE_MXU, bool RELAXED_MXU>
-// Multiplies a <=16x16 Neumann tile. MXU needs a 16x32 N tile, so only that
-// path pads the RHS/result through scratch before copying the valid 16x16 part.
-METAL_FUNC void tree_gram_neumann_matmul16(
-    threadgroup float* lhs_tile,
-    int lhs_stride,
-    threadgroup float* rhs_tile,
-    int rhs_stride,
-    threadgroup float* dst_tile,
-    int dst_stride,
-    threadgroup float* mxu_rhs_tile_16x32,
-    threadgroup float* mxu_dst_tile_16x32,
-    ushort lane,
-    short valid_rows,
-    short valid_cols
-) {
-  if constexpr (USE_MXU) {
-    using Ops = MxuFragmentOps<RELAXED_MXU>;
-    using AccFragment = Fragment<float, 1, 2, Ops>;
-    using LeftFragment = OperandFragment<float, 1, 1, Ops>;
-    using RightFragment = OperandFragment<float, 1, 2, Ops>;
-
-    for (uint idx = lane; idx < 16 * 32; idx += METAL_SIMD_SIZE) {
-      const uint r = idx / 32;
-      const uint c = idx - r * 32;
-      mxu_rhs_tile_16x32[idx] = c < 16 ? rhs_tile[r * rhs_stride + c] : 0.0f;
-      mxu_dst_tile_16x32[idx] = 0.0f;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    AccFragment acc;
-    LeftFragment left_frag;
-    RightFragment right_frag;
-    left_frag.load_from(lane, fragment_source(lhs_tile, lhs_stride).bounded(valid_rows, short(16)));
-    right_frag.load_from(lane, fragment_source(mxu_rhs_tile_16x32, 32).bounded(short(16), short(32)));
-    fragment_mm(acc, left_frag, right_frag);
-    acc.store(lane, mxu_dst_tile_16x32, 32);
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    for (uint idx = lane; idx < 16 * 16; idx += METAL_SIMD_SIZE) {
-      const uint r = idx / 16;
-      const uint c = idx - r * 16;
-      if (r < uint(valid_rows) && c < uint(valid_cols)) {
-        dst_tile[r * dst_stride + c] = mxu_dst_tile_16x32[r * 32 + c];
-      }
-    }
-  } else {
-    using Ops = SimdgroupFragmentOps;
-    using AccFragment = Fragment<float, 2, 2, Ops>;
-    using LeftFragment = OperandFragment<float, 2, 2, Ops>;
-    using RightFragment = OperandFragment<float, 2, 2, Ops>;
-    AccFragment acc;
-    LeftFragment left_frag;
-    RightFragment right_frag;
-    acc.clear();
-    left_frag.load_from(lane, fragment_source(lhs_tile, lhs_stride).bounded(valid_rows, short(16)));
-    right_frag.load_from(lane, fragment_source(rhs_tile, rhs_stride).bounded(short(16), valid_cols));
-    fragment_mma(acc, left_frag, right_frag);
-    acc.store_safe(lane, dst_tile, dst_stride, short2(valid_cols, valid_rows));
-  }
-}
-
-template <bool USE_MXU>
-METAL_FUNC void invert_tree_gram_diag_neumann_tile(
-    threadgroup float* neumann_power_tile,
-    threadgroup float* inverse_tile,
-    threadgroup float* product_tile,
-    threadgroup float* mxu_scratch,
-    device float* ainv,
-    ulong mat_base,
-    uint tree_size,
-    uint block_start,
-    uint block_size,
-    uint tid
-) {
-  for (uint covered_power = 1; covered_power < block_size - 1; covered_power = covered_power * 2 + 1) {
-    if (tid < METAL_SIMD_SIZE) {
-      // Strict MXU precision is intentional here; relaxed precision fails the
-      // repeated-squaring Ainv accuracy check.
-      tree_gram_neumann_matmul16<USE_MXU, false>(
-          neumann_power_tile,
-          16,
-          neumann_power_tile,
-          16,
-          product_tile,
-          16,
-          mxu_scratch,
-          mxu_scratch + 16 * 32,
-          ushort(tid),
-          short(block_size),
-          short(block_size)
-      );
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    for (uint idx = tid; idx < 16 * 16; idx += TREE_GRAM_MAT_THREADS) {
-      const uint r = idx / 16;
-      const uint c = idx - r * 16;
-      neumann_power_tile[r * 16 + c] = product_tile[r * 16 + c];
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    if (tid < METAL_SIMD_SIZE) {
-      tree_gram_neumann_matmul16<USE_MXU, false>(
-          inverse_tile,
-          16,
-          neumann_power_tile,
-          16,
-          product_tile,
-          16,
-          mxu_scratch,
-          mxu_scratch + 16 * 32,
-          ushort(tid),
-          short(block_size),
-          short(block_size)
-      );
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    for (uint idx = tid; idx < block_size * block_size; idx += TREE_GRAM_MAT_THREADS) {
-      const uint r = idx / block_size;
-      const uint c = idx - r * block_size;
-      const uint i = block_start + r;
-      const uint j = block_start + c;
-      inverse_tile[r * 16 + c] += product_tile[r * 16 + c];
-      ainv[mat_base + (ulong)i * (ulong)tree_size + (ulong)j] = inverse_tile[r * 16 + c];
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-  }
-}
+#define TREE_GRAM_THREADS METAL_SIMD_SIZE
 
 template <typename T, bool USE_MXU>
 VARIANTS(T, float, half, bfloat)
@@ -164,26 +32,13 @@ PUBLIC KERNEL(BuildTreeGram)(
     constant const uint& k_heads,
     constant const uint& value_heads,
     constant const uint& head_k_dim,
-    threadgroup float row_prefix_shared[TREE_GRAM_MAX_T],
-    threadgroup float row_beta_shared[TREE_GRAM_MAX_T],
-    threadgroup float col_prefix_shared[TREE_GRAM_COL_TILE],
-    threadgroup uint col_start_shared[TREE_GRAM_COL_TILE],
-    threadgroup uint col_end_shared[TREE_GRAM_COL_TILE],
-    threadgroup float a_tile_shared[TREE_GRAM_ROW_TILE * TREE_GRAM_COL_TILE],
-    threadgroup float neumann_power_shared[16 * 16],
-    threadgroup float neumann_inverse_shared[16 * 16],
-    threadgroup float neumann_product_shared[16 * 16],
-    threadgroup float mxu_neumann_scratch[16 * 32 * 2],
+    threadgroup float diagonal_a[TREE_GRAM_ROW_TILE * TREE_GRAM_ROW_TILE],
     const ThreadContext thread_context,
-    const uint batch_idx GROUPS(batch_size),
-    const uint hv GROUPS(value_heads),
+    const uint batch GROUPS(batch_size),
+    const uint value_head GROUPS(value_heads),
     const uint tile_idx GROUPS(tree_size.div_ceil(TREE_GRAM_ROW_TILE) * tree_size.div_ceil(TREE_GRAM_COL_TILE)),
-    const uint tid THREADS(TREE_GRAM_MAT_THREADS)
+    const uint tid THREADS(TREE_GRAM_THREADS)
 ) {
-  if (tree_size > TREE_GRAM_MAX_T) {
-    return;
-  }
-
   using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
   constexpr ushort ROW_FRAGMENTS = TREE_GRAM_ROW_TILE / Ops::FRAGMENT_ROWS;
   constexpr ushort COL_FRAGMENTS = TREE_GRAM_COL_TILE / Ops::FRAGMENT_COLS;
@@ -192,13 +47,13 @@ PUBLIC KERNEL(BuildTreeGram)(
   using LeftFragment = OperandFragment<InputType, ROW_FRAGMENTS, 1, Ops>;
   using RightFragment = OperandFragment<InputType, 1, COL_FRAGMENTS, Ops, ReadTranspose>;
 
-  const uint groups_per_head = value_heads / k_heads;
-  const uint hk = hv / groups_per_head;
-  const ulong qk_head_base = (((ulong)batch_idx * (ulong)tree_size) * (ulong)k_heads + (ulong)hk) * (ulong)head_k_dim;
+  const uint value_heads_per_key_head = value_heads / k_heads;
+  const uint key_head = value_head / value_heads_per_key_head;
+  const ulong qk_head_base = (((ulong)batch * (ulong)tree_size) * (ulong)k_heads + (ulong)key_head) * (ulong)head_k_dim;
   const uint qk_row_stride = k_heads * head_k_dim;
-  const ulong prefix_base = ((ulong)batch_idx * (ulong)tree_size) * (ulong)value_heads + (ulong)hv;
-  const ulong trie_base = (ulong)batch_idx * (ulong)tree_size;
-  const ulong mat_base = ((ulong)batch_idx * (ulong)value_heads + (ulong)hv) * (ulong)tree_size * (ulong)tree_size;
+  const ulong prefix_base = ((ulong)batch * (ulong)tree_size) * (ulong)value_heads + (ulong)value_head;
+  const ulong trie_base = (ulong)batch * (ulong)tree_size;
+  const ulong mat_base = ((ulong)batch * (ulong)value_heads + (ulong)value_head) * (ulong)tree_size * (ulong)tree_size;
 
   const uint col_tiles = (tree_size + TREE_GRAM_COL_TILE - 1) / TREE_GRAM_COL_TILE;
   const uint row_tile_idx = tile_idx / col_tiles;
@@ -206,25 +61,6 @@ PUBLIC KERNEL(BuildTreeGram)(
   const uint row_base = row_tile_idx * TREE_GRAM_ROW_TILE;
   const uint col_base = col_tile_idx * TREE_GRAM_COL_TILE;
   const ushort lane = thread_context.simd_lane_id;
-
-  for (uint i = tid; i < tree_size; i += TREE_GRAM_MAT_THREADS) {
-    row_prefix_shared[i] = prefix[prefix_base + (ulong)i * (ulong)value_heads];
-    row_beta_shared[i] = beta[prefix_base + (ulong)i * (ulong)value_heads];
-  }
-  if (tid < TREE_GRAM_COL_TILE) {
-    const uint j = col_base + tid;
-    if (j < tree_size) {
-      const TrieNode node = trie[trie_base + (ulong)j];
-      col_prefix_shared[tid] = prefix[prefix_base + (ulong)j * (ulong)value_heads];
-      col_start_shared[tid] = node.trie_start;
-      col_end_shared[tid] = node.trie_end;
-    } else {
-      col_prefix_shared[tid] = 0.0f;
-      col_start_shared[tid] = 1;
-      col_end_shared[tid] = 0;
-    }
-  }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
 
   AccFragment kk_acc;
   AccFragment qk_acc;
@@ -260,20 +96,29 @@ PUBLIC KERNEL(BuildTreeGram)(
     return;
   }
 
+  const bool has_diagonal_block = col_base <= row_base && row_base < col_base + TREE_GRAM_COL_TILE;
+  const uint diagonal_col_offset = has_diagonal_block ? row_base - col_base : 0;
+  const uint diagonal_block_size = min(uint(TREE_GRAM_ROW_TILE), tree_size - row_base);
+
   kk_acc.map_coords(lane, [&](short row, short col, float kk) {
     const uint i = row_base + uint(row);
     const uint j = col_base + uint(col);
     if (i >= tree_size || j >= tree_size) {
       return 0.0f;
     }
-    const bool incl = i >= col_start_shared[col] && i <= col_end_shared[col];
-    const float prefix_i = row_prefix_shared[i];
-    const float prefix_j = col_prefix_shared[col];
-    const float beta_i = row_beta_shared[i];
-    if (!incl || i == j) {
-      return 0.0f;
+    const TrieNode node = trie[trie_base + (ulong)j];
+    const bool incl = i >= node.trie_start && i <= node.trie_end;
+    const float prefix_i = prefix[prefix_base + (ulong)i * (ulong)value_heads];
+    const float prefix_j = prefix[prefix_base + (ulong)j * (ulong)value_heads];
+    const float beta_i = beta[prefix_base + (ulong)i * (ulong)value_heads];
+    const float a = incl && i != j ? beta_i * exp(prefix_i - prefix_j) * kk : 0.0f;
+    if (has_diagonal_block && uint(row) < diagonal_block_size && uint(col) >= diagonal_col_offset) {
+      const uint local_col = uint(col) - diagonal_col_offset;
+      if (local_col < diagonal_block_size) {
+        diagonal_a[uint(row) * TREE_GRAM_ROW_TILE + local_col] = a;
+      }
     }
-    return beta_i * exp(prefix_i - prefix_j) * kk;
+    return a;
   });
 
   qk_acc.map_coords(lane, [&](short row, short col, float qk_dot) {
@@ -282,9 +127,10 @@ PUBLIC KERNEL(BuildTreeGram)(
     if (i >= tree_size || j >= tree_size) {
       return 0.0f;
     }
-    const bool incl = i >= col_start_shared[col] && i <= col_end_shared[col];
-    const float prefix_i = row_prefix_shared[i];
-    const float prefix_j = col_prefix_shared[col];
+    const TrieNode node = trie[trie_base + (ulong)j];
+    const bool incl = i >= node.trie_start && i <= node.trie_end;
+    const float prefix_i = prefix[prefix_base + (ulong)i * (ulong)value_heads];
+    const float prefix_j = prefix[prefix_base + (ulong)j * (ulong)value_heads];
     if (!incl) {
       return 0.0f;
     }
@@ -300,7 +146,6 @@ PUBLIC KERNEL(BuildTreeGram)(
       int(tree_size),
       tile_dims
   );
-  kk_acc.store_safe(lane, a_tile_shared, TREE_GRAM_COL_TILE, tile_dims);
   qk_acc.store_safe(
       lane,
       qkd + mat_base + (ulong)row_base * (ulong)tree_size + (ulong)col_base,
@@ -308,41 +153,42 @@ PUBLIC KERNEL(BuildTreeGram)(
       tile_dims
   );
 
-  for (uint idx = tid; idx < tile_rows * tile_cols; idx += TREE_GRAM_MAT_THREADS) {
+  for (uint idx = tid; idx < tile_rows * tile_cols; idx += TREE_GRAM_THREADS) {
     const uint i = row_base + idx / tile_cols;
     const uint j = col_base + idx % tile_cols;
     ainv[mat_base + (ulong)i * (ulong)tree_size + (ulong)j] = i == j ? 1.0f : 0.0f;
   }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  if (col_base <= row_base && row_base < col_base + TREE_GRAM_COL_TILE) {
-    const uint diag_col = row_base - col_base;
-    const uint block_size = min(uint(16), tree_size - row_base);
-    for (uint idx = tid; idx < 16 * 16; idx += TREE_GRAM_MAT_THREADS) {
-      const uint r = idx / 16;
-      const uint c = idx - r * 16;
-      const uint i = row_base + r;
-      const uint j = row_base + c;
-      const bool in_block = r < block_size && c < block_size;
-      const float neg_a = in_block && c < r ? -a_tile_shared[r * TREE_GRAM_COL_TILE + diag_col + c] : 0.0f;
-      neumann_power_shared[idx] = neg_a;
-      neumann_inverse_shared[idx] = in_block && r == c ? 1.0f : neg_a;
-      if (in_block) {
-        ainv[mat_base + (ulong)i * (ulong)tree_size + (ulong)j] = neumann_inverse_shared[idx];
+  // ponytail: only diagonal 16x16 inverse blocks are produced; downstream reads no off-block Ainv.
+  if (has_diagonal_block) {
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const uint block_size = diagonal_block_size;
+    const uint j = tid;
+    if (j < block_size) {
+      float xcol[16];
+      METAL_PRAGMA_UNROLL
+      for (uint i = 0; i < 16; i++) {
+        if (i >= block_size || i < j) {
+          xcol[i] = 0.0f;
+        } else if (i == j) {
+          xcol[i] = 1.0f;
+        } else {
+          float acc = 0.0f;
+          METAL_PRAGMA_UNROLL
+          for (uint prev_row = 0; prev_row < 16; prev_row++) {
+            if (prev_row < i) {
+              acc += diagonal_a[i * TREE_GRAM_ROW_TILE + prev_row] * xcol[prev_row];
+            }
+          }
+          xcol[i] = -acc;
+        }
+      }
+      METAL_PRAGMA_UNROLL
+      for (uint i = 0; i < 16; i++) {
+        if (i < block_size) {
+          ainv[mat_base + (ulong)(row_base + i) * (ulong)tree_size + (ulong)(row_base + j)] = xcol[i];
+        }
       }
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    invert_tree_gram_diag_neumann_tile<USE_MXU>(
-        neumann_power_shared,
-        neumann_inverse_shared,
-        neumann_product_shared,
-        mxu_neumann_scratch,
-        ainv,
-        mat_base,
-        tree_size,
-        row_base,
-        block_size,
-        tid
-    );
   }
 }
