@@ -1,14 +1,16 @@
-use std::pin::Pin;
+use std::{collections::HashMap, pin::Pin};
 
-use crate::{
-    traits::backend::{Error, Instance as InstanceTrait},
-    types::session::classification::{ClassificationMessage, ClassificationOutput},
-};
+use crate::traits::backend::{Error, Instance as InstanceTrait};
+
+pub struct ClassifierOutput {
+    pub logits: Vec<f32>,
+    pub probabilities: HashMap<String, f32>,
+}
 
 pub type Config = ();
 pub type StreamConfig = ();
-pub type StreamInput = Vec<ClassificationMessage>;
-pub type StreamOutput = ClassificationOutput;
+pub type StreamInput = Vec<u64>;
+pub type StreamOutput = ClassifierOutput;
 
 pub trait Backend: Send + Sync {
     fn instance(

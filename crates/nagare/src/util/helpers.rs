@@ -20,7 +20,7 @@ pub fn error_stream<'a>(
     }))
 }
 
-pub fn get_encoding(
+pub fn build_encoding(
     reference: String,
     model: &Model,
 ) -> Result<Encoding, io::Error> {

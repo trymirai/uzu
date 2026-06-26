@@ -64,7 +64,6 @@ reqwest.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
 tokio.workspace = true
-tokio-stream.workspace = true
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }

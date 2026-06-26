@@ -21,9 +21,9 @@ use shoji::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::chat::{
-    ChatSessionError,
-    helpers::{error_stream, get_encoding},
+use crate::{
+    chat::ChatSessionError,
+    util::helpers::{build_encoding, error_stream},
 };
 
 pub struct Session {
@@ -41,7 +41,7 @@ impl Session {
         reference: String,
         model: &Model,
     ) -> Result<Self, ChatSessionError> {
-        let encoding = get_encoding(reference.clone(), model).map_err(|err| ChatSessionError::Loading {
+        let encoding = build_encoding(reference.clone(), model).map_err(|err| ChatSessionError::Loading {
             message: err.to_string(),
         })?;
         let tokenizer = encoding.tokenizer().ok_or_else(|| ChatSessionError::Loading {

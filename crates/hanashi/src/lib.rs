@@ -1,6 +1,11 @@
 use tokenizers::Tokenizer;
 
+mod classification;
+mod util;
+
 pub mod chat;
+
+pub use classification::encoding::ClassificationEncoding;
 
 pub trait Encoding {
     type Config;

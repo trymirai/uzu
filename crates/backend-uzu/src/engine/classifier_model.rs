@@ -1,4 +1,5 @@
 use std::{
+    cmp::min,
     collections::HashMap,
     fs::File,
     io::{self, BufReader},
@@ -7,6 +8,7 @@ use std::{
 };
 
 use half::bf16;
+use shoji::traits::backend::classification::ClassifierOutput;
 use thiserror::Error;
 
 use crate::{
@@ -95,7 +97,7 @@ impl<B: Backend> ClassifierModel<B> {
     pub fn classify(
         &self,
         input: &[u64],
-    ) -> Result<HashMap<String, f32>, ClassifierModelClassifyError<B>> {
+    ) -> Result<ClassifierOutput, ClassifierModelClassifyError<B>> {
         if input.is_empty() {
             return Err(ClassifierModelClassifyError::EmptyInput);
         }
@@ -126,8 +128,20 @@ impl<B: Backend> ClassifierModel<B> {
 
         assert!(self.data_type == DataType::BF16);
 
-        let probs = output_buffer.copyout::<bf16>().into_iter().map(|logit| 1.0 / (1.0 + (-logit.to_f32()).exp()));
+        let logits_bf16: Vec<bf16> = output_buffer.copyout::<bf16>();
+        let count = min(self.output_labels.len(), logits_bf16.len());
 
-        Ok(self.output_labels.iter().cloned().zip(probs).collect())
+        let mut logits: Vec<f32> = vec![0.0f32; count];
+        let mut probabilities = HashMap::new();
+        for i in 0..count {
+            logits[i] = logits_bf16[i].to_f32();
+            let prob = 1.0 / (1.0 + (-logits[i]).exp());
+            probabilities.insert(self.output_labels[i].clone(), prob);
+        }
+
+        Ok(ClassifierOutput {
+            logits,
+            probabilities,
+        })
     }
 }

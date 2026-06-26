@@ -49,7 +49,7 @@ pub fn main() {
     let engine = Engine::<Metal>::new().unwrap();
     let model = engine.load_classifier_model(&model_path).unwrap();
 
-    let mut probabilities = model.classify(&prompt).unwrap().into_iter().collect::<Vec<_>>();
+    let mut probabilities = model.classify(&prompt).unwrap().probabilities.into_iter().collect::<Vec<_>>();
     probabilities.sort_by(|(left, _), (right, _)| left.cmp(right));
 
     for (label, probability) in probabilities {
