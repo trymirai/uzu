@@ -18,63 +18,68 @@ pub struct PowerStats {
 impl PowerStats {
     pub(crate) fn from_keisoku_session(session: &keisoku::Session) -> Option<Self> {
         let mut samples_count = 0_u64;
-        let mut cpu = 0.0;
-        let mut gpu = 0.0;
-        let mut gpu_sram = 0.0;
-        let mut ane = 0.0;
-        let mut ram = 0.0;
-        let mut total = 0.0;
-        let mut package = 0.0;
+        // Joule accumulators: watts × window_secs for each component.
+        // Dividing by total_elapsed_secs gives the time-weighted average, so
+        // average_package_watts × total_elapsed_secs = energy_joules exactly.
+        let mut cpu_j = 0.0_f64;
+        let mut gpu_j = 0.0_f64;
+        let mut gpu_sram_j = 0.0_f64;
+        let mut ane_j = 0.0_f64;
+        let mut ram_j = 0.0_f64;
+        let mut total_j = 0.0_f64;
+        let mut energy_joules = 0.0_f64;
         let mut max_package = 0.0_f64;
-        let mut energy_joules = 0.0;
-        let mut previous_elapsed_secs = 0.0;
+        let mut previous_elapsed_secs = 0.0_f64;
+        let mut total_elapsed_secs = 0.0_f64;
 
         for snapshot in &session.snapshots {
-            // Integrate energy over the real time each sample spans (sampling overhead makes
-            // the gap longer than the nominal interval), so energy tracks wall-clock.
             let elapsed_secs = snapshot.elapsed.value() as f64 / 1000.0;
+            // window_secs = duration this snapshot's readings were observed over.
+            // elapsed is stamped after each collector.sample() call, so consecutive
+            // gaps partition the recording timeline without overlap.
             let window_secs = (elapsed_secs - previous_elapsed_secs).max(0.0);
             previous_elapsed_secs = elapsed_secs;
-            // Prefer SoC IOReport power (macOS); fall back to HID charger "wall" power on iOS (per-component stays 0).
+
+            // Prefer SoC IOReport power (macOS); fall back to HID rail power on iOS.
             let wall_watts = match snapshot.power.as_ref() {
                 Some(power) => {
-                    cpu += power.cpu.value() as f64;
-                    gpu += power.gpu.value() as f64;
-                    gpu_sram += power.gpu_sram.value() as f64;
-                    ane += power.ane.value() as f64;
-                    ram += power.ram.value() as f64;
-                    total += power.total.value() as f64;
+                    cpu_j += power.cpu.value() as f64 * window_secs;
+                    gpu_j += power.gpu.value() as f64 * window_secs;
+                    gpu_sram_j += power.gpu_sram.value() as f64 * window_secs;
+                    ane_j += power.ane.value() as f64 * window_secs;
+                    ram_j += power.ram.value() as f64 * window_secs;
+                    total_j += power.total.value() as f64 * window_secs;
                     power.package.value() as f64
                 },
                 None => match snapshot.rail_power() {
                     Some(watts) => {
                         let watts = watts.value() as f64;
-                        total += watts;
+                        total_j += watts * window_secs;
                         watts
                     },
                     None => continue,
                 },
             };
             samples_count += 1;
-            package += wall_watts;
             max_package = max_package.max(wall_watts);
             energy_joules += wall_watts * window_secs;
+            total_elapsed_secs = elapsed_secs;
         }
 
         if samples_count == 0 {
             return None;
         }
 
-        let sample_count = samples_count as f64;
+        let t = total_elapsed_secs;
         Some(Self {
             samples_count,
-            average_cpu_watts: cpu / sample_count,
-            average_gpu_watts: gpu / sample_count,
-            average_gpu_sram_watts: gpu_sram / sample_count,
-            average_ane_watts: ane / sample_count,
-            average_ram_watts: ram / sample_count,
-            average_total_watts: total / sample_count,
-            average_package_watts: package / sample_count,
+            average_cpu_watts: cpu_j / t,
+            average_gpu_watts: gpu_j / t,
+            average_gpu_sram_watts: gpu_sram_j / t,
+            average_ane_watts: ane_j / t,
+            average_ram_watts: ram_j / t,
+            average_total_watts: total_j / t,
+            average_package_watts: energy_joules / t,
             max_package_watts: max_package,
             energy_joules,
         })
