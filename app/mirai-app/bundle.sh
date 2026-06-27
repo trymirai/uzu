@@ -37,8 +37,20 @@ chmod +x "$APP/Contents/MacOS/mirai-app"
 cp "$SCRIPT_DIR/resources/Mirai.icns" "$APP/Contents/Resources/Mirai.icns"
 sed "s/__VERSION__/$VERSION/g" "$SCRIPT_DIR/resources/Info.plist" >"$APP/Contents/Info.plist"
 
-echo "==> Ad-hoc code-signing (replace with a Developer ID for distribution)"
-codesign --force --deep --sign - "$APP"
+# Sign with $MACOS_SIGNING_IDENTITY (a Developer ID) if set, else ad-hoc. The
+# entitlements are applied either way; hardened runtime (--options runtime,
+# required for notarization) is only added for a real identity, mirroring Zed's
+# script/bundle-mac. Distribution still needs notarytool + stapler afterwards.
+IDENTITY="${MACOS_SIGNING_IDENTITY:--}"
+ENTITLEMENTS="$SCRIPT_DIR/resources/Mirai.entitlements"
+if [[ "$IDENTITY" == "-" ]]; then
+	echo "==> Ad-hoc code-signing (set MACOS_SIGNING_IDENTITY for distribution)"
+	codesign --force --deep --entitlements "$ENTITLEMENTS" --sign - "$APP"
+else
+	echo "==> Code-signing + hardened runtime as '$IDENTITY'"
+	codesign --force --deep --timestamp --options runtime \
+		--entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$APP"
+fi
 
 echo "==> Building $DMG"
 STAGE="$(mktemp -d)"
