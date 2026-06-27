@@ -18,7 +18,7 @@ pub(super) fn section_header(label: &str, theme: &crate::theme::Theme) -> impl I
         .child(div().flex_1().child(label.to_uppercase()))
         .child(div().w(px(80.)).child("SIZE"))
         .child(div().w(px(140.)).child("QUANTIZATION"))
-        .child(div().w(px(56.)))
+        .child(div().w(px(100.)))
 }
 
 pub(super) fn quant_label(model: &Model) -> String {

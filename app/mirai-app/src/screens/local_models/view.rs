@@ -448,7 +448,10 @@ impl LocalModelsView {
                     .text_color(theme.text_muted)
                     .child(vm.quant.clone()),
             )
-            .child(action);
+            // Fixed-width, right-aligned control slot so the Size/Quantization
+            // columns don't shift as the controls change between phases
+            // (idle download button vs %+pause+cancel during download).
+            .child(div().w(px(100.)).flex().justify_end().child(action));
 
         div()
             // Stable id so hover state persists and updates on mouse-move
