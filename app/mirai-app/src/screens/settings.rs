@@ -482,22 +482,27 @@ impl SettingsView {
             .justify_between()
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
                     .items_center()
                     .gap_2()
                     .child(IconEl::new(Icon::Heart, theme.info).size(crate::tokens::icon::MD))
                     .child(
                         div()
+                            .min_w_0()
                             .text_xs()
                             .text_color(theme.text_muted)
                             .child("Let us know your feedback or request a new feature"),
                     ),
             )
             .child(
-                Button::new("give-feedback", "Give Feedback")
-                    .kind(ButtonKind::Primary)
-                    .size(ButtonSize::Small)
-                    .on_click(|_, _, cx| cx.open_url(DISCORD_URL)),
+                div().flex_shrink_0().child(
+                    Button::new("give-feedback", "Give Feedback")
+                        .kind(ButtonKind::Primary)
+                        .size(ButtonSize::Small)
+                        .on_click(|_, _, cx| cx.open_url(DISCORD_URL)),
+                ),
             )
             .into_any_element()
     }
