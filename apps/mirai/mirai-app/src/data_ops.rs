@@ -44,7 +44,9 @@ pub struct CleanupPreview {
 }
 
 pub fn log_file_path() -> PathBuf {
-    persistence::mirai_data_dir().join("mirai.log")
+    // The engine logs to `~/.cache/mirai/mirai.log` (uzu `StorageConfig`
+    // cache_path + log_name, name "mirai"); read/clear that, not the app data dir.
+    dirs::home_dir().unwrap_or_default().join(".cache").join("mirai").join("mirai.log")
 }
 
 pub fn tts_audio_dir() -> PathBuf {
@@ -265,7 +267,10 @@ pub fn clear_logs() -> bool {
     if primary.exists() {
         ok &= fs::write(&primary, []).is_ok();
     }
-    ok &= fs::remove_file(log_file_path_with_suffix(".1")).is_ok();
+    let rotated = log_file_path_with_suffix(".1");
+    if rotated.exists() {
+        ok &= fs::remove_file(&rotated).is_ok();
+    }
     ok
 }
 
