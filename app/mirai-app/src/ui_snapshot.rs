@@ -366,8 +366,9 @@ fn render_sidebar_settings() {
 
 #[test]
 fn render_chat_thinking() {
-    // Expanded reasoning panel with long content — verifies monospace text,
-    // the 180px cap, and the bottom fade gradient.
+    // Expanded reasoning panel on a finished message — verifies the monospace
+    // body renders inline (no inner scroll box) so the main chat scroll, not a
+    // trapped nested scroller, reviews it.
     let reasoning = "Let me think about Paris.\n\
         - Arc de Triomphe (Military).\n\
         - Notre-Dame Cathedral.\n\

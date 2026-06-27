@@ -771,38 +771,51 @@ impl Render for ChatView {
                                         .child(header);
 
                                     if !collapsed {
-                                        // Monospace body capped at 180 px, scrollable, with a
-                                        // bottom fade so the cut-off blends into the panel.
-                                        // The live message auto-scrolls to its newest line.
-                                        let mut body = div()
-                                            .id(SharedString::from(format!("think-body-{idx}")))
-                                            .max_h(px(180.))
-                                            .overflow_y_scroll()
-                                            .font_family(FONT_MONO)
-                                            .text_size(crate::tokens::font::SMALL)
-                                            .text_color(theme.text_muted)
-                                            .child(reasoning.clone());
                                         if streaming_here {
-                                            body = body.track_scroll(&self.reasoning_scroll);
+                                            // Live: cap the body at 180 px and auto-scroll to the
+                                            // newest line (tracked handle), with a bottom fade so
+                                            // the cut-off blends into the panel.
+                                            let body = div()
+                                                .id(SharedString::from(format!("think-body-{idx}")))
+                                                .max_h(px(180.))
+                                                .overflow_y_scroll()
+                                                .track_scroll(&self.reasoning_scroll)
+                                                .font_family(FONT_MONO)
+                                                .text_size(crate::tokens::font::SMALL)
+                                                .text_color(theme.text_muted)
+                                                .child(reasoning.clone());
+                                            panel = panel.child(
+                                                div()
+                                                    .relative()
+                                                    .child(body)
+                                                    .child(
+                                                        div()
+                                                            .absolute()
+                                                            .bottom_0()
+                                                            .left_0()
+                                                            .right_0()
+                                                            .h(px(28.))
+                                                            .bg(gpui::linear_gradient(
+                                                                180.,
+                                                                gpui::linear_color_stop(theme.bg_sub.opacity(0.), 0.),
+                                                                gpui::linear_color_stop(theme.bg_sub, 1.),
+                                                            )),
+                                                    ),
+                                            );
+                                        } else {
+                                            // Done: render the reasoning inline (no inner scroll
+                                            // box) so the main chat scroll reviews it. A nested
+                                            // capped scroller traps the wheel in GPUI — there's no
+                                            // browser-style overscroll chaining — which leaves the
+                                            // expanded panel un-scrollable and blocks the chat.
+                                            panel = panel.child(
+                                                div()
+                                                    .font_family(FONT_MONO)
+                                                    .text_size(crate::tokens::font::SMALL)
+                                                    .text_color(theme.text_muted)
+                                                    .child(reasoning.clone()),
+                                            );
                                         }
-                                        panel = panel.child(
-                                            div()
-                                                .relative()
-                                                .child(body)
-                                                .child(
-                                                    div()
-                                                        .absolute()
-                                                        .bottom_0()
-                                                        .left_0()
-                                                        .right_0()
-                                                        .h(px(28.))
-                                                        .bg(gpui::linear_gradient(
-                                                            180.,
-                                                            gpui::linear_color_stop(theme.bg_sub.opacity(0.), 0.),
-                                                            gpui::linear_color_stop(theme.bg_sub, 1.),
-                                                        )),
-                                                ),
-                                        );
                                     }
                                     block = block.child(panel);
                                 }
