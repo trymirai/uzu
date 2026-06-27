@@ -233,7 +233,8 @@ impl MiraiApp {
         active: bool,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let fg = if active { theme.text } else { theme.text_muted };
+        // Labels/icons are always white; only the active row gets a highlight bg.
+        let fg = theme.text;
         let bg = if active {
             theme.bg_hover
         } else {
@@ -273,14 +274,14 @@ impl MiraiApp {
             .px_2()
             .mx_2()
             .rounded_md()
-            .text_color(theme.text_muted)
+            .text_color(theme.text)
             .text_sm()
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(IconEl::new(Icon::Apps, theme.text_muted).size(18.))
+                    .child(IconEl::new(Icon::Apps, theme.text).size(18.))
                     .child("Apps"),
             )
             .child(div().text_xs().text_color(theme.text_muted).child("Soon"))
