@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use gpui::{
     AnyElement, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render,
-    SharedString, Window, div, prelude::*, px,
+    SharedString, Window, div, prelude::*, px, uniform_list,
 };
 
 use super::{
@@ -488,43 +488,57 @@ impl Render for ChatsView {
         let query = self.search.read(cx).text().to_lowercase();
         let query = query.trim();
 
-        let chats = std::mem::take(&mut self.chats);
-        let chats_empty = chats.is_empty();
+        let chats_empty = self.chats.is_empty();
         let hit = |chat: &StoredChat| {
             query.is_empty()
                 || chat.title.to_lowercase().contains(query)
                 || chat.model_name.as_deref().is_some_and(|m| m.to_lowercase().contains(query))
         };
-        let filtered: Vec<String> = chats.iter().filter(|c| hit(c)).map(|c| c.id.clone()).collect();
-        let toolbar = self.toolbar(cx, filtered, chats_empty);
+        let filtered: Vec<String> =
+            self.chats.iter().filter(|c| hit(c)).map(|c| c.id.clone()).collect();
+        let toolbar = self.toolbar(cx, filtered.clone(), chats_empty);
 
-        let mut list = div().flex().flex_col().gap_2().pb_6();
-        if chats_empty {
-            list = list.child(
-                div()
-                    .py_8()
-                    .text_color(theme.text_muted)
-                    .child("No chats yet. Start a new conversation!"),
-            );
+        // Virtualized chat list: only visible rows are built (the saved-chat
+        // count grows unbounded). Empty/no-match states render in their place.
+        let empty_msg = if chats_empty {
+            Some("No chats yet. Start a new conversation!")
+        } else if filtered.is_empty() {
+            Some("No chats found matching your search.")
         } else {
-            let mut shown = 0usize;
-            for chat in &chats {
-                if hit(chat) {
-                    let selected = self.selected.contains(&chat.id);
-                    list = list.child(self.row(cx, chat, self.selection_mode, selected));
-                    shown += 1;
-                }
+            None
+        };
+        let list_area = match empty_msg {
+            Some(msg) => div()
+                .id("chats-list")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(div().py_8().text_color(theme.text_muted).child(msg))
+                .into_any_element(),
+            None => {
+                let ids = filtered;
+                uniform_list(
+                    "chats-list",
+                    ids.len(),
+                    cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                        range
+                            .filter_map(|ix| {
+                                let id = ids.get(ix)?;
+                                let chat = this.chats.iter().find(|c| &c.id == id)?;
+                                let selected = this.selected.contains(id);
+                                Some(
+                                    this.row(cx, chat, this.selection_mode, selected)
+                                        .into_any_element(),
+                                )
+                            })
+                            .collect()
+                    }),
+                )
+                .flex_1()
+                .min_h_0()
+                .into_any_element()
             }
-            if shown == 0 {
-                list = list.child(
-                    div()
-                        .py_8()
-                        .text_color(theme.text_muted)
-                        .child("No chats found matching your search."),
-                );
-            }
-        }
-        self.chats = chats;
+        };
 
         let modal = self.confirm_delete.clone().map(|(id, title)| {
             ConfirmModal::new("Delete chat", format!("Delete \"{title}\"? This can't be undone."))
@@ -589,14 +603,7 @@ impl Render for ChatsView {
                     .child(self.instructions_card(cx))
                     .child(div().h_px().w_full().bg(theme.border).mb_3())
                     .child(toolbar)
-                    .child(
-                        div()
-                            .id("chats-list")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(list),
-                    ),
+                    .child(list_area),
             )
             .children(modal)
             .children(bulk_modal)
