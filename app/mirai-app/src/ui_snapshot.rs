@@ -195,16 +195,28 @@ fn render_settings() {
     render_png("settings", 1200.0, 800.0, |_, cx| cx.new(screens::SettingsView::new));
 }
 
+/// Point persistence at a clean, empty temp dir so the sidebar's recent-chats
+/// list renders deterministically empty — these full-app snapshots would
+/// otherwise read the developer's real chat history.
+fn use_empty_data_dir(tag: &str) {
+    let dir = std::env::temp_dir().join(format!("mirai-snap-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).ok();
+    persistence::set_test_data_dir(Some(dir));
+}
+
 // Full app shell on the Settings route, reproducing the real sidebar + flex_1
 // content-outlet nesting (the isolated `render_settings` can't surface
 // outlet-width bugs).
 #[test]
 fn render_app_settings() {
+    use_empty_data_dir("app-settings");
     unsafe { std::env::set_var("MIRAI_SCREEN", "settings") };
     render_png("app-settings", 1400.0, 820.0, |_, cx| {
         cx.new(crate::app_shell::MiraiApp::new)
     });
     unsafe { std::env::remove_var("MIRAI_SCREEN") };
+    persistence::set_test_data_dir(None);
 }
 
 #[test]
@@ -340,11 +352,13 @@ fn sample_stored_chat() -> StoredChat {
 #[test]
 fn render_sidebar_settings() {
     // Full app shell with the bottom Settings menu expanded.
+    use_empty_data_dir("sidebar-settings");
     render_png("sidebar-settings", 1200.0, 800.0, |_, cx| {
         let app = cx.new(MiraiApp::new);
         app.update(cx, |a, cx| a.open_settings_menu(cx));
         app
     });
+    persistence::set_test_data_dir(None);
 }
 
 #[test]
