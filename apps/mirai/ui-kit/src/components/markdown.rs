@@ -461,17 +461,44 @@ fn parse_inline(line: &str) -> Inline {
                 }
                 runs.push((start..out.len(), RunKind::Bold));
             },
-            '*' | '_' => {
-                let marker = c;
+            '*' => {
                 let start = out.len();
                 while let Some(&nc) = chars.peek() {
                     chars.next();
-                    if nc == marker {
+                    if nc == '*' {
                         break;
                     }
                     out.push(nc);
                 }
                 runs.push((start..out.len(), RunKind::Italic));
+            },
+            '_' => {
+                // Underscores only delimit emphasis at word boundaries, so
+                // identifiers like `foo_bar` stay literal (CommonMark intraword
+                // rule). `*` keeps its intraword behaviour above.
+                if out.chars().last().is_some_and(char::is_alphanumeric) {
+                    out.push('_');
+                } else {
+                    let mut content = String::new();
+                    let mut closed = false;
+                    while let Some(&nc) = chars.peek() {
+                        chars.next();
+                        if nc == '_' && !chars.peek().is_some_and(|n| n.is_alphanumeric()) {
+                            closed = true;
+                            break;
+                        }
+                        content.push(nc);
+                    }
+                    if closed {
+                        let start = out.len();
+                        out.push_str(&content);
+                        runs.push((start..out.len(), RunKind::Italic));
+                    } else {
+                        // No word-boundary close — keep the opener literal.
+                        out.push('_');
+                        out.push_str(&content);
+                    }
+                }
             },
             _ => out.push(c),
         }
