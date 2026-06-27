@@ -1,42 +1,35 @@
-//! `AssetSource` serving SVG icons from the on-disk `assets/` dir
-//! (`CARGO_MANIFEST_DIR`). Swap for an embedded source when shipping.
+//! `AssetSource` serving the SVG icons in `assets/`. `rust-embed` reads from
+//! disk in debug builds (live icon reload) and embeds the bytes into the binary
+//! in release, so a shipped `.app` bundle is self-contained (no dependency on
+//! the source checkout's `assets/` dir at runtime). Fonts are embedded
+//! separately via `include_bytes!` in `ui-kit/theme.rs`.
 
-use std::{borrow::Cow, fs, io::ErrorKind, path::PathBuf};
+use std::borrow::Cow;
 
 use anyhow::Result;
 use gpui::{AssetSource, SharedString};
 
-pub struct Assets {
-    root: PathBuf,
-}
+#[derive(rust_embed::RustEmbed)]
+#[folder = "assets"]
+struct Embedded;
+
+pub struct Assets;
 
 impl Assets {
     pub fn new() -> Self {
-        Self {
-            root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-        }
+        Self
     }
 }
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        match fs::read(self.root.join(path)) {
-            Ok(bytes) => Ok(Some(Cow::Owned(bytes))),
-            Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(err.into()),
-        }
+        Ok(Embedded::get(path).map(|file| file.data))
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        let mut out = Vec::new();
-        if let Ok(entries) = fs::read_dir(self.root.join(path)) {
-            let prefix = path.trim_end_matches('/');
-            for entry in entries.flatten() {
-                if let Some(name) = entry.file_name().to_str() {
-                    out.push(SharedString::from(format!("{prefix}/{name}")));
-                }
-            }
-        }
-        Ok(out)
+        Ok(Embedded::iter()
+            .filter(|p| p.starts_with(path))
+            .map(|p| SharedString::from(p.to_string()))
+            .collect())
     }
 }
