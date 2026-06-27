@@ -2,8 +2,8 @@
 //! danger/ghost) at two sizes.
 
 use gpui::{
-    App, ClickEvent, CursorStyle, ElementId, FontWeight, IntoElement, RenderOnce, SharedString,
-    Window, div, prelude::*, px,
+    App, ClickEvent, CursorStyle, ElementId, FontWeight, IntoElement, RenderOnce, SharedString, Window, div,
+    prelude::*, px,
 };
 
 use crate::{
@@ -38,7 +38,10 @@ pub struct Button {
 }
 
 impl Button {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+    pub fn new(
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+    ) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
@@ -51,27 +54,42 @@ impl Button {
         }
     }
 
-    pub fn kind(mut self, kind: ButtonKind) -> Self {
+    pub fn kind(
+        mut self,
+        kind: ButtonKind,
+    ) -> Self {
         self.kind = kind;
         self
     }
 
-    pub fn size(mut self, size: ButtonSize) -> Self {
+    pub fn size(
+        mut self,
+        size: ButtonSize,
+    ) -> Self {
         self.size = size;
         self
     }
 
-    pub fn icon(mut self, icon: Icon) -> Self {
+    pub fn icon(
+        mut self,
+        icon: Icon,
+    ) -> Self {
         self.icon = Some(icon);
         self
     }
 
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub fn disabled(
+        mut self,
+        disabled: bool,
+    ) -> Self {
         self.disabled = disabled;
         self
     }
 
-    pub fn full_width(mut self, full_width: bool) -> Self {
+    pub fn full_width(
+        mut self,
+        full_width: bool,
+    ) -> Self {
         self.full_width = full_width;
         self
     }
@@ -86,14 +104,16 @@ impl Button {
 }
 
 impl RenderOnce for Button {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(
+        self,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
 
         let (bg, fg, border) = match self.kind {
             ButtonKind::Primary => (theme.text, theme.bg, None),
-            ButtonKind::Secondary => {
-                (gpui::transparent_black(), theme.text, Some(theme.button_border))
-            }
+            ButtonKind::Secondary => (gpui::transparent_black(), theme.text, Some(theme.button_border)),
             ButtonKind::Danger => (theme.error, gpui::white(), None),
             ButtonKind::Ghost => (gpui::transparent_black(), theme.text_muted, None),
         };

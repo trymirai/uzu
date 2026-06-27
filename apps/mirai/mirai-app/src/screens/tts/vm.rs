@@ -15,7 +15,10 @@ pub(super) struct TtsVm {
 }
 
 impl TtsVm {
-    pub(super) fn from_row(row: &ModelRow, dark: bool) -> Self {
+    pub(super) fn from_row(
+        row: &ModelRow,
+        dark: bool,
+    ) -> Self {
         Self {
             id: row.id().to_string(),
             name: row.name(),
@@ -23,10 +26,7 @@ impl TtsVm {
             icon_url: row.icon_url(dark),
             size: crate::screens::local_models::format_size(row.display_size_bytes()),
             installed: row.is_installed(),
-            downloading: matches!(
-                row.phase(),
-                DownloadPhase::Downloading {} | DownloadPhase::Paused {}
-            ),
+            downloading: matches!(row.phase(), DownloadPhase::Downloading {} | DownloadPhase::Paused {}),
             progress: row.progress(),
         }
     }

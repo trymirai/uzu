@@ -4,7 +4,10 @@ use gpui::{FontWeight, IntoElement, div, prelude::*, px};
 use uzu::types::model::Model;
 
 /// Column header row for a family detail section (Installed / Available).
-pub(super) fn section_header(label: &str, theme: &crate::theme::Theme) -> impl IntoElement {
+pub(super) fn section_header(
+    label: &str,
+    theme: &crate::theme::Theme,
+) -> impl IntoElement {
     div()
         .flex()
         .items_center()

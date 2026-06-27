@@ -6,8 +6,8 @@
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Anchor, Animation, AnimationExt, Context, CursorStyle, Entity, EventEmitter, FontWeight,
-    IntoElement, Render, ScrollHandle, SharedString, Window, div, prelude::*, px,
+    Anchor, Animation, AnimationExt, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render,
+    ScrollHandle, SharedString, Window, div, prelude::*, px,
 };
 use uzu::{session::chat::ChatSession, types::model::Model};
 
@@ -18,10 +18,7 @@ use super::{
     state::ChatState,
 };
 use crate::{
-    components::{
-        Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, TextInput, Toggle,
-        VendorIcon,
-    },
+    components::{Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, TextInput, Toggle, VendorIcon},
     models_store::ModelsStore,
     persistence::{self, StoredChat, StoredMessage},
     settings_state,
@@ -78,7 +75,7 @@ impl ChatView {
         let input = cx.new(|cx| TextInput::new(cx, "Add message…").multiline(true, 1, 8));
         cx.subscribe(&input, |this, _input, event, cx| match event {
             InputEvent::Submit(text) => this.send(text.clone(), cx),
-            InputEvent::Changed(_) => {}
+            InputEvent::Changed(_) => {},
         })
         .detach();
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
@@ -135,7 +132,10 @@ impl ChatView {
 
     /// Eject the resident model if auto-eject is on and the chat has been idle
     /// past the configured timeout (and isn't mid-generation).
-    fn maybe_auto_eject(&mut self, cx: &mut Context<Self>) {
+    fn maybe_auto_eject(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let settings = settings_state::current(cx);
         if !settings.auto_eject || self.state.streaming || self.state.loaded_model.is_none() {
             return;
@@ -151,14 +151,18 @@ impl ChatView {
         self.state.session_model_id = None;
     }
 
-    pub(super) fn cached_session(&self, model_id: &str) -> Option<ChatSession> {
-        self.state.session
-            .as_ref()
-            .filter(|_| self.state.session_model_id.as_deref() == Some(model_id))
-            .cloned()
+    pub(super) fn cached_session(
+        &self,
+        model_id: &str,
+    ) -> Option<ChatSession> {
+        self.state.session.as_ref().filter(|_| self.state.session_model_id.as_deref() == Some(model_id)).cloned()
     }
 
-    pub(super) fn store_session(&mut self, session: ChatSession, model_id: &str) {
+    pub(super) fn store_session(
+        &mut self,
+        session: ChatSession,
+        model_id: &str,
+    ) {
         self.state.session = Some(session);
         self.state.session_model_id = Some(model_id.to_string());
     }
@@ -172,7 +176,10 @@ impl ChatView {
     /// indicator. Note: uzu exposes no unload API, so this does not free GPU
     /// memory — it's a UI deselect. The picked model (`self.state.model`) is kept, so
     /// the next message reloads it.
-    pub fn eject(&mut self, cx: &mut Context<Self>) {
+    pub fn eject(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(token) = &self.state.cancel {
             token.cancel();
         }
@@ -192,40 +199,60 @@ impl ChatView {
 
     /// Open the model picker (used by the trigger and visual tests).
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn open_model_picker(&mut self, cx: &mut Context<Self>) {
+    pub fn open_model_picker(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.close_popovers();
         self.state.model_picker_open = true;
         cx.notify();
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn open_file_upload(&mut self, cx: &mut Context<Self>) {
+    pub fn open_file_upload(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.close_popovers();
         self.state.file_upload_open = true;
         cx.notify();
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn open_perf_panel(&mut self, msg_idx: usize, cx: &mut Context<Self>) {
+    pub fn open_perf_panel(
+        &mut self,
+        msg_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
         self.close_popovers();
         self.state.perf_open_msg = Some(msg_idx);
         cx.notify();
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn open_gen_settings(&mut self, cx: &mut Context<Self>) {
+    pub fn open_gen_settings(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.state.gen_settings_open = true;
         cx.notify();
     }
 
     #[cfg(test)]
-    pub fn set_stochastic(&mut self, cx: &mut Context<Self>) {
+    pub fn set_stochastic(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.state.sampling_mode = SamplingMode::Stochastic;
         cx.notify();
     }
 
     #[cfg(test)]
-    pub fn expand_reasoning(&mut self, msg_idx: usize, cx: &mut Context<Self>) {
+    pub fn expand_reasoning(
+        &mut self,
+        msg_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(m) = self.state.messages.get_mut(msg_idx) {
             m.reasoning_collapsed = false;
             cx.notify();
@@ -233,7 +260,10 @@ impl ChatView {
     }
 
     /// Reset to a fresh, unsaved conversation (keeps the selected model).
-    pub fn start_new(&mut self, cx: &mut Context<Self>) {
+    pub fn start_new(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.state.messages.clear();
         self.state.chat_id = None;
         self.state.created_at = persistence::now_ms();
@@ -252,13 +282,13 @@ impl ChatView {
     /// came here to swap the model on a specific reply (`pending_regen`, set by
     /// the per-message "More local models" link), keep the conversation and
     /// regenerate that turn instead — Electron's `useRegenerateMessage` parity.
-    pub fn use_model(&mut self, model: Model, cx: &mut Context<Self>) {
+    pub fn use_model(
+        &mut self,
+        model: Model,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(idx) = self.state.pending_regen.take() {
-            let valid = self
-                .state
-                .messages
-                .get(idx)
-                .is_some_and(|m| m.role == Role::Assistant);
+            let valid = self.state.messages.get(idx).is_some_and(|m| m.role == Role::Assistant);
             if valid && !self.state.streaming {
                 self.regenerate_at_with_model(idx, Some(model), cx);
                 return;
@@ -269,7 +299,11 @@ impl ChatView {
     }
 
     /// Load a previously saved chat for viewing/continuing.
-    pub fn load_stored(&mut self, stored: StoredChat, cx: &mut Context<Self>) {
+    pub fn load_stored(
+        &mut self,
+        stored: StoredChat,
+        cx: &mut Context<Self>,
+    ) {
         self.state.messages = stored
             .messages
             .into_iter()
@@ -329,13 +363,11 @@ impl ChatView {
         if !self.state.messages.iter().any(|m| m.role == Role::User) {
             return;
         }
-        let id = self.state
-            .chat_id
-            .clone()
-            .unwrap_or_else(|| format!("chat-{}", self.state.created_at));
+        let id = self.state.chat_id.clone().unwrap_or_else(|| format!("chat-{}", self.state.created_at));
         self.state.chat_id = Some(id.clone());
         let title = if title_gen::is_placeholder(&self.state.chat_title) {
-            self.state.messages
+            self.state
+                .messages
                 .iter()
                 .find(|m| m.role == Role::User)
                 .map(|m| truncate(&m.cur().text, 48))
@@ -343,7 +375,8 @@ impl ChatView {
         } else {
             self.state.chat_title.clone()
         };
-        let messages = self.state
+        let messages = self
+            .state
             .messages
             .iter()
             .filter(|m| !m.cur().error && !m.cur().text.is_empty())
@@ -369,7 +402,10 @@ impl ChatView {
     }
 
     /// Generation-settings overlay: sampling mode + (Stochastic) params + max tokens.
-    fn gen_settings_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    fn gen_settings_overlay(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
         if !self.state.gen_settings_open {
             return None;
         }
@@ -378,44 +414,35 @@ impl ChatView {
         let border = theme.border;
         let fg = theme.text;
 
-        let mode_row = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(div().text_sm().text_color(fg).child("Sampling"))
-            .child(
-                SegmentedControl::new("sampling-mode", self.state.sampling_mode as usize)
-                    .segment(
-                        "Default",
-                        cx.listener(|this, _, _, cx| {
-                            this.state.sampling_mode = SamplingMode::Default;
-                            cx.notify();
-                        }),
-                    )
-                    .segment(
-                        "Argmax",
-                        cx.listener(|this, _, _, cx| {
-                            this.state.sampling_mode = SamplingMode::Argmax;
-                            cx.notify();
-                        }),
-                    )
-                    .segment(
-                        "Stochastic",
-                        cx.listener(|this, _, _, cx| {
-                            this.state.sampling_mode = SamplingMode::Stochastic;
-                            cx.notify();
-                        }),
-                    ),
-            );
+        let mode_row = div().flex().flex_col().gap_1().child(div().text_sm().text_color(fg).child("Sampling")).child(
+            SegmentedControl::new("sampling-mode", self.state.sampling_mode as usize)
+                .segment(
+                    "Default",
+                    cx.listener(|this, _, _, cx| {
+                        this.state.sampling_mode = SamplingMode::Default;
+                        cx.notify();
+                    }),
+                )
+                .segment(
+                    "Argmax",
+                    cx.listener(|this, _, _, cx| {
+                        this.state.sampling_mode = SamplingMode::Argmax;
+                        cx.notify();
+                    }),
+                )
+                .segment(
+                    "Stochastic",
+                    cx.listener(|this, _, _, cx| {
+                        this.state.sampling_mode = SamplingMode::Stochastic;
+                        cx.notify();
+                    }),
+                ),
+        );
 
         // Title bar + current-model row + reasoning toggle (Electron drawer).
         let resolved = self.resolved_model(cx);
-        let model_name =
-            resolved.as_ref().map(|m| m.name()).unwrap_or_else(|| "No model".to_string());
-        let vendor = resolved
-            .as_ref()
-            .and_then(|m| m.family.as_ref().map(|f| f.vendor.name()))
-            .unwrap_or_default();
+        let model_name = resolved.as_ref().map(|m| m.name()).unwrap_or_else(|| "No model".to_string());
+        let vendor = resolved.as_ref().and_then(|m| m.family.as_ref().map(|f| f.vendor.name())).unwrap_or_default();
         let icon_url = resolved.as_ref().and_then(dark_icon_url);
         let reasoning_on = settings_state::current(cx).reasoning;
 
@@ -423,13 +450,7 @@ impl ChatView {
             .flex()
             .items_center()
             .justify_between()
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(fg)
-                    .child("Edit parameters"),
-            )
+            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).text_color(fg).child("Edit parameters"))
             .child(
                 IconButton::new("gen-close", Icon::Close)
                     .color(theme.text_muted)
@@ -446,15 +467,7 @@ impl ChatView {
             .items_center()
             .gap_2()
             .child(VendorIcon::new(vendor).size(crate::tokens::icon::XL).icon_url(icon_url))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_sm()
-                    .text_color(fg)
-                    .child(model_name),
-            )
+            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(fg).child(model_name))
             .child(IconEl::new(Icon::ChevronDown, theme.text_muted).size(crate::tokens::icon::MD));
 
         let reasoning_row = div()
@@ -526,7 +539,11 @@ impl ChatView {
                 let v = view.clone();
                 move |_, _, cx| {
                     v.update(cx, |this, cx| {
-                        this.state.top_p = if this.state.top_p > 0.0 { 0.0 } else { 0.95 };
+                        this.state.top_p = if this.state.top_p > 0.0 {
+                            0.0
+                        } else {
+                            0.95
+                        };
                         cx.notify();
                     });
                 }
@@ -551,7 +568,11 @@ impl ChatView {
                 let v = view.clone();
                 move |_, _, cx| {
                     v.update(cx, |this, cx| {
-                        this.state.min_p = if this.state.min_p > 0.0 { 0.0 } else { 0.05 };
+                        this.state.min_p = if this.state.min_p > 0.0 {
+                            0.0
+                        } else {
+                            0.05
+                        };
                         cx.notify();
                     });
                 }
@@ -614,25 +635,30 @@ impl ChatView {
         )
     }
 
-    pub(super) fn resolved_model(&self, cx: &Context<Self>) -> Option<Model> {
-        self.state.model.clone().or_else(|| {
-            self.store
-                .read(cx)
-                .rows
-                .iter()
-                .find(|r| r.is_installed())
-                .map(|r| r.model.clone())
-        })
+    pub(super) fn resolved_model(
+        &self,
+        cx: &Context<Self>,
+    ) -> Option<Model> {
+        self.state
+            .model
+            .clone()
+            .or_else(|| self.store.read(cx).rows.iter().find(|r| r.is_installed()).map(|r| r.model.clone()))
     }
 
-    fn submit_from_button(&mut self, cx: &mut Context<Self>) {
+    fn submit_from_button(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let text = self.input.read(cx).text();
         self.input.update(cx, |input, cx| input.clear(cx));
         self.send(text, cx);
     }
 }
 
-fn truncate(s: &str, max: usize) -> String {
+fn truncate(
+    s: &str,
+    max: usize,
+) -> String {
     let trimmed = s.trim();
     if trimmed.chars().count() <= max {
         trimmed.to_string()
@@ -643,7 +669,11 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 impl Render for ChatView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let streaming = self.state.streaming;
 
@@ -659,14 +689,12 @@ impl Render for ChatView {
         }
         let show_reasoning = settings_state::current(cx).reasoning;
         let resolved = self.resolved_model(cx);
-        let model_name = resolved
-            .as_ref()
-            .map(|m| m.name())
-            .unwrap_or_else(|| "Select model".to_string());
+        let model_name = resolved.as_ref().map(|m| m.name()).unwrap_or_else(|| "Select model".to_string());
         let has_model = resolved.is_some();
         // Icon URL for the trigger badge (prefer dark theme logo).
         let trigger_icon_url = resolved.as_ref().and_then(dark_icon_url);
-        let trigger_vendor = resolved.as_ref().and_then(|m| m.family.as_ref().map(|f| f.vendor.name())).unwrap_or_default();
+        let trigger_vendor =
+            resolved.as_ref().and_then(|m| m.family.as_ref().map(|f| f.vendor.name())).unwrap_or_default();
 
         // Message column (`gap-4`, `pt-4`).
         let mut column = div().flex().flex_col().gap_4().pt_4().w_full();
@@ -690,33 +718,23 @@ impl Render for ChatView {
                 let cur = msg.cur();
                 column = column.child(match msg.role {
                     Role::User => div()
-                            .flex()
-                            .w_full()
-                            .justify_end()
-                            .child(
-                                div()
-                                    .max_w(px(560.))
-                                    .flex_shrink_0()
-                                    .px_3()
-                                    .py_2()
-                                    .rounded_lg()
-                                    .bg(theme.bg_hover)
-                                    .text_color(theme.text)
-                                    .child(crate::components::markdown::render(
-                                        &cur.parsed_markdown(),
-                                        &theme,
-                                        idx,
-                                    )),
-                            )
+                        .flex()
+                        .w_full()
+                        .justify_end()
+                        .child(
+                            div()
+                                .max_w(px(560.))
+                                .flex_shrink_0()
+                                .px_3()
+                                .py_2()
+                                .rounded_lg()
+                                .bg(theme.bg_hover)
+                                .text_color(theme.text)
+                                .child(crate::components::markdown::render(&cur.parsed_markdown(), &theme, idx)),
+                        )
                         .into_any_element(),
                     Role::Assistant => {
-                        let mut block = div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .w_full()
-                            .min_w_0()
-                            .pb_3();
+                        let mut block = div().flex().flex_col().gap_2().w_full().min_w_0().pb_3();
 
                         // Reasoning ("thinking") panel (hidden when the setting is off).
                         if show_reasoning {
@@ -790,17 +808,13 @@ impl Render for ChatView {
                                                             .child(text),
                                                     )
                                                     .child(
-                                                        div()
-                                                            .absolute()
-                                                            .bottom_0()
-                                                            .left_0()
-                                                            .right_0()
-                                                            .h(px(28.))
-                                                            .bg(gpui::linear_gradient(
+                                                        div().absolute().bottom_0().left_0().right_0().h(px(28.)).bg(
+                                                            gpui::linear_gradient(
                                                                 180.,
                                                                 gpui::linear_color_stop(theme.bg_sub.opacity(0.), 0.),
                                                                 gpui::linear_color_stop(theme.bg_sub, 1.),
-                                                            )),
+                                                            ),
+                                                        ),
                                                     ),
                                             );
                                         } else {
@@ -852,31 +866,19 @@ impl Render for ChatView {
                                 .w_full()
                                 .min_w_0()
                                 .text_color(theme.text)
-                                .child(crate::components::markdown::render(
-                                    &cur.parsed_markdown(),
-                                    &theme,
-                                    idx,
-                                ))
+                                .child(crate::components::markdown::render(&cur.parsed_markdown(), &theme, idx))
                                 .into_any_element()
                         };
                         block = block.child(body);
 
                         // Actions (`mt-6 pr-6`, copy left, model + performance right).
-                        let has_reasoning = cur
-                            .reasoning
-                            .as_ref()
-                            .is_some_and(|r| !r.trim().is_empty());
+                        let has_reasoning = cur.reasoning.as_ref().is_some_and(|r| !r.trim().is_empty());
                         let show_actions = !streaming
-                            && (msg.versions.len() > 1
-                                || !cur.text.is_empty()
-                                || cur.error
-                                || has_reasoning);
+                            && (msg.versions.len() > 1 || !cur.text.is_empty() || cur.error || has_reasoning);
                         if show_actions {
                             let copy_text = cur.text.clone();
-                            let show_perf = cur
-                                .tps
-                                .is_some_and(|t| t.is_finite() && t > 0.0)
-                                || cur.tokens.is_some_and(|t| t > 0);
+                            let show_perf =
+                                cur.tps.is_some_and(|t| t.is_finite() && t > 0.0) || cur.tokens.is_some_and(|t| t > 0);
 
                             let mut left = div().flex().items_center().gap_1();
                             if msg.versions.len() > 1 {
@@ -931,68 +933,77 @@ impl Render for ChatView {
                             }
                             if !cur.text.is_empty() || cur.error {
                                 left = left.child(
-                                    IconButton::new(
-                                        gpui::SharedString::from(format!("copy-{idx}")),
-                                        Icon::Copy,
-                                    )
-                                    .color(theme.text_muted)
-                                    .icon_size(14.)
-                                    .hit_size(24.)
-                                    .on_click(cx.listener(move |_this, _, _, cx| {
-                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                            copy_text.clone(),
-                                        ));
-                                    })),
+                                    IconButton::new(gpui::SharedString::from(format!("copy-{idx}")), Icon::Copy)
+                                        .color(theme.text_muted)
+                                        .icon_size(14.)
+                                        .hit_size(24.)
+                                        .on_click(cx.listener(move |_this, _, _, cx| {
+                                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy_text.clone()));
+                                        })),
                                 );
                             }
 
                             let mut right = div().flex().items_center().gap_4();
-                            right = right.child(
-                                {
-                                    let is_open = self.state.msg_model_picker_open == Some(idx);
-                                    let msg_picker = self.model_picker_panel(cx, Some(idx));
-                                    let btn_bg = if is_open { theme.bg_hover } else { gpui::transparent_black() };
-                                    div()
-                                        .relative()
-                                        .child(
-                                            div()
-                                                .id(gpui::SharedString::from(format!("msg-model-{idx}")))
-                                                .flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .px(px(6.))
-                                                .py_1()
-                                                .rounded_md()
-                                                .bg(btn_bg)
-                                                .cursor(gpui::CursorStyle::PointingHand)
-                                                .hover(|s| s.bg(theme.bg_hover))
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    let opening = this.state.msg_model_picker_open != Some(idx);
-                                                    this.close_popovers();
-                                                    if opening { this.state.msg_model_picker_open = Some(idx); }
-                                                    cx.notify();
-                                                }))
-                                                .child(IconEl::new(Icon::ModelMenu, theme.text_muted).size(crate::tokens::icon::SM))
-                                                .child(
-                                                    div()
-                                                        .text_size(crate::tokens::font::COMPACT)
-                                                        .text_color(theme.text_muted)
-                                                        .child("Model"),
-                                                ),
-                                        )
-                                        .when(is_open, |el| {
-                                            el.child(Self::anchored_popover(
-                                                msg_picker,
-                                                Anchor::BottomRight,
-                                                |this, _, _, cx| { this.state.msg_model_picker_open = None; cx.notify(); },
-                                                cx,
-                                            ))
-                                        })
-                                },
-                            );
+                            right = right.child({
+                                let is_open = self.state.msg_model_picker_open == Some(idx);
+                                let msg_picker = self.model_picker_panel(cx, Some(idx));
+                                let btn_bg = if is_open {
+                                    theme.bg_hover
+                                } else {
+                                    gpui::transparent_black()
+                                };
+                                div()
+                                    .relative()
+                                    .child(
+                                        div()
+                                            .id(gpui::SharedString::from(format!("msg-model-{idx}")))
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .px(px(6.))
+                                            .py_1()
+                                            .rounded_md()
+                                            .bg(btn_bg)
+                                            .cursor(gpui::CursorStyle::PointingHand)
+                                            .hover(|s| s.bg(theme.bg_hover))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                let opening = this.state.msg_model_picker_open != Some(idx);
+                                                this.close_popovers();
+                                                if opening {
+                                                    this.state.msg_model_picker_open = Some(idx);
+                                                }
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                IconEl::new(Icon::ModelMenu, theme.text_muted)
+                                                    .size(crate::tokens::icon::SM),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(crate::tokens::font::COMPACT)
+                                                    .text_color(theme.text_muted)
+                                                    .child("Model"),
+                                            ),
+                                    )
+                                    .when(is_open, |el| {
+                                        el.child(Self::anchored_popover(
+                                            msg_picker,
+                                            Anchor::BottomRight,
+                                            |this, _, _, cx| {
+                                                this.state.msg_model_picker_open = None;
+                                                cx.notify();
+                                            },
+                                            cx,
+                                        ))
+                                    })
+                            });
                             if show_perf {
                                 let perf_open = self.state.perf_open_msg == Some(idx);
-                                let perf_btn_bg = if perf_open { theme.bg_hover } else { gpui::transparent_black() };
+                                let perf_btn_bg = if perf_open {
+                                    theme.bg_hover
+                                } else {
+                                    gpui::transparent_black()
+                                };
                                 let perf_panel = self.performance_panel(idx, cur, cx);
                                 right = right.child(
                                     div()
@@ -1012,10 +1023,15 @@ impl Render for ChatView {
                                                 .on_click(cx.listener(move |this, _, _, cx| {
                                                     let opening = this.state.perf_open_msg != Some(idx);
                                                     this.close_popovers();
-                                                    if opening { this.state.perf_open_msg = Some(idx); }
+                                                    if opening {
+                                                        this.state.perf_open_msg = Some(idx);
+                                                    }
                                                     cx.notify();
                                                 }))
-                                                .child(IconEl::new(Icon::Performance, theme.text_muted).size(crate::tokens::icon::SM))
+                                                .child(
+                                                    IconEl::new(Icon::Performance, theme.text_muted)
+                                                        .size(crate::tokens::icon::SM),
+                                                )
                                                 .child(
                                                     div()
                                                         .text_size(crate::tokens::font::COMPACT)
@@ -1028,7 +1044,10 @@ impl Render for ChatView {
                                                 Self::anchored_popover(
                                                     panel,
                                                     Anchor::BottomRight,
-                                                    |this, _, _, cx| { this.state.perf_open_msg = None; cx.notify(); },
+                                                    |this, _, _, cx| {
+                                                        this.state.perf_open_msg = None;
+                                                        cx.notify();
+                                                    },
                                                     cx,
                                                 )
                                             }))
@@ -1037,19 +1056,12 @@ impl Render for ChatView {
                             }
 
                             block = block.child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .pt_6()
-                                    .pr_6()
-                                    .child(left)
-                                    .child(right),
+                                div().flex().items_center().justify_between().pt_6().pr_6().child(left).child(right),
                             );
                         }
 
                         block.into_any_element()
-                    }
+                    },
                 });
             }
         }
@@ -1098,58 +1110,50 @@ impl Render for ChatView {
                     .items_center()
                     // Scrollable message area (same flex pattern as `chats.rs` list).
                     .child(
-                        div()
-                            .w_full()
-                            .max_w(px(CONTENT_MAX_WIDTH))
-                            .flex_1()
-                            .min_h_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .id("chat-scroll")
-                                    .flex_1()
-                                    .min_h_0()
-                                    .min_w_0()
-                                    .w_full()
-                                    .overflow_y_scroll()
-                                    .track_scroll(&self.scroll)
-                                    .child(column),
-                            ),
+                        div().w_full().max_w(px(CONTENT_MAX_WIDTH)).flex_1().min_h_0().flex().flex_col().child(
+                            div()
+                                .id("chat-scroll")
+                                .flex_1()
+                                .min_h_0()
+                                .min_w_0()
+                                .w_full()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.scroll)
+                                .child(column),
+                        ),
                     )
                     // Composer (`flex-shrink-0`, max 800px — mirai-chat ChatPage).
                     .child(
-                        div()
-                            .w_full()
-                            .flex_shrink_0()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .child(
-                                div()
-                                    .w_full()
-                                    .max_w(px(CONTENT_MAX_WIDTH))
-                                    .flex()
-                                    .flex_col()
-                                    .items_end()
-                                    .gap_2()
-                                    // `MessageInput`: `gap-4 p-4 rounded-[8px]`.
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .gap_4()
-                                            .w_full()
-                                            .p_4()
-                                            .rounded_lg()
-                                            .border_1()
-                                            .border_color(theme.border)
-                                            .bg(theme.card)
-                                            .child(div().w_full().child(self.input.clone()))
-                                            // Attached-file chips — each shows the filename
-                                            // and an × to remove it before sending.
-                                            .when(!self.state.attached_files.is_empty(), |el| {
-                                                let chips = self.state.attached_files.iter().enumerate().map(|(i, (name, ext, _))| {
+                        div().w_full().flex_shrink_0().flex().flex_col().items_center().child(
+                            div()
+                                .w_full()
+                                .max_w(px(CONTENT_MAX_WIDTH))
+                                .flex()
+                                .flex_col()
+                                .items_end()
+                                .gap_2()
+                                // `MessageInput`: `gap-4 p-4 rounded-[8px]`.
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_4()
+                                        .w_full()
+                                        .p_4()
+                                        .rounded_lg()
+                                        .border_1()
+                                        .border_color(theme.border)
+                                        .bg(theme.card)
+                                        .child(div().w_full().child(self.input.clone()))
+                                        // Attached-file chips — each shows the filename
+                                        // and an × to remove it before sending.
+                                        .when(!self.state.attached_files.is_empty(), |el| {
+                                            let chips = self
+                                                .state
+                                                .attached_files
+                                                .iter()
+                                                .enumerate()
+                                                .map(|(i, (name, ext, _))| {
                                                     let label = format!("{name} .{ext}");
                                                     div()
                                                         .id(SharedString::from(format!("attach-{i}")))
@@ -1180,73 +1184,64 @@ impl Render for ChatView {
                                                                 })),
                                                         )
                                                         .into_any_element()
-                                                }).collect::<Vec<_>>();
-                                                el.child(
+                                                })
+                                                .collect::<Vec<_>>();
+                                            el.child(div().flex().flex_wrap().gap_1().children(chips))
+                                        })
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .child({
+                                                    // Float the upload panel above the "+" trigger
+                                                    // (deferred/anchored) instead of growing the
+                                                    // composer inline.
+                                                    let upload_panel = self.file_upload_panel(cx);
                                                     div()
-                                                        .flex()
-                                                        .flex_wrap()
-                                                        .gap_1()
-                                                        .children(chips),
-                                                )
-                                            })
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_between()
-                                                    .child({
-                                                        // Float the upload panel above the "+" trigger
-                                                        // (deferred/anchored) instead of growing the
-                                                        // composer inline.
-                                                        let upload_panel = self.file_upload_panel(cx);
-                                                        div()
-                                                            .relative()
-                                                            .child(
-                                                                div()
-                                                                    .id("file-upload-trigger")
-                                                                    .flex()
-                                                                    .items_center()
-                                                                    .px(px(6.))
-                                                                    .py_1()
-                                                                    .rounded_md()
-                                                                    .cursor(gpui::CursorStyle::PointingHand)
-                                                                    .hover(|s| s.bg(theme.bg_hover))
-                                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                                        this.state.file_upload_open =
-                                                                            !this.state.file_upload_open;
-                                                                        if this.state.file_upload_open {
-                                                                            this.state.model_picker_open = false;
-                                                                            this.state.msg_model_picker_open = None;
-                                                                            this.state.perf_open_msg = None;
-                                                                        }
-                                                                        cx.notify();
-                                                                    }))
-                                                                    .child(
-                                                                        IconEl::new(Icon::Plus, theme.text_muted)
-                                                                            .size(crate::tokens::icon::MD),
-                                                                    ),
-                                                            )
-                                                            .when_some(upload_panel, |el, panel| {
-                                                                el.child(Self::anchored_popover(
-                                                                    panel,
-                                                                    Anchor::BottomLeft,
-                                                                    |this, _, _, cx| {
-                                                                        this.state.file_upload_open = false;
-                                                                        cx.notify();
-                                                                    },
-                                                                    cx,
-                                                                ))
-                                                            })
-                                                    })
-                                                    .child({
-                                                        let mut controls =
-                                                            div().flex().items_center().gap(px(10.));
-                                                        if has_model {
-                                                            controls = controls.child(
-                                                                IconButton::new(
-                                                                    "gen-settings",
-                                                                    Icon::Settings,
-                                                                )
+                                                        .relative()
+                                                        .child(
+                                                            div()
+                                                                .id("file-upload-trigger")
+                                                                .flex()
+                                                                .items_center()
+                                                                .px(px(6.))
+                                                                .py_1()
+                                                                .rounded_md()
+                                                                .cursor(gpui::CursorStyle::PointingHand)
+                                                                .hover(|s| s.bg(theme.bg_hover))
+                                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                                    this.state.file_upload_open =
+                                                                        !this.state.file_upload_open;
+                                                                    if this.state.file_upload_open {
+                                                                        this.state.model_picker_open = false;
+                                                                        this.state.msg_model_picker_open = None;
+                                                                        this.state.perf_open_msg = None;
+                                                                    }
+                                                                    cx.notify();
+                                                                }))
+                                                                .child(
+                                                                    IconEl::new(Icon::Plus, theme.text_muted)
+                                                                        .size(crate::tokens::icon::MD),
+                                                                ),
+                                                        )
+                                                        .when_some(upload_panel, |el, panel| {
+                                                            el.child(Self::anchored_popover(
+                                                                panel,
+                                                                Anchor::BottomLeft,
+                                                                |this, _, _, cx| {
+                                                                    this.state.file_upload_open = false;
+                                                                    cx.notify();
+                                                                },
+                                                                cx,
+                                                            ))
+                                                        })
+                                                })
+                                                .child({
+                                                    let mut controls = div().flex().items_center().gap(px(10.));
+                                                    if has_model {
+                                                        controls = controls.child(
+                                                            IconButton::new("gen-settings", Icon::Settings)
                                                                 .color(theme.text_muted)
                                                                 .icon_size(18.)
                                                                 .hit_size(32.)
@@ -1255,64 +1250,70 @@ impl Render for ChatView {
                                                                         !this.state.gen_settings_open;
                                                                     cx.notify();
                                                                 })),
-                                                            );
-                                                        }
-                                                        let picker_panel = self
-                                                            .model_picker_panel(cx, None);
-                                                        controls = controls
-                                                            .child(
-                                                                div()
-                                                                    .relative()
-                                                                    .child(
-                                                                        div()
-                                                                            .id("model-trigger")
-                                                                            .flex()
-                                                                            .items_center()
-                                                                            .gap_1()
-                                                                            .px(px(6.))
-                                                                            .cursor(gpui::CursorStyle::PointingHand)
-                                                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                                                let opening = !this.state.model_picker_open;
-                                                                                this.close_popovers();
-                                                                                if opening { this.state.model_picker_open = true; }
-                                                                                cx.notify();
-                                                                            }))
-                                                                            .when(has_model, |el| {
-                                                                                el.child(
-                                                                                    VendorIcon::new(trigger_vendor.clone())
-                                                                                        .size(crate::tokens::icon::MD)
-                                                                                        .icon_url(trigger_icon_url.clone()),
-                                                                                )
-                                                                            })
-                                                                            .child(
-                                                                                div()
-                                                                                    .text_size(crate::tokens::font::COMPACT)
-                                                                                    .text_color(theme.text_muted)
-                                                                                    .child(model_name.clone()),
+                                                        );
+                                                    }
+                                                    let picker_panel = self.model_picker_panel(cx, None);
+                                                    controls = controls
+                                                        .child(
+                                                            div()
+                                                                .relative()
+                                                                .child(
+                                                                    div()
+                                                                        .id("model-trigger")
+                                                                        .flex()
+                                                                        .items_center()
+                                                                        .gap_1()
+                                                                        .px(px(6.))
+                                                                        .cursor(gpui::CursorStyle::PointingHand)
+                                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                                            let opening = !this.state.model_picker_open;
+                                                                            this.close_popovers();
+                                                                            if opening {
+                                                                                this.state.model_picker_open = true;
+                                                                            }
+                                                                            cx.notify();
+                                                                        }))
+                                                                        .when(has_model, |el| {
+                                                                            el.child(
+                                                                                VendorIcon::new(trigger_vendor.clone())
+                                                                                    .size(crate::tokens::icon::MD)
+                                                                                    .icon_url(trigger_icon_url.clone()),
                                                                             )
-                                                                            .child(
-                                                                                IconEl::new(Icon::ChevronDown, theme.text_muted)
-                                                                                    .size(crate::tokens::icon::XS),
-                                                                            ),
-                                                                    )
-                                                                    .when(self.state.model_picker_open, |el| {
-                                                                        el.child(Self::anchored_popover(
-                                                                            picker_panel,
-                                                                            Anchor::BottomRight,
-                                                                            |this, _, _, cx| { this.state.model_picker_open = false; cx.notify(); },
-                                                                            cx,
-                                                                        ))
-                                                                    }),
-                                                            )
-                                                            .child(send_button);
-                                                        controls
-                                                    }),
-                                            ),
-                                    ),
-                            ),
+                                                                        })
+                                                                        .child(
+                                                                            div()
+                                                                                .text_size(crate::tokens::font::COMPACT)
+                                                                                .text_color(theme.text_muted)
+                                                                                .child(model_name.clone()),
+                                                                        )
+                                                                        .child(
+                                                                            IconEl::new(
+                                                                                Icon::ChevronDown,
+                                                                                theme.text_muted,
+                                                                            )
+                                                                            .size(crate::tokens::icon::XS),
+                                                                        ),
+                                                                )
+                                                                .when(self.state.model_picker_open, |el| {
+                                                                    el.child(Self::anchored_popover(
+                                                                        picker_panel,
+                                                                        Anchor::BottomRight,
+                                                                        |this, _, _, cx| {
+                                                                            this.state.model_picker_open = false;
+                                                                            cx.notify();
+                                                                        },
+                                                                        cx,
+                                                                    ))
+                                                                }),
+                                                        )
+                                                        .child(send_button);
+                                                    controls
+                                                }),
+                                        ),
+                                ),
+                        ),
                     ),
             )
             .children(self.gen_settings_overlay(cx))
     }
 }
-

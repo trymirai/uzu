@@ -1,8 +1,11 @@
 use uzu::{
-    engine::{config::{
-        KEY_ANTHROPIC_API_KEY, KEY_BASETEN_API_KEY, KEY_GEMINI_API_KEY, KEY_OPENAI_API_KEY,
-        KEY_OPENROUTER_API_KEY, KEY_XAI_API_KEY,
-    }, Engine},
+    engine::{
+        Engine,
+        config::{
+            KEY_ANTHROPIC_API_KEY, KEY_BASETEN_API_KEY, KEY_GEMINI_API_KEY, KEY_OPENAI_API_KEY, KEY_OPENROUTER_API_KEY,
+            KEY_XAI_API_KEY,
+        },
+    },
     registry::openai::{self, Config as OpenAiConfig},
     settings::SettingKind,
 };
@@ -53,7 +56,10 @@ pub fn provider_by_id(id: &str) -> Option<&'static CloudProvider> {
     PROVIDERS.iter().find(|p| p.id == id)
 }
 
-fn openai_config(provider_id: &str, api_key: String) -> Option<OpenAiConfig> {
+fn openai_config(
+    provider_id: &str,
+    api_key: String,
+) -> Option<OpenAiConfig> {
     Some(match provider_id {
         "openai" => OpenAiConfig::openai(api_key),
         "anthropic" => OpenAiConfig::anthropic(api_key),
@@ -65,13 +71,12 @@ fn openai_config(provider_id: &str, api_key: String) -> Option<OpenAiConfig> {
     })
 }
 
-pub async fn load_key(engine: &Engine, settings_key: &str) -> Option<String> {
+pub async fn load_key(
+    engine: &Engine,
+    settings_key: &str,
+) -> Option<String> {
     let settings = engine.settings().await.ok()?;
-    settings
-        .load(SettingKind::Secret, settings_key.to_string())
-        .ok()
-        .flatten()
-        .filter(|v| !v.trim().is_empty())
+    settings.load(SettingKind::Secret, settings_key.to_string()).ok().flatten().filter(|v| !v.trim().is_empty())
 }
 
 pub async fn configured_providers(engine: &Engine) -> Vec<(&'static CloudProvider, bool)> {
@@ -89,28 +94,18 @@ pub async fn set_provider_key(
     api_key: Option<String>,
 ) -> Result<(), String> {
     let provider = provider_by_id(provider_id).ok_or("unknown provider")?;
-    let settings = engine
-        .settings()
-        .await
-        .map_err(|e| format!("settings unavailable: {e}"))?;
+    let settings = engine.settings().await.map_err(|e| format!("settings unavailable: {e}"))?;
 
     let trimmed = api_key.as_deref().map(str::trim).filter(|s| !s.is_empty());
     settings
-        .save(
-            SettingKind::Secret,
-            provider.settings_key.to_string(),
-            trimmed.map(str::to_string),
-        )
+        .save(SettingKind::Secret, provider.settings_key.to_string(), trimmed.map(str::to_string))
         .map_err(|e| e.to_string())?;
 
     let _ = engine.remove_registry(provider.id.to_string()).await;
     if let Some(key) = trimmed {
         let config = openai_config(provider.id, key.to_string()).ok_or("unknown provider")?;
         let registry = openai::Registry::new(config).map_err(|e| e.to_string())?;
-        engine
-            .add_registry(Box::new(registry))
-            .await
-            .map_err(|e| e.to_string())?;
+        engine.add_registry(Box::new(registry)).await.map_err(|e| e.to_string())?;
     }
     Ok(())
 }

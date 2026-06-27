@@ -4,10 +4,7 @@
 //! base, so offline / before-load it shows a neutral stand-in (no bundled
 //! third-party brand assets).
 
-use gpui::{
-    App, FontWeight, IntoElement, RenderOnce, SharedString, Window, div, hsla, img, prelude::*, px,
-    white,
-};
+use gpui::{App, FontWeight, IntoElement, RenderOnce, SharedString, Window, div, hsla, img, prelude::*, px, white};
 
 #[derive(IntoElement)]
 pub struct VendorIcon {
@@ -25,21 +22,31 @@ impl VendorIcon {
         }
     }
 
-    pub fn size(mut self, size: f32) -> Self {
+    pub fn size(
+        mut self,
+        size: f32,
+    ) -> Self {
         self.size = size;
         self
     }
 
     /// Remote logo URL (from the model's vendor/family metadata). When set and
     /// reachable, it's overlaid on the fallback initial.
-    pub fn icon_url(mut self, url: Option<impl Into<SharedString>>) -> Self {
+    pub fn icon_url(
+        mut self,
+        url: Option<impl Into<SharedString>>,
+    ) -> Self {
         self.icon_url = url.map(Into::into);
         self
     }
 }
 
 impl RenderOnce for VendorIcon {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(
+        self,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> impl IntoElement {
         let name = self.vendor.trim();
         let size = self.size;
         let base = div().w(px(size)).h(px(size)).flex_none().rounded_md().overflow_hidden();
@@ -62,7 +69,7 @@ impl RenderOnce for VendorIcon {
                     .text_size(px(size * 0.5))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(initial)
-            }
+            },
         }
     }
 }

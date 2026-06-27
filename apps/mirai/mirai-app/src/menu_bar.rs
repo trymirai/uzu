@@ -43,9 +43,7 @@ pub fn build() -> Option<TrayIcon> {
 }
 
 fn icon() -> Option<Icon> {
-    let rgba = image::load_from_memory(include_bytes!("../assets/icons/tray.png"))
-        .ok()?
-        .to_rgba8();
+    let rgba = image::load_from_memory(include_bytes!("../assets/icons/tray.png")).ok()?.to_rgba8();
     let (w, h) = rgba.dimensions();
     Icon::from_rgba(rgba.into_raw(), w, h).ok()
 }

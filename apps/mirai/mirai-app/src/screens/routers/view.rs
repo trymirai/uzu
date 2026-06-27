@@ -2,16 +2,12 @@
 //! pick one, and classify input text in a playground (probability bars).
 
 use futures::{StreamExt, channel::mpsc};
-use gpui::{
-    Context, CursorStyle, Entity, FontWeight, IntoElement, Render, Window, div, prelude::*, px,
-};
+use gpui::{Context, CursorStyle, Entity, FontWeight, IntoElement, Render, Window, div, prelude::*, px};
 use uzu::types::{model::Model, session::classification::ClassificationMessage};
 
 use super::vm::RouterVm;
 use crate::{
-    components::{
-        Button, ButtonKind, Icon, IconButton, IconEl, InputEvent, Loader, TextInput, VendorIcon,
-    },
+    components::{Button, ButtonKind, Icon, IconButton, IconEl, InputEvent, Loader, TextInput, VendorIcon},
     engine,
     models_store::ModelsStore,
     theme::{ActiveTheme, Theme, layout::CONTENT_MAX_WIDTH},
@@ -32,10 +28,11 @@ pub struct RoutersView {
 }
 
 impl RoutersView {
-    pub fn new(store: Entity<ModelsStore>, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| {
-            TextInput::new(cx, "Enter text to classify…").multiline(false, 6, 18)
-        });
+    pub fn new(
+        store: Entity<ModelsStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let input = cx.new(|cx| TextInput::new(cx, "Enter text to classify…").multiline(false, 6, 18));
         cx.subscribe(&input, |_, _input, event, cx| match event {
             InputEvent::Submit(_) | InputEvent::Changed(_) => cx.notify(),
         })
@@ -51,25 +48,30 @@ impl RoutersView {
         }
     }
 
-    fn clear(&mut self, cx: &mut Context<Self>) {
+    fn clear(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.input.update(cx, |input, cx| input.set_text("", cx));
         self.result = None;
         self.error = None;
         cx.notify();
     }
 
-    fn resolved_router(&self, cx: &Context<Self>) -> Option<Model> {
-        self.selected.clone().or_else(|| {
-            self.store
-                .read(cx)
-                .rows
-                .iter()
-                .find(|r| r.is_installed())
-                .map(|r| r.model.clone())
-        })
+    fn resolved_router(
+        &self,
+        cx: &Context<Self>,
+    ) -> Option<Model> {
+        self.selected
+            .clone()
+            .or_else(|| self.store.read(cx).rows.iter().find(|r| r.is_installed()).map(|r| r.model.clone()))
     }
 
-    fn classify(&mut self, text: String, cx: &mut Context<Self>) {
+    fn classify(
+        &mut self,
+        text: String,
+        cx: &mut Context<Self>,
+    ) {
         if self.classifying {
             return;
         }
@@ -98,24 +100,19 @@ impl RoutersView {
         let (tx, mut rx) = mpsc::unbounded::<ClassMsg>();
         gpui_tokio::Tokio::spawn(cx, async move {
             match engine.classification(model).await {
-                Ok(session) => {
-                    match session.classify(vec![ClassificationMessage::user(text)]).await {
-                        Ok(output) => {
-                            let mut values: Vec<(String, f64)> =
-                                output.probabilities.values.into_iter().collect();
-                            values.sort_by(|a, b| {
-                                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                            });
-                            let _ = tx.unbounded_send(ClassMsg::Ok(values));
-                        }
-                        Err(err) => {
-                            let _ = tx.unbounded_send(ClassMsg::Err(format!("{err:?}")));
-                        }
-                    }
-                }
+                Ok(session) => match session.classify(vec![ClassificationMessage::user(text)]).await {
+                    Ok(output) => {
+                        let mut values: Vec<(String, f64)> = output.probabilities.values.into_iter().collect();
+                        values.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                        let _ = tx.unbounded_send(ClassMsg::Ok(values));
+                    },
+                    Err(err) => {
+                        let _ = tx.unbounded_send(ClassMsg::Err(format!("{err:?}")));
+                    },
+                },
                 Err(err) => {
                     let _ = tx.unbounded_send(ClassMsg::Err(err.to_string()));
-                }
+                },
             }
         })
         .detach();
@@ -140,12 +137,20 @@ impl RoutersView {
         .detach();
     }
 
-    fn classify_from_button(&mut self, cx: &mut Context<Self>) {
+    fn classify_from_button(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let text = self.input.read(cx).text();
         self.classify(text, cx);
     }
 
-    fn router_row(&self, cx: &mut Context<Self>, vm: &RouterVm, selected: bool) -> impl IntoElement {
+    fn router_row(
+        &self,
+        cx: &mut Context<Self>,
+        vm: &RouterVm,
+        selected: bool,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let id = vm.id.clone();
 
@@ -173,16 +178,15 @@ impl RoutersView {
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(format!("{:.0}%", vm.progress * 100.0)),
-                )
+                .child(div().text_xs().text_color(theme.text_muted).child(format!("{:.0}%", vm.progress * 100.0)))
                 .child(
                     IconButton::new(
                         gpui::SharedString::from(format!("tog-{}", vm.id)),
-                        if vm.paused { Icon::Download } else { Icon::Pause },
+                        if vm.paused {
+                            Icon::Download
+                        } else {
+                            Icon::Pause
+                        },
                     )
                     .color(theme.text_muted)
                     .icon_size(15.)
@@ -205,7 +209,11 @@ impl RoutersView {
         };
 
         let select_id = id.clone();
-        let bg = if selected { theme.bg_hover } else { gpui::transparent_black() };
+        let bg = if selected {
+            theme.bg_hover
+        } else {
+            gpui::transparent_black()
+        };
         div()
             .id(gpui::SharedString::from(vm.id.clone()))
             .flex()
@@ -237,11 +245,7 @@ impl RoutersView {
                     .flex()
                     .flex_col()
                     .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child(vm.name.clone()),
+                        div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.text).child(vm.name.clone()),
                     )
                     .child(div().text_xs().text_color(theme.text_muted).child(vm.vendor.clone())),
             )
@@ -252,13 +256,14 @@ impl RoutersView {
 }
 
 impl Render for RoutersView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let selected_id = self.selected.as_ref().map(|m| m.identifier.clone());
-        let resolved_name = self
-            .resolved_router(cx)
-            .map(|m| m.name())
-            .unwrap_or_else(|| "No router".to_string());
+        let resolved_name = self.resolved_router(cx).map(|m| m.name()).unwrap_or_else(|| "No router".to_string());
 
         let (loading, routers): (bool, Vec<RouterVm>) = {
             let store = self.store.read(cx);
@@ -271,18 +276,9 @@ impl Render for RoutersView {
         let mut list = div().flex().flex_col().gap_1();
         if routers.is_empty() {
             list = list.child(if loading {
-                div()
-                    .py_6()
-                    .flex()
-                    .justify_center()
-                    .child(Loader::new().label("Loading routers…"))
-                    .into_any_element()
+                div().py_6().flex().justify_center().child(Loader::new().label("Loading routers…")).into_any_element()
             } else {
-                div()
-                    .py_6()
-                    .text_color(theme.text_muted)
-                    .child("No routers available.")
-                    .into_any_element()
+                div().py_6().text_color(theme.text_muted).child("No routers available.").into_any_element()
             });
         } else {
             let installed: Vec<&RouterVm> = routers.iter().filter(|r| r.installed).collect();
@@ -304,12 +300,7 @@ impl Render for RoutersView {
 
         // Classify results as tag-chip pills.
         let result_block = if self.classifying {
-            div()
-                .pt_2()
-                .text_sm()
-                .text_color(theme.text_muted)
-                .child("Classifying…")
-                .into_any_element()
+            div().pt_2().text_sm().text_color(theme.text_muted).child("Classifying…").into_any_element()
         } else if let Some(err) = &self.error {
             div()
                 .mt_2()
@@ -332,90 +323,84 @@ impl Render for RoutersView {
             div().into_any_element()
         };
 
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .items_center()
-            .child(
-                div()
-                    .id("routers-scroll")
-                    .w_full()
-                    .max_w(px(CONTENT_MAX_WIDTH))
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .overflow_y_scroll()
-                    .px_6()
-                    // Header + divider.
-                    .child(
-                        div()
-                            .pt_10()
-                            .pb_3()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(IconEl::new(Icon::Routers, theme.text).size(crate::tokens::icon::XXL))
-                            .child(
-                                div().text_xl().font_weight(FontWeight::MEDIUM).child("Choose router"),
-                            ),
-                    )
-                    .child(div().h_px().bg(theme.border))
-                    .child(list)
-                    // Classify playground: large textarea + Clear/Classify + pills.
-                    .child(
-                        div()
-                            .pt_6()
-                            .pb_6()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.text_muted)
-                                    .child(format!("Classify with {resolved_name}")),
-                            )
-                            .child(
-                                div()
-                                    .px_3()
-                                    .py_2()
-                                    .rounded_lg()
-                                    .border_1()
-                                    .border_color(theme.border)
-                                    .bg(theme.card)
-                                    .child(self.input.clone()),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_end()
-                                    .gap_2()
-                                    .child(
-                                        Button::new("clear", "Clear")
-                                            .kind(ButtonKind::Secondary)
-                                            .on_click(cx.listener(|this, _, _, cx| this.clear(cx))),
-                                    )
-                                    .child(
-                                        Button::new("classify", "Classify")
-                                            .kind(ButtonKind::Primary)
-                                            .disabled(!any_installed || self.classifying)
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.classify_from_button(cx)
-                                            })),
-                                    ),
-                            )
-                            .child(result_block),
-                    ),
-            )
+        div().size_full().flex().flex_col().items_center().child(
+            div()
+                .id("routers-scroll")
+                .w_full()
+                .max_w(px(CONTENT_MAX_WIDTH))
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .overflow_y_scroll()
+                .px_6()
+                // Header + divider.
+                .child(
+                    div()
+                        .pt_10()
+                        .pb_3()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(IconEl::new(Icon::Routers, theme.text).size(crate::tokens::icon::XXL))
+                        .child(div().text_xl().font_weight(FontWeight::MEDIUM).child("Choose router")),
+                )
+                .child(div().h_px().bg(theme.border))
+                .child(list)
+                // Classify playground: large textarea + Clear/Classify + pills.
+                .child(
+                    div()
+                        .pt_6()
+                        .pb_6()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(theme.text_muted)
+                                .child(format!("Classify with {resolved_name}")),
+                        )
+                        .child(
+                            div()
+                                .px_3()
+                                .py_2()
+                                .rounded_lg()
+                                .border_1()
+                                .border_color(theme.border)
+                                .bg(theme.card)
+                                .child(self.input.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .gap_2()
+                                .child(
+                                    Button::new("clear", "Clear")
+                                        .kind(ButtonKind::Secondary)
+                                        .on_click(cx.listener(|this, _, _, cx| this.clear(cx))),
+                                )
+                                .child(
+                                    Button::new("classify", "Classify")
+                                        .kind(ButtonKind::Primary)
+                                        .disabled(!any_installed || self.classifying)
+                                        .on_click(cx.listener(|this, _, _, cx| this.classify_from_button(cx))),
+                                ),
+                        )
+                        .child(result_block),
+                ),
+        )
     }
 }
 
 /// Section label ("INSTALLED" / "AVAILABLE") above a router group.
-fn router_section(label: &str, theme: &Theme) -> impl IntoElement {
+fn router_section(
+    label: &str,
+    theme: &Theme,
+) -> impl IntoElement {
     div()
         .pt_4()
         .pb_1()
@@ -427,7 +412,11 @@ fn router_section(label: &str, theme: &Theme) -> impl IntoElement {
 }
 
 /// A rounded probability pill for a classification result.
-fn tag_chip(label: &str, prob: f64, theme: &Theme) -> impl IntoElement {
+fn tag_chip(
+    label: &str,
+    prob: f64,
+    theme: &Theme,
+) -> impl IntoElement {
     div()
         .flex()
         .items_center()
@@ -441,10 +430,5 @@ fn tag_chip(label: &str, prob: f64, theme: &Theme) -> impl IntoElement {
         .text_sm()
         .text_color(theme.text)
         .child(label.to_string())
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child(format!("{:.0}%", prob * 100.0)),
-        )
+        .child(div().text_xs().text_color(theme.text_muted).child(format!("{:.0}%", prob * 100.0)))
 }

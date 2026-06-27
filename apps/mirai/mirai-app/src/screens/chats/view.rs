@@ -3,8 +3,8 @@
 use std::collections::HashSet;
 
 use gpui::{
-    AnyElement, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render,
-    SharedString, Window, div, prelude::*, px, uniform_list,
+    AnyElement, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString, Window, div,
+    prelude::*, px, uniform_list,
 };
 
 use super::{
@@ -12,10 +12,7 @@ use super::{
     util::{relative_time, validate_rename_name},
 };
 use crate::{
-    components::{
-        Button, ButtonKind, ButtonSize, ConfirmModal, Icon, IconButton, IconEl, InputEvent,
-        TextInput,
-    },
+    components::{Button, ButtonKind, ButtonSize, ConfirmModal, Icon, IconButton, IconEl, InputEvent, TextInput},
     persistence::{self, StoredChat},
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
 };
@@ -41,16 +38,13 @@ impl ChatsView {
         let search = cx.new(|cx| TextInput::new(cx, "Search chats…"));
         cx.observe(&search, |_, _, cx| cx.notify()).detach();
 
-        let instructions =
-            cx.new(|cx| TextInput::new(cx, "Tailor the way the model responds").multiline(false, 3, 6));
+        let instructions = cx.new(|cx| TextInput::new(cx, "Tailor the way the model responds").multiline(false, 3, 6));
         let current = persistence::global_instructions();
         if !current.is_empty() {
             instructions.update(cx, |input, cx| input.set_text(current, cx));
         }
         cx.subscribe(&instructions, |_this, _input, event, _cx| match event {
-            InputEvent::Submit(text) | InputEvent::Changed(text) => {
-                persistence::set_global_instructions(text)
-            }
+            InputEvent::Submit(text) | InputEvent::Changed(text) => persistence::set_global_instructions(text),
         })
         .detach();
 
@@ -78,27 +72,39 @@ impl ChatsView {
     }
 
     #[cfg(test)]
-    pub fn open_instructions(&mut self, cx: &mut Context<Self>) {
+    pub fn open_instructions(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.instructions_open = true;
         cx.notify();
     }
 
-    fn open_rename(&mut self, title: &str, cx: &mut Context<Self>) {
+    fn open_rename(
+        &mut self,
+        title: &str,
+        cx: &mut Context<Self>,
+    ) {
         self.rename_open = true;
         self.rename_error = None;
         self.rename_input.update(cx, |input, cx| input.set_text(title, cx));
         cx.notify();
     }
 
-    fn close_rename(&mut self, cx: &mut Context<Self>) {
+    fn close_rename(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.rename_open = false;
         self.rename_error = None;
         cx.notify();
     }
 
-    fn confirm_rename(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.selected.iter().next().cloned().filter(|_| self.selected.len() == 1)
-        else {
+    fn confirm_rename(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.selected.iter().next().cloned().filter(|_| self.selected.len() == 1) else {
             return;
         };
         let text = self.rename_input.read(cx).text();
@@ -106,7 +112,7 @@ impl ChatsView {
             Err(msg) => {
                 self.rename_error = Some(msg);
                 cx.notify();
-            }
+            },
             Ok(title) => {
                 if persistence::rename_chat(&id, &title) {
                     self.close_rename(cx);
@@ -115,11 +121,14 @@ impl ChatsView {
                     self.rename_error = Some("failed to rename chat");
                     cx.notify();
                 }
-            }
+            },
         }
     }
 
-    fn rename_modal(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    fn rename_modal(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
         if !self.rename_open {
             return None;
         }
@@ -146,16 +155,9 @@ impl ChatsView {
                         .bg(theme.card)
                         .border_1()
                         .border_color(theme.border)
-                        .child(
-                            div()
-                                .text_color(theme.text)
-                                .font_weight(FontWeight::MEDIUM)
-                                .child("Rename chat"),
-                        )
+                        .child(div().text_color(theme.text).font_weight(FontWeight::MEDIUM).child("Rename chat"))
                         .child(self.rename_input.clone())
-                        .children(error.map(|msg| {
-                            div().text_xs().text_color(theme.error).child(msg)
-                        }))
+                        .children(error.map(|msg| div().text_xs().text_color(theme.error).child(msg)))
                         .child(
                             div()
                                 .flex()
@@ -182,7 +184,10 @@ impl ChatsView {
         )
     }
 
-    fn instructions_card(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn instructions_card(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
         let open = self.instructions_open;
@@ -210,7 +215,11 @@ impl ChatsView {
                         IconEl::new(Icon::Plus, theme.text)
                             .size(crate::tokens::icon::MD)
                             // The `+` rotates 45° into an `×` when expanded.
-                            .rotate(if open { 45. } else { 0. }),
+                            .rotate(if open {
+                                45.
+                            } else {
+                                0.
+                            }),
                     )
                     .child(
                         div()
@@ -220,21 +229,10 @@ impl ChatsView {
                             .child("Add instructions to all chats"),
                     ),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child("Tailor the way the model responds"),
-            );
+            .child(div().text_xs().text_color(theme.text_muted).child("Tailor the way the model responds"));
 
-        let mut card = div()
-            .w_full()
-            .mb_3()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.card)
-            .child(header);
+        let mut card =
+            div().w_full().mb_3().rounded_lg().border_1().border_color(theme.border).bg(theme.card).child(header);
 
         if open {
             card = card.child(
@@ -254,7 +252,10 @@ impl ChatsView {
         card.into_any_element()
     }
 
-    pub fn reload(&mut self, cx: &mut Context<Self>) {
+    pub fn reload(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.chats = persistence::list_chats();
         cx.notify();
     }
@@ -297,24 +298,18 @@ impl ChatsView {
             div()
                 .flex()
                 .flex_col()
+                .child(div().text_sm().text_color(theme.text).font_weight(FontWeight::MEDIUM).child(chat.title.clone()))
                 .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.text)
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(chat.title.clone()),
-                )
-                .child(
-                    div()
-                        .font_family(crate::theme::FONT_MONO)
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(subtitle),
+                    div().font_family(crate::theme::FONT_MONO).text_xs().text_color(theme.text_muted).child(subtitle),
                 ),
         );
 
         // Bordered card row (mirai-chat ChatCard); accent border when selected.
-        let border = if selected { theme.info } else { theme.border };
+        let border = if selected {
+            theme.info
+        } else {
+            theme.border
+        };
         div()
             .id(SharedString::from(chat.id.clone()))
             .flex()
@@ -346,7 +341,12 @@ impl ChatsView {
 
     /// "Your chats" row (search + Select), or the selection toolbar in select
     /// mode (select-all · count · Delete · exit), mirroring mirai-chat.
-    fn toolbar(&self, cx: &mut Context<Self>, filtered: Vec<String>, empty: bool) -> AnyElement {
+    fn toolbar(
+        &self,
+        cx: &mut Context<Self>,
+        filtered: Vec<String>,
+        empty: bool,
+    ) -> AnyElement {
         let theme = cx.theme().clone();
 
         if self.selection_mode {
@@ -388,13 +388,11 @@ impl ChatsView {
                     .find(|c| self.selected.contains(&c.id))
                     .map(|c| c.title.clone())
                     .unwrap_or_default();
-                actions = actions.child(
-                    IconButton::new("rename-one", Icon::Rename)
-                        .color(theme.text_muted)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.open_rename(&title, cx);
-                        })),
-                );
+                actions = actions.child(IconButton::new("rename-one", Icon::Rename).color(theme.text_muted).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.open_rename(&title, cx);
+                    }),
+                ));
             }
             actions = actions
                 .child(
@@ -409,32 +407,28 @@ impl ChatsView {
                             }
                         })),
                 )
-                .child(
-                    IconButton::new("sel-exit", Icon::Close)
-                        .color(theme.text_muted)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.selection_mode = false;
-                            this.selected.clear();
-                            cx.notify();
-                        })),
-                );
+                .child(IconButton::new("sel-exit", Icon::Close).color(theme.text_muted).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.selection_mode = false;
+                        this.selected.clear();
+                        cx.notify();
+                    },
+                )));
 
             div()
                 .flex()
                 .items_center()
                 .justify_between()
                 .mb_3()
-                .child(
-                    div().flex().items_center().gap_3().child(select_all).child(
-                        div().text_sm().text_color(theme.text_muted).child(if count == 0 {
-                            "Select all".to_string()
-                        } else if all {
-                            "All selected".to_string()
-                        } else {
-                            format!("{count} selected")
-                        }),
-                    ),
-                )
+                .child(div().flex().items_center().gap_3().child(select_all).child(
+                    div().text_sm().text_color(theme.text_muted).child(if count == 0 {
+                        "Select all".to_string()
+                    } else if all {
+                        "All selected".to_string()
+                    } else {
+                        format!("{count} selected")
+                    }),
+                ))
                 .child(actions)
                 .into_any_element()
         } else {
@@ -443,13 +437,7 @@ impl ChatsView {
                 .items_center()
                 .gap_3()
                 .mb_3()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(theme.text)
-                        .child("Your chats"),
-                )
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.text).child("Your chats"))
                 .child(
                     div()
                         .flex_1()
@@ -482,7 +470,11 @@ impl ChatsView {
 }
 
 impl Render for ChatsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
 
         let query = self.search.read(cx).text().to_lowercase();
@@ -494,8 +486,7 @@ impl Render for ChatsView {
                 || chat.title.to_lowercase().contains(query)
                 || chat.model_name.as_deref().is_some_and(|m| m.to_lowercase().contains(query))
         };
-        let filtered: Vec<String> =
-            self.chats.iter().filter(|c| hit(c)).map(|c| c.id.clone()).collect();
+        let filtered: Vec<String> = self.chats.iter().filter(|c| hit(c)).map(|c| c.id.clone()).collect();
         let toolbar = self.toolbar(cx, filtered.clone(), chats_empty);
 
         // Virtualized chat list: only visible rows are built (the saved-chat
@@ -526,10 +517,7 @@ impl Render for ChatsView {
                                 let id = ids.get(ix)?;
                                 let chat = this.chats.iter().find(|c| &c.id == id)?;
                                 let selected = this.selected.contains(id);
-                                Some(
-                                    this.row(cx, chat, this.selection_mode, selected)
-                                        .into_any_element(),
-                                )
+                                Some(this.row(cx, chat, this.selection_mode, selected).into_any_element())
                             })
                             .collect()
                     }),
@@ -537,7 +525,7 @@ impl Render for ChatsView {
                 .flex_1()
                 .min_h_0()
                 .into_any_element()
-            }
+            },
         };
 
         let modal = self.confirm_delete.clone().map(|(id, title)| {
@@ -557,24 +545,21 @@ impl Render for ChatsView {
 
         let bulk_modal = self.confirm_bulk_delete.then(|| {
             let n = self.selected.len();
-            ConfirmModal::new(
-                "Delete chats",
-                format!("Delete {n} selected chat(s)? This can't be undone."),
-            )
-            .confirm_label("Delete")
-            .danger(true)
-            .on_confirm(cx.listener(|this, _, _, cx| {
-                for id in this.selected.drain() {
-                    persistence::delete_chat(&id);
-                }
-                this.confirm_bulk_delete = false;
-                this.selection_mode = false;
-                this.reload(cx);
-            }))
-            .on_cancel(cx.listener(|this, _, _, cx| {
-                this.confirm_bulk_delete = false;
-                cx.notify();
-            }))
+            ConfirmModal::new("Delete chats", format!("Delete {n} selected chat(s)? This can't be undone."))
+                .confirm_label("Delete")
+                .danger(true)
+                .on_confirm(cx.listener(|this, _, _, cx| {
+                    for id in this.selected.drain() {
+                        persistence::delete_chat(&id);
+                    }
+                    this.confirm_bulk_delete = false;
+                    this.selection_mode = false;
+                    this.reload(cx);
+                }))
+                .on_cancel(cx.listener(|this, _, _, cx| {
+                    this.confirm_bulk_delete = false;
+                    cx.notify();
+                }))
         });
 
         div()
@@ -592,14 +577,7 @@ impl Render for ChatsView {
                     .flex()
                     .flex_col()
                     .px_6()
-                    .child(
-                        div()
-                            .pt_10()
-                            .pb_2()
-                            .text_xl()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child("Chat history"),
-                    )
+                    .child(div().pt_10().pb_2().text_xl().font_weight(FontWeight::MEDIUM).child("Chat history"))
                     .child(self.instructions_card(cx))
                     .child(div().h_px().w_full().bg(theme.border).mb_3())
                     .child(toolbar)
@@ -610,4 +588,3 @@ impl Render for ChatsView {
             .children(self.rename_modal(cx))
     }
 }
-

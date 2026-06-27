@@ -2,8 +2,8 @@
 //! `SegmentedControl`. Each segment carries its own click handler.
 
 use gpui::{
-    App, ClickEvent, CursorStyle, ElementId, FontWeight, IntoElement, RenderOnce, SharedString,
-    Window, div, prelude::*, px,
+    App, ClickEvent, CursorStyle, ElementId, FontWeight, IntoElement, RenderOnce, SharedString, Window, div,
+    prelude::*, px,
 };
 
 use crate::{theme::ActiveTheme, tokens};
@@ -23,7 +23,10 @@ pub struct SegmentedControl {
 }
 
 impl SegmentedControl {
-    pub fn new(id: impl Into<ElementId>, selected: usize) -> Self {
+    pub fn new(
+        id: impl Into<ElementId>,
+        selected: usize,
+    ) -> Self {
         Self {
             id: id.into(),
             segments: Vec::new(),
@@ -46,7 +49,11 @@ impl SegmentedControl {
 }
 
 impl RenderOnce for SegmentedControl {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(
+        self,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let selected = self.selected;
 
@@ -81,7 +88,11 @@ impl RenderOnce for SegmentedControl {
                 // must be the theme's dark tone — `bg` in dark mode, `text` in
                 // light mode (`bg`/`text_inverse` are light in light mode, which
                 // left the label invisible on the white pill).
-                let label_color = if theme.dark { theme.bg } else { theme.text };
+                let label_color = if theme.dark {
+                    theme.bg
+                } else {
+                    theme.text
+                };
                 cell = cell.bg(gpui::white()).text_color(label_color).font_weight(FontWeight::MEDIUM);
             } else {
                 let hover = theme.bg_hover;

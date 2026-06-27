@@ -16,13 +16,14 @@ pub fn init(cx: &mut App) {
 
 /// Current settings (cheap clone).
 pub fn current(cx: &App) -> AppSettings {
-    cx.try_global::<GlobalSettings>()
-        .map(|g| g.0.clone())
-        .unwrap_or_default()
+    cx.try_global::<GlobalSettings>().map(|g| g.0.clone()).unwrap_or_default()
 }
 
 /// Persists + updates the global, notifying observers.
-pub fn set(cx: &mut App, settings: AppSettings) {
+pub fn set(
+    cx: &mut App,
+    settings: AppSettings,
+) {
     persistence::save_settings(&settings);
     cx.set_global(GlobalSettings(settings));
 }

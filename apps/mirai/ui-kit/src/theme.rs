@@ -65,24 +65,24 @@ impl Theme {
     pub fn dark() -> Self {
         Self {
             dark: true,
-            bg: hex(0x0B0B0B),          // --color-background
-            bg_sidebar: hex(0x080808),  // darker than content (mirai-chat layout)
-            bg_hover: hex(0x191919),    // ghost-hover (gray-200)
-            bg_sub: hex(0x222222),      // surface-tertiary (gray-300)
-            bg_sub_hover: hex(0x313131), // gray-500
-            card: hex(0x0F0F0F),        // surface-elevated (gray-50)
-            card_hover: hex(0x191919),  // gray-200
-            text: hex(0xEEEEEE),        // text-primary (gray-1200)
-            text_muted: hex(0x7B7B7B),  // text-muted (gray-1000)
-            text_inverse: hex(0x0F0F0F), // primary-contrast (gray-50)
-            link: hex(0xFF6A20),        // Mirai accent
-            border: hexa(0xFFFFFF12),   // border-default (white @ ~0.07)
-            button_border: hexa(0xFFFFFF26), // border-outlined (white @ ~0.15)
+            bg: hex(0x0B0B0B),                     // --color-background
+            bg_sidebar: hex(0x080808),             // darker than content (mirai-chat layout)
+            bg_hover: hex(0x191919),               // ghost-hover (gray-200)
+            bg_sub: hex(0x222222),                 // surface-tertiary (gray-300)
+            bg_sub_hover: hex(0x313131),           // gray-500
+            card: hex(0x0F0F0F),                   // surface-elevated (gray-50)
+            card_hover: hex(0x191919),             // gray-200
+            text: hex(0xEEEEEE),                   // text-primary (gray-1200)
+            text_muted: hex(0x7B7B7B),             // text-muted (gray-1000)
+            text_inverse: hex(0x0F0F0F),           // primary-contrast (gray-50)
+            link: hex(0xFF6A20),                   // Mirai accent
+            border: hexa(0xFFFFFF12),              // border-default (white @ ~0.07)
+            button_border: hexa(0xFFFFFF26),       // border-outlined (white @ ~0.15)
             button_border_hover: hexa(0xFFFFFF38), // border-outlined-hover (~0.22)
             accent: hex(0xFF6A20),
-            success: hex(0x00C758),     // green-500
-            error: hex(0xFB2C36),       // red-500
-            info: hex(0x3080FF),        // blue-500
+            success: hex(0x00C758), // green-500
+            error: hex(0xFB2C36),   // red-500
+            info: hex(0x3080FF),    // blue-500
         }
     }
 
@@ -90,19 +90,19 @@ impl Theme {
     pub fn light() -> Self {
         Self {
             dark: false,
-            bg: hex(0xFCFCFC),          // --color-background
+            bg: hex(0xFCFCFC), // --color-background
             bg_sidebar: hex(0xF5F5F5),
-            bg_hover: hex(0xF0F0F0),    // ghost-hover (gray-300)
-            bg_sub: hex(0xF0F0F0),      // surface-tertiary (gray-300)
+            bg_hover: hex(0xF0F0F0),     // ghost-hover (gray-300)
+            bg_sub: hex(0xF0F0F0),       // surface-tertiary (gray-300)
             bg_sub_hover: hex(0xE8E8E8), // gray-400
-            card: hex(0xFFFFFF),        // surface-elevated (gray-50)
-            card_hover: hex(0xF9F9F9),  // gray-200
-            text: hex(0x202020),        // text-primary (gray-1200)
-            text_muted: hex(0x838383),  // text-muted (gray-1000)
+            card: hex(0xFFFFFF),         // surface-elevated (gray-50)
+            card_hover: hex(0xF9F9F9),   // gray-200
+            text: hex(0x202020),         // text-primary (gray-1200)
+            text_muted: hex(0x838383),   // text-muted (gray-1000)
             text_inverse: hex(0xFFFFFF), // primary-contrast (gray-50)
             link: hex(0xFF6A20),
-            border: hexa(0x0000001A),   // border-default (black @ ~0.10)
-            button_border: hexa(0x00000026), // border-outlined (black @ ~0.15)
+            border: hexa(0x0000001A),              // border-default (black @ ~0.10)
+            button_border: hexa(0x00000026),       // border-outlined (black @ ~0.15)
             button_border_hover: hexa(0x00000038), // border-outlined-hover (~0.22)
             accent: hex(0xFF6A20),
             success: hex(0x00C758),
@@ -134,7 +134,10 @@ pub fn init(cx: &mut App) {
 }
 
 /// Swap the active palette; notifies observers.
-pub fn set_theme(cx: &mut App, theme: Theme) {
+pub fn set_theme(
+    cx: &mut App,
+    theme: Theme,
+) {
     cx.set_global(GlobalTheme(Arc::new(theme)));
 }
 

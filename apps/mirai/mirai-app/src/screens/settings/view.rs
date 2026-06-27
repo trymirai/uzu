@@ -6,16 +6,15 @@
 use std::collections::HashSet;
 
 use gpui::{
-    AnyElement, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, Window,
-    div, prelude::*, px,
+    AnyElement, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, Window, div, prelude::*,
+    px,
 };
 
 use super::{clear_data::ClearDataStep, event::SettingsEvent};
 use crate::{
     components::{Button, ButtonKind, ButtonSize, Icon, IconEl, InputEvent, TextInput, Toggle},
     data_ops::{self, CleanupCategory, CleanupPreview},
-    engine, native_dialog,
-    persistence, settings_state,
+    engine, native_dialog, persistence, settings_state,
     theme::{ActiveTheme, Theme},
 };
 
@@ -53,16 +52,14 @@ impl EventEmitter<SettingsEvent> for SettingsView {}
 
 impl SettingsView {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let instructions = cx
-            .new(|cx| TextInput::new(cx, "Instructions applied to every chat…").multiline(false, 3, 6));
+        let instructions =
+            cx.new(|cx| TextInput::new(cx, "Instructions applied to every chat…").multiline(false, 3, 6));
         let current = persistence::global_instructions();
         if !current.is_empty() {
             instructions.update(cx, |input, cx| input.set_text(current, cx));
         }
         cx.subscribe(&instructions, |_this, _input, event, _cx| match event {
-            InputEvent::Submit(text) | InputEvent::Changed(text) => {
-                persistence::set_global_instructions(text)
-            }
+            InputEvent::Submit(text) | InputEvent::Changed(text) => persistence::set_global_instructions(text),
         })
         .detach();
         settings_state::observe(cx, |_, cx| cx.notify()).detach();
@@ -79,7 +76,10 @@ impl SettingsView {
         }
     }
 
-    fn open_clear_data(&mut self, cx: &mut Context<Self>) {
+    fn open_clear_data(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.clear_data_open = true;
         self.clear_data_step = ClearDataStep::Select;
         self.clear_data_results.clear();
@@ -116,13 +116,20 @@ impl SettingsView {
         }
     }
 
-    pub(super) fn close_clear_data(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn close_clear_data(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.clear_data_open = false;
         self.clear_data_busy = false;
         cx.notify();
     }
 
-    pub(super) fn toggle_clear_category(&mut self, cat: CleanupCategory, cx: &mut Context<Self>) {
+    pub(super) fn toggle_clear_category(
+        &mut self,
+        cat: CleanupCategory,
+        cx: &mut Context<Self>,
+    ) {
         if self.clear_data_selected.contains(&cat) {
             self.clear_data_selected.remove(&cat);
         } else {
@@ -131,11 +138,12 @@ impl SettingsView {
         cx.notify();
     }
 
-    pub(super) fn run_clear_data(&mut self, cx: &mut Context<Self>) {
-        let selected: Vec<CleanupCategory> = CleanupCategory::ALL
-            .into_iter()
-            .filter(|c| self.clear_data_selected.contains(c))
-            .collect();
+    pub(super) fn run_clear_data(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let selected: Vec<CleanupCategory> =
+            CleanupCategory::ALL.into_iter().filter(|c| self.clear_data_selected.contains(c)).collect();
         if selected.is_empty() {
             return;
         }
@@ -159,14 +167,16 @@ impl SettingsView {
         .detach();
     }
 
-    fn export_chats(&mut self, cx: &mut Context<Self>) {
+    fn export_chats(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let Some(data) = data_ops::export_chats_zip() else {
             crate::toast::push(cx, "No chats to export", crate::toast::ToastKind::Info);
             return;
         };
         let default_name = data_ops::export_zip_default_name();
-        let Some(path) = native_dialog::save_file("Export chats", &default_name, "zip", "ZIP archive")
-        else {
+        let Some(path) = native_dialog::save_file("Export chats", &default_name, "zip", "ZIP archive") else {
             return;
         };
         if native_dialog::write_bytes(&path, &data) {
@@ -176,14 +186,15 @@ impl SettingsView {
         }
     }
 
-    fn export_logs(&mut self, cx: &mut Context<Self>) {
+    fn export_logs(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let Some(data) = data_ops::read_log_bytes() else {
             crate::toast::push(cx, "No log file found", crate::toast::ToastKind::Info);
             return;
         };
-        let Some(path) =
-            native_dialog::save_file("Export logs", "mirai.log", "log", "Log file")
-        else {
+        let Some(path) = native_dialog::save_file("Export logs", "mirai.log", "log", "Log file") else {
             return;
         };
         if native_dialog::write_bytes(&path, &data) {
@@ -226,7 +237,10 @@ impl SettingsView {
 
     /// Expandable "Add instructions to all chats" card (mirai-chat parity),
     /// shared in spirit with the Chats screen.
-    fn instructions_card(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn instructions_card(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
         let open = self.instructions_open;
@@ -244,9 +258,11 @@ impl SettingsView {
                 this.instructions_open = !this.instructions_open;
                 cx.notify();
             }))
-            .child(
-                IconEl::new(Icon::Plus, theme.text).size(crate::tokens::icon::MD).rotate(if open { 45. } else { 0. }),
-            )
+            .child(IconEl::new(Icon::Plus, theme.text).size(crate::tokens::icon::MD).rotate(if open {
+                45.
+            } else {
+                0.
+            }))
             .child(
                 div()
                     .flex()
@@ -258,21 +274,10 @@ impl SettingsView {
                             .text_color(theme.text)
                             .child("Add instructions to all chats"),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child("Tailor the way the model responds"),
-                    ),
+                    .child(div().text_xs().text_color(theme.text_muted).child("Tailor the way the model responds")),
             );
 
-        let mut card = div()
-            .w_full()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.card)
-            .child(header);
+        let mut card = div().w_full().rounded_lg().border_1().border_color(theme.border).bg(theme.card).child(header);
 
         if open {
             card = card.child(
@@ -292,14 +297,18 @@ impl SettingsView {
         card.into_any_element()
     }
 
-    fn flip(&mut self, kind: SettingKind, cx: &mut Context<Self>) {
+    fn flip(
+        &mut self,
+        kind: SettingKind,
+        cx: &mut Context<Self>,
+    ) {
         let mut settings = settings_state::current(cx);
         match kind {
             SettingKind::Reasoning => settings.reasoning = !settings.reasoning,
             SettingKind::RunOnStartup => {
                 settings.run_on_startup = !settings.run_on_startup;
                 crate::startup::set(settings.run_on_startup);
-            }
+            },
             SettingKind::ShowInMenuBar => settings.show_in_menu_bar = !settings.show_in_menu_bar,
             SettingKind::AutoEject => settings.auto_eject = !settings.auto_eject,
             SettingKind::ShareUsage => settings.share_usage_data = !settings.share_usage_data,
@@ -307,7 +316,11 @@ impl SettingsView {
         settings_state::set(cx, settings);
     }
 
-    fn bump_idle(&mut self, delta: i32, cx: &mut Context<Self>) {
+    fn bump_idle(
+        &mut self,
+        delta: i32,
+        cx: &mut Context<Self>,
+    ) {
         let mut settings = settings_state::current(cx);
         let next = settings.idle_timeout_minutes as i32 + delta;
         settings.idle_timeout_minutes = next.clamp(1, 120) as u32;
@@ -333,13 +346,7 @@ impl SettingsView {
                 div()
                     .flex()
                     .flex_col()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child(title),
-                    )
+                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.text).child(title))
                     .child(div().text_xs().text_color(theme.text_muted).child(desc)),
             )
             .child(Toggle::new(title, on).on_click(move |_, _, cx| {
@@ -365,13 +372,7 @@ impl SettingsView {
                 div()
                     .flex()
                     .flex_col()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child(title),
-                    )
+                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.text).child(title))
                     .child(div().text_xs().text_color(theme.text_muted).child(desc)),
             )
             .child(right)
@@ -379,7 +380,11 @@ impl SettingsView {
     }
 
     /// Indented "Idle timeout (minutes)" stepper, shown under Auto-eject.
-    fn idle_timeout_row(&self, cx: &mut Context<Self>, minutes: u32) -> AnyElement {
+    fn idle_timeout_row(
+        &self,
+        cx: &mut Context<Self>,
+        minutes: u32,
+    ) -> AnyElement {
         let theme = cx.theme().clone();
         let border = theme.border;
         let hover = theme.bg_hover;
@@ -400,12 +405,7 @@ impl SettingsView {
             .items_center()
             .justify_between()
             .pb_3()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.text_muted)
-                    .child("Idle timeout (minutes)"),
-            )
+            .child(div().text_sm().text_color(theme.text_muted).child("Idle timeout (minutes)"))
             .child(
                 div()
                     .flex()
@@ -414,29 +414,20 @@ impl SettingsView {
                     .border_1()
                     .border_color(border)
                     .bg(theme.bg)
-                    .child(
-                        stepper("idle-dec", "−")
-                            .on_click(cx.listener(|this, _, _, cx| this.bump_idle(-1, cx))),
-                    )
-                    .child(
-                        div()
-                            .w(px(36.))
-                            .text_center()
-                            .text_sm()
-                            .text_color(theme.text)
-                            .child(format!("{minutes}")),
-                    )
-                    .child(
-                        stepper("idle-inc", "+")
-                            .on_click(cx.listener(|this, _, _, cx| this.bump_idle(1, cx))),
-                    ),
+                    .child(stepper("idle-dec", "−").on_click(cx.listener(|this, _, _, cx| this.bump_idle(-1, cx))))
+                    .child(div().w(px(36.)).text_center().text_sm().text_color(theme.text).child(format!("{minutes}")))
+                    .child(stepper("idle-inc", "+").on_click(cx.listener(|this, _, _, cx| this.bump_idle(1, cx)))),
             )
             .into_any_element()
     }
 
     /// Select a tab by index (0 General, 1 Privacy, 2 About) — used by visual tests.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn select_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub fn select_tab(
+        &mut self,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
         self.tab = match index {
             1 => SettingsTab::Privacy,
             2 => SettingsTab::About,
@@ -446,7 +437,12 @@ impl SettingsView {
     }
 
     /// One inner-sidebar nav item.
-    fn nav_item(&self, cx: &mut Context<Self>, label: &'static str, tab: SettingsTab) -> AnyElement {
+    fn nav_item(
+        &self,
+        cx: &mut Context<Self>,
+        label: &'static str,
+        tab: SettingsTab,
+    ) -> AnyElement {
         let theme = cx.theme().clone();
         let active = self.tab == tab;
         let hover = theme.bg_hover;
@@ -458,8 +454,16 @@ impl SettingsView {
             .px_2()
             .rounded_md()
             .text_sm()
-            .text_color(if active { theme.text } else { theme.text_muted })
-            .bg(if active { theme.bg_hover } else { gpui::transparent_black() })
+            .text_color(if active {
+                theme.text
+            } else {
+                theme.text_muted
+            })
+            .bg(if active {
+                theme.bg_hover
+            } else {
+                gpui::transparent_black()
+            })
             .cursor(CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -470,12 +474,18 @@ impl SettingsView {
             .into_any_element()
     }
 
-    fn divider(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn divider(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         div().h(px(1.)).w_full().bg(cx.theme().border).into_any_element()
     }
 
     /// Feedback row shown at the foot of General / Privacy.
-    fn feedback_footer(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn feedback_footer(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = cx.theme().clone();
         div()
             .w_full()
@@ -509,7 +519,10 @@ impl SettingsView {
             .into_any_element()
     }
 
-    fn general_content(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn general_content(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let settings = settings_state::current(cx);
         let theme = cx.theme().clone();
 
@@ -531,11 +544,7 @@ impl SettingsView {
             .cursor(CursorStyle::PointingHand)
             .hover(move |s| s.bg(shortcut_hover))
             .on_click(cx.listener(|_, _, _, cx| {
-                crate::toast::push(
-                    cx,
-                    "Global shortcut capture is coming soon",
-                    crate::toast::ToastKind::Info,
-                );
+                crate::toast::push(cx, "Global shortcut capture is coming soon", crate::toast::ToastKind::Info);
             }))
             .child("Set shortcut")
             .into_any_element();
@@ -586,7 +595,10 @@ impl SettingsView {
         col.into_any_element()
     }
 
-    fn privacy_content(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn privacy_content(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = cx.theme().clone();
         let settings = settings_state::current(cx);
         let export_chats = self.action_button(cx, "export-chats", Icon::Download, "Export", |this, cx| {
@@ -636,24 +648,9 @@ impl SettingsView {
                 "https://artifacts.trymirai.com/legal/Mirai_Tech_Privacy_Policy.pdf",
                 &theme,
             ))
-            .child(self.action_row(
-                cx,
-                "Export all your chats",
-                "As Markdown files in .zip archive",
-                export_chats,
-            ))
-            .child(self.action_row(
-                cx,
-                "Export logs",
-                "Save the current Mirai log file for debugging",
-                export_logs,
-            ))
-            .child(self.action_row(
-                cx,
-                "Clear data",
-                "Delete dialogs, generated audio, models, or logs",
-                clear_data,
-            ))
+            .child(self.action_row(cx, "Export all your chats", "As Markdown files in .zip archive", export_chats))
+            .child(self.action_row(cx, "Export logs", "Save the current Mirai log file for debugging", export_logs))
+            .child(self.action_row(cx, "Clear data", "Delete dialogs, generated audio, models, or logs", clear_data))
             .child(self.toggle_row(
                 cx,
                 "Share anonymous usage data",
@@ -664,7 +661,10 @@ impl SettingsView {
             .into_any_element()
     }
 
-    fn about_content(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn about_content(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = cx.theme().clone();
         let text = theme.text;
         let muted = theme.text_muted;
@@ -700,16 +700,10 @@ impl SettingsView {
                     .gap_2()
                     .p_4()
                     .child(IconEl::new(Icon::Heart, theme.info).size(crate::tokens::icon::XXL))
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(text)
-                            .child(
-                                "Done by a team who share a vision for accessible and powerful \
+                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).text_color(text).child(
+                        "Done by a team who share a vision for accessible and powerful \
                                  local AI.",
-                            ),
-                    ),
+                    )),
             )
             .child(
                 div()
@@ -731,14 +725,7 @@ impl SettingsView {
             .flex_col()
             .gap_3()
             .child(header_card)
-            .child(
-                div()
-                    .pt_6()
-                    .text_xs()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(muted)
-                    .child("Our products"),
-            )
+            .child(div().pt_6().text_xs().font_weight(FontWeight::MEDIUM).text_color(muted).child("Our products"))
             .child(product_row(
                 "prod-platform",
                 "Mirai platform",
@@ -764,11 +751,14 @@ impl SettingsView {
             ))
             .into_any_element()
     }
-
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
 
         let content = match self.tab {
@@ -800,62 +790,46 @@ impl Render for SettingsView {
             .flex_col()
             // Title bar spanning the full width, above the sidebar + content.
             .child(
-                div()
-                    .w_full()
-                    .flex_none()
-                    .pt_10()
-                    .pb_3()
-                    .px_6()
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(
-                        div()
-                            .text_size(crate::tokens::font::LABEL)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child("Settings"),
-                    ),
+                div().w_full().flex_none().pt_10().pb_3().px_6().border_b_1().border_color(theme.border).child(
+                    div()
+                        .text_size(crate::tokens::font::LABEL)
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.text)
+                        .child("Settings"),
+                ),
             )
             .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(nav)
-                    .child(
-                        // Content column: scrollable body + a pinned feedback
-                        // footer at the bottom (General / Privacy only).
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .flex()
-                            .flex_col()
-                            .child(
+                div().flex().flex_1().min_h_0().child(nav).child(
+                    // Content column: scrollable body + a pinned feedback
+                    // footer at the bottom (General / Privacy only).
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .id("settings-content")
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_y_scroll()
+                                .px_6()
+                                .py_4()
+                                .child(content),
+                        )
+                        .when(matches!(self.tab, SettingsTab::General | SettingsTab::Privacy), |el| {
+                            el.child(
                                 div()
-                                    .id("settings-content")
-                                    .flex_1()
-                                    .min_h_0()
-                                    .overflow_y_scroll()
+                                    .flex_none()
+                                    .w_full()
+                                    .border_t_1()
+                                    .border_color(theme.border)
                                     .px_6()
-                                    .py_4()
-                                    .child(content),
+                                    .py_3()
+                                    .child(self.feedback_footer(cx)),
                             )
-                            .when(
-                                matches!(self.tab, SettingsTab::General | SettingsTab::Privacy),
-                                |el| {
-                                    el.child(
-                                        div()
-                                            .flex_none()
-                                            .w_full()
-                                            .border_t_1()
-                                            .border_color(theme.border)
-                                            .px_6()
-                                            .py_3()
-                                            .child(self.feedback_footer(cx)),
-                                    )
-                                },
-                            ),
-                    ),
+                        }),
+                ),
             );
         if let Some(modal) = modal {
             root = root.child(modal);
@@ -864,7 +838,12 @@ impl Render for SettingsView {
     }
 }
 
-fn legal_row(id: &'static str, label: &'static str, url: &'static str, theme: &Theme) -> impl IntoElement {
+fn legal_row(
+    id: &'static str,
+    label: &'static str,
+    url: &'static str,
+    theme: &Theme,
+) -> impl IntoElement {
     let hover = theme.bg_hover;
     let text = theme.text;
     let muted = theme.text_muted;

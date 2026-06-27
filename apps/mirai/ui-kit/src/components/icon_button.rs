@@ -1,9 +1,6 @@
 //! Square, icon-only button (sidebar toggle, copy, close, send/stop, …).
 
-use gpui::{
-    App, ClickEvent, CursorStyle, ElementId, Hsla, IntoElement, RenderOnce, Window, div,
-    prelude::*, px,
-};
+use gpui::{App, ClickEvent, CursorStyle, ElementId, Hsla, IntoElement, RenderOnce, Window, div, prelude::*, px};
 
 use crate::{
     components::icon::{Icon, IconEl},
@@ -23,7 +20,10 @@ pub struct IconButton {
 }
 
 impl IconButton {
-    pub fn new(id: impl Into<ElementId>, icon: Icon) -> Self {
+    pub fn new(
+        id: impl Into<ElementId>,
+        icon: Icon,
+    ) -> Self {
         Self {
             id: id.into(),
             icon,
@@ -36,28 +36,43 @@ impl IconButton {
         }
     }
 
-    pub fn color(mut self, color: Hsla) -> Self {
+    pub fn color(
+        mut self,
+        color: Hsla,
+    ) -> Self {
         self.color = Some(color);
         self
     }
 
     /// Persistent fill behind the glyph (e.g. download pause/cancel controls).
-    pub fn background(mut self, background: Hsla) -> Self {
+    pub fn background(
+        mut self,
+        background: Hsla,
+    ) -> Self {
         self.background = Some(background);
         self
     }
 
-    pub fn icon_size(mut self, size: f32) -> Self {
+    pub fn icon_size(
+        mut self,
+        size: f32,
+    ) -> Self {
         self.icon_size = size;
         self
     }
 
-    pub fn hit_size(mut self, size: f32) -> Self {
+    pub fn hit_size(
+        mut self,
+        size: f32,
+    ) -> Self {
         self.hit_size = size;
         self
     }
 
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub fn disabled(
+        mut self,
+        disabled: bool,
+    ) -> Self {
         self.disabled = disabled;
         self
     }
@@ -72,7 +87,11 @@ impl IconButton {
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(
+        self,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let color = self.color.unwrap_or(theme.text_muted);
         // A button with a persistent fill brightens on hover; a flat one just
@@ -96,9 +115,7 @@ impl RenderOnce for IconButton {
         if self.disabled {
             el.opacity(0.5)
         } else {
-            let mut el = el
-                .cursor(CursorStyle::PointingHand)
-                .hover(move |s| s.bg(hover_bg));
+            let mut el = el.cursor(CursorStyle::PointingHand).hover(move |s| s.bg(hover_bg));
             if let Some(handler) = self.on_click {
                 el = el.on_click(move |event, window, cx| handler(event, window, cx));
             }

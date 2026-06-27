@@ -4,10 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use uzu::{
-    engine::Engine,
-    storage::types::DownloadPhase,
-};
+use uzu::{engine::Engine, storage::types::DownloadPhase};
 
 use crate::{persistence, tts_history};
 
@@ -69,28 +66,46 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
-pub fn category_description(cat: CleanupCategory, preview: &CleanupPreview) -> String {
+pub fn category_description(
+    cat: CleanupCategory,
+    preview: &CleanupPreview,
+) -> String {
     match cat {
         CleanupCategory::Dialogs => {
             let n = preview.dialogs.count;
-            let word = if n == 1 { "chat" } else { "chats" };
+            let word = if n == 1 {
+                "chat"
+            } else {
+                "chats"
+            };
             format!("{n} {word} · {}", format_bytes(preview.dialogs.size_bytes))
-        }
+        },
         CleanupCategory::Files => {
             let n = preview.files.count;
-            let word = if n == 1 { "file" } else { "files" };
+            let word = if n == 1 {
+                "file"
+            } else {
+                "files"
+            };
             format!("{n} {word} · {}", format_bytes(preview.files.size_bytes))
-        }
+        },
         CleanupCategory::Models => {
             let n = preview.models.count;
-            let word = if n == 1 { "model" } else { "models" };
+            let word = if n == 1 {
+                "model"
+            } else {
+                "models"
+            };
             format!("{n} {word} · {}", format_bytes(preview.models.size_bytes))
-        }
+        },
         CleanupCategory::Logs => format_bytes(preview.logs_size_bytes),
     }
 }
 
-fn dir_file_stats(dir: &Path, ext: Option<&str>) -> CategoryStats {
+fn dir_file_stats(
+    dir: &Path,
+    ext: Option<&str>,
+) -> CategoryStats {
     let Ok(entries) = fs::read_dir(dir) else {
         return CategoryStats::default();
     };
@@ -133,10 +148,7 @@ pub async fn model_cleanup_stats(engine: &Engine) -> CategoryStats {
         let Some(state) = states.get(&model.identifier) else {
             continue;
         };
-        if !matches!(
-            state.phase,
-            DownloadPhase::Downloaded {} | DownloadPhase::Error { .. }
-        ) {
+        if !matches!(state.phase, DownloadPhase::Downloaded {} | DownloadPhase::Error { .. }) {
             continue;
         }
         stats.count += 1;
@@ -171,16 +183,13 @@ pub fn export_chats_zip() -> Option<Vec<u8>> {
     let mut buf = Cursor::new(Vec::new());
     {
         let mut zip = zip::ZipWriter::new(&mut buf);
-        let opts =
-            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         for name in names {
             let path = dir.join(&name);
             let content = if path.exists() {
                 fs::read_to_string(&path).unwrap_or_default()
             } else if let Some(stem) = name.strip_suffix(".md") {
-                persistence::load_chat(stem)
-                    .map(|c| persistence::serialize_markdown(&c))
-                    .unwrap_or_default()
+                persistence::load_chat(stem).map(|c| persistence::serialize_markdown(&c)).unwrap_or_default()
             } else {
                 String::new()
             };
@@ -196,9 +205,7 @@ pub fn export_chats_zip() -> Option<Vec<u8>> {
 }
 
 pub fn export_zip_default_name() -> String {
-    let stamp = persistence::fmt_utc_public(persistence::now_ms())
-        .replace(':', ".")
-        .replace(" UTC", "");
+    let stamp = persistence::fmt_utc_public(persistence::now_ms()).replace(':', ".").replace(" UTC", "");
     format!("mirai-chats {stamp}.zip")
 }
 
@@ -272,10 +279,7 @@ pub async fn clear_downloaded_models(engine: &Engine) -> bool {
         let Some(state) = states.get(&model.identifier) else {
             continue;
         };
-        if !matches!(
-            state.phase,
-            DownloadPhase::Downloaded {} | DownloadPhase::Error { .. }
-        ) {
+        if !matches!(state.phase, DownloadPhase::Downloaded {} | DownloadPhase::Error { .. }) {
             continue;
         }
         if engine.downloader(&model).delete().await.is_err() {
@@ -301,7 +305,7 @@ pub async fn execute_cleanup(
                 } else {
                     false
                 }
-            }
+            },
         };
         results.push((cat, ok));
     }

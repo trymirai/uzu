@@ -11,13 +11,8 @@ pub async fn fetch_repo_id() -> Option<String> {
         .trim_end_matches('/')
         .to_string();
     let mem = uzu::device::Device::create().ok()?.memory_total;
-    let version = std::env::var("ENGINE_VERSION")
-        .ok()
-        .filter(|v| !v.trim().is_empty());
-    let path = version
-        .as_ref()
-        .map(|v| format!("models/recommend/{v}"))
-        .unwrap_or_else(|| "models/recommend".into());
+    let version = std::env::var("ENGINE_VERSION").ok().filter(|v| !v.trim().is_empty());
+    let path = version.as_ref().map(|v| format!("models/recommend/{v}")).unwrap_or_else(|| "models/recommend".into());
     let url = format!("{base}/{path}");
     let client = reqwest::Client::new();
     let res = client.get(url).query(&[("mem", mem)]).send().await.ok()?;

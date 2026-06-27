@@ -3,8 +3,7 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, Context, EventEmitter, FontWeight, Hsla, IntoElement, Render, Window,
-    div, prelude::*, px,
+    Animation, AnimationExt, Context, EventEmitter, FontWeight, Hsla, IntoElement, Render, Window, div, prelude::*, px,
 };
 
 use crate::{
@@ -29,7 +28,11 @@ impl WelcomeView {
 
 /// A plain feature item: icon + label inline (no pill background), matching
 /// mirai-chat's welcome screen.
-fn feature(icon: Icon, label: &'static str, fg: Hsla) -> impl IntoElement {
+fn feature(
+    icon: Icon,
+    label: &'static str,
+    fg: Hsla,
+) -> impl IntoElement {
     div()
         .flex()
         .items_center()
@@ -41,7 +44,11 @@ fn feature(icon: Icon, label: &'static str, fg: Hsla) -> impl IntoElement {
 }
 
 impl Render for WelcomeView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let share = settings_state::current(cx).share_usage_data;
 
@@ -111,12 +118,7 @@ impl Render for WelcomeView {
                         cx.notify();
                     }))
                     .child(checkbox)
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child("Share anonymous usage data"),
-                    ),
+                    .child(div().text_xs().text_color(theme.text_muted).child("Share anonymous usage data")),
             );
 
         // Fade the content in on first launch. Skipped under `cfg!(test)` so the
@@ -125,21 +127,12 @@ impl Render for WelcomeView {
             content.into_any_element()
         } else {
             content
-                .with_animation(
-                    "welcome-in",
-                    Animation::new(Duration::from_millis(500)),
-                    |el, delta| el.opacity(1.0 - (1.0 - delta).powi(3)),
-                )
+                .with_animation("welcome-in", Animation::new(Duration::from_millis(500)), |el, delta| {
+                    el.opacity(1.0 - (1.0 - delta).powi(3))
+                })
                 .into_any_element()
         };
 
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(theme.bg)
-            .text_color(theme.text)
-            .child(content)
+        div().size_full().flex().items_center().justify_center().bg(theme.bg).text_color(theme.text).child(content)
     }
 }

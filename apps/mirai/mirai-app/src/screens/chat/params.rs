@@ -40,7 +40,10 @@ pub(super) fn round2(v: f32) -> f32 {
 }
 
 /// Read-only numeric value box on the right of a parameter row.
-fn value_box(text: String, theme: &Theme) -> impl IntoElement {
+fn value_box(
+    text: String,
+    theme: &Theme,
+) -> impl IntoElement {
     div()
         .min_w(px(76.))
         .px_3()
@@ -127,18 +130,13 @@ pub(super) fn param_row(
     on_dec: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_inc: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .child(div().text_sm().text_color(fg).child(label.to_string()))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(step_button(dec_id, "−", border, fg, hover, on_dec))
-                .child(div().w(px(44.)).text_color(fg).child(value))
-                .child(step_button(inc_id, "+", border, fg, hover, on_inc)),
-        )
+    div().flex().items_center().justify_between().child(div().text_sm().text_color(fg).child(label.to_string())).child(
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(step_button(dec_id, "−", border, fg, hover, on_dec))
+            .child(div().w(px(44.)).text_color(fg).child(value))
+            .child(step_button(inc_id, "+", border, fg, hover, on_inc)),
+    )
 }

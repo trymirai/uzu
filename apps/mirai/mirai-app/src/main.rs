@@ -22,13 +22,12 @@ mod tts_history;
 mod ui_snapshot;
 
 // Design system lives in the `ui-kit` crate; re-export under the old paths.
-pub(crate) use ui_kit::{components, theme, tokens};
-
 use gpui::{
-    App, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions, actions,
-    point, prelude::*, px, size,
+    App, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions, actions, point, prelude::*,
+    px, size,
 };
 use gpui_platform::application;
+pub(crate) use ui_kit::{components, theme, tokens};
 
 use crate::app_shell::MiraiApp;
 
@@ -36,15 +35,13 @@ actions!(mirai, [Quit]);
 
 fn main() {
     // Tokio runtime for uzu, kept alive for the app's lifetime; GPUI gets its handle.
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("failed to build Tokio runtime");
+    let runtime =
+        tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("failed to build Tokio runtime");
     let handle = runtime.handle().clone();
 
     let engine = runtime.block_on(async {
-        let config = uzu::engine::EngineConfig::default()
-            .with_application_identifier(provider_keys::APPLICATION_ID.to_string());
+        let config =
+            uzu::engine::EngineConfig::default().with_application_identifier(provider_keys::APPLICATION_ID.to_string());
         uzu::engine::Engine::new(config).await
     });
 
@@ -77,7 +74,7 @@ fn main() {
                 Ok(engine) => {
                     crate::engine::init(cx, engine.clone());
                     eprintln!("[mirai-app] uzu Engine ready");
-                }
+                },
                 Err(err) => eprintln!("[mirai-app] uzu Engine init failed: {err}"),
             }
 

@@ -13,8 +13,8 @@ use std::{
 };
 
 use gpui::{
-    AnyView, AnyWindowHandle, App, AppContext, Context, Entity, HeadlessAppContext, Hsla, Render,
-    Window, div, prelude::*, px, size,
+    AnyView, AnyWindowHandle, App, AppContext, Context, Entity, HeadlessAppContext, Hsla, Render, Window, div,
+    prelude::*, px, size,
 };
 
 use crate::{
@@ -37,7 +37,11 @@ struct SnapshotRoot {
 }
 
 impl Render for SnapshotRoot {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
             .size_full()
             .bg(self.bg)
@@ -75,7 +79,11 @@ fn render_png<V: Render + 'static>(
         .open_window(size(px(width), px(height)), |window, app| {
             let inner: AnyView = build(window, app).into();
             let theme = app.theme().clone();
-            app.new(|_| SnapshotRoot { inner, bg: theme.bg, fg: theme.text })
+            app.new(|_| SnapshotRoot {
+                inner,
+                bg: theme.bg,
+                fg: theme.text,
+            })
         })
         .expect("open offscreen window");
     let handle: AnyWindowHandle = window.into();
@@ -109,8 +117,7 @@ fn render_png_with_engine<V: Render + 'static>(
     height: f32,
     build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
 ) -> PathBuf {
-    let runtime =
-        tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime");
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime");
     let handle = runtime.handle().clone();
     let engine = runtime
         .block_on(async { uzu::engine::Engine::new(uzu::engine::EngineConfig::default()).await })
@@ -135,7 +142,11 @@ fn render_png_with_engine<V: Render + 'static>(
         .open_window(size(px(width), px(height)), |window, app| {
             let inner: AnyView = build(window, app).into();
             let theme = app.theme().clone();
-            app.new(|_| SnapshotRoot { inner, bg: theme.bg, fg: theme.text })
+            app.new(|_| SnapshotRoot {
+                inner,
+                bg: theme.bg,
+                fg: theme.text,
+            })
         })
         .expect("open offscreen window");
     let handle_w: AnyWindowHandle = window.into();
@@ -165,9 +176,11 @@ fn render_png_with_engine<V: Render + 'static>(
 /// Compare a freshly rendered PNG against the committed golden baseline under
 /// `tests/ui-baselines/`. Set `UPDATE_BASELINES=1` (or when no baseline exists)
 /// to refresh. Tolerates tiny anti-aliasing noise; fails on layout changes.
-fn compare_baseline(name: &str, rendered: &Path) {
-    let baseline =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/ui-baselines").join(format!("{name}.png"));
+fn compare_baseline(
+    name: &str,
+    rendered: &Path,
+) {
+    let baseline = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/ui-baselines").join(format!("{name}.png"));
     if std::env::var("UPDATE_BASELINES").is_ok() || !baseline.exists() {
         std::fs::create_dir_all(baseline.parent().unwrap()).ok();
         std::fs::copy(rendered, &baseline).expect("write baseline");
@@ -184,10 +197,7 @@ fn compare_baseline(name: &str, rendered: &Path) {
         .filter(|(pa, pb)| pa.0.iter().zip(pb.0.iter()).any(|(x, y)| x.abs_diff(*y) > 8))
         .count();
     let pct = diff as f64 / total as f64 * 100.0;
-    assert!(
-        pct < 0.5,
-        "{name}: {pct:.3}% pixels differ ({diff}/{total}) — run UPDATE_BASELINES=1 to refresh"
-    );
+    assert!(pct < 0.5, "{name}: {pct:.3}% pixels differ ({diff}/{total}) — run UPDATE_BASELINES=1 to refresh");
 }
 
 #[test]
@@ -212,9 +222,7 @@ fn use_empty_data_dir(tag: &str) {
 fn render_app_settings() {
     use_empty_data_dir("app-settings");
     unsafe { std::env::set_var("MIRAI_SCREEN", "settings") };
-    render_png("app-settings", 1400.0, 820.0, |_, cx| {
-        cx.new(crate::app_shell::MiraiApp::new)
-    });
+    render_png("app-settings", 1400.0, 820.0, |_, cx| cx.new(crate::app_shell::MiraiApp::new));
     unsafe { std::env::remove_var("MIRAI_SCREEN") };
     persistence::set_test_data_dir(None);
 }
@@ -385,7 +393,13 @@ fn render_chat_thinking() {
         created_at: 0,
         updated_at: 0,
         messages: vec![
-            StoredMessage { role: "user".into(), text: "Tell me about Paris".into(), reasoning: None, tps: None, tokens: None },
+            StoredMessage {
+                role: "user".into(),
+                text: "Tell me about Paris".into(),
+                reasoning: None,
+                tps: None,
+                tokens: None,
+            },
             StoredMessage {
                 role: "assistant".into(),
                 text: "Paris is the capital of France.".into(),
@@ -495,9 +509,7 @@ fn render_textarea() {
     // auto-grow, and cursor placement (the composer's editor).
     render_png("textarea", 600.0, 200.0, |_, cx| {
         let input = cx.new(|cx| components::TextInput::new(cx, "Type…").multiline(true, 3, 8));
-        input.update(cx, |t, cx| {
-            t.set_text("First line of a longer message\nSecond line\nThird line here", cx)
-        });
+        input.update(cx, |t, cx| t.set_text("First line of a longer message\nSecond line\nThird line here", cx));
         input
     });
 }

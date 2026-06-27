@@ -39,9 +39,7 @@ fn mirai_dir() -> PathBuf {
             return path.clone();
         }
     }
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Mirai")
+    dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("Mirai")
 }
 
 #[cfg(test)]
@@ -122,10 +120,7 @@ impl Default for AppSettings {
 }
 
 pub fn load_settings() -> AppSettings {
-    fs::read(settings_path())
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+    fs::read(settings_path()).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
 }
 
 pub fn save_settings(settings: &AppSettings) {
@@ -143,10 +138,7 @@ pub(crate) fn global_instructions_path() -> PathBuf {
 /// Milliseconds since the Unix epoch (used for ids + timestamps).
 pub fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 /// A file's modification time in epoch-ms, or 0. Used as the timestamp fallback
@@ -193,7 +185,10 @@ pub fn delete_chat(id: &str) {
     let _ = fs::remove_file(dir.join(format!("{id}.md")));
 }
 
-pub fn rename_chat(id: &str, title: &str) -> bool {
+pub fn rename_chat(
+    id: &str,
+    title: &str,
+) -> bool {
     let Some(mut chat) = load_chat(id) else {
         return false;
     };
@@ -320,19 +315,23 @@ pub fn serialize_markdown(chat: &StoredChat) -> String {
 /// Parse a mirai-chat markdown chat file. `fallback_ms` is used for any
 /// timestamp that isn't in our `YYYY-MM-DD HH:MM UTC` form (e.g. mirai-chat's
 /// locale dates). Returns `None` only if no title/messages can be found.
-pub fn parse_markdown(md: &str, id: &str, fallback_ms: u64) -> Option<StoredChat> {
+pub fn parse_markdown(
+    md: &str,
+    id: &str,
+    fallback_ms: u64,
+) -> Option<StoredChat> {
     let title = first_line_prefixed(md, "# ")?.trim().to_string();
-    let model_name = first_line_prefixed(md, "**Model:** ")
-        .map(|s| s.trim().to_string())
-        .filter(|s| s != "Unknown");
-    let created_at =
-        first_line_prefixed(md, "**Created:** ").and_then(parse_utc).unwrap_or(fallback_ms);
-    let updated_at =
-        first_line_prefixed(md, "**Updated:** ").and_then(parse_utc).unwrap_or(fallback_ms);
+    let model_name = first_line_prefixed(md, "**Model:** ").map(|s| s.trim().to_string()).filter(|s| s != "Unknown");
+    let created_at = first_line_prefixed(md, "**Created:** ").and_then(parse_utc).unwrap_or(fallback_ms);
+    let updated_at = first_line_prefixed(md, "**Updated:** ").and_then(parse_utc).unwrap_or(fallback_ms);
 
     let mut messages = Vec::new();
     for block in message_blocks(md) {
-        let role = if block.starts_with("## 🤖") { "assistant" } else { "user" };
+        let role = if block.starts_with("## 🤖") {
+            "assistant"
+        } else {
+            "user"
+        };
         let scope = active_version_slice(block);
         let Some(text) = between(scope, "<!-- START_CONTENT -->\n", "\n<!-- END_CONTENT -->") else {
             continue;
@@ -351,16 +350,30 @@ pub fn parse_markdown(md: &str, id: &str, fallback_ms: u64) -> Option<StoredChat
     if messages.is_empty() {
         return None;
     }
-    Some(StoredChat { id: id.to_string(), title, model_name, created_at, updated_at, messages })
+    Some(StoredChat {
+        id: id.to_string(),
+        title,
+        model_name,
+        created_at,
+        updated_at,
+        messages,
+    })
 }
 
 /// The first line with `prefix` stripped (whole remainder of that line).
-fn first_line_prefixed<'a>(md: &'a str, prefix: &str) -> Option<&'a str> {
+fn first_line_prefixed<'a>(
+    md: &'a str,
+    prefix: &str,
+) -> Option<&'a str> {
     md.lines().find_map(|l| l.strip_prefix(prefix))
 }
 
 /// Slice between (after) `start` and (before) `end`, first occurrence.
-fn between<'a>(text: &'a str, start: &str, end: &str) -> Option<&'a str> {
+fn between<'a>(
+    text: &'a str,
+    start: &str,
+    end: &str,
+) -> Option<&'a str> {
     let s = text.find(start)? + start.len();
     let e = text[s..].find(end)? + s;
     Some(&text[s..e])
@@ -377,11 +390,7 @@ fn message_blocks(md: &str) -> Vec<&str> {
         }
         idx += line.len();
     }
-    starts
-        .iter()
-        .enumerate()
-        .map(|(i, &s)| &md[s..starts.get(i + 1).copied().unwrap_or(md.len())])
-        .collect()
+    starts.iter().enumerate().map(|(i, &s)| &md[s..starts.get(i + 1).copied().unwrap_or(md.len())]).collect()
 }
 
 /// For a multi-version block (`#### Version N`), the slice of the active version
@@ -401,11 +410,18 @@ fn active_version_slice(block: &str) -> &str {
     }
     let seg = |i: usize| &block[starts[i]..starts.get(i + 1).copied().unwrap_or(block.len())];
     let active = (0..starts.len()).find(|&i| seg(i).contains("⭐ ACTIVE")).unwrap_or(0);
-    if starts.is_empty() { block } else { seg(active) }
+    if starts.is_empty() {
+        block
+    } else {
+        seg(active)
+    }
 }
 
 /// `**LABEL:** <number>` (optional trailing `s`) anywhere in `text`.
-fn perf_value(text: &str, label: &str) -> Option<f64> {
+fn perf_value(
+    text: &str,
+    label: &str,
+) -> Option<f64> {
     let needle = format!("**{label}:** ");
     text.lines()
         .find_map(|l| l.trim().strip_prefix(needle.as_str()))
@@ -444,22 +460,58 @@ fn parse_utc(s: &str) -> Option<u64> {
 // 1970 epoch). Used only for the markdown date fields.
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let era = if z >= 0 {
+        z
+    } else {
+        z - 146_096
+    } / 146_097;
     let doe = z - era * 146_097;
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
     let y = yoe + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
+    let m = if mp < 10 {
+        mp + 3
+    } else {
+        mp - 9
+    } as u32;
+    (
+        if m <= 2 {
+            y + 1
+        } else {
+            y
+        },
+        m,
+        d,
+    )
 }
 
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
+fn days_from_civil(
+    y: i64,
+    m: i64,
+    d: i64,
+) -> i64 {
+    let y = if m <= 2 {
+        y - 1
+    } else {
+        y
+    };
+    let era = if y >= 0 {
+        y
+    } else {
+        y - 399
+    } / 400;
     let yoe = y - era * 400;
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doy =
+        (153 * (if m > 2 {
+            m - 3
+        } else {
+            m + 9
+        }) + 2)
+            / 5
+            + d
+            - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146_097 + doe - 719_468
 }

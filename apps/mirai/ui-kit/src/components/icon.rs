@@ -107,7 +107,10 @@ pub struct IconEl {
 }
 
 impl IconEl {
-    pub fn new(icon: Icon, color: Hsla) -> Self {
+    pub fn new(
+        icon: Icon,
+        color: Hsla,
+    ) -> Self {
         Self {
             icon,
             size: 16.0,
@@ -116,26 +119,31 @@ impl IconEl {
         }
     }
 
-    pub fn size(mut self, size: f32) -> Self {
+    pub fn size(
+        mut self,
+        size: f32,
+    ) -> Self {
         self.size = size;
         self
     }
 
     /// Rotate the glyph by `deg` degrees (e.g. a `+` → `×` at 45°).
-    pub fn rotate(mut self, deg: f32) -> Self {
+    pub fn rotate(
+        mut self,
+        deg: f32,
+    ) -> Self {
         self.rotate_deg = deg;
         self
     }
 }
 
 impl RenderOnce for IconEl {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let mut el = svg()
-            .path(self.icon.path())
-            .w(px(self.size))
-            .h(px(self.size))
-            .flex_none()
-            .text_color(self.color);
+    fn render(
+        self,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> impl IntoElement {
+        let mut el = svg().path(self.icon.path()).w(px(self.size)).h(px(self.size)).flex_none().text_color(self.color);
         if self.rotate_deg != 0.0 {
             el = el.with_transformation(gpui::Transformation::rotate(gpui::radians(
                 self.rotate_deg * std::f32::consts::PI / 180.0,

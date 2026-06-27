@@ -9,7 +9,10 @@ pub(super) struct CloudVm {
 }
 
 impl CloudVm {
-    pub(super) fn from_row(row: &ModelRow, dark: bool) -> Self {
+    pub(super) fn from_row(
+        row: &ModelRow,
+        dark: bool,
+    ) -> Self {
         Self {
             id: row.id().to_string(),
             name: row.name(),

@@ -7,7 +7,10 @@ struct GlobalEngine(Engine);
 
 impl Global for GlobalEngine {}
 
-pub fn init(cx: &mut App, engine: Engine) {
+pub fn init(
+    cx: &mut App,
+    engine: Engine,
+) {
     cx.set_global(GlobalEngine(engine));
 }
 

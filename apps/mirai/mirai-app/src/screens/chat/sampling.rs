@@ -44,21 +44,24 @@ mod tests {
 
     #[test]
     fn argmax_mode_is_greedy() {
-        assert!(matches!(
-            sampling_method(SamplingMode::Argmax, 0.7, 40, 0.9, 0.1),
-            Some(SamplingMethod::Greedy {})
-        ));
+        assert!(matches!(sampling_method(SamplingMode::Argmax, 0.7, 40, 0.9, 0.1), Some(SamplingMethod::Greedy {})));
     }
 
     #[test]
     fn stochastic_zero_params_are_off() {
         match sampling_method(SamplingMode::Stochastic, 0.7, 0, 0.0, 0.0) {
-            Some(SamplingMethod::Stochastic { temperature, top_k, top_p, min_p, .. }) => {
+            Some(SamplingMethod::Stochastic {
+                temperature,
+                top_k,
+                top_p,
+                min_p,
+                ..
+            }) => {
                 assert_eq!(temperature, Some(0.7f32 as f64));
                 assert_eq!(top_k, None);
                 assert_eq!(top_p, None);
                 assert_eq!(min_p, None);
-            }
+            },
             _ => panic!("expected stochastic"),
         }
     }
@@ -66,11 +69,16 @@ mod tests {
     #[test]
     fn stochastic_nonzero_params_pass_through() {
         match sampling_method(SamplingMode::Stochastic, 0.8, 40, 0.9, 0.05) {
-            Some(SamplingMethod::Stochastic { top_k, top_p, min_p, .. }) => {
+            Some(SamplingMethod::Stochastic {
+                top_k,
+                top_p,
+                min_p,
+                ..
+            }) => {
                 assert_eq!(top_k, Some(40));
                 assert_eq!(top_p, Some(0.9f32 as f64));
                 assert!(min_p.unwrap() > 0.0);
-            }
+            },
             _ => panic!("expected stochastic"),
         }
     }

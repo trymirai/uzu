@@ -14,17 +14,52 @@ pub(super) fn relative_time(updated_at: u64) -> String {
         "just now".to_string()
     } else if mins < 60 {
         let n = mins.max(1);
-        format!("{n} minute{} ago", if n == 1 { "" } else { "s" })
+        format!(
+            "{n} minute{} ago",
+            if n == 1 {
+                ""
+            } else {
+                "s"
+            }
+        )
     } else if hours < 24 {
-        format!("{hours} hour{} ago", if hours == 1 { "" } else { "s" })
+        format!(
+            "{hours} hour{} ago",
+            if hours == 1 {
+                ""
+            } else {
+                "s"
+            }
+        )
     } else if days < 30 {
-        format!("{days} day{} ago", if days == 1 { "" } else { "s" })
+        format!(
+            "{days} day{} ago",
+            if days == 1 {
+                ""
+            } else {
+                "s"
+            }
+        )
     } else if days < 365 {
         let n = days / 30;
-        format!("{n} month{} ago", if n == 1 { "" } else { "s" })
+        format!(
+            "{n} month{} ago",
+            if n == 1 {
+                ""
+            } else {
+                "s"
+            }
+        )
     } else {
         let n = days / 365;
-        format!("{n} year{} ago", if n == 1 { "" } else { "s" })
+        format!(
+            "{n} year{} ago",
+            if n == 1 {
+                ""
+            } else {
+                "s"
+            }
+        )
     }
 }
 

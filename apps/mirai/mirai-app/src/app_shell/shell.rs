@@ -2,21 +2,20 @@
 //! swaps on the active `Route`, and a bottom footer bar. Navigation is just a
 //! `Route` field on the root view, switched via `cx.listener` + `cx.notify()`.
 
-use gpui::{
-    AnyElement, Context, CursorStyle, Entity, IntoElement, Render, Window, div, prelude::*, px,
-};
+use gpui::{AnyElement, Context, CursorStyle, Entity, IntoElement, Render, Window, div, prelude::*, px};
 
 use super::route::Route;
 use crate::{
     components::{Icon, IconEl},
     models_store::{ModelKind, ModelsStore},
-    persistence, settings_state, toast,
+    persistence,
     screens::{
-        ChatView, ChatEvent, ChatsEvent, ChatsView, CloudEvent, CloudModelsView, LocalModelsEvent,
-        LocalModelsView, RoutersView, SettingsEvent, SettingsView, TtsView, WelcomeEvent,
-        WelcomeView,
+        ChatEvent, ChatView, ChatsEvent, ChatsView, CloudEvent, CloudModelsView, LocalModelsEvent, LocalModelsView,
+        RoutersView, SettingsEvent, SettingsView, TtsView, WelcomeEvent, WelcomeView,
     },
+    settings_state,
     theme::{self, ActiveTheme, FONT_SANS, TEXT_SIZE, layout::FOOTER_HEIGHT},
+    toast,
 };
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -55,9 +54,7 @@ impl MiraiApp {
         // Reconcile the menu-bar status item and drain its menu clicks.
         cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(250))
-                    .await;
+                cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
                 if this.update(cx, |app, cx| app.tick_menu_bar(cx)).is_err() {
                     break;
                 }
@@ -73,11 +70,10 @@ impl MiraiApp {
         // Tapping an installed local model starts a chat with it.
         cx.subscribe(&local_models, |this, _view, event, cx| match event {
             LocalModelsEvent::UseModel(model) => {
-                this.chat
-                    .update(cx, |chat, cx| chat.use_model(model.clone(), cx));
+                this.chat.update(cx, |chat, cx| chat.use_model(model.clone(), cx));
                 this.route = Route::Chat(None);
                 cx.notify();
-            }
+            },
         })
         .detach();
         let chats = cx.new(ChatsView::new);
@@ -92,11 +88,10 @@ impl MiraiApp {
         // Chatting with a cloud model picked on the Cloud Models screen.
         cx.subscribe(&cloud, |this, _cloud, event, cx| match event {
             CloudEvent::UseModel(model) => {
-                this.chat
-                    .update(cx, |chat, cx| chat.use_model(model.clone(), cx));
+                this.chat.update(cx, |chat, cx| chat.use_model(model.clone(), cx));
                 this.route = Route::Chat(None);
                 cx.notify();
-            }
+            },
         })
         .detach();
 
@@ -110,7 +105,7 @@ impl MiraiApp {
             ChatEvent::Updated => {
                 this.recent_chats = persistence::list_chats();
                 cx.notify();
-            }
+            },
             ChatEvent::OpenLocalModels => this.navigate(Route::LocalModels, cx),
         })
         .detach();
@@ -120,7 +115,7 @@ impl MiraiApp {
             SettingsEvent::DataCleared => {
                 this.recent_chats = persistence::list_chats();
                 cx.notify();
-            }
+            },
         })
         .detach();
 
@@ -129,7 +124,7 @@ impl MiraiApp {
             WelcomeEvent::Continue => {
                 persistence::set_seen_welcome();
                 this.navigate(Route::LocalModels, cx);
-            }
+            },
         })
         .detach();
 
@@ -168,7 +163,10 @@ impl MiraiApp {
     /// Keep the menu-bar status item in sync with the "Show in menu bar" toggle
     /// and route any pending status-item menu clicks. Driven by a short timer
     /// (`tray-icon`'s `MenuEvent` channel isn't wired into GPUI's run loop).
-    fn tick_menu_bar(&mut self, cx: &mut Context<Self>) {
+    fn tick_menu_bar(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let want = settings_state::current(cx).show_in_menu_bar;
         if want && self.tray.is_none() {
             self.tray = crate::menu_bar::build();
@@ -181,51 +179,68 @@ impl MiraiApp {
                 crate::menu_bar::NEW_CHAT => {
                     self.navigate(Route::Chat(None), cx);
                     cx.activate(true);
-                }
+                },
                 crate::menu_bar::OPEN_CHATS => {
                     self.navigate(Route::Chats, cx);
                     cx.activate(true);
-                }
+                },
                 crate::menu_bar::SETTINGS => {
                     self.navigate(Route::Settings, cx);
                     cx.activate(true);
-                }
+                },
                 crate::menu_bar::QUIT => cx.quit(),
-                _ => {}
+                _ => {},
             }
         }
     }
 
     #[cfg(test)]
-    pub fn open_settings_menu(&mut self, cx: &mut Context<Self>) {
+    pub fn open_settings_menu(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.settings_menu_open = true;
         cx.notify();
     }
 
     /// Flip the color scheme and persist it (used by the settings menu).
-    pub(super) fn toggle_dark_mode(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn toggle_dark_mode(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let mut settings = settings_state::current(cx);
         settings.dark_mode = !settings.dark_mode;
-        let next =
-            if settings.dark_mode { theme::Theme::dark() } else { theme::Theme::light() };
+        let next = if settings.dark_mode {
+            theme::Theme::dark()
+        } else {
+            theme::Theme::light()
+        };
         theme::set_theme(cx, next);
         settings_state::set(cx, settings);
         cx.notify();
     }
 
     /// Navigate to a route, running any side effects (reset/reload).
-    pub(super) fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
+    pub(super) fn navigate(
+        &mut self,
+        route: Route,
+        cx: &mut Context<Self>,
+    ) {
         match &route {
             Route::Chat(None) => self.chat.update(cx, |chat, cx| chat.start_new(cx)),
             Route::Chats => self.chats.update(cx, |chats, cx| chats.reload(cx)),
-            _ => {}
+            _ => {},
         }
         self.recent_chats = persistence::list_chats();
         self.route = route;
         cx.notify();
     }
 
-    pub(super) fn open_chat(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(super) fn open_chat(
+        &mut self,
+        id: String,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(stored) = persistence::load_chat(&id) {
             self.chat.update(cx, |chat, cx| chat.load_stored(stored, cx));
             self.recent_chats = persistence::list_chats();
@@ -234,7 +249,10 @@ impl MiraiApp {
         }
     }
 
-    fn render_content(&self, _cx: &mut Context<Self>) -> AnyElement {
+    fn render_content(
+        &self,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
         match &self.route {
             Route::LocalModels => self.local_models.clone().into_any_element(),
             Route::CloudModels => self.cloud.clone().into_any_element(),
@@ -248,7 +266,10 @@ impl MiraiApp {
         }
     }
 
-    fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_footer(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let hover_bg = theme.bg_hover;
         let loaded = self.chat.read(cx).loaded_model_name();
@@ -297,9 +318,12 @@ impl MiraiApp {
     }
 }
 
-
 impl Render for MiraiApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let root = div()
             .size_full()
@@ -311,9 +335,7 @@ impl Render for MiraiApp {
 
         // Welcome is full-screen (no sidebar/footer).
         if matches!(self.route, Route::Welcome) {
-            return root
-                .child(self.welcome.clone())
-                .children(toast::render_overlay(cx));
+            return root.child(self.welcome.clone()).children(toast::render_overlay(cx));
         }
 
         root.flex()
@@ -326,13 +348,7 @@ impl Render for MiraiApp {
                     .min_h_0()
                     .overflow_hidden()
                     .child(self.render_sidebar(cx))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_hidden()
-                            .child(self.render_content(cx)),
-                    ),
+                    .child(div().flex_1().min_h_0().overflow_hidden().child(self.render_content(cx))),
             )
             .child(self.render_footer(cx))
             .children(toast::render_overlay(cx))

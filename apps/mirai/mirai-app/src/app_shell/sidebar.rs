@@ -56,7 +56,10 @@ impl MiraiApp {
     }
 
     /// Disabled "Apps" nav row with a trailing "Soon" tag (mirai-chat parity).
-    fn apps_soon_item(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn apps_soon_item(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         div()
             .flex()
@@ -79,7 +82,10 @@ impl MiraiApp {
             .child(div().text_xs().text_color(theme.text_muted).child("Soon"))
     }
 
-    pub(super) fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn render_sidebar(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let section = self.route.section();
 
@@ -143,7 +149,10 @@ impl MiraiApp {
 
     /// Bottom "Settings" row that expands an inline menu upward: external links,
     /// a Settings entry, and a dark-mode toggle, mirroring mirai-chat.
-    fn render_settings_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_settings_menu(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let open = self.settings_menu_open;
         let dark = settings_state::current(cx).dark_mode;
@@ -178,7 +187,11 @@ impl MiraiApp {
                 )
                 .child(
                     IconEl::new(
-                        if open { Icon::ChevronUp } else { Icon::ChevronDown },
+                        if open {
+                            Icon::ChevronUp
+                        } else {
+                            Icon::ChevronDown
+                        },
                         theme.text_muted,
                     )
                     .size(crate::tokens::icon::SM),
@@ -239,9 +252,10 @@ impl MiraiApp {
                         .text_sm()
                         .text_color(theme.text)
                         .child("Dark mode")
-                        .child(Toggle::new("dark-mode", dark).on_click(cx.listener(
-                            |this, _, _, cx| this.toggle_dark_mode(cx),
-                        ))),
+                        .child(
+                            Toggle::new("dark-mode", dark)
+                                .on_click(cx.listener(|this, _, _, cx| this.toggle_dark_mode(cx))),
+                        ),
                 );
         }
 
@@ -249,7 +263,10 @@ impl MiraiApp {
     }
 
     /// Scrollable list of recent chats in the sidebar (mirai-chat parity).
-    fn render_recent_chats(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_recent_chats(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let hover_bg = theme.bg_hover;
         let active = match &self.route {
@@ -257,15 +274,7 @@ impl MiraiApp {
             _ => None,
         };
 
-        let mut col = div()
-            .id("recent-chats")
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .overflow_y_scroll()
-            .px_2()
-            .pt_2();
+        let mut col = div().id("recent-chats").flex_1().min_h_0().flex().flex_col().overflow_y_scroll().px_2().pt_2();
 
         if self.recent_chats.is_empty() {
             return col
@@ -277,8 +286,16 @@ impl MiraiApp {
         for chat in &self.recent_chats {
             let id = chat.id.clone();
             let is_active = active.as_deref() == Some(chat.id.as_str());
-            let fg = if is_active { theme.text } else { theme.text_muted };
-            let bg = if is_active { theme.bg_hover } else { gpui::transparent_black() };
+            let fg = if is_active {
+                theme.text
+            } else {
+                theme.text_muted
+            };
+            let bg = if is_active {
+                theme.bg_hover
+            } else {
+                gpui::transparent_black()
+            };
             col = col.child(
                 div()
                     .id(SharedString::from(format!("recent-{}", chat.id)))
@@ -298,7 +315,6 @@ impl MiraiApp {
         }
         col.into_any_element()
     }
-
 }
 
 fn truncate_title(s: &str) -> String {

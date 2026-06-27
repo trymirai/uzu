@@ -1,9 +1,15 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use uzu::types::{basic::PcmBatch, model::Model};
 
-use crate::{data_ops::tts_audio_dir, persistence::{self, now_ms}};
+use crate::{
+    data_ops::tts_audio_dir,
+    persistence::{self, now_ms},
+};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TtsHistoryEntry {
@@ -60,9 +66,7 @@ pub fn save_generation(
     let dir = tts_audio_dir();
     fs::create_dir_all(&dir).ok()?;
     let path = dir.join(format!("{id}.wav"));
-    merged
-        .save_as_wav(path.to_string_lossy().into_owned())
-        .ok()?;
+    merged.save_as_wav(path.to_string_lossy().into_owned()).ok()?;
     let entry = TtsHistoryEntry {
         id,
         model_id: model.identifier.clone(),
@@ -98,11 +102,8 @@ fn pcm_from_wav(path: &Path) -> Option<PcmBatch> {
     let spec = reader.spec();
     let channels = spec.channels as u32;
     let sample_rate = spec.sample_rate;
-    let samples: Vec<f64> = reader
-        .samples::<i16>()
-        .map(|s| s.map(|v| v as f64 / 32767.0))
-        .collect::<Result<_, _>>()
-        .ok()?;
+    let samples: Vec<f64> =
+        reader.samples::<i16>().map(|s| s.map(|v| v as f64 / 32767.0)).collect::<Result<_, _>>().ok()?;
     let frames = samples.len() as u32 / channels.max(1);
     Some(PcmBatch {
         samples,

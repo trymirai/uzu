@@ -5,9 +5,9 @@
 use std::{cell::Cell, rc::Rc};
 
 use gpui::{
-    App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior,
-    InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Style, Window, fill, point, px, relative, size,
+    App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
+    IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Style, Window, fill,
+    point, px, relative, size,
 };
 
 use crate::theme::ActiveTheme;
@@ -22,12 +22,22 @@ pub struct Slider {
 
 impl Slider {
     /// `value` is the normalized fraction (0.0–1.0).
-    pub fn new(id: impl Into<ElementId>, value: f32) -> Self {
-        Self { id: id.into(), value: value.clamp(0., 1.), on_change: None }
+    pub fn new(
+        id: impl Into<ElementId>,
+        value: f32,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            value: value.clamp(0., 1.),
+            on_change: None,
+        }
     }
 
     /// Called with the new fraction (0.0–1.0) on click or drag.
-    pub fn on_change(mut self, handler: impl Fn(f32, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_change(
+        mut self,
+        handler: impl Fn(f32, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_change = Some(Box::new(handler));
         self
     }
@@ -104,39 +114,31 @@ impl Element for Slider {
 
         // Track.
         window.paint_quad(
-            fill(
-                Bounds::new(point(left, cy - track_h / 2.), size(width, track_h)),
-                theme.border,
-            )
-            .corner_radii(track_h / 2.),
+            fill(Bounds::new(point(left, cy - track_h / 2.), size(width, track_h)), theme.border)
+                .corner_radii(track_h / 2.),
         );
         // Filled portion.
         window.paint_quad(
-            fill(
-                Bounds::new(point(left, cy - track_h / 2.), size(width * frac, track_h)),
-                theme.text,
-            )
-            .corner_radii(track_h / 2.),
+            fill(Bounds::new(point(left, cy - track_h / 2.), size(width * frac, track_h)), theme.text)
+                .corner_radii(track_h / 2.),
         );
         // Thumb.
         window.paint_quad(
-            fill(
-                Bounds::new(
-                    point(thumb_x - thumb_r, cy - thumb_r),
-                    size(thumb_r * 2., thumb_r * 2.),
-                ),
-                theme.text,
-            )
-            .corner_radii(thumb_r),
+            fill(Bounds::new(point(thumb_x - thumb_r, cy - thumb_r), size(thumb_r * 2., thumb_r * 2.)), theme.text)
+                .corner_radii(thumb_r),
         );
 
-        let Some(global_id) = global_id else { return };
+        let Some(global_id) = global_id else {
+            return;
+        };
         let dragging = window.with_element_state::<SliderState, _>(global_id, |state, _| {
             let state = state.unwrap_or_default();
             (state.dragging.clone(), state)
         });
 
-        let Some(on_change) = self.on_change.take() else { return };
+        let Some(on_change) = self.on_change.take() else {
+            return;
+        };
         let on_change = Rc::new(on_change);
 
         // Press: jump to the clicked position and start dragging.
@@ -145,10 +147,7 @@ impl Element for Slider {
             let dragging = dragging.clone();
             let on_change = on_change.clone();
             window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
-                if phase == DispatchPhase::Bubble
-                    && e.button == MouseButton::Left
-                    && hitbox.is_hovered(window)
-                {
+                if phase == DispatchPhase::Bubble && e.button == MouseButton::Left && hitbox.is_hovered(window) {
                     dragging.set(true);
                     on_change(((e.position.x - left) / width).clamp(0., 1.), window, cx);
                 }

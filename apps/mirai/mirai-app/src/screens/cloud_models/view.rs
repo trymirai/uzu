@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 
-use gpui::{
-    Context, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString, Window, div,
-    prelude::*, px,
-};
+use gpui::{Context, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString, Window, div, prelude::*, px};
 
 use super::{event::CloudEvent, vm::CloudVm};
 use crate::{
@@ -25,7 +22,10 @@ pub struct CloudModelsView {
 impl EventEmitter<CloudEvent> for CloudModelsView {}
 
 impl CloudModelsView {
-    pub fn new(store: Entity<ModelsStore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        store: Entity<ModelsStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let key_input = cx.new(|cx| TextInput::new(cx, "Paste API key…"));
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
 
@@ -59,7 +59,11 @@ impl CloudModelsView {
         }
     }
 
-    fn open_key_editor(&mut self, provider: &'static CloudProvider, cx: &mut Context<Self>) {
+    fn open_key_editor(
+        &mut self,
+        provider: &'static CloudProvider,
+        cx: &mut Context<Self>,
+    ) {
         self.key_editor = Some(provider.id);
         self.key_input.update(cx, |input, cx| {
             input.set_text(String::new(), cx);
@@ -80,13 +84,19 @@ impl CloudModelsView {
         .detach();
     }
 
-    fn close_key_editor(&mut self, cx: &mut Context<Self>) {
+    fn close_key_editor(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.key_editor = None;
         self.key_busy = false;
         cx.notify();
     }
 
-    fn save_key(&mut self, cx: &mut Context<Self>) {
+    fn save_key(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let Some(provider_id) = self.key_editor else {
             return;
         };
@@ -114,19 +124,11 @@ impl CloudModelsView {
                         this.configured.insert(provider_id, true);
                         this.key_editor = None;
                         store.update(cx, |s, cx| s.reload(cx));
-                        crate::toast::push(
-                            cx,
-                            "Provider connected",
-                            crate::toast::ToastKind::Success,
-                        );
-                    }
+                        crate::toast::push(cx, "Provider connected", crate::toast::ToastKind::Success);
+                    },
                     Err(err) => {
-                        crate::toast::push(
-                            cx,
-                            format!("Failed: {err}"),
-                            crate::toast::ToastKind::Error,
-                        );
-                    }
+                        crate::toast::push(cx, format!("Failed: {err}"), crate::toast::ToastKind::Error);
+                    },
                 }
                 cx.notify();
             });
@@ -134,7 +136,10 @@ impl CloudModelsView {
         .detach();
     }
 
-    fn remove_key(&mut self, cx: &mut Context<Self>) {
+    fn remove_key(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let Some(provider_id) = self.key_editor else {
             return;
         };
@@ -157,14 +162,10 @@ impl CloudModelsView {
                         this.key_editor = None;
                         store.update(cx, |s, cx| s.reload(cx));
                         crate::toast::push(cx, "Provider disconnected", crate::toast::ToastKind::Info);
-                    }
+                    },
                     Err(err) => {
-                        crate::toast::push(
-                            cx,
-                            format!("Failed: {err}"),
-                            crate::toast::ToastKind::Error,
-                        );
-                    }
+                        crate::toast::push(cx, format!("Failed: {err}"), crate::toast::ToastKind::Error);
+                    },
                 }
                 cx.notify();
             });
@@ -172,10 +173,18 @@ impl CloudModelsView {
         .detach();
     }
 
-    fn provider_row(&self, cx: &mut Context<Self>, provider: &'static CloudProvider) -> impl IntoElement {
+    fn provider_row(
+        &self,
+        cx: &mut Context<Self>,
+        provider: &'static CloudProvider,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let connected = self.configured.get(provider.id).copied().unwrap_or(false);
-        let label = if connected { "Manage" } else { "Connect" };
+        let label = if connected {
+            "Manage"
+        } else {
+            "Connect"
+        };
         div()
             .flex()
             .items_center()
@@ -201,26 +210,25 @@ impl CloudModelsView {
                                     .text_color(theme.text)
                                     .child(provider.label),
                             )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.text_muted)
-                                    .child(if connected { "Connected" } else { "Not connected" }),
-                            ),
+                            .child(div().text_xs().text_color(theme.text_muted).child(if connected {
+                                "Connected"
+                            } else {
+                                "Not connected"
+                            })),
                     ),
             )
             .child(
-                Button::new(
-                    SharedString::from(format!("connect-{}", provider.id)),
-                    label,
-                )
-                .kind(ButtonKind::Secondary)
-                .size(ButtonSize::Small)
-                .on_click(cx.listener(move |this, _, _, cx| this.open_key_editor(provider, cx))),
+                Button::new(SharedString::from(format!("connect-{}", provider.id)), label)
+                    .kind(ButtonKind::Secondary)
+                    .size(ButtonSize::Small)
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_key_editor(provider, cx))),
             )
     }
 
-    fn connectors_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn connectors_section(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let mut rows = div().flex().flex_col().gap_1();
         for provider in provider_keys::PROVIDERS {
@@ -249,7 +257,10 @@ impl CloudModelsView {
             .child(rows)
     }
 
-    fn key_modal(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    fn key_modal(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
         let provider = self.key_editor?;
         let provider = provider_keys::provider_by_id(provider)?;
         let theme = cx.theme().clone();
@@ -319,7 +330,11 @@ impl CloudModelsView {
         )
     }
 
-    fn row(&self, cx: &mut Context<Self>, vm: &CloudVm) -> impl IntoElement {
+    fn row(
+        &self,
+        cx: &mut Context<Self>,
+        vm: &CloudVm,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
         let id = vm.id.clone();
@@ -335,9 +350,7 @@ impl CloudModelsView {
             .cursor(gpui::CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(move |this, _, _, cx| {
-                if let Some(model) =
-                    this.store.read(cx).rows.iter().find(|r| r.id() == id).map(|r| r.model.clone())
-                {
+                if let Some(model) = this.store.read(cx).rows.iter().find(|r| r.id() == id).map(|r| r.model.clone()) {
                     cx.emit(CloudEvent::UseModel(model));
                 }
             }))
@@ -356,7 +369,11 @@ impl CloudModelsView {
 }
 
 impl Render for CloudModelsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
 
         let (loading, mut models): (bool, Vec<CloudVm>) = {
@@ -383,16 +400,9 @@ impl Render for CloudModelsView {
 
         if models.is_empty() {
             if loading {
-                list = list.child(
-                    div().py_8().flex().justify_center().child(Loader::new().label("Loading…")),
-                );
+                list = list.child(div().py_8().flex().justify_center().child(Loader::new().label("Loading…")));
             } else {
-                list = list.child(
-                    div()
-                        .py_4()
-                        .text_color(theme.text_muted)
-                        .child("No cloud models available."),
-                );
+                list = list.child(div().py_4().text_color(theme.text_muted).child("No cloud models available."));
             }
         } else {
             let mut current_vendor: Option<String> = None;
@@ -423,45 +433,27 @@ impl Render for CloudModelsView {
 
         let modal = self.key_modal(cx);
 
-        let mut root = div()
-            .size_full()
-            .relative()
-            .flex()
-            .flex_col()
-            .items_center()
-            .child(
-                div()
-                    .w_full()
-                    .max_w(px(CONTENT_MAX_WIDTH))
-                    .h_full()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .px_6()
-                    .child(
-                        div()
-                            .pt_10()
-                            .pb_2()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(IconEl::new(Icon::ModelMenu, theme.text).size(crate::tokens::icon::XXL))
-                            .child(
-                                div()
-                                    .text_xl()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child("Choose cloud model to chat"),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("cloud-list")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(list),
-                    ),
-            );
+        let mut root = div().size_full().relative().flex().flex_col().items_center().child(
+            div()
+                .w_full()
+                .max_w(px(CONTENT_MAX_WIDTH))
+                .h_full()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .px_6()
+                .child(
+                    div()
+                        .pt_10()
+                        .pb_2()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(IconEl::new(Icon::ModelMenu, theme.text).size(crate::tokens::icon::XXL))
+                        .child(div().text_xl().font_weight(FontWeight::MEDIUM).child("Choose cloud model to chat")),
+                )
+                .child(div().id("cloud-list").flex_1().min_h_0().overflow_y_scroll().child(list)),
+        );
         if let Some(modal) = modal {
             root = root.child(modal);
         }

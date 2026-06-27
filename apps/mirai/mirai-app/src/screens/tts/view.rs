@@ -1,10 +1,7 @@
 //! Text-to-speech screen.
 
 use futures::{StreamExt, channel::mpsc};
-use gpui::{
-    Context, CursorStyle, Entity, FontWeight, IntoElement, Render, SharedString, Window, div,
-    prelude::*, px,
-};
+use gpui::{Context, CursorStyle, Entity, FontWeight, IntoElement, Render, SharedString, Window, div, prelude::*, px};
 use uzu::{
     player::Player,
     session::text_to_speech::TextToSpeechSessionStreamChunk,
@@ -60,7 +57,10 @@ pub struct TtsView {
 }
 
 impl TtsView {
-    pub fn new(store: Entity<ModelsStore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        store: Entity<ModelsStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let input = cx.new(|cx| {
             TextInput::new(cx, "Start typing here or paste any text you want to turn into speech…")
                 .multiline(false, 16, 40)
@@ -88,7 +88,10 @@ impl TtsView {
     }
 
     /// Load a text file's contents into the editor (Upload text file button).
-    fn pick_text_file(&mut self, cx: &mut Context<Self>) {
+    fn pick_text_file(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
             directories: false,
@@ -96,8 +99,12 @@ impl TtsView {
             prompt: Some("Open text file".into()),
         });
         cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = rx.await else { return };
-            let Some(path) = paths.first() else { return };
+            let Ok(Ok(Some(paths))) = rx.await else {
+                return;
+            };
+            let Some(path) = paths.first() else {
+                return;
+            };
             if let Ok(content) = std::fs::read_to_string(path) {
                 let _ = this.update(cx, |this, cx| {
                     this.input.update(cx, |input, cx| input.set_text(&content, cx));
@@ -113,33 +120,34 @@ impl TtsView {
         self.pending_gen = None;
     }
 
-    fn append_pcm(&mut self, batch: PcmBatch) -> Result<(), String> {
+    fn append_pcm(
+        &mut self,
+        batch: PcmBatch,
+    ) -> Result<(), String> {
         if self.player.is_none() {
             self.player = Some(Player::new().map_err(|e| format!("audio: {e}"))?);
         }
-        self.player
-            .as_ref()
-            .expect("player just opened")
-            .append_pcm_batch(batch)
-            .map_err(|e| format!("audio: {e}"))
+        self.player.as_ref().expect("player just opened").append_pcm_batch(batch).map_err(|e| format!("audio: {e}"))
     }
 
     fn reload_history(&mut self) {
         self.history = tts_history::list();
     }
 
-    fn resolved_model(&self, cx: &Context<Self>) -> Option<Model> {
-        self.selected.clone().or_else(|| {
-            self.store
-                .read(cx)
-                .rows
-                .iter()
-                .find(|r| r.is_installed())
-                .map(|r| r.model.clone())
-        })
+    fn resolved_model(
+        &self,
+        cx: &Context<Self>,
+    ) -> Option<Model> {
+        self.selected
+            .clone()
+            .or_else(|| self.store.read(cx).rows.iter().find(|r| r.is_installed()).map(|r| r.model.clone()))
     }
 
-    fn generate(&mut self, text: String, cx: &mut Context<Self>) {
+    fn generate(
+        &mut self,
+        text: String,
+        cx: &mut Context<Self>,
+    ) {
         if self.generating {
             return;
         }
@@ -185,18 +193,22 @@ impl TtsView {
                 Err(err) => {
                     let _ = tx.unbounded_send(TtsMsg::Error(err.to_string()));
                     return;
-                }
+                },
             };
             let stream = session.synthesize_stream(text).await;
             let _ = tx.unbounded_send(TtsMsg::Started(stream.cancel_token()));
             while let Some(event) = stream.next().await {
                 match event {
-                    TextToSpeechSessionStreamChunk::Output { output } => {
+                    TextToSpeechSessionStreamChunk::Output {
+                        output,
+                    } => {
                         let _ = tx.unbounded_send(TtsMsg::Batch(output.pcm_batch));
-                    }
-                    TextToSpeechSessionStreamChunk::Error { error } => {
+                    },
+                    TextToSpeechSessionStreamChunk::Error {
+                        error,
+                    } => {
                         let _ = tx.unbounded_send(TtsMsg::Error(format!("{error}")));
-                    }
+                    },
                 }
             }
             let _ = tx.unbounded_send(TtsMsg::Done);
@@ -213,7 +225,11 @@ impl TtsView {
         .detach();
     }
 
-    fn apply(&mut self, msg: TtsMsg, cx: &mut Context<Self>) {
+    fn apply(
+        &mut self,
+        msg: TtsMsg,
+        cx: &mut Context<Self>,
+    ) {
         match msg {
             TtsMsg::Started(token) => self.cancel = Some(token),
             TtsMsg::Batch(batch) => {
@@ -222,7 +238,7 @@ impl TtsView {
                     self.error = Some(err);
                     self.generating = false;
                 }
-            }
+            },
             TtsMsg::Done => {
                 self.generating = false;
                 self.cancel = None;
@@ -242,18 +258,22 @@ impl TtsView {
                 }
                 self.clear_gen();
                 cx.notify();
-            }
+            },
             TtsMsg::Error(err) => {
                 self.error = Some(err);
                 self.generating = false;
                 self.cancel = None;
                 self.clear_gen();
                 cx.notify();
-            }
+            },
         }
     }
 
-    fn play_history(&mut self, id: &str, cx: &mut Context<Self>) {
+    fn play_history(
+        &mut self,
+        id: &str,
+        cx: &mut Context<Self>,
+    ) {
         if self.playing_id.as_deref() == Some(id) {
             self.stop_playback(cx);
             return;
@@ -275,7 +295,10 @@ impl TtsView {
         cx.notify();
     }
 
-    fn stop_playback(&mut self, cx: &mut Context<Self>) {
+    fn stop_playback(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(player) = &self.player {
             player.stop();
         }
@@ -283,7 +306,11 @@ impl TtsView {
         cx.notify();
     }
 
-    fn delete_history(&mut self, id: &str, cx: &mut Context<Self>) {
+    fn delete_history(
+        &mut self,
+        id: &str,
+        cx: &mut Context<Self>,
+    ) {
         if self.playing_id.as_deref() == Some(id) {
             self.stop_playback(cx);
         }
@@ -292,12 +319,19 @@ impl TtsView {
         cx.notify();
     }
 
-    fn restore_text(&mut self, text: &str, cx: &mut Context<Self>) {
+    fn restore_text(
+        &mut self,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
         self.input.update(cx, |input, cx| input.set_text(text, cx));
         cx.notify();
     }
 
-    fn stop(&mut self, cx: &mut Context<Self>) {
+    fn stop(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(token) = &self.cancel {
             token.cancel();
         }
@@ -308,14 +342,22 @@ impl TtsView {
         cx.notify();
     }
 
-    fn generate_from_button(&mut self, cx: &mut Context<Self>) {
+    fn generate_from_button(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let text = self.input.read(cx).text();
         self.generate(text, cx);
     }
 
     /// A model card in the right "Settings" pane: icon + name + size + control,
     /// with a status badge below. Selected (installed) cards get an accent ring.
-    fn model_card(&self, cx: &mut Context<Self>, vm: &TtsVm, selected: bool) -> impl IntoElement {
+    fn model_card(
+        &self,
+        cx: &mut Context<Self>,
+        vm: &TtsVm,
+        selected: bool,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let id = vm.id.clone();
 
@@ -377,7 +419,11 @@ impl TtsView {
         };
 
         let select_id = id.clone();
-        let border = if selected { theme.success } else { theme.border };
+        let border = if selected {
+            theme.success
+        } else {
+            theme.border
+        };
         div()
             .id(gpui::SharedString::from(vm.id.clone()))
             .flex()
@@ -407,7 +453,9 @@ impl TtsView {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(VendorIcon::new(vm.vendor.clone()).size(crate::tokens::icon::XXL).icon_url(vm.icon_url.clone()))
+                    .child(
+                        VendorIcon::new(vm.vendor.clone()).size(crate::tokens::icon::XXL).icon_url(vm.icon_url.clone()),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -425,7 +473,11 @@ impl TtsView {
             .child(div().flex().child(badge))
     }
 
-    fn history_row(&self, cx: &mut Context<Self>, entry: &TtsHistoryEntry) -> impl IntoElement {
+    fn history_row(
+        &self,
+        cx: &mut Context<Self>,
+        entry: &TtsHistoryEntry,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
         let playing = self.playing_id.as_deref() == Some(entry.id.as_str());
@@ -457,13 +509,7 @@ impl TtsView {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.restore_text(&restore, cx);
                     }))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.text)
-                            .overflow_hidden()
-                            .child(preview),
-                    )
+                    .child(div().text_sm().text_color(theme.text).overflow_hidden().child(preview))
                     .child(
                         div()
                             .text_xs()
@@ -479,7 +525,11 @@ impl TtsView {
                     .child(
                         IconButton::new(
                             SharedString::from(format!("play-{}", entry.id)),
-                            if playing { Icon::Stop } else { Icon::Speech },
+                            if playing {
+                                Icon::Stop
+                            } else {
+                                Icon::Speech
+                            },
                         )
                         .color(theme.text_muted)
                         .disabled(self.generating)
@@ -502,7 +552,12 @@ impl TtsView {
     }
 
     /// A "Settings" / "History" tab in the right pane.
-    fn tab_button(&self, cx: &mut Context<Self>, label: &'static str, tab: TtsTab) -> impl IntoElement {
+    fn tab_button(
+        &self,
+        cx: &mut Context<Self>,
+        label: &'static str,
+        tab: TtsTab,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let active = self.right_tab == tab;
         div()
@@ -513,9 +568,17 @@ impl TtsView {
             .justify_center()
             .h(px(48.))
             .text_sm()
-            .text_color(if active { theme.text } else { theme.text_muted })
+            .text_color(if active {
+                theme.text
+            } else {
+                theme.text_muted
+            })
             .border_b_2()
-            .border_color(if active { theme.text } else { gpui::transparent_black() })
+            .border_color(if active {
+                theme.text
+            } else {
+                gpui::transparent_black()
+            })
             .cursor(CursorStyle::PointingHand)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.right_tab = tab;
@@ -525,7 +588,10 @@ impl TtsView {
     }
 }
 
-fn truncate_line(text: &str, max: usize) -> String {
+fn truncate_line(
+    text: &str,
+    max: usize,
+) -> String {
     let trimmed = text.trim();
     if trimmed.chars().count() <= max {
         return trimmed.to_string();
@@ -534,7 +600,11 @@ fn truncate_line(text: &str, max: usize) -> String {
 }
 
 impl Render for TtsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let selected_id = self.selected.as_ref().map(|m| m.identifier.clone());
         let resolved = self.resolved_model(cx);
@@ -549,30 +619,22 @@ impl Render for TtsView {
         let over = char_count > CHAR_LIMIT;
 
         // Header model badge (vendor logo + selected model name).
-        let header_badge = resolved
-            .as_ref()
-            .and_then(|m| models.iter().find(|v| v.id == m.identifier))
-            .map(|vm| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .bg(theme.bg_sub)
-                    .child(VendorIcon::new(vm.vendor.clone()).size(crate::tokens::icon::MD).icon_url(vm.icon_url.clone()))
-                    .child(div().text_sm().text_color(theme.text_muted).child(vm.name.clone()))
-            });
+        let header_badge = resolved.as_ref().and_then(|m| models.iter().find(|v| v.id == m.identifier)).map(|vm| {
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .bg(theme.bg_sub)
+                .child(VendorIcon::new(vm.vendor.clone()).size(crate::tokens::icon::MD).icon_url(vm.icon_url.clone()))
+                .child(div().text_sm().text_color(theme.text_muted).child(vm.name.clone()))
+        });
 
         // Right "Settings" pane content.
         let mut settings_content = div().flex().flex_col().gap_2().p_4().child(
-            div()
-                .pb_1()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(theme.text)
-                .child("Select a model"),
+            div().pb_1().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.text).child("Select a model"),
         );
         if models.is_empty() {
             settings_content = settings_content.child(if loading {
@@ -599,12 +661,7 @@ impl Render for TtsView {
 
         // Right "History" pane content.
         let history_content = if self.history.is_empty() {
-            div()
-                .p_4()
-                .text_sm()
-                .text_color(theme.text_muted)
-                .child("No generations yet.")
-                .into_any_element()
+            div().p_4().text_sm().text_color(theme.text_muted).child("No generations yet.").into_any_element()
         } else {
             let mut rows = div().flex().flex_col().gap_1().p_2();
             for entry in &self.history {
@@ -640,11 +697,7 @@ impl Render for TtsView {
                     .border_color(theme.border)
                     .child(IconEl::new(Icon::Speech, theme.text).size(crate::tokens::icon::XL))
                     .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child("Text to Speech"),
+                        div().text_lg().font_weight(FontWeight::MEDIUM).text_color(theme.text).child("Text to Speech"),
                     )
                     .children(header_badge),
             )
@@ -672,9 +725,9 @@ impl Render for TtsView {
                                     .text_color(theme.text)
                                     .child(self.input.clone()),
                             )
-                            .children(status.map(|(text, color)| {
-                                div().px_5().pb_1().text_sm().text_color(color).child(text)
-                            }))
+                            .children(
+                                status.map(|(text, color)| div().px_5().pb_1().text_sm().text_color(color).child(text)),
+                            )
                             .child(
                                 div()
                                     .flex()
@@ -688,7 +741,11 @@ impl Render for TtsView {
                                     .child(
                                         div()
                                             .text_sm()
-                                            .text_color(if over { theme.error } else { theme.text_muted })
+                                            .text_color(if over {
+                                                theme.error
+                                            } else {
+                                                theme.text_muted
+                                            })
                                             .child(format!("{char_count} / {CHAR_LIMIT} characters")),
                                     )
                                     .child(
@@ -700,23 +757,19 @@ impl Render for TtsView {
                                                 Button::new("tts-upload", "Upload text file")
                                                     .kind(ButtonKind::Secondary)
                                                     .icon(Icon::Download)
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.pick_text_file(cx)
-                                                    })),
+                                                    .on_click(cx.listener(|this, _, _, cx| this.pick_text_file(cx))),
                                             )
                                             .child(if self.generating {
                                                 Button::new("tts-stop", "Stop")
                                                     .kind(ButtonKind::Danger)
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.stop(cx)
-                                                    }))
+                                                    .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
                                             } else {
                                                 Button::new("tts-generate", "Generate speech")
                                                     .kind(ButtonKind::Primary)
                                                     .disabled(!any_installed || char_count == 0)
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.generate_from_button(cx)
-                                                    }))
+                                                    .on_click(
+                                                        cx.listener(|this, _, _, cx| this.generate_from_button(cx)),
+                                                    )
                                             }),
                                     ),
                             ),
@@ -740,12 +793,7 @@ impl Render for TtsView {
                                     .child(self.tab_button(cx, "History", TtsTab::History)),
                             )
                             .child(
-                                div()
-                                    .id("tts-right-scroll")
-                                    .flex_1()
-                                    .min_h_0()
-                                    .overflow_y_scroll()
-                                    .child(right_body),
+                                div().id("tts-right-scroll").flex_1().min_h_0().overflow_y_scroll().child(right_body),
                             ),
                     ),
             )

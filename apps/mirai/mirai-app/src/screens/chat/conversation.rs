@@ -56,7 +56,10 @@ impl ChatMsg {
     pub(super) fn user(text: String) -> Self {
         Self {
             role: Role::User,
-            versions: vec![Version { text, ..Default::default() }],
+            versions: vec![Version {
+                text,
+                ..Default::default()
+            }],
             current: 0,
             reasoning_collapsed: false,
         }
@@ -85,21 +88,25 @@ impl ChatMsg {
 /// each as its current version's `(role, text)`.
 pub(super) fn conversation_for_request(messages: &[ChatMsg]) -> Vec<(Role, String)> {
     let upto = messages.len().saturating_sub(1);
-    messages[..upto]
-        .iter()
-        .filter(|m| !m.cur().error)
-        .map(|m| (m.role, m.cur().text.clone()))
-        .collect()
+    messages[..upto].iter().filter(|m| !m.cur().error).map(|m| (m.role, m.cur().text.clone())).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn msg(role: Role, text: &str, error: bool) -> ChatMsg {
+    fn msg(
+        role: Role,
+        text: &str,
+        error: bool,
+    ) -> ChatMsg {
         ChatMsg {
             role,
-            versions: vec![Version { text: text.into(), error, ..Default::default() }],
+            versions: vec![Version {
+                text: text.into(),
+                error,
+                ..Default::default()
+            }],
             current: 0,
             reasoning_collapsed: false,
         }
@@ -117,8 +124,14 @@ mod tests {
     // reachable via the pager.
     #[test]
     fn regenerate_keeps_prior_versions() {
-        let mut m = ChatMsg::assistant(Version { text: "v0".into(), ..Default::default() });
-        m.versions.push(Version { text: "v1".into(), ..Default::default() });
+        let mut m = ChatMsg::assistant(Version {
+            text: "v0".into(),
+            ..Default::default()
+        });
+        m.versions.push(Version {
+            text: "v1".into(),
+            ..Default::default()
+        });
         m.current = m.versions.len() - 1;
         assert_eq!(m.versions.len(), 2);
         assert_eq!(m.cur().text, "v1");

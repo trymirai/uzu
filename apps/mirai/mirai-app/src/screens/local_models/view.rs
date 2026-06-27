@@ -1,9 +1,10 @@
 //! Local model families and family detail (download, chat).
 
 use gpui::{
-    Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString,
-    Window, div, prelude::*, px, relative,
+    Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString, Window, div, prelude::*,
+    px, relative,
 };
+
 use super::{
     event::LocalModelsEvent,
     format::{format_params, format_size, quant_label, section_header},
@@ -11,8 +12,7 @@ use super::{
 };
 use crate::{
     components::{ConfirmModal, Icon, IconButton, IconEl, Loader, TextInput, VendorIcon},
-    device_info,
-    model_recommend,
+    device_info, model_recommend,
     model_sort::{self, ModelSort},
     models_store::ModelsStore,
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
@@ -36,7 +36,10 @@ pub struct LocalModelsView {
 impl EventEmitter<LocalModelsEvent> for LocalModelsView {}
 
 impl LocalModelsView {
-    pub fn new(store: Entity<ModelsStore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        store: Entity<ModelsStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let search = cx.new(|cx| TextInput::new(cx, "Search families"));
         // A store change (catalog load, download progress) invalidates the
         // families cache so it rebuilds on the next render; a search change only
@@ -73,19 +76,29 @@ impl LocalModelsView {
         .detach();
     }
 
-    pub fn open_family(&mut self, key: String, cx: &mut Context<Self>) {
+    pub fn open_family(
+        &mut self,
+        key: String,
+        cx: &mut Context<Self>,
+    ) {
         self.selected_family = Some(key);
         self.search.update(cx, |i, cx| i.clear(cx));
         cx.notify();
     }
 
-    fn back_to_families(&mut self, cx: &mut Context<Self>) {
+    fn back_to_families(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         self.selected_family = None;
         self.search.update(cx, |i, cx| i.clear(cx));
         cx.notify();
     }
 
-    fn families(&self, cx: &Context<Self>) -> Vec<FamilyVm> {
+    fn families(
+        &self,
+        cx: &Context<Self>,
+    ) -> Vec<FamilyVm> {
         let dark = cx.theme().dark;
         let store = self.store.read(cx);
         let recommended_id = self.recommended_id.as_deref();
@@ -106,10 +119,7 @@ impl LocalModelsView {
                 .model
                 .quantization
                 .as_ref()
-                .map(|q| {
-                    q.method.to_lowercase().contains("mirai")
-                        || q.identifier.to_lowercase().contains("mirai")
-                })
+                .map(|q| q.method.to_lowercase().contains("mirai") || q.identifier.to_lowercase().contains("mirai"))
                 .unwrap_or(false);
             let bytes = row.display_size_bytes();
             let installed_at = store.installed_at(row.id());
@@ -143,11 +153,7 @@ impl LocalModelsView {
         }
 
         for fam in families.values_mut() {
-            let mut params: Vec<f64> = fam
-                .models
-                .iter()
-                .filter_map(|m| model_sort::parse_params(&m.name))
-                .collect();
+            let mut params: Vec<f64> = fam.models.iter().filter_map(|m| model_sort::parse_params(&m.name)).collect();
             params.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             if let (Some(min), Some(max)) = (params.first(), params.last()) {
                 fam.range = Some(if (min - max).abs() < f64::EPSILON {
@@ -158,10 +164,7 @@ impl LocalModelsView {
             }
         }
 
-        let mut list: Vec<FamilyVm> = order
-            .into_iter()
-            .filter_map(|k| families.remove(&k))
-            .collect();
+        let mut list: Vec<FamilyVm> = order.into_iter().filter_map(|k| families.remove(&k)).collect();
 
         let rec_key = recommended_family;
         list.sort_by(|a, b| {
@@ -176,12 +179,10 @@ impl LocalModelsView {
                     3
                 }
             };
-            rank(a)
-                .cmp(&rank(b))
-                .then_with(|| match (rank(a), rank(b)) {
-                    (2, 2) => b.last_installed_at.cmp(&a.last_installed_at),
-                    _ => a.name.cmp(&b.name),
-                })
+            rank(a).cmp(&rank(b)).then_with(|| match (rank(a), rank(b)) {
+                (2, 2) => b.last_installed_at.cmp(&a.last_installed_at),
+                _ => a.name.cmp(&b.name),
+            })
         });
         list
     }
@@ -189,7 +190,10 @@ impl LocalModelsView {
     /// Rebuild `families_cache` only if it's missing or was built for a
     /// different theme. `render` then takes the cached list, applies the live
     /// search/sort, and restores it.
-    fn ensure_families(&mut self, cx: &Context<Self>) {
+    fn ensure_families(
+        &mut self,
+        cx: &Context<Self>,
+    ) {
         let dark = cx.theme().dark;
         let valid = matches!(&self.families_cache, Some((d, _)) if *d == dark);
         if !valid {
@@ -198,15 +202,25 @@ impl LocalModelsView {
         }
     }
 
-    fn sort_models(&self, models: &mut [ModelVm]) {
+    fn sort_models(
+        &self,
+        models: &mut [ModelVm],
+    ) {
         match self.sort {
-            ModelSort::Size => models.sort_by(|a, b| a.bytes.cmp(&b.bytes).then_with(|| model_sort::sort_by_name(&a.name, &b.name))),
+            ModelSort::Size => {
+                models.sort_by(|a, b| a.bytes.cmp(&b.bytes).then_with(|| model_sort::sort_by_name(&a.name, &b.name)))
+            },
             ModelSort::Name => models.sort_by(|a, b| model_sort::sort_by_name(&a.name, &b.name)),
             ModelSort::Newest => models.sort_by(|a, b| model_sort::sort_by_newest(&a.name, &b.name)),
         }
     }
 
-    fn chip(&self, text: String, accent: bool, cx: &Context<Self>) -> impl IntoElement {
+    fn chip(
+        &self,
+        text: String,
+        accent: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         // Outlined pill (mirai-chat parity): green text+border for accent chips,
         // a transparent pill with a visible outline + muted text for neutral ones
@@ -230,7 +244,11 @@ impl LocalModelsView {
             .child(text)
     }
 
-    fn family_row(&self, cx: &mut Context<Self>, fam: &FamilyVm) -> impl IntoElement {
+    fn family_row(
+        &self,
+        cx: &mut Context<Self>,
+        fam: &FamilyVm,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
         let key = fam.key.clone();
@@ -242,13 +260,27 @@ impl LocalModelsView {
             chips = chips.child(self.chip("Mirai quantizations".to_string(), true, cx));
         }
         chips = chips.child(self.chip(
-            format!("{total} model{}", if total == 1 { "" } else { "s" }),
+            format!(
+                "{total} model{}",
+                if total == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ),
             false,
             cx,
         ));
         if installed > 0 {
             chips = chips.child(self.chip(
-                format!("{installed} installed model{}", if installed == 1 { "" } else { "s" }),
+                format!(
+                    "{installed} installed model{}",
+                    if installed == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                ),
                 true,
                 cx,
             ));
@@ -279,18 +311,8 @@ impl LocalModelsView {
                     .flex()
                     .items_baseline()
                     .gap_2()
-                    .child(
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child(fam.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.text_muted)
-                            .child(format!("from {}", fam.vendor)),
-                    ),
+                    .child(div().font_weight(FontWeight::MEDIUM).text_color(theme.text).child(fam.name.clone()))
+                    .child(div().text_sm().text_color(theme.text_muted).child(format!("from {}", fam.vendor))),
             )
             .child(chips)
             .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(crate::tokens::icon::MD))
@@ -309,22 +331,14 @@ impl LocalModelsView {
 
         // Left info area — clickable to start a chat when installed. Shows the
         // provider logo (same as the family list), not a generic glyph.
-        let vendor_icon = VendorIcon::new(vendor.to_string())
-            .size(crate::tokens::icon::XL)
-            .icon_url(icon_url.map(|u| u.to_string()));
+        let vendor_icon =
+            VendorIcon::new(vendor.to_string()).size(crate::tokens::icon::XL).icon_url(icon_url.map(|u| u.to_string()));
         let name_label = div()
             .flex()
             .items_center()
             .gap_2()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.text)
-                    .child(vm.name.clone()),
-            )
-            .when(vm.recommended, |el| {
-                el.child(self.chip("Recommended".to_string(), true, cx))
-            });
+            .child(div().text_sm().text_color(theme.text).child(vm.name.clone()))
+            .when(vm.recommended, |el| el.child(self.chip("Recommended".to_string(), true, cx)));
         let chat_id = id.clone();
         let info = div()
             .id(SharedString::from(format!("use-{}", vm.id)))
@@ -334,19 +348,13 @@ impl LocalModelsView {
             .gap_2()
             .h_full()
             .when(vm.installed(), |el| {
-                el.cursor(CursorStyle::PointingHand)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(model) = this
-                            .store
-                            .read(cx)
-                            .rows
-                            .iter()
-                            .find(|r| r.id() == chat_id)
-                            .map(|r| r.model.clone())
-                        {
-                            cx.emit(LocalModelsEvent::UseModel(model));
-                        }
-                    }))
+                el.cursor(CursorStyle::PointingHand).on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(model) =
+                        this.store.read(cx).rows.iter().find(|r| r.id() == chat_id).map(|r| r.model.clone())
+                    {
+                        cx.emit(LocalModelsEvent::UseModel(model));
+                    }
+                }))
             })
             .child(vendor_icon)
             .child(name_label)
@@ -377,16 +385,15 @@ impl LocalModelsView {
                 .flex()
                 .items_center()
                 .gap_1p5()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.text_muted)
-                        .child(format!("{:.0}%", vm.progress * 100.0)),
-                )
+                .child(div().text_sm().text_color(theme.text_muted).child(format!("{:.0}%", vm.progress * 100.0)))
                 .child(
                     IconButton::new(
                         SharedString::from(format!("tog-{}", vm.id)),
-                        if vm.paused() { Icon::Download } else { Icon::Pause },
+                        if vm.paused() {
+                            Icon::Download
+                        } else {
+                            Icon::Pause
+                        },
                     )
                     .icon_size(14.)
                     .hit_size(26.)
@@ -398,18 +405,15 @@ impl LocalModelsView {
                     })),
                 )
                 .child(
-                    IconButton::new(
-                        SharedString::from(format!("cancel-{}", vm.id)),
-                        Icon::Close,
-                    )
-                    .icon_size(14.)
-                    .hit_size(26.)
-                    .color(theme.text)
-                    .background(theme.bg_hover)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let id = cancel_id.clone();
-                        this.store.update(cx, |s, cx| s.delete(id, cx));
-                    })),
+                    IconButton::new(SharedString::from(format!("cancel-{}", vm.id)), Icon::Close)
+                        .icon_size(14.)
+                        .hit_size(26.)
+                        .color(theme.text)
+                        .background(theme.bg_hover)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let id = cancel_id.clone();
+                            this.store.update(cx, |s, cx| s.delete(id, cx));
+                        })),
                 )
                 .into_any_element()
         } else {
@@ -434,20 +438,8 @@ impl LocalModelsView {
             .h(px(52.))
             .w_full()
             .child(info)
-            .child(
-                div()
-                    .w(px(80.))
-                    .text_sm()
-                    .text_color(theme.text_muted)
-                    .child(vm.size.clone()),
-            )
-            .child(
-                div()
-                    .w(px(140.))
-                    .text_sm()
-                    .text_color(theme.text_muted)
-                    .child(vm.quant.clone()),
-            )
+            .child(div().w(px(80.)).text_sm().text_color(theme.text_muted).child(vm.size.clone()))
+            .child(div().w(px(140.)).text_sm().text_color(theme.text_muted).child(vm.quant.clone()))
             // Fixed-width, right-aligned control slot so the Size/Quantization
             // columns don't shift as the controls change between phases
             // (idle download button vs %+pause+cancel during download).
@@ -480,19 +472,18 @@ impl LocalModelsView {
                             .h(px(4.))
                             .rounded_full()
                             .bg(track)
-                            .child(
-                                div()
-                                    .h_full()
-                                    .w(relative(vm.progress.clamp(0., 1.)))
-                                    .rounded_full()
-                                    .bg(fill),
-                            ),
+                            .child(div().h_full().w(relative(vm.progress.clamp(0., 1.))).rounded_full().bg(fill)),
                     ),
                 )
             })
     }
 
-    fn recommended_row(&self, cx: &mut Context<Self>, vm: &ModelVm, family_key: &str) -> impl IntoElement {
+    fn recommended_row(
+        &self,
+        cx: &mut Context<Self>,
+        vm: &ModelVm,
+        family_key: &str,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
         let key = family_key.to_string();
@@ -518,24 +509,16 @@ impl LocalModelsView {
                     .flex()
                     .flex_col()
                     .gap_0p5()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.success)
-                            .child("Recommended for your device"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child(name),
-                    ),
+                    .child(div().text_xs().text_color(theme.success).child("Recommended for your device"))
+                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.text).child(name)),
             )
             .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(crate::tokens::icon::MD))
     }
 
-    fn sort_control(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn sort_control(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
         let label = self.sort.label();
@@ -549,7 +532,11 @@ impl LocalModelsView {
                     .py_1p5()
                     .rounded_md()
                     .text_sm()
-                    .text_color(if active { theme.text } else { theme.text_muted })
+                    .text_color(if active {
+                        theme.text
+                    } else {
+                        theme.text_muted
+                    })
                     .cursor(CursorStyle::PointingHand)
                     .hover(move |s| s.bg(hover))
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -579,12 +566,7 @@ impl LocalModelsView {
                         this.sort_open = !this.sort_open;
                         cx.notify();
                     }))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.text_muted)
-                            .child(format!("Sort: {label}")),
-                    )
+                    .child(div().text_sm().text_color(theme.text_muted).child(format!("Sort: {label}")))
                     .child(IconEl::new(Icon::ChevronDown, theme.text_muted).size(crate::tokens::icon::SM)),
             )
             .when(self.sort_open, |el| {
@@ -607,7 +589,11 @@ impl LocalModelsView {
 }
 
 impl Render for LocalModelsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let query = self.search.read(cx).text().to_lowercase();
         // Take the memoized family list (rebuilt only on store/recommend/theme
@@ -620,21 +606,18 @@ impl Render for LocalModelsView {
 
         // Delete-confirm modal (shared across both levels).
         let modal = self.confirm_delete.clone().map(|(id, name)| {
-            ConfirmModal::new(
-                "Delete model",
-                format!("Delete \"{name}\"? You can download it again later."),
-            )
-            .confirm_label("Delete")
-            .danger(true)
-            .on_confirm(cx.listener(move |this, _, _, cx| {
-                this.store.update(cx, |s, cx| s.delete(id.clone(), cx));
-                this.confirm_delete = None;
-                cx.notify();
-            }))
-            .on_cancel(cx.listener(|this, _, _, cx| {
-                this.confirm_delete = None;
-                cx.notify();
-            }))
+            ConfirmModal::new("Delete model", format!("Delete \"{name}\"? You can download it again later."))
+                .confirm_label("Delete")
+                .danger(true)
+                .on_confirm(cx.listener(move |this, _, _, cx| {
+                    this.store.update(cx, |s, cx| s.delete(id.clone(), cx));
+                    this.confirm_delete = None;
+                    cx.notify();
+                }))
+                .on_cancel(cx.listener(|this, _, _, cx| {
+                    this.confirm_delete = None;
+                    cx.notify();
+                }))
         });
 
         // Header (title or back button) + search box.
@@ -655,58 +638,30 @@ impl Render for LocalModelsView {
                             .on_click(cx.listener(|this, _, _, cx| this.back_to_families(cx))),
                     )
                     .child(VendorIcon::new(title.1.clone()).size(crate::tokens::icon::XXL).icon_url(title.2.clone()))
-                    .child(
-                        div()
-                            .text_xl()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(title.0),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.text_muted)
-                            .child(format!("from {}", title.1)),
-                    )
+                    .child(div().text_xl().font_weight(FontWeight::MEDIUM).child(title.0))
+                    .child(div().text_sm().text_color(theme.text_muted).child(format!("from {}", title.1)))
                     .into_any_element()
-            }
+            },
             None => {
-                let mut header_col = div()
-                    .flex()
-                    .flex_col()
-                    .gap_0p5()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(IconEl::new(Icon::Devices, theme.text).size(crate::tokens::icon::XXL))
-                            .child(
-                                div()
-                                    .text_xl()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child("Choose local model to chat"),
-                            ),
-                    );
+                let mut header_col = div().flex().flex_col().gap_0p5().child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(IconEl::new(Icon::Devices, theme.text).size(crate::tokens::icon::XXL))
+                        .child(div().text_xl().font_weight(FontWeight::MEDIUM).child("Choose local model to chat")),
+                );
                 if !self.device_label.is_empty() {
                     header_col = header_col.child(
-                        div()
-                            .pl(px(30.))
-                            .text_sm()
-                            .text_color(theme.text_muted)
-                            .child(self.device_label.clone()),
+                        div().pl(px(30.)).text_sm().text_color(theme.text_muted).child(self.device_label.clone()),
                     );
                 }
                 header_col.into_any_element()
-            }
+            },
         };
 
         let recommended = self.recommended_id.as_ref().and_then(|id| {
-            families.iter().find_map(|f| {
-                f.models
-                    .iter()
-                    .find(|m| &m.id == id)
-                    .map(|vm| (vm.clone(), f.key.clone()))
-            })
+            families.iter().find_map(|f| f.models.iter().find(|m| &m.id == id).map(|vm| (vm.clone(), f.key.clone())))
         });
 
         // Body list.
@@ -731,7 +686,7 @@ impl Render for LocalModelsView {
                         list = list.child(self.family_row(cx, fam));
                     }
                 }
-            }
+            },
             Some(key) => {
                 if let Some(fam) = families.iter().find(|f| &f.key == key) {
                     let mut matched: Vec<ModelVm> = fam
@@ -741,29 +696,25 @@ impl Render for LocalModelsView {
                         .cloned()
                         .collect();
                     self.sort_models(&mut matched);
-                    let installed: Vec<&ModelVm> =
-                        matched.iter().filter(|m| m.installed()).collect();
-                    let available: Vec<&ModelVm> =
-                        matched.iter().filter(|m| !m.installed()).collect();
+                    let installed: Vec<&ModelVm> = matched.iter().filter(|m| m.installed()).collect();
+                    let available: Vec<&ModelVm> = matched.iter().filter(|m| !m.installed()).collect();
 
                     let vendor = fam.vendor.clone();
                     let icon_url = fam.icon_url.clone();
                     if !installed.is_empty() {
                         list = list.child(section_header("Installed models", &theme));
                         for vm in installed {
-                            list =
-                                list.child(self.model_row(cx, vm, &vendor, icon_url.as_deref()));
+                            list = list.child(self.model_row(cx, vm, &vendor, icon_url.as_deref()));
                         }
                     }
                     if !available.is_empty() {
                         list = list.child(section_header("Available models", &theme));
                         for vm in available {
-                            list =
-                                list.child(self.model_row(cx, vm, &vendor, icon_url.as_deref()));
+                            list = list.child(self.model_row(cx, vm, &vendor, icon_url.as_deref()));
                         }
                     }
                 }
-            }
+            },
         }
 
         // `families` is fully consumed above; restore the cache for next frame.
@@ -785,54 +736,40 @@ impl Render for LocalModelsView {
                     .flex_col()
                     .px_6()
                     .child(
-                        div()
-                            .pt_10()
-                            .pb_3()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap_4()
-                            .child(header)
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .when(selected.is_some(), |el| {
-                                        el.child(self.sort_control(cx))
-                                    })
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .w(px(280.))
-                                            .h(px(32.))
-                                            .px_3()
-                                            .rounded_lg()
-                                            .border_1()
-                                            .border_color(theme.border)
-                                            .bg(theme.card)
-                                            .child(IconEl::new(Icon::Search, theme.text_muted).size(15.))
-                                            .child(div().flex_1().child(self.search.clone())),
-                                    ),
-                            ),
+                        div().pt_10().pb_3().flex().items_center().justify_between().gap_4().child(header).child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .when(selected.is_some(), |el| el.child(self.sort_control(cx)))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .w(px(280.))
+                                        .h(px(32.))
+                                        .px_3()
+                                        .rounded_lg()
+                                        .border_1()
+                                        .border_color(theme.border)
+                                        .bg(theme.card)
+                                        .child(IconEl::new(Icon::Search, theme.text_muted).size(15.))
+                                        .child(div().flex_1().child(self.search.clone())),
+                                ),
+                        ),
                     )
-                    .child(
-                        div()
-                            .id("models-list")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(list),
-                    ),
+                    .child(div().id("models-list").flex_1().min_h_0().overflow_y_scroll().child(list)),
             )
             .children(modal)
     }
 }
 
 impl LocalModelsView {
-    fn empty_message(&self, cx: &Context<Self>) -> gpui::AnyElement {
+    fn empty_message(
+        &self,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
         let theme = cx.theme().clone();
         let store = self.store.read(cx);
         if store.loading {
@@ -850,4 +787,3 @@ impl LocalModelsView {
         div().py_8().text_color(theme.text_muted).child(msg).into_any_element()
     }
 }
-

@@ -16,11 +16,17 @@ impl ModelSort {
     }
 }
 
-pub fn sort_by_name(a: &str, b: &str) -> std::cmp::Ordering {
+pub fn sort_by_name(
+    a: &str,
+    b: &str,
+) -> std::cmp::Ordering {
     a.to_lowercase().cmp(&b.to_lowercase())
 }
 
-pub fn sort_by_newest(a: &str, b: &str) -> std::cmp::Ordering {
+pub fn sort_by_newest(
+    a: &str,
+    b: &str,
+) -> std::cmp::Ordering {
     fn score(name: &str) -> (i64, i64) {
         let params = parse_params(name).map(|p| (p * 1000.0) as i64).unwrap_or(0);
         let dated = name
@@ -37,18 +43,12 @@ pub fn sort_by_newest(a: &str, b: &str) -> std::cmp::Ordering {
 pub fn parse_params(name: &str) -> Option<f64> {
     for raw in name.split(|c: char| c == ' ' || c == '-') {
         let token = raw.trim();
-        if let Some(num) = token
-            .strip_suffix('B')
-            .or_else(|| token.strip_suffix('b'))
-        {
+        if let Some(num) = token.strip_suffix('B').or_else(|| token.strip_suffix('b')) {
             if let Ok(v) = num.parse::<f64>() {
                 return Some(v * 1000.0);
             }
         }
-        if let Some(num) = token
-            .strip_suffix('M')
-            .or_else(|| token.strip_suffix('m'))
-        {
+        if let Some(num) = token.strip_suffix('M').or_else(|| token.strip_suffix('m')) {
             if let Ok(v) = num.parse::<f64>() {
                 return Some(v);
             }
@@ -63,9 +63,6 @@ mod tests {
 
     #[test]
     fn newest_prefers_larger_params() {
-        assert_eq!(
-            sort_by_newest("Qwen3-8B", "Qwen3-4B"),
-            std::cmp::Ordering::Less
-        );
+        assert_eq!(sort_by_newest("Qwen3-8B", "Qwen3-4B"), std::cmp::Ordering::Less);
     }
 }

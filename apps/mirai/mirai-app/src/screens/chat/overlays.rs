@@ -2,9 +2,7 @@
 //! and file-upload panel — plus the file-attach action and the model-entry
 //! collection that feeds the picker. Each is an `impl ChatView` builder.
 
-use gpui::{
-    Anchor, App, Context, FontWeight, IntoElement, anchored, deferred, div, prelude::*, px,
-};
+use gpui::{Anchor, App, Context, FontWeight, IntoElement, anchored, deferred, div, prelude::*, px};
 use uzu::types::model::Model;
 
 use super::{
@@ -27,12 +25,15 @@ fn model_entry(r: &crate::models_store::ModelRow) -> ModelEntry {
 impl ChatView {
     /// Open a native file-picker, read the selected file(s) as UTF-8 text and
     /// add them to `attached_files`. Max 5 files, 256 KB each (matching Electron).
-    fn pick_file(&mut self, cx: &mut Context<Self>) {
+    fn pick_file(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         const MAX_SIZE: u64 = 256 * 1024; // 256 KB
         const MAX_FILES: usize = 5;
         const SUPPORTED: &[&str] = &[
-            "txt", "md", "markdown", "json", "csv", "tsv", "yaml", "yml",
-            "py", "js", "ts", "tsx", "jsx", "rs", "html", "css", "xml",
+            "txt", "md", "markdown", "json", "csv", "tsv", "yaml", "yml", "py", "js", "ts", "tsx", "jsx", "rs", "html",
+            "css", "xml",
         ];
 
         if self.state.attached_files.len() >= MAX_FILES {
@@ -48,13 +49,11 @@ impl ChatView {
         });
 
         cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = rx.await else { return; };
+            let Ok(Ok(Some(paths))) = rx.await else {
+                return;
+            };
             for path in paths.iter().take(MAX_FILES) {
-                let ext = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("txt")
-                    .to_lowercase();
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("txt").to_lowercase();
                 if !SUPPORTED.contains(&ext.as_str()) {
                     let _ = this.update(cx, |_, cx| {
                         toast::push(cx, format!("Unsupported file type: .{ext}"), ToastKind::Info);
@@ -70,38 +69,30 @@ impl ChatView {
                 }
                 match std::fs::read_to_string(path) {
                     Ok(content) => {
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("file")
-                            .to_string();
+                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
                         let _ = this.update(cx, |this, cx| {
                             if this.state.attached_files.len() < MAX_FILES {
                                 this.state.attached_files.push((name, ext, content));
                                 cx.notify();
                             }
                         });
-                    }
+                    },
                     Err(_) => {
                         let _ = this.update(cx, |_, cx| {
                             toast::push(cx, "Could not read file", ToastKind::Info);
                         });
-                    }
+                    },
                 }
             }
         })
         .detach();
     }
 
-    fn collect_model_entries(&self, cx: &App) -> (Vec<ModelEntry>, Vec<ModelEntry>) {
-        let local = self
-            .store
-            .read(cx)
-            .rows
-            .iter()
-            .filter(|r| r.is_installed())
-            .map(model_entry)
-            .collect();
+    fn collect_model_entries(
+        &self,
+        cx: &App,
+    ) -> (Vec<ModelEntry>, Vec<ModelEntry>) {
+        let local = self.store.read(cx).rows.iter().filter(|r| r.is_installed()).map(model_entry).collect();
         let cloud = self.cloud_store.read(cx).rows.iter().map(model_entry).collect();
         (local, cloud)
     }
@@ -139,11 +130,12 @@ impl ChatView {
     ) -> gpui::AnyElement {
         let theme = cx.theme().clone();
         // Plain muted label — matches Electron's model-selector styling.
-        let badge = div()
-            .flex_none()
-            .text_size(crate::tokens::font::SMALL)
-            .text_color(theme.text_muted)
-            .child(if is_local { "Local" } else { "Cloud" });
+        let badge =
+            div().flex_none().text_size(crate::tokens::font::SMALL).text_color(theme.text_muted).child(if is_local {
+                "Local"
+            } else {
+                "Cloud"
+            });
 
         div()
             .id(gpui::SharedString::from(format!("pick-{id}")))
@@ -156,14 +148,7 @@ impl ChatView {
             .cursor(gpui::CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover))
             .child(VendorIcon::new(vendor).size(crate::tokens::icon::XXL).icon_url(icon_url))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_sm()
-                    .text_color(theme.text)
-                    .child(name),
-            )
+            .child(div().flex_1().min_w_0().text_sm().text_color(theme.text).child(name))
             .child(badge)
             .on_click(cx.listener(move |this, _, _, cx| {
                 if let Some(msg_idx) = for_message {
@@ -188,32 +173,16 @@ impl ChatView {
         let hover = theme.bg_hover;
         let (local, cloud) = self.collect_model_entries(cx);
 
-        let mut list = div()
-            .id("model-picker-list")
-            .flex()
-            .flex_col()
-            .gap_2()
-            .max_h(px(360.))
-            .overflow_y_scroll();
+        let mut list = div().id("model-picker-list").flex().flex_col().gap_2().max_h(px(360.)).overflow_y_scroll();
         if local.is_empty() && cloud.is_empty() {
-            list = list.child(
-                div()
-                    .px(px(14.))
-                    .py_2()
-                    .text_sm()
-                    .text_color(theme.text_muted)
-                    .child("No models available"),
-            );
+            list = list
+                .child(div().px(px(14.)).py_2().text_sm().text_color(theme.text_muted).child("No models available"));
         } else {
             for (id, model, name, vendor, icon_url) in local {
-                list = list.child(self.picker_row(
-                    cx, id, model, name, vendor, icon_url, true, hover, for_message,
-                ));
+                list = list.child(self.picker_row(cx, id, model, name, vendor, icon_url, true, hover, for_message));
             }
             for (id, model, name, vendor, icon_url) in cloud {
-                list = list.child(self.picker_row(
-                    cx, id, model, name, vendor, icon_url, false, hover, for_message,
-                ));
+                list = list.child(self.picker_row(cx, id, model, name, vendor, icon_url, false, hover, for_message));
             }
         }
 
@@ -226,11 +195,7 @@ impl ChatView {
             .bg(theme.card)
             .border_1()
             .border_color(theme.border)
-            .child(
-                div()
-                    .py_2()
-                    .child(list),
-            )
+            .child(div().py_2().child(list))
             .child(div().h_px().bg(theme.border))
             .child(
                 div()
@@ -252,12 +217,7 @@ impl ChatView {
                         cx.emit(ChatEvent::OpenLocalModels);
                         cx.notify();
                     }))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.text)
-                            .child("More local models"),
-                    )
+                    .child(div().text_sm().text_color(theme.text).child("More local models"))
                     .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(crate::tokens::icon::MD)),
             )
             .into_any_element()
@@ -291,12 +251,7 @@ impl ChatView {
                         .text_color(theme.text)
                         .child(value),
                 )
-                .child(
-                    div()
-                        .text_size(crate::tokens::font::CAPTION)
-                        .text_color(theme.text_muted)
-                        .child(label),
-                )
+                .child(div().text_size(crate::tokens::font::CAPTION).text_color(theme.text_muted).child(label))
         };
         let sep = || div().w_px().h(px(40.)).bg(theme.border).self_center();
         Some(
@@ -323,7 +278,10 @@ impl ChatView {
         )
     }
 
-    pub(super) fn file_upload_panel(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    pub(super) fn file_upload_panel(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
         if !self.state.file_upload_open {
             return None;
         }
@@ -358,12 +316,7 @@ impl ChatView {
                             div()
                                 .flex()
                                 .flex_col()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(theme.text)
-                                        .child("Upload a file"),
-                                )
+                                .child(div().text_sm().text_color(theme.text).child("Upload a file"))
                                 .child(
                                     div()
                                         .text_size(crate::tokens::font::CAPTION)

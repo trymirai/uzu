@@ -36,7 +36,11 @@ pub(super) enum StreamMsg {
 }
 
 impl ChatView {
-    pub(super) fn send(&mut self, text: String, cx: &mut Context<Self>) {
+    pub(super) fn send(
+        &mut self,
+        text: String,
+        cx: &mut Context<Self>,
+    ) {
         if self.state.streaming {
             return;
         }
@@ -64,9 +68,15 @@ impl ChatView {
     }
 
     /// Start a fresh assistant reply for the latest turn.
-    fn run_inference(&mut self, cx: &mut Context<Self>) {
+    fn run_inference(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let model_name = self.state.model.as_ref().map(|m| m.name());
-        self.state.messages.push(ChatMsg::assistant(Version { model_name, ..Default::default() }));
+        self.state.messages.push(ChatMsg::assistant(Version {
+            model_name,
+            ..Default::default()
+        }));
         self.state.streaming = true;
         self.state.waiting_for_model = true;
         self.spawn_reply(cx);
@@ -95,7 +105,10 @@ impl ChatView {
         self.state.messages.truncate(msg_idx + 1);
         let model_name = self.state.model.as_ref().map(|m| m.name());
         if let Some(last) = self.state.messages.last_mut() {
-            last.versions.push(Version { model_name, ..Default::default() });
+            last.versions.push(Version {
+                model_name,
+                ..Default::default()
+            });
             last.current = last.versions.len() - 1;
         }
         self.close_popovers();
@@ -105,12 +118,14 @@ impl ChatView {
 
     /// Resolve the model, build the request from the conversation (excluding the
     /// trailing assistant placeholder), and stream into its current version.
-    fn spawn_reply(&mut self, cx: &mut Context<Self>) {
+    fn spawn_reply(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         let Some(model) = self.resolved_model(cx) else {
             if let Some(last) = self.state.messages.last_mut() {
                 let v = last.cur_mut();
-                v.text = "No local model installed yet. Open Local Models to download one."
-                    .to_string();
+                v.text = "No local model installed yet. Open Local Models to download one.".to_string();
                 v.error = true;
             }
             self.state.streaming = false;
@@ -127,12 +142,10 @@ impl ChatView {
         if !instructions.trim().is_empty() {
             history.push(ChatMessage::system().with_text(instructions));
         }
-        history.extend(conversation_for_request(&self.state.messages).into_iter().map(
-            |(role, text)| match role {
-                Role::User => ChatMessage::user().with_text(text),
-                Role::Assistant => ChatMessage::assistant().with_text(text),
-            },
-        ));
+        history.extend(conversation_for_request(&self.state.messages).into_iter().map(|(role, text)| match role {
+            Role::User => ChatMessage::user().with_text(text),
+            Role::Assistant => ChatMessage::assistant().with_text(text),
+        }));
 
         let Some(engine) = engine::try_engine(cx) else {
             self.apply_stream(StreamMsg::Error("engine unavailable".to_string()), cx);
@@ -150,8 +163,7 @@ impl ChatView {
         if let Some(method) = method {
             reply_config = reply_config.with_sampling_method(method);
         }
-        let reply_config = reply_config
-            .with_token_limit((self.state.max_tokens > 0).then_some(self.state.max_tokens));
+        let reply_config = reply_config.with_token_limit((self.state.max_tokens > 0).then_some(self.state.max_tokens));
 
         let model_id = model.identifier.clone();
         let cached_session = self.cached_session(&model_id);
@@ -166,11 +178,11 @@ impl ChatView {
                     Ok(session) => {
                         let _ = tx.unbounded_send(StreamMsg::Session(session.clone()));
                         session
-                    }
+                    },
                     Err(err) => {
                         let _ = tx.unbounded_send(StreamMsg::Error(err.to_string()));
                         return;
-                    }
+                    },
                 },
             };
             if let Err(err) = session.reset().await {
@@ -182,7 +194,9 @@ impl ChatView {
             let _ = tx.unbounded_send(StreamMsg::Started(stream.cancel_token()));
             while let Some(chunk) = stream.next().await {
                 match chunk {
-                    ChatSessionStreamChunk::Replies { replies } => {
+                    ChatSessionStreamChunk::Replies {
+                        replies,
+                    } => {
                         if let Some(reply) = replies.into_iter().next() {
                             let _ = tx.unbounded_send(StreamMsg::Update {
                                 text: reply.message.text().unwrap_or_default(),
@@ -191,10 +205,12 @@ impl ChatView {
                                 tokens: reply.stats.tokens_count_output,
                             });
                         }
-                    }
-                    ChatSessionStreamChunk::Error { error } => {
+                    },
+                    ChatSessionStreamChunk::Error {
+                        error,
+                    } => {
                         let _ = tx.unbounded_send(StreamMsg::Error(format!("{error:?}")));
-                    }
+                    },
                 }
             }
             let _ = tx.unbounded_send(StreamMsg::Done);
@@ -215,17 +231,21 @@ impl ChatView {
         cx.notify();
     }
 
-    fn apply_stream(&mut self, msg: StreamMsg, cx: &mut Context<Self>) {
+    fn apply_stream(
+        &mut self,
+        msg: StreamMsg,
+        cx: &mut Context<Self>,
+    ) {
         match msg {
             StreamMsg::Started(token) => {
                 self.state.cancel = Some(token);
                 self.state.waiting_for_model = false;
-            }
+            },
             StreamMsg::Session(session) => {
                 if let Some(id) = self.state.model.as_ref().map(|m| m.identifier.clone()) {
                     self.store_session(session, &id);
                 }
-            }
+            },
             StreamMsg::DropSession => self.clear_session(),
             StreamMsg::Update {
                 text,
@@ -254,7 +274,7 @@ impl ChatView {
                 // Keep the live reasoning panel scrolled to its newest line.
                 self.reasoning_scroll.scroll_to_bottom();
                 cx.notify();
-            }
+            },
             StreamMsg::Done => {
                 self.state.streaming = false;
                 self.state.waiting_for_model = false;
@@ -275,7 +295,7 @@ impl ChatView {
                 self.save();
                 self.maybe_generate_title(cx);
                 cx.notify();
-            }
+            },
             StreamMsg::Error(err) => {
                 if let Some(last) = self.state.messages.last_mut() {
                     if last.role == Role::Assistant {
@@ -289,11 +309,14 @@ impl ChatView {
                 self.state.cancel = None;
                 crate::toast::push(cx, "Inference failed", crate::toast::ToastKind::Error);
                 cx.notify();
-            }
+            },
         }
     }
 
-    pub(super) fn stop(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn stop(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(token) = &self.state.cancel {
             token.cancel();
         }
@@ -303,18 +326,17 @@ impl ChatView {
         cx.notify();
     }
 
-    fn maybe_generate_title(&mut self, cx: &mut Context<Self>) {
+    fn maybe_generate_title(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         if !self.state.title_pending {
             return;
         }
         let Some(model) = self.state.model.clone() else {
             return;
         };
-        let Some(user_text) = self.state
-            .messages
-            .iter()
-            .find(|m| m.role == Role::User)
-            .map(|m| m.cur().text.clone())
+        let Some(user_text) = self.state.messages.iter().find(|m| m.role == Role::User).map(|m| m.cur().text.clone())
         else {
             return;
         };

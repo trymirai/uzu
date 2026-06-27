@@ -34,18 +34,24 @@ pub fn init(cx: &mut App) {
 }
 
 /// Show a toast; it removes itself after ~4s.
-pub fn push<T: 'static>(cx: &mut Context<T>, message: impl Into<SharedString>, kind: ToastKind) {
+pub fn push<T: 'static>(
+    cx: &mut Context<T>,
+    message: impl Into<SharedString>,
+    kind: ToastKind,
+) {
     let message = message.into();
     let id = cx.update_global::<GlobalToasts, _>(|toasts, _| {
         toasts.next_id += 1;
         let id = toasts.next_id;
-        toasts.items.push(Toast { id, message, kind });
+        toasts.items.push(Toast {
+            id,
+            message,
+            kind,
+        });
         id
     });
     cx.spawn(async move |_this, cx| {
-        cx.background_executor()
-            .timer(Duration::from_secs(4))
-            .await;
+        cx.background_executor().timer(Duration::from_secs(4)).await;
         let _ = cx.update(|cx| {
             if cx.has_global::<GlobalToasts>() {
                 cx.update_global::<GlobalToasts, _>(|toasts, _| {
@@ -71,13 +77,7 @@ pub fn render_overlay(cx: &App) -> Option<gpui::AnyElement> {
         return None;
     }
     let theme = cx.theme().clone();
-    let mut col = div()
-        .absolute()
-        .top_8()
-        .right_4()
-        .flex()
-        .flex_col()
-        .gap_2();
+    let mut col = div().absolute().top_8().right_4().flex().flex_col().gap_2();
     for toast in &toasts.items {
         let (bg, fg) = match toast.kind {
             ToastKind::Success => (theme.success, gpui::white()),
