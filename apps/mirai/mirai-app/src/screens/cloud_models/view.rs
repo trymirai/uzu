@@ -74,11 +74,16 @@ impl CloudModelsView {
             return;
         };
         let settings_key = provider.settings_key;
+        let provider_id = provider.id;
         let input = self.key_input.clone();
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             let existing = provider_keys::load_key(&engine, settings_key).await.unwrap_or_default();
-            input.update(cx, |field, cx| {
-                field.set_text(existing, cx);
+            let _ = this.update(cx, |this, cx| {
+                // Drop the result if the user switched provider editors meanwhile,
+                // so one provider's key can't show/save under another.
+                if this.key_editor == Some(provider_id) {
+                    input.update(cx, |field, cx| field.set_text(existing, cx));
+                }
             });
         })
         .detach();

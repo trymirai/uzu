@@ -97,15 +97,17 @@ pub async fn set_provider_key(
     let settings = engine.settings().await.map_err(|e| format!("settings unavailable: {e}"))?;
 
     let trimmed = api_key.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    settings
-        .save(SettingKind::Secret, provider.settings_key.to_string(), trimmed.map(str::to_string))
-        .map_err(|e| e.to_string())?;
 
+    // Apply to the live engine first; only persist once it is accepted. Saving
+    // a rejected key would reload it on next launch and fail engine init.
     let _ = engine.remove_registry(provider.id.to_string()).await;
     if let Some(key) = trimmed {
         let config = openai_config(provider.id, key.to_string()).ok_or("unknown provider")?;
         let registry = openai::Registry::new(config).map_err(|e| e.to_string())?;
         engine.add_registry(Box::new(registry)).await.map_err(|e| e.to_string())?;
     }
+    settings
+        .save(SettingKind::Secret, provider.settings_key.to_string(), trimmed.map(str::to_string))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }

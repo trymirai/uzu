@@ -167,6 +167,16 @@ impl ModelsStore {
         cx: &mut Context<Self>,
     ) {
         let Some(engine) = engine::try_engine(cx) else {
+            // No engine (e.g. a bad provider key blocked init) — clear the
+            // spinner and surface the failure instead of loading forever.
+            cx.spawn(async move |this, cx| {
+                let _ = this.update(cx, |store, cx| {
+                    store.loading = false;
+                    store.error = Some("Engine unavailable".to_string());
+                    cx.notify();
+                });
+            })
+            .detach();
             return;
         };
         let task = gpui_tokio::Tokio::spawn_result(cx, async move {
