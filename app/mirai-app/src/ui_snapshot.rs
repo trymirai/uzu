@@ -195,6 +195,18 @@ fn render_settings() {
     render_png("settings", 1200.0, 800.0, |_, cx| cx.new(screens::SettingsView::new));
 }
 
+// Full app shell on the Settings route, reproducing the real sidebar + flex_1
+// content-outlet nesting (the isolated `render_settings` can't surface
+// outlet-width bugs).
+#[test]
+fn render_app_settings() {
+    unsafe { std::env::set_var("MIRAI_SCREEN", "settings") };
+    render_png("app-settings", 1400.0, 820.0, |_, cx| {
+        cx.new(crate::app_shell::MiraiApp::new)
+    });
+    unsafe { std::env::remove_var("MIRAI_SCREEN") };
+}
+
 #[test]
 fn render_settings_privacy() {
     render_png("settings-privacy", 1200.0, 800.0, |_, cx| {

@@ -1054,6 +1054,7 @@ impl Render for SettingsView {
                                     el.child(
                                         div()
                                             .flex_none()
+                                            .w_full()
                                             .border_t_1()
                                             .border_color(theme.border)
                                             .px_6()
