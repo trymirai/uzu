@@ -261,7 +261,11 @@ impl ChatView {
                     .h(px(48.))
                     .cursor(gpui::CursorStyle::PointingHand)
                     .hover(move |s| s.bg(hover))
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        // Carry the per-message switch intent across the trip to
+                        // Local Models so picking a (freshly downloaded) model
+                        // regenerates that reply instead of resetting the chat.
+                        this.state.pending_regen = for_message;
                         this.close_popovers();
                         cx.emit(ChatEvent::OpenLocalModels);
                         cx.notify();

@@ -94,6 +94,7 @@ impl ChatView {
                 created_at: persistence::now_ms(),
                 model_picker_open: false,
                 msg_model_picker_open: None,
+                pending_regen: None,
                 perf_open_msg: None,
                 file_upload_open: false,
                 attached_files: Vec::new(),
@@ -229,13 +230,28 @@ impl ChatView {
         self.state.streaming = false;
         self.state.cancel = None;
         self.state.attached_files.clear();
+        self.state.pending_regen = None;
         self.clear_session();
         cx.notify();
     }
 
-    /// Start a fresh chat pinned to a specific model (e.g. a cloud model picked
-    /// on the Cloud Models screen).
+    /// Adopt a model picked from a model list. Normally this starts a fresh chat
+    /// (e.g. a cloud model picked on the Cloud Models screen), but when the user
+    /// came here to swap the model on a specific reply (`pending_regen`, set by
+    /// the per-message "More local models" link), keep the conversation and
+    /// regenerate that turn instead — Electron's `useRegenerateMessage` parity.
     pub fn use_model(&mut self, model: Model, cx: &mut Context<Self>) {
+        if let Some(idx) = self.state.pending_regen.take() {
+            let valid = self
+                .state
+                .messages
+                .get(idx)
+                .is_some_and(|m| m.role == Role::Assistant);
+            if valid && !self.state.streaming {
+                self.regenerate_at_with_model(idx, Some(model), cx);
+                return;
+            }
+        }
         self.state.model = Some(model);
         self.start_new(cx);
     }
@@ -271,6 +287,7 @@ impl ChatView {
         self.state.model = None;
         self.state.streaming = false;
         self.state.cancel = None;
+        self.state.pending_regen = None;
         self.clear_session();
         // Opening a saved chat lands on its most recent message.
         self.pin_to_bottom();

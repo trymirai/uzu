@@ -20,6 +20,11 @@ pub(super) struct ChatState {
     pub model_picker_open: bool,
     /// Message index whose per-message model menu is open.
     pub msg_model_picker_open: Option<usize>,
+    /// Assistant message to regenerate once a model is picked from Local Models.
+    /// Set when "More local models" is opened from a per-message switcher; the
+    /// intent survives the round-trip so the reply regenerates instead of the
+    /// chat resetting (Electron's `useRegenerateMessage` parity).
+    pub pending_regen: Option<usize>,
     /// Message index whose performance popover is open (`None` = closed).
     pub perf_open_msg: Option<usize>,
     pub file_upload_open: bool,
