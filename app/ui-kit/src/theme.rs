@@ -12,20 +12,9 @@ pub const FONT_MONO: &str = "Geist Mono";
 /// Base UI text size (mirai-chat body text is ~14px).
 pub const TEXT_SIZE: f32 = 14.0;
 
-/// Layout constants (in logical pixels), mirrored from mirai-chat. Stored as
-/// `f32` and wrapped with `gpui::px(...)` at call sites.
-pub mod layout {
-    /// Left navigation sidebar width (desktop).
-    pub const SIDEBAR_WIDTH: f32 = 200.0;
-    /// Bottom footer bar height.
-    pub const FOOTER_HEIGHT: f32 = 24.0;
-    /// Max width of the centered content column (chat / history / settings).
-    pub const CONTENT_MAX_WIDTH: f32 = 800.0;
-    /// Settings vertical tab sidebar width.
-    pub const SETTINGS_SIDEBAR_WIDTH: f32 = 152.0;
-    /// Default corner radius for buttons/cells.
-    pub const RADIUS: f32 = 8.0;
-}
+/// Layout constants — now live in [`crate::tokens::layout`]; re-exported here
+/// for back-compat (`theme::layout::*` keeps resolving).
+pub use crate::tokens::layout;
 
 #[inline]
 fn hex(c: u32) -> Hsla {
