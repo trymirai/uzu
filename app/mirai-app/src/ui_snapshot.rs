@@ -264,6 +264,13 @@ fn render_chats() {
 
     render_png("chats", 1200.0, 800.0, |_, cx| cx.new(screens::ChatsView::new));
 
+    // Instructions card expanded — verifies the +→× rotation.
+    render_png("chats-instructions", 1200.0, 800.0, |_, cx| {
+        let v = cx.new(screens::ChatsView::new);
+        v.update(cx, |c, cx| c.open_instructions(cx));
+        v
+    });
+
     persistence::set_test_data_dir(None);
     let _ = std::fs::remove_dir_all(&dir);
 }

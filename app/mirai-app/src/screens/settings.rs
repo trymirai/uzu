@@ -245,7 +245,9 @@ impl SettingsView {
                 this.instructions_open = !this.instructions_open;
                 cx.notify();
             }))
-            .child(IconEl::new(if open { Icon::Close } else { Icon::Plus }, theme.text).size(16.))
+            .child(
+                IconEl::new(Icon::Plus, theme.text).size(16.).rotate(if open { 45. } else { 0. }),
+            )
             .child(
                 div()
                     .flex()

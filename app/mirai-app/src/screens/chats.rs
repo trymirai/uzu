@@ -78,6 +78,12 @@ impl ChatsView {
         }
     }
 
+    #[cfg(test)]
+    pub fn open_instructions(&mut self, cx: &mut Context<Self>) {
+        self.instructions_open = true;
+        cx.notify();
+    }
+
     fn open_rename(&mut self, title: &str, cx: &mut Context<Self>) {
         self.rename_open = true;
         self.rename_error = None;
@@ -202,8 +208,10 @@ impl ChatsView {
                     .items_center()
                     .gap_2()
                     .child(
-                        IconEl::new(if open { Icon::Close } else { Icon::Plus }, theme.text)
-                            .size(16.),
+                        IconEl::new(Icon::Plus, theme.text)
+                            .size(16.)
+                            // The `+` rotates 45° into an `×` when expanded.
+                            .rotate(if open { 45. } else { 0. }),
                     )
                     .child(
                         div()
