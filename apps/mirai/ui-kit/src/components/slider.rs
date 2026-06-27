@@ -112,17 +112,14 @@ impl Element for Slider {
         let frac = self.value.clamp(0., 1.);
         let thumb_x = left + width * frac;
 
-        // Track.
         window.paint_quad(
             fill(Bounds::new(point(left, cy - track_h / 2.), size(width, track_h)), theme.border)
                 .corner_radii(track_h / 2.),
         );
-        // Filled portion.
         window.paint_quad(
             fill(Bounds::new(point(left, cy - track_h / 2.), size(width * frac, track_h)), theme.text)
                 .corner_radii(track_h / 2.),
         );
-        // Thumb.
         window.paint_quad(
             fill(Bounds::new(point(thumb_x - thumb_r, cy - thumb_r), size(thumb_r * 2., thumb_r * 2.)), theme.text)
                 .corner_radii(thumb_r),
@@ -141,7 +138,6 @@ impl Element for Slider {
         };
         let on_change = Rc::new(on_change);
 
-        // Press: jump to the clicked position and start dragging.
         {
             let hitbox = hitbox.clone();
             let dragging = dragging.clone();
@@ -153,7 +149,6 @@ impl Element for Slider {
                 }
             });
         }
-        // Drag.
         {
             let dragging = dragging.clone();
             let on_change = on_change.clone();
@@ -163,7 +158,6 @@ impl Element for Slider {
                 }
             });
         }
-        // Release.
         {
             window.on_mouse_event(move |_: &MouseUpEvent, phase, _, _| {
                 if phase == DispatchPhase::Bubble {

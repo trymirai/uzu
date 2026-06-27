@@ -54,7 +54,6 @@ impl RenderOnce for VendorIcon {
         match self.icon_url {
             // Remote logo: the brand asset has its own background — no tint behind it.
             Some(url) => base.child(img(url).size_full()),
-            // No URL: colored initial as a stand-in.
             None => {
                 let initial = name
                     .chars()

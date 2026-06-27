@@ -287,7 +287,6 @@ impl ChatsView {
                 checkbox.bg(theme.info).child(IconEl::new(Icon::Check, theme.card).size(crate::tokens::icon::XS));
         }
 
-        // Leading glyph: checkbox in select mode, otherwise the chat icon.
         let mut left = div().flex().items_center().gap_3();
         if selection_mode {
             left = left.child(checkbox);

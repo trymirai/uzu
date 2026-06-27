@@ -389,7 +389,6 @@ impl TtsView {
                 .into_any_element()
         };
 
-        // Status badge: green "Installed" / "Downloading N%" / size hint.
         let badge = if vm.installed {
             div()
                 .flex()
@@ -618,7 +617,6 @@ impl Render for TtsView {
         let char_count = self.input.read(cx).text().chars().count();
         let over = char_count > CHAR_LIMIT;
 
-        // Header model badge (vendor logo + selected model name).
         let header_badge = resolved.as_ref().and_then(|m| models.iter().find(|v| v.id == m.identifier)).map(|vm| {
             div()
                 .flex()
@@ -632,7 +630,6 @@ impl Render for TtsView {
                 .child(div().text_sm().text_color(theme.text_muted).child(vm.name.clone()))
         });
 
-        // Right "Settings" pane content.
         let mut settings_content = div().flex().flex_col().gap_2().p_4().child(
             div().pb_1().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.text).child("Select a model"),
         );
@@ -659,7 +656,6 @@ impl Render for TtsView {
             }
         }
 
-        // Right "History" pane content.
         let history_content = if self.history.is_empty() {
             div().p_4().text_sm().text_color(theme.text_muted).child("No generations yet.").into_any_element()
         } else {
@@ -685,7 +681,6 @@ impl Render for TtsView {
             .size_full()
             .flex()
             .flex_col()
-            // Top header bar.
             .child(
                 div()
                     .flex()
@@ -701,14 +696,12 @@ impl Render for TtsView {
                     )
                     .children(header_badge),
             )
-            // Two-pane body.
             .child(
                 div()
                     .flex_1()
                     .min_h_0()
                     .flex()
                     .flex_row()
-                    // Left editor pane.
                     .child(
                         div()
                             .flex_1()
@@ -774,7 +767,6 @@ impl Render for TtsView {
                                     ),
                             ),
                     )
-                    // Right tabbed pane.
                     .child(
                         div()
                             .w(px(360.))

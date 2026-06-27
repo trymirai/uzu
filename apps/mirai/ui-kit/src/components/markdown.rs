@@ -414,7 +414,6 @@ fn parse_inline(line: &str) -> Inline {
                 runs.push((start..out.len(), RunKind::Code));
             },
             '[' => {
-                // [text](url) → blue link text.
                 let mut link_text = String::new();
                 let mut found_close = false;
                 while let Some(&nc) = chars.peek() {
@@ -440,7 +439,6 @@ fn parse_inline(line: &str) -> Inline {
                     runs.push((start..out.len(), RunKind::Link));
                     links.push((start..out.len(), url));
                 } else {
-                    // Not a link: emit literally.
                     out.push('[');
                     out.push_str(&link_text);
                     if found_close {

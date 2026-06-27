@@ -360,7 +360,6 @@ impl LocalModelsView {
             .child(name_label)
             .into_any_element();
 
-        // Right action area (varies by phase).
         let action = if vm.installed() {
             let del_id = id.clone();
             let del_name = vm.name.clone();
@@ -430,7 +429,6 @@ impl LocalModelsView {
         let active_dl = vm.downloading() || vm.paused();
         let track = theme.bg_hover;
         let fill = theme.text;
-        // Horizontal content (icon/name, size + quantization columns, controls).
         let content = div()
             .flex()
             .items_center()
@@ -620,7 +618,6 @@ impl Render for LocalModelsView {
                 }))
         });
 
-        // Header (title or back button) + search box.
         let header = match &selected {
             Some(key) => {
                 let title = families
@@ -664,7 +661,6 @@ impl Render for LocalModelsView {
             families.iter().find_map(|f| f.models.iter().find(|m| &m.id == id).map(|vm| (vm.clone(), f.key.clone())))
         });
 
-        // Body list.
         let mut list = div().flex().flex_col().gap_2().pb_6();
         match &selected {
             None => {

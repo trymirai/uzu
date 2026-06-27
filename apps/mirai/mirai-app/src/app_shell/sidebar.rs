@@ -101,7 +101,6 @@ impl MiraiApp {
             // Empty header spacer to clear the macOS traffic lights at y≈18
             // (the Electron app shows no logo/name in the sidebar).
             .child(div().h(px(52.)))
-            // Primary navigation.
             .child(
                 div()
                     .flex()

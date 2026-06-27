@@ -33,7 +33,6 @@ fn hexa(c: u32) -> Hsla {
 pub struct Theme {
     pub dark: bool,
 
-    // Surfaces
     pub bg: Hsla,
     pub bg_sidebar: Hsla,
     pub bg_hover: Hsla,
@@ -42,18 +41,15 @@ pub struct Theme {
     pub card: Hsla,
     pub card_hover: Hsla,
 
-    // Text
     pub text: Hsla,
     pub text_muted: Hsla,
     pub text_inverse: Hsla,
     pub link: Hsla,
 
-    // Borders
     pub border: Hsla,
     pub button_border: Hsla,
     pub button_border_hover: Hsla,
 
-    // Semantic
     pub accent: Hsla,
     pub success: Hsla,
     pub error: Hsla,

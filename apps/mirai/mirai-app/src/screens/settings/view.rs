@@ -436,7 +436,6 @@ impl SettingsView {
         cx.notify();
     }
 
-    /// One inner-sidebar nav item.
     fn nav_item(
         &self,
         cx: &mut Context<Self>,
@@ -788,7 +787,6 @@ impl Render for SettingsView {
             .relative()
             .flex()
             .flex_col()
-            // Title bar spanning the full width, above the sidebar + content.
             .child(
                 div().w_full().flex_none().pt_10().pb_3().px_6().border_b_1().border_color(theme.border).child(
                     div()
@@ -800,8 +798,6 @@ impl Render for SettingsView {
             )
             .child(
                 div().flex().flex_1().min_h_0().child(nav).child(
-                    // Content column: scrollable body + a pinned feedback
-                    // footer at the bottom (General / Privacy only).
                     div()
                         .flex_1()
                         .min_h_0()
@@ -861,7 +857,6 @@ fn legal_row(
         .child(IconEl::new(Icon::ChevronRight, muted).size(crate::tokens::icon::MD))
 }
 
-/// A product row (title + description + chevron) linking to `url`.
 fn product_row(
     id: &'static str,
     title: &'static str,

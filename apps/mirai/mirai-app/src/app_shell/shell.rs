@@ -20,7 +20,6 @@ use crate::{
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Root view.
 pub struct MiraiApp {
     pub(super) route: Route,
     local_models: Entity<LocalModelsView>,
@@ -48,7 +47,6 @@ impl MiraiApp {
         }
         // Repaint the whole tree when the theme is swapped (Settings toggle).
         theme::observe_theme(cx, |_, cx| cx.notify()).detach();
-        // Repaint when toasts change.
         toast::observe(cx, |_, cx| cx.notify()).detach();
 
         // Reconcile the menu-bar status item and drain its menu clicks.

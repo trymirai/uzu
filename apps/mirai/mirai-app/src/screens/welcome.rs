@@ -52,7 +52,6 @@ impl Render for WelcomeView {
         let theme = cx.theme().clone();
         let share = settings_state::current(cx).share_usage_data;
 
-        // Analytics opt-in checkbox.
         let mut checkbox = div()
             .size(px(18.))
             .flex_none()

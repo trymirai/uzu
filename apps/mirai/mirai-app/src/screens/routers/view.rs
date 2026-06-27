@@ -154,7 +154,6 @@ impl RoutersView {
         let theme = cx.theme().clone();
         let id = vm.id.clone();
 
-        // Right-side controls vary by download phase.
         let control = if vm.installed {
             let del = id.clone();
             div()
@@ -298,7 +297,6 @@ impl Render for RoutersView {
             }
         }
 
-        // Classify results as tag-chip pills.
         let result_block = if self.classifying {
             div().pt_2().text_sm().text_color(theme.text_muted).child("Classifying…").into_any_element()
         } else if let Some(err) = &self.error {
@@ -334,7 +332,6 @@ impl Render for RoutersView {
                 .flex_col()
                 .overflow_y_scroll()
                 .px_6()
-                // Header + divider.
                 .child(
                     div()
                         .pt_10()
@@ -347,7 +344,6 @@ impl Render for RoutersView {
                 )
                 .child(div().h_px().bg(theme.border))
                 .child(list)
-                // Classify playground: large textarea + Clear/Classify + pills.
                 .child(
                     div()
                         .pt_6()

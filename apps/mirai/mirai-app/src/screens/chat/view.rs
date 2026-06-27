@@ -47,7 +47,6 @@ pub struct ChatView {
     /// Domain + UI state; `pub(super)` so the `stream`/`overlays` submodules
     /// (their own `impl ChatView` blocks) can reach it.
     pub(super) state: ChatState,
-    // GPUI handles.
     pub(super) store: Entity<ModelsStore>,
     /// Cloud chat models, shown alongside local ones in the model picker.
     pub(super) cloud_store: Entity<ModelsStore>,
@@ -501,7 +500,6 @@ impl ChatView {
 
         if self.state.sampling_mode == SamplingMode::Stochastic {
             let view = cx.entity();
-            // Temperature (0–2).
             let v = view.clone();
             card = card.child(slider_param(
                 "Temperature",
@@ -517,7 +515,6 @@ impl ChatView {
                     });
                 },
             ));
-            // Top K (0–200).
             let v = view.clone();
             card = card.child(slider_param(
                 "Top K",
@@ -533,7 +530,6 @@ impl ChatView {
                     });
                 },
             ));
-            // Top P (0–1) with on/off checkbox.
             let v = view.clone();
             let topp_box = param_checkbox("topp-cb", self.state.top_p > 0.0, &theme, {
                 let v = view.clone();
@@ -562,7 +558,6 @@ impl ChatView {
                     });
                 },
             ));
-            // Min P (0–1) with on/off checkbox.
             let v = view.clone();
             let minp_box = param_checkbox("minp-cb", self.state.min_p > 0.0, &theme, {
                 let v = view.clone();
@@ -691,12 +686,10 @@ impl Render for ChatView {
         let resolved = self.resolved_model(cx);
         let model_name = resolved.as_ref().map(|m| m.name()).unwrap_or_else(|| "Select model".to_string());
         let has_model = resolved.is_some();
-        // Icon URL for the trigger badge (prefer dark theme logo).
         let trigger_icon_url = resolved.as_ref().and_then(dark_icon_url);
         let trigger_vendor =
             resolved.as_ref().and_then(|m| m.family.as_ref().map(|f| f.vendor.name())).unwrap_or_default();
 
-        // Message column (`gap-4`, `pt-4`).
         let mut column = div().flex().flex_col().gap_4().pt_4().w_full();
         if self.state.messages.is_empty() {
             column = column.child(
@@ -736,7 +729,6 @@ impl Render for ChatView {
                     Role::Assistant => {
                         let mut block = div().flex().flex_col().gap_2().w_full().min_w_0().pb_3();
 
-                        // Reasoning ("thinking") panel (hidden when the setting is off).
                         if show_reasoning {
                             if let Some(reasoning) = &cur.reasoning {
                                 if !reasoning.trim().is_empty() {
@@ -746,7 +738,6 @@ impl Render for ChatView {
                                     } else {
                                         Icon::ChevronUp
                                     };
-                                    // Header: label on the left, collapse chevron on the right.
                                     let header = div()
                                         .id(SharedString::from(format!("think-hdr-{idx}")))
                                         .flex()
@@ -830,7 +821,6 @@ impl Render for ChatView {
                             }
                         }
 
-                        // Body (markdown for assistant prose + code blocks).
                         let body = if cur.error {
                             div()
                                 .p_3()
@@ -871,7 +861,6 @@ impl Render for ChatView {
                         };
                         block = block.child(body);
 
-                        // Actions (`mt-6 pr-6`, copy left, model + performance right).
                         let has_reasoning = cur.reasoning.as_ref().is_some_and(|r| !r.trim().is_empty());
                         let show_actions = !streaming
                             && (msg.versions.len() > 1 || !cur.text.is_empty() || cur.error || has_reasoning);
@@ -1145,8 +1134,6 @@ impl Render for ChatView {
                                         .border_color(theme.border)
                                         .bg(theme.card)
                                         .child(div().w_full().child(self.input.clone()))
-                                        // Attached-file chips — each shows the filename
-                                        // and an × to remove it before sending.
                                         .when(!self.state.attached_files.is_empty(), |el| {
                                             let chips = self
                                                 .state

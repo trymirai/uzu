@@ -120,8 +120,6 @@ mod tests {
         assert_eq!(m.cur().text, "hi");
     }
 
-    // Regenerate pushes a new version and points `current` at it, keeping priors
-    // reachable via the pager.
     #[test]
     fn regenerate_keeps_prior_versions() {
         let mut m = ChatMsg::assistant(Version {
