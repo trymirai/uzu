@@ -231,12 +231,13 @@ impl LocalModelsView {
 
     fn chip(&self, text: String, accent: bool, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        // Outlined pill (mirai-chat parity): green border+tint for accent chips,
-        // a hairline border for neutral ones.
+        // Outlined pill (mirai-chat parity): green text+border for accent chips,
+        // a transparent pill with a visible outline + muted text for neutral ones
+        // (no grey fill).
         let (fg, bg, border) = if accent {
             (theme.success, theme.success.opacity(0.08), theme.success.opacity(0.45))
         } else {
-            (theme.text_muted, theme.bg_sub, theme.border)
+            (theme.text_muted, gpui::transparent_black(), theme.button_border)
         };
         div()
             .flex()
