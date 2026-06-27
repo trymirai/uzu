@@ -40,6 +40,7 @@ impl ChatView {
         if self.state.streaming {
             return;
         }
+        self.last_active = std::time::Instant::now();
         let text = text.trim().to_string();
         if text.is_empty() && self.state.attached_files.is_empty() {
             return;
@@ -258,6 +259,8 @@ impl ChatView {
                 self.state.streaming = false;
                 self.state.waiting_for_model = false;
                 self.state.cancel = None;
+                // Reply finished — restart the idle clock for auto-eject.
+                self.last_active = std::time::Instant::now();
                 // If the model produced no text, show a notice rather than an
                 // empty bubble stuck on "…".
                 if let Some(last) = self.state.messages.last_mut() {

@@ -3,7 +3,7 @@
 //! uzu reply stream runs on the Tokio runtime and pushes cumulative updates back
 //! to the UI entity.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     Anchor, Animation, AnimationExt, Context, CursorStyle, Entity, EventEmitter, FontWeight,
@@ -51,6 +51,8 @@ pub struct ChatView {
     /// final after the second layout pass; re-asserting for a few frames lets
     /// the offset converge to the true bottom as `content_size` settles.
     pub(super) pin_bottom_frames: u8,
+    /// Last user/model activity, for idle auto-eject (Settings → Auto-eject).
+    pub(super) last_active: Instant,
 }
 
 impl EventEmitter<ChatEvent> for ChatView {}
@@ -70,6 +72,17 @@ impl ChatView {
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
         cx.observe(&cloud_store, |_, _, cx| cx.notify()).detach();
         settings_state::observe(cx, |_, cx| cx.notify()).detach();
+        // Idle auto-eject: periodically drop the resident session after a stretch
+        // of inactivity (Settings → "Auto-eject models when idle").
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(30)).await;
+                if this.update(cx, |view, cx| view.maybe_auto_eject(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         Self {
             state: ChatState {
                 messages: Vec::new(),
@@ -103,6 +116,20 @@ impl ChatView {
             scroll: ScrollHandle::new(),
             reasoning_scroll: ScrollHandle::new(),
             pin_bottom_frames: 0,
+            last_active: Instant::now(),
+        }
+    }
+
+    /// Eject the resident model if auto-eject is on and the chat has been idle
+    /// past the configured timeout (and isn't mid-generation).
+    fn maybe_auto_eject(&mut self, cx: &mut Context<Self>) {
+        let settings = settings_state::current(cx);
+        if !settings.auto_eject || self.state.streaming || self.state.loaded_model.is_none() {
+            return;
+        }
+        let idle = self.last_active.elapsed().as_secs();
+        if idle >= u64::from(settings.idle_timeout_minutes.max(1)) * 60 {
+            self.eject(cx);
         }
     }
 
