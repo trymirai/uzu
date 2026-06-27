@@ -12,11 +12,12 @@ use uzu::{
 
 use crate::{
     components::{
-        Button, ButtonKind, ButtonSize, Icon, IconButton, IconEl, InputEvent, Loader, TextInput,
+        Button, ButtonKind, Icon, IconButton, IconEl, InputEvent, Loader, TextInput, VendorIcon,
     },
     engine,
     models_store::ModelsStore,
-    theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
+    screens::local_models::format_size,
+    theme::{ActiveTheme, Theme, layout::CONTENT_MAX_WIDTH},
 };
 
 enum ClassMsg {
@@ -28,8 +29,11 @@ struct RouterVm {
     id: String,
     name: String,
     vendor: String,
+    icon_url: Option<String>,
+    size: String,
     installed: bool,
     downloading: bool,
+    paused: bool,
     progress: f32,
 }
 
@@ -44,10 +48,11 @@ pub struct RoutersView {
 
 impl RoutersView {
     pub fn new(store: Entity<ModelsStore>, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| TextInput::new(cx, "Text to classify…"));
-        cx.subscribe(&input, |this, _input, event, cx| match event {
-            InputEvent::Submit(text) => this.classify(text.clone(), cx),
-            InputEvent::Changed(_) => {}
+        let input = cx.new(|cx| {
+            TextInput::new(cx, "Enter text to classify…").multiline(false, 6, 18)
+        });
+        cx.subscribe(&input, |_, _input, event, cx| match event {
+            InputEvent::Submit(_) | InputEvent::Changed(_) => cx.notify(),
         })
         .detach();
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
@@ -59,6 +64,13 @@ impl RoutersView {
             classifying: false,
             error: None,
         }
+    }
+
+    fn clear(&mut self, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.set_text("", cx));
+        self.result = None;
+        self.error = None;
+        cx.notify();
     }
 
     fn resolved_router(&self, cx: &Context<Self>) -> Option<Model> {
@@ -152,47 +164,69 @@ impl RoutersView {
         let theme = cx.theme().clone();
         let id = vm.id.clone();
 
+        // Right-side controls vary by download phase.
         let control = if vm.installed {
-            let id = id.clone();
-            IconButton::new(gpui::SharedString::from(format!("del-{}", vm.id)), Icon::Trash)
-                .color(theme.text_muted)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let id = id.clone();
-                    this.store.update(cx, |s, cx| s.delete(id, cx));
-                }))
-                .into_any_element()
-        } else if vm.downloading {
+            let del = id.clone();
             div()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child(format!("{:.0}%", vm.progress * 100.0))
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(IconEl::new(Icon::Check, theme.success).size(15.))
+                .child(
+                    IconButton::new(gpui::SharedString::from(format!("del-{}", vm.id)), Icon::Trash)
+                        .color(theme.text_muted)
+                        .icon_size(15.)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let del = del.clone();
+                            this.store.update(cx, |s, cx| s.delete(del, cx));
+                        })),
+                )
+                .into_any_element()
+        } else if vm.downloading || vm.paused {
+            let toggle = id.clone();
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(format!("{:.0}%", vm.progress * 100.0)),
+                )
+                .child(
+                    IconButton::new(
+                        gpui::SharedString::from(format!("tog-{}", vm.id)),
+                        if vm.paused { Icon::Download } else { Icon::Pause },
+                    )
+                    .color(theme.text_muted)
+                    .icon_size(15.)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let toggle = toggle.clone();
+                        this.store.update(cx, |s, cx| s.toggle_download(toggle, cx));
+                    })),
+                )
                 .into_any_element()
         } else {
-            let id = id.clone();
-            Button::new(gpui::SharedString::from(format!("dl-{}", vm.id)), "Download")
-                .kind(ButtonKind::Secondary)
-                .size(ButtonSize::Small)
-                .icon(Icon::Download)
+            let dl = id.clone();
+            IconButton::new(gpui::SharedString::from(format!("dl-{}", vm.id)), Icon::Download)
+                .color(theme.text_muted)
+                .icon_size(15.)
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    let id = id.clone();
-                    this.store.update(cx, |s, cx| s.toggle_download(id, cx));
+                    let dl = dl.clone();
+                    this.store.update(cx, |s, cx| s.toggle_download(dl, cx));
                 }))
                 .into_any_element()
         };
 
         let select_id = id.clone();
-        let bg = if selected {
-            theme.bg_hover
-        } else {
-            gpui::transparent_black()
-        };
+        let bg = if selected { theme.bg_hover } else { gpui::transparent_black() };
         div()
             .id(gpui::SharedString::from(vm.id.clone()))
             .flex()
             .items_center()
-            .justify_between()
             .gap_3()
-            .h(px(52.))
+            .h(px(56.))
             .px_3()
             .rounded_lg()
             .bg(bg)
@@ -210,8 +244,11 @@ impl RoutersView {
                     cx.notify();
                 }
             }))
+            .child(VendorIcon::new(vm.vendor.clone()).size(20.).icon_url(vm.icon_url.clone()))
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
                     .flex_col()
                     .child(
@@ -223,7 +260,9 @@ impl RoutersView {
                     )
                     .child(div().text_xs().text_color(theme.text_muted).child(vm.vendor.clone())),
             )
+            .child(div().text_xs().text_color(theme.text_muted).child(vm.size.clone()))
             .child(control)
+            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(16.))
     }
 }
 
@@ -245,11 +284,11 @@ impl Render for RoutersView {
                     id: r.id().to_string(),
                     name: r.name(),
                     vendor: r.vendor().unwrap_or_else(|| "Other".to_string()),
+                    icon_url: r.icon_url(true),
+                    size: format_size(r.size_bytes()),
                     installed: r.is_installed(),
-                    downloading: matches!(
-                        r.phase(),
-                        DownloadPhase::Downloading {} | DownloadPhase::Paused {}
-                    ),
+                    downloading: matches!(r.phase(), DownloadPhase::Downloading {}),
+                    paused: matches!(r.phase(), DownloadPhase::Paused {}),
                     progress: r.progress(),
                 })
                 .collect();
@@ -257,71 +296,70 @@ impl Render for RoutersView {
         };
         let any_installed = routers.iter().any(|r| r.installed);
 
+        // Split into Installed / Available sections (mirai-chat parity).
         let mut list = div().flex().flex_col().gap_1();
         if routers.is_empty() {
-            if loading {
-                list = list.child(
-                    div().py_6().flex().justify_center().child(Loader::new().label("Loading routers…")),
-                );
+            list = list.child(if loading {
+                div()
+                    .py_6()
+                    .flex()
+                    .justify_center()
+                    .child(Loader::new().label("Loading routers…"))
+                    .into_any_element()
             } else {
-                list = list.child(
-                    div().py_6().text_color(theme.text_muted).child("No router models available."),
-                );
-            }
+                div()
+                    .py_6()
+                    .text_color(theme.text_muted)
+                    .child("No routers available.")
+                    .into_any_element()
+            });
         } else {
-            for vm in &routers {
-                let selected = selected_id.as_deref() == Some(vm.id.as_str());
-                list = list.child(self.router_row(cx, vm, selected));
+            let installed: Vec<&RouterVm> = routers.iter().filter(|r| r.installed).collect();
+            let available: Vec<&RouterVm> = routers.iter().filter(|r| !r.installed).collect();
+            if !installed.is_empty() {
+                list = list.child(router_section("Installed", &theme));
+                for vm in installed {
+                    let selected = selected_id.as_deref() == Some(vm.id.as_str());
+                    list = list.child(self.router_row(cx, vm, selected));
+                }
+            }
+            if !available.is_empty() {
+                list = list.child(router_section("Available", &theme));
+                for vm in available {
+                    list = list.child(self.router_row(cx, vm, false));
+                }
             }
         }
 
-        // Result bars.
-        let mut result_block = div().flex().flex_col().gap_2().pt_2();
-        if self.classifying {
-            result_block = result_block.child(
-                div().text_sm().text_color(theme.text_muted).child("Classifying…"),
-            );
+        // Classify results as tag-chip pills.
+        let result_block = if self.classifying {
+            div()
+                .pt_2()
+                .text_sm()
+                .text_color(theme.text_muted)
+                .child("Classifying…")
+                .into_any_element()
         } else if let Some(err) = &self.error {
-            result_block =
-                result_block.child(div().text_sm().text_color(theme.error).child(err.clone()));
+            div()
+                .mt_2()
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.error.opacity(0.3))
+                .bg(theme.error.opacity(0.08))
+                .text_sm()
+                .text_color(theme.error)
+                .child(err.clone())
+                .into_any_element()
         } else if let Some(values) = &self.result {
+            let mut pills = div().pt_2().flex().flex_wrap().gap_2();
             for (label, prob) in values {
-                result_block = result_block.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .w(px(160.))
-                                .text_sm()
-                                .text_color(theme.text)
-                                .child(label.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .h(px(6.))
-                                .rounded_full()
-                                .bg(theme.bg_sub)
-                                .child(
-                                    div()
-                                        .h(px(6.))
-                                        .w(px(200.0 * (*prob as f32).clamp(0.0, 1.0)))
-                                        .rounded_full()
-                                        .bg(theme.accent),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .w(px(48.))
-                                .text_xs()
-                                .text_color(theme.text_muted)
-                                .child(format!("{:.1}%", prob * 100.0)),
-                        ),
-                );
+                pills = pills.child(tag_chip(label, *prob, &theme));
             }
-        }
+            pills.into_any_element()
+        } else {
+            div().into_any_element()
+        };
 
         div()
             .size_full()
@@ -339,26 +377,26 @@ impl Render for RoutersView {
                     .flex_col()
                     .overflow_y_scroll()
                     .px_6()
+                    // Header + divider.
                     .child(
                         div()
                             .pt_10()
-                            .pb_2()
+                            .pb_3()
                             .flex()
                             .items_center()
                             .gap_2()
                             .child(IconEl::new(Icon::Routers, theme.text).size(22.))
                             .child(
-                                div()
-                                    .text_xl()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child("Routers"),
+                                div().text_xl().font_weight(FontWeight::MEDIUM).child("Choose router"),
                             ),
                     )
+                    .child(div().h_px().bg(theme.border))
                     .child(list)
-                    // Classify playground.
+                    // Classify playground: large textarea + Clear/Classify + pills.
                     .child(
                         div()
                             .pt_6()
+                            .pb_6()
                             .flex()
                             .flex_col()
                             .gap_2()
@@ -371,19 +409,24 @@ impl Render for RoutersView {
                             )
                             .child(
                                 div()
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_lg()
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .bg(theme.card)
+                                    .child(self.input.clone()),
+                            )
+                            .child(
+                                div()
                                     .flex()
                                     .items_center()
+                                    .justify_end()
                                     .gap_2()
                                     .child(
-                                        div()
-                                            .flex_1()
-                                            .px_3()
-                                            .py_2()
-                                            .rounded_lg()
-                                            .border_1()
-                                            .border_color(theme.border)
-                                            .bg(theme.card)
-                                            .child(self.input.clone()),
+                                        Button::new("clear", "Clear")
+                                            .kind(ButtonKind::Secondary)
+                                            .on_click(cx.listener(|this, _, _, cx| this.clear(cx))),
                                     )
                                     .child(
                                         Button::new("classify", "Classify")
@@ -398,4 +441,39 @@ impl Render for RoutersView {
                     ),
             )
     }
+}
+
+/// Section label ("INSTALLED" / "AVAILABLE") above a router group.
+fn router_section(label: &str, theme: &Theme) -> impl IntoElement {
+    div()
+        .pt_4()
+        .pb_1()
+        .px_3()
+        .text_xs()
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(theme.text_muted)
+        .child(label.to_uppercase())
+}
+
+/// A rounded probability pill for a classification result.
+fn tag_chip(label: &str, prob: f64, theme: &Theme) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_3()
+        .py_1()
+        .rounded_full()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.bg_sub)
+        .text_sm()
+        .text_color(theme.text)
+        .child(label.to_string())
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .child(format!("{:.0}%", prob * 100.0)),
+        )
 }
