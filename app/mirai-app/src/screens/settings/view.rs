@@ -871,7 +871,6 @@ fn legal_row(id: &'static str, label: &'static str, url: &'static str, theme: &T
         .items_center()
         .justify_between()
         .py_3()
-        .px_2()
         .rounded_md()
         .cursor(gpui::CursorStyle::PointingHand)
         .hover(move |s| s.bg(hover))
