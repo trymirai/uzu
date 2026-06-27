@@ -1,7 +1,9 @@
 //! Text-to-speech screen.
 
 use futures::{StreamExt, channel::mpsc};
-use gpui::{Context, CursorStyle, Entity, FontWeight, IntoElement, Render, SharedString, Window, div, prelude::*, px};
+use gpui::{
+    Context, CursorStyle, Entity, FontWeight, IntoElement, Render, SharedString, Window, div, prelude::*, px, relative,
+};
 use uzu::{
     player::Player,
     session::text_to_speech::TextToSpeechSessionStreamChunk,
@@ -470,6 +472,17 @@ impl TtsView {
             // Wrap so the badge pill hugs its content (left-aligned) instead of
             // stretching across the card.
             .child(div().flex().child(badge))
+            // Downloading rows grow a thin progress bar (mirai-chat parity).
+            .when(vm.downloading, |el| {
+                el.child(
+                    div()
+                        .w_full()
+                        .h(px(4.))
+                        .rounded_full()
+                        .bg(theme.bg_hover)
+                        .child(div().h_full().w(relative(vm.progress.clamp(0., 1.))).rounded_full().bg(theme.text)),
+                )
+            })
     }
 
     fn history_row(
