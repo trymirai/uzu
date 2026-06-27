@@ -151,9 +151,15 @@ impl TtsView {
         &self,
         cx: &Context<Self>,
     ) -> Option<Model> {
-        self.selected
-            .clone()
-            .or_else(|| self.store.read(cx).rows.iter().find(|r| r.is_installed()).map(|r| r.model.clone()))
+        let store = self.store.read(cx);
+        // A selected voice model that's since been deleted must not win over an
+        // installed fallback.
+        if let Some(model) = &self.selected
+            && store.rows.iter().any(|r| r.model.identifier == model.identifier && r.is_installed())
+        {
+            return Some(model.clone());
+        }
+        store.rows.iter().find(|r| r.is_installed()).map(|r| r.model.clone())
     }
 
     fn generate(
@@ -168,11 +174,20 @@ impl TtsView {
         if text.is_empty() {
             return;
         }
+        if text.chars().count() > CHAR_LIMIT {
+            self.error = Some(format!("Text exceeds the {CHAR_LIMIT}-character limit."));
+            cx.notify();
+            return;
+        }
         let Some(model) = self.resolved_model(cx) else {
             self.error = Some("Download and select a voice model first.".to_string());
             cx.notify();
             return;
         };
+        // Stop any history clip still playing before queuing new audio.
+        if let Some(player) = &self.player {
+            player.stop();
+        }
         self.selected = Some(model.clone());
         self.generating = true;
         self.error = None;
@@ -246,6 +261,11 @@ impl TtsView {
         match msg {
             TtsMsg::Started(token) => self.cancel = Some(token),
             TtsMsg::Batch(batch) => {
+                // Ignore batches that arrive after Stop/Done so cancelled audio
+                // doesn't resume playing.
+                if !self.generating {
+                    return;
+                }
                 self.pending_batches.push(batch.clone());
                 if let Err(err) = self.append_pcm(batch) {
                     self.error = Some(err);
@@ -795,7 +815,7 @@ impl Render for TtsView {
                                             } else {
                                                 Button::new("tts-generate", "Generate speech")
                                                     .kind(ButtonKind::Primary)
-                                                    .disabled(!any_installed || char_count == 0)
+                                                    .disabled(!any_installed || char_count == 0 || over)
                                                     .on_click(
                                                         cx.listener(|this, _, _, cx| this.generate_from_button(cx)),
                                                     )
