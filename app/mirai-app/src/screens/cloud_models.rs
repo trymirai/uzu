@@ -25,6 +25,7 @@ struct CloudVm {
     id: String,
     name: String,
     vendor: String,
+    icon_url: Option<String>,
 }
 
 pub struct CloudModelsView {
@@ -334,39 +335,37 @@ impl CloudModelsView {
 
     fn row(&self, cx: &mut Context<Self>, vm: &CloudVm) -> impl IntoElement {
         let theme = cx.theme().clone();
+        let hover = theme.bg_hover;
         let id = vm.id.clone();
+        // Whole row is clickable → starts a chat (mirai-chat ModelCard).
         div()
+            .id(gpui::SharedString::from(format!("use-{}", vm.id)))
             .flex()
             .items_center()
-            .justify_between()
             .gap_3()
             .h(px(52.))
             .px_3()
             .rounded_lg()
+            .cursor(gpui::CursorStyle::PointingHand)
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(model) =
+                    this.store.read(cx).rows.iter().find(|r| r.id() == id).map(|r| r.model.clone())
+                {
+                    cx.emit(CloudEvent::UseModel(model));
+                }
+            }))
+            .child(VendorIcon::new(vm.vendor.clone()).size(20.).icon_url(vm.icon_url.clone()))
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.text)
                     .child(vm.name.clone()),
             )
-            .child(
-                Button::new(gpui::SharedString::from(format!("use-{}", vm.id)), "Chat")
-                    .kind(ButtonKind::Secondary)
-                    .size(ButtonSize::Small)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(model) = this
-                            .store
-                            .read(cx)
-                            .rows
-                            .iter()
-                            .find(|r| r.id() == id)
-                            .map(|r| r.model.clone())
-                        {
-                            cx.emit(CloudEvent::UseModel(model));
-                        }
-                    })),
-            )
+            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(16.))
     }
 }
 
@@ -383,6 +382,7 @@ impl Render for CloudModelsView {
                     id: r.id().to_string(),
                     name: r.name(),
                     vendor: r.vendor().unwrap_or_else(|| "Other".to_string()),
+                    icon_url: r.icon_url(true),
                 })
                 .collect();
             (store.loading, rows)
@@ -400,7 +400,7 @@ impl Render for CloudModelsView {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.text)
-                    .child("Models"),
+                    .child("Available Models"),
             );
         }
 
@@ -409,12 +409,12 @@ impl Render for CloudModelsView {
                 list = list.child(
                     div().py_8().flex().justify_center().child(Loader::new().label("Loading…")),
                 );
-            } else if self.configured.values().any(|&v| v) {
+            } else {
                 list = list.child(
                     div()
                         .py_4()
                         .text_color(theme.text_muted)
-                        .child("No models found for the connected providers."),
+                        .child("No cloud models available."),
                 );
             }
         } else {
@@ -473,7 +473,7 @@ impl Render for CloudModelsView {
                                 div()
                                     .text_xl()
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child("Cloud models"),
+                                    .child("Choose cloud model to chat"),
                             ),
                     )
                     .child(
