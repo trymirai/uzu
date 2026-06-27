@@ -111,7 +111,10 @@ impl LocalModelsView {
                 Some(f) => (f.identifier.clone(), f.name(), f.vendor.name()),
                 None => ("other".to_string(), "Other".to_string(), String::new()),
             };
-            if recommended_id == Some(row.id()) {
+            // The recommendation API returns a repository id, which differs from
+            // the model identifier — match against the model's repo ids.
+            let is_recommended = recommended_id.is_some_and(|rid| row.model.repo_ids().iter().any(|r| r == rid));
+            if is_recommended {
                 recommended_family = Some(key.clone());
             }
             let quant = quant_label(&row.model);
@@ -132,7 +135,7 @@ impl LocalModelsView {
                 phase: row.phase(),
                 progress: row.progress(),
                 is_mirai,
-                recommended: recommended_id == Some(row.id()),
+                recommended: is_recommended,
             };
             let entry = families.entry(key.clone()).or_insert_with(|| {
                 order.push(key.clone());
@@ -663,9 +666,10 @@ impl Render for LocalModelsView {
             },
         };
 
-        let recommended = self.recommended_id.as_ref().and_then(|id| {
-            families.iter().find_map(|f| f.models.iter().find(|m| &m.id == id).map(|vm| (vm.clone(), f.key.clone())))
-        });
+        // Reuse the `recommended` flag computed in `families()` (matched by repo
+        // id), rather than re-matching the API's repo id against the model id.
+        let recommended =
+            families.iter().find_map(|f| f.models.iter().find(|m| m.recommended).map(|vm| (vm.clone(), f.key.clone())));
 
         let mut list = div().flex().flex_col().gap_2().pb_6();
         match &selected {
