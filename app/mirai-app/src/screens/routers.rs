@@ -284,7 +284,7 @@ impl Render for RoutersView {
                     id: r.id().to_string(),
                     name: r.name(),
                     vendor: r.vendor().unwrap_or_else(|| "Other".to_string()),
-                    icon_url: r.icon_url(true),
+                    icon_url: r.icon_url(theme.dark),
                     size: format_size(r.size_bytes()),
                     installed: r.is_installed(),
                     downloading: matches!(r.phase(), DownloadPhase::Downloading {}),

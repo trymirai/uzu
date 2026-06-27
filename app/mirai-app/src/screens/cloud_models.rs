@@ -382,7 +382,7 @@ impl Render for CloudModelsView {
                     id: r.id().to_string(),
                     name: r.name(),
                     vendor: r.vendor().unwrap_or_else(|| "Other".to_string()),
-                    icon_url: r.icon_url(true),
+                    icon_url: r.icon_url(theme.dark),
                 })
                 .collect();
             (store.loading, rows)

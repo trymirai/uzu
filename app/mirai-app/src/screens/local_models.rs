@@ -117,6 +117,7 @@ impl LocalModelsView {
     }
 
     fn families(&self, cx: &Context<Self>) -> Vec<FamilyVm> {
+        let dark = cx.theme().dark;
         let store = self.store.read(cx);
         let recommended_id = self.recommended_id.as_deref();
         let mut order: Vec<String> = Vec::new();
@@ -165,7 +166,7 @@ impl LocalModelsView {
                     key: key.clone(),
                     name,
                     vendor,
-                    icon_url: row.icon_url(true),
+                    icon_url: row.icon_url(dark),
                     range: None,
                     has_mirai: false,
                     last_installed_at: 0,
