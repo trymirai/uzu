@@ -4,29 +4,15 @@ use gpui::{
     Context, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString, Window, div,
     prelude::*, px,
 };
-use uzu::types::model::Model;
 
+use super::{event::CloudEvent, vm::CloudVm};
 use crate::{
-    components::{
-        Button, ButtonKind, ButtonSize, Icon, IconEl, Loader, TextInput, VendorIcon,
-    },
+    components::{Button, ButtonKind, ButtonSize, Icon, IconEl, Loader, TextInput, VendorIcon},
     engine,
     models_store::ModelsStore,
     provider_keys::{self, CloudProvider},
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
 };
-
-/// Emitted to the shell to start a chat with the chosen cloud model.
-pub enum CloudEvent {
-    UseModel(Model),
-}
-
-struct CloudVm {
-    id: String,
-    name: String,
-    vendor: String,
-    icon_url: Option<String>,
-}
 
 pub struct CloudModelsView {
     store: Entity<ModelsStore>,
@@ -375,16 +361,7 @@ impl Render for CloudModelsView {
 
         let (loading, mut models): (bool, Vec<CloudVm>) = {
             let store = self.store.read(cx);
-            let rows = store
-                .rows
-                .iter()
-                .map(|r| CloudVm {
-                    id: r.id().to_string(),
-                    name: r.name(),
-                    vendor: r.vendor().unwrap_or_else(|| "Other".to_string()),
-                    icon_url: r.icon_url(theme.dark),
-                })
-                .collect();
+            let rows = store.rows.iter().map(|r| CloudVm::from_row(r, theme.dark)).collect();
             (store.loading, rows)
         };
         models.sort_by(|a, b| a.vendor.cmp(&b.vendor).then(a.name.cmp(&b.name)));
