@@ -8,13 +8,13 @@ use gpui::{
 use uzu::{
     player::Player,
     session::text_to_speech::TextToSpeechSessionStreamChunk,
-    storage::types::DownloadPhase,
     types::{
         basic::{CancelToken, PcmBatch},
         model::Model,
     },
 };
 
+use super::vm::TtsVm;
 use crate::{
     components::{Button, ButtonKind, Icon, IconButton, IconEl, InputEvent, Loader, TextInput, VendorIcon},
     engine,
@@ -36,17 +36,6 @@ enum TtsMsg {
 enum TtsTab {
     Settings,
     History,
-}
-
-struct TtsVm {
-    id: String,
-    name: String,
-    vendor: String,
-    icon_url: Option<String>,
-    size: String,
-    installed: bool,
-    downloading: bool,
-    progress: f32,
 }
 
 struct PendingGen {
@@ -552,23 +541,7 @@ impl Render for TtsView {
 
         let (loading, models): (bool, Vec<TtsVm>) = {
             let store = self.store.read(cx);
-            let rows = store
-                .rows
-                .iter()
-                .map(|r| TtsVm {
-                    id: r.id().to_string(),
-                    name: r.name(),
-                    vendor: r.vendor().unwrap_or_else(|| "Other".to_string()),
-                    icon_url: r.icon_url(theme.dark),
-                    size: crate::screens::local_models::format_size(r.display_size_bytes()),
-                    installed: r.is_installed(),
-                    downloading: matches!(
-                        r.phase(),
-                        DownloadPhase::Downloading {} | DownloadPhase::Paused {}
-                    ),
-                    progress: r.progress(),
-                })
-                .collect();
+            let rows = store.rows.iter().map(|r| TtsVm::from_row(r, theme.dark)).collect();
             (store.loading, rows)
         };
         let any_installed = models.iter().any(|r| r.installed);
