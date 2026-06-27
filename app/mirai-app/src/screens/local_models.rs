@@ -2,7 +2,7 @@
 
 use gpui::{
     Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString,
-    Window, div, prelude::*, px,
+    Window, div, prelude::*, px, relative,
 };
 use uzu::{storage::types::DownloadPhase, types::model::Model};
 
@@ -391,13 +391,14 @@ impl LocalModelsView {
                 .into_any_element()
         } else if vm.downloading() || vm.paused() {
             let toggle_id = id.clone();
+            let cancel_id = id.clone();
             div()
                 .flex()
                 .items_center()
-                .gap_2()
+                .gap_1p5()
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(theme.text_muted)
                         .child(format!("{:.0}%", vm.progress * 100.0)),
                 )
@@ -406,10 +407,27 @@ impl LocalModelsView {
                         SharedString::from(format!("tog-{}", vm.id)),
                         if vm.paused() { Icon::Download } else { Icon::Pause },
                     )
-                    .color(theme.text_muted)
+                    .icon_size(14.)
+                    .hit_size(26.)
+                    .color(theme.text)
+                    .background(theme.bg_hover)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let id = toggle_id.clone();
                         this.store.update(cx, |s, cx| s.toggle_download(id, cx));
+                    })),
+                )
+                .child(
+                    IconButton::new(
+                        SharedString::from(format!("cancel-{}", vm.id)),
+                        Icon::Close,
+                    )
+                    .icon_size(14.)
+                    .hit_size(26.)
+                    .color(theme.text)
+                    .background(theme.bg_hover)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let id = cancel_id.clone();
+                        this.store.update(cx, |s, cx| s.delete(id, cx));
                     })),
                 )
                 .into_any_element()
@@ -424,21 +442,16 @@ impl LocalModelsView {
                 .into_any_element()
         };
 
-        div()
-            // Stable id so hover state persists and updates on mouse-move
-            // (not only on scroll-triggered repaints).
-            .id(SharedString::from(format!("model-{}", vm.id)))
+        let active_dl = vm.downloading() || vm.paused();
+        let track = theme.bg_hover;
+        let fill = theme.text;
+        // Horizontal content (icon/name, size + quantization columns, controls).
+        let content = div()
             .flex()
             .items_center()
             .gap_4()
             .h(px(52.))
-            .px_4()
-            .rounded_lg()
-            .cursor(CursorStyle::PointingHand)
-            // Mirai-quantized rows get a full green tint (mirai-chat parity),
-            // not just a left edge.
-            .when(vm.is_mirai, |el| el.bg(theme.success.opacity(0.12)))
-            .hover(move |s| s.bg(hover))
+            .w_full()
             .child(info)
             .child(
                 div()
@@ -454,7 +467,41 @@ impl LocalModelsView {
                     .text_color(theme.text_muted)
                     .child(vm.quant.clone()),
             )
-            .child(action)
+            .child(action);
+
+        div()
+            // Stable id so hover state persists and updates on mouse-move
+            // (not only on scroll-triggered repaints).
+            .id(SharedString::from(format!("model-{}", vm.id)))
+            .flex()
+            .flex_col()
+            .px_4()
+            .rounded_lg()
+            .cursor(CursorStyle::PointingHand)
+            // Mirai-quantized rows get a full green tint (mirai-chat parity),
+            // not just a left edge.
+            .when(vm.is_mirai, |el| el.bg(theme.success.opacity(0.12)))
+            .hover(move |s| s.bg(hover))
+            .child(content)
+            // Active downloads grow a thin progress bar along the bottom edge.
+            .when(active_dl, |el| {
+                el.child(
+                    div().w_full().pb(px(6.)).child(
+                        div()
+                            .w_full()
+                            .h(px(4.))
+                            .rounded_full()
+                            .bg(track)
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(relative(vm.progress.clamp(0., 1.)))
+                                    .rounded_full()
+                                    .bg(fill),
+                            ),
+                    ),
+                )
+            })
     }
 
     fn recommended_row(&self, cx: &mut Context<Self>, vm: &ModelVm, family_key: &str) -> impl IntoElement {

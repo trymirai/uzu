@@ -17,6 +17,7 @@ pub struct IconButton {
     icon_size: f32,
     hit_size: f32,
     color: Option<Hsla>,
+    background: Option<Hsla>,
     disabled: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
@@ -29,6 +30,7 @@ impl IconButton {
             icon_size: 16.0,
             hit_size: 28.0,
             color: None,
+            background: None,
             disabled: false,
             on_click: None,
         }
@@ -36,6 +38,12 @@ impl IconButton {
 
     pub fn color(mut self, color: Hsla) -> Self {
         self.color = Some(color);
+        self
+    }
+
+    /// Persistent fill behind the glyph (e.g. download pause/cancel controls).
+    pub fn background(mut self, background: Hsla) -> Self {
+        self.background = Some(background);
         self
     }
 
@@ -67,6 +75,13 @@ impl RenderOnce for IconButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme().clone();
         let color = self.color.unwrap_or(theme.text_muted);
+        // A button with a persistent fill brightens on hover; a flat one just
+        // picks up the standard hover wash.
+        let hover_bg = if self.background.is_some() {
+            theme.bg_sub_hover
+        } else {
+            theme.bg_hover
+        };
 
         let el = div()
             .id(self.id)
@@ -75,6 +90,7 @@ impl RenderOnce for IconButton {
             .justify_center()
             .size(px(self.hit_size))
             .rounded_md()
+            .when_some(self.background, |el, bg| el.bg(bg))
             .child(IconEl::new(self.icon, color).size(self.icon_size));
 
         if self.disabled {
@@ -82,7 +98,7 @@ impl RenderOnce for IconButton {
         } else {
             let mut el = el
                 .cursor(CursorStyle::PointingHand)
-                .hover(move |s| s.bg(theme.bg_hover));
+                .hover(move |s| s.bg(hover_bg));
             if let Some(handler) = self.on_click {
                 el = el.on_click(move |event, window, cx| handler(event, window, cx));
             }
