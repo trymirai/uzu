@@ -477,7 +477,6 @@ impl SettingsView {
             .flex()
             .items_center()
             .justify_between()
-            .pt_4()
             .child(
                 div()
                     .flex()
@@ -574,7 +573,7 @@ impl SettingsView {
         if settings.auto_eject {
             col = col.child(self.idle_timeout_row(cx, settings.idle_timeout_minutes));
         }
-        col.child(self.feedback_footer(cx)).into_any_element()
+        col.into_any_element()
     }
 
     fn privacy_content(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -652,7 +651,6 @@ impl SettingsView {
                 settings.share_usage_data,
                 SettingKind::ShareUsage,
             ))
-            .child(self.feedback_footer(cx))
             .into_any_element()
     }
 
@@ -1025,14 +1023,37 @@ impl Render for SettingsView {
                     .min_h_0()
                     .child(nav)
                     .child(
+                        // Content column: scrollable body + a pinned feedback
+                        // footer at the bottom (General / Privacy only).
                         div()
-                            .id("settings-content")
                             .flex_1()
                             .min_h_0()
-                            .overflow_y_scroll()
-                            .px_6()
-                            .py_4()
-                            .child(content),
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .id("settings-content")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_scroll()
+                                    .px_6()
+                                    .py_4()
+                                    .child(content),
+                            )
+                            .when(
+                                matches!(self.tab, SettingsTab::General | SettingsTab::Privacy),
+                                |el| {
+                                    el.child(
+                                        div()
+                                            .flex_none()
+                                            .border_t_1()
+                                            .border_color(theme.border)
+                                            .px_6()
+                                            .py_3()
+                                            .child(self.feedback_footer(cx)),
+                                    )
+                                },
+                            ),
                     ),
             );
         if let Some(modal) = modal {
