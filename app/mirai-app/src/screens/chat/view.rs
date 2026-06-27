@@ -11,12 +11,16 @@ use gpui::{
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
     types::{
-        basic::{CancelToken, SamplingMethod},
+        basic::CancelToken,
         model::Model,
         session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
     },
 };
 
+use super::{
+    conversation::{ChatMsg, Role, Version, conversation_for_request},
+    sampling::{SamplingMode, sampling_method},
+};
 use crate::{
     components::{
         Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, Slider, TextInput, Toggle,
@@ -30,105 +34,6 @@ use crate::{
     title_gen,
     toast::{self, ToastKind},
 };
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Role {
-    User,
-    Assistant,
-}
-
-/// Sampling mode (mirrors ui-kit). `Default` uses the model's own config.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SamplingMode {
-    Default,
-    Argmax,
-    Stochastic,
-}
-
-/// One generated version of an assistant reply (regenerate keeps the prior
-/// ones so they can be paged through). User messages have exactly one.
-#[derive(Clone, Default)]
-struct Version {
-    text: String,
-    reasoning: Option<String>,
-    tps: Option<f32>,
-    tokens: Option<u32>,
-    error: bool,
-    /// Display name of the model that produced this version.
-    model_name: Option<String>,
-}
-
-struct ChatMsg {
-    role: Role,
-    versions: Vec<Version>,
-    current: usize,
-    /// Whether the reasoning panel is collapsed. Starts expanded (false) while
-    /// streaming; auto-collapses once the reply body text starts arriving.
-    reasoning_collapsed: bool,
-}
-
-impl ChatMsg {
-    fn user(text: String) -> Self {
-        Self {
-            role: Role::User,
-            versions: vec![Version { text, ..Default::default() }],
-            current: 0,
-            reasoning_collapsed: false,
-        }
-    }
-
-    fn assistant(version: Version) -> Self {
-        Self {
-            role: Role::Assistant,
-            versions: vec![version],
-            current: 0,
-            reasoning_collapsed: false,
-        }
-    }
-
-    fn cur(&self) -> &Version {
-        &self.versions[self.current]
-    }
-
-    fn cur_mut(&mut self) -> &mut Version {
-        &mut self.versions[self.current]
-    }
-}
-
-/// The conversation to send for a reply: prior turns only — the trailing
-/// assistant placeholder being filled is dropped, as are any errored turns —
-/// each as its current version's `(role, text)`.
-fn conversation_for_request(messages: &[ChatMsg]) -> Vec<(Role, String)> {
-    let upto = messages.len().saturating_sub(1);
-    messages[..upto]
-        .iter()
-        .filter(|m| !m.cur().error)
-        .map(|m| (m.role, m.cur().text.clone()))
-        .collect()
-}
-
-/// Map the UI sampling mode + params to a uzu `SamplingMethod`. `Default`
-/// leaves it to the model's own config (`None`); a param of 0 means "off".
-fn sampling_method(
-    mode: SamplingMode,
-    temperature: f32,
-    top_k: u32,
-    top_p: f32,
-    min_p: f32,
-) -> Option<SamplingMethod> {
-    match mode {
-        SamplingMode::Default => None,
-        SamplingMode::Argmax => Some(SamplingMethod::Greedy {}),
-        SamplingMode::Stochastic => Some(SamplingMethod::Stochastic {
-            temperature: Some(temperature as f64),
-            top_k: (top_k > 0).then_some(top_k as i64),
-            top_p: (top_p > 0.0).then_some(top_p as f64),
-            min_p: (min_p > 0.0).then_some(min_p as f64),
-            repetition_penalty: None,
-            suffix_repetition_length: None,
-        }),
-    }
-}
 
 /// Messages bridged from the Tokio reply stream to the UI.
 enum StreamMsg {
@@ -2190,108 +2095,3 @@ impl Render for ChatView {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn msg(role: Role, text: &str, error: bool) -> ChatMsg {
-        ChatMsg {
-            role,
-            versions: vec![Version { text: text.into(), error, ..Default::default() }],
-            current: 0,
-            reasoning_collapsed: false,
-        }
-    }
-
-    #[test]
-    fn user_message_has_single_version() {
-        let m = ChatMsg::user("hi".into());
-        assert_eq!(m.versions.len(), 1);
-        assert_eq!(m.current, 0);
-        assert_eq!(m.cur().text, "hi");
-    }
-
-    // Regenerate pushes a new version and points `current` at it, keeping priors
-    // reachable via the pager.
-    #[test]
-    fn regenerate_keeps_prior_versions() {
-        let mut m = ChatMsg::assistant(Version { text: "v0".into(), ..Default::default() });
-        m.versions.push(Version { text: "v1".into(), ..Default::default() });
-        m.current = m.versions.len() - 1;
-        assert_eq!(m.versions.len(), 2);
-        assert_eq!(m.cur().text, "v1");
-        m.current = 0;
-        assert_eq!(m.cur().text, "v0");
-    }
-
-    #[test]
-    fn request_excludes_trailing_placeholder() {
-        let messages = vec![
-            msg(Role::User, "q1", false),
-            msg(Role::Assistant, "a1", false),
-            msg(Role::User, "q2", false),
-            msg(Role::Assistant, "", false), // placeholder being filled
-        ];
-        let convo = conversation_for_request(&messages);
-        assert_eq!(convo.len(), 3);
-        assert_eq!(convo[0].1, "q1");
-        assert_eq!(convo[2].1, "q2");
-    }
-
-    #[test]
-    fn request_drops_errored_turns() {
-        let messages = vec![
-            msg(Role::User, "q1", false),
-            msg(Role::Assistant, "boom", true), // errored — excluded from history
-            msg(Role::User, "q2", false),
-            msg(Role::Assistant, "", false),
-        ];
-        let convo = conversation_for_request(&messages);
-        assert_eq!(convo.len(), 2);
-        assert_eq!(convo[0].1, "q1");
-        assert_eq!(convo[1].1, "q2");
-    }
-
-    #[test]
-    fn request_empty_when_only_placeholder() {
-        assert!(conversation_for_request(&[msg(Role::Assistant, "", false)]).is_empty());
-    }
-
-    #[test]
-    fn default_mode_leaves_sampling_to_model() {
-        assert!(sampling_method(SamplingMode::Default, 0.7, 0, 0.0, 0.0).is_none());
-    }
-
-    #[test]
-    fn argmax_mode_is_greedy() {
-        assert!(matches!(
-            sampling_method(SamplingMode::Argmax, 0.7, 40, 0.9, 0.1),
-            Some(SamplingMethod::Greedy {})
-        ));
-    }
-
-    #[test]
-    fn stochastic_zero_params_are_off() {
-        match sampling_method(SamplingMode::Stochastic, 0.7, 0, 0.0, 0.0) {
-            Some(SamplingMethod::Stochastic { temperature, top_k, top_p, min_p, .. }) => {
-                assert_eq!(temperature, Some(0.7f32 as f64));
-                assert_eq!(top_k, None);
-                assert_eq!(top_p, None);
-                assert_eq!(min_p, None);
-            }
-            _ => panic!("expected stochastic"),
-        }
-    }
-
-    #[test]
-    fn stochastic_nonzero_params_pass_through() {
-        match sampling_method(SamplingMode::Stochastic, 0.8, 40, 0.9, 0.05) {
-            Some(SamplingMethod::Stochastic { top_k, top_p, min_p, .. }) => {
-                assert_eq!(top_k, Some(40));
-                assert_eq!(top_p, Some(0.9f32 as f64));
-                assert!(min_p.unwrap() > 0.0);
-            }
-            _ => panic!("expected stochastic"),
-        }
-    }
-}
