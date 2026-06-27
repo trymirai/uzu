@@ -3,5 +3,6 @@
 
 mod route;
 mod shell;
+mod sidebar;
 
 pub use shell::MiraiApp;
