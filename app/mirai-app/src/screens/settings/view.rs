@@ -6,11 +6,11 @@
 use std::collections::HashSet;
 
 use gpui::{
-    AnyElement, Context, CursorStyle, Entity, FontWeight, IntoElement, Render, Window, div,
-    prelude::*, px,
+    AnyElement, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, Window,
+    div, prelude::*, px,
 };
 
-use super::clear_data::ClearDataStep;
+use super::{clear_data::ClearDataStep, event::SettingsEvent};
 use crate::{
     components::{Button, ButtonKind, ButtonSize, Icon, IconEl, InputEvent, TextInput, Toggle},
     data_ops::{self, CleanupCategory, CleanupPreview},
@@ -48,6 +48,8 @@ pub struct SettingsView {
     pub(super) clear_data_results: Vec<(CleanupCategory, bool)>,
     pub(super) clear_data_busy: bool,
 }
+
+impl EventEmitter<SettingsEvent> for SettingsView {}
 
 impl SettingsView {
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -148,6 +150,9 @@ impl SettingsView {
                 this.clear_data_busy = false;
                 this.clear_data_results = results;
                 this.clear_data_step = ClearDataStep::Result;
+                // Tell the shell to refresh cached views (e.g. the sidebar's
+                // recent-chats list, now that chats may be deleted).
+                cx.emit(SettingsEvent::DataCleared);
                 cx.notify();
             });
         })

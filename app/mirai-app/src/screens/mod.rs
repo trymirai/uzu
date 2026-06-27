@@ -14,6 +14,6 @@ pub use chats::{ChatsEvent, ChatsView};
 pub use cloud_models::{CloudEvent, CloudModelsView};
 pub use local_models::{LocalModelsEvent, LocalModelsView};
 pub use routers::RoutersView;
-pub use settings::SettingsView;
+pub use settings::{SettingsEvent, SettingsView};
 pub use tts::TtsView;
 pub use welcome::{WelcomeEvent, WelcomeView};

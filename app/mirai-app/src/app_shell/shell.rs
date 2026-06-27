@@ -13,7 +13,8 @@ use crate::{
     persistence, settings_state, toast,
     screens::{
         ChatView, ChatEvent, ChatsEvent, ChatsView, CloudEvent, CloudModelsView, LocalModelsEvent,
-        LocalModelsView, RoutersView, SettingsView, TtsView, WelcomeEvent, WelcomeView,
+        LocalModelsView, RoutersView, SettingsEvent, SettingsView, TtsView, WelcomeEvent,
+        WelcomeView,
     },
     theme::{self, ActiveTheme, FONT_SANS, TEXT_SIZE, layout::FOOTER_HEIGHT},
 };
@@ -97,6 +98,15 @@ impl MiraiApp {
                 cx.notify();
             }
             ChatEvent::OpenLocalModels => this.navigate(Route::LocalModels, cx),
+        })
+        .detach();
+
+        // Clearing data deletes chats on disk; refresh the sidebar's cache.
+        cx.subscribe(&settings, |this, _settings, event, cx| match event {
+            SettingsEvent::DataCleared => {
+                this.recent_chats = persistence::list_chats();
+                cx.notify();
+            }
         })
         .detach();
 

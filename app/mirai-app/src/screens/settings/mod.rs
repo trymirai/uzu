@@ -2,6 +2,8 @@
 //! scrollable content panel.
 
 mod clear_data;
+mod event;
 mod view;
 
+pub use event::SettingsEvent;
 pub use view::SettingsView;
