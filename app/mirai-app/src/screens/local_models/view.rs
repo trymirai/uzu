@@ -461,6 +461,10 @@ impl LocalModelsView {
             .flex_col()
             .px_4()
             .rounded_lg()
+            // Bordered card row, matching the families/providers list.
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.card)
             .cursor(CursorStyle::PointingHand)
             // Mirai-quantized rows get a full green tint (mirai-chat parity),
             // not just a left edge.
