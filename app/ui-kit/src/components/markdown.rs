@@ -12,6 +12,7 @@ use gpui::{
 use crate::{
     components::icon::{Icon, IconEl},
     theme::{FONT_MONO, Theme},
+    tokens,
 };
 
 enum Block {
@@ -105,7 +106,7 @@ fn code_block(lang: &str, code: &str, theme: &Theme, uid: usize) -> AnyElement {
         .py_1()
         .border_b_1()
         .border_color(theme.border)
-        .child(div().text_size(px(11.)).text_color(theme.text_muted).child(label))
+        .child(div().text_size(tokens::font::CAPTION).text_color(theme.text_muted).child(label))
         .child(
             div()
                 .id(SharedString::from(format!("md-copy-{uid}")))
@@ -116,10 +117,10 @@ fn code_block(lang: &str, code: &str, theme: &Theme, uid: usize) -> AnyElement {
                 .py_0p5()
                 .rounded_md()
                 .cursor(CursorStyle::PointingHand)
-                .text_size(px(11.))
+                .text_size(tokens::font::CAPTION)
                 .text_color(theme.text_muted)
                 .hover(|s| s.text_color(theme.text))
-                .child(IconEl::new(Icon::Copy, theme.text_muted).size(12.))
+                .child(IconEl::new(Icon::Copy, theme.text_muted).size(tokens::icon::XS))
                 .child("Copy")
                 .on_click(move |_, _, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(code_for_copy.clone()));
@@ -128,7 +129,7 @@ fn code_block(lang: &str, code: &str, theme: &Theme, uid: usize) -> AnyElement {
 
     let mut body = div()
         .font_family(FONT_MONO)
-        .text_size(px(12.))
+        .text_size(tokens::font::SMALL)
         .text_color(theme.text)
         .p_3()
         .flex()
@@ -176,10 +177,10 @@ fn render_line(line: &str, theme: &Theme, id: usize) -> AnyElement {
     if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
         // h1=24px h2=20px h3=18px h4–h6=14px (body size), matching Electron.
         let size = match hashes {
-            1 => px(24.),
-            2 => px(20.),
-            3 => px(18.),
-            _ => px(14.),
+            1 => tokens::font::H1,
+            2 => tokens::font::H2,
+            3 => tokens::font::H3,
+            _ => tokens::font::BODY,
         };
         let weight = if hashes <= 3 {
             FontWeight::SEMIBOLD
