@@ -1,7 +1,10 @@
 //! Welcome / onboarding screen shown on first launch.
 
+use std::time::Duration;
+
 use gpui::{
-    Context, EventEmitter, FontWeight, Hsla, IntoElement, Render, Window, div, prelude::*, px,
+    Animation, AnimationExt, Context, EventEmitter, FontWeight, Hsla, IntoElement, Render, Window,
+    div, prelude::*, px,
 };
 
 use crate::{
@@ -56,15 +59,11 @@ impl Render for WelcomeView {
             checkbox = checkbox.bg(theme.text).child(IconEl::new(Icon::Check, theme.bg).size(crate::tokens::icon::XS));
         }
 
-        div()
-            .size_full()
+        let content = div()
             .flex()
             .flex_col()
             .items_center()
-            .justify_center()
             .gap_8()
-            .bg(theme.bg)
-            .text_color(theme.text)
             .child(IconEl::new(Icon::Logo, theme.text).size(crate::tokens::icon::HERO))
             .child(
                 div()
@@ -118,6 +117,29 @@ impl Render for WelcomeView {
                             .text_color(theme.text_muted)
                             .child("Share anonymous usage data"),
                     ),
-            )
+            );
+
+        // Fade the content in on first launch. Skipped under `cfg!(test)` so the
+        // `welcome` snapshot captures a deterministic (settled) frame.
+        let content = if cfg!(test) {
+            content.into_any_element()
+        } else {
+            content
+                .with_animation(
+                    "welcome-in",
+                    Animation::new(Duration::from_millis(500)),
+                    |el, delta| el.opacity(1.0 - (1.0 - delta).powi(3)),
+                )
+                .into_any_element()
+        };
+
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme.bg)
+            .text_color(theme.text)
+            .child(content)
     }
 }
