@@ -244,7 +244,7 @@ impl RoutersView {
                     cx.notify();
                 }
             }))
-            .child(VendorIcon::new(vm.vendor.clone()).size(20.).icon_url(vm.icon_url.clone()))
+            .child(VendorIcon::new(vm.vendor.clone()).size(crate::tokens::icon::XL).icon_url(vm.icon_url.clone()))
             .child(
                 div()
                     .flex_1()
@@ -262,7 +262,7 @@ impl RoutersView {
             )
             .child(div().text_xs().text_color(theme.text_muted).child(vm.size.clone()))
             .child(control)
-            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(16.))
+            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(crate::tokens::icon::MD))
     }
 }
 
@@ -385,7 +385,7 @@ impl Render for RoutersView {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(IconEl::new(Icon::Routers, theme.text).size(22.))
+                            .child(IconEl::new(Icon::Routers, theme.text).size(crate::tokens::icon::XXL))
                             .child(
                                 div().text_xl().font_weight(FontWeight::MEDIUM).child("Choose router"),
                             ),

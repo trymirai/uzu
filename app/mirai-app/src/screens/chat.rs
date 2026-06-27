@@ -437,7 +437,7 @@ impl ChatView {
         // Plain muted label — matches Electron's model-selector styling.
         let badge = div()
             .flex_none()
-            .text_size(px(12.))
+            .text_size(crate::tokens::font::SMALL)
             .text_color(theme.text_muted)
             .child(if is_local { "Local" } else { "Cloud" });
 
@@ -451,7 +451,7 @@ impl ChatView {
             .h(px(48.))
             .cursor(gpui::CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover))
-            .child(VendorIcon::new(vendor).size(22.).icon_url(icon_url))
+            .child(VendorIcon::new(vendor).size(crate::tokens::icon::XXL).icon_url(icon_url))
             .child(
                 div()
                     .flex_1()
@@ -550,7 +550,7 @@ impl ChatView {
                             .text_color(theme.text)
                             .child("More local models"),
                     )
-                    .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(16.)),
+                    .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(crate::tokens::icon::MD)),
             )
             .into_any_element()
     }
@@ -578,14 +578,14 @@ impl ChatView {
                 .gap_1()
                 .child(
                     div()
-                        .text_size(px(22.))
+                        .text_size(crate::tokens::font::HEADING)
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(theme.text)
                         .child(value),
                 )
                 .child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(crate::tokens::font::CAPTION)
                         .text_color(theme.text_muted)
                         .child(label),
                 )
@@ -645,7 +645,7 @@ impl ChatView {
                             this.file_upload_open = false;
                             this.pick_file(cx);
                         }))
-                        .child(IconEl::new(Icon::Rename, theme.text_muted).size(16.))
+                        .child(IconEl::new(Icon::Rename, theme.text_muted).size(crate::tokens::icon::MD))
                         .child(
                             div()
                                 .flex()
@@ -658,7 +658,7 @@ impl ChatView {
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(11.))
+                                        .text_size(crate::tokens::font::CAPTION)
                                         .text_color(theme.text_muted)
                                         .child("TXT · MD · JSON · CSV · YAML · PY · JS · TS · RS"),
                                 ),
@@ -907,7 +907,7 @@ impl ChatView {
             .flex()
             .items_center()
             .gap_2()
-            .child(VendorIcon::new(vendor).size(20.).icon_url(icon_url))
+            .child(VendorIcon::new(vendor).size(crate::tokens::icon::XL).icon_url(icon_url))
             .child(
                 div()
                     .flex_1()
@@ -917,7 +917,7 @@ impl ChatView {
                     .text_color(fg)
                     .child(model_name),
             )
-            .child(IconEl::new(Icon::ChevronDown, theme.text_muted).size(16.));
+            .child(IconEl::new(Icon::ChevronDown, theme.text_muted).size(crate::tokens::icon::MD));
 
         let reasoning_row = div()
             .flex()
@@ -1463,7 +1463,7 @@ fn param_checkbox(
         .id(id)
         .size(px(18.))
         .flex_none()
-        .rounded(px(4.))
+        .rounded(crate::tokens::radius::SM)
         .border_1()
         .border_color(theme.border)
         .flex()
@@ -1472,7 +1472,7 @@ fn param_checkbox(
         .cursor(gpui::CursorStyle::PointingHand)
         .on_click(on_click);
     if checked {
-        b = b.bg(theme.text).child(IconEl::new(Icon::Check, theme.bg).size(12.));
+        b = b.bg(theme.text).child(IconEl::new(Icon::Check, theme.bg).size(crate::tokens::icon::XS));
     }
     b
 }
@@ -1659,7 +1659,7 @@ impl Render for ChatView {
                                                     "Thoughts"
                                                 }),
                                         )
-                                        .child(IconEl::new(chevron, theme.text_muted).size(12.));
+                                        .child(IconEl::new(chevron, theme.text_muted).size(crate::tokens::icon::XS));
 
                                     let mut panel = div()
                                         .flex()
@@ -1681,7 +1681,7 @@ impl Render for ChatView {
                                             .max_h(px(180.))
                                             .overflow_y_scroll()
                                             .font_family(FONT_MONO)
-                                            .text_size(px(12.))
+                                            .text_size(crate::tokens::font::SMALL)
                                             .text_color(theme.text_muted)
                                             .child(reasoning.clone());
                                         if streaming_here {
@@ -1851,10 +1851,10 @@ impl Render for ChatView {
                                                     if opening { this.msg_model_picker_open = Some(idx); }
                                                     cx.notify();
                                                 }))
-                                                .child(IconEl::new(Icon::ModelMenu, theme.text_muted).size(14.))
+                                                .child(IconEl::new(Icon::ModelMenu, theme.text_muted).size(crate::tokens::icon::SM))
                                                 .child(
                                                     div()
-                                                        .text_size(px(13.))
+                                                        .text_size(crate::tokens::font::COMPACT)
                                                         .text_color(theme.text_muted)
                                                         .child("Model"),
                                                 ),
@@ -1894,10 +1894,10 @@ impl Render for ChatView {
                                                     if opening { this.perf_open_msg = Some(idx); }
                                                     cx.notify();
                                                 }))
-                                                .child(IconEl::new(Icon::Performance, theme.text_muted).size(14.))
+                                                .child(IconEl::new(Icon::Performance, theme.text_muted).size(crate::tokens::icon::SM))
                                                 .child(
                                                     div()
-                                                        .text_size(px(13.))
+                                                        .text_size(crate::tokens::font::COMPACT)
                                                         .text_color(theme.text_muted)
                                                         .child("Performance"),
                                                 ),
@@ -1946,7 +1946,7 @@ impl Render for ChatView {
                 .cursor(gpui::CursorStyle::PointingHand)
                 .hover(|s| s.bg(theme.button_border_hover))
                 .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
-                .child(IconEl::new(Icon::Stop, theme.text_inverse).size(14.))
+                .child(IconEl::new(Icon::Stop, theme.text_inverse).size(crate::tokens::icon::SM))
                 .into_any_element()
         } else {
             div()
@@ -1960,7 +1960,7 @@ impl Render for ChatView {
                 .cursor(gpui::CursorStyle::PointingHand)
                 .hover(|s| s.bg(theme.button_border_hover))
                 .on_click(cx.listener(|this, _, _, cx| this.submit_from_button(cx)))
-                .child(IconEl::new(Icon::Send, theme.text_inverse).size(16.))
+                .child(IconEl::new(Icon::Send, theme.text_inverse).size(crate::tokens::icon::MD))
                 .into_any_element()
         };
 
@@ -2047,7 +2047,7 @@ impl Render for ChatView {
                                                         .bg(theme.bg_hover)
                                                         .border_1()
                                                         .border_color(theme.border)
-                                                        .text_size(px(11.))
+                                                        .text_size(crate::tokens::font::CAPTION)
                                                         .text_color(theme.text_muted)
                                                         .child(IconEl::new(Icon::Rename, theme.text_muted).size(11.))
                                                         .child(label)
@@ -2108,7 +2108,7 @@ impl Render for ChatView {
                                                                     }))
                                                                     .child(
                                                                         IconEl::new(Icon::Plus, theme.text_muted)
-                                                                            .size(16.),
+                                                                            .size(crate::tokens::icon::MD),
                                                                     ),
                                                             ),
                                                     )
@@ -2154,19 +2154,19 @@ impl Render for ChatView {
                                                                             .when(has_model, |el| {
                                                                                 el.child(
                                                                                     VendorIcon::new(trigger_vendor.clone())
-                                                                                        .size(16.)
+                                                                                        .size(crate::tokens::icon::MD)
                                                                                         .icon_url(trigger_icon_url.clone()),
                                                                                 )
                                                                             })
                                                                             .child(
                                                                                 div()
-                                                                                    .text_size(px(13.))
+                                                                                    .text_size(crate::tokens::font::COMPACT)
                                                                                     .text_color(theme.text_muted)
                                                                                     .child(model_name.clone()),
                                                                             )
                                                                             .child(
                                                                                 IconEl::new(Icon::ChevronDown, theme.text_muted)
-                                                                                    .size(12.),
+                                                                                    .size(crate::tokens::icon::XS),
                                                                             ),
                                                                     )
                                                                     .when(self.model_picker_open, |el| {

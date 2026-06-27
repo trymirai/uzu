@@ -209,7 +209,7 @@ impl ChatsView {
                     .gap_2()
                     .child(
                         IconEl::new(Icon::Plus, theme.text)
-                            .size(16.)
+                            .size(crate::tokens::icon::MD)
                             // The `+` rotates 45° into an `×` when expanded.
                             .rotate(if open { 45. } else { 0. }),
                     )
@@ -276,7 +276,7 @@ impl ChatsView {
         let mut checkbox = div()
             .size(px(18.))
             .flex_none()
-            .rounded(px(4.))
+            .rounded(crate::tokens::radius::SM)
             .border_1()
             .border_color(theme.border)
             .flex()
@@ -284,7 +284,7 @@ impl ChatsView {
             .justify_center();
         if selected {
             checkbox =
-                checkbox.bg(theme.info).child(IconEl::new(Icon::Check, theme.card).size(12.));
+                checkbox.bg(theme.info).child(IconEl::new(Icon::Check, theme.card).size(crate::tokens::icon::XS));
         }
 
         // Leading glyph: checkbox in select mode, otherwise the chat icon.
@@ -292,7 +292,7 @@ impl ChatsView {
         if selection_mode {
             left = left.child(checkbox);
         } else {
-            left = left.child(IconEl::new(Icon::Chats, theme.text_muted).size(18.));
+            left = left.child(IconEl::new(Icon::Chats, theme.text_muted).size(crate::tokens::icon::LG));
         }
         left = left.child(
             div()
@@ -359,7 +359,7 @@ impl ChatsView {
                 .id("select-all")
                 .size(px(18.))
                 .flex_none()
-                .rounded(px(4.))
+                .rounded(crate::tokens::radius::SM)
                 .border_1()
                 .border_color(theme.border)
                 .flex()
@@ -376,7 +376,7 @@ impl ChatsView {
                 }));
             if all {
                 select_all =
-                    select_all.bg(theme.info).child(IconEl::new(Icon::Check, theme.card).size(12.));
+                    select_all.bg(theme.info).child(IconEl::new(Icon::Check, theme.card).size(crate::tokens::icon::XS));
             }
 
             let show_rename = count == 1 && !all;
@@ -463,7 +463,7 @@ impl ChatsView {
                         .border_1()
                         .border_color(theme.border)
                         .bg(theme.card)
-                        .child(IconEl::new(Icon::Search, theme.text_muted).size(14.))
+                        .child(IconEl::new(Icon::Search, theme.text_muted).size(crate::tokens::icon::SM))
                         .child(self.search.clone()),
                 )
                 .child(

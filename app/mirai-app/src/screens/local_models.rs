@@ -291,7 +291,7 @@ impl LocalModelsView {
             .cursor(CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(move |this, _, _, cx| this.open_family(key.clone(), cx)))
-            .child(VendorIcon::new(fam.vendor.clone()).size(20.).icon_url(fam.icon_url.clone()))
+            .child(VendorIcon::new(fam.vendor.clone()).size(crate::tokens::icon::XL).icon_url(fam.icon_url.clone()))
             .child(
                 div()
                     .flex_1()
@@ -312,7 +312,7 @@ impl LocalModelsView {
                     ),
             )
             .child(chips)
-            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(16.))
+            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(crate::tokens::icon::MD))
     }
 
     fn model_row(
@@ -329,7 +329,7 @@ impl LocalModelsView {
         // Left info area — clickable to start a chat when installed. Shows the
         // provider logo (same as the family list), not a generic glyph.
         let vendor_icon = VendorIcon::new(vendor.to_string())
-            .size(20.)
+            .size(crate::tokens::icon::XL)
             .icon_url(icon_url.map(|u| u.to_string()));
         let name_label = div()
             .flex()
@@ -544,7 +544,7 @@ impl LocalModelsView {
                             .child(name),
                     ),
             )
-            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(16.))
+            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(crate::tokens::icon::MD))
     }
 
     fn sort_control(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -597,7 +597,7 @@ impl LocalModelsView {
                             .text_color(theme.text_muted)
                             .child(format!("Sort: {label}")),
                     )
-                    .child(IconEl::new(Icon::ChevronDown, theme.text_muted).size(14.)),
+                    .child(IconEl::new(Icon::ChevronDown, theme.text_muted).size(crate::tokens::icon::SM)),
             )
             .when(self.sort_open, |el| {
                 el.child(
@@ -661,7 +661,7 @@ impl Render for LocalModelsView {
                             .color(theme.text_muted)
                             .on_click(cx.listener(|this, _, _, cx| this.back_to_families(cx))),
                     )
-                    .child(VendorIcon::new(title.1.clone()).size(22.).icon_url(title.2.clone()))
+                    .child(VendorIcon::new(title.1.clone()).size(crate::tokens::icon::XXL).icon_url(title.2.clone()))
                     .child(
                         div()
                             .text_xl()
@@ -686,7 +686,7 @@ impl Render for LocalModelsView {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(IconEl::new(Icon::Devices, theme.text).size(22.))
+                            .child(IconEl::new(Icon::Devices, theme.text).size(crate::tokens::icon::XXL))
                             .child(
                                 div()
                                     .text_xl()

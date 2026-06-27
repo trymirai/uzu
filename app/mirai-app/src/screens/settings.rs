@@ -246,7 +246,7 @@ impl SettingsView {
                 cx.notify();
             }))
             .child(
-                IconEl::new(Icon::Plus, theme.text).size(16.).rotate(if open { 45. } else { 0. }),
+                IconEl::new(Icon::Plus, theme.text).size(crate::tokens::icon::MD).rotate(if open { 45. } else { 0. }),
             )
             .child(
                 div()
@@ -485,7 +485,7 @@ impl SettingsView {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(IconEl::new(Icon::Heart, theme.info).size(16.))
+                    .child(IconEl::new(Icon::Heart, theme.info).size(crate::tokens::icon::MD))
                     .child(
                         div()
                             .text_xs()
@@ -601,7 +601,7 @@ impl SettingsView {
                     .flex_col()
                     .gap_2()
                     .pb_2()
-                    .child(IconEl::new(Icon::Shield, theme.info).size(22.))
+                    .child(IconEl::new(Icon::Shield, theme.info).size(crate::tokens::icon::XXL))
                     .child(
                         div()
                             .text_lg()
@@ -677,7 +677,7 @@ impl SettingsView {
                 .hover(move |s| s.bg(hover))
                 .on_click(move |_, _, cx| cx.open_url(url))
                 .child(div().text_sm().text_color(text).child(label))
-                .child(IconEl::new(Icon::ChevronRight, muted).size(14.))
+                .child(IconEl::new(Icon::ChevronRight, muted).size(crate::tokens::icon::SM))
         };
         let vsep = || div().w(px(1.)).h(px(24.)).bg(border);
 
@@ -692,7 +692,7 @@ impl SettingsView {
                     .flex_col()
                     .gap_2()
                     .p_4()
-                    .child(IconEl::new(Icon::Heart, theme.info).size(22.))
+                    .child(IconEl::new(Icon::Heart, theme.info).size(crate::tokens::icon::XXL))
                     .child(
                         div()
                             .text_lg()
@@ -1013,7 +1013,7 @@ impl Render for SettingsView {
                     .border_color(theme.border)
                     .child(
                         div()
-                            .text_size(px(16.))
+                            .text_size(crate::tokens::font::LABEL)
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(theme.text)
                             .child("Settings"),
@@ -1096,7 +1096,7 @@ fn legal_row(id: &'static str, label: &'static str, url: &'static str, theme: &T
         .hover(move |s| s.bg(hover))
         .on_click(move |_, _, cx| cx.open_url(url))
         .child(div().text_sm().text_color(text).child(label))
-        .child(IconEl::new(Icon::ChevronRight, muted).size(16.))
+        .child(IconEl::new(Icon::ChevronRight, muted).size(crate::tokens::icon::MD))
 }
 
 /// A product row (title + description + chevron) linking to `url`.
@@ -1128,5 +1128,5 @@ fn product_row(
                 .child(div().text_sm().text_color(text).child(title))
                 .child(div().text_xs().text_color(muted).child(desc)),
         )
-        .child(IconEl::new(Icon::ChevronRight, muted).size(14.))
+        .child(IconEl::new(Icon::ChevronRight, muted).size(crate::tokens::icon::SM))
 }

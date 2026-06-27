@@ -6,7 +6,7 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 
-use crate::theme::ActiveTheme;
+use crate::{theme::ActiveTheme, tokens};
 
 type SegHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 

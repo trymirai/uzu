@@ -20,7 +20,7 @@ mod tts_history;
 mod ui_snapshot;
 
 // Design system lives in the `ui-kit` crate; re-export under the old paths.
-pub(crate) use ui_kit::{components, theme};
+pub(crate) use ui_kit::{components, theme, tokens};
 
 use gpui::{
     App, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions, actions,

@@ -256,7 +256,7 @@ impl MiraiApp {
             .text_sm()
             .cursor(CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover_bg))
-            .child(IconEl::new(icon, fg).size(18.))
+            .child(IconEl::new(icon, fg).size(crate::tokens::icon::LG))
             .child(label)
             .on_click(cx.listener(move |this, _event, _window, cx| {
                 this.navigate(target.clone(), cx);
@@ -281,7 +281,7 @@ impl MiraiApp {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(IconEl::new(Icon::Apps, theme.text).size(18.))
+                    .child(IconEl::new(Icon::Apps, theme.text).size(crate::tokens::icon::LG))
                     .child("Apps"),
             )
             .child(div().text_xs().text_color(theme.text_muted).child("Soon"))
@@ -381,7 +381,7 @@ impl MiraiApp {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(IconEl::new(Icon::Settings, theme.text).size(18.))
+                        .child(IconEl::new(Icon::Settings, theme.text).size(crate::tokens::icon::LG))
                         .child("Settings"),
                 )
                 .child(
@@ -389,7 +389,7 @@ impl MiraiApp {
                         if open { Icon::ChevronUp } else { Icon::ChevronDown },
                         theme.text_muted,
                     )
-                    .size(14.),
+                    .size(crate::tokens::icon::SM),
                 ),
         );
 
@@ -415,7 +415,7 @@ impl MiraiApp {
                         .cursor(CursorStyle::PointingHand)
                         .hover(move |s| s.text_color(link_hover).bg(hover))
                         .on_click(move |_, _, cx| cx.open_url(&url))
-                        .child(IconEl::new(icon, muted).size(18.)),
+                        .child(IconEl::new(icon, muted).size(crate::tokens::icon::LG)),
                 );
             }
             wrap = wrap
@@ -564,7 +564,7 @@ impl MiraiApp {
             .border_t_1()
             .border_color(theme.border)
             .text_color(theme.text_muted)
-            .text_size(px(11.))
+            .text_size(crate::tokens::font::CAPTION)
             .child(left)
             .child(div().child(format!("v{APP_VERSION}")))
     }

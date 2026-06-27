@@ -33,7 +33,7 @@ fn feature(icon: Icon, label: &'static str, fg: Hsla) -> impl IntoElement {
         .gap_2()
         .text_color(fg)
         .text_sm()
-        .child(IconEl::new(icon, fg).size(16.))
+        .child(IconEl::new(icon, fg).size(crate::tokens::icon::MD))
         .child(label)
 }
 
@@ -46,14 +46,14 @@ impl Render for WelcomeView {
         let mut checkbox = div()
             .size(px(18.))
             .flex_none()
-            .rounded(px(4.))
+            .rounded(crate::tokens::radius::SM)
             .border_1()
             .border_color(theme.border)
             .flex()
             .items_center()
             .justify_center();
         if share {
-            checkbox = checkbox.bg(theme.text).child(IconEl::new(Icon::Check, theme.bg).size(12.));
+            checkbox = checkbox.bg(theme.text).child(IconEl::new(Icon::Check, theme.bg).size(crate::tokens::icon::XS));
         }
 
         div()
@@ -65,7 +65,7 @@ impl Render for WelcomeView {
             .gap_8()
             .bg(theme.bg)
             .text_color(theme.text)
-            .child(IconEl::new(Icon::Logo, theme.text).size(64.))
+            .child(IconEl::new(Icon::Logo, theme.text).size(crate::tokens::icon::HERO))
             .child(
                 div()
                     .flex()
@@ -74,7 +74,7 @@ impl Render for WelcomeView {
                     .gap_2()
                     .child(
                         div()
-                            .text_size(px(32.))
+                            .text_size(crate::tokens::font::DISPLAY)
                             .font_weight(FontWeight::MEDIUM)
                             .child("Welcome to Mirai"),
                     )

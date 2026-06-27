@@ -203,7 +203,7 @@ impl CloudModelsView {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(VendorIcon::new(provider.label.to_string()).size(16.))
+                    .child(VendorIcon::new(provider.label.to_string()).size(crate::tokens::icon::MD))
                     .child(
                         div()
                             .flex()
@@ -355,7 +355,7 @@ impl CloudModelsView {
                     cx.emit(CloudEvent::UseModel(model));
                 }
             }))
-            .child(VendorIcon::new(vm.vendor.clone()).size(20.).icon_url(vm.icon_url.clone()))
+            .child(VendorIcon::new(vm.vendor.clone()).size(crate::tokens::icon::XL).icon_url(vm.icon_url.clone()))
             .child(
                 div()
                     .flex_1()
@@ -365,7 +365,7 @@ impl CloudModelsView {
                     .text_color(theme.text)
                     .child(vm.name.clone()),
             )
-            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(16.))
+            .child(IconEl::new(Icon::ChevronRight, theme.text_muted).size(crate::tokens::icon::MD))
     }
 }
 
@@ -430,7 +430,7 @@ impl Render for CloudModelsView {
                             .pt_4()
                             .pb_1()
                             .px_3()
-                            .child(VendorIcon::new(vm.vendor.clone()).size(16.))
+                            .child(VendorIcon::new(vm.vendor.clone()).size(crate::tokens::icon::MD))
                             .child(
                                 div()
                                     .text_xs()
@@ -468,7 +468,7 @@ impl Render for CloudModelsView {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(IconEl::new(Icon::ModelMenu, theme.text).size(22.))
+                            .child(IconEl::new(Icon::ModelMenu, theme.text).size(crate::tokens::icon::XXL))
                             .child(
                                 div()
                                     .text_xl()

@@ -368,20 +368,20 @@ impl TtsView {
                 .py_0p5()
                 .rounded_md()
                 .bg(theme.success.opacity(0.12))
-                .text_size(px(11.))
+                .text_size(crate::tokens::font::CAPTION)
                 .text_color(theme.success)
                 .child(IconEl::new(Icon::Check, theme.success).size(11.))
                 .child("Installed")
                 .into_any_element()
         } else if vm.downloading {
             div()
-                .text_size(px(11.))
+                .text_size(crate::tokens::font::CAPTION)
                 .text_color(theme.text_muted)
                 .child(format!("Downloading {:.0}%", vm.progress * 100.0))
                 .into_any_element()
         } else {
             div()
-                .text_size(px(11.))
+                .text_size(crate::tokens::font::CAPTION)
                 .text_color(theme.text_muted)
                 .child("Not installed")
                 .into_any_element()
@@ -418,7 +418,7 @@ impl TtsView {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(VendorIcon::new(vm.vendor.clone()).size(22.).icon_url(vm.icon_url.clone()))
+                    .child(VendorIcon::new(vm.vendor.clone()).size(crate::tokens::icon::XXL).icon_url(vm.icon_url.clone()))
                     .child(
                         div()
                             .flex_1()
@@ -588,7 +588,7 @@ impl Render for TtsView {
                     .py_0p5()
                     .rounded_md()
                     .bg(theme.bg_sub)
-                    .child(VendorIcon::new(vm.vendor.clone()).size(16.).icon_url(vm.icon_url.clone()))
+                    .child(VendorIcon::new(vm.vendor.clone()).size(crate::tokens::icon::MD).icon_url(vm.icon_url.clone()))
                     .child(div().text_sm().text_color(theme.text_muted).child(vm.name.clone()))
             });
 
@@ -665,7 +665,7 @@ impl Render for TtsView {
                     .px_5()
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(IconEl::new(Icon::Speech, theme.text).size(20.))
+                    .child(IconEl::new(Icon::Speech, theme.text).size(crate::tokens::icon::XL))
                     .child(
                         div()
                             .text_lg()
