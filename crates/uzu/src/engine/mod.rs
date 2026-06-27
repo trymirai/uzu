@@ -222,6 +222,21 @@ impl Engine {
     ) {
         self.backends.lock().await.insert(backend.identifier(), backend);
     }
+
+    /// Register an OpenAI-compatible provider's registry *and* execution backend
+    /// in one step, so a model connected at runtime is immediately usable —
+    /// `add_registry` alone leaves `chat` failing with `BackendNotFound` until
+    /// restart. Mirrors the provider setup `Engine::new` does at startup.
+    pub async fn connect_openai(
+        &self,
+        config: OpenAIConfig,
+    ) -> Result<(), EngineError> {
+        let registry = OpenAIRegistry::new(config.clone())?;
+        let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;
+        self.add_registry(Box::new(registry)).await?;
+        self.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
+        Ok(())
+    }
 }
 
 #[bindings::export(Implementation)]
