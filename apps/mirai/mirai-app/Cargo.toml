@@ -12,15 +12,15 @@ path = "src/main.rs"
 # Local LLM inference engine (this repo). Metal backend only for now; grammar /
 # structured-output (capability-grammar, a heavy C++ xgrammar build) is added
 # later when needed.
-uzu = { path = "../../crates/uzu", default-features = false, features = ["backend-metal"] }
+uzu = { path = "../../../crates/uzu", default-features = false, features = ["backend-metal"] }
 
 # GPUI UI framework + platform entry point + Tokio bridge, from the local Zed
 # checkout. `font-kit` on gpui_platform is required for glyph rasterization.
-gpui = { path = "../../external/zed/crates/gpui" }
-gpui_platform = { path = "../../external/zed/crates/gpui_platform", features = ["font-kit"] }
-gpui_tokio = { path = "../../external/zed/crates/gpui_tokio" }
+gpui = { path = "../../../external/zed/crates/gpui" }
+gpui_platform = { path = "../../../external/zed/crates/gpui_platform", features = ["font-kit"] }
+gpui_tokio = { path = "../../../external/zed/crates/gpui_tokio" }
 # HTTP client for loading remote provider-icon images via gpui's image cache.
-reqwest_client = { path = "../../external/zed/crates/reqwest_client" }
+reqwest_client = { path = "../../../external/zed/crates/reqwest_client" }
 
 # Mirai design system (theme + reusable components), mirroring the structure of
 # @trymirai-schemas/ui-kit. The app builds its UI from this crate.
@@ -50,7 +50,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 insta = { version = "1", features = ["json"] }
 # Headless offscreen rendering for visual snapshot tests (render_to_image →
 # PNG via Metal, no window / OS screenshot). test-support unlocks the API.
-gpui = { path = "../../external/zed/crates/gpui", features = ["test-support"] }
-gpui_platform = { path = "../../external/zed/crates/gpui_platform", features = ["test-support", "font-kit"] }
+gpui = { path = "../../../external/zed/crates/gpui", features = ["test-support"] }
+gpui_platform = { path = "../../../external/zed/crates/gpui_platform", features = ["test-support", "font-kit"] }
 # PNG decode for comparing renders against committed golden baselines.
 image = "0.25"

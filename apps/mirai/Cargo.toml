@@ -1,11 +1,12 @@
-# Standalone workspace for the Mirai GPUI app.
+# Standalone workspace for the Mirai GPUI app (lives under `apps/`, alongside
+# the Swift `apps/playground`).
 #
-# This is intentionally NOT a member of the uzu workspace at the repo root.
-# GPUI (in ../external/zed) resolves dozens of `*.workspace = true` deps against
-# Zed's workspace and relies on a `[patch.crates-io]` override that only applies
-# from the root workspace cargo is invoked from. Keeping `app/` as its own
-# workspace lets the path-deps on GPUI and uzu each resolve against their own
-# parent workspaces, and lets us replicate Zed's patch table here.
+# Intentionally NOT a member of the uzu workspace at the repo root. GPUI (in
+# ../../external/zed) resolves dozens of `*.workspace = true` deps against Zed's
+# workspace and relies on a `[patch.crates-io]` override that only applies from
+# the workspace root cargo is invoked from. A dedicated workspace here keeps
+# those Zed-specific patches out of the published uzu engine's workspace, while
+# the path-deps on GPUI and uzu each still resolve against their own parents.
 [workspace]
 members = ["mirai-app", "ui-kit"]
 resolver = "3"
