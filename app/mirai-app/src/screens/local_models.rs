@@ -287,6 +287,10 @@ impl LocalModelsView {
             .h(px(56.))
             .px_4()
             .rounded_lg()
+            // Bordered card row (mirai-chat parity).
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.card)
             .cursor(CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(move |this, _, _, cx| this.open_family(key.clone(), cx)))
@@ -669,7 +673,7 @@ impl Render for LocalModelsView {
         });
 
         // Body list.
-        let mut list = div().flex().flex_col().gap_1().pb_6();
+        let mut list = div().flex().flex_col().gap_2().pb_6();
         match &selected {
             None => {
                 if let Some((vm, key)) = recommended {
