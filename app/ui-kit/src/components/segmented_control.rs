@@ -77,8 +77,12 @@ impl RenderOnce for SegmentedControl {
                 .child(seg.label);
 
             if is_sel {
-                // Active segment is a light pill with dark text (mirai-chat parity).
-                cell = cell.bg(gpui::white()).text_color(theme.bg).font_weight(FontWeight::MEDIUM);
+                // Active segment is a white pill (mirai-chat parity), so its text
+                // must be the theme's dark tone — `bg` in dark mode, `text` in
+                // light mode (`bg`/`text_inverse` are light in light mode, which
+                // left the label invisible on the white pill).
+                let label_color = if theme.dark { theme.bg } else { theme.text };
+                cell = cell.bg(gpui::white()).text_color(label_color).font_weight(FontWeight::MEDIUM);
             } else {
                 let hover = theme.bg_hover;
                 cell = cell.text_color(theme.text_muted).hover(move |s| s.bg(hover));
