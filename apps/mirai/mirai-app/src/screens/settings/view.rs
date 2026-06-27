@@ -160,7 +160,9 @@ impl SettingsView {
                 this.clear_data_step = ClearDataStep::Result;
                 // Tell the shell to refresh cached views (e.g. the sidebar's
                 // recent-chats list, now that chats may be deleted).
-                cx.emit(SettingsEvent::DataCleared);
+                cx.emit(SettingsEvent::DataCleared {
+                    dialogs: selected.contains(&CleanupCategory::Dialogs),
+                });
                 cx.notify();
             });
         })

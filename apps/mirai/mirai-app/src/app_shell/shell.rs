@@ -110,8 +110,14 @@ impl MiraiApp {
 
         // Clearing data deletes chats on disk; refresh the sidebar's cache.
         cx.subscribe(&settings, |this, _settings, event, cx| match event {
-            SettingsEvent::DataCleared => {
+            SettingsEvent::DataCleared {
+                dialogs,
+            } => {
                 this.recent_chats = persistence::list_chats();
+                // Reset the live chat so it can't re-save a now-deleted dialog.
+                if *dialogs {
+                    this.chat.update(cx, |chat, cx| chat.start_new(cx));
+                }
                 cx.notify();
             },
         })
