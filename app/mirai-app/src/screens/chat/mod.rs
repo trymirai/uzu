@@ -6,6 +6,7 @@ mod conversation;
 mod overlays;
 mod params;
 mod sampling;
+mod state;
 mod stream;
 mod view;
 

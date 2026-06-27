@@ -37,37 +37,37 @@ pub(super) enum StreamMsg {
 
 impl ChatView {
     pub(super) fn send(&mut self, text: String, cx: &mut Context<Self>) {
-        if self.streaming {
+        if self.state.streaming {
             return;
         }
         let text = text.trim().to_string();
-        if text.is_empty() && self.attached_files.is_empty() {
+        if text.is_empty() && self.state.attached_files.is_empty() {
             return;
         }
         // Append attached files as fenced code blocks (Electron parity).
-        let full_text = if self.attached_files.is_empty() {
+        let full_text = if self.state.attached_files.is_empty() {
             text
         } else {
             let mut s = text;
-            for (name, ext, content) in self.attached_files.drain(..) {
+            for (name, ext, content) in self.state.attached_files.drain(..) {
                 s.push_str(&format!("\n\n```{ext}\n# {name}\n{content}\n```"));
             }
             s
         };
-        let first_user = !self.messages.iter().any(|m| m.role == Role::User);
-        self.messages.push(ChatMsg::user(full_text));
+        let first_user = !self.state.messages.iter().any(|m| m.role == Role::User);
+        self.state.messages.push(ChatMsg::user(full_text));
         if first_user {
-            self.title_pending = true;
+            self.state.title_pending = true;
         }
         self.run_inference(cx);
     }
 
     /// Start a fresh assistant reply for the latest turn.
     fn run_inference(&mut self, cx: &mut Context<Self>) {
-        let model_name = self.model.as_ref().map(|m| m.name());
-        self.messages.push(ChatMsg::assistant(Version { model_name, ..Default::default() }));
-        self.streaming = true;
-        self.waiting_for_model = true;
+        let model_name = self.state.model.as_ref().map(|m| m.name());
+        self.state.messages.push(ChatMsg::assistant(Version { model_name, ..Default::default() }));
+        self.state.streaming = true;
+        self.state.waiting_for_model = true;
         self.spawn_reply(cx);
     }
 
@@ -78,27 +78,27 @@ impl ChatView {
         model: Option<Model>,
         cx: &mut Context<Self>,
     ) {
-        if self.streaming {
+        if self.state.streaming {
             return;
         }
-        let Some(msg) = self.messages.get(msg_idx) else {
+        let Some(msg) = self.state.messages.get(msg_idx) else {
             return;
         };
         if msg.role != Role::Assistant {
             return;
         }
         if let Some(model) = model {
-            self.model = Some(model);
+            self.state.model = Some(model);
             self.clear_session();
         }
-        self.messages.truncate(msg_idx + 1);
-        let model_name = self.model.as_ref().map(|m| m.name());
-        if let Some(last) = self.messages.last_mut() {
+        self.state.messages.truncate(msg_idx + 1);
+        let model_name = self.state.model.as_ref().map(|m| m.name());
+        if let Some(last) = self.state.messages.last_mut() {
             last.versions.push(Version { model_name, ..Default::default() });
             last.current = last.versions.len() - 1;
         }
         self.close_popovers();
-        self.streaming = true;
+        self.state.streaming = true;
         self.spawn_reply(cx);
     }
 
@@ -106,18 +106,18 @@ impl ChatView {
     /// trailing assistant placeholder), and stream into its current version.
     fn spawn_reply(&mut self, cx: &mut Context<Self>) {
         let Some(model) = self.resolved_model(cx) else {
-            if let Some(last) = self.messages.last_mut() {
+            if let Some(last) = self.state.messages.last_mut() {
                 let v = last.cur_mut();
                 v.text = "No local model installed yet. Open Local Models to download one."
                     .to_string();
                 v.error = true;
             }
-            self.streaming = false;
+            self.state.streaming = false;
             cx.notify();
             return;
         };
-        self.model = Some(model.clone());
-        self.loaded_model = Some(model.name());
+        self.state.model = Some(model.clone());
+        self.state.loaded_model = Some(model.name());
 
         // Global instructions + prior messages, excluding the trailing assistant
         // placeholder being filled and any errored turns.
@@ -126,7 +126,7 @@ impl ChatView {
         if !instructions.trim().is_empty() {
             history.push(ChatMessage::system().with_text(instructions));
         }
-        history.extend(conversation_for_request(&self.messages).into_iter().map(
+        history.extend(conversation_for_request(&self.state.messages).into_iter().map(
             |(role, text)| match role {
                 Role::User => ChatMessage::user().with_text(text),
                 Role::Assistant => ChatMessage::assistant().with_text(text),
@@ -139,18 +139,18 @@ impl ChatView {
         };
 
         let method = sampling_method(
-            self.sampling_mode,
-            self.temperature,
-            self.top_k,
-            self.top_p,
-            self.min_p,
+            self.state.sampling_mode,
+            self.state.temperature,
+            self.state.top_k,
+            self.state.top_p,
+            self.state.min_p,
         );
         let mut reply_config = ChatReplyConfig::default();
         if let Some(method) = method {
             reply_config = reply_config.with_sampling_method(method);
         }
         let reply_config = reply_config
-            .with_token_limit((self.max_tokens > 0).then_some(self.max_tokens));
+            .with_token_limit((self.state.max_tokens > 0).then_some(self.state.max_tokens));
 
         let model_id = model.identifier.clone();
         let cached_session = self.cached_session(&model_id);
@@ -217,11 +217,11 @@ impl ChatView {
     fn apply_stream(&mut self, msg: StreamMsg, cx: &mut Context<Self>) {
         match msg {
             StreamMsg::Started(token) => {
-                self.cancel = Some(token);
-                self.waiting_for_model = false;
+                self.state.cancel = Some(token);
+                self.state.waiting_for_model = false;
             }
             StreamMsg::Session(session) => {
-                if let Some(id) = self.model.as_ref().map(|m| m.identifier.clone()) {
+                if let Some(id) = self.state.model.as_ref().map(|m| m.identifier.clone()) {
                     self.store_session(session, &id);
                 }
             }
@@ -232,7 +232,7 @@ impl ChatView {
                 tps,
                 tokens,
             } => {
-                if let Some(last) = self.messages.last_mut() {
+                if let Some(last) = self.state.messages.last_mut() {
                     if last.role == Role::Assistant {
                         let had_text = !last.cur().text.is_empty();
                         let v = last.cur_mut();
@@ -255,12 +255,12 @@ impl ChatView {
                 cx.notify();
             }
             StreamMsg::Done => {
-                self.streaming = false;
-                self.waiting_for_model = false;
-                self.cancel = None;
+                self.state.streaming = false;
+                self.state.waiting_for_model = false;
+                self.state.cancel = None;
                 // If the model produced no text, show a notice rather than an
                 // empty bubble stuck on "…".
-                if let Some(last) = self.messages.last_mut() {
+                if let Some(last) = self.state.messages.last_mut() {
                     if last.role == Role::Assistant {
                         let v = last.cur_mut();
                         if !v.error && v.text.is_empty() {
@@ -274,16 +274,16 @@ impl ChatView {
                 cx.notify();
             }
             StreamMsg::Error(err) => {
-                if let Some(last) = self.messages.last_mut() {
+                if let Some(last) = self.state.messages.last_mut() {
                     if last.role == Role::Assistant {
                         let v = last.cur_mut();
                         v.text = format!("Error: {err}");
                         v.error = true;
                     }
                 }
-                self.streaming = false;
-                self.waiting_for_model = false;
-                self.cancel = None;
+                self.state.streaming = false;
+                self.state.waiting_for_model = false;
+                self.state.cancel = None;
                 crate::toast::push(cx, "Inference failed", crate::toast::ToastKind::Error);
                 cx.notify();
             }
@@ -291,23 +291,23 @@ impl ChatView {
     }
 
     pub(super) fn stop(&mut self, cx: &mut Context<Self>) {
-        if let Some(token) = &self.cancel {
+        if let Some(token) = &self.state.cancel {
             token.cancel();
         }
-        self.streaming = false;
-        self.waiting_for_model = false;
-        self.cancel = None;
+        self.state.streaming = false;
+        self.state.waiting_for_model = false;
+        self.state.cancel = None;
         cx.notify();
     }
 
     fn maybe_generate_title(&mut self, cx: &mut Context<Self>) {
-        if !self.title_pending {
+        if !self.state.title_pending {
             return;
         }
-        let Some(model) = self.model.clone() else {
+        let Some(model) = self.state.model.clone() else {
             return;
         };
-        let Some(user_text) = self
+        let Some(user_text) = self.state
             .messages
             .iter()
             .find(|m| m.role == Role::User)
@@ -315,7 +315,7 @@ impl ChatView {
         else {
             return;
         };
-        self.title_pending = false;
+        self.state.title_pending = false;
 
         let Some(engine) = engine::try_engine(cx) else {
             return;
@@ -328,7 +328,7 @@ impl ChatView {
         cx.spawn(async move |this, cx| {
             if let Some(Ok(title)) = rx.next().await {
                 let _ = this.update(cx, |view, cx| {
-                    view.chat_title = title;
+                    view.state.chat_title = title;
                     view.save();
                     cx.emit(ChatEvent::Updated);
                     cx.notify();

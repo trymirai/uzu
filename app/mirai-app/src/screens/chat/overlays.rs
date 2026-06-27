@@ -31,7 +31,7 @@ impl ChatView {
             "py", "js", "ts", "tsx", "jsx", "rs", "html", "css", "xml",
         ];
 
-        if self.attached_files.len() >= MAX_FILES {
+        if self.state.attached_files.len() >= MAX_FILES {
             toast::push(cx, "Maximum 5 files per message", ToastKind::Info);
             return;
         }
@@ -72,8 +72,8 @@ impl ChatView {
                             .unwrap_or("file")
                             .to_string();
                         let _ = this.update(cx, |this, cx| {
-                            if this.attached_files.len() < MAX_FILES {
-                                this.attached_files.push((name, ext, content));
+                            if this.state.attached_files.len() < MAX_FILES {
+                                this.state.attached_files.push((name, ext, content));
                                 cx.notify();
                             }
                         });
@@ -187,7 +187,7 @@ impl ChatView {
                 if let Some(msg_idx) = for_message {
                     this.regenerate_at_with_model(msg_idx, Some(model.clone()), cx);
                 } else {
-                    this.model = Some(model.clone());
+                    this.state.model = Some(model.clone());
                     this.clear_session();
                     this.close_popovers();
                     cx.notify();
@@ -283,7 +283,7 @@ impl ChatView {
         cur: &Version,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        if self.perf_open_msg != Some(msg_idx) {
+        if self.state.perf_open_msg != Some(msg_idx) {
             return None;
         }
         let theme = cx.theme().clone();
@@ -338,7 +338,7 @@ impl ChatView {
     }
 
     pub(super) fn file_upload_panel(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        if !self.file_upload_open {
+        if !self.state.file_upload_open {
             return None;
         }
         let theme = cx.theme().clone();
@@ -364,7 +364,7 @@ impl ChatView {
                         .cursor(gpui::CursorStyle::PointingHand)
                         .hover(move |s| s.bg(hover))
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.file_upload_open = false;
+                            this.state.file_upload_open = false;
                             this.pick_file(cx);
                         }))
                         .child(IconEl::new(Icon::Rename, theme.text_muted).size(crate::tokens::icon::MD))
