@@ -297,6 +297,18 @@ fn render_chat() {
     });
 }
 
+// The file-upload panel must float above the composer (anchored), not grow it.
+#[test]
+fn render_chat_upload() {
+    render_png("chat-upload", 1200.0, 800.0, |_, cx| {
+        let store = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
+        let cloud = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
+        let v = cx.new(|cx| screens::ChatView::new(store, cloud, cx));
+        v.update(cx, |c, cx| c.open_file_upload(cx));
+        v
+    });
+}
+
 /// A two-message conversation exercising markdown (bold, code block, list,
 /// inline code), reasoning, and perf stats.
 fn sample_stored_chat() -> StoredChat {

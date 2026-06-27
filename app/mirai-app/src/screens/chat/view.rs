@@ -191,6 +191,13 @@ impl ChatView {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
+    pub fn open_file_upload(&mut self, cx: &mut Context<Self>) {
+        self.close_popovers();
+        self.file_upload_open = true;
+        cx.notify();
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn open_perf_panel(&mut self, msg_idx: usize, cx: &mut Context<Self>) {
         self.close_popovers();
         self.perf_open_msg = Some(msg_idx);
@@ -1156,13 +1163,13 @@ impl Render for ChatView {
                                                     .flex()
                                                     .items_center()
                                                     .justify_between()
-                                                    .child(
+                                                    .child({
+                                                        // Float the upload panel above the "+" trigger
+                                                        // (deferred/anchored) instead of growing the
+                                                        // composer inline.
+                                                        let upload_panel = self.file_upload_panel(cx);
                                                         div()
-                                                            .flex()
-                                                            .flex_col()
-                                                            .items_start()
-                                                            .gap_2()
-                                                            .children(self.file_upload_panel(cx))
+                                                            .relative()
                                                             .child(
                                                                 div()
                                                                     .id("file-upload-trigger")
@@ -1187,8 +1194,19 @@ impl Render for ChatView {
                                                                         IconEl::new(Icon::Plus, theme.text_muted)
                                                                             .size(crate::tokens::icon::MD),
                                                                     ),
-                                                            ),
-                                                    )
+                                                            )
+                                                            .when_some(upload_panel, |el, panel| {
+                                                                el.child(Self::anchored_popover(
+                                                                    panel,
+                                                                    Anchor::BottomLeft,
+                                                                    |this, _, _, cx| {
+                                                                        this.file_upload_open = false;
+                                                                        cx.notify();
+                                                                    },
+                                                                    cx,
+                                                                ))
+                                                            })
+                                                    })
                                                     .child({
                                                         let mut controls =
                                                             div().flex().items_center().gap(px(10.));
