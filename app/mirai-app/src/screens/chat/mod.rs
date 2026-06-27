@@ -3,6 +3,7 @@
 //! [`sampling`] the sampling-mode mapping, and [`view`] the `ChatView` itself.
 
 mod conversation;
+mod params;
 mod sampling;
 mod view;
 
