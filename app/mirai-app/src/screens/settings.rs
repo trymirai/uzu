@@ -476,6 +476,7 @@ impl SettingsView {
     fn feedback_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         div()
+            .w_full()
             .flex()
             .items_center()
             .justify_between()
