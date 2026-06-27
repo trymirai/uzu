@@ -56,9 +56,18 @@ echo "==> Building $DMG"
 STAGE="$(mktemp -d)"
 cp -R "$APP" "$STAGE/Mirai.app"
 ln -s /Applications "$STAGE/Applications"
+# `.VolumeIcon.icns` at the volume root + the volume's custom-icon attribute
+# gives the mounted disk image its icon in Finder. That attribute can only be
+# set on a writable image, so build UDRW, stamp it, then compress to UDZO.
+cp "$SCRIPT_DIR/resources/VolumeIcon.icns" "$STAGE/.VolumeIcon.icns"
+RW="$(mktemp -d)/rw.dmg"
+hdiutil create -volname "Mirai" -srcfolder "$STAGE" -fs HFS+ -format UDRW -ov "$RW" >/dev/null
+MNT="$(hdiutil attach "$RW" -nobrowse -noverify | grep Volumes | awk '{print $3}')"
+SetFile -a C "$MNT"
+hdiutil detach "$MNT" >/dev/null
 rm -f "$DMG"
-hdiutil create -volname "Mirai" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
-rm -rf "$STAGE"
+hdiutil convert "$RW" -format UDZO -o "$DMG" >/dev/null
+rm -rf "$STAGE" "$(dirname "$RW")"
 
 echo "==> Done:"
 echo "    $APP"
