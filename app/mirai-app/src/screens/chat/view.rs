@@ -692,8 +692,10 @@ impl Render for ChatView {
                                     .rounded_lg()
                                     .bg(theme.bg_hover)
                                     .text_color(theme.text)
-                                    .child(crate::components::markdown::markdown(
-                                        &cur.text, &theme, idx,
+                                    .child(crate::components::markdown::render(
+                                        &cur.parsed_markdown(),
+                                        &theme,
+                                        idx,
                                     )),
                             )
                         .into_any_element(),
@@ -819,7 +821,11 @@ impl Render for ChatView {
                                 .w_full()
                                 .min_w_0()
                                 .text_color(theme.text)
-                                .child(crate::components::markdown::markdown(&cur.text, &theme, idx))
+                                .child(crate::components::markdown::render(
+                                    &cur.parsed_markdown(),
+                                    &theme,
+                                    idx,
+                                ))
                                 .into_any_element()
                         };
                         block = block.child(body);

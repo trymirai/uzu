@@ -1,6 +1,10 @@
 //! The chat conversation model: messages, their regenerate-versions, and the
 //! projection sent to the engine for a reply.
 
+use std::cell::RefCell;
+
+use crate::components::markdown::ParsedMarkdown;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Role {
     User,
@@ -18,6 +22,25 @@ pub(super) struct Version {
     pub error: bool,
     /// Display name of the model that produced this version.
     pub model_name: Option<String>,
+    /// Memoized markdown parse of `text`, tagged with the text it was built for.
+    /// The view rebuilds elements each frame but only re-parses when `text`
+    /// changes — see [`Version::parsed_markdown`].
+    pub parsed: RefCell<Option<(String, ParsedMarkdown)>>,
+}
+
+impl Version {
+    /// Borrow the parsed markdown for `self.text`, parsing (and caching) only
+    /// when the text differs from the cached one.
+    pub(super) fn parsed_markdown(&self) -> std::cell::Ref<'_, ParsedMarkdown> {
+        {
+            let mut cache = self.parsed.borrow_mut();
+            let stale = cache.as_ref().map(|(t, _)| t != &self.text).unwrap_or(true);
+            if stale {
+                *cache = Some((self.text.clone(), crate::components::markdown::parse(&self.text)));
+            }
+        }
+        std::cell::Ref::map(self.parsed.borrow(), |c| &c.as_ref().unwrap().1)
+    }
 }
 
 pub(super) struct ChatMsg {

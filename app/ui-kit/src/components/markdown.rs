@@ -1,6 +1,11 @@
 //! Markdown for chat bodies, mirroring ui-kit's `MarkdownRenderer`: code blocks
 //! (with copy), headings, lists, blockquotes, inline bold/italic/code/links
 //! (clickable). No tables/math/syntax-highlight yet.
+//!
+//! Parsing is split from rendering: [`parse`] produces a theme-independent
+//! [`ParsedMarkdown`] (cheap to clone/cache), and [`render`] builds elements
+//! from it. Callers that render the same text every frame (e.g. chat messages)
+//! cache the parse and only rebuild elements, avoiding a per-frame text scan.
 
 use std::ops::Range;
 
@@ -15,12 +20,47 @@ use crate::{
     tokens,
 };
 
+/// A parsed markdown document — theme-independent and cheap to clone, so callers
+/// can cache it and rebuild elements each frame without re-scanning the text.
+#[derive(Clone)]
+pub struct ParsedMarkdown {
+    blocks: Vec<Block>,
+}
+
+#[derive(Clone)]
 enum Block {
-    Text(String),
+    Prose(Vec<Line>),
     Code { lang: String, code: String },
 }
 
-fn parse_blocks(text: &str) -> Vec<Block> {
+#[derive(Clone)]
+enum Line {
+    Blank,
+    Heading { level: u8, inline: Inline },
+    Quote(Inline),
+    Bullet(Inline),
+    Ordered { num: String, inline: Inline },
+    Plain(Inline),
+}
+
+/// Inline text with theme-independent style runs (colors applied at render).
+#[derive(Clone, Default)]
+struct Inline {
+    text: String,
+    runs: Vec<(Range<usize>, RunKind)>,
+    links: Vec<(Range<usize>, String)>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RunKind {
+    Code,
+    Bold,
+    Italic,
+    Link,
+}
+
+/// Parse markdown into a reusable, theme-independent structure.
+pub fn parse(text: &str) -> ParsedMarkdown {
     let mut blocks = Vec::new();
     let mut in_code = false;
     let mut lang = String::new();
@@ -37,7 +77,7 @@ fn parse_blocks(text: &str) -> Vec<Block> {
                 in_code = false;
             } else {
                 if !buf.trim().is_empty() {
-                    blocks.push(Block::Text(buf.trim_matches('\n').to_string()));
+                    blocks.push(parse_prose(&buf));
                 }
                 buf.clear();
                 lang = line.trim_start().trim_start_matches('`').trim().to_string();
@@ -54,25 +94,68 @@ fn parse_blocks(text: &str) -> Vec<Block> {
             code: buf.trim_end_matches('\n').to_string(),
         });
     } else if !buf.trim().is_empty() {
-        blocks.push(Block::Text(buf.trim_matches('\n').to_string()));
+        blocks.push(parse_prose(&buf));
     }
-    blocks
+    ParsedMarkdown { blocks }
 }
 
-/// Renders `text` as a vertical stack of prose + code blocks. `id_seed` must be
-/// unique per message so code-block copy buttons get stable, non-colliding ids.
-pub fn markdown(text: &str, theme: &Theme, id_seed: usize) -> AnyElement {
+fn parse_prose(prose: &str) -> Block {
+    let lines = prose.trim_matches('\n').split('\n').map(parse_line).collect();
+    Block::Prose(lines)
+}
+
+/// Classify one prose line: heading (`#`), blockquote (`> `), unordered
+/// (`- `/`* `) or ordered (`N. `) list item, blank, or plain — and parse its
+/// inline styling.
+fn parse_line(line: &str) -> Line {
+    if line.trim().is_empty() {
+        return Line::Blank;
+    }
+    let trimmed = line.trim_start();
+
+    let hashes = trimmed.chars().take_while(|c| *c == '#').count();
+    if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
+        return Line::Heading {
+            level: hashes as u8,
+            inline: parse_inline(trimmed[hashes + 1..].trim_start()),
+        };
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("> ").or_else(|| trimmed.strip_prefix(">")) {
+        return Line::Quote(parse_inline(rest.trim_start()));
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+        return Line::Bullet(parse_inline(rest));
+    }
+
+    let digits = trimmed.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits > 0 && trimmed[digits..].starts_with(". ") {
+        return Line::Ordered {
+            num: trimmed[..digits].to_string(),
+            inline: parse_inline(&trimmed[digits + 2..]),
+        };
+    }
+
+    // Plain lines keep their original (un-trimmed) text, matching prior behavior.
+    Line::Plain(parse_inline(line))
+}
+
+/// Renders a parsed document as a vertical stack of prose + code blocks.
+/// `id_seed` must be unique per message so code-block copy buttons and link
+/// hit-targets get stable, non-colliding ids.
+pub fn render(parsed: &ParsedMarkdown, theme: &Theme, id_seed: usize) -> AnyElement {
     let mut col = div().flex().flex_col().w_full().min_w_0().gap_2();
     let mut line_no = 0usize;
 
-    for (bi, block) in parse_blocks(text).into_iter().enumerate() {
+    for (bi, block) in parsed.blocks.iter().enumerate() {
         col = col.child(match block {
             // Prose: one element per line so single newlines (lists, breaks)
             // survive, while each line still wraps.
-            Block::Text(prose) => {
+            Block::Prose(lines) => {
                 let mut p = div().flex().flex_col().w_full().min_w_0().gap_1();
-                for line in prose.split('\n') {
-                    if line.trim().is_empty() {
+                for line in lines {
+                    if matches!(line, Line::Blank) {
                         p = p.child(div().h(px(6.)));
                     } else {
                         let lid = id_seed.wrapping_mul(100_000).wrapping_add(line_no);
@@ -82,10 +165,15 @@ pub fn markdown(text: &str, theme: &Theme, id_seed: usize) -> AnyElement {
                 }
                 p.into_any_element()
             }
-            Block::Code { lang, code } => code_block(&lang, &code, theme, id_seed * 64 + bi),
+            Block::Code { lang, code } => code_block(lang, code, theme, id_seed * 64 + bi),
         });
     }
     col.into_any_element()
+}
+
+/// Convenience: parse + render in one call (for callers that don't cache).
+pub fn markdown(text: &str, theme: &Theme, id_seed: usize) -> AnyElement {
+    render(&parse(text), theme, id_seed)
 }
 
 /// A fenced code block: header (language label + copy button) over a monospace
@@ -158,109 +246,95 @@ fn code_block(lang: &str, code: &str, theme: &Theme, uid: usize) -> AnyElement {
 
 /// Wrap prose so long lines wrap inside the chat column instead of overflowing.
 fn prose_wrap(el: AnyElement) -> AnyElement {
-    div()
-        .w_full()
-        .min_w_0()
-        .overflow_hidden()
-        .child(el)
-        .into_any_element()
+    div().w_full().min_w_0().overflow_hidden().child(el).into_any_element()
 }
 
-/// Render one prose line: headings (`#`), unordered (`- `/`* `) and ordered
-/// (`N. `) list items, blockquotes (`> `), and inline styling. `id` keeps link
-/// hit-targets unique.
-fn render_line(line: &str, theme: &Theme, id: usize) -> AnyElement {
-    let trimmed = line.trim_start();
-
-    // Heading: leading #'s followed by a space.
-    let hashes = trimmed.chars().take_while(|c| *c == '#').count();
-    if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
-        // h1=24px h2=20px h3=18px h4–h6=14px (body size), matching Electron.
-        let size = match hashes {
-            1 => tokens::font::H1,
-            2 => tokens::font::H2,
-            3 => tokens::font::H3,
-            _ => tokens::font::BODY,
-        };
-        let weight = if hashes <= 3 {
-            FontWeight::SEMIBOLD
-        } else {
-            FontWeight::MEDIUM
-        };
-        return prose_wrap(
-            div()
-                .text_size(size)
-                .font_weight(weight)
-                .text_color(theme.text)
-                .child(text_el(trimmed[hashes + 1..].trim_start(), theme, id))
-                .into_any_element(),
-        );
-    }
-
-    // Blockquote.
-    if let Some(rest) = trimmed.strip_prefix("> ").or_else(|| trimmed.strip_prefix(">")) {
-        return prose_wrap(
+/// Build one parsed prose line into an element. `id` keeps link hit-targets unique.
+fn render_line(line: &Line, theme: &Theme, id: usize) -> AnyElement {
+    match line {
+        Line::Blank => div().h(px(6.)).into_any_element(),
+        Line::Heading { level, inline } => {
+            // h1=24px h2=20px h3=18px h4–h6=14px (body size), matching Electron.
+            let size = match level {
+                1 => tokens::font::H1,
+                2 => tokens::font::H2,
+                3 => tokens::font::H3,
+                _ => tokens::font::BODY,
+            };
+            let weight =
+                if *level <= 3 { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM };
+            prose_wrap(
+                div()
+                    .text_size(size)
+                    .font_weight(weight)
+                    .text_color(theme.text)
+                    .child(inline_el(inline, theme, id))
+                    .into_any_element(),
+            )
+        }
+        Line::Quote(inline) => prose_wrap(
             div()
                 .border_l_2()
                 .border_color(theme.border)
                 .pl_3()
                 .text_color(theme.text_muted)
-                .child(text_el(rest.trim_start(), theme, id))
+                .child(inline_el(inline, theme, id))
                 .into_any_element(),
-        );
-    }
-
-    // Unordered list item.
-    if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
-        return div()
+        ),
+        Line::Bullet(inline) => div()
             .flex()
             .w_full()
             .min_w_0()
             .gap_2()
             .child(div().flex_none().text_color(theme.text_muted).child("•"))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .child(text_el(rest, theme, id)),
-            )
-            .into_any_element();
-    }
-
-    // Ordered list item: `N. `.
-    let digits = trimmed.chars().take_while(|c| c.is_ascii_digit()).count();
-    if digits > 0 && trimmed[digits..].starts_with(". ") {
-        let num = trimmed[..digits].to_string();
-        return div()
+            .child(div().flex_1().min_w_0().overflow_hidden().child(inline_el(inline, theme, id)))
+            .into_any_element(),
+        Line::Ordered { num, inline } => div()
             .flex()
             .w_full()
             .min_w_0()
             .gap_2()
             .child(div().flex_none().text_color(theme.text_muted).child(format!("{num}.")))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .child(text_el(&trimmed[digits + 2..], theme, id)),
-            )
-            .into_any_element();
+            .child(div().flex_1().min_w_0().overflow_hidden().child(inline_el(inline, theme, id)))
+            .into_any_element(),
+        Line::Plain(inline) => prose_wrap(inline_el(inline, theme, id)),
     }
-
-    prose_wrap(text_el(line, theme, id))
 }
 
-/// Inline text for one line: a `StyledText`, upgraded to an `InteractiveText`
+/// Map a parsed inline run kind to a themed highlight style.
+fn style_for(kind: RunKind, theme: &Theme) -> HighlightStyle {
+    match kind {
+        RunKind::Code => HighlightStyle {
+            background_color: Some(theme.bg_sub),
+            color: Some(theme.text),
+            ..Default::default()
+        },
+        RunKind::Bold => HighlightStyle {
+            font_weight: Some(FontWeight::BOLD),
+            ..Default::default()
+        },
+        RunKind::Italic => HighlightStyle {
+            font_style: Some(FontStyle::Italic),
+            ..Default::default()
+        },
+        RunKind::Link => HighlightStyle {
+            color: Some(theme.info),
+            ..Default::default()
+        },
+    }
+}
+
+/// Build inline text: a `StyledText`, upgraded to an `InteractiveText`
 /// (clickable links opening in the browser) when it contains `[text](url)`.
-fn text_el(line: &str, theme: &Theme, id: usize) -> AnyElement {
-    let (text, runs, links) = inline_runs(line, theme);
-    let styled = StyledText::new(text).with_highlights(runs);
-    if links.is_empty() {
+fn inline_el(inline: &Inline, theme: &Theme, id: usize) -> AnyElement {
+    let runs: Vec<(Range<usize>, HighlightStyle)> =
+        inline.runs.iter().map(|(r, k)| (r.clone(), style_for(*k, theme))).collect();
+    let styled = StyledText::new(inline.text.clone()).with_highlights(runs);
+    if inline.links.is_empty() {
         return styled.into_any_element();
     }
-    let urls: Vec<String> = links.iter().map(|(_, u)| u.clone()).collect();
-    let ranges: Vec<Range<usize>> = links.into_iter().map(|(r, _)| r).collect();
+    let urls: Vec<String> = inline.links.iter().map(|(_, u)| u.clone()).collect();
+    let ranges: Vec<Range<usize>> = inline.links.iter().map(|(r, _)| r.clone()).collect();
     InteractiveText::new(SharedString::from(format!("md-link-{id}")), styled)
         .on_click(ranges, move |ix, _, cx| {
             if let Some(url) = urls.get(ix) {
@@ -271,14 +345,11 @@ fn text_el(line: &str, theme: &Theme, id: usize) -> AnyElement {
 }
 
 /// Parse `**bold**`, `*italic*`, `` `code` ``, and `[text](url)` links into plain
-/// text + styled ranges. Unclosed markers (common mid-stream) consume to end.
-#[allow(clippy::type_complexity)]
-fn inline_runs(
-    line: &str,
-    theme: &Theme,
-) -> (String, Vec<(Range<usize>, HighlightStyle)>, Vec<(Range<usize>, String)>) {
+/// text + theme-independent style runs. Unclosed markers (common mid-stream)
+/// consume to end.
+fn parse_inline(line: &str) -> Inline {
     let mut out = String::new();
-    let mut runs: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+    let mut runs: Vec<(Range<usize>, RunKind)> = Vec::new();
     let mut links: Vec<(Range<usize>, String)> = Vec::new();
     let mut chars = line.chars().peekable();
 
@@ -293,17 +364,10 @@ fn inline_runs(
                     }
                     out.push(nc);
                 }
-                runs.push((
-                    start..out.len(),
-                    HighlightStyle {
-                        background_color: Some(theme.bg_sub),
-                        color: Some(theme.text),
-                        ..Default::default()
-                    },
-                ));
+                runs.push((start..out.len(), RunKind::Code));
             }
             '[' => {
-                // [text](url) → blue link text (url dropped; not yet clickable).
+                // [text](url) → blue link text.
                 let mut link_text = String::new();
                 let mut found_close = false;
                 while let Some(&nc) = chars.peek() {
@@ -326,13 +390,7 @@ fn inline_runs(
                     }
                     let start = out.len();
                     out.push_str(&link_text);
-                    runs.push((
-                        start..out.len(),
-                        HighlightStyle {
-                            color: Some(theme.info),
-                            ..Default::default()
-                        },
-                    ));
+                    runs.push((start..out.len(), RunKind::Link));
                     links.push((start..out.len(), url));
                 } else {
                     // Not a link: emit literally.
@@ -356,13 +414,7 @@ fn inline_runs(
                         None => break,
                     }
                 }
-                runs.push((
-                    start..out.len(),
-                    HighlightStyle {
-                        font_weight: Some(FontWeight::BOLD),
-                        ..Default::default()
-                    },
-                ));
+                runs.push((start..out.len(), RunKind::Bold));
             }
             '*' | '_' => {
                 let marker = c;
@@ -374,55 +426,42 @@ fn inline_runs(
                     }
                     out.push(nc);
                 }
-                runs.push((
-                    start..out.len(),
-                    HighlightStyle {
-                        font_style: Some(FontStyle::Italic),
-                        ..Default::default()
-                    },
-                ));
+                runs.push((start..out.len(), RunKind::Italic));
             }
             _ => out.push(c),
         }
     }
 
-    (out, runs, links)
+    Inline { text: out, runs, links }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Classify a highlight run by its style alone, so snapshots stay
-    /// theme- and color-independent.
-    fn kind(style: &HighlightStyle) -> &'static str {
-        if style.background_color.is_some() {
-            "code"
-        } else if style.font_weight == Some(FontWeight::BOLD) {
-            "bold"
-        } else if style.font_style == Some(FontStyle::Italic) {
-            "italic"
-        } else if style.color.is_some() {
-            "link"
-        } else {
-            "plain"
+    fn kind_name(kind: RunKind) -> &'static str {
+        match kind {
+            RunKind::Code => "code",
+            RunKind::Bold => "bold",
+            RunKind::Italic => "italic",
+            RunKind::Link => "link",
         }
     }
 
     /// Readable structural dump of one inline line.
     fn describe_inline(line: &str) -> String {
-        let (text, runs, links) = inline_runs(line, &Theme::dark());
-        let mut out = format!("text: {text:?}\n");
-        for (range, style) in &runs {
+        let inline = parse_inline(line);
+        let mut out = format!("text: {:?}\n", inline.text);
+        for (range, kind) in &inline.runs {
             out += &format!(
                 "  run {}..{} {} {:?}\n",
                 range.start,
                 range.end,
-                kind(style),
-                &text[range.clone()]
+                kind_name(*kind),
+                &inline.text[range.clone()]
             );
         }
-        for (range, url) in &links {
+        for (range, url) in &inline.links {
             out += &format!("  link {}..{} -> {url}\n", range.start, range.end);
         }
         out
@@ -430,9 +469,22 @@ mod tests {
 
     fn describe_blocks(text: &str) -> String {
         let mut out = String::new();
-        for block in parse_blocks(text) {
+        for block in parse(text).blocks {
             match block {
-                Block::Text(t) => out += &format!("[text] {t:?}\n"),
+                Block::Prose(lines) => {
+                    let joined: Vec<String> = lines
+                        .iter()
+                        .map(|l| match l {
+                            Line::Blank => String::new(),
+                            Line::Heading { inline, .. }
+                            | Line::Quote(inline)
+                            | Line::Bullet(inline)
+                            | Line::Ordered { inline, .. }
+                            | Line::Plain(inline) => inline.text.clone(),
+                        })
+                        .collect();
+                    out += &format!("[text] {:?}\n", joined.join("\n"));
+                }
                 Block::Code { lang, code } => out += &format!("[code:{lang}] {code:?}\n"),
             }
         }
@@ -456,25 +508,25 @@ mod tests {
     // Mid-stream tokens commonly leave a marker open; it must still style to EOL.
     #[test]
     fn unclosed_bold_consumes_to_end() {
-        let (text, runs, _) = inline_runs("half **bold", &Theme::dark());
-        assert_eq!(text, "half bold");
-        assert_eq!(runs.len(), 1);
-        assert_eq!(kind(&runs[0].1), "bold");
+        let inline = parse_inline("half **bold");
+        assert_eq!(inline.text, "half bold");
+        assert_eq!(inline.runs.len(), 1);
+        assert_eq!(inline.runs[0].1, RunKind::Bold);
     }
 
     #[test]
     fn link_url_is_captured() {
-        let (text, _, links) = inline_runs("[uzu](https://github.com/trymirai/uzu)", &Theme::dark());
-        assert_eq!(text, "uzu");
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[0].1, "https://github.com/trymirai/uzu");
+        let inline = parse_inline("[uzu](https://github.com/trymirai/uzu)");
+        assert_eq!(inline.text, "uzu");
+        assert_eq!(inline.links.len(), 1);
+        assert_eq!(inline.links[0].1, "https://github.com/trymirai/uzu");
     }
 
     // A `[text]` with no `(url)` is not a link: emit the brackets literally.
     #[test]
     fn bracket_without_paren_is_literal() {
-        let (text, _, links) = inline_runs("see [note] here", &Theme::dark());
-        assert_eq!(text, "see [note] here");
-        assert!(links.is_empty());
+        let inline = parse_inline("see [note] here");
+        assert_eq!(inline.text, "see [note] here");
+        assert!(inline.links.is_empty());
     }
 }
