@@ -1,7 +1,6 @@
 //! Local Models screen: a family grid and per-family detail list with
-//! download/pause/cancel/delete. Submodules: [`event`] (shell event), [`vm`]
-//! (row/family view-models), [`format`] (pure label helpers), [`view`] (the
-//! `LocalModelsView`). `format_size` is re-exported for the other model screens.
+//! download/pause/cancel/delete. `format_size` is re-exported for the other
+//! model screens.
 
 mod event;
 mod format;

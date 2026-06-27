@@ -35,10 +35,10 @@ pub enum ChatEvent {
 }
 
 pub struct ChatView {
-    /// Pure domain + UI state (TCA "State"). `pub(super)` so the sibling
-    /// `stream`/`overlays` `impl ChatView` blocks can read/write it.
+    /// Domain + UI state; `pub(super)` so the `stream`/`overlays` submodules
+    /// (their own `impl ChatView` blocks) can reach it.
     pub(super) state: ChatState,
-    // GPUI handles — framework plumbing, kept off `ChatState`.
+    // GPUI handles.
     pub(super) store: Entity<ModelsStore>,
     /// Cloud chat models, shown alongside local ones in the model picker.
     pub(super) cloud_store: Entity<ModelsStore>,

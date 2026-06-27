@@ -1,5 +1,4 @@
-//! The multi-step "Clear data" wizard (select categories → confirm → result),
-//! a self-contained `impl SettingsView` builder plus its step enum and helper.
+//! The multi-step "Clear data" wizard (select categories → confirm → result).
 
 use gpui::{
     AnyElement, Context, CursorStyle, FontWeight, IntoElement, SharedString, div, prelude::*, px,

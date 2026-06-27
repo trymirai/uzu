@@ -1,8 +1,5 @@
-//! `ChatState` — the chat's pure domain + UI data, separated from the GPUI
-//! handles (entities, scroll handles, frame counters) that live on `ChatView`.
-//! This is the TCA "State" principle: the data that intent methods mutate and
-//! the view renders, holding no framework plumbing — so it can be reasoned
-//! about (and tested) independently of a window.
+//! `ChatState` — the chat's domain + UI data, kept separate from the GPUI
+//! handles (entities, scroll handles, frame counters) on `ChatView`.
 
 use uzu::{
     session::chat::ChatSession,

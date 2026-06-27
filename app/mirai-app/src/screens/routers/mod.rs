@@ -1,6 +1,5 @@
 //! Routers screen: download/select a classification ("router") model and
-//! classify input text in a playground. [`vm`] holds the row view-model;
-//! [`view`] holds `RoutersView`.
+//! classify input text in a playground.
 
 mod view;
 mod vm;
