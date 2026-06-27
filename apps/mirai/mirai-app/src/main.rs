@@ -22,14 +22,9 @@ mod tts_history;
 mod ui_snapshot;
 
 // Design system lives in the `ui-kit` crate; re-export under the old paths.
-use gpui::{
-    App, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions, actions, point, prelude::*,
-    px, size,
-};
+use gpui::{App, KeyBinding, Menu, MenuItem, actions};
 use gpui_platform::application;
 pub(crate) use ui_kit::{components, theme, tokens};
-
-use crate::app_shell::MiraiApp;
 
 actions!(mirai, [Quit]);
 
@@ -54,7 +49,7 @@ fn main() {
     // `window-all-closed` behaviour).
     app.on_reopen(|cx| {
         if cx.windows().is_empty() {
-            open_main_window(cx);
+            app_shell::open_window(cx);
         } else {
             cx.activate(true);
         }
@@ -88,28 +83,8 @@ fn main() {
             Err(err) => eprintln!("[mirai-app] uzu Engine init failed: {err}"),
         }
 
-        open_main_window(cx);
+        // Menu-bar item lives at App level so it survives window close.
+        menu_bar::init(cx);
+        app_shell::open_window(cx);
     });
-}
-
-/// Open the main window and bring Mirai to the foreground. Used at launch and
-/// on dock-icon reopen.
-fn open_main_window(cx: &mut App) {
-    let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: None,
-                appears_transparent: true,
-                // mirai-chat positions the macOS traffic lights at (20, 18).
-                traffic_light_position: Some(point(px(20.), px(18.))),
-            }),
-            window_min_size: Some(size(px(720.), px(560.))),
-            ..Default::default()
-        },
-        |_, cx| cx.new(|cx| MiraiApp::new(cx)),
-    )
-    .unwrap();
-    cx.activate(true);
 }

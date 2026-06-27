@@ -2,7 +2,10 @@
 //! swaps on the active `Route`, and a bottom footer bar. Navigation is just a
 //! `Route` field on the root view, switched via `cx.listener` + `cx.notify()`.
 
-use gpui::{AnyElement, Context, CursorStyle, Entity, IntoElement, Render, Window, div, prelude::*, px};
+use gpui::{
+    AnyElement, App, Bounds, Context, CursorStyle, Entity, IntoElement, Render, TitlebarOptions, Window, WindowBounds,
+    WindowOptions, div, point, prelude::*, px, size,
+};
 
 use super::route::Route;
 use crate::{
@@ -34,9 +37,6 @@ pub struct MiraiApp {
     pub(super) recent_chats: Vec<persistence::StoredChat>,
     /// Whether the bottom "Settings" menu is expanded (mirai-chat parity).
     pub(super) settings_menu_open: bool,
-    /// The macOS menu-bar status item, present while "Show in menu bar" is on.
-    /// `!Send`; lives on the main-thread entity. Dropping it removes the item.
-    tray: Option<tray_icon::TrayIcon>,
 }
 
 impl MiraiApp {
@@ -49,16 +49,10 @@ impl MiraiApp {
         theme::observe_theme(cx, |_, cx| cx.notify()).detach();
         toast::observe(cx, |_, cx| cx.notify()).detach();
 
-        // Reconcile the menu-bar status item and drain its menu clicks.
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
-                if this.update(cx, |app, cx| app.tick_menu_bar(cx)).is_err() {
-                    break;
-                }
-            }
-        })
-        .detach();
+        // Register as the current root view so the App-level menu-bar item (which
+        // outlives this window) can route clicks here.
+        let weak = cx.entity().downgrade();
+        crate::menu_bar::register_app(cx, weak);
 
         let models = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
         let cloud_store = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
@@ -160,42 +154,22 @@ impl MiraiApp {
             cloud,
             recent_chats: persistence::list_chats(),
             settings_menu_open: false,
-            tray: None,
         }
     }
 
-    /// Keep the menu-bar status item in sync with the "Show in menu bar" toggle
-    /// and route any pending status-item menu clicks. Driven by a short timer
-    /// (`tray-icon`'s `MenuEvent` channel isn't wired into GPUI's run loop).
-    fn tick_menu_bar(
+    /// Route a menu-bar status-item click to a navigation (called by `menu_bar`).
+    pub fn handle_tray_action(
         &mut self,
+        action: crate::menu_bar::TrayAction,
         cx: &mut Context<Self>,
     ) {
-        let want = settings_state::current(cx).show_in_menu_bar;
-        if want && self.tray.is_none() {
-            self.tray = crate::menu_bar::build();
-        } else if !want && self.tray.is_some() {
-            self.tray = None;
-        }
-        while let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
-            match event.id.0.as_str() {
-                crate::menu_bar::OPEN => cx.activate(true),
-                crate::menu_bar::NEW_CHAT => {
-                    self.navigate(Route::Chat(None), cx);
-                    cx.activate(true);
-                },
-                crate::menu_bar::OPEN_CHATS => {
-                    self.navigate(Route::Chats, cx);
-                    cx.activate(true);
-                },
-                crate::menu_bar::SETTINGS => {
-                    self.navigate(Route::Settings, cx);
-                    cx.activate(true);
-                },
-                crate::menu_bar::QUIT => cx.quit(),
-                _ => {},
-            }
-        }
+        use crate::menu_bar::TrayAction;
+        let route = match action {
+            TrayAction::NewChat => Route::Chat(None),
+            TrayAction::OpenChats => Route::Chats,
+            TrayAction::Settings => Route::Settings,
+        };
+        self.navigate(route, cx);
     }
 
     #[cfg(test)]
@@ -357,4 +331,26 @@ impl Render for MiraiApp {
             .child(self.render_footer(cx))
             .children(toast::render_overlay(cx))
     }
+}
+
+/// Open the main app window and bring Mirai to the foreground. Used at launch
+/// and on dock-icon reopen.
+pub fn open_window(cx: &mut App) {
+    let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: None,
+                appears_transparent: true,
+                // mirai-chat positions the macOS traffic lights at (20, 18).
+                traffic_light_position: Some(point(px(20.), px(18.))),
+            }),
+            window_min_size: Some(size(px(720.), px(560.))),
+            ..Default::default()
+        },
+        |_, cx| cx.new(|cx| MiraiApp::new(cx)),
+    )
+    .unwrap();
+    cx.activate(true);
 }

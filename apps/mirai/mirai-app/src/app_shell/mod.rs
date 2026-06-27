@@ -4,4 +4,4 @@ mod route;
 mod shell;
 mod sidebar;
 
-pub use shell::MiraiApp;
+pub use shell::{MiraiApp, open_window};
