@@ -142,12 +142,7 @@ impl LocalModelsView {
                         || q.identifier.to_lowercase().contains("mirai")
                 })
                 .unwrap_or(false);
-            let bytes = row
-                .state
-                .as_ref()
-                .map(|s| s.total_bytes)
-                .filter(|b| *b > 0)
-                .unwrap_or_else(|| row.size_bytes());
+            let bytes = row.display_size_bytes();
             let installed_at = store.installed_at(row.id());
             let vm = ModelVm {
                 id: row.id().to_string(),

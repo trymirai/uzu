@@ -79,6 +79,18 @@ impl ModelRow {
             .unwrap_or(0)
     }
 
+    /// Size to display to the user: the full download total (sum of every
+    /// repo file) when known, falling back to the registry's declared base
+    /// size. mirai-chat shows `state.total_bytes` (`formatSizeLabel`), so the
+    /// `properties.size` fallback is only for rows with no download state yet.
+    pub fn display_size_bytes(&self) -> i64 {
+        self.state
+            .as_ref()
+            .map(|s| s.total_bytes)
+            .filter(|b| *b > 0)
+            .unwrap_or_else(|| self.size_bytes())
+    }
+
     pub fn phase(&self) -> DownloadPhase {
         self.state
             .as_ref()
