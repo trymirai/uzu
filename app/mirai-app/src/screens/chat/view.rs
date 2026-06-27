@@ -3,9 +3,11 @@
 //! uzu reply stream runs on the Tokio runtime and pushes cumulative updates back
 //! to the UI entity.
 
+use std::time::Duration;
+
 use gpui::{
-    Anchor, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render,
-    ScrollHandle, SharedString, Window, div, prelude::*, px,
+    Anchor, Animation, AnimationExt, Context, CursorStyle, Entity, EventEmitter, FontWeight,
+    IntoElement, Render, ScrollHandle, SharedString, Window, div, prelude::*, px,
 };
 use uzu::{session::chat::ChatSession, types::model::Model};
 
@@ -781,7 +783,19 @@ impl Render for ChatView {
                             } else {
                                 "Generating…"
                             };
-                            Loader::new().label(label).into_any_element()
+                            // Gentle "breathing" pulse on the loading row while the
+                            // model warms up / streams (triangle wave 0.5↔1.0).
+                            div()
+                                .child(Loader::new().label(label))
+                                .with_animation(
+                                    "stream-pulse",
+                                    Animation::new(Duration::from_millis(1400)).repeat(),
+                                    |el, delta| {
+                                        let t = 1.0 - (2.0 * delta - 1.0).abs();
+                                        el.opacity(0.5 + 0.5 * t)
+                                    },
+                                )
+                                .into_any_element()
                         } else {
                             div()
                                 .w_full()
