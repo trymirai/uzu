@@ -5,6 +5,7 @@
 mod conversation;
 mod params;
 mod sampling;
+mod stream;
 mod view;
 
 pub use view::{ChatEvent, ChatView};

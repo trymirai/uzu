@@ -3,31 +3,25 @@
 //! uzu reply stream runs on the Tokio runtime and pushes cumulative updates back
 //! to the UI entity.
 
-use futures::{StreamExt, channel::mpsc};
 use gpui::{
     Anchor, App, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement,
     Render, ScrollHandle, SharedString, Window, anchored, deferred, div, prelude::*, px,
 };
 use uzu::{
-    session::chat::{ChatSession, ChatSessionStreamChunk},
-    types::{
-        basic::CancelToken,
-        model::Model,
-        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
-    },
+    session::chat::ChatSession,
+    types::{basic::CancelToken, model::Model},
 };
 
 use super::{
-    conversation::{ChatMsg, Role, Version, conversation_for_request},
+    conversation::{ChatMsg, Role, Version},
     params::{param_checkbox, param_row, round2, slider_param},
-    sampling::{SamplingMode, sampling_method},
+    sampling::SamplingMode,
 };
 use crate::{
     components::{
         Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, TextInput, Toggle,
         VendorIcon,
     },
-    engine,
     models_store::ModelsStore,
     persistence::{self, StoredChat, StoredMessage},
     settings_state,
@@ -36,75 +30,62 @@ use crate::{
     toast::{self, ToastKind},
 };
 
-/// Messages bridged from the Tokio reply stream to the UI.
-enum StreamMsg {
-    Started(CancelToken),
-    Session(ChatSession),
-    DropSession,
-    Update {
-        text: String,
-        reasoning: Option<String>,
-        tps: Option<f32>,
-        tokens: Option<u32>,
-    },
-    Done,
-    Error(String),
-}
-
 pub enum ChatEvent {
     Updated,
     OpenLocalModels,
 }
 
 pub struct ChatView {
-    store: Entity<ModelsStore>,
+    // Fields are `pub(super)` so the sibling `stream` and `overlays` submodules
+    // (which carry their own `impl ChatView` blocks) can read/write them.
+    pub(super) store: Entity<ModelsStore>,
     /// Cloud chat models, shown alongside local ones in the model picker.
-    cloud_store: Entity<ModelsStore>,
-    input: Entity<TextInput>,
-    messages: Vec<ChatMsg>,
-    model: Option<Model>,
-    streaming: bool,
+    pub(super) cloud_store: Entity<ModelsStore>,
+    pub(super) input: Entity<TextInput>,
+    pub(super) messages: Vec<ChatMsg>,
+    pub(super) model: Option<Model>,
+    pub(super) streaming: bool,
     /// True between "send" and the first `Started` token — model is loading.
-    waiting_for_model: bool,
-    cancel: Option<CancelToken>,
-    chat_id: Option<String>,
-    created_at: u64,
-    scroll: ScrollHandle,
+    pub(super) waiting_for_model: bool,
+    pub(super) cancel: Option<CancelToken>,
+    pub(super) chat_id: Option<String>,
+    pub(super) created_at: u64,
+    pub(super) scroll: ScrollHandle,
     /// Auto-scrolls the streaming reasoning panel to its latest line.
-    reasoning_scroll: ScrollHandle,
+    pub(super) reasoning_scroll: ScrollHandle,
     /// Frames remaining to keep re-pinning the scroll to the bottom. A single
     /// `scroll_to_bottom()` lands short because wrapped-text height is only
     /// final after the second layout pass; re-asserting for a few frames lets
     /// the offset converge to the true bottom as `content_size` settles.
-    pin_bottom_frames: u8,
-    model_picker_open: bool,
+    pub(super) pin_bottom_frames: u8,
+    pub(super) model_picker_open: bool,
     /// Message index whose per-message model menu is open.
-    msg_model_picker_open: Option<usize>,
+    pub(super) msg_model_picker_open: Option<usize>,
     /// Message index whose performance popover is open (`None` = closed).
-    perf_open_msg: Option<usize>,
-    file_upload_open: bool,
+    pub(super) perf_open_msg: Option<usize>,
+    pub(super) file_upload_open: bool,
     /// Files attached to the next outgoing message: (display_name, extension, content).
     /// Appended as fenced code blocks when the message is sent, then cleared.
-    attached_files: Vec<(String, String, String)>,
+    pub(super) attached_files: Vec<(String, String, String)>,
     /// Name of the model the UI considers "loaded" (set once a chat runs).
     /// uzu has no unload API, so eject is a UI-level indicator/deselect.
-    loaded_model: Option<String>,
+    pub(super) loaded_model: Option<String>,
     // Generation settings.
-    gen_settings_open: bool,
-    sampling_mode: SamplingMode,
-    temperature: f32,
+    pub(super) gen_settings_open: bool,
+    pub(super) sampling_mode: SamplingMode,
+    pub(super) temperature: f32,
     /// Top-K; 0 = off (None).
-    top_k: u32,
+    pub(super) top_k: u32,
     /// Top-P nucleus; 0.0 = off (None).
-    top_p: f32,
+    pub(super) top_p: f32,
     /// Min-P; 0.0 = off (None).
-    min_p: f32,
+    pub(super) min_p: f32,
     /// Max output tokens; 0 = unlimited.
-    max_tokens: u32,
-    chat_title: String,
-    title_pending: bool,
-    session: Option<ChatSession>,
-    session_model_id: Option<String>,
+    pub(super) max_tokens: u32,
+    pub(super) chat_title: String,
+    pub(super) title_pending: bool,
+    pub(super) session: Option<ChatSession>,
+    pub(super) session_model_id: Option<String>,
 }
 
 impl EventEmitter<ChatEvent> for ChatView {}
@@ -161,19 +142,19 @@ impl ChatView {
         }
     }
 
-    fn clear_session(&mut self) {
+    pub(super) fn clear_session(&mut self) {
         self.session = None;
         self.session_model_id = None;
     }
 
-    fn cached_session(&self, model_id: &str) -> Option<ChatSession> {
+    pub(super) fn cached_session(&self, model_id: &str) -> Option<ChatSession> {
         self.session
             .as_ref()
             .filter(|_| self.session_model_id.as_deref() == Some(model_id))
             .cloned()
     }
 
-    fn store_session(&mut self, session: ChatSession, model_id: &str) {
+    pub(super) fn store_session(&mut self, session: ChatSession, model_id: &str) {
         self.session = Some(session);
         self.session_model_id = Some(model_id.to_string());
     }
@@ -198,7 +179,7 @@ impl ChatView {
         cx.notify();
     }
 
-    fn close_popovers(&mut self) {
+    pub(super) fn close_popovers(&mut self) {
         self.model_picker_open = false;
         self.msg_model_picker_open = None;
         self.perf_open_msg = None;
@@ -670,14 +651,14 @@ impl ChatView {
     /// Keep the message list pinned to the bottom for the next few frames so
     /// the scroll offset converges to the true bottom once wrapped-text height
     /// has settled (a single `scroll_to_bottom` lands short — see the field).
-    fn pin_to_bottom(&mut self) {
+    pub(super) fn pin_to_bottom(&mut self) {
         self.scroll.scroll_to_bottom();
         self.pin_bottom_frames = 8;
     }
 
     /// True when the user is at (or near) the bottom — used to avoid fighting
     /// manual scroll during streaming.
-    fn should_auto_scroll(&self) -> bool {
+    pub(super) fn should_auto_scroll(&self) -> bool {
         let offset = self.scroll.offset();
         let max = self.scroll.max_offset();
         if max.y <= px(0.) {
@@ -686,7 +667,7 @@ impl ChatView {
         offset.y <= -(max.y - px(32.))
     }
 
-    fn save(&mut self) {
+    pub(super) fn save(&mut self) {
         if !self.messages.iter().any(|m| m.role == Role::User) {
             return;
         }
@@ -982,7 +963,7 @@ impl ChatView {
         )
     }
 
-    fn resolved_model(&self, cx: &Context<Self>) -> Option<Model> {
+    pub(super) fn resolved_model(&self, cx: &Context<Self>) -> Option<Model> {
         self.model.clone().or_else(|| {
             self.store
                 .read(cx)
@@ -991,308 +972,6 @@ impl ChatView {
                 .find(|r| r.is_installed())
                 .map(|r| r.model.clone())
         })
-    }
-
-    fn send(&mut self, text: String, cx: &mut Context<Self>) {
-        if self.streaming {
-            return;
-        }
-        let text = text.trim().to_string();
-        if text.is_empty() && self.attached_files.is_empty() {
-            return;
-        }
-        // Append attached files as fenced code blocks (Electron parity).
-        let full_text = if self.attached_files.is_empty() {
-            text
-        } else {
-            let mut s = text;
-            for (name, ext, content) in self.attached_files.drain(..) {
-                s.push_str(&format!("\n\n```{ext}\n# {name}\n{content}\n```"));
-            }
-            s
-        };
-        let first_user = !self.messages.iter().any(|m| m.role == Role::User);
-        self.messages.push(ChatMsg::user(full_text));
-        if first_user {
-            self.title_pending = true;
-        }
-        self.run_inference(cx);
-    }
-
-    /// Start a fresh assistant reply for the latest turn.
-    fn run_inference(&mut self, cx: &mut Context<Self>) {
-        let model_name = self.model.as_ref().map(|m| m.name());
-        self.messages.push(ChatMsg::assistant(Version { model_name, ..Default::default() }));
-        self.streaming = true;
-        self.waiting_for_model = true;
-        self.spawn_reply(cx);
-    }
-
-    /// Re-run an assistant turn (optionally switching model) as a new version.
-    fn regenerate_at_with_model(
-        &mut self,
-        msg_idx: usize,
-        model: Option<Model>,
-        cx: &mut Context<Self>,
-    ) {
-        if self.streaming {
-            return;
-        }
-        let Some(msg) = self.messages.get(msg_idx) else {
-            return;
-        };
-        if msg.role != Role::Assistant {
-            return;
-        }
-        if let Some(model) = model {
-            self.model = Some(model);
-            self.clear_session();
-        }
-        self.messages.truncate(msg_idx + 1);
-        let model_name = self.model.as_ref().map(|m| m.name());
-        if let Some(last) = self.messages.last_mut() {
-            last.versions.push(Version { model_name, ..Default::default() });
-            last.current = last.versions.len() - 1;
-        }
-        self.close_popovers();
-        self.streaming = true;
-        self.spawn_reply(cx);
-    }
-
-    /// Resolve the model, build the request from the conversation (excluding the
-    /// trailing assistant placeholder), and stream into its current version.
-    fn spawn_reply(&mut self, cx: &mut Context<Self>) {
-        let Some(model) = self.resolved_model(cx) else {
-            if let Some(last) = self.messages.last_mut() {
-                let v = last.cur_mut();
-                v.text = "No local model installed yet. Open Local Models to download one."
-                    .to_string();
-                v.error = true;
-            }
-            self.streaming = false;
-            cx.notify();
-            return;
-        };
-        self.model = Some(model.clone());
-        self.loaded_model = Some(model.name());
-
-        // Global instructions + prior messages, excluding the trailing assistant
-        // placeholder being filled and any errored turns.
-        let mut history: Vec<ChatMessage> = Vec::new();
-        let instructions = persistence::global_instructions();
-        if !instructions.trim().is_empty() {
-            history.push(ChatMessage::system().with_text(instructions));
-        }
-        history.extend(conversation_for_request(&self.messages).into_iter().map(
-            |(role, text)| match role {
-                Role::User => ChatMessage::user().with_text(text),
-                Role::Assistant => ChatMessage::assistant().with_text(text),
-            },
-        ));
-
-        let Some(engine) = engine::try_engine(cx) else {
-            self.apply_stream(StreamMsg::Error("engine unavailable".to_string()), cx);
-            return;
-        };
-
-        let method = sampling_method(
-            self.sampling_mode,
-            self.temperature,
-            self.top_k,
-            self.top_p,
-            self.min_p,
-        );
-        let mut reply_config = ChatReplyConfig::default();
-        if let Some(method) = method {
-            reply_config = reply_config.with_sampling_method(method);
-        }
-        let reply_config = reply_config
-            .with_token_limit((self.max_tokens > 0).then_some(self.max_tokens));
-
-        let model_id = model.identifier.clone();
-        let cached_session = self.cached_session(&model_id);
-
-        let (tx, mut rx) = mpsc::unbounded::<StreamMsg>();
-
-        // Producer: run uzu on the Tokio runtime, never touching view state.
-        gpui_tokio::Tokio::spawn(cx, async move {
-            let session = match cached_session {
-                Some(session) => session,
-                None => match engine.chat(model.clone(), ChatConfig::default()).await {
-                    Ok(session) => {
-                        let _ = tx.unbounded_send(StreamMsg::Session(session.clone()));
-                        session
-                    }
-                    Err(err) => {
-                        let _ = tx.unbounded_send(StreamMsg::Error(err.to_string()));
-                        return;
-                    }
-                },
-            };
-            if let Err(err) = session.reset().await {
-                let _ = tx.unbounded_send(StreamMsg::DropSession);
-                let _ = tx.unbounded_send(StreamMsg::Error(format!("{err:?}")));
-                return;
-            }
-            let stream = session.reply_with_stream(history, reply_config).await;
-            let _ = tx.unbounded_send(StreamMsg::Started(stream.cancel_token()));
-            while let Some(chunk) = stream.next().await {
-                match chunk {
-                    ChatSessionStreamChunk::Replies { replies } => {
-                        if let Some(reply) = replies.into_iter().next() {
-                            let _ = tx.unbounded_send(StreamMsg::Update {
-                                text: reply.message.text().unwrap_or_default(),
-                                reasoning: reply.message.reasoning(),
-                                tps: reply.stats.generate_tokens_per_second.map(|v| v as f32),
-                                tokens: reply.stats.tokens_count_output,
-                            });
-                        }
-                    }
-                    ChatSessionStreamChunk::Error { error } => {
-                        let _ = tx.unbounded_send(StreamMsg::Error(format!("{error:?}")));
-                    }
-                }
-            }
-            let _ = tx.unbounded_send(StreamMsg::Done);
-        })
-        .detach();
-
-        // Consumer: fold updates into the trailing assistant message.
-        cx.spawn(async move |this, cx| {
-            while let Some(msg) = rx.next().await {
-                if this.update(cx, |view, cx| view.apply_stream(msg, cx)).is_err() {
-                    break;
-                }
-            }
-        })
-        .detach();
-
-        self.pin_to_bottom();
-        cx.notify();
-    }
-
-    fn apply_stream(&mut self, msg: StreamMsg, cx: &mut Context<Self>) {
-        match msg {
-            StreamMsg::Started(token) => {
-                self.cancel = Some(token);
-                self.waiting_for_model = false;
-            }
-            StreamMsg::Session(session) => {
-                if let Some(id) = self.model.as_ref().map(|m| m.identifier.clone()) {
-                    self.store_session(session, &id);
-                }
-            }
-            StreamMsg::DropSession => self.clear_session(),
-            StreamMsg::Update {
-                text,
-                reasoning,
-                tps,
-                tokens,
-            } => {
-                if let Some(last) = self.messages.last_mut() {
-                    if last.role == Role::Assistant {
-                        let had_text = !last.cur().text.is_empty();
-                        let v = last.cur_mut();
-                        v.text = text;
-                        v.reasoning = reasoning;
-                        v.tps = tps;
-                        v.tokens = tokens;
-                        // Auto-collapse reasoning once the reply body starts
-                        // arriving (mirrors Electron behaviour).
-                        if !had_text && !last.cur().text.is_empty() {
-                            last.reasoning_collapsed = true;
-                        }
-                    }
-                }
-                if self.should_auto_scroll() {
-                    self.pin_to_bottom();
-                }
-                // Keep the live reasoning panel scrolled to its newest line.
-                self.reasoning_scroll.scroll_to_bottom();
-                cx.notify();
-            }
-            StreamMsg::Done => {
-                self.streaming = false;
-                self.waiting_for_model = false;
-                self.cancel = None;
-                // If the model produced no text, show a notice rather than an
-                // empty bubble stuck on "…".
-                if let Some(last) = self.messages.last_mut() {
-                    if last.role == Role::Assistant {
-                        let v = last.cur_mut();
-                        if !v.error && v.text.is_empty() {
-                            v.text = "(The model returned no text.)".to_string();
-                            v.error = true;
-                        }
-                    }
-                }
-                self.save();
-                self.maybe_generate_title(cx);
-                cx.notify();
-            }
-            StreamMsg::Error(err) => {
-                if let Some(last) = self.messages.last_mut() {
-                    if last.role == Role::Assistant {
-                        let v = last.cur_mut();
-                        v.text = format!("Error: {err}");
-                        v.error = true;
-                    }
-                }
-                self.streaming = false;
-                self.waiting_for_model = false;
-                self.cancel = None;
-                crate::toast::push(cx, "Inference failed", crate::toast::ToastKind::Error);
-                cx.notify();
-            }
-        }
-    }
-
-    fn stop(&mut self, cx: &mut Context<Self>) {
-        if let Some(token) = &self.cancel {
-            token.cancel();
-        }
-        self.streaming = false;
-        self.waiting_for_model = false;
-        self.cancel = None;
-        cx.notify();
-    }
-
-    fn maybe_generate_title(&mut self, cx: &mut Context<Self>) {
-        if !self.title_pending {
-            return;
-        }
-        let Some(model) = self.model.clone() else {
-            return;
-        };
-        let Some(user_text) = self
-            .messages
-            .iter()
-            .find(|m| m.role == Role::User)
-            .map(|m| m.cur().text.clone())
-        else {
-            return;
-        };
-        self.title_pending = false;
-
-        let Some(engine) = engine::try_engine(cx) else {
-            return;
-        };
-        let (tx, mut rx) = mpsc::unbounded::<Result<String, String>>();
-        gpui_tokio::Tokio::spawn(cx, async move {
-            let _ = tx.unbounded_send(title_gen::run(&engine, model, &user_text).await);
-        })
-        .detach();
-        cx.spawn(async move |this, cx| {
-            if let Some(Ok(title)) = rx.next().await {
-                let _ = this.update(cx, |view, cx| {
-                    view.chat_title = title;
-                    view.save();
-                    cx.emit(ChatEvent::Updated);
-                    cx.notify();
-                });
-            }
-        })
-        .detach();
     }
 
     fn submit_from_button(&mut self, cx: &mut Context<Self>) {
