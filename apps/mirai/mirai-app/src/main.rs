@@ -45,11 +45,21 @@ fn main() {
         uzu::engine::Engine::new(config).await
     });
 
-    application()
+    let app = application()
         // Real HTTP client so the image cache can fetch remote provider icons.
         .with_http_client(std::sync::Arc::new(reqwest_client::ReqwestClient::new()))
-        .with_assets(assets::Assets::new())
-        .run(move |cx: &mut App| {
+        .with_assets(assets::Assets::new());
+    // macOS keeps the app resident after its last window closes; re-open one
+    // when the dock icon is clicked and none remain (Electron's `activate` /
+    // `window-all-closed` behaviour).
+    app.on_reopen(|cx| {
+        if cx.windows().is_empty() {
+            open_main_window(cx);
+        } else {
+            cx.activate(true);
+        }
+    });
+    app.run(move |cx: &mut App| {
             theme::init(cx);
             settings_state::init(cx);
             // Reflect the real OS login-item state in the persisted "run on
@@ -78,22 +88,28 @@ fn main() {
                 Err(err) => eprintln!("[mirai-app] uzu Engine init failed: {err}"),
             }
 
-            let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(TitlebarOptions {
-                        title: None,
-                        appears_transparent: true,
-                        // mirai-chat positions the macOS traffic lights at (20, 18).
-                        traffic_light_position: Some(point(px(20.), px(18.))),
-                    }),
-                    window_min_size: Some(size(px(720.), px(560.))),
-                    ..Default::default()
-                },
-                |_, cx| cx.new(|cx| MiraiApp::new(cx)),
-            )
-            .unwrap();
-            cx.activate(true);
+            open_main_window(cx);
         });
+}
+
+/// Open the main window and bring Mirai to the foreground. Used at launch and
+/// on dock-icon reopen.
+fn open_main_window(cx: &mut App) {
+    let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: None,
+                appears_transparent: true,
+                // mirai-chat positions the macOS traffic lights at (20, 18).
+                traffic_light_position: Some(point(px(20.), px(18.))),
+            }),
+            window_min_size: Some(size(px(720.), px(560.))),
+            ..Default::default()
+        },
+        |_, cx| cx.new(|cx| MiraiApp::new(cx)),
+    )
+    .unwrap();
+    cx.activate(true);
 }
