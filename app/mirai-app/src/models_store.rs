@@ -54,14 +54,19 @@ impl ModelRow {
         self.model.family.as_ref().map(|f| f.vendor.name())
     }
 
-    /// Remote provider/family logo URL from the model's metadata, preferring the
-    /// given theme. `None` when the family has no icons.
+    /// Remote provider/family logo URL from the model's metadata. Prefers the
+    /// SVG variant (full-color vector — e.g. Google's 4-color "G") over the
+    /// raster fallback, which is often a flat monochrome mark, matching
+    /// mirai-chat's `pickSvgForTheme`. `None` when the family has no icons.
     pub fn icon_url(&self, prefer_dark: bool) -> Option<String> {
         let icons = &self.model.family.as_ref()?.vendor.metadata.icons;
         let want = if prefer_dark { ImageTheme::Dark } else { ImageTheme::Light };
+        let is_svg = |i: &&uzu::types::basic::Image| i.url.ends_with(".svg");
         icons
             .iter()
-            .find(|i| i.theme == want)
+            .find(|i| i.theme == want && is_svg(i))
+            .or_else(|| icons.iter().find(is_svg))
+            .or_else(|| icons.iter().find(|i| i.theme == want))
             .or_else(|| icons.first())
             .map(|i| i.url.clone())
     }
