@@ -1,8 +1,8 @@
 //! Local model families and family detail (download, chat).
 
 use gpui::{
-    Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString, Window, div, prelude::*,
-    px, relative,
+    Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString, Window, deferred, div,
+    prelude::*, px, relative,
 };
 
 use super::{
@@ -568,19 +568,25 @@ impl LocalModelsView {
                     .child(IconEl::new(Icon::ChevronDown, theme.text_muted).size(crate::tokens::icon::SM)),
             )
             .when(self.sort_open, |el| {
+                // `deferred` paints the menu in the top layer so the list rows
+                // below it don't render on top (it stays positioned by the
+                // `.absolute()` offset relative to this `.relative()` trigger).
                 el.child(
-                    div()
-                        .absolute()
-                        .top(px(36.))
-                        .right_0()
-                        .w(px(140.))
-                        .p_1()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.card)
-                        .shadow_md()
-                        .child(menu),
+                    deferred(
+                        div()
+                            .absolute()
+                            .top(px(36.))
+                            .right_0()
+                            .w(px(140.))
+                            .p_1()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(theme.card)
+                            .shadow_md()
+                            .child(menu),
+                    )
+                    .priority(1),
                 )
             })
     }
