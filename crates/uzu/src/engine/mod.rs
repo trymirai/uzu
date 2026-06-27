@@ -176,10 +176,7 @@ impl Engine {
             openai_configs.push(OpenAIConfig::openrouter(openrouter_api_key));
         }
         for config in openai_configs {
-            let registry = OpenAIRegistry::new(config.clone())?;
-            let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;
-            engine.add_registry(Box::new(registry)).await?;
-            engine.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
+            engine.connect_openai(config).await?;
         }
 
         Ok(engine)

@@ -138,6 +138,21 @@ impl ModelsStore {
         self.installed_at.get(id).copied().unwrap_or(0)
     }
 
+    /// Resolve the model to use among installed rows: the current `selected` if
+    /// it's still installed, otherwise the first installed model. Keeps a
+    /// deleted selection from winning over an available fallback.
+    pub fn resolve_installed(
+        &self,
+        selected: Option<&Model>,
+    ) -> Option<Model> {
+        if let Some(model) = selected
+            && self.rows.iter().any(|r| r.model.identifier == model.identifier && r.is_installed())
+        {
+            return Some(model.clone());
+        }
+        self.rows.iter().find(|r| r.is_installed()).map(|r| r.model.clone())
+    }
+
     fn installed_at_path() -> PathBuf {
         crate::persistence::mirai_data_dir().join("installed-at.json")
     }
