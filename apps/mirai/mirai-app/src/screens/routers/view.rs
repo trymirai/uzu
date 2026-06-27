@@ -62,9 +62,15 @@ impl RoutersView {
         &self,
         cx: &Context<Self>,
     ) -> Option<Model> {
-        self.selected
-            .clone()
-            .or_else(|| self.store.read(cx).rows.iter().find(|r| r.is_installed()).map(|r| r.model.clone()))
+        let store = self.store.read(cx);
+        // A selected router that's since been deleted must not win over an
+        // installed fallback.
+        if let Some(model) = &self.selected
+            && store.rows.iter().any(|r| r.model.identifier == model.identifier && r.is_installed())
+        {
+            return Some(model.clone());
+        }
+        store.rows.iter().find(|r| r.is_installed()).map(|r| r.model.clone())
     }
 
     fn classify(
