@@ -41,6 +41,10 @@ reqwest = { version = "0.13.2", features = ["json"] }
 rust-embed = "8"
 # "Run on startup" — registers the bundled `.app` as a macOS login item.
 auto-launch = "0.5"
+# "Show in menu bar" — NSStatusItem + menu (GPUI has no status-item API).
+tray-icon = "0.19"
+# Decode the embedded menu-bar PNG to RGBA for the tray icon.
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 insta = { version = "1", features = ["json"] }

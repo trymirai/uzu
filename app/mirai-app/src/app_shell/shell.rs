@@ -36,6 +36,9 @@ pub struct MiraiApp {
     pub(super) recent_chats: Vec<persistence::StoredChat>,
     /// Whether the bottom "Settings" menu is expanded (mirai-chat parity).
     pub(super) settings_menu_open: bool,
+    /// The macOS menu-bar status item, present while "Show in menu bar" is on.
+    /// `!Send`; lives on the main-thread entity. Dropping it removes the item.
+    tray: Option<tray_icon::TrayIcon>,
 }
 
 impl MiraiApp {
@@ -48,6 +51,19 @@ impl MiraiApp {
         theme::observe_theme(cx, |_, cx| cx.notify()).detach();
         // Repaint when toasts change.
         toast::observe(cx, |_, cx| cx.notify()).detach();
+
+        // Reconcile the menu-bar status item and drain its menu clicks.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(250))
+                    .await;
+                if this.update(cx, |app, cx| app.tick_menu_bar(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
 
         let models = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
         let cloud_store = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
@@ -145,6 +161,38 @@ impl MiraiApp {
             cloud,
             recent_chats: persistence::list_chats(),
             settings_menu_open: false,
+            tray: None,
+        }
+    }
+
+    /// Keep the menu-bar status item in sync with the "Show in menu bar" toggle
+    /// and route any pending status-item menu clicks. Driven by a short timer
+    /// (`tray-icon`'s `MenuEvent` channel isn't wired into GPUI's run loop).
+    fn tick_menu_bar(&mut self, cx: &mut Context<Self>) {
+        let want = settings_state::current(cx).show_in_menu_bar;
+        if want && self.tray.is_none() {
+            self.tray = crate::menu_bar::build();
+        } else if !want && self.tray.is_some() {
+            self.tray = None;
+        }
+        while let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
+            match event.id.0.as_str() {
+                crate::menu_bar::OPEN => cx.activate(true),
+                crate::menu_bar::NEW_CHAT => {
+                    self.navigate(Route::Chat(None), cx);
+                    cx.activate(true);
+                }
+                crate::menu_bar::OPEN_CHATS => {
+                    self.navigate(Route::Chats, cx);
+                    cx.activate(true);
+                }
+                crate::menu_bar::SETTINGS => {
+                    self.navigate(Route::Settings, cx);
+                    cx.activate(true);
+                }
+                crate::menu_bar::QUIT => cx.quit(),
+                _ => {}
+            }
         }
     }
 
