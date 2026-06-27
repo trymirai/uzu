@@ -262,13 +262,7 @@ impl ChatsView {
         let theme = cx.theme().clone();
         let hover_bg = theme.bg_hover;
         let click_id = chat.id.clone();
-        let delete_id = chat.id.clone();
-        let delete_title = chat.title.clone();
-        let count = chat.messages.len();
-        let subtitle = match &chat.model_name {
-            Some(model) => format!("{model} · {count} messages"),
-            None => format!("{count} messages"),
-        };
+        let subtitle = relative_time(chat.updated_at);
 
         // Selection checkbox (built from primitives — no Checkbox component yet).
         let mut checkbox = div()
@@ -285,9 +279,12 @@ impl ChatsView {
                 checkbox.bg(theme.info).child(IconEl::new(Icon::Check, theme.card).size(12.));
         }
 
+        // Leading glyph: checkbox in select mode, otherwise the chat icon.
         let mut left = div().flex().items_center().gap_3();
         if selection_mode {
             left = left.child(checkbox);
+        } else {
+            left = left.child(IconEl::new(Icon::Chats, theme.text_muted).size(18.));
         }
         left = left.child(
             div()
@@ -300,18 +297,30 @@ impl ChatsView {
                         .font_weight(FontWeight::MEDIUM)
                         .child(chat.title.clone()),
                 )
-                .child(div().text_xs().text_color(theme.text_muted).child(subtitle)),
+                .child(
+                    div()
+                        .font_family(crate::theme::FONT_MONO)
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(subtitle),
+                ),
         );
 
-        let mut row = div()
+        // Bordered card row (mirai-chat ChatCard); accent border when selected.
+        let border = if selected { theme.info } else { theme.border };
+        div()
             .id(SharedString::from(chat.id.clone()))
             .flex()
             .items_center()
             .justify_between()
             .gap_3()
-            .h(px(56.))
+            .min_h(px(56.))
             .px_3()
+            .py_2()
             .rounded_lg()
+            .border_1()
+            .border_color(border)
+            .bg(theme.card)
             .cursor(CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover_bg))
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -324,22 +333,8 @@ impl ChatsView {
                     cx.emit(ChatsEvent::Open(click_id.clone()));
                 }
             }))
-            .child(left);
-
-        if !selection_mode {
-            row = row.child(
-                IconButton::new(SharedString::from(format!("del-{}", chat.id)), Icon::Trash)
-                    .color(theme.text_muted)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        // Don't let the click bubble to the row (which would open
-                        // the chat); just raise the delete-confirm modal.
-                        cx.stop_propagation();
-                        this.confirm_delete = Some((delete_id.clone(), delete_title.clone()));
-                        cx.notify();
-                    })),
-            );
-        }
-        row.into_any_element()
+            .child(left)
+            .into_any_element()
     }
 
     /// "Your chats" row (search + Select), or the selection toolbar in select
@@ -424,10 +419,13 @@ impl ChatsView {
                 .mb_3()
                 .child(
                     div().flex().items_center().gap_3().child(select_all).child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.text_muted)
-                            .child(format!("{count} selected")),
+                        div().text_sm().text_color(theme.text_muted).child(if count == 0 {
+                            "Select all".to_string()
+                        } else if all {
+                            "All selected".to_string()
+                        } else {
+                            format!("{count} selected")
+                        }),
                     ),
                 )
                 .child(actions)
@@ -493,10 +491,13 @@ impl Render for ChatsView {
         let filtered: Vec<String> = chats.iter().filter(|c| hit(c)).map(|c| c.id.clone()).collect();
         let toolbar = self.toolbar(cx, filtered, chats_empty);
 
-        let mut list = div().flex().flex_col().gap_1().pb_6();
+        let mut list = div().flex().flex_col().gap_2().pb_6();
         if chats_empty {
             list = list.child(
-                div().py_8().text_color(theme.text_muted).child("No saved chats yet."),
+                div()
+                    .py_8()
+                    .text_color(theme.text_muted)
+                    .child("No chats yet. Start a new conversation!"),
             );
         } else {
             let mut shown = 0usize;
@@ -509,7 +510,10 @@ impl Render for ChatsView {
             }
             if shown == 0 {
                 list = list.child(
-                    div().py_8().text_color(theme.text_muted).child("No chats match your search."),
+                    div()
+                        .py_8()
+                        .text_color(theme.text_muted)
+                        .child("No chats found matching your search."),
                 );
             }
         }
@@ -576,6 +580,7 @@ impl Render for ChatsView {
                             .child("Chat history"),
                     )
                     .child(self.instructions_card(cx))
+                    .child(div().h_px().w_full().bg(theme.border).mb_3())
                     .child(toolbar)
                     .child(
                         div()
@@ -589,6 +594,32 @@ impl Render for ChatsView {
             .children(modal)
             .children(bulk_modal)
             .children(self.rename_modal(cx))
+    }
+}
+
+/// Human-readable "time ago" for a millisecond timestamp (à la date-fns
+/// `formatDistanceToNow`), used as the chat row subtitle.
+fn relative_time(updated_at: u64) -> String {
+    let now = persistence::now_ms();
+    let secs = now.saturating_sub(updated_at) / 1000;
+    let mins = secs / 60;
+    let hours = mins / 60;
+    let days = hours / 24;
+    if secs < 45 {
+        "just now".to_string()
+    } else if mins < 60 {
+        let n = mins.max(1);
+        format!("{n} minute{} ago", if n == 1 { "" } else { "s" })
+    } else if hours < 24 {
+        format!("{hours} hour{} ago", if hours == 1 { "" } else { "s" })
+    } else if days < 30 {
+        format!("{days} day{} ago", if days == 1 { "" } else { "s" })
+    } else if days < 365 {
+        let n = days / 30;
+        format!("{n} month{} ago", if n == 1 { "" } else { "s" })
+    } else {
+        let n = days / 365;
+        format!("{n} year{} ago", if n == 1 { "" } else { "s" })
     }
 }
 
