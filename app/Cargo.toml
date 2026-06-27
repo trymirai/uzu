@@ -8,7 +8,7 @@
 # parent workspaces, and lets us replicate Zed's patch table here.
 [workspace]
 members = ["mirai-app", "ui-kit"]
-resolver = "2"
+resolver = "3"
 
 # Replicated from external/zed/Cargo.toml [patch.crates-io]. GPUI's executor
 # depends on these specific revisions of async-task/async-process. The other
