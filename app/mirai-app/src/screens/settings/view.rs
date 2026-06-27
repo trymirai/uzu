@@ -296,7 +296,10 @@ impl SettingsView {
         let mut settings = settings_state::current(cx);
         match kind {
             SettingKind::Reasoning => settings.reasoning = !settings.reasoning,
-            SettingKind::RunOnStartup => settings.run_on_startup = !settings.run_on_startup,
+            SettingKind::RunOnStartup => {
+                settings.run_on_startup = !settings.run_on_startup;
+                crate::startup::set(settings.run_on_startup);
+            }
             SettingKind::ShowInMenuBar => settings.show_in_menu_bar = !settings.show_in_menu_bar,
             SettingKind::AutoEject => settings.auto_eject = !settings.auto_eject,
             SettingKind::ShareUsage => settings.share_usage_data = !settings.share_usage_data,

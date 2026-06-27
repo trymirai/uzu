@@ -13,6 +13,7 @@ mod persistence;
 mod provider_keys;
 mod screens;
 mod settings_state;
+mod startup;
 mod title_gen;
 mod toast;
 mod tts_history;
@@ -53,6 +54,15 @@ fn main() {
         .run(move |cx: &mut App| {
             theme::init(cx);
             settings_state::init(cx);
+            // Reflect the real OS login-item state in the persisted "run on
+            // startup" toggle (the OS is the source of truth; `None` in dev).
+            if let Some(enabled) = startup::status() {
+                let mut s = settings_state::current(cx);
+                if s.run_on_startup != enabled {
+                    s.run_on_startup = enabled;
+                    settings_state::set(cx, s);
+                }
+            }
             toast::init(cx);
             components::text_input::register(cx);
 
