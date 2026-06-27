@@ -73,6 +73,17 @@ impl TtsView {
         })
         .detach();
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
+        // Revert a history row's stop icon to play once its audio drains —
+        // rodio has no completion callback, so poll the player's state.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
+                if this.update(cx, |view, cx| view.tick_playback(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         Self {
             store,
             input,
@@ -306,6 +317,18 @@ impl TtsView {
         }
         self.playing_id = None;
         cx.notify();
+    }
+
+    /// Once the queued audio finishes, clear the playing highlight so the
+    /// history row's stop icon reverts to play (there is no playback-end event).
+    fn tick_playback(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        if self.playing_id.is_some() && self.player.as_ref().is_some_and(|p| p.is_finished()) {
+            self.playing_id = None;
+            cx.notify();
+        }
     }
 
     fn delete_history(
