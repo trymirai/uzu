@@ -5,36 +5,21 @@ use futures::{StreamExt, channel::mpsc};
 use gpui::{
     Context, CursorStyle, Entity, FontWeight, IntoElement, Render, Window, div, prelude::*, px,
 };
-use uzu::{
-    storage::types::DownloadPhase,
-    types::{model::Model, session::classification::ClassificationMessage},
-};
+use uzu::types::{model::Model, session::classification::ClassificationMessage};
 
+use super::vm::RouterVm;
 use crate::{
     components::{
         Button, ButtonKind, Icon, IconButton, IconEl, InputEvent, Loader, TextInput, VendorIcon,
     },
     engine,
     models_store::ModelsStore,
-    screens::local_models::format_size,
     theme::{ActiveTheme, Theme, layout::CONTENT_MAX_WIDTH},
 };
 
 enum ClassMsg {
     Ok(Vec<(String, f64)>),
     Err(String),
-}
-
-struct RouterVm {
-    id: String,
-    name: String,
-    vendor: String,
-    icon_url: Option<String>,
-    size: String,
-    installed: bool,
-    downloading: bool,
-    paused: bool,
-    progress: f32,
 }
 
 pub struct RoutersView {
@@ -277,21 +262,7 @@ impl Render for RoutersView {
 
         let (loading, routers): (bool, Vec<RouterVm>) = {
             let store = self.store.read(cx);
-            let rows = store
-                .rows
-                .iter()
-                .map(|r| RouterVm {
-                    id: r.id().to_string(),
-                    name: r.name(),
-                    vendor: r.vendor().unwrap_or_else(|| "Other".to_string()),
-                    icon_url: r.icon_url(theme.dark),
-                    size: format_size(r.display_size_bytes()),
-                    installed: r.is_installed(),
-                    downloading: matches!(r.phase(), DownloadPhase::Downloading {}),
-                    paused: matches!(r.phase(), DownloadPhase::Paused {}),
-                    progress: r.progress(),
-                })
-                .collect();
+            let rows = store.rows.iter().map(|r| RouterVm::from_row(r, theme.dark)).collect();
             (store.loading, rows)
         };
         let any_installed = routers.iter().any(|r| r.installed);
