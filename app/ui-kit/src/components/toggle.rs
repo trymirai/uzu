@@ -34,9 +34,12 @@ impl Toggle {
 impl RenderOnce for Toggle {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme().clone();
-        // White-when-on (mirai-chat parity); dark knob for contrast on the white
-        // track, white knob on the muted off-track.
-        let track = if self.on { gpui::white() } else { theme.bg_sub_hover };
+        // ON track is a high-contrast pill: white in dark mode, the dark `text`
+        // tone in light mode (a hardcoded white would vanish on the light page).
+        // The knob is the inverse (`bg`), so it reads as a dark dot on the white
+        // dark-mode pill and a white dot on the dark light-mode pill.
+        let on_track = if theme.dark { gpui::white() } else { theme.text };
+        let track = if self.on { on_track } else { theme.bg_sub_hover };
         let knob = if self.on { theme.bg } else { gpui::white() };
         let mut el = div()
             .id(self.id)
