@@ -7,6 +7,7 @@ use gpui::{
     prelude::*, px,
 };
 
+use super::route::{Route, Section};
 use crate::{
     components::{Icon, IconEl, Toggle},
     models_store::{ModelKind, ModelsStore},
@@ -23,50 +24,9 @@ use crate::{
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Which top-level screen is showing. `Chat(None)` is a fresh chat.
-#[derive(Clone)]
-pub enum Route {
-    Welcome,
-    Chat(Option<String>),
-    Chats,
-    LocalModels,
-    CloudModels,
-    Routers,
-    Tts,
-    Settings,
-}
-
-/// Coarse grouping used for sidebar active-state highlighting.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Section {
-    Welcome,
-    Chat,
-    Chats,
-    LocalModels,
-    CloudModels,
-    Routers,
-    Tts,
-    Settings,
-}
-
-impl Route {
-    fn section(&self) -> Section {
-        match self {
-            Route::Welcome => Section::Welcome,
-            Route::Chat(_) => Section::Chat,
-            Route::Chats => Section::Chats,
-            Route::LocalModels => Section::LocalModels,
-            Route::CloudModels => Section::CloudModels,
-            Route::Routers => Section::Routers,
-            Route::Tts => Section::Tts,
-            Route::Settings => Section::Settings,
-        }
-    }
-}
-
 /// Root view.
 pub struct MiraiApp {
-    route: Route,
+    pub(super) route: Route,
     #[allow(dead_code)] // used by the footer / chat model selector in later steps
     models: Entity<ModelsStore>,
     local_models: Entity<LocalModelsView>,
@@ -78,9 +38,9 @@ pub struct MiraiApp {
     tts: Entity<TtsView>,
     cloud: Entity<CloudModelsView>,
     /// Cached recent chats for the sidebar list; refreshed on navigation.
-    recent_chats: Vec<persistence::StoredChat>,
+    pub(super) recent_chats: Vec<persistence::StoredChat>,
     /// Whether the bottom "Settings" menu is expanded (mirai-chat parity).
-    settings_menu_open: bool,
+    pub(super) settings_menu_open: bool,
 }
 
 impl MiraiApp {
@@ -192,7 +152,7 @@ impl MiraiApp {
     }
 
     /// Flip the color scheme and persist it (used by the settings menu).
-    fn toggle_dark_mode(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn toggle_dark_mode(&mut self, cx: &mut Context<Self>) {
         let mut settings = settings_state::current(cx);
         settings.dark_mode = !settings.dark_mode;
         let next =
@@ -203,7 +163,7 @@ impl MiraiApp {
     }
 
     /// Navigate to a route, running any side effects (reset/reload).
-    fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
+    pub(super) fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
         match &route {
             Route::Chat(None) => self.chat.update(cx, |chat, cx| chat.start_new(cx)),
             Route::Chats => self.chats.update(cx, |chats, cx| chats.reload(cx)),
@@ -214,7 +174,7 @@ impl MiraiApp {
         cx.notify();
     }
 
-    fn open_chat(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(super) fn open_chat(&mut self, id: String, cx: &mut Context<Self>) {
         if let Some(stored) = persistence::load_chat(&id) {
             self.chat.update(cx, |chat, cx| chat.load_stored(stored, cx));
             self.recent_chats = persistence::list_chats();
