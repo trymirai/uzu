@@ -72,8 +72,16 @@ impl ChatView {
         cx: &mut Context<Self>,
     ) -> Self {
         let input = cx.new(|cx| TextInput::new(cx, "Add message…").multiline(true, 1, 8));
-        cx.subscribe(&input, |this, _input, event, cx| match event {
-            InputEvent::Submit(text) => this.send(text.clone(), cx),
+        cx.subscribe(&input, |this, input, event, cx| match event {
+            InputEvent::Submit(text) => {
+                // Can't send mid-stream — keep the draft in the composer.
+                if this.state.streaming {
+                    return;
+                }
+                let text = text.clone();
+                input.update(cx, |input, cx| input.clear(cx));
+                this.send(text, cx);
+            },
             InputEvent::Changed(_) => {},
         })
         .detach();
@@ -150,6 +158,17 @@ impl ChatView {
         self.state.session_model_id = None;
     }
 
+    /// Cancel any in-flight reply so its producer stops streaming into a
+    /// conversation that's being reset or replaced. Dropping the token alone
+    /// leaves the old stream delivering updates into the new chat.
+    fn cancel_stream(&mut self) {
+        if let Some(token) = self.state.cancel.take() {
+            token.cancel();
+        }
+        self.state.streaming = false;
+        self.state.waiting_for_model = false;
+    }
+
     pub(super) fn cached_session(
         &self,
         model_id: &str,
@@ -179,11 +198,7 @@ impl ChatView {
         &mut self,
         cx: &mut Context<Self>,
     ) {
-        if let Some(token) = &self.state.cancel {
-            token.cancel();
-        }
-        self.state.streaming = false;
-        self.state.cancel = None;
+        self.cancel_stream();
         self.state.loaded_model = None;
         self.clear_session();
         cx.notify();
@@ -268,8 +283,7 @@ impl ChatView {
         self.state.created_at = persistence::now_ms();
         self.state.chat_title.clear();
         self.state.title_pending = false;
-        self.state.streaming = false;
-        self.state.cancel = None;
+        self.cancel_stream();
         self.state.attached_files.clear();
         self.state.pending_regen = None;
         self.clear_session();
@@ -329,9 +343,10 @@ impl ChatView {
         self.state.created_at = stored.created_at;
         self.state.chat_title = stored.title;
         self.state.title_pending = false;
-        self.state.model = None;
-        self.state.streaming = false;
-        self.state.cancel = None;
+        // Restore the model the chat was saved with so continuing it uses the
+        // right backend/model, not the first installed local model.
+        self.state.model = stored.model_name.as_deref().and_then(|name| self.model_by_name(name, cx));
+        self.cancel_stream();
         self.state.pending_regen = None;
         self.clear_session();
         // Opening a saved chat lands on its most recent message.
@@ -634,10 +649,29 @@ impl ChatView {
         &self,
         cx: &Context<Self>,
     ) -> Option<Model> {
-        self.state
-            .model
-            .clone()
-            .or_else(|| self.store.read(cx).rows.iter().find(|r| r.is_installed()).map(|r| r.model.clone()))
+        let store = self.store.read(cx);
+        // A selected local model that's since been deleted must not win over an
+        // installed fallback; cloud models (absent from the local store) are kept.
+        if let Some(model) = &self.state.model {
+            let in_local = store.rows.iter().any(|r| r.model.identifier == model.identifier);
+            let installed = store.rows.iter().any(|r| r.model.identifier == model.identifier && r.is_installed());
+            if !in_local || installed {
+                return Some(model.clone());
+            }
+        }
+        store.rows.iter().find(|r| r.is_installed()).map(|r| r.model.clone())
+    }
+
+    /// Find a model by display name across the local and cloud stores.
+    fn model_by_name(
+        &self,
+        name: &str,
+        cx: &Context<Self>,
+    ) -> Option<Model> {
+        let lookup = |store: &Entity<ModelsStore>| {
+            store.read(cx).rows.iter().find(|r| r.name() == name).map(|r| r.model.clone())
+        };
+        lookup(&self.store).or_else(|| lookup(&self.cloud_store))
     }
 
     fn submit_from_button(

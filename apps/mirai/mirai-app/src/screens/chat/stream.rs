@@ -293,6 +293,8 @@ impl ChatView {
                     }
                 }
                 self.save();
+                // Refresh the sidebar now; title generation may be skipped/fail.
+                cx.emit(ChatEvent::Updated);
                 self.maybe_generate_title(cx);
                 cx.notify();
             },
@@ -341,6 +343,7 @@ impl ChatView {
             return;
         };
         self.state.title_pending = false;
+        let chat_id = self.state.chat_id.clone();
 
         let Some(engine) = engine::try_engine(cx) else {
             return;
@@ -353,6 +356,10 @@ impl ChatView {
         cx.spawn(async move |this, cx| {
             if let Some(Ok(title)) = rx.next().await {
                 let _ = this.update(cx, |view, cx| {
+                    // Drop the result if the user switched to another chat meanwhile.
+                    if view.state.chat_id != chat_id {
+                        return;
+                    }
                     view.state.chat_title = title;
                     view.save();
                     cx.emit(ChatEvent::Updated);
