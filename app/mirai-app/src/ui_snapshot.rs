@@ -351,13 +351,16 @@ fn sample_stored_chat() -> StoredChat {
 
 #[test]
 fn render_sidebar_settings() {
-    // Full app shell with the bottom Settings menu expanded.
+    // Full app shell with the bottom Settings menu expanded. An empty data dir
+    // would land on Welcome (no "seen welcome" flag), so pin a real screen.
     use_empty_data_dir("sidebar-settings");
+    unsafe { std::env::set_var("MIRAI_SCREEN", "local") };
     render_png("sidebar-settings", 1200.0, 800.0, |_, cx| {
         let app = cx.new(MiraiApp::new);
         app.update(cx, |a, cx| a.open_settings_menu(cx));
         app
     });
+    unsafe { std::env::remove_var("MIRAI_SCREEN") };
     persistence::set_test_data_dir(None);
 }
 
