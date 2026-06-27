@@ -72,7 +72,7 @@ impl RenderOnce for SegmentedControl {
                 .px_3()
                 .py_1()
                 .rounded_md()
-                .text_size(px(13.))
+                .text_size(tokens::font::COMPACT)
                 .cursor(CursorStyle::PointingHand)
                 .child(seg.label);
 

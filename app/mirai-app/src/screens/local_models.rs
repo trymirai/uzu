@@ -71,6 +71,10 @@ pub struct LocalModelsView {
     recommended_id: Option<String>,
     sort: ModelSort,
     sort_open: bool,
+    /// Memoized `families()` output, tagged with the theme it was built for.
+    /// Rebuilt only when the store, recommended id, or theme changes — not on
+    /// every frame (search/sort are applied to this cached list in `render`).
+    families_cache: Option<(bool, Vec<FamilyVm>)>,
 }
 
 impl EventEmitter<LocalModelsEvent> for LocalModelsView {}
@@ -78,7 +82,14 @@ impl EventEmitter<LocalModelsEvent> for LocalModelsView {}
 impl LocalModelsView {
     pub fn new(store: Entity<ModelsStore>, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| TextInput::new(cx, "Search families"));
-        cx.observe(&store, |_, _, cx| cx.notify()).detach();
+        // A store change (catalog load, download progress) invalidates the
+        // families cache so it rebuilds on the next render; a search change only
+        // re-renders (the query is applied to the cached list).
+        cx.observe(&store, |this, _, cx| {
+            this.families_cache = None;
+            cx.notify();
+        })
+        .detach();
         cx.observe(&search, |_, _, cx| cx.notify()).detach();
         Self::spawn_recommend(cx);
         Self {
@@ -90,6 +101,7 @@ impl LocalModelsView {
             recommended_id: None,
             sort: ModelSort::default(),
             sort_open: false,
+            families_cache: None,
         }
     }
 
@@ -98,6 +110,7 @@ impl LocalModelsView {
             let id = model_recommend::fetch_repo_id().await;
             let _ = this.update(cx, |view, cx| {
                 view.recommended_id = id;
+                view.families_cache = None;
                 cx.notify();
             });
         })
@@ -215,6 +228,18 @@ impl LocalModelsView {
                 })
         });
         list
+    }
+
+    /// Rebuild `families_cache` only if it's missing or was built for a
+    /// different theme. `render` then takes the cached list, applies the live
+    /// search/sort, and restores it.
+    fn ensure_families(&mut self, cx: &Context<Self>) {
+        let dark = cx.theme().dark;
+        let valid = matches!(&self.families_cache, Some((d, _)) if *d == dark);
+        if !valid {
+            let built = self.families(cx);
+            self.families_cache = Some((dark, built));
+        }
     }
 
     fn sort_models(&self, models: &mut [ModelVm]) {
@@ -622,7 +647,12 @@ impl Render for LocalModelsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let query = self.search.read(cx).text().to_lowercase();
-        let families = self.families(cx);
+        // Take the memoized family list (rebuilt only on store/recommend/theme
+        // change) and restore it before returning, so render does no per-frame
+        // catalog rebuild — only the cheap query filter + sort below.
+        self.ensure_families(cx);
+        let cache = self.families_cache.take().expect("ensure_families populates cache");
+        let families: &[FamilyVm] = &cache.1;
         let selected = self.selected_family.clone();
 
         // Delete-confirm modal (shared across both levels).
@@ -772,6 +802,9 @@ impl Render for LocalModelsView {
                 }
             }
         }
+
+        // `families` is fully consumed above; restore the cache for next frame.
+        self.families_cache = Some(cache);
 
         div()
             .size_full()
