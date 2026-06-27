@@ -20,6 +20,10 @@ use crate::{
 /// (id, model, display_name, vendor_name, icon_url)
 type ModelEntry = (String, Model, String, String, Option<String>);
 
+fn model_entry(r: &crate::models_store::ModelRow) -> ModelEntry {
+    (r.id().to_string(), r.model.clone(), r.name(), r.vendor().unwrap_or_default(), r.icon_url(true))
+}
+
 impl ChatView {
     /// Open a native file-picker, read the selected file(s) as UTF-8 text and
     /// add them to `attached_files`. Max 5 files, 256 KB each (matching Electron).
@@ -96,31 +100,9 @@ impl ChatView {
             .rows
             .iter()
             .filter(|r| r.is_installed())
-            .map(|r| {
-                (
-                    r.id().to_string(),
-                    r.model.clone(),
-                    r.name(),
-                    r.vendor().unwrap_or_default(),
-                    r.icon_url(true),
-                )
-            })
+            .map(model_entry)
             .collect();
-        let cloud = self
-            .cloud_store
-            .read(cx)
-            .rows
-            .iter()
-            .map(|r| {
-                (
-                    r.id().to_string(),
-                    r.model.clone(),
-                    r.name(),
-                    r.vendor().unwrap_or_default(),
-                    r.icon_url(true),
-                )
-            })
-            .collect();
+        let cloud = self.cloud_store.read(cx).rows.iter().map(model_entry).collect();
         (local, cloud)
     }
 

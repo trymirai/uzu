@@ -24,8 +24,6 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Root view.
 pub struct MiraiApp {
     pub(super) route: Route,
-    #[allow(dead_code)] // used by the footer / chat model selector in later steps
-    models: Entity<ModelsStore>,
     local_models: Entity<LocalModelsView>,
     chat: Entity<ChatView>,
     chats: Entity<ChatsView>,
@@ -137,7 +135,6 @@ impl MiraiApp {
 
         Self {
             route,
-            models,
             local_models,
             chat,
             chats,

@@ -34,6 +34,18 @@ pub enum ChatEvent {
     OpenLocalModels,
 }
 
+/// Dark-theme (or first) vendor logo URL for a resolved model — used by the
+/// chat's compact picker badges. The model-row lists use the richer,
+/// SVG-aware `ModelRow::icon_url` instead.
+fn dark_icon_url(model: &Model) -> Option<String> {
+    let icons = &model.family.as_ref()?.vendor.metadata.icons;
+    icons
+        .iter()
+        .find(|i| i.theme == uzu::types::basic::ImageTheme::Dark)
+        .or_else(|| icons.first())
+        .map(|i| i.url.clone())
+}
+
 pub struct ChatView {
     /// Domain + UI state; `pub(super)` so the `stream`/`overlays` submodules
     /// (their own `impl ChatView` blocks) can reach it.
@@ -404,14 +416,7 @@ impl ChatView {
             .as_ref()
             .and_then(|m| m.family.as_ref().map(|f| f.vendor.name()))
             .unwrap_or_default();
-        let icon_url = resolved.as_ref().and_then(|m| {
-            let icons = &m.family.as_ref()?.vendor.metadata.icons;
-            icons
-                .iter()
-                .find(|i| i.theme == uzu::types::basic::ImageTheme::Dark)
-                .or_else(|| icons.first())
-                .map(|i| i.url.clone())
-        });
+        let icon_url = resolved.as_ref().and_then(dark_icon_url);
         let reasoning_on = settings_state::current(cx).reasoning;
 
         let header = div()
@@ -660,14 +665,7 @@ impl Render for ChatView {
             .unwrap_or_else(|| "Select model".to_string());
         let has_model = resolved.is_some();
         // Icon URL for the trigger badge (prefer dark theme logo).
-        let trigger_icon_url: Option<String> = resolved.as_ref().and_then(|m| {
-            let icons = &m.family.as_ref()?.vendor.metadata.icons;
-            icons
-                .iter()
-                .find(|i| i.theme == uzu::types::basic::ImageTheme::Dark)
-                .or_else(|| icons.first())
-                .map(|i| i.url.clone())
-        });
+        let trigger_icon_url = resolved.as_ref().and_then(dark_icon_url);
         let trigger_vendor = resolved.as_ref().and_then(|m| m.family.as_ref().map(|f| f.vendor.name())).unwrap_or_default();
 
         // Message column (`gap-4`, `pt-4`).
@@ -771,23 +769,26 @@ impl Render for ChatView {
                                         .child(header);
 
                                     if !collapsed {
+                                        let text = div()
+                                            .font_family(FONT_MONO)
+                                            .text_size(crate::tokens::font::SMALL)
+                                            .text_color(theme.text_muted)
+                                            .child(reasoning.clone());
                                         if streaming_here {
-                                            // Live: cap the body at 180 px and auto-scroll to the
-                                            // newest line (tracked handle), with a bottom fade so
-                                            // the cut-off blends into the panel.
-                                            let body = div()
-                                                .id(SharedString::from(format!("think-body-{idx}")))
-                                                .max_h(px(180.))
-                                                .overflow_y_scroll()
-                                                .track_scroll(&self.reasoning_scroll)
-                                                .font_family(FONT_MONO)
-                                                .text_size(crate::tokens::font::SMALL)
-                                                .text_color(theme.text_muted)
-                                                .child(reasoning.clone());
+                                            // Live: cap at 180 px and auto-scroll to the newest
+                                            // line (tracked handle), with a bottom fade blending
+                                            // the cut-off into the panel.
                                             panel = panel.child(
                                                 div()
                                                     .relative()
-                                                    .child(body)
+                                                    .child(
+                                                        div()
+                                                            .id(SharedString::from(format!("think-body-{idx}")))
+                                                            .max_h(px(180.))
+                                                            .overflow_y_scroll()
+                                                            .track_scroll(&self.reasoning_scroll)
+                                                            .child(text),
+                                                    )
                                                     .child(
                                                         div()
                                                             .absolute()
@@ -803,18 +804,11 @@ impl Render for ChatView {
                                                     ),
                                             );
                                         } else {
-                                            // Done: render the reasoning inline (no inner scroll
-                                            // box) so the main chat scroll reviews it. A nested
-                                            // capped scroller traps the wheel in GPUI — there's no
-                                            // browser-style overscroll chaining — which leaves the
-                                            // expanded panel un-scrollable and blocks the chat.
-                                            panel = panel.child(
-                                                div()
-                                                    .font_family(FONT_MONO)
-                                                    .text_size(crate::tokens::font::SMALL)
-                                                    .text_color(theme.text_muted)
-                                                    .child(reasoning.clone()),
-                                            );
+                                            // Done: render inline (no inner scroll box) so the main
+                                            // chat scroll reviews it. A nested capped scroller traps
+                                            // the wheel in GPUI — no browser overscroll chaining —
+                                            // leaving the panel un-scrollable and blocking the chat.
+                                            panel = panel.child(text);
                                         }
                                     }
                                     block = block.child(panel);
@@ -1061,35 +1055,29 @@ impl Render for ChatView {
         }
 
         // Composer send/stop (`message-input.tsx`: filled label-title button, not accent).
-        let send_button = if streaming {
-            div()
-                .id("chat-stop")
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(24.))
-                .rounded_md()
-                .bg(theme.text)
-                .cursor(gpui::CursorStyle::PointingHand)
-                .hover(|s| s.bg(theme.button_border_hover))
-                .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
-                .child(IconEl::new(Icon::Stop, theme.text_inverse).size(crate::tokens::icon::SM))
-                .into_any_element()
+        let (btn_id, btn_icon, btn_icon_size) = if streaming {
+            ("chat-stop", Icon::Stop, crate::tokens::icon::SM)
         } else {
-            div()
-                .id("chat-send")
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(24.))
-                .rounded_md()
-                .bg(theme.text)
-                .cursor(gpui::CursorStyle::PointingHand)
-                .hover(|s| s.bg(theme.button_border_hover))
-                .on_click(cx.listener(|this, _, _, cx| this.submit_from_button(cx)))
-                .child(IconEl::new(Icon::Send, theme.text_inverse).size(crate::tokens::icon::MD))
-                .into_any_element()
+            ("chat-send", Icon::Send, crate::tokens::icon::MD)
         };
+        let send_button = div()
+            .id(btn_id)
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(24.))
+            .rounded_md()
+            .bg(theme.text)
+            .cursor(gpui::CursorStyle::PointingHand)
+            .hover(|s| s.bg(theme.button_border_hover))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if streaming {
+                    this.stop(cx);
+                } else {
+                    this.submit_from_button(cx);
+                }
+            }))
+            .child(IconEl::new(btn_icon, theme.text_inverse).size(btn_icon_size));
 
         div()
             .size_full()
