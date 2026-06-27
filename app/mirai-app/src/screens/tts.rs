@@ -16,14 +16,14 @@ use uzu::{
 };
 
 use crate::{
-    components::{
-        Button, ButtonKind, ButtonSize, Icon, IconButton, IconEl, InputEvent, Loader, TextInput,
-    },
+    components::{Button, ButtonKind, Icon, IconButton, IconEl, InputEvent, Loader, TextInput, VendorIcon},
     engine,
     models_store::ModelsStore,
-    theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
+    theme::ActiveTheme,
     tts_history::{self, TtsHistoryEntry},
 };
+
+const CHAR_LIMIT: usize = 2000;
 
 enum TtsMsg {
     Started(CancelToken),
@@ -32,10 +32,18 @@ enum TtsMsg {
     Error(String),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TtsTab {
+    Settings,
+    History,
+}
+
 struct TtsVm {
     id: String,
     name: String,
     vendor: String,
+    icon_url: Option<String>,
+    size: String,
     installed: bool,
     downloading: bool,
     progress: f32,
@@ -59,14 +67,18 @@ pub struct TtsView {
     playing_id: Option<String>,
     pending_batches: Vec<PcmBatch>,
     pending_gen: Option<PendingGen>,
+    right_tab: TtsTab,
 }
 
 impl TtsView {
     pub fn new(store: Entity<ModelsStore>, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| TextInput::new(cx, "Text to speak…"));
-        cx.subscribe(&input, |this, _input, event, cx| match event {
-            InputEvent::Submit(text) => this.generate(text.clone(), cx),
-            InputEvent::Changed(_) => {}
+        let input = cx.new(|cx| {
+            TextInput::new(cx, "Start typing here or paste any text you want to turn into speech…")
+                .multiline(false, 16, 40)
+        });
+        // Re-render on input so the character counter updates.
+        cx.subscribe(&input, |_, _input, event, cx| match event {
+            InputEvent::Submit(_) | InputEvent::Changed(_) => cx.notify(),
         })
         .detach();
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
@@ -82,7 +94,29 @@ impl TtsView {
             playing_id: None,
             pending_batches: Vec::new(),
             pending_gen: None,
+            right_tab: TtsTab::Settings,
         }
+    }
+
+    /// Load a text file's contents into the editor (Upload text file button).
+    fn pick_text_file(&mut self, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Open text file".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = rx.await else { return };
+            let Some(path) = paths.first() else { return };
+            if let Ok(content) = std::fs::read_to_string(path) {
+                let _ = this.update(cx, |this, cx| {
+                    this.input.update(cx, |input, cx| input.set_text(&content, cx));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     fn clear_gen(&mut self) {
@@ -290,7 +324,9 @@ impl TtsView {
         self.generate(text, cx);
     }
 
-    fn model_row(&self, cx: &mut Context<Self>, vm: &TtsVm, selected: bool) -> impl IntoElement {
+    /// A model card in the right "Settings" pane: icon + name + size + control,
+    /// with a status badge below. Selected (installed) cards get an accent ring.
+    fn model_card(&self, cx: &mut Context<Self>, vm: &TtsVm, selected: bool) -> impl IntoElement {
         let theme = cx.theme().clone();
         let id = vm.id.clone();
 
@@ -298,6 +334,7 @@ impl TtsView {
             let id = id.clone();
             IconButton::new(gpui::SharedString::from(format!("del-{}", vm.id)), Icon::Trash)
                 .color(theme.text_muted)
+                .icon_size(15.)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let id = id.clone();
                     this.store.update(cx, |s, cx| s.delete(id, cx));
@@ -311,10 +348,9 @@ impl TtsView {
                 .into_any_element()
         } else {
             let id = id.clone();
-            Button::new(gpui::SharedString::from(format!("dl-{}", vm.id)), "Download")
-                .kind(ButtonKind::Secondary)
-                .size(ButtonSize::Small)
-                .icon(Icon::Download)
+            IconButton::new(gpui::SharedString::from(format!("dl-{}", vm.id)), Icon::Download)
+                .color(theme.text_muted)
+                .icon_size(15.)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let id = id.clone();
                     this.store.update(cx, |s, cx| s.toggle_download(id, cx));
@@ -322,22 +358,47 @@ impl TtsView {
                 .into_any_element()
         };
 
-        let select_id = id.clone();
-        let bg = if selected {
-            theme.bg_hover
+        // Status badge: green "Installed" / "Downloading N%" / size hint.
+        let badge = if vm.installed {
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .bg(theme.success.opacity(0.12))
+                .text_size(px(11.))
+                .text_color(theme.success)
+                .child(IconEl::new(Icon::Check, theme.success).size(11.))
+                .child("Installed")
+                .into_any_element()
+        } else if vm.downloading {
+            div()
+                .text_size(px(11.))
+                .text_color(theme.text_muted)
+                .child(format!("Downloading {:.0}%", vm.progress * 100.0))
+                .into_any_element()
         } else {
-            gpui::transparent_black()
+            div()
+                .text_size(px(11.))
+                .text_color(theme.text_muted)
+                .child("Not installed")
+                .into_any_element()
         };
+
+        let select_id = id.clone();
+        let border = if selected { theme.success } else { theme.border };
         div()
             .id(gpui::SharedString::from(vm.id.clone()))
             .flex()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .h(px(52.))
-            .px_3()
+            .flex_col()
+            .gap_2()
+            .p_3()
             .rounded_lg()
-            .bg(bg)
+            .border_1()
+            .border_color(border)
+            .bg(theme.bg_sub)
             .when(vm.installed, |el| el.cursor(CursorStyle::PointingHand))
             .on_click(cx.listener(move |this, _, _, cx| {
                 if let Some(model) = this
@@ -355,17 +416,24 @@ impl TtsView {
             .child(
                 div()
                     .flex()
-                    .flex_col()
+                    .items_center()
+                    .gap_2()
+                    .child(VendorIcon::new(vm.vendor.clone()).size(22.).icon_url(vm.icon_url.clone()))
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(theme.text)
                             .child(vm.name.clone()),
                     )
-                    .child(div().text_xs().text_color(theme.text_muted).child(vm.vendor.clone())),
+                    .child(div().text_xs().text_color(theme.text_muted).child(vm.size.clone()))
+                    .child(control),
             )
-            .child(control)
+            // Wrap so the badge pill hugs its content (left-aligned) instead of
+            // stretching across the card.
+            .child(div().flex().child(badge))
     }
 
     fn history_row(&self, cx: &mut Context<Self>, entry: &TtsHistoryEntry) -> impl IntoElement {
@@ -443,6 +511,29 @@ impl TtsView {
                     ),
             )
     }
+
+    /// A "Settings" / "History" tab in the right pane.
+    fn tab_button(&self, cx: &mut Context<Self>, label: &'static str, tab: TtsTab) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let active = self.right_tab == tab;
+        div()
+            .id(label)
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(48.))
+            .text_sm()
+            .text_color(if active { theme.text } else { theme.text_muted })
+            .border_b_2()
+            .border_color(if active { theme.text } else { gpui::transparent_black() })
+            .cursor(CursorStyle::PointingHand)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.right_tab = tab;
+                cx.notify();
+            }))
+            .child(label)
+    }
 }
 
 fn truncate_line(text: &str, max: usize) -> String {
@@ -457,10 +548,7 @@ impl Render for TtsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let selected_id = self.selected.as_ref().map(|m| m.identifier.clone());
-        let resolved_name = self
-            .resolved_model(cx)
-            .map(|m| m.name())
-            .unwrap_or_else(|| "No voice model".to_string());
+        let resolved = self.resolved_model(cx);
 
         let (loading, models): (bool, Vec<TtsVm>) = {
             let store = self.store.read(cx);
@@ -471,6 +559,8 @@ impl Render for TtsView {
                     id: r.id().to_string(),
                     name: r.name(),
                     vendor: r.vendor().unwrap_or_else(|| "Other".to_string()),
+                    icon_url: r.icon_url(true),
+                    size: crate::screens::local_models::format_size(r.size_bytes()),
                     installed: r.is_installed(),
                     downloading: matches!(
                         r.phase(),
@@ -482,24 +572,78 @@ impl Render for TtsView {
             (store.loading, rows)
         };
         let any_installed = models.iter().any(|r| r.installed);
+        let char_count = self.input.read(cx).text().chars().count();
+        let over = char_count > CHAR_LIMIT;
 
-        let mut list = div().flex().flex_col().gap_1();
+        // Header model badge (vendor logo + selected model name).
+        let header_badge = resolved
+            .as_ref()
+            .and_then(|m| models.iter().find(|v| v.id == m.identifier))
+            .map(|vm| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .bg(theme.bg_sub)
+                    .child(VendorIcon::new(vm.vendor.clone()).size(16.).icon_url(vm.icon_url.clone()))
+                    .child(div().text_sm().text_color(theme.text_muted).child(vm.name.clone()))
+            });
+
+        // Right "Settings" pane content.
+        let mut settings_content = div().flex().flex_col().gap_2().p_4().child(
+            div()
+                .pb_1()
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(theme.text)
+                .child("Select a model"),
+        );
         if models.is_empty() {
-            if loading {
-                list = list.child(
-                    div().py_6().flex().justify_center().child(Loader::new().label("Loading voice models…")),
-                );
+            settings_content = settings_content.child(if loading {
+                div()
+                    .py_6()
+                    .flex()
+                    .justify_center()
+                    .child(Loader::new().label("Loading voice models…"))
+                    .into_any_element()
             } else {
-                list = list.child(
-                    div().py_6().text_color(theme.text_muted).child("No voice models available."),
-                );
-            }
+                div()
+                    .py_6()
+                    .text_sm()
+                    .text_color(theme.text_muted)
+                    .child("No voice models available.")
+                    .into_any_element()
+            });
         } else {
             for vm in &models {
                 let selected = selected_id.as_deref() == Some(vm.id.as_str());
-                list = list.child(self.model_row(cx, vm, selected));
+                settings_content = settings_content.child(self.model_card(cx, vm, selected));
             }
         }
+
+        // Right "History" pane content.
+        let history_content = if self.history.is_empty() {
+            div()
+                .p_4()
+                .text_sm()
+                .text_color(theme.text_muted)
+                .child("No generations yet.")
+                .into_any_element()
+        } else {
+            let mut rows = div().flex().flex_col().gap_1().p_2();
+            for entry in &self.history {
+                rows = rows.child(self.history_row(cx, entry));
+            }
+            rows.into_any_element()
+        };
+
+        let right_body = match self.right_tab {
+            TtsTab::Settings => settings_content.into_any_element(),
+            TtsTab::History => history_content,
+        };
 
         let status = if self.generating {
             Some(("Generating…".to_string(), theme.text_muted))
@@ -511,109 +655,125 @@ impl Render for TtsView {
             .size_full()
             .flex()
             .flex_col()
-            .items_center()
+            // Top header bar.
             .child(
                 div()
-                    .id("tts-scroll")
-                    .w_full()
-                    .max_w(px(CONTENT_MAX_WIDTH))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .h(px(56.))
+                    .px_5()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(IconEl::new(Icon::Speech, theme.text).size(20.))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.text)
+                            .child("Text to Speech"),
+                    )
+                    .children(header_badge),
+            )
+            // Two-pane body.
+            .child(
+                div()
                     .flex_1()
                     .min_h_0()
                     .flex()
-                    .flex_col()
-                    .overflow_y_scroll()
-                    .px_6()
+                    .flex_row()
+                    // Left editor pane.
                     .child(
                         div()
-                            .pt_10()
-                            .pb_2()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(IconEl::new(Icon::Speech, theme.text).size(22.))
-                            .child(
-                                div()
-                                    .text_xl()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child("Text to Speech"),
-                            ),
-                    )
-                    .child(list)
-                    .child(
-                        div()
-                            .pt_6()
+                            .flex_1()
+                            .min_h_0()
                             .flex()
                             .flex_col()
-                            .gap_2()
                             .child(
                                 div()
-                                    .text_xs()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.text_muted)
-                                    .child(format!("Speak with {resolved_name}")),
+                                    .id("tts-editor")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_scroll()
+                                    .p_5()
+                                    .text_color(theme.text)
+                                    .child(self.input.clone()),
                             )
+                            .children(status.map(|(text, color)| {
+                                div().px_5().pb_1().text_sm().text_color(color).child(text)
+                            }))
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap_2()
+                                    .justify_between()
+                                    .gap_3()
+                                    .h(px(60.))
+                                    .px_5()
+                                    .border_t_1()
+                                    .border_color(theme.border)
                                     .child(
                                         div()
-                                            .flex_1()
-                                            .px_3()
-                                            .py_2()
-                                            .rounded_lg()
-                                            .border_1()
-                                            .border_color(theme.border)
-                                            .bg(theme.card)
-                                            .child(self.input.clone()),
+                                            .text_sm()
+                                            .text_color(if over { theme.error } else { theme.text_muted })
+                                            .child(format!("{char_count} / {CHAR_LIMIT} characters")),
                                     )
-                                    .child(if self.generating {
-                                        Button::new("tts-stop", "Stop")
-                                            .kind(ButtonKind::Danger)
-                                            .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
-                                    } else {
-                                        Button::new("tts-generate", "Generate")
-                                            .kind(ButtonKind::Primary)
-                                            .icon(Icon::Speech)
-                                            .disabled(!any_installed)
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.generate_from_button(cx)
-                                            }))
-                                    }),
-                            )
-                            .children(status.map(|(text, color)| {
-                                div().text_sm().text_color(color).child(text)
-                            })),
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                Button::new("tts-upload", "Upload text file")
+                                                    .kind(ButtonKind::Secondary)
+                                                    .icon(Icon::Download)
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.pick_text_file(cx)
+                                                    })),
+                                            )
+                                            .child(if self.generating {
+                                                Button::new("tts-stop", "Stop")
+                                                    .kind(ButtonKind::Danger)
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.stop(cx)
+                                                    }))
+                                            } else {
+                                                Button::new("tts-generate", "Generate speech")
+                                                    .kind(ButtonKind::Primary)
+                                                    .disabled(!any_installed || char_count == 0)
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.generate_from_button(cx)
+                                                    }))
+                                            }),
+                                    ),
+                            ),
                     )
+                    // Right tabbed pane.
                     .child(
                         div()
-                            .pt_8()
-                            .pb_6()
+                            .w(px(360.))
+                            .flex_none()
+                            .min_h_0()
                             .flex()
                             .flex_col()
-                            .gap_2()
+                            .border_l_1()
+                            .border_color(theme.border)
                             .child(
                                 div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.text)
-                                    .child("History"),
+                                    .flex()
+                                    .border_b_1()
+                                    .border_color(theme.border)
+                                    .child(self.tab_button(cx, "Settings", TtsTab::Settings))
+                                    .child(self.tab_button(cx, "History", TtsTab::History)),
                             )
-                            .child(if self.history.is_empty() {
+                            .child(
                                 div()
-                                    .py_4()
-                                    .text_sm()
-                                    .text_color(theme.text_muted)
-                                    .child("No generations yet.")
-                                    .into_any_element()
-                            } else {
-                                let mut rows = div().flex().flex_col().gap_1();
-                                for entry in &self.history {
-                                    rows = rows.child(self.history_row(cx, entry));
-                                }
-                                rows.into_any_element()
-                            }),
+                                    .id("tts-right-scroll")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_scroll()
+                                    .child(right_body),
+                            ),
                     ),
             )
     }

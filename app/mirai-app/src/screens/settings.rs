@@ -503,7 +503,6 @@ impl SettingsView {
     fn general_content(&self, cx: &mut Context<Self>) -> AnyElement {
         let settings = settings_state::current(cx);
         let theme = cx.theme().clone();
-        let hover = theme.bg_hover;
 
         // "Set shortcut": white (primary) button. Global-shortcut capture isn't
         // wired yet, so it explains itself when clicked.

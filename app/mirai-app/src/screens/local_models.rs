@@ -846,7 +846,7 @@ fn format_params(millions: f64) -> String {
     }
 }
 
-fn format_size(bytes: i64) -> String {
+pub(crate) fn format_size(bytes: i64) -> String {
     if bytes <= 0 {
         return "—".to_string();
     }
