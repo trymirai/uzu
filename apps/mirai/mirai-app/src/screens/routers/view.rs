@@ -25,6 +25,9 @@ pub struct RoutersView {
     result: Option<Vec<(String, f64)>>,
     classifying: bool,
     error: Option<String>,
+    /// Bumped on each classify and on Clear, so a late result from a superseded
+    /// run is dropped instead of reappearing under an emptied editor.
+    classify_gen: u64,
 }
 
 impl RoutersView {
@@ -45,6 +48,7 @@ impl RoutersView {
             result: None,
             classifying: false,
             error: None,
+            classify_gen: 0,
         }
     }
 
@@ -53,6 +57,10 @@ impl RoutersView {
         cx: &mut Context<Self>,
     ) {
         self.input.update(cx, |input, cx| input.set_text("", cx));
+        // Invalidate any in-flight classification so its late result can't
+        // reappear under the now-empty editor.
+        self.classify_gen = self.classify_gen.wrapping_add(1);
+        self.classifying = false;
         self.result = None;
         self.error = None;
         cx.notify();
@@ -86,6 +94,8 @@ impl RoutersView {
         self.classifying = true;
         self.error = None;
         self.result = None;
+        self.classify_gen = self.classify_gen.wrapping_add(1);
+        let gen_id = self.classify_gen;
         cx.notify();
 
         let Some(engine) = engine::try_engine(cx) else {
@@ -117,17 +127,20 @@ impl RoutersView {
 
         cx.spawn(async move |this, cx| {
             while let Some(msg) = rx.next().await {
-                if this
-                    .update(cx, |view, cx| {
-                        match msg {
-                            ClassMsg::Ok(values) => view.result = Some(values),
-                            ClassMsg::Err(err) => view.error = Some(err),
-                        }
-                        view.classifying = false;
-                        cx.notify();
-                    })
-                    .is_err()
-                {
+                let keep = this.update(cx, |view, cx| {
+                    // Drop a result from a superseded run (Clear or a new classify).
+                    if view.classify_gen != gen_id {
+                        return false;
+                    }
+                    match msg {
+                        ClassMsg::Ok(values) => view.result = Some(values),
+                        ClassMsg::Err(err) => view.error = Some(err),
+                    }
+                    view.classifying = false;
+                    cx.notify();
+                    true
+                });
+                if !matches!(keep, Ok(true)) {
                     break;
                 }
             }
