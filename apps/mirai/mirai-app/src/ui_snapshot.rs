@@ -265,6 +265,7 @@ fn render_chats() {
             id: "fixture-a".into(),
             title: "What is Rust?".into(),
             model_name: Some("Qwen3.5 0.8B".into()),
+            model_id: None,
             created_at: 1_700_000_040_000,
             updated_at: 1_700_000_100_000,
             messages: vec![persistence::StoredMessage {
@@ -279,6 +280,7 @@ fn render_chats() {
             id: "fixture-b".into(),
             title: "Sky color".into(),
             model_name: Some("Qwen3.5 0.8B".into()),
+            model_id: None,
             created_at: 1_700_000_200_000,
             updated_at: 1_700_000_300_000,
             messages: vec![persistence::StoredMessage {
@@ -336,6 +338,7 @@ fn sample_stored_chat() -> StoredChat {
         id: "sample".into(),
         title: "Sample".into(),
         model_name: Some("Qwen3.5 0.8B".into()),
+        model_id: None,
         created_at: 0,
         updated_at: 0,
         messages: vec![
@@ -390,6 +393,7 @@ fn render_chat_thinking() {
         id: "think".into(),
         title: "Thinking".into(),
         model_name: Some("Qwen3.5 0.8B".into()),
+        model_id: None,
         created_at: 0,
         updated_at: 0,
         messages: vec![
@@ -478,6 +482,7 @@ fn tall_stored_chat() -> StoredChat {
         id: "tall".into(),
         title: "Tall".into(),
         model_name: Some("Qwen3.5 0.8B".into()),
+        model_id: None,
         created_at: 0,
         updated_at: 0,
         messages,

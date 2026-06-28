@@ -6,6 +6,7 @@ expression: sample_chat()
   "id": "abc123",
   "title": "What is 2+2?",
   "model_name": "Qwen/Qwen3-0.6B",
+  "model_id": null,
   "created_at": 1700000000000,
   "updated_at": 1700000005000,
   "messages": [

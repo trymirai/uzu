@@ -15,6 +15,11 @@ pub(super) struct ChatState {
     /// True between "send" and the first `Started` token — model is loading.
     pub waiting_for_model: bool,
     pub cancel: Option<CancelToken>,
+    /// Monotonic id for the current reply stream. Bumped whenever a stream is
+    /// started, stopped, or the chat is reset, so a superseded stream's late
+    /// updates/`Done` (which arrive after `cancel()`) are dropped instead of
+    /// landing on the next conversation's assistant message.
+    pub stream_gen: u64,
     pub chat_id: Option<String>,
     pub created_at: u64,
     pub model_picker_open: bool,

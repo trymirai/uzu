@@ -27,6 +27,10 @@ pub struct StoredChat {
     pub title: String,
     #[serde(default)]
     pub model_name: Option<String>,
+    /// Stable model identifier — preferred over `model_name` on restore, which
+    /// is ambiguous when two providers expose the same display name.
+    #[serde(default)]
+    pub model_id: Option<String>,
     pub created_at: u64,
     pub updated_at: u64,
     pub messages: Vec<StoredMessage>,
@@ -354,6 +358,8 @@ pub fn parse_markdown(
         id: id.to_string(),
         title,
         model_name,
+        // The markdown mirror doesn't record the id; JSON is authoritative.
+        model_id: None,
         created_at,
         updated_at,
         messages,
@@ -525,6 +531,7 @@ mod tests {
             id: "abc123".into(),
             title: "What is 2+2?".into(),
             model_name: Some("Qwen/Qwen3-0.6B".into()),
+            model_id: None,
             created_at: 1_700_000_000_000,
             updated_at: 1_700_000_005_000,
             messages: vec![

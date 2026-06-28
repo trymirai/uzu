@@ -106,6 +106,7 @@ impl ChatView {
                 streaming: false,
                 waiting_for_model: false,
                 cancel: None,
+                stream_gen: 0,
                 chat_id: None,
                 created_at: persistence::now_ms(),
                 model_picker_open: false,
@@ -161,10 +162,12 @@ impl ChatView {
     /// Cancel any in-flight reply so its producer stops streaming into a
     /// conversation that's being reset or replaced. Dropping the token alone
     /// leaves the old stream delivering updates into the new chat.
-    fn cancel_stream(&mut self) {
+    pub(super) fn cancel_stream(&mut self) {
         if let Some(token) = self.state.cancel.take() {
             token.cancel();
         }
+        // Invalidate the in-flight stream so its late updates/`Done` are dropped.
+        self.state.stream_gen = self.state.stream_gen.wrapping_add(1);
         self.state.streaming = false;
         self.state.waiting_for_model = false;
     }
@@ -345,7 +348,12 @@ impl ChatView {
         self.state.title_pending = false;
         // Restore the model the chat was saved with so continuing it uses the
         // right backend/model, not the first installed local model.
-        self.state.model = stored.model_name.as_deref().and_then(|name| self.model_by_name(name, cx));
+        // Prefer the stable id; fall back to the display name for older chats.
+        self.state.model = stored
+            .model_id
+            .as_deref()
+            .and_then(|id| self.find_model(cx, |r| r.model.identifier == id))
+            .or_else(|| stored.model_name.as_deref().and_then(|name| self.find_model(cx, |r| r.name() == name)));
         self.cancel_stream();
         self.state.pending_regen = None;
         self.clear_session();
@@ -409,6 +417,7 @@ impl ChatView {
             id,
             title,
             model_name: self.state.model.as_ref().map(|m| m.name()),
+            model_id: self.state.model.as_ref().map(|m| m.identifier.clone()),
             created_at: self.state.created_at,
             updated_at: persistence::now_ms(),
             messages,
@@ -661,14 +670,14 @@ impl ChatView {
     }
 
     /// Find a model by display name across the local and cloud stores.
-    fn model_by_name(
+    /// Find a model across the local and cloud stores by a predicate.
+    fn find_model(
         &self,
-        name: &str,
         cx: &Context<Self>,
+        matches: impl Fn(&crate::models_store::ModelRow) -> bool,
     ) -> Option<Model> {
-        let lookup = |store: &Entity<ModelsStore>| {
-            store.read(cx).rows.iter().find(|r| r.name() == name).map(|r| r.model.clone())
-        };
+        let lookup =
+            |store: &Entity<ModelsStore>| store.read(cx).rows.iter().find(|r| matches(r)).map(|r| r.model.clone());
         lookup(&self.store).or_else(|| lookup(&self.cloud_store))
     }
 

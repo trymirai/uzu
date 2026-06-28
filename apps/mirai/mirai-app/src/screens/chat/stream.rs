@@ -168,6 +168,11 @@ impl ChatView {
         let model_id = model.identifier.clone();
         let cached_session = self.cached_session(&model_id);
 
+        // Tag this stream so its consumer can drop late messages once superseded
+        // (Stop + a new prompt, or a chat reset).
+        self.state.stream_gen = self.state.stream_gen.wrapping_add(1);
+        let gen_id = self.state.stream_gen;
+
         let (tx, mut rx) = mpsc::unbounded::<StreamMsg>();
 
         // Producer: run uzu on the Tokio runtime, never touching view state.
@@ -217,10 +222,18 @@ impl ChatView {
         })
         .detach();
 
-        // Consumer: fold updates into the trailing assistant message.
+        // Consumer: fold updates into the trailing assistant message, dropping
+        // anything from a superseded stream.
         cx.spawn(async move |this, cx| {
             while let Some(msg) = rx.next().await {
-                if this.update(cx, |view, cx| view.apply_stream(msg, cx)).is_err() {
+                let keep = this.update(cx, |view, cx| {
+                    if view.state.stream_gen != gen_id {
+                        return false;
+                    }
+                    view.apply_stream(msg, cx);
+                    true
+                });
+                if !matches!(keep, Ok(true)) {
                     break;
                 }
             }
@@ -309,6 +322,11 @@ impl ChatView {
                 self.state.streaming = false;
                 self.state.waiting_for_model = false;
                 self.state.cancel = None;
+                // Persist so the user's prompt isn't lost (save() drops the
+                // errored assistant turn but keeps the user turn) and refresh the
+                // sidebar, matching the `Done` path.
+                self.save();
+                cx.emit(ChatEvent::Updated);
                 crate::toast::push(cx, "Inference failed", crate::toast::ToastKind::Error);
                 cx.notify();
             },
@@ -319,12 +337,7 @@ impl ChatView {
         &mut self,
         cx: &mut Context<Self>,
     ) {
-        if let Some(token) = &self.state.cancel {
-            token.cancel();
-        }
-        self.state.streaming = false;
-        self.state.waiting_for_model = false;
-        self.state.cancel = None;
+        self.cancel_stream();
         cx.notify();
     }
 
