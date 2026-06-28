@@ -162,19 +162,26 @@ pub async fn model_cleanup_stats(engine: &Engine) -> CategoryStats {
 pub fn export_chats_zip() -> Option<Vec<u8>> {
     let dir = persistence::chats_dir();
     let mut names: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Existing markdown mirrors first (their authored content is preserved below).
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("md") {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    names.push(name.to_string());
+                    if seen.insert(name.to_string()) {
+                        names.push(name.to_string());
+                    }
                 }
             }
         }
     }
-    if names.is_empty() {
-        for chat in persistence::list_chats() {
-            names.push(format!("{}.md", chat.id));
+    // Plus every other saved chat (e.g. JSON-only, or a chat whose mirror failed
+    // to write) — serialized on the fly in the loop below.
+    for chat in persistence::list_chats() {
+        let name = format!("{}.md", chat.id);
+        if seen.insert(name.clone()) {
+            names.push(name);
         }
     }
     if names.is_empty() {
