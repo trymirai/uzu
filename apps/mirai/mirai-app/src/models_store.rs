@@ -103,7 +103,10 @@ impl ModelRow {
     }
 
     pub fn is_installed(&self) -> bool {
-        matches!(self.phase(), DownloadPhase::Downloaded {})
+        // External local models (`ModelReference::Local`, e.g. via `LALAMO_PATH`)
+        // are runnable from their path and never get a download state, so treat
+        // them as installed rather than showing unusable download controls.
+        matches!(self.phase(), DownloadPhase::Downloaded {}) || (self.model.is_local() && !self.model.is_downloadable())
     }
 }
 
