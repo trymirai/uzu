@@ -30,6 +30,8 @@ pub(super) enum StreamMsg {
         reasoning: Option<String>,
         tps: Option<f32>,
         tokens: Option<u32>,
+        ttft: Option<f32>,
+        total_time: Option<f32>,
     },
     Done,
     Error(String),
@@ -208,6 +210,8 @@ impl ChatView {
                                 reasoning: reply.message.reasoning(),
                                 tps: reply.stats.generate_tokens_per_second.map(|v| v as f32),
                                 tokens: reply.stats.tokens_count_output,
+                                ttft: reply.stats.time_to_first_token.map(|v| v as f32),
+                                total_time: Some(reply.stats.duration as f32),
                             });
                         }
                     },
@@ -265,6 +269,8 @@ impl ChatView {
                 reasoning,
                 tps,
                 tokens,
+                ttft,
+                total_time,
             } => {
                 if let Some(last) = self.state.messages.last_mut() {
                     if last.role == Role::Assistant {
@@ -274,6 +280,8 @@ impl ChatView {
                         v.reasoning = reasoning;
                         v.tps = tps;
                         v.tokens = tokens;
+                        v.ttft = ttft;
+                        v.total_time = total_time;
                         // Auto-collapse reasoning once the reply body starts
                         // arriving (mirrors Electron behaviour).
                         if !had_text && !last.cur().text.is_empty() {

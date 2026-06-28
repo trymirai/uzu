@@ -334,6 +334,8 @@ impl ChatView {
                     reasoning: m.reasoning,
                     tps: m.tps,
                     tokens: m.tokens,
+                    ttft: m.ttft,
+                    total_time: m.total_time,
                     error: false,
                     ..Default::default()
                 }],
@@ -411,6 +413,8 @@ impl ChatView {
                 reasoning: m.cur().reasoning.clone(),
                 tps: m.cur().tps,
                 tokens: m.cur().tokens,
+                ttft: m.cur().ttft,
+                total_time: m.cur().total_time,
             })
             .collect();
         persistence::save_chat(&StoredChat {

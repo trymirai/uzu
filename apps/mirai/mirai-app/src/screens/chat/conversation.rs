@@ -19,6 +19,10 @@ pub(super) struct Version {
     pub reasoning: Option<String>,
     pub tps: Option<f32>,
     pub tokens: Option<u32>,
+    /// Seconds to the first generated token, and total reply duration (from
+    /// uzu's `ChatReplyStats`). Shown in the per-message performance popover.
+    pub ttft: Option<f32>,
+    pub total_time: Option<f32>,
     pub error: bool,
     /// Display name of the model that produced this version.
     pub model_name: Option<String>,

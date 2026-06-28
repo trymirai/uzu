@@ -274,6 +274,8 @@ fn render_chats() {
                 reasoning: None,
                 tps: None,
                 tokens: None,
+                ttft: None,
+                total_time: None,
             }],
         },
         persistence::StoredChat {
@@ -289,6 +291,8 @@ fn render_chats() {
                 reasoning: None,
                 tps: None,
                 tokens: None,
+                ttft: None,
+                total_time: None,
             }],
         },
     ];
@@ -348,6 +352,8 @@ fn sample_stored_chat() -> StoredChat {
                 reasoning: None,
                 tps: None,
                 tokens: None,
+                ttft: None,
+                total_time: None,
             },
             StoredMessage {
                 role: "assistant".into(),
@@ -355,6 +361,8 @@ fn sample_stored_chat() -> StoredChat {
                 reasoning: Some("The user asks a simple sum.".into()),
                 tps: Some(42.0),
                 tokens: Some(18),
+                ttft: None,
+                total_time: None,
             },
         ],
     }
@@ -403,6 +411,8 @@ fn render_chat_thinking() {
                 reasoning: None,
                 tps: None,
                 tokens: None,
+                ttft: None,
+                total_time: None,
             },
             StoredMessage {
                 role: "assistant".into(),
@@ -410,6 +420,8 @@ fn render_chat_thinking() {
                 reasoning: Some(reasoning.into()),
                 tps: Some(40.0),
                 tokens: Some(64),
+                ttft: None,
+                total_time: None,
             },
         ],
     };
@@ -463,6 +475,8 @@ fn tall_stored_chat() -> StoredChat {
             reasoning: None,
             tps: None,
             tokens: None,
+            ttft: None,
+            total_time: None,
         });
         messages.push(StoredMessage {
             role: "assistant".into(),
@@ -476,6 +490,8 @@ fn tall_stored_chat() -> StoredChat {
             reasoning: None,
             tps: Some(40.0),
             tokens: Some(64),
+            ttft: None,
+            total_time: None,
         });
     }
     StoredChat {

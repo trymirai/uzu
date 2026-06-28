@@ -19,6 +19,10 @@ pub struct StoredMessage {
     pub tps: Option<f32>,
     #[serde(default)]
     pub tokens: Option<u32>,
+    #[serde(default)]
+    pub ttft: Option<f32>,
+    #[serde(default)]
+    pub total_time: Option<f32>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -349,6 +353,9 @@ pub fn parse_markdown(
             reasoning,
             tps: perf_value(scope, "TPS").map(|v| v as f32),
             tokens: perf_value(scope, "TokensOut").map(|v| v as u32),
+            // Not stored in the markdown mirror; JSON is authoritative.
+            ttft: None,
+            total_time: None,
         });
     }
     if messages.is_empty() {
@@ -541,6 +548,8 @@ mod tests {
                     reasoning: None,
                     tps: None,
                     tokens: None,
+                    ttft: None,
+                    total_time: None,
                 },
                 StoredMessage {
                     role: "assistant".into(),
@@ -548,6 +557,8 @@ mod tests {
                     reasoning: Some("The user asks a simple sum.".into()),
                     tps: Some(42.5),
                     tokens: Some(12),
+                    ttft: None,
+                    total_time: None,
                 },
             ],
         }

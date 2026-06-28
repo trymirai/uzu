@@ -15,14 +15,18 @@ expression: sample_chat()
       "text": "What is 2+2?",
       "reasoning": null,
       "tps": null,
-      "tokens": null
+      "tokens": null,
+      "ttft": null,
+      "total_time": null
     },
     {
       "role": "assistant",
       "text": "**2 + 2** equals **4**.",
       "reasoning": "The user asks a simple sum.",
       "tps": 42.5,
-      "tokens": 12
+      "tokens": 12,
+      "ttft": null,
+      "total_time": null
     }
   ]
 }

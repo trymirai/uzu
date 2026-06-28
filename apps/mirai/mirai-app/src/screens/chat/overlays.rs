@@ -238,6 +238,20 @@ impl ChatView {
             .filter(|t| t.is_finite() && *t > 0.0)
             .map(|t| format!("{}", t.round() as i64))
             .unwrap_or_else(|| "—".into());
+        // Seconds → "340 ms" below a second, "1.2 s" above.
+        let fmt_time = |secs: Option<f32>| {
+            secs.filter(|v| v.is_finite() && *v > 0.0)
+                .map(|v| {
+                    if v < 1.0 {
+                        format!("{} ms", (v * 1000.0).round() as i64)
+                    } else {
+                        format!("{v:.1} s")
+                    }
+                })
+                .unwrap_or_else(|| "—".into())
+        };
+        let ttft = fmt_time(cur.ttft);
+        let total = fmt_time(cur.total_time);
         let stat = |value: String, label: &'static str| {
             div()
                 .flex()
@@ -268,11 +282,11 @@ impl ChatView {
                         .flex()
                         .items_center()
                         .gap_6()
-                        .child(stat("—".into(), "T to 1st token"))
+                        .child(stat(ttft, "T to 1st token"))
                         .child(sep())
                         .child(stat(tps, "№ of t/s"))
                         .child(sep())
-                        .child(stat("—".into(), "Total time")),
+                        .child(stat(total, "Total time")),
                 )
                 .into_any_element(),
         )
