@@ -361,8 +361,8 @@ fn sample_stored_chat() -> StoredChat {
                 reasoning: Some("The user asks a simple sum.".into()),
                 tps: Some(42.0),
                 tokens: Some(18),
-                ttft: None,
-                total_time: None,
+                ttft: Some(0.234),
+                total_time: Some(1.245),
             },
         ],
     }

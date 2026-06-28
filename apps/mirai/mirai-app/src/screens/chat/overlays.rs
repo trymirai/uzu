@@ -233,25 +233,15 @@ impl ChatView {
             return None;
         }
         let theme = cx.theme().clone();
-        let tps = cur
-            .tps
-            .filter(|t| t.is_finite() && *t > 0.0)
-            .map(|t| format!("{}", t.round() as i64))
-            .unwrap_or_else(|| "—".into());
-        // Seconds → "340 ms" below a second, "1.2 s" above.
-        let fmt_time = |secs: Option<f32>| {
-            secs.filter(|v| v.is_finite() && *v > 0.0)
-                .map(|v| {
-                    if v < 1.0 {
-                        format!("{} ms", (v * 1000.0).round() as i64)
-                    } else {
-                        format!("{v:.1} s")
-                    }
-                })
-                .unwrap_or_else(|| "—".into())
+        // Match Electron's `performance-dropdown.tsx`: tps is `Math.round`,
+        // durations are seconds with 3 decimals ("0.234s"), "—" if absent.
+        let tps =
+            cur.tps.filter(|t| t.is_finite()).map(|t| format!("{}", t.round() as i64)).unwrap_or_else(|| "—".into());
+        let fmt_secs = |secs: Option<f32>| {
+            secs.filter(|v| v.is_finite()).map(|v| format!("{v:.3}s")).unwrap_or_else(|| "—".into())
         };
-        let ttft = fmt_time(cur.ttft);
-        let total = fmt_time(cur.total_time);
+        let ttft = fmt_secs(cur.ttft);
+        let total = fmt_secs(cur.total_time);
         let stat = |value: String, label: &'static str| {
             div()
                 .flex()
