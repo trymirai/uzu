@@ -147,6 +147,17 @@ impl TtsView {
         self.history = tts_history::list();
     }
 
+    /// After Clear Data removed generated audio: stop playback and drop the
+    /// now-missing clips from the in-memory history.
+    pub fn reload_after_clear(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        self.stop_playback(cx);
+        self.reload_history();
+        cx.notify();
+    }
+
     fn resolved_model(
         &self,
         cx: &Context<Self>,

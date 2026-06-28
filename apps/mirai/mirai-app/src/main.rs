@@ -77,6 +77,8 @@ fn main() {
 
         match &engine {
             Ok(engine) => {
+                // Honor the privacy opt-in (default off) before any reporting.
+                engine.set_usage_reporting(settings_state::current(cx).share_usage_data);
                 crate::engine::init(cx, engine.clone());
                 eprintln!("[mirai-app] uzu Engine ready");
             },

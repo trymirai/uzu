@@ -87,9 +87,14 @@ impl MiraiApp {
         })
         .detach();
 
-        // Opening a saved chat from the history screen.
+        // Opening a saved chat from the history screen, or refreshing the
+        // sidebar after the history list changed there.
         cx.subscribe(&chats, |this, _chats, event, cx| match event {
             ChatsEvent::Open(id) => this.open_chat(id.clone(), cx),
+            ChatsEvent::Changed => {
+                this.recent_chats = persistence::list_chats();
+                cx.notify();
+            },
         })
         .detach();
 
@@ -106,11 +111,16 @@ impl MiraiApp {
         cx.subscribe(&settings, |this, _settings, event, cx| match event {
             SettingsEvent::DataCleared {
                 dialogs,
+                audio,
             } => {
                 this.recent_chats = persistence::list_chats();
                 // Reset the live chat so it can't re-save a now-deleted dialog.
                 if *dialogs {
                     this.chat.update(cx, |chat, cx| chat.start_new(cx));
+                }
+                // Drop now-deleted clips from the TTS history and stop playback.
+                if *audio {
+                    this.tts.update(cx, |tts, cx| tts.reload_after_clear(cx));
                 }
                 cx.notify();
             },

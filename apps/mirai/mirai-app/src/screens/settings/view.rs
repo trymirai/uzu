@@ -162,6 +162,7 @@ impl SettingsView {
                 // recent-chats list, now that chats may be deleted).
                 cx.emit(SettingsEvent::DataCleared {
                     dialogs: selected.contains(&CleanupCategory::Dialogs),
+                    audio: selected.contains(&CleanupCategory::Files),
                 });
                 cx.notify();
             });
@@ -313,7 +314,12 @@ impl SettingsView {
             },
             SettingKind::ShowInMenuBar => settings.show_in_menu_bar = !settings.show_in_menu_bar,
             SettingKind::AutoEject => settings.auto_eject = !settings.auto_eject,
-            SettingKind::ShareUsage => settings.share_usage_data = !settings.share_usage_data,
+            SettingKind::ShareUsage => {
+                settings.share_usage_data = !settings.share_usage_data;
+                if let Some(engine) = engine::try_engine(cx) {
+                    engine.set_usage_reporting(settings.share_usage_data);
+                }
+            },
         }
         settings_state::set(cx, settings);
     }

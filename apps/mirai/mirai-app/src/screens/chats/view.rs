@@ -204,6 +204,13 @@ impl ChatsView {
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.instructions_open = !this.instructions_open;
+                // Refresh from disk on open — Settings may have changed the
+                // shared instructions since this view was built, and editing a
+                // stale buffer would overwrite the newer text.
+                if this.instructions_open {
+                    let current = persistence::global_instructions();
+                    this.instructions.update(cx, |input, cx| input.set_text(&current, cx));
+                }
                 cx.notify();
             }))
             .child(
@@ -257,6 +264,9 @@ impl ChatsView {
         cx: &mut Context<Self>,
     ) {
         self.chats = persistence::list_chats();
+        // The list changed (delete/rename/nav) — let the shell refresh the
+        // sidebar's cached recents too.
+        cx.emit(ChatsEvent::Changed);
         cx.notify();
     }
 
