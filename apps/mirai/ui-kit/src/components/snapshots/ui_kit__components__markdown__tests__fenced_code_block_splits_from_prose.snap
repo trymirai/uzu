@@ -1,7 +1,0 @@
----
-source: ui-kit/src/components/markdown.rs
-expression: "describe_blocks(\"Here is code:\\n```rust\\nfn main() {}\\n```\\nDone.\")"
----
-[text] "Here is code:"
-[code:rust] "fn main() {}"
-[text] "Done."

@@ -71,15 +71,6 @@ impl ChatsView {
         }
     }
 
-    #[cfg(test)]
-    pub fn open_instructions(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
-        self.instructions_open = true;
-        cx.notify();
-    }
-
     fn open_rename(
         &mut self,
         title: &str,

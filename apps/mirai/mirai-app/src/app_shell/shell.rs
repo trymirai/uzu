@@ -182,15 +182,6 @@ impl MiraiApp {
         self.navigate(route, cx);
     }
 
-    #[cfg(test)]
-    pub fn open_settings_menu(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
-        self.settings_menu_open = true;
-        cx.notify();
-    }
-
     /// Flip the color scheme and persist it (used by the settings menu).
     pub(super) fn toggle_dark_mode(
         &mut self,

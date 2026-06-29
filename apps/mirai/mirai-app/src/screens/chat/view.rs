@@ -255,27 +255,6 @@ impl ChatView {
         cx.notify();
     }
 
-    #[cfg(test)]
-    pub fn set_stochastic(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
-        self.state.sampling_mode = SamplingMode::Stochastic;
-        cx.notify();
-    }
-
-    #[cfg(test)]
-    pub fn expand_reasoning(
-        &mut self,
-        msg_idx: usize,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(m) = self.state.messages.get_mut(msg_idx) {
-            m.reasoning_collapsed = false;
-            cx.notify();
-        }
-    }
-
     /// Reset to a fresh, unsaved conversation (keeps the selected model).
     pub fn start_new(
         &mut self,

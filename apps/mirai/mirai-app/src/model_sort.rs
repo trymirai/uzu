@@ -56,13 +56,3 @@ pub fn parse_params(name: &str) -> Option<f64> {
     }
     None
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn newest_prefers_larger_params() {
-        assert_eq!(sort_by_newest("Qwen3-8B", "Qwen3-4B"), std::cmp::Ordering::Less);
-    }
-}

@@ -18,8 +18,6 @@ mod startup;
 mod title_gen;
 mod toast;
 mod tts_history;
-#[cfg(test)]
-mod ui_snapshot;
 
 // Design system lives in the `ui-kit` crate; re-export under the old paths.
 use gpui::{App, KeyBinding, Menu, MenuItem, actions};

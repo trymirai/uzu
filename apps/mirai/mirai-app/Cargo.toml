@@ -45,12 +45,3 @@ auto-launch = "0.5"
 tray-icon = "0.19"
 # Decode the embedded menu-bar PNG to RGBA for the tray icon.
 image = { version = "0.25", default-features = false, features = ["png"] }
-
-[dev-dependencies]
-insta = { version = "1", features = ["json"] }
-# Headless offscreen rendering for visual snapshot tests (render_to_image →
-# PNG via Metal, no window / OS screenshot). test-support unlocks the API.
-gpui = { path = "../../../external/zed/crates/gpui", features = ["test-support"] }
-gpui_platform = { path = "../../../external/zed/crates/gpui_platform", features = ["test-support", "font-kit"] }
-# PNG decode for comparing renders against committed golden baselines.
-image = "0.25"

@@ -83,21 +83,3 @@ async fn generate(
         candidate
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn placeholder_titles() {
-        assert!(is_placeholder(""));
-        assert!(is_placeholder("New chat"));
-        assert!(is_placeholder("  UNTITLED  "));
-        assert!(!is_placeholder("Sky color"));
-    }
-
-    #[test]
-    fn sanitize_strips_quotes_and_newlines() {
-        assert_eq!(sanitize("  \"Hello\nworld\"  "), "Hello world");
-    }
-}

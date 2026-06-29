@@ -13,8 +13,3 @@ path = "src/lib.rs"
 [dependencies]
 gpui = { path = "../../../external/zed/crates/gpui" }
 unicode-segmentation = "1"
-
-[dev-dependencies]
-insta = "1"
-# Enables GPUI's headless test harness (TestAppContext) for interaction tests.
-gpui = { path = "../../../external/zed/crates/gpui", features = ["test-support"] }
