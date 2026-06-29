@@ -108,6 +108,19 @@ fn make_buffers(
     )
 }
 
+fn buffers_bytes(
+    batch_size: usize,
+    tree_size: usize,
+) -> usize {
+    let qk_len = batch_size * tree_size * K_HEADS * HEAD_K_DIM;
+    let head_len = batch_size * tree_size * VALUE_HEADS;
+    let out_len = batch_size * VALUE_HEADS * tree_size * tree_size;
+    qk_len * size_of::<bf16>() * 2
+        + batch_size * tree_size * 3 * size_of::<u32>()
+        + head_len * size_of::<f32>() * 2
+        + out_len * size_of::<f32>() * 3
+}
+
 #[uzu_bench]
 fn bench_build_tree_gram(c: &mut Criterion) {
     let context = <Metal as Backend>::Context::new().expect("metal context");
@@ -131,64 +144,47 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                 )
                 .expect("BuildTreeGramKernel");
                 let scale = (HEAD_K_DIM as f32).sqrt().recip();
-                let qk_len = batch_size * tree_size * K_HEADS * HEAD_K_DIM;
-                let head_len = batch_size * tree_size * VALUE_HEADS;
-                let out_len = batch_size * VALUE_HEADS * tree_size * tree_size;
-                let bytes_per_copy = qk_len * size_of::<bf16>() * 2
-                    + batch_size * tree_size * 3 * size_of::<u32>()
-                    + head_len * size_of::<f32>() * 2
-                    + out_len * size_of::<f32>() * 3;
                 let benchmark_path =
                     format!("Metal/Kernel/GDNTreeVerify/BuildTreeGram/{kernel_path}/B{batch_size}_T{tree_size}");
                 let benchmark_id = BenchmarkId::from_parameter(format!(
                     "B{batch_size}_T{tree_size}_Hg{K_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}"
                 ));
 
+                let encode = |buffers: &mut TreeGramBuffers, encoder| {
+                    kernel.encode(
+                        &buffers.q,
+                        &buffers.k,
+                        &buffers.trie,
+                        &buffers.prefix,
+                        &buffers.beta,
+                        &mut buffers.a_mat,
+                        &mut buffers.qkd,
+                        &mut buffers.ainv,
+                        scale,
+                        batch_size as u32,
+                        tree_size as u32,
+                        K_HEADS as u32,
+                        VALUE_HEADS as u32,
+                        HEAD_K_DIM as u32,
+                        encoder,
+                    );
+                };
+
                 if cold_buffers {
-                    let mut buffers = ColdPool::new(bytes_per_copy, || make_buffers(&context, batch_size, tree_size).0);
+                    let mut buffers = ColdPool::new(buffers_bytes(batch_size, tree_size), || {
+                        make_buffers(&context, batch_size, tree_size).0
+                    });
                     group.bench_function(benchmark_id, |bencher| {
                         iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
                             let buffers = buffers.next_mut();
-                            kernel.encode(
-                                &buffers.q,
-                                &buffers.k,
-                                &buffers.trie,
-                                &buffers.prefix,
-                                &buffers.beta,
-                                &mut buffers.a_mat,
-                                &mut buffers.qkd,
-                                &mut buffers.ainv,
-                                scale,
-                                batch_size as u32,
-                                tree_size as u32,
-                                K_HEADS as u32,
-                                VALUE_HEADS as u32,
-                                HEAD_K_DIM as u32,
-                                encoder,
-                            );
+                            encode(buffers, encoder);
                         });
                     });
                 } else {
                     let (mut buffers, _) = make_buffers(&context, batch_size, tree_size);
                     group.bench_function(benchmark_id, |bencher| {
                         iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
-                            kernel.encode(
-                                &buffers.q,
-                                &buffers.k,
-                                &buffers.trie,
-                                &buffers.prefix,
-                                &buffers.beta,
-                                &mut buffers.a_mat,
-                                &mut buffers.qkd,
-                                &mut buffers.ainv,
-                                scale,
-                                batch_size as u32,
-                                tree_size as u32,
-                                K_HEADS as u32,
-                                VALUE_HEADS as u32,
-                                HEAD_K_DIM as u32,
-                                encoder,
-                            );
+                            encode(&mut buffers, encoder);
                         });
                     });
                 }

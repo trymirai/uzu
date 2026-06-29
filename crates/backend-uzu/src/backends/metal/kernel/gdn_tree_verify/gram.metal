@@ -14,6 +14,7 @@ using namespace uzu::trie;
 #define TREE_GRAM_ROW_TILE 16u
 #define TREE_GRAM_COL_TILE 32u
 #define TREE_GRAM_THREADS METAL_SIMD_SIZE
+#define TREE_GRAM_INVALID_ROW 0xffffffffu
 
 METAL_FUNC void invert_tree_gram_diagonal_block(
     device float* ainv,
@@ -172,7 +173,7 @@ PUBLIC KERNEL(BuildTreeGram)(
       row_prefix[thread_idx] = prefix[prefix_base + token * value_heads];
       row_beta[thread_idx] = beta[prefix_base + token * value_heads];
     } else {
-      row_token[thread_idx] = 0xffffffff;
+      row_token[thread_idx] = TREE_GRAM_INVALID_ROW;
       row_prefix[thread_idx] = 0.0f;
       row_beta[thread_idx] = 0.0f;
     }
