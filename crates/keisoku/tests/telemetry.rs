@@ -34,6 +34,9 @@ fn available_telemetry() {
     println!("battery    {}", flag(snapshot.battery.is_some()));
     println!("temps      {}", flag(snapshot.temperatures.is_some()));
     println!("sensors    {}", snapshot.sensors.len());
+    println!("voltage    {}", snapshot.voltage.len());
+    println!("current    {}", snapshot.current.len());
+    println!("rail_power {}", snapshot.rail_power().map_or("--".into(), |w| format!("{:.2} W", w.value())));
 
     if let Some(memory) = &snapshot.memory {
         println!(
@@ -52,5 +55,11 @@ fn available_telemetry() {
     }
     for sensor in snapshot.sensors.iter().take(24) {
         println!("  {:<26} {:>8.2}  [{}]", sensor.name, sensor.value, sensor.component);
+    }
+    for volts in &snapshot.voltage {
+        println!("  {:<26} {:>8.3} V  [{}]", volts.name, volts.value, volts.component);
+    }
+    for amps in &snapshot.current {
+        println!("  {:<26} {:>8.3} A  [{}]", amps.name, amps.value, amps.component);
     }
 }

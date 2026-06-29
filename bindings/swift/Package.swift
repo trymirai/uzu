@@ -21,7 +21,7 @@ let package = Package(
         ),
         .target(
             name: "Uzu",
-            dependencies: ["uzu"],
+            dependencies: ["uzu", "UzuMetalIOSimulatorStubs"],
             linkerSettings: [
                 .linkedLibrary("c++"),
                 .linkedFramework("SystemConfiguration"),
@@ -30,6 +30,11 @@ let package = Package(
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
             ]
+        ),
+        .target(
+            name: "UzuMetalIOSimulatorStubs",
+            path: "Sources/UzuMetalIOSimulatorStubs",
+            publicHeadersPath: "include"
         ),
         .executableTarget(
             name: "Examples",

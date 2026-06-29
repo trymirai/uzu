@@ -5,7 +5,7 @@ mod stats;
 pub use config::ChatReplyConfig;
 pub use finish_reason::ChatReplyFinishReason;
 use serde::{Deserialize, Serialize};
-pub use stats::ChatReplyStats;
+pub use stats::{ChatReplyPowerStats, ChatReplyStats};
 
 use crate::types::session::chat::ChatMessage;
 

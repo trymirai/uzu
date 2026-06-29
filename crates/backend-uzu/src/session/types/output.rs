@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::session::types::{Stats, Text, TotalStats};
+use crate::session::types::{Stats, Text};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -19,32 +19,11 @@ pub struct Output {
 }
 
 impl Output {
-    pub fn clone_with_finish_reason(
-        &self,
+    pub fn with_finish_reason(
+        mut self,
         finish_reason: Option<FinishReason>,
     ) -> Self {
-        Self {
-            text: self.text.clone(),
-            stats: self.stats.clone(),
-            finish_reason,
-        }
-    }
-
-    pub fn clone_with_duration(
-        &self,
-        duration: f64,
-    ) -> Self {
-        Self {
-            text: self.text.clone(),
-            stats: Stats {
-                prefill_stats: self.stats.prefill_stats.clone(),
-                generate_stats: self.stats.generate_stats.clone(),
-                total_stats: TotalStats {
-                    duration,
-                    ..self.stats.total_stats.clone()
-                },
-            },
-            finish_reason: self.finish_reason.clone(),
-        }
+        self.finish_reason = finish_reason;
+        self
     }
 }

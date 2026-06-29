@@ -3,53 +3,39 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
-use super::{Config, Device, Marker, Session};
+use super::{Config, Session};
 use crate::{Collector, snapshot::Snapshot, units::Milliseconds};
 
 pub struct RecorderHandle {
-    started_at: Instant,
     interval: Duration,
     stop_flag: Arc<AtomicBool>,
-    markers: Arc<Mutex<Vec<Marker>>>,
-    worker: Option<JoinHandle<(Device, Vec<Snapshot>)>>,
+    snapshots: Arc<Mutex<Vec<Snapshot>>>,
+    // Option so both stop() and Drop can take ownership to join.
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl RecorderHandle {
-    pub fn mark(
-        &self,
-        label: impl Into<String>,
-    ) {
-        let elapsed = Milliseconds(self.started_at.elapsed().as_millis() as u64);
-        if let Ok(mut markers) = self.markers.lock() {
-            markers.push(Marker {
-                elapsed,
-                label: label.into(),
-            });
-        }
-    }
-
     pub fn stop(mut self) -> Session {
         self.stop_flag.store(true, Ordering::Relaxed);
-        let (device, snapshots) = match self.worker.take().map(JoinHandle::join) {
-            Some(Ok(result)) => result,
-            _ => (Device::default(), Vec::new()),
-        };
-        let markers = self.markers.lock().map(|markers| markers.clone()).unwrap_or_default();
+        // Join so the in-flight sample is committed before we read the buffer, and so
+        // workers can't pile up across back-to-back recorders. Waits up to one interval.
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+        let snapshots = self.snapshots.lock().map(|mut collected| std::mem::take(&mut *collected)).unwrap_or_default();
         Session {
-            device,
             interval: Milliseconds(self.interval.as_millis() as u64),
             snapshots,
-            markers,
         }
     }
 }
 
 impl Drop for RecorderHandle {
     fn drop(&mut self) {
+        // Reached only when stop() was not called, e.g. an error path.
         self.stop_flag.store(true, Ordering::Relaxed);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -58,32 +44,31 @@ impl Drop for RecorderHandle {
 }
 
 pub fn start(config: Config) -> RecorderHandle {
-    let started_at = Instant::now();
     let interval = config.interval;
     let stop_flag = Arc::new(AtomicBool::new(false));
-    let markers = Arc::new(Mutex::new(Vec::new()));
+    let snapshots = Arc::new(Mutex::new(Vec::new()));
 
     let worker = {
         let stop_flag = Arc::clone(&stop_flag);
-
+        let snapshots = Arc::clone(&snapshots);
         std::thread::spawn(move || {
             let mut collector = Collector::new();
-            let device = Device::detect(&collector);
-            let mut snapshots = Vec::new();
+            // Start the clock after Collector::new() so elapsed excludes init overhead.
+            let started_at = Instant::now();
             while !stop_flag.load(Ordering::Relaxed) {
                 let mut snapshot = collector.sample(interval);
                 snapshot.elapsed = Milliseconds(started_at.elapsed().as_millis() as u64);
-                snapshots.push(snapshot);
+                if let Ok(mut collected) = snapshots.lock() {
+                    collected.push(snapshot);
+                }
             }
-            (device, snapshots)
         })
     };
 
     RecorderHandle {
-        started_at,
         interval,
         stop_flag,
-        markers,
+        snapshots,
         worker: Some(worker),
     }
 }

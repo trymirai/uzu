@@ -12,23 +12,11 @@ final class ClassificationModel {
         case error(Swift.Error)
     }
 
-    struct GenerationStats: Equatable {
-        let timeToFirstToken: Double
-        let tokensPerSecond: Double
-        let totalTime: Double
-
-        init(stats: ChatReplyStats) {
-            self.timeToFirstToken = stats.timeToFirstToken ?? 0.0
-            self.tokensPerSecond = stats.generateTokensPerSecond ?? 0.0
-            self.totalTime = stats.duration
-        }
-    }
-
     // MARK: - Observable Properties
     var viewState: ViewState = .idle
     var inputText: String = ""
     var resultText: String = ""
-    var stats: GenerationStats? = nil
+    var stats: ReplyStats? = nil
 
     // MARK: - Private
     private let identifier: String

@@ -138,6 +138,8 @@ impl StreamState {
             generate_tokens_per_second,
             tokens_count_input: self.tokens_input,
             tokens_count_output: self.tokens_output,
+            memory_used_bytes: None,
+            power_stats: None,
         }
     }
 }

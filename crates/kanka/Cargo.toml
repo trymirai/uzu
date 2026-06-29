@@ -8,6 +8,7 @@ homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 description = "Generic obfuscated dlsym bindings for private Apple framework APIs"
+readme = "README.md"
 
 [lib]
 name = "kanka"

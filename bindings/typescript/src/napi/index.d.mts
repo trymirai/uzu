@@ -265,6 +265,20 @@ export declare class ChatReplyConfig {
   withGrammar(grammar?: Grammar | undefined | null): ChatReplyConfig
 }
 
+export declare class ChatReplyPowerStats {
+  samplesCount: number
+  averageCpuWatts: number
+  averageGpuWatts: number
+  averageGpuSramWatts: number
+  averageAneWatts: number
+  averageRamWatts: number
+  averageTotalWatts: number
+  averagePackageWatts: number
+  maxPackageWatts: number
+  energyJoules: number
+  constructor(samplesCount: number, averageCpuWatts: number, averageGpuWatts: number, averageGpuSramWatts: number, averageAneWatts: number, averageRamWatts: number, averageTotalWatts: number, averagePackageWatts: number, maxPackageWatts: number, energyJoules: number)
+}
+
 export declare class ChatReplyStats {
   duration: number
   timeToFirstToken?: number
@@ -272,7 +286,9 @@ export declare class ChatReplyStats {
   generateTokensPerSecond?: number
   tokensCountInput?: number
   tokensCountOutput?: number
-  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountOutput?: number)
+  memoryUsedBytes?: number
+  powerStats?: ChatReplyPowerStats
+  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountOutput?: number, memoryUsedBytes?: number, powerStats?: ChatReplyPowerStats)
   get tokensCount(): number | null
 }
 
