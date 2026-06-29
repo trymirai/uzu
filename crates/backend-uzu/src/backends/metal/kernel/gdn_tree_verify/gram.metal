@@ -1,4 +1,5 @@
 #include <metal_stdlib>
+#include "../common/defines.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "../generated/trie.h"
@@ -10,8 +11,8 @@ using namespace metal;
 using namespace uzu::matmul;
 using namespace uzu::trie;
 
-#define TREE_GRAM_ROW_TILE 16
-#define TREE_GRAM_COL_TILE 32
+#define TREE_GRAM_ROW_TILE 16u
+#define TREE_GRAM_COL_TILE 32u
 #define TREE_GRAM_THREADS METAL_SIMD_SIZE
 
 METAL_FUNC void invert_tree_gram_diagonal_block(
@@ -71,21 +72,19 @@ PUBLIC KERNEL(BuildTreeGram)(
   const uint trie_base = batch_idx * tree_size;
   const uint mat_base = (batch_idx * value_heads + value_head_idx) * tree_size * tree_size;
 
-  const uint col_tiles = (tree_size + TREE_GRAM_COL_TILE - 1) / TREE_GRAM_COL_TILE;
+  const uint col_tiles = div_ceil(tree_size, TREE_GRAM_COL_TILE);
   const uint row_tile_idx = tile_idx / col_tiles;
   const uint col_tile_idx = tile_idx - row_tile_idx * col_tiles;
   const uint row_base = row_tile_idx * TREE_GRAM_ROW_TILE;
   const uint col_base = col_tile_idx * TREE_GRAM_COL_TILE;
-  const uint row_tile_size = TREE_GRAM_ROW_TILE;
-  const uint col_tile_size = TREE_GRAM_COL_TILE;
   const ushort lane = thread_context.simd_lane_id;
 
   if (row_base >= tree_size) {
     return;
   }
 
-  const uint tile_rows = min(row_tile_size, tree_size - row_base);
-  const uint tile_cols = min(col_tile_size, tree_size - col_base);
+  const uint tile_rows = min(TREE_GRAM_ROW_TILE, tree_size - row_base);
+  const uint tile_cols = min(TREE_GRAM_COL_TILE, tree_size - col_base);
   const uint tile_base = mat_base + row_base * tree_size + col_base;
 
   if (col_base >= row_base + TREE_GRAM_ROW_TILE) {
@@ -139,7 +138,7 @@ PUBLIC KERNEL(BuildTreeGram)(
 
   const bool has_diag = col_base <= row_base && row_base < col_base + TREE_GRAM_COL_TILE;
   const uint diag_col_offset = has_diag ? row_base - col_base : 0;
-  const uint diag_size = min(row_tile_size, tree_size - row_base);
+  const uint diag_size = min(TREE_GRAM_ROW_TILE, tree_size - row_base);
 
   if (thread_idx < TREE_GRAM_COL_TILE) {
     const uint col_token = col_base + thread_idx;
