@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use futures::{StreamExt, channel::mpsc};
 use gpui::Context;
 use uzu::{
@@ -50,7 +52,6 @@ impl ChatView {
         let full_text = if self.state.attached_files.is_empty() {
             text
         } else {
-            use std::fmt::Write;
             let mut combined = text;
             for (name, extension, content) in self.state.attached_files.drain(..) {
                 let _ = write!(combined, "\n\n```{extension}\n# {name}\n{content}\n```");

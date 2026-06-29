@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -122,12 +123,10 @@ pub(crate) fn global_instructions_path() -> PathBuf {
 }
 
 pub fn now_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 fn file_mtime_ms(path: &Path) -> u64 {
-    use std::time::UNIX_EPOCH;
     fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()

@@ -6,6 +6,7 @@ use gpui::{
 use super::route::Route;
 use crate::{
     components::{Icon, IconEl},
+    menu_bar::TrayAction,
     models_store::{ModelKind, ModelsStore},
     persistence,
     screens::{
@@ -153,10 +154,9 @@ impl MiraiApp {
 
     pub fn handle_tray_action(
         &mut self,
-        action: crate::menu_bar::TrayAction,
+        action: TrayAction,
         cx: &mut Context<Self>,
     ) {
-        use crate::menu_bar::TrayAction;
         let route = match action {
             TrayAction::NewChat => Route::Chat(None),
             TrayAction::OpenChats => Route::Chats,

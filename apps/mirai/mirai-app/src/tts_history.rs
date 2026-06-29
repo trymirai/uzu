@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use hound::WavReader;
 use serde::{Deserialize, Serialize};
 use uzu::types::{basic::PcmBatch, model::Model};
 
@@ -97,7 +98,6 @@ pub fn clear_all() {
 }
 
 fn pcm_from_wav(path: &Path) -> Option<PcmBatch> {
-    use hound::WavReader;
     let mut reader = WavReader::open(path).ok()?;
     let spec = reader.spec();
     let channels = spec.channels as u32;
