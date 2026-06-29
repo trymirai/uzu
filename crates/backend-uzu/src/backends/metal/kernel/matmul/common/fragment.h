@@ -73,8 +73,8 @@ struct Fragment {
   METAL_CONST ushort ROW_FRAGMENTS = ROW_FRAGMENTS_;
   METAL_CONST ushort COL_FRAGMENTS = COL_FRAGMENTS_;
 
-  METAL_CONST ushort FRAGMENT_ROWS = ushort(Ops::FRAGMENT_ROWS);
-  METAL_CONST ushort FRAGMENT_COLS = ushort(Ops::FRAGMENT_COLS);
+  METAL_CONST ushort FRAGMENT_ROWS = Ops::FRAGMENT_ROWS;
+  METAL_CONST ushort FRAGMENT_COLS = Ops::FRAGMENT_COLS;
 
   METAL_CONST ushort NUM_FRAGS = ROW_FRAGMENTS * COL_FRAGMENTS;
   METAL_CONST ushort ELEMENTS_PER_FRAGMENT = NUM_FRAGS * Ops::ELEMENTS_PER_THREAD;
@@ -127,8 +127,8 @@ struct Fragment {
     const short2 position = get_position(simd_lane_id);
     for_each_fragment([&](auto fragment_row, auto fragment_col) {
       const ushort frag_base = (fragment_row.value * COL_FRAGMENTS + fragment_col.value) * Ops::ELEMENTS_PER_THREAD;
-      const short row_base = position.y + short(fragment_row.value) * FRAGMENT_ROWS;
-      const short col_base = position.x + short(fragment_col.value) * FRAGMENT_COLS;
+      const short row_base = position.y + fragment_row.value * FRAGMENT_ROWS;
+      const short col_base = position.x + fragment_col.value * FRAGMENT_COLS;
       METAL_PRAGMA_UNROLL
       for (ushort element_index = 0; element_index < Ops::ELEMENTS_PER_THREAD; ++element_index) {
         const short2 element_offset = Ops::get_element_offset(element_index);
@@ -136,6 +136,27 @@ struct Fragment {
         const short col = col_base + element_offset.x;
         thread ElementType& value = data[frag_base + element_index];
         value = ElementType(fn(row, col, value));
+      }
+    });
+  }
+
+  template <class Fn, class... Fragments>
+  METAL_FUNC static void zip_for_each_coord(const ushort simd_lane_id, Fn fn, thread Fragments&... fragments) {
+    static_assert(sizeof...(Fragments) > 0, "zip_for_each_coord needs at least one fragment");
+    static_assert((metal::is_same_v<Fragment, Fragments> && ...), "zipped fragments must have the same type");
+
+    const short2 position = get_position(simd_lane_id);
+    for_each_fragment([&](auto fragment_row, auto fragment_col) {
+      const ushort frag_base = (fragment_row.value * COL_FRAGMENTS + fragment_col.value) * Ops::ELEMENTS_PER_THREAD;
+      const short row_base = position.y + fragment_row.value * FRAGMENT_ROWS;
+      const short col_base = position.x + fragment_col.value * FRAGMENT_COLS;
+      METAL_PRAGMA_UNROLL
+      for (ushort element_index = 0; element_index < Ops::ELEMENTS_PER_THREAD; ++element_index) {
+        const short2 element_offset = Ops::get_element_offset(element_index);
+        const short row = row_base + element_offset.y;
+        const short col = col_base + element_offset.x;
+        const ushort index = frag_base + element_index;
+        fn(row, col, fragments.elements()[index]...);
       }
     });
   }
@@ -275,7 +296,7 @@ private:
   METAL_CONST bool UNSAFE = false;
 
   template <class Fn>
-  METAL_FUNC void for_each_fragment(Fn fn) thread {
+  METAL_FUNC static void for_each_fragment(Fn fn) {
     const_for_loop<0, ROW_FRAGMENTS, 1>([&](auto row_index) {
       const_for_loop<0, COL_FRAGMENTS, 1>([&](auto col_index) { fn(row_index, col_index); });
     });
