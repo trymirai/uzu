@@ -161,7 +161,10 @@ fn run_scenario(
         messages.push(Message::user(user_prompt.clone()));
         println!("User > {}", user_prompt.clone());
 
-        let input = Input::Messages(messages.clone());
+        let input = Input::Messages {
+            messages: messages.clone(),
+            tools: Vec::new(),
+        };
         let output = session.run(input, RunConfig::default(), Some(|_: Output| true)).unwrap();
         messages.push(Message::assistant(
             output.text.parsed.response.clone().unwrap_or_default(),

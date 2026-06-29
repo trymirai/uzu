@@ -23,7 +23,7 @@ use uuid::Uuid;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
     types::{
-        basic::{Grammar, SamplingMethod},
+        basic::{Grammar, SamplingMethod, ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value},
         session::chat::{ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole},
     },
 };
@@ -34,7 +34,23 @@ use crate::server::ServerState;
 pub struct OaiMessage {
     pub role: String,
     #[serde(default)]
-    pub content: String,
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<OaiToolCall>>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OaiToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: OaiFunctionCall,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OaiFunctionCall {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Deserialize)]
@@ -58,6 +74,28 @@ pub struct ChatCompletionRequest {
     #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub tools: Option<Vec<OaiTool>>,
+    // Raw value (not typed) so an unsupported tool_choice is our 400, not Rocket's 422.
+    #[serde(default)]
+    pub tool_choice: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+pub struct OaiTool {
+    #[serde(rename = "type")]
+    #[allow(dead_code)]
+    pub kind: String,
+    pub function: OaiToolFunction,
+}
+
+#[derive(Deserialize)]
+pub struct OaiToolFunction {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub parameters: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -162,14 +200,64 @@ fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
-    messages
+fn to_tool_namespaces(tools: &[OaiTool]) -> Vec<ToolNamespace> {
+    if tools.is_empty() {
+        return Vec::new();
+    }
+    let descriptions = tools
+        .iter()
+        .map(|tool| ToolDescription::Function {
+            tool_function: ToolFunction {
+                name: tool.function.name.clone(),
+                description: tool.function.description.clone().unwrap_or_default(),
+                parameters: tool.function.parameters.clone().map(Value::from),
+                return_definition: None,
+            },
+        })
+        .collect();
+    vec![ToolNamespace {
+        name: "functions".to_string(),
+        description: None,
+        tools: descriptions,
+    }]
+}
+
+fn to_oai_tool_calls(tool_calls: &[ToolCall]) -> Option<Vec<OaiToolCall>> {
+    if tool_calls.is_empty() {
+        return None;
+    }
+    Some(
+        tool_calls
+            .iter()
+            .map(|tool_call| OaiToolCall {
+                id: tool_call.identifier.clone().unwrap_or_else(|| format!("call_{}", Uuid::new_v4().simple())),
+                kind: "function".to_string(),
+                function: OaiFunctionCall {
+                    name: tool_call.name.clone(),
+                    arguments: serde_json::to_string(&tool_call.arguments).unwrap_or_else(|_| "{}".to_string()),
+                },
+            })
+            .collect(),
+    )
+}
+
+fn to_chat_messages(
+    messages: &[OaiMessage],
+    tool_namespaces: Vec<ToolNamespace>,
+) -> Vec<ChatMessage> {
+    let mut chat_messages: Vec<ChatMessage> = messages
         .iter()
         .map(|message| {
             let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
-            ChatMessage::for_role(role).with_text(message.content.clone())
+            ChatMessage::for_role(role).with_text(message.content.clone().unwrap_or_default())
         })
-        .collect()
+        .collect();
+    if !tool_namespaces.is_empty()
+        && let Some(first) = chat_messages.first_mut()
+    {
+        *first = first.clone().with_tool_namespaces(tool_namespaces);
+    }
+    chat_messages
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -204,18 +292,73 @@ impl ResponseFormatError {
     }
 }
 
-fn request_error_response(error: ResponseFormatError) -> ChatCompletionResult {
+fn bad_request(
+    message: String,
+    param: &str,
+    code: &str,
+) -> ChatCompletionResult {
     ChatCompletionResult::Error(status::Custom(
         Status::BadRequest,
         Json(OaiErrorResponse {
             error: OaiError {
-                message: error.message(),
+                message,
                 kind: "invalid_request_error".to_string(),
-                param: Some("response_format".to_string()),
-                code: Some(error.code().to_string()),
+                param: Some(param.to_string()),
+                code: Some(code.to_string()),
             },
         }),
     ))
+}
+
+fn request_error_response(error: ResponseFormatError) -> ChatCompletionResult {
+    bad_request(error.message(), "response_format", error.code())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ToolRequestError {
+    StreamingUnsupported,
+    UnsupportedToolChoice,
+}
+
+impl ToolRequestError {
+    fn message(&self) -> &'static str {
+        match self {
+            ToolRequestError::StreamingUnsupported => "tool calling is not supported with stream: true yet",
+            ToolRequestError::UnsupportedToolChoice => "tool_choice values other than \"auto\" are not supported yet",
+        }
+    }
+
+    fn param(&self) -> &'static str {
+        match self {
+            ToolRequestError::StreamingUnsupported => "stream",
+            ToolRequestError::UnsupportedToolChoice => "tool_choice",
+        }
+    }
+
+    fn code(&self) -> &'static str {
+        match self {
+            ToolRequestError::StreamingUnsupported => "unsupported_streaming_tools",
+            ToolRequestError::UnsupportedToolChoice => "unsupported_tool_choice",
+        }
+    }
+}
+
+// Tools only support the default `auto` choice, non-streaming, for now; reject the rest
+// with a 400 instead of silently emitting tool calls the response path cannot deliver.
+fn ensure_tools_supported(request: &ChatCompletionRequest) -> Result<(), ToolRequestError> {
+    let has_tools = request.tools.as_ref().is_some_and(|tools| !tools.is_empty());
+    if !has_tools {
+        return Ok(());
+    }
+    if let Some(choice) = &request.tool_choice
+        && choice.as_str() != Some("auto")
+    {
+        return Err(ToolRequestError::UnsupportedToolChoice);
+    }
+    if request.stream.unwrap_or(false) {
+        return Err(ToolRequestError::StreamingUnsupported);
+    }
+    Ok(())
 }
 
 fn with_response_format_grammar(
@@ -310,7 +453,8 @@ fn error_response(
             index: 0,
             message: OaiMessage {
                 role: "assistant".to_string(),
-                content: format!("Error: {message}"),
+                content: Some(format!("Error: {message}")),
+                tool_calls: None,
             },
             finish_reason: "stop".to_string(),
         }],
@@ -356,24 +500,34 @@ async fn run_blocking(
 
     match session.reply(messages, config).await {
         Ok(replies) => match replies.last() {
-            Some(reply) => ChatCompletionResponse {
-                id,
-                object: "chat.completion".to_string(),
-                created,
-                model,
-                choices: vec![ChatCompletionChoice {
-                    index: 0,
-                    message: OaiMessage {
-                        role: "assistant".to_string(),
-                        content: reply.message.text().unwrap_or_default(),
-                    },
-                    finish_reason: reply
-                        .finish_reason
-                        .as_ref()
-                        .map(map_finish_reason)
-                        .unwrap_or_else(|| "stop".to_string()),
-                }],
-                usage: usage_from_stats(&reply.stats),
+            Some(reply) => {
+                let tool_calls = to_oai_tool_calls(&reply.message.tool_calls());
+                let text = reply.message.text().unwrap_or_default();
+                let content = if text.is_empty() && tool_calls.is_some() {
+                    None
+                } else {
+                    Some(text)
+                };
+                ChatCompletionResponse {
+                    id,
+                    object: "chat.completion".to_string(),
+                    created,
+                    model,
+                    choices: vec![ChatCompletionChoice {
+                        index: 0,
+                        message: OaiMessage {
+                            role: "assistant".to_string(),
+                            content,
+                            tool_calls,
+                        },
+                        finish_reason: reply
+                            .finish_reason
+                            .as_ref()
+                            .map(map_finish_reason)
+                            .unwrap_or_else(|| "stop".to_string()),
+                    }],
+                    usage: usage_from_stats(&reply.stats),
+                }
             },
             None => error_response(id, model, created, "No response generated"),
         },
@@ -510,7 +664,11 @@ pub async fn handle_chat_completions(
         Ok(config) => config,
         Err(error) => return request_error_response(error),
     };
-    let messages = to_chat_messages(&request.messages);
+    if let Err(error) = ensure_tools_supported(&request) {
+        return bad_request(error.message().to_string(), error.param(), error.code());
+    }
+    let tool_namespaces = to_tool_namespaces(request.tools.as_deref().unwrap_or(&[]));
+    let messages = to_chat_messages(&request.messages, tool_namespaces);
 
     if is_stream {
         let session = Arc::clone(&state.session);

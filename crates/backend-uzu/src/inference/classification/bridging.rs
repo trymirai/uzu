@@ -26,7 +26,10 @@ pub fn build_input(messages: &[ShojiMessage]) -> Input {
             }
         })
         .collect();
-    Input::Messages(input_messages)
+    Input::Messages {
+        messages: input_messages,
+        tools: Vec::new(),
+    }
 }
 
 pub fn build_output(output: &ClassificationOutput) -> ShojiOutput {

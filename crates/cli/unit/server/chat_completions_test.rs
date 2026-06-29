@@ -149,3 +149,103 @@ fn response_format_composes_with_sampling_options() {
         }
     );
 }
+
+#[test]
+fn tools_map_to_function_namespace() {
+    let request = request(
+        r#"{"messages":[],"tools":[{"type":"function","function":{"name":"get_weather","description":"Get weather","parameters":{"type":"object"}}}]}"#,
+    );
+    let namespaces = to_tool_namespaces(request.tools.as_deref().unwrap_or(&[]));
+    assert_eq!(namespaces.len(), 1);
+    assert_eq!(namespaces[0].name, "functions");
+    assert_eq!(namespaces[0].tools.len(), 1);
+    let ToolDescription::Function {
+        tool_function,
+    } = &namespaces[0].tools[0];
+    assert_eq!(tool_function.name, "get_weather");
+    assert_eq!(tool_function.description, "Get weather");
+    assert!(tool_function.parameters.is_some());
+}
+
+#[test]
+fn absent_tools_produce_no_namespaces() {
+    assert!(to_tool_namespaces(request(r#"{"messages":[]}"#).tools.as_deref().unwrap_or(&[])).is_empty());
+}
+
+#[test]
+fn tool_calls_map_to_openai_shape() {
+    let tool_calls = vec![ToolCall {
+        identifier: Some("call_1".to_string()),
+        name: "get_weather".to_string(),
+        arguments: Value::from(serde_json::json!({ "city": "Paris" })),
+    }];
+    let mapped = to_oai_tool_calls(&tool_calls).expect("tool calls present");
+    assert_eq!(mapped.len(), 1);
+    assert_eq!(mapped[0].id, "call_1");
+    assert_eq!(mapped[0].kind, "function");
+    assert_eq!(mapped[0].function.name, "get_weather");
+    assert_eq!(mapped[0].function.arguments, r#"{"city":"Paris"}"#);
+}
+
+#[test]
+fn no_tool_calls_serialize_to_none() {
+    assert!(to_oai_tool_calls(&[]).is_none());
+}
+
+#[test]
+fn tools_with_auto_tool_choice_are_supported() {
+    assert!(
+        ensure_tools_supported(&request(
+            r#"{"messages":[],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}]}"#
+        ))
+        .is_ok()
+    );
+    assert!(
+        ensure_tools_supported(&request(
+            r#"{"messages":[],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"tool_choice":"auto"}"#
+        ))
+        .is_ok()
+    );
+}
+
+#[test]
+fn absent_tools_skip_tool_validation() {
+    // No tools: a stray tool_choice or stream must not trigger a tool error.
+    assert!(ensure_tools_supported(&request(r#"{"messages":[],"tool_choice":"none","stream":true}"#)).is_ok());
+}
+
+#[test]
+fn streaming_with_tools_is_rejected() {
+    assert_eq!(
+        ensure_tools_supported(&request(
+            r#"{"messages":[],"stream":true,"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}]}"#
+        )),
+        Err(ToolRequestError::StreamingUnsupported)
+    );
+}
+
+#[test]
+fn unsupported_tool_choice_is_rejected() {
+    for body in [
+        r#"{"messages":[],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"tool_choice":"none"}"#,
+        r#"{"messages":[],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"tool_choice":"required"}"#,
+        r#"{"messages":[],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"f"}}}"#,
+    ] {
+        assert_eq!(
+            ensure_tools_supported(&request(body)),
+            Err(ToolRequestError::UnsupportedToolChoice),
+            "expected UnsupportedToolChoice for {body}"
+        );
+    }
+}
+
+#[test]
+fn tool_namespaces_attach_to_first_message() {
+    let request = request(
+        r#"{"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}]}"#,
+    );
+    let namespaces = to_tool_namespaces(request.tools.as_deref().unwrap_or(&[]));
+    let messages = to_chat_messages(&request.messages, namespaces);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].tool_namespaces().len(), 1);
+}

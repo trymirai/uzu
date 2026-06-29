@@ -52,7 +52,10 @@ impl Runner {
 
         let device = self.get_device_info();
 
-        let input = Input::Messages(self.task.messages.clone());
+        let input = Input::Messages {
+            messages: self.task.messages.clone(),
+            tools: Vec::new(),
+        };
 
         let warmup_config = RunConfig::default().tokens_limit(1);
         session.run(input.clone(), warmup_config, Option::<fn(Output) -> bool>::None)?;

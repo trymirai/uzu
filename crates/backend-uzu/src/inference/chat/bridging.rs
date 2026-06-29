@@ -1,12 +1,12 @@
 use std::{path::Path, sync::Arc};
 
 use shoji::{
-    traits::backend::chat_message::Output as ChatMessageOutput,
+    traits::backend::chat_message::{Output as ChatMessageOutput, ToolCallState},
     types::{
         basic::{
             ContextLength as ShojiContextLength, Grammar as ShojiGrammar, ReasoningEffort,
             SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy,
-            SamplingSeed as ShojiSamplingSeed,
+            SamplingSeed as ShojiSamplingSeed, ToolCall, ToolDescription, Value,
         },
         session::chat::{
             ChatConfig as ShojiChatConfig, ChatMessage as ShojiMessage, ChatMessageList, ChatReplyConfig,
@@ -85,20 +85,69 @@ pub fn build_input_and_run_config(
     config: &ChatReplyConfig,
 ) -> (Input, RunConfig) {
     let input_messages = messages.iter().filter_map(build_message).collect();
-    let input = Input::Messages(input_messages);
+    let input = Input::Messages {
+        messages: input_messages,
+        tools: build_tools(messages),
+    };
     let run_config = build_run_config(messages, config);
     (input, run_config)
+}
+
+fn build_tools(messages: &Vec<ShojiMessage>) -> Vec<serde_json::Value> {
+    messages
+        .tool_namespaces()
+        .iter()
+        .flat_map(|namespace| namespace.tools.iter())
+        .map(|tool| match tool {
+            ToolDescription::Function {
+                tool_function,
+            } => {
+                let parameters = tool_function
+                    .parameters
+                    .as_ref()
+                    .and_then(|value| serde_json::from_str::<serde_json::Value>(&value.json).ok())
+                    .unwrap_or_else(|| serde_json::json!({}));
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool_function.name,
+                        "description": tool_function.description,
+                        "parameters": parameters,
+                    }
+                })
+            },
+        })
+        .collect()
 }
 
 pub fn build_output(output: &Output) -> ChatMessageOutput {
     let text = output.text.parsed.response.clone();
     let reasoning = output.text.parsed.chain_of_thought.clone();
-    let finish_reason = output.finish_reason.as_ref().map(build_finish_reason);
+    let tool_calls: Vec<ToolCallState> = output
+        .text
+        .parsed
+        .tool_calls
+        .iter()
+        .map(|tool_call| {
+            ToolCallState::Finished(ToolCall {
+                identifier: None,
+                name: tool_call.name.clone(),
+                arguments: Value {
+                    json: tool_call.arguments.clone(),
+                },
+            })
+        })
+        .collect();
+    let finish_reason = if tool_calls.is_empty() {
+        output.finish_reason.as_ref().map(build_finish_reason)
+    } else {
+        Some(ShojiFinishReason::ToolCalls)
+    };
     let stats = build_stats(&output.stats);
     ChatMessageOutput {
         reasoning,
         text,
-        tool_calls: vec![],
+        tool_calls,
         finish_reason,
         stats,
     }
