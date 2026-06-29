@@ -55,11 +55,12 @@ impl ChatView {
         let full_text = if self.state.attached_files.is_empty() {
             text
         } else {
-            let mut s = text;
-            for (name, ext, content) in self.state.attached_files.drain(..) {
-                s.push_str(&format!("\n\n```{ext}\n# {name}\n{content}\n```"));
+            use std::fmt::Write;
+            let mut combined = text;
+            for (name, extension, content) in self.state.attached_files.drain(..) {
+                let _ = write!(combined, "\n\n```{extension}\n# {name}\n{content}\n```");
             }
-            s
+            combined
         };
         let first_user = !self.state.messages.iter().any(|m| m.role == Role::User);
         self.state.messages.push(ChatMsg::user(full_text));
@@ -249,6 +250,10 @@ impl ChatView {
         cx.notify();
     }
 
+    fn last_assistant_mut(&mut self) -> Option<&mut ChatMsg> {
+        self.state.messages.last_mut().filter(|message| message.role == Role::Assistant)
+    }
+
     fn apply_stream(
         &mut self,
         msg: StreamMsg,
@@ -271,27 +276,22 @@ impl ChatView {
                 ttft,
                 total_time,
             } => {
-                if let Some(last) = self.state.messages.last_mut() {
-                    if last.role == Role::Assistant {
-                        let had_text = !last.cur().text.is_empty();
-                        let v = last.cur_mut();
-                        v.text = text;
-                        v.reasoning = reasoning;
-                        v.tps = tps;
-                        v.tokens = tokens;
-                        v.ttft = ttft;
-                        v.total_time = total_time;
-                        // Auto-collapse reasoning once the reply body starts
-                        // arriving (mirrors Electron behaviour).
-                        if !had_text && !last.cur().text.is_empty() {
-                            last.reasoning_collapsed = true;
-                        }
+                if let Some(message) = self.last_assistant_mut() {
+                    let had_text = !message.cur().text.is_empty();
+                    let version = message.cur_mut();
+                    version.text = text;
+                    version.reasoning = reasoning;
+                    version.tps = tps;
+                    version.tokens = tokens;
+                    version.ttft = ttft;
+                    version.total_time = total_time;
+                    if !had_text && !message.cur().text.is_empty() {
+                        message.reasoning_collapsed = true;
                     }
                 }
                 if self.should_auto_scroll() {
                     self.pin_to_bottom();
                 }
-                // Keep the live reasoning panel scrolled to its newest line.
                 self.reasoning_scroll.scroll_to_bottom();
                 cx.notify();
             },
@@ -299,39 +299,28 @@ impl ChatView {
                 self.state.streaming = false;
                 self.state.waiting_for_model = false;
                 self.state.cancel = None;
-                // Reply finished — restart the idle clock for auto-eject.
                 self.last_active = std::time::Instant::now();
-                // If the model produced no text, show a notice rather than an
-                // empty bubble stuck on "…".
-                if let Some(last) = self.state.messages.last_mut() {
-                    if last.role == Role::Assistant {
-                        let v = last.cur_mut();
-                        if !v.error && v.text.is_empty() {
-                            v.text = "(The model returned no text.)".to_string();
-                            v.error = true;
-                        }
+                if let Some(message) = self.last_assistant_mut() {
+                    let version = message.cur_mut();
+                    if !version.error && version.text.is_empty() {
+                        version.text = "(The model returned no text.)".to_string();
+                        version.error = true;
                     }
                 }
                 self.save();
-                // Refresh the sidebar now; title generation may be skipped/fail.
                 cx.emit(ChatEvent::Updated);
                 self.maybe_generate_title(cx);
                 cx.notify();
             },
             StreamMsg::Error(err) => {
-                if let Some(last) = self.state.messages.last_mut() {
-                    if last.role == Role::Assistant {
-                        let v = last.cur_mut();
-                        v.text = format!("Error: {err}");
-                        v.error = true;
-                    }
+                if let Some(message) = self.last_assistant_mut() {
+                    let version = message.cur_mut();
+                    version.text = format!("Error: {err}");
+                    version.error = true;
                 }
                 self.state.streaming = false;
                 self.state.waiting_for_model = false;
                 self.state.cancel = None;
-                // Persist so the user's prompt isn't lost (save() drops the
-                // errored assistant turn but keeps the user turn) and refresh the
-                // sidebar, matching the `Done` path.
                 self.save();
                 cx.emit(ChatEvent::Updated);
                 crate::toast::push(cx, "Inference failed", crate::toast::ToastKind::Error);
