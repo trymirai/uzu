@@ -94,7 +94,14 @@ fn test_build_tree_gram_matches_cpu() {
         let expected = get_output::<Cpu>(&q, &k, &trie, &prefix, &beta, tree_size, scale, false);
 
         for_each_non_cpu_backend!(|B| {
-            for use_mxu in [false, true] {
+            let context = <<B as Backend>::Context as Context>::new().expect("Failed to create Context");
+            let paths: &[bool] = if context.supports_mxu() {
+                &[false, true]
+            } else {
+                &[false]
+            };
+
+            for &use_mxu in paths {
                 let actual = get_output::<B>(&q, &k, &trie, &prefix, &beta, tree_size, scale, use_mxu);
                 let path = if use_mxu {
                     "mxu"
