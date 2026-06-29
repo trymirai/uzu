@@ -5,7 +5,7 @@
 #include "../common/thread_context.h"
 #include "../generated/trie.h"
 
-#define ROWS_PER_THREADGROUP 4
+#define ROWS_PER_THREADGROUP 4u
 
 using namespace metal;
 using namespace uzu::trie;
