@@ -25,6 +25,18 @@ METAL_FUNC void invert_tree_gram_diagonal_block(
     const uint thread_idx
 );
 
+// Build tree gram matrices for one (batch, value-head) tile.
+//
+// q, k:   [B, T, Hg, K], with key head hk = hv / (HV / Hg)
+// trie:   [B, T] DFS intervals; col is an ancestor of row when row is in col's interval
+// prefix: [B, T, HV] path log-decay prefix from BuildPrefixBeta
+// beta:   [B, T, HV] sigmoid gate from BuildPrefixBeta
+//
+// a_mat[row, col] = beta[row] * exp(prefix[row] - prefix[col]) * dot(k[row], k[col])
+//                   for proper ancestors only
+// qkd[row, col]   = scale * exp(prefix[row] - prefix[col]) * dot(q[row], k[col])
+//                   for ancestor-or-self
+// ainv            = (I + A)^-1 for each diagonal block
 template <typename T, bool USE_MXU>
 VARIANTS(T, float, bfloat)
 VARIANTS(USE_MXU, false, true)

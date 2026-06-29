@@ -3,20 +3,6 @@ use num_traits::Float;
 use proc_macros::kernel;
 
 use crate::{array::ArrayElement, backends::common::gpu_types::trie::TrieNode};
-
-// K1 — tree gram + masked decay + inverse.
-//
-// Inputs
-//   q, k        : [B, T, Hg, K]      Hg = k-heads; value-head hv -> hk = hv / (HV/Hg)
-//   trie        : [B, T]      TrieNode DFS intervals
-//   prefix      : [B, T, HV]  f32    G  = path cumsum of log-decay   (from K0)
-//   beta        : [B, T, HV]  f32    sigmoid gate                    (from K0)
-// Outputs
-//   a_mat : [B, HV, T, T] f32   strictly-lower   A[i,j]   = beta_i * exp(G_i-G_j) * (k_i . k_j),  j PROPER ancestor of i
-//   qkd   : [B, HV, T, T] f32   inclusive        QKD[i,j] = exp(G_i-G_j) * scale * (q_i . k_j),   j ancestor-or-self of i
-//   ainv  : [B, HV, T, T] f32   (I + A)^-1
-//
-// scale = 1/sqrt(K). exp(G_i-G_j) <= 1 for real ancestor pairs; clamp masked-out junk before exp if you fuse the mask.
 #[kernel(BuildTreeGram)]
 #[variants(T, f32, bf16)]
 #[variants(USE_MXU, false)]
@@ -50,7 +36,6 @@ pub fn build_tree_gram<T: ArrayElement + Float, const USE_MXU: bool>(
             let mat_base = (batch * value_heads + hv) * tree_size * tree_size;
             let trie_base = batch * tree_size;
 
-            // Step 1-3: grams + decay + masks -> a_mat, qkd.
             for i in 0..tree_size {
                 let row_idx = i as u32;
                 let prefix_i = unsafe { *prefix.add((batch * tree_size + i) * value_heads + hv) };
@@ -79,7 +64,6 @@ pub fn build_tree_gram<T: ArrayElement + Float, const USE_MXU: bool>(
                     }
                     let prefix_j = unsafe { *prefix.add((batch * tree_size + j) * value_heads + hv) };
                     let dexp = (prefix_i - prefix_j).exp();
-                    // strict = proper ancestor (drops the diagonal); incl keeps it.
                     unsafe {
                         *a_mat.add(out) = if i != j {
                             beta_i * dexp * kk
