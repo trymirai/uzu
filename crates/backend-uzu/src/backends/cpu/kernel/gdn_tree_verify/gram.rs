@@ -1,4 +1,4 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
@@ -18,7 +18,7 @@ use crate::{array::ArrayElement, backends::common::gpu_types::trie::TrieNode};
 //
 // scale = 1/sqrt(K). exp(G_i-G_j) <= 1 for real ancestor pairs; clamp masked-out junk before exp if you fuse the mask.
 #[kernel(BuildTreeGram)]
-#[variants(T, f32, f16, bf16)]
+#[variants(T, f32, bf16)]
 #[variants(USE_MXU, false)]
 pub fn build_tree_gram<T: ArrayElement + Float, const USE_MXU: bool>(
     q: *const T,

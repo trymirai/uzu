@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{env, mem::size_of, time::Duration};
 
 use criterion::{BenchmarkId, Criterion};
 use half::bf16;
@@ -11,7 +11,7 @@ use crate::{
         metal::Metal,
     },
     data_type::DataType,
-    tests::matmul::iter_encode_loop_named,
+    tests::{cold_pool::ColdPool, matmul::iter_encode_loop_named},
 };
 
 const K_HEADS: usize = 16;
@@ -109,6 +109,7 @@ fn make_buffers(
 #[uzu_bench]
 fn bench_build_tree_gram(c: &mut Criterion) {
     let context = <Metal as Backend>::Context::new().expect("metal context");
+    let cold_buffers = env::var("UZU_GRAM_COLD_BUFFERS").is_ok();
     let kernel_paths = if context.supports_mxu() {
         &[("Simdgroup", false), ("MXU", true)][..]
     } else {
@@ -116,22 +117,58 @@ fn bench_build_tree_gram(c: &mut Criterion) {
     };
 
     for &(kernel_path, use_mxu) in kernel_paths {
-        let kernel =
-            <<Metal as Backend>::Kernels as Kernels>::BuildTreeGramKernel::new(&context, DataType::BF16, use_mxu)
-                .expect("BuildTreeGramKernel");
         let mut group = c.benchmark_group(format!("Metal/Kernel/GDNTreeVerify/BuildTreeGram/{kernel_path}"));
         group.sample_size(10).warm_up_time(Duration::from_millis(100)).measurement_time(Duration::from_millis(500));
 
         for &batch_size in BATCH_SIZES {
             for &tree_size in TREE_SIZES {
-                let (mut buffers, scale) = make_buffers(&context, batch_size, tree_size);
+                let kernel = <<Metal as Backend>::Kernels as Kernels>::BuildTreeGramKernel::new(
+                    &context,
+                    DataType::BF16,
+                    use_mxu,
+                )
+                .expect("BuildTreeGramKernel");
+                let scale = (HEAD_K_DIM as f32).sqrt().recip();
+                let qk_len = batch_size * tree_size * K_HEADS * HEAD_K_DIM;
+                let head_len = batch_size * tree_size * VALUE_HEADS;
+                let out_len = batch_size * VALUE_HEADS * tree_size * tree_size;
+                let bytes_per_copy = qk_len * size_of::<bf16>() * 2
+                    + batch_size * tree_size * 3 * size_of::<u32>()
+                    + head_len * size_of::<f32>() * 2
+                    + out_len * size_of::<f32>() * 3;
                 let benchmark_path =
                     format!("Metal/Kernel/GDNTreeVerify/BuildTreeGram/{kernel_path}/B{batch_size}_T{tree_size}");
-                group.bench_function(
-                    BenchmarkId::from_parameter(format!(
-                        "B{batch_size}_T{tree_size}_Hg{K_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}"
-                    )),
-                    |bencher| {
+                let benchmark_id = BenchmarkId::from_parameter(format!(
+                    "B{batch_size}_T{tree_size}_Hg{K_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}"
+                ));
+
+                if cold_buffers {
+                    let mut buffers = ColdPool::new(bytes_per_copy, || make_buffers(&context, batch_size, tree_size).0);
+                    group.bench_function(benchmark_id, |bencher| {
+                        iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
+                            let buffers = buffers.next_mut();
+                            kernel.encode(
+                                &buffers.q,
+                                &buffers.k,
+                                &buffers.trie,
+                                &buffers.prefix,
+                                &buffers.beta,
+                                &mut buffers.a_mat,
+                                &mut buffers.qkd,
+                                &mut buffers.ainv,
+                                scale,
+                                batch_size as u32,
+                                tree_size as u32,
+                                K_HEADS as u32,
+                                VALUE_HEADS as u32,
+                                HEAD_K_DIM as u32,
+                                encoder,
+                            );
+                        });
+                    });
+                } else {
+                    let (mut buffers, _) = make_buffers(&context, batch_size, tree_size);
+                    group.bench_function(benchmark_id, |bencher| {
                         iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
                             kernel.encode(
                                 &buffers.q,
@@ -151,8 +188,8 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                                 encoder,
                             );
                         });
-                    },
-                );
+                    });
+                }
             }
         }
         group.finish();
