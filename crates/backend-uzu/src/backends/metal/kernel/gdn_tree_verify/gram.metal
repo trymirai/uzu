@@ -168,21 +168,27 @@ PUBLIC KERNEL(BuildTreeGram)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  kk_acc.zip_map_coords(lane, qk_acc, [&](ushort local_row, ushort local_col, float kk, float qk_dot) {
-    const uint row_idx = row_token[local_row];
-    const uint col_idx = col_base + local_col;
-    const bool in_subtree = row_idx >= col_trie_start[local_col] && row_idx <= col_trie_end[local_col];
-    const float decay = exp(row_prefix[local_row] - col_prefix[local_col]);
-    const float a_value = in_subtree && row_idx != col_idx ? row_beta[local_row] * decay * kk : 0.0f;
-    const float qkd_value = in_subtree ? scale * decay * qk_dot : 0.0f;
-    if (has_diag && local_row < diag_size && local_col >= diag_col_offset) {
-      const uint diag_col = local_col - diag_col_offset;
-      if (diag_col < diag_size) {
-        diag_a_tile[local_row * TREE_GRAM_ROW_TILE + diag_col] = a_value;
-      }
-    }
-    return float2(a_value, qkd_value);
-  });
+  AccFragment::zip_for_each_coord(
+      lane,
+      [&](ushort local_row, ushort local_col, thread float& kk, thread float& qk_dot) {
+        const uint row_idx = row_token[local_row];
+        const uint col_idx = col_base + local_col;
+        const bool in_subtree = row_idx >= col_trie_start[local_col] && row_idx <= col_trie_end[local_col];
+        const float decay = exp(row_prefix[local_row] - col_prefix[local_col]);
+        const float a_value = in_subtree && row_idx != col_idx ? row_beta[local_row] * decay * kk : 0.0f;
+        const float qkd_value = in_subtree ? scale * decay * qk_dot : 0.0f;
+        if (has_diag && local_row < diag_size && local_col >= diag_col_offset) {
+          const uint diag_col = local_col - diag_col_offset;
+          if (diag_col < diag_size) {
+            diag_a_tile[local_row * TREE_GRAM_ROW_TILE + diag_col] = a_value;
+          }
+        }
+        kk = a_value;
+        qk_dot = qkd_value;
+      },
+      kk_acc,
+      qk_acc
+  );
 
   const short2 tile_dims = short2(tile_cols, tile_rows);
   device float* a_tile = a_mat + tile_base;
