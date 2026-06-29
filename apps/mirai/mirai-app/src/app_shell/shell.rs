@@ -1,7 +1,3 @@
-//! The application shell: a left navigation sidebar, a content outlet that
-//! swaps on the active `Route`, and a bottom footer bar. Navigation is just a
-//! `Route` field on the root view, switched via `cx.listener` + `cx.notify()`.
-
 use gpui::{
     AnyElement, App, Bounds, Context, CursorStyle, Entity, IntoElement, Render, TitlebarOptions, Window, WindowBounds,
     WindowOptions, div, point, prelude::*, px, size,
@@ -33,9 +29,9 @@ pub struct MiraiApp {
     routers: Entity<RoutersView>,
     tts: Entity<TtsView>,
     cloud: Entity<CloudModelsView>,
-    /// Cached recent chats for the sidebar list; refreshed on navigation.
+
     pub(super) recent_chats: Vec<persistence::StoredChat>,
-    /// Whether the bottom "Settings" menu is expanded (mirai-chat parity).
+
     pub(super) settings_menu_open: bool,
 }
 
@@ -44,12 +40,10 @@ impl MiraiApp {
         if !settings_state::current(cx).dark_mode {
             theme::set_theme(cx, theme::Theme::light());
         }
-        // Repaint the whole tree when the theme is swapped (Settings toggle).
+
         theme::observe_theme(cx, |_, cx| cx.notify()).detach();
         toast::observe(cx, |_, cx| cx.notify()).detach();
 
-        // Register as the current root view so the App-level menu-bar item (which
-        // outlives this window) can route clicks here.
         let weak = cx.entity().downgrade();
         crate::menu_bar::register_app(cx, weak);
 
@@ -58,7 +52,6 @@ impl MiraiApp {
         let local_models = cx.new(|cx| LocalModelsView::new(models.clone(), cx));
         let chat = cx.new(|cx| ChatView::new(models.clone(), cloud_store.clone(), cx));
 
-        // Tapping an installed local model starts a chat with it.
         cx.subscribe(&local_models, |this, _view, event, cx| match event {
             LocalModelsEvent::UseModel(model) => {
                 this.chat.update(cx, |chat, cx| chat.use_model(model.clone(), cx));
@@ -76,7 +69,6 @@ impl MiraiApp {
         let tts = cx.new(|cx| TtsView::new(tts_store, cx));
         let cloud = cx.new(|cx| CloudModelsView::new(cloud_store, cx));
 
-        // Chatting with a cloud model picked on the Cloud Models screen.
         cx.subscribe(&cloud, |this, _cloud, event, cx| match event {
             CloudEvent::UseModel(model) => {
                 this.chat.update(cx, |chat, cx| chat.use_model(model.clone(), cx));
@@ -86,8 +78,6 @@ impl MiraiApp {
         })
         .detach();
 
-        // Opening a saved chat from the history screen, or refreshing the
-        // sidebar after the history list changed there.
         cx.subscribe(&chats, |this, _chats, event, cx| match event {
             ChatsEvent::Open(id) => this.open_chat(id.clone(), cx),
             ChatsEvent::Changed => {
@@ -106,18 +96,17 @@ impl MiraiApp {
         })
         .detach();
 
-        // Clearing data deletes chats on disk; refresh the sidebar's cache.
         cx.subscribe(&settings, |this, _settings, event, cx| match event {
             SettingsEvent::DataCleared {
                 dialogs,
                 audio,
             } => {
                 this.recent_chats = persistence::list_chats();
-                // Reset the live chat so it can't re-save a now-deleted dialog.
+
                 if *dialogs {
                     this.chat.update(cx, |chat, cx| chat.start_new(cx));
                 }
-                // Drop now-deleted clips from the TTS history and stop playback.
+
                 if *audio {
                     this.tts.update(cx, |tts, cx| tts.reload_after_clear(cx));
                 }
@@ -126,7 +115,6 @@ impl MiraiApp {
         })
         .detach();
 
-        // Dismissing the welcome screen.
         cx.subscribe(&welcome, |this, _welcome, event, cx| match event {
             WelcomeEvent::Continue => {
                 persistence::set_seen_welcome();
@@ -135,9 +123,6 @@ impl MiraiApp {
         })
         .detach();
 
-        // First run shows onboarding; afterwards land on Local Models (matching
-        // Electron mirai-chat's launch redirect). `MIRAI_SCREEN` overrides the
-        // landing route for visual-QA/screenshot automation.
         let route = match std::env::var("MIRAI_SCREEN").ok().as_deref() {
             Some("chat") => Route::Chat(None),
             Some("chats") => Route::Chats,
@@ -166,7 +151,6 @@ impl MiraiApp {
         }
     }
 
-    /// Route a menu-bar status-item click to a navigation (called by `menu_bar`).
     pub fn handle_tray_action(
         &mut self,
         action: crate::menu_bar::TrayAction,
@@ -181,7 +165,6 @@ impl MiraiApp {
         self.navigate(route, cx);
     }
 
-    /// Flip the color scheme and persist it (used by the settings menu).
     pub(super) fn toggle_dark_mode(
         &mut self,
         cx: &mut Context<Self>,
@@ -198,7 +181,6 @@ impl MiraiApp {
         cx.notify();
     }
 
-    /// Navigate to a route, running any side effects (reset/reload).
     pub(super) fn navigate(
         &mut self,
         route: Route,
@@ -239,7 +221,7 @@ impl MiraiApp {
             Route::Routers => self.routers.clone().into_any_element(),
             Route::Tts => self.tts.clone().into_any_element(),
             Route::Settings => self.settings.clone().into_any_element(),
-            // Welcome is rendered full-screen in `render`, never here.
+
             Route::Welcome => div().into_any_element(),
         }
     }
@@ -311,7 +293,6 @@ impl Render for MiraiApp {
             .font_family(FONT_SANS)
             .text_size(px(TEXT_SIZE));
 
-        // Welcome is full-screen (no sidebar/footer).
         if matches!(self.route, Route::Welcome) {
             return root.child(self.welcome.clone()).children(toast::render_overlay(cx));
         }
@@ -333,8 +314,6 @@ impl Render for MiraiApp {
     }
 }
 
-/// Open the main app window and bring Mirai to the foreground. Used at launch
-/// and on dock-icon reopen.
 pub fn open_window(cx: &mut App) {
     let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
     let window = cx.open_window(

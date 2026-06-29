@@ -1,7 +1,3 @@
-//! The chat composer's floating overlays — model picker, performance popover,
-//! and file-upload panel — plus the file-attach action and the model-entry
-//! collection that feeds the picker. Each is an `impl ChatView` builder.
-
 use gpui::{Anchor, App, Context, FontWeight, IntoElement, anchored, deferred, div, prelude::*, px};
 use uzu::types::model::Model;
 
@@ -15,7 +11,6 @@ use crate::{
     toast::{self, ToastKind},
 };
 
-/// (id, model, display_name, vendor_name, icon_url)
 type ModelEntry = (String, Model, String, String, Option<String>);
 
 fn model_entry(r: &crate::models_store::ModelRow) -> ModelEntry {
@@ -23,13 +18,11 @@ fn model_entry(r: &crate::models_store::ModelRow) -> ModelEntry {
 }
 
 impl ChatView {
-    /// Open a native file-picker, read the selected file(s) as UTF-8 text and
-    /// add them to `attached_files`. Max 5 files, 256 KB each (matching Electron).
     fn pick_file(
         &mut self,
         cx: &mut Context<Self>,
     ) {
-        const MAX_SIZE: u64 = 256 * 1024; // 256 KB
+        const MAX_SIZE: u64 = 256 * 1024;
         const MAX_FILES: usize = 5;
         const SUPPORTED: &[&str] = &[
             "txt", "md", "markdown", "json", "csv", "tsv", "yaml", "yml", "py", "js", "ts", "tsx", "jsx", "rs", "html",
@@ -98,9 +91,6 @@ impl ChatView {
         (local, cloud)
     }
 
-    /// One row in a model picker (`model-selector.tsx` ListboxOption layout).
-    /// Wraps `panel` in `deferred(anchored(corner).snap_to_window())` with a
-    /// mouse-down-out close handler — shared by all three popovers.
     pub(super) fn anchored_popover(
         panel: impl gpui::IntoElement + 'static,
         corner: Anchor,
@@ -130,7 +120,7 @@ impl ChatView {
         for_message: Option<usize>,
     ) -> gpui::AnyElement {
         let theme = cx.theme().clone();
-        // Plain muted label — matches Electron's model-selector styling.
+
         let badge =
             div().flex_none().text_size(crate::tokens::font::SMALL).text_color(theme.text_muted).child(if is_local {
                 "Local"
@@ -167,7 +157,6 @@ impl ChatView {
             .into_any_element()
     }
 
-    /// Shared model list + footer (`model-selector.tsx` ListboxOptions body).
     pub(super) fn model_picker_panel(
         &self,
         cx: &mut Context<Self>,
@@ -213,9 +202,6 @@ impl ChatView {
                     .cursor(gpui::CursorStyle::PointingHand)
                     .hover(move |s| s.bg(hover))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        // Carry the per-message switch intent across the trip to
-                        // Local Models so picking a (freshly downloaded) model
-                        // regenerates that reply instead of resetting the chat.
                         this.state.pending_regen = for_message;
                         this.close_popovers();
                         cx.emit(ChatEvent::OpenLocalModels);

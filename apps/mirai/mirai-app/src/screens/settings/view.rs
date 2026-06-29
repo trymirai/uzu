@@ -1,8 +1,3 @@
-//! Settings screen: an inner sidebar (General / Privacy / About Mirai) with a
-//! scrollable content panel, mirroring mirai-chat. The OS-integration rows
-//! (run-on-startup, menu bar, global shortcut) persist their preference; the
-//! native hooks behind them are tracked separately.
-
 use std::collections::HashSet;
 
 use gpui::{
@@ -158,8 +153,7 @@ impl SettingsView {
                 this.clear_data_busy = false;
                 this.clear_data_results = results;
                 this.clear_data_step = ClearDataStep::Result;
-                // Tell the shell to refresh cached views (e.g. the sidebar's
-                // recent-chats list, now that chats may be deleted).
+
                 cx.emit(SettingsEvent::DataCleared {
                     dialogs: selected.contains(&CleanupCategory::Dialogs),
                     audio: selected.contains(&CleanupCategory::Files),
@@ -238,8 +232,6 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// Expandable "Add instructions to all chats" card (mirai-chat parity),
-    /// shared in spirit with the Chats screen.
     fn instructions_card(
         &self,
         cx: &mut Context<Self>,
@@ -366,7 +358,6 @@ impl SettingsView {
             }))
     }
 
-    /// A non-toggle row: title + description on the left, a control on the right.
     fn action_row(
         &self,
         cx: &mut Context<Self>,
@@ -391,7 +382,6 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// Indented "Idle timeout (minutes)" stepper, shown under Auto-eject.
     fn idle_timeout_row(
         &self,
         cx: &mut Context<Self>,
@@ -433,7 +423,6 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// Select a tab by index (0 General, 1 Privacy, 2 About) — used by visual tests.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn select_tab(
         &mut self,
@@ -492,7 +481,6 @@ impl SettingsView {
         div().h(px(1.)).w_full().bg(cx.theme().border).into_any_element()
     }
 
-    /// Feedback row shown at the foot of General / Privacy.
     fn feedback_footer(
         &self,
         cx: &mut Context<Self>,
@@ -537,8 +525,6 @@ impl SettingsView {
         let settings = settings_state::current(cx);
         let theme = cx.theme().clone();
 
-        // "Set shortcut": white (primary) button. Global-shortcut capture isn't
-        // wired yet, so it explains itself when clicked.
         let shortcut_hover = theme.text.opacity(0.85);
         let set_shortcut = div()
             .id("set-shortcut")

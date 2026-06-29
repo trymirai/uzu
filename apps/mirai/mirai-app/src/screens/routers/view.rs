@@ -1,6 +1,3 @@
-//! Routers screen: list classification ("router") models with download/delete,
-//! pick one, and classify input text in a playground (probability bars).
-
 use futures::{StreamExt, channel::mpsc};
 use gpui::{Context, CursorStyle, Entity, FontWeight, IntoElement, Render, Window, div, prelude::*, px};
 use uzu::types::{model::Model, session::classification::ClassificationMessage};
@@ -25,8 +22,7 @@ pub struct RoutersView {
     result: Option<Vec<(String, f64)>>,
     classifying: bool,
     error: Option<String>,
-    /// Bumped on each classify and on Clear, so a late result from a superseded
-    /// run is dropped instead of reappearing under an emptied editor.
+
     classify_gen: u64,
 }
 
@@ -57,8 +53,7 @@ impl RoutersView {
         cx: &mut Context<Self>,
     ) {
         self.input.update(cx, |input, cx| input.set_text("", cx));
-        // Invalidate any in-flight classification so its late result can't
-        // reappear under the now-empty editor.
+
         self.classify_gen = self.classify_gen.wrapping_add(1);
         self.classifying = false;
         self.result = None;
@@ -128,7 +123,6 @@ impl RoutersView {
         cx.spawn(async move |this, cx| {
             while let Some(msg) = rx.next().await {
                 let keep = this.update(cx, |view, cx| {
-                    // Drop a result from a superseded run (Clear or a new classify).
                     if view.classify_gen != gen_id {
                         return false;
                     }
@@ -275,7 +269,6 @@ impl Render for RoutersView {
         };
         let any_installed = routers.iter().any(|r| r.installed);
 
-        // Split into Installed / Available sections (mirai-chat parity).
         let mut list = div().flex().flex_col().gap_1();
         if routers.is_empty() {
             list = list.child(if loading {
@@ -396,7 +389,6 @@ impl Render for RoutersView {
     }
 }
 
-/// Section label ("INSTALLED" / "AVAILABLE") above a router group.
 fn router_section(
     label: &str,
     theme: &Theme,
@@ -411,7 +403,6 @@ fn router_section(
         .child(label.to_uppercase())
 }
 
-/// A rounded probability pill for a classification result.
 fn tag_chip(
     label: &str,
     prob: f64,

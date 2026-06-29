@@ -1,8 +1,3 @@
-//! Chat screen: streaming local inference with a reasoning panel, perf stats,
-//! and a composer. Streaming follows the Tokio→channel→foreground pattern: the
-//! uzu reply stream runs on the Tokio runtime and pushes cumulative updates back
-//! to the UI entity.
-
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -31,9 +26,6 @@ pub enum ChatEvent {
     OpenLocalModels,
 }
 
-/// Dark-theme (or first) vendor logo URL for a resolved model — used by the
-/// chat's compact picker badges. The model-row lists use the richer,
-/// SVG-aware `ModelRow::icon_url` instead.
 fn dark_icon_url(model: &Model) -> Option<String> {
     let icons = &model.family.as_ref()?.vendor.metadata.icons;
     icons
@@ -44,22 +36,17 @@ fn dark_icon_url(model: &Model) -> Option<String> {
 }
 
 pub struct ChatView {
-    /// Domain + UI state; `pub(super)` so the `stream`/`overlays` submodules
-    /// (their own `impl ChatView` blocks) can reach it.
     pub(super) state: ChatState,
     pub(super) store: Entity<ModelsStore>,
-    /// Cloud chat models, shown alongside local ones in the model picker.
+
     pub(super) cloud_store: Entity<ModelsStore>,
     pub(super) input: Entity<TextInput>,
     pub(super) scroll: ScrollHandle,
-    /// Auto-scrolls the streaming reasoning panel to its latest line.
+
     pub(super) reasoning_scroll: ScrollHandle,
-    /// Frames remaining to keep re-pinning the scroll to the bottom. A single
-    /// `scroll_to_bottom()` lands short because wrapped-text height is only
-    /// final after the second layout pass; re-asserting for a few frames lets
-    /// the offset converge to the true bottom as `content_size` settles.
+
     pub(super) pin_bottom_frames: u8,
-    /// Last user/model activity, for idle auto-eject (Settings → Auto-eject).
+
     pub(super) last_active: Instant,
 }
 
@@ -74,7 +61,6 @@ impl ChatView {
         let input = cx.new(|cx| TextInput::new(cx, "Add message…").multiline(true, 1, 8));
         cx.subscribe(&input, |this, input, event, cx| match event {
             InputEvent::Submit(text) => {
-                // Can't send mid-stream — keep the draft in the composer.
                 if this.state.streaming {
                     return;
                 }
@@ -88,8 +74,7 @@ impl ChatView {
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
         cx.observe(&cloud_store, |_, _, cx| cx.notify()).detach();
         settings_state::observe(cx, |_, cx| cx.notify()).detach();
-        // Idle auto-eject: periodically drop the resident session after a stretch
-        // of inactivity (Settings → "Auto-eject models when idle").
+
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(30)).await;
@@ -138,8 +123,6 @@ impl ChatView {
         }
     }
 
-    /// Eject the resident model if auto-eject is on and the chat has been idle
-    /// past the configured timeout (and isn't mid-generation).
     fn maybe_auto_eject(
         &mut self,
         cx: &mut Context<Self>,
@@ -159,14 +142,11 @@ impl ChatView {
         self.state.session_model_id = None;
     }
 
-    /// Cancel any in-flight reply so its producer stops streaming into a
-    /// conversation that's being reset or replaced. Dropping the token alone
-    /// leaves the old stream delivering updates into the new chat.
     pub(super) fn cancel_stream(&mut self) {
         if let Some(token) = self.state.cancel.take() {
             token.cancel();
         }
-        // Invalidate the in-flight stream so its late updates/`Done` are dropped.
+
         self.state.stream_gen = self.state.stream_gen.wrapping_add(1);
         self.state.streaming = false;
         self.state.waiting_for_model = false;
@@ -188,15 +168,10 @@ impl ChatView {
         self.state.session_model_id = Some(model_id.to_string());
     }
 
-    /// The model the footer shows as loaded (None → "No model loaded").
     pub fn loaded_model_name(&self) -> Option<String> {
         self.state.loaded_model.clone()
     }
 
-    /// "Eject" the loaded model: stop any generation and clear the loaded
-    /// indicator. Note: uzu exposes no unload API, so this does not free GPU
-    /// memory — it's a UI deselect. The picked model (`self.state.model`) is kept, so
-    /// the next message reloads it.
     pub fn eject(
         &mut self,
         cx: &mut Context<Self>,
@@ -214,7 +189,6 @@ impl ChatView {
         self.state.file_upload_open = false;
     }
 
-    /// Open the model picker (used by the trigger and visual tests).
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn open_model_picker(
         &mut self,
@@ -255,7 +229,6 @@ impl ChatView {
         cx.notify();
     }
 
-    /// Reset to a fresh, unsaved conversation (keeps the selected model).
     pub fn start_new(
         &mut self,
         cx: &mut Context<Self>,
@@ -272,11 +245,6 @@ impl ChatView {
         cx.notify();
     }
 
-    /// Adopt a model picked from a model list. Normally this starts a fresh chat
-    /// (e.g. a cloud model picked on the Cloud Models screen), but when the user
-    /// came here to swap the model on a specific reply (`pending_regen`, set by
-    /// the per-message "More local models" link), keep the conversation and
-    /// regenerate that turn instead — Electron's `useRegenerateMessage` parity.
     pub fn use_model(
         &mut self,
         model: Model,
@@ -293,7 +261,6 @@ impl ChatView {
         self.start_new(cx);
     }
 
-    /// Load a previously saved chat for viewing/continuing.
     pub fn load_stored(
         &mut self,
         stored: StoredChat,
@@ -319,7 +286,7 @@ impl ChatView {
                     ..Default::default()
                 }],
                 current: 0,
-                // Loaded chats collapse reasoning by default — they're already done.
+
                 reasoning_collapsed: true,
             })
             .collect();
@@ -327,9 +294,7 @@ impl ChatView {
         self.state.created_at = stored.created_at;
         self.state.chat_title = stored.title;
         self.state.title_pending = false;
-        // Restore the model the chat was saved with so continuing it uses the
-        // right backend/model, not the first installed local model.
-        // Prefer the stable id; fall back to the display name for older chats.
+
         self.state.model = stored
             .model_id
             .as_deref()
@@ -338,21 +303,16 @@ impl ChatView {
         self.cancel_stream();
         self.state.pending_regen = None;
         self.clear_session();
-        // Opening a saved chat lands on its most recent message.
+
         self.pin_to_bottom();
         cx.notify();
     }
 
-    /// Keep the message list pinned to the bottom for the next few frames so
-    /// the scroll offset converges to the true bottom once wrapped-text height
-    /// has settled (a single `scroll_to_bottom` lands short — see the field).
     pub(super) fn pin_to_bottom(&mut self) {
         self.scroll.scroll_to_bottom();
         self.pin_bottom_frames = 8;
     }
 
-    /// True when the user is at (or near) the bottom — used to avoid fighting
-    /// manual scroll during streaming.
     pub(super) fn should_auto_scroll(&self) -> bool {
         let offset = self.scroll.offset();
         let max = self.scroll.max_offset();
@@ -407,7 +367,6 @@ impl ChatView {
         });
     }
 
-    /// Generation-settings overlay: sampling mode + (Stochastic) params + max tokens.
     fn gen_settings_overlay(
         &self,
         cx: &mut Context<Self>,
@@ -445,7 +404,6 @@ impl ChatView {
                 ),
         );
 
-        // Title bar + current-model row + reasoning toggle (Electron drawer).
         let resolved = self.resolved_model(cx);
         let model_name = resolved.as_ref().map(|m| m.name()).unwrap_or_else(|| "No model".to_string());
         let vendor = resolved.as_ref().and_then(|m| m.family.as_ref().map(|f| f.vendor.name())).unwrap_or_default();
@@ -595,7 +553,6 @@ impl ChatView {
             ));
         }
 
-        // Divider + Reasoning toggle (always shown, like Electron).
         card = card.child(div().h_px().bg(border)).child(reasoning_row);
 
         let tokens_str = if self.state.max_tokens == 0 {
@@ -642,8 +599,7 @@ impl ChatView {
         cx: &Context<Self>,
     ) -> Option<Model> {
         let store = self.store.read(cx);
-        // Cloud models are absent from the local catalog — keep them as-is.
-        // Local selections fall back if deleted (see `resolve_installed`).
+
         if let Some(model) = &self.state.model
             && !store.rows.iter().any(|r| r.model.identifier == model.identifier)
         {
@@ -694,10 +650,6 @@ impl Render for ChatView {
         let theme = cx.theme().clone();
         let streaming = self.state.streaming;
 
-        // Re-pin the scroll to the bottom for a few frames after content
-        // changes: the first layout underestimates wrapped-text height, so a
-        // single `scroll_to_bottom` lands short. Each frame re-asserts and
-        // schedules the next until the offset converges to the true bottom.
         if self.pin_bottom_frames > 0 {
             self.pin_bottom_frames -= 1;
             self.scroll.scroll_to_bottom();
@@ -806,9 +758,6 @@ impl Render for ChatView {
                                             .text_color(theme.text_muted)
                                             .child(reasoning.clone());
                                         if streaming_here {
-                                            // Live: cap at 180 px and auto-scroll to the newest
-                                            // line (tracked handle), with a bottom fade blending
-                                            // the cut-off into the panel.
                                             panel = panel.child(
                                                 div()
                                                     .relative()
@@ -831,10 +780,6 @@ impl Render for ChatView {
                                                     ),
                                             );
                                         } else {
-                                            // Done: render inline (no inner scroll box) so the main
-                                            // chat scroll reviews it. A nested capped scroller traps
-                                            // the wheel in GPUI — no browser overscroll chaining —
-                                            // leaving the panel un-scrollable and blocking the chat.
                                             panel = panel.child(text);
                                         }
                                     }
@@ -860,8 +805,7 @@ impl Render for ChatView {
                             } else {
                                 "Generating…"
                             };
-                            // Gentle "breathing" pulse on the loading row while the
-                            // model warms up / streams (triangle wave 0.5↔1.0).
+
                             div()
                                 .child(Loader::new().label(label))
                                 .with_animation(
@@ -1077,7 +1021,6 @@ impl Render for ChatView {
             }
         }
 
-        // Composer send/stop (`message-input.tsx`: filled label-title button, not accent).
         let (btn_id, btn_icon, btn_icon_size) = if streaming {
             ("chat-stop", Icon::Stop, crate::tokens::icon::SM)
         } else {
@@ -1119,7 +1062,6 @@ impl Render for ChatView {
                     .pt_4()
                     .pb_5()
                     .items_center()
-                    // Scrollable message area (same flex pattern as `chats.rs` list).
                     .child(
                         div().w_full().max_w(px(CONTENT_MAX_WIDTH)).flex_1().min_h_0().flex().flex_col().child(
                             div()
@@ -1133,193 +1075,181 @@ impl Render for ChatView {
                                 .child(column),
                         ),
                     )
-                    // Composer (`flex-shrink-0`, max 800px — mirai-chat ChatPage).
                     .child(
                         div().w_full().flex_shrink_0().flex().flex_col().items_center().child(
-                            div()
-                                .w_full()
-                                .max_w(px(CONTENT_MAX_WIDTH))
-                                .flex()
-                                .flex_col()
-                                .items_end()
-                                .gap_2()
-                                // `MessageInput`: `gap-4 p-4 rounded-[8px]`.
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_4()
-                                        .w_full()
-                                        .p_4()
-                                        .rounded_lg()
-                                        .border_1()
-                                        .border_color(theme.border)
-                                        .bg(theme.card)
-                                        .child(div().w_full().child(self.input.clone()))
-                                        .when(!self.state.attached_files.is_empty(), |el| {
-                                            let chips = self
-                                                .state
-                                                .attached_files
-                                                .iter()
-                                                .enumerate()
-                                                .map(|(i, (name, ext, _))| {
-                                                    let label = format!("{name} .{ext}");
-                                                    div()
-                                                        .id(SharedString::from(format!("attach-{i}")))
-                                                        .flex()
-                                                        .items_center()
-                                                        .gap_1()
-                                                        .px_2()
-                                                        .py_0p5()
-                                                        .rounded_md()
-                                                        .bg(theme.bg_hover)
-                                                        .border_1()
-                                                        .border_color(theme.border)
-                                                        .text_size(crate::tokens::font::CAPTION)
-                                                        .text_color(theme.text_muted)
-                                                        .child(IconEl::new(Icon::Rename, theme.text_muted).size(11.))
-                                                        .child(label)
-                                                        .child(
-                                                            div()
-                                                                .id(SharedString::from(format!("attach-rm-{i}")))
-                                                                .cursor(gpui::CursorStyle::PointingHand)
-                                                                .text_color(theme.text_muted)
-                                                                .child("×")
-                                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                                    if i < this.state.attached_files.len() {
-                                                                        this.state.attached_files.remove(i);
+                            div().w_full().max_w(px(CONTENT_MAX_WIDTH)).flex().flex_col().items_end().gap_2().child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_4()
+                                    .w_full()
+                                    .p_4()
+                                    .rounded_lg()
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .bg(theme.card)
+                                    .child(div().w_full().child(self.input.clone()))
+                                    .when(!self.state.attached_files.is_empty(), |el| {
+                                        let chips = self
+                                            .state
+                                            .attached_files
+                                            .iter()
+                                            .enumerate()
+                                            .map(|(i, (name, ext, _))| {
+                                                let label = format!("{name} .{ext}");
+                                                div()
+                                                    .id(SharedString::from(format!("attach-{i}")))
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .px_2()
+                                                    .py_0p5()
+                                                    .rounded_md()
+                                                    .bg(theme.bg_hover)
+                                                    .border_1()
+                                                    .border_color(theme.border)
+                                                    .text_size(crate::tokens::font::CAPTION)
+                                                    .text_color(theme.text_muted)
+                                                    .child(IconEl::new(Icon::Rename, theme.text_muted).size(11.))
+                                                    .child(label)
+                                                    .child(
+                                                        div()
+                                                            .id(SharedString::from(format!("attach-rm-{i}")))
+                                                            .cursor(gpui::CursorStyle::PointingHand)
+                                                            .text_color(theme.text_muted)
+                                                            .child("×")
+                                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                                if i < this.state.attached_files.len() {
+                                                                    this.state.attached_files.remove(i);
+                                                                    cx.notify();
+                                                                }
+                                                            })),
+                                                    )
+                                                    .into_any_element()
+                                            })
+                                            .collect::<Vec<_>>();
+                                        el.child(div().flex().flex_wrap().gap_1().children(chips))
+                                    })
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .child({
+                                                let upload_panel = self.file_upload_panel(cx);
+                                                div()
+                                                    .relative()
+                                                    .child(
+                                                        div()
+                                                            .id("file-upload-trigger")
+                                                            .flex()
+                                                            .items_center()
+                                                            .px(px(6.))
+                                                            .py_1()
+                                                            .rounded_md()
+                                                            .cursor(gpui::CursorStyle::PointingHand)
+                                                            .hover(|s| s.bg(theme.bg_hover))
+                                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                                this.state.file_upload_open =
+                                                                    !this.state.file_upload_open;
+                                                                if this.state.file_upload_open {
+                                                                    this.state.model_picker_open = false;
+                                                                    this.state.msg_model_picker_open = None;
+                                                                    this.state.perf_open_msg = None;
+                                                                }
+                                                                cx.notify();
+                                                            }))
+                                                            .child(
+                                                                IconEl::new(Icon::Plus, theme.text_muted)
+                                                                    .size(crate::tokens::icon::MD),
+                                                            ),
+                                                    )
+                                                    .when_some(upload_panel, |el, panel| {
+                                                        el.child(Self::anchored_popover(
+                                                            panel,
+                                                            Anchor::BottomLeft,
+                                                            |this, _, _, cx| {
+                                                                this.state.file_upload_open = false;
+                                                                cx.notify();
+                                                            },
+                                                            cx,
+                                                        ))
+                                                    })
+                                            })
+                                            .child({
+                                                let mut controls = div().flex().items_center().gap(px(10.));
+                                                if has_model {
+                                                    controls = controls.child(
+                                                        IconButton::new("gen-settings", Icon::Settings)
+                                                            .color(theme.text_muted)
+                                                            .icon_size(18.)
+                                                            .hit_size(32.)
+                                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                                this.state.gen_settings_open =
+                                                                    !this.state.gen_settings_open;
+                                                                cx.notify();
+                                                            })),
+                                                    );
+                                                }
+                                                let picker_panel = self.model_picker_panel(cx, None);
+                                                controls = controls
+                                                    .child(
+                                                        div()
+                                                            .relative()
+                                                            .child(
+                                                                div()
+                                                                    .id("model-trigger")
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap_1()
+                                                                    .px(px(6.))
+                                                                    .cursor(gpui::CursorStyle::PointingHand)
+                                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                                        let opening = !this.state.model_picker_open;
+                                                                        this.close_popovers();
+                                                                        if opening {
+                                                                            this.state.model_picker_open = true;
+                                                                        }
                                                                         cx.notify();
-                                                                    }
-                                                                })),
-                                                        )
-                                                        .into_any_element()
-                                                })
-                                                .collect::<Vec<_>>();
-                                            el.child(div().flex().flex_wrap().gap_1().children(chips))
-                                        })
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .justify_between()
-                                                .child({
-                                                    // Float the upload panel above the "+" trigger
-                                                    // (deferred/anchored) instead of growing the
-                                                    // composer inline.
-                                                    let upload_panel = self.file_upload_panel(cx);
-                                                    div()
-                                                        .relative()
-                                                        .child(
-                                                            div()
-                                                                .id("file-upload-trigger")
-                                                                .flex()
-                                                                .items_center()
-                                                                .px(px(6.))
-                                                                .py_1()
-                                                                .rounded_md()
-                                                                .cursor(gpui::CursorStyle::PointingHand)
-                                                                .hover(|s| s.bg(theme.bg_hover))
-                                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                                    this.state.file_upload_open =
-                                                                        !this.state.file_upload_open;
-                                                                    if this.state.file_upload_open {
-                                                                        this.state.model_picker_open = false;
-                                                                        this.state.msg_model_picker_open = None;
-                                                                        this.state.perf_open_msg = None;
-                                                                    }
-                                                                    cx.notify();
-                                                                }))
-                                                                .child(
-                                                                    IconEl::new(Icon::Plus, theme.text_muted)
-                                                                        .size(crate::tokens::icon::MD),
-                                                                ),
-                                                        )
-                                                        .when_some(upload_panel, |el, panel| {
-                                                            el.child(Self::anchored_popover(
-                                                                panel,
-                                                                Anchor::BottomLeft,
-                                                                |this, _, _, cx| {
-                                                                    this.state.file_upload_open = false;
-                                                                    cx.notify();
-                                                                },
-                                                                cx,
-                                                            ))
-                                                        })
-                                                })
-                                                .child({
-                                                    let mut controls = div().flex().items_center().gap(px(10.));
-                                                    if has_model {
-                                                        controls = controls.child(
-                                                            IconButton::new("gen-settings", Icon::Settings)
-                                                                .color(theme.text_muted)
-                                                                .icon_size(18.)
-                                                                .hit_size(32.)
-                                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                                    this.state.gen_settings_open =
-                                                                        !this.state.gen_settings_open;
-                                                                    cx.notify();
-                                                                })),
-                                                        );
-                                                    }
-                                                    let picker_panel = self.model_picker_panel(cx, None);
-                                                    controls = controls
-                                                        .child(
-                                                            div()
-                                                                .relative()
-                                                                .child(
-                                                                    div()
-                                                                        .id("model-trigger")
-                                                                        .flex()
-                                                                        .items_center()
-                                                                        .gap_1()
-                                                                        .px(px(6.))
-                                                                        .cursor(gpui::CursorStyle::PointingHand)
-                                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                                            let opening = !this.state.model_picker_open;
-                                                                            this.close_popovers();
-                                                                            if opening {
-                                                                                this.state.model_picker_open = true;
-                                                                            }
-                                                                            cx.notify();
-                                                                        }))
-                                                                        .when(has_model, |el| {
-                                                                            el.child(
-                                                                                VendorIcon::new(trigger_vendor.clone())
-                                                                                    .size(crate::tokens::icon::MD)
-                                                                                    .icon_url(trigger_icon_url.clone()),
-                                                                            )
-                                                                        })
-                                                                        .child(
-                                                                            div()
-                                                                                .text_size(crate::tokens::font::COMPACT)
-                                                                                .text_color(theme.text_muted)
-                                                                                .child(model_name.clone()),
+                                                                    }))
+                                                                    .when(has_model, |el| {
+                                                                        el.child(
+                                                                            VendorIcon::new(trigger_vendor.clone())
+                                                                                .size(crate::tokens::icon::MD)
+                                                                                .icon_url(trigger_icon_url.clone()),
                                                                         )
-                                                                        .child(
-                                                                            IconEl::new(
-                                                                                Icon::ChevronDown,
-                                                                                theme.text_muted,
-                                                                            )
-                                                                            .size(crate::tokens::icon::XS),
-                                                                        ),
-                                                                )
-                                                                .when(self.state.model_picker_open, |el| {
-                                                                    el.child(Self::anchored_popover(
-                                                                        picker_panel,
-                                                                        Anchor::BottomRight,
-                                                                        |this, _, _, cx| {
-                                                                            this.state.model_picker_open = false;
-                                                                            cx.notify();
-                                                                        },
-                                                                        cx,
-                                                                    ))
-                                                                }),
-                                                        )
-                                                        .child(send_button);
-                                                    controls
-                                                }),
-                                        ),
-                                ),
+                                                                    })
+                                                                    .child(
+                                                                        div()
+                                                                            .text_size(crate::tokens::font::COMPACT)
+                                                                            .text_color(theme.text_muted)
+                                                                            .child(model_name.clone()),
+                                                                    )
+                                                                    .child(
+                                                                        IconEl::new(
+                                                                            Icon::ChevronDown,
+                                                                            theme.text_muted,
+                                                                        )
+                                                                        .size(crate::tokens::icon::XS),
+                                                                    ),
+                                                            )
+                                                            .when(self.state.model_picker_open, |el| {
+                                                                el.child(Self::anchored_popover(
+                                                                    picker_panel,
+                                                                    Anchor::BottomRight,
+                                                                    |this, _, _, cx| {
+                                                                        this.state.model_picker_open = false;
+                                                                        cx.notify();
+                                                                    },
+                                                                    cx,
+                                                                ))
+                                                            }),
+                                                    )
+                                                    .child(send_button);
+                                                controls
+                                            }),
+                                    ),
+                            ),
                         ),
                     ),
             )

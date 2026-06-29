@@ -1,7 +1,3 @@
-//! Shared model catalog + live download state as a GPUI entity. Loads models
-//! from the engine, follows its download broadcast, and exposes download /
-//! pause / resume / delete. Views hold an `Entity<ModelsStore>` and observe it.
-
 use std::{collections::HashMap, fs, path::PathBuf};
 
 use futures::{StreamExt, channel::mpsc};
@@ -13,12 +9,10 @@ use uzu::{
 
 use crate::engine;
 
-/// Which capability a store lists.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ModelKind {
-    /// Local (downloadable) chat models.
     Chat,
-    /// Remote/cloud chat models (loaded when a provider key is configured).
+
     CloudChat,
     Classification,
     TextToSpeech,
@@ -38,8 +32,6 @@ impl ModelKind {
     }
 }
 
-/// One catalog entry: the full uzu `Model` (kept so actions can call the
-/// downloader) plus its latest download state.
 pub struct ModelRow {
     pub model: Model,
     pub state: Option<DownloadState>,
@@ -58,10 +50,6 @@ impl ModelRow {
         self.model.family.as_ref().map(|f| f.vendor.name())
     }
 
-    /// Remote provider/family logo URL from the model's metadata. Prefers the
-    /// SVG variant (full-color vector — e.g. Google's 4-color "G") over the
-    /// raster fallback, which is often a flat monochrome mark, matching
-    /// mirai-chat's `pickSvgForTheme`. `None` when the family has no icons.
     pub fn icon_url(
         &self,
         prefer_dark: bool,
@@ -86,10 +74,6 @@ impl ModelRow {
         self.model.properties.as_ref().map(|p| p.size).unwrap_or(0)
     }
 
-    /// Size to display to the user: the full download total (sum of every
-    /// repo file) when known, falling back to the registry's declared base
-    /// size. mirai-chat shows `state.total_bytes` (`formatSizeLabel`), so the
-    /// `properties.size` fallback is only for rows with no download state yet.
     pub fn display_size_bytes(&self) -> i64 {
         self.state.as_ref().map(|s| s.total_bytes).filter(|b| *b > 0).unwrap_or_else(|| self.size_bytes())
     }
@@ -103,9 +87,6 @@ impl ModelRow {
     }
 
     pub fn is_installed(&self) -> bool {
-        // External local models (`ModelReference::Local`, e.g. via `LALAMO_PATH`)
-        // are runnable from their path and never get a download state, so treat
-        // them as installed rather than showing unusable download controls.
         matches!(self.phase(), DownloadPhase::Downloaded {}) || (self.model.is_local() && !self.model.is_downloadable())
     }
 }
@@ -141,9 +122,6 @@ impl ModelsStore {
         self.installed_at.get(id).copied().unwrap_or(0)
     }
 
-    /// Resolve the model to use among installed rows: the current `selected` if
-    /// it's still installed, otherwise the first installed model. Keeps a
-    /// deleted selection from winning over an available fallback.
     pub fn resolve_installed(
         &self,
         selected: Option<&Model>,
@@ -175,7 +153,6 @@ impl ModelsStore {
         }
     }
 
-    /// Re-fetch the catalog from the engine (e.g. after adding a cloud provider).
     pub fn reload(
         &mut self,
         cx: &mut Context<Self>,
@@ -186,14 +163,11 @@ impl ModelsStore {
         Self::spawn_load(self.kind, cx);
     }
 
-    /// Loads the matching model catalog + initial download states.
     fn spawn_load(
         kind: ModelKind,
         cx: &mut Context<Self>,
     ) {
         let Some(engine) = engine::try_engine(cx) else {
-            // No engine (e.g. a bad provider key blocked init) — clear the
-            // spinner and surface the failure instead of loading forever.
             cx.spawn(async move |this, cx| {
                 let _ = this.update(cx, |store, cx| {
                     store.loading = false;
@@ -238,8 +212,6 @@ impl ModelsStore {
         .detach();
     }
 
-    /// Subscribes once to the engine's global download broadcast and folds each
-    /// `(identifier, state)` update into the matching row.
     fn spawn_watch(cx: &mut Context<Self>) {
         let Some(engine) = engine::try_engine(cx) else {
             return;
@@ -251,7 +223,7 @@ impl ModelsStore {
             while let Some(item) = stream.next().await {
                 if let Ok(event) = item {
                     if tx.unbounded_send(event).is_err() {
-                        break; // store dropped
+                        break;
                     }
                 }
             }
@@ -289,7 +261,6 @@ impl ModelsStore {
         .detach();
     }
 
-    /// Start a download, or pause/resume it depending on current phase.
     pub fn toggle_download(
         &mut self,
         id: String,
@@ -307,17 +278,15 @@ impl ModelsStore {
                 Some(DownloadPhase::Downloading {}) => {
                     let _ = downloader.pause().await;
                 },
-                // NotDownloaded / Paused / Locked / Error / unknown → (re)start.
+
                 _ => {
                     let _ = downloader.resume().await;
                 },
             }
         })
         .detach();
-        // Progress + phase changes arrive via the storage broadcast watcher.
     }
 
-    /// Delete (or cancel an in-flight download of) a model's on-disk files.
     pub fn delete(
         &mut self,
         id: String,

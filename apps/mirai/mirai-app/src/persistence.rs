@@ -1,7 +1,3 @@
-//! Chat persistence: one JSON file per chat under the OS data dir. Synchronous
-//! I/O (files are small, saved per exchange). mirai-chat's markdown format for
-//! cross-app interop is a follow-up.
-
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -11,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct StoredMessage {
-    pub role: String, // "user" | "assistant"
+    pub role: String,
     pub text: String,
     #[serde(default)]
     pub reasoning: Option<String>,
@@ -31,8 +27,7 @@ pub struct StoredChat {
     pub title: String,
     #[serde(default)]
     pub model_name: Option<String>,
-    /// Stable model identifier — preferred over `model_name` on restore, which
-    /// is ambiguous when two providers expose the same display name.
+
     #[serde(default)]
     pub model_id: Option<String>,
     pub created_at: u64,
@@ -60,7 +55,6 @@ fn settings_path() -> PathBuf {
     mirai_dir().join("settings.json")
 }
 
-/// True once the user has dismissed the welcome/onboarding screen.
 pub fn has_seen_welcome() -> bool {
     welcome_marker_path().exists()
 }
@@ -71,7 +65,6 @@ pub fn set_seen_welcome() {
     }
 }
 
-/// Persisted app settings (Settings screen).
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AppSettings {
     #[serde(default = "default_true")]
@@ -128,14 +121,11 @@ pub(crate) fn global_instructions_path() -> PathBuf {
     chats_dir().join("global-instructions.txt")
 }
 
-/// Milliseconds since the Unix epoch (used for ids + timestamps).
 pub fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-/// A file's modification time in epoch-ms, or 0. Used as the timestamp fallback
-/// when reading a markdown chat whose dates aren't in our format.
 fn file_mtime_ms(path: &Path) -> u64 {
     use std::time::UNIX_EPOCH;
     fs::metadata(path)
@@ -154,8 +144,7 @@ pub fn save_chat(chat: &StoredChat) {
     if let Ok(json) = serde_json::to_string_pretty(chat) {
         let _ = fs::write(dir.join(format!("{}.json", chat.id)), json);
     }
-    // Human-readable mirror for cross-app interop with mirai-chat. Loading still
-    // prefers the JSON, so a bad mirror can't corrupt the stored chat.
+
     let _ = fs::write(dir.join(format!("{}.md", chat.id)), serialize_markdown(chat));
 }
 
@@ -166,7 +155,7 @@ pub fn load_chat(id: &str) -> Option<StoredChat> {
             return Some(chat);
         }
     }
-    // Fall back to a markdown file (e.g. one authored by mirai-chat).
+
     let md_path = dir.join(format!("{id}.md"));
     let text = fs::read_to_string(&md_path).ok()?;
     parse_markdown(&text, id, file_mtime_ms(&md_path))
@@ -191,8 +180,6 @@ pub fn rename_chat(
     true
 }
 
-/// All saved chats, newest first. JSON files are authoritative; markdown files
-/// with no JSON sibling (e.g. imported from mirai-chat) are parsed in too.
 pub fn list_chats() -> Vec<StoredChat> {
     let dir = chats_dir();
     let mut chats: Vec<StoredChat> = Vec::new();
@@ -238,7 +225,7 @@ pub fn global_instructions() -> String {
     fs::read_to_string(global_instructions_path()).unwrap_or_default()
 }
 
-#[allow(dead_code)] // wired to the Settings/Chats editor in a later step
+#[allow(dead_code)]
 pub fn set_global_instructions(text: &str) {
     let dir = chats_dir();
     if fs::create_dir_all(&dir).is_ok() {
@@ -246,15 +233,6 @@ pub fn set_global_instructions(text: &str) {
     }
 }
 
-// ---- mirai-chat-compatible markdown chat-file format -----------------------
-//
-// Mirrors external/mirai-chat's `storage/markdown` so chat files interoperate: a
-// metadata header, then per-message blocks delimited by `## 👤/🤖` headers and
-// HTML-comment sentinels (START_CONTENT, START_COT, START_PERF). We persist a
-// single (current) version per message, matching `StoredMessage`; when reading a
-// multi-version mirai-chat block we keep the active version.
-
-/// Serialize a chat to the mirai-chat markdown format.
 pub fn serialize_markdown(chat: &StoredChat) -> String {
     let date = fmt_utc(chat.created_at);
     let mut out = String::new();
@@ -305,9 +283,6 @@ pub fn serialize_markdown(chat: &StoredChat) -> String {
     out
 }
 
-/// Parse a mirai-chat markdown chat file. `fallback_ms` is used for any
-/// timestamp that isn't in our `YYYY-MM-DD HH:MM UTC` form (e.g. mirai-chat's
-/// locale dates). Returns `None` only if no title/messages can be found.
 pub fn parse_markdown(
     md: &str,
     id: &str,
@@ -338,7 +313,7 @@ pub fn parse_markdown(
             reasoning,
             tps: perf_value(scope, "TPS").map(|v| v as f32),
             tokens: perf_value(scope, "TokensOut").map(|v| v as u32),
-            // Not stored in the markdown mirror; JSON is authoritative.
+
             ttft: None,
             total_time: None,
         });
@@ -350,7 +325,7 @@ pub fn parse_markdown(
         id: id.to_string(),
         title,
         model_name,
-        // The markdown mirror doesn't record the id; JSON is authoritative.
+
         model_id: None,
         created_at,
         updated_at,
@@ -358,7 +333,6 @@ pub fn parse_markdown(
     })
 }
 
-/// The first line with `prefix` stripped (whole remainder of that line).
 fn first_line_prefixed<'a>(
     md: &'a str,
     prefix: &str,
@@ -366,7 +340,6 @@ fn first_line_prefixed<'a>(
     md.lines().find_map(|l| l.strip_prefix(prefix))
 }
 
-/// Slice between (after) `start` and (before) `end`, first occurrence.
 fn between<'a>(
     text: &'a str,
     start: &str,
@@ -377,7 +350,6 @@ fn between<'a>(
     Some(&text[s..e])
 }
 
-/// Byte ranges of each `## 👤/🤖` message block in document order.
 fn message_blocks(md: &str) -> Vec<&str> {
     let mut starts = Vec::new();
     let mut idx = 0;
@@ -391,9 +363,6 @@ fn message_blocks(md: &str) -> Vec<&str> {
     starts.iter().enumerate().map(|(i, &s)| &md[s..starts.get(i + 1).copied().unwrap_or(md.len())]).collect()
 }
 
-/// For a multi-version block (`#### Version N`), the slice of the active version
-/// (the one marked `⭐ ACTIVE`, else the first). Single-version blocks pass
-/// through unchanged.
 fn active_version_slice(block: &str) -> &str {
     if !block.contains("#### Version") {
         return block;
@@ -415,7 +384,6 @@ fn active_version_slice(block: &str) -> &str {
     }
 }
 
-/// `**LABEL:** <number>` (optional trailing `s`) anywhere in `text`.
 fn perf_value(
     text: &str,
     label: &str,
@@ -433,7 +401,6 @@ pub fn fmt_utc(ms: u64) -> String {
     format!("{y:04}-{m:02}-{d:02} {:02}:{:02} UTC", rem / 3600, (rem % 3600) / 60)
 }
 
-/// Parse `YYYY-MM-DD HH:MM[ UTC]` back to epoch-ms; `None` for other formats.
 fn parse_utc(s: &str) -> Option<u64> {
     let s = s.trim().trim_end_matches("UTC").trim();
     let (date, time) = s.split_once(' ')?;
@@ -448,8 +415,6 @@ fn parse_utc(s: &str) -> Option<u64> {
     (secs >= 0).then(|| secs as u64 * 1000)
 }
 
-// Howard Hinnant's civil<->days algorithms (proleptic Gregorian, days from the
-// 1970 epoch). Used only for the markdown date fields.
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = if z >= 0 {

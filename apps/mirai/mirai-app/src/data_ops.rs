@@ -44,8 +44,6 @@ pub struct CleanupPreview {
 }
 
 pub fn log_file_path() -> PathBuf {
-    // The engine logs to `~/.cache/mirai/mirai.log` (uzu `StorageConfig`
-    // cache_path + log_name, name "mirai"); read/clear that, not the app data dir.
     dirs::home_dir().unwrap_or_default().join(".cache").join("mirai").join("mirai.log")
 }
 
@@ -163,7 +161,7 @@ pub fn export_chats_zip() -> Option<Vec<u8>> {
     let dir = persistence::chats_dir();
     let mut names: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    // Existing markdown mirrors first (their authored content is preserved below).
+
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -176,8 +174,7 @@ pub fn export_chats_zip() -> Option<Vec<u8>> {
             }
         }
     }
-    // Plus every other saved chat (e.g. JSON-only, or a chat whose mirror failed
-    // to write) — serialized on the fly in the loop below.
+
     for chat in persistence::list_chats() {
         let name = format!("{}.md", chat.id);
         if seen.insert(name.clone()) {

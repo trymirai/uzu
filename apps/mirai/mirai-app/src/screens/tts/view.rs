@@ -1,5 +1,3 @@
-//! Text-to-speech screen.
-
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
     Context, CursorStyle, Entity, FontWeight, IntoElement, Render, SharedString, Window, div, prelude::*, px, relative,
@@ -68,14 +66,13 @@ impl TtsView {
             TextInput::new(cx, "Start typing here or paste any text you want to turn into speech…")
                 .multiline(false, 16, 40)
         });
-        // Re-render on input so the character counter updates.
+
         cx.subscribe(&input, |_, _input, event, cx| match event {
             InputEvent::Submit(_) | InputEvent::Changed(_) => cx.notify(),
         })
         .detach();
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
-        // Revert a history row's stop icon to play once its audio drains —
-        // rodio has no completion callback, so poll the player's state.
+
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
@@ -102,7 +99,6 @@ impl TtsView {
         }
     }
 
-    /// Load a text file's contents into the editor (Upload text file button).
     fn pick_text_file(
         &mut self,
         cx: &mut Context<Self>,
@@ -149,8 +145,6 @@ impl TtsView {
         self.history = tts_history::list();
     }
 
-    /// After Clear Data removed generated audio: stop playback and drop the
-    /// now-missing clips from the in-memory history.
     pub fn reload_after_clear(
         &mut self,
         cx: &mut Context<Self>,
@@ -190,7 +184,7 @@ impl TtsView {
             cx.notify();
             return;
         };
-        // Stop any history clip still playing before queuing new audio.
+
         if let Some(player) = &self.player {
             player.stop();
         }
@@ -276,8 +270,6 @@ impl TtsView {
         match msg {
             TtsMsg::Started(token) => self.cancel = Some(token),
             TtsMsg::Batch(batch) => {
-                // Ignore batches that arrive after Stop/Done so cancelled audio
-                // doesn't resume playing.
                 if !self.generating {
                     return;
                 }
@@ -354,8 +346,6 @@ impl TtsView {
         cx.notify();
     }
 
-    /// Once the queued audio finishes, clear the playing highlight so the
-    /// history row's stop icon reverts to play (there is no playback-end event).
     fn tick_playback(
         &mut self,
         cx: &mut Context<Self>,
@@ -411,8 +401,6 @@ impl TtsView {
         self.generate(text, cx);
     }
 
-    /// A model card in the right "Settings" pane: icon + name + size + control,
-    /// with a status badge below. Selected (installed) cards get an accent ring.
     fn model_card(
         &self,
         cx: &mut Context<Self>,
@@ -521,10 +509,7 @@ impl TtsView {
                     .child(div().text_xs().text_color(theme.text_muted).child(vm.size.clone()))
                     .child(control),
             )
-            // Wrap so the badge pill hugs its content (left-aligned) instead of
-            // stretching across the card.
             .child(div().flex().child(badge))
-            // Downloading rows grow a thin progress bar (mirai-chat parity).
             .when(vm.downloading, |el| {
                 el.child(
                     div()
@@ -615,7 +600,6 @@ impl TtsView {
             )
     }
 
-    /// A "Settings" / "History" tab in the right pane.
     fn tab_button(
         &self,
         cx: &mut Context<Self>,

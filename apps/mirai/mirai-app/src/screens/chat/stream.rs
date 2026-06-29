@@ -1,7 +1,3 @@
-//! The chat inference effect. `send`/`regenerate` kick off a reply; a Tokio
-//! producer streams cumulative chunks back through an `mpsc` channel, and
-//! `apply_stream` (the reducer) folds each into the trailing assistant message.
-
 use futures::{StreamExt, channel::mpsc};
 use gpui::Context;
 use uzu::{
@@ -20,7 +16,6 @@ use super::{
 };
 use crate::{engine, persistence, title_gen};
 
-/// Messages bridged from the Tokio reply stream to the UI.
 pub(super) enum StreamMsg {
     Started(CancelToken),
     Session(ChatSession, String),
@@ -51,7 +46,7 @@ impl ChatView {
         if text.is_empty() && self.state.attached_files.is_empty() {
             return;
         }
-        // Append attached files as fenced code blocks (Electron parity).
+
         let full_text = if self.state.attached_files.is_empty() {
             text
         } else {
@@ -70,7 +65,6 @@ impl ChatView {
         self.run_inference(cx);
     }
 
-    /// Start a fresh assistant reply for the latest turn.
     fn run_inference(
         &mut self,
         cx: &mut Context<Self>,
@@ -85,7 +79,6 @@ impl ChatView {
         self.spawn_reply(cx);
     }
 
-    /// Re-run an assistant turn (optionally switching model) as a new version.
     pub(super) fn regenerate_at_with_model(
         &mut self,
         msg_idx: usize,
@@ -120,8 +113,6 @@ impl ChatView {
         self.spawn_reply(cx);
     }
 
-    /// Resolve the model, build the request from the conversation (excluding the
-    /// trailing assistant placeholder), and stream into its current version.
     fn spawn_reply(
         &mut self,
         cx: &mut Context<Self>,
@@ -139,8 +130,6 @@ impl ChatView {
         self.state.model = Some(model.clone());
         self.state.loaded_model = Some(model.name());
 
-        // Global instructions + prior messages, excluding the trailing assistant
-        // placeholder being filled and any errored turns.
         let mut history: Vec<ChatMessage> = Vec::new();
         let instructions = persistence::global_instructions();
         if !instructions.trim().is_empty() {
@@ -172,14 +161,11 @@ impl ChatView {
         let model_id = model.identifier.clone();
         let cached_session = self.cached_session(&model_id);
 
-        // Tag this stream so its consumer can drop late messages once superseded
-        // (Stop + a new prompt, or a chat reset).
         self.state.stream_gen = self.state.stream_gen.wrapping_add(1);
         let gen_id = self.state.stream_gen;
 
         let (tx, mut rx) = mpsc::unbounded::<StreamMsg>();
 
-        // Producer: run uzu on the Tokio runtime, never touching view state.
         gpui_tokio::Tokio::spawn(cx, async move {
             let session = match cached_session {
                 Some(session) => session,
@@ -228,8 +214,6 @@ impl ChatView {
         })
         .detach();
 
-        // Consumer: fold updates into the trailing assistant message, dropping
-        // anything from a superseded stream.
         cx.spawn(async move |this, cx| {
             while let Some(msg) = rx.next().await {
                 let keep = this.update(cx, |view, cx| {
@@ -365,7 +349,6 @@ impl ChatView {
         cx.spawn(async move |this, cx| {
             if let Some(Ok(title)) = rx.next().await {
                 let _ = this.update(cx, |view, cx| {
-                    // Drop the result if the user switched to another chat meanwhile.
                     if view.state.chat_id != chat_id {
                         return;
                     }
