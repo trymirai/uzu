@@ -2,12 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- uzu compiles Metal compute kernels at runtime (JIT); required once the
-	     app is signed with a hardened runtime (Electron Mirai ships the same). -->
-	<key>com.apple.security.cs.allow-jit</key>
-	<true/>
-	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-	<true/>
 	<!-- "Run on startup" toggles a login item via AppleScript (auto-launch). -->
 	<key>com.apple.security.automation.apple-events</key>
 	<true/>
