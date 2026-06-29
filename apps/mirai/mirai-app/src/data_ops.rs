@@ -219,11 +219,20 @@ pub fn export_zip_default_name() -> String {
 }
 
 pub fn read_log_bytes() -> Option<Vec<u8>> {
+    let rotated = log_file_path_with_suffix(".1");
     let primary = log_file_path();
-    if primary.exists() {
-        return fs::read(primary).ok();
+    let mut bytes = Vec::new();
+    if let Ok(mut rotated_bytes) = fs::read(&rotated) {
+        bytes.append(&mut rotated_bytes);
     }
-    None
+    if let Ok(mut primary_bytes) = fs::read(&primary) {
+        bytes.append(&mut primary_bytes);
+    }
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(bytes)
+    }
 }
 
 fn log_file_path_with_suffix(suffix: &str) -> PathBuf {
@@ -235,7 +244,7 @@ fn log_file_path_with_suffix(suffix: &str) -> PathBuf {
 pub fn clear_dialogs() -> bool {
     let dir = persistence::chats_dir();
     let Ok(entries) = fs::read_dir(&dir) else {
-        return false;
+        return true;
     };
     let mut ok = true;
     for entry in entries.flatten() {
