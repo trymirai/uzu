@@ -49,6 +49,7 @@ pub struct TtsView {
     selected: Option<Model>,
     player: Option<Player>,
     generating: bool,
+    generation_id: u64,
     cancel: Option<CancelToken>,
     error: Option<String>,
     history: Vec<TtsHistoryEntry>,
@@ -90,6 +91,7 @@ impl TtsView {
             selected: None,
             player: None,
             generating: false,
+            generation_id: 0,
             cancel: None,
             error: None,
             history: tts_history::list(),
@@ -154,6 +156,7 @@ impl TtsView {
         cx: &mut Context<Self>,
     ) {
         self.stop_playback(cx);
+        self.generation_id = self.generation_id.wrapping_add(1);
         self.reload_history();
         cx.notify();
     }
@@ -193,6 +196,8 @@ impl TtsView {
         }
         self.selected = Some(model.clone());
         self.generating = true;
+        self.generation_id = self.generation_id.wrapping_add(1);
+        let generation_id = self.generation_id;
         self.error = None;
         self.playing_id = None;
         self.pending_batches.clear();
@@ -247,8 +252,15 @@ impl TtsView {
         .detach();
 
         cx.spawn(async move |this, cx| {
-            while let Some(msg) = rx.next().await {
-                if this.update(cx, |view, cx| view.apply(msg, cx)).is_err() {
+            while let Some(message) = rx.next().await {
+                let still_current = this.update(cx, |view, cx| {
+                    if view.generation_id != generation_id {
+                        return false;
+                    }
+                    view.apply(message, cx);
+                    true
+                });
+                if !matches!(still_current, Ok(true)) {
                     break;
                 }
             }
@@ -385,6 +397,7 @@ impl TtsView {
         }
         self.stop_playback(cx);
         self.generating = false;
+        self.generation_id = self.generation_id.wrapping_add(1);
         self.cancel = None;
         self.clear_gen();
         cx.notify();
