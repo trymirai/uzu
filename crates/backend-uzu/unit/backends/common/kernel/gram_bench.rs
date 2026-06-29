@@ -9,7 +9,7 @@ use proc_macros::uzu_bench;
 use crate::{
     array::ArrayContextExt,
     backends::{
-        common::{Allocation, Backend, Context, Kernels, kernel::BuildTreeGramKernel},
+        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
         metal::Metal,
     },
     data_type::DataType,
@@ -150,7 +150,7 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                     "B{batch_size}_T{tree_size}_Hg{K_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}"
                 ));
 
-                let encode = |buffers: &mut TreeGramBuffers, encoder| {
+                let encode = |buffers: &mut TreeGramBuffers, encoder: &mut Encoder<Metal>| {
                     kernel.encode(
                         &buffers.q,
                         &buffers.k,
