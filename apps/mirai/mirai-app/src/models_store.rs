@@ -156,6 +156,13 @@ impl ModelsStore {
         self.rows.iter().find(|r| r.is_installed()).map(|r| r.model.clone())
     }
 
+    pub fn installed_model_by_id(
+        &self,
+        id: &str,
+    ) -> Option<Model> {
+        self.rows.iter().find(|row| row.id() == id && row.is_installed()).map(|row| row.model.clone())
+    }
+
     fn installed_at_path() -> PathBuf {
         crate::persistence::mirai_data_dir().join("installed-at.json")
     }
@@ -219,7 +226,6 @@ impl ModelsStore {
                 store.loading = false;
                 match result {
                     Ok(rows) => {
-                        eprintln!("[mirai-app] loaded {} models", rows.len());
                         store.rows = rows;
                         store.error = None;
                     },

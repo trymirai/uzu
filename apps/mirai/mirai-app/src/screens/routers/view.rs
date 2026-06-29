@@ -235,14 +235,7 @@ impl RoutersView {
             .bg(bg)
             .when(vm.installed, |el| el.cursor(CursorStyle::PointingHand))
             .on_click(cx.listener(move |this, _, _, cx| {
-                if let Some(model) = this
-                    .store
-                    .read(cx)
-                    .rows
-                    .iter()
-                    .find(|r| r.id() == select_id && r.is_installed())
-                    .map(|r| r.model.clone())
-                {
+                if let Some(model) = this.store.read(cx).installed_model_by_id(&select_id) {
                     this.selected = Some(model);
                     cx.notify();
                 }
