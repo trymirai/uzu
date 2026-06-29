@@ -41,8 +41,7 @@ pub struct MiraiApp {
 
 impl MiraiApp {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        // Apply the persisted color scheme (theme::init defaults to dark).
-        if !persistence::load_settings().dark_mode {
+        if !settings_state::current(cx).dark_mode {
             theme::set_theme(cx, theme::Theme::light());
         }
         // Repaint the whole tree when the theme is swapped (Settings toggle).
@@ -338,20 +337,20 @@ impl Render for MiraiApp {
 /// and on dock-icon reopen.
 pub fn open_window(cx: &mut App) {
     let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-    cx.open_window(
+    let window = cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
                 title: None,
                 appears_transparent: true,
-                // mirai-chat positions the macOS traffic lights at (20, 18).
                 traffic_light_position: Some(point(px(20.), px(18.))),
             }),
             window_min_size: Some(size(px(720.), px(560.))),
             ..Default::default()
         },
         |_, cx| cx.new(|cx| MiraiApp::new(cx)),
-    )
-    .unwrap();
-    cx.activate(true);
+    );
+    if window.is_ok() {
+        cx.activate(true);
+    }
 }
