@@ -1,3 +1,5 @@
+#![cfg(metal_backend)]
+
 use std::{env, mem::size_of, time::Duration};
 
 use criterion::{BenchmarkId, Criterion};
