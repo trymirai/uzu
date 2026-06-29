@@ -288,7 +288,7 @@ impl ChatsView {
                 checkbox.bg(theme.info).child(IconEl::new(Icon::Check, theme.card).size(crate::tokens::icon::XS));
         }
 
-        let mut left = div().flex().items_center().gap_3();
+        let mut left = div().flex().flex_1().min_w_0().items_center().gap_3();
         if selection_mode {
             left = left.child(checkbox);
         } else {
@@ -296,15 +296,21 @@ impl ChatsView {
         }
         left = left.child(
             div()
-                .flex()
-                .flex_col()
-                .child(div().text_sm().text_color(theme.text).font_weight(FontWeight::MEDIUM).child(chat.title.clone()))
-                .child(
-                    div().font_family(crate::theme::FONT_MONO).text_xs().text_color(theme.text_muted).child(subtitle),
-                ),
+                .min_w_0()
+                .overflow_hidden()
+                .text_sm()
+                .text_color(theme.text)
+                .font_weight(FontWeight::MEDIUM)
+                .child(chat.title.clone()),
         );
 
-        // Bordered card row (mirai-chat ChatCard); accent border when selected.
+        let timestamp = div()
+            .flex_none()
+            .font_family(crate::theme::FONT_MONO)
+            .text_xs()
+            .text_color(theme.text_muted)
+            .child(subtitle);
+
         let border = if selected {
             theme.info
         } else {
@@ -313,6 +319,7 @@ impl ChatsView {
         div()
             .id(SharedString::from(chat.id.clone()))
             .flex()
+            .w_full()
             .items_center()
             .justify_between()
             .gap_3()
@@ -336,6 +343,7 @@ impl ChatsView {
                 }
             }))
             .child(left)
+            .child(timestamp)
             .into_any_element()
     }
 
