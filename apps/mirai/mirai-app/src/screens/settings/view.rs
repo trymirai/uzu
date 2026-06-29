@@ -259,6 +259,10 @@ impl SettingsView {
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.instructions_open = !this.instructions_open;
+                if this.instructions_open {
+                    let current = persistence::global_instructions();
+                    this.instructions.update(cx, |input, cx| input.set_text(&current, cx));
+                }
                 cx.notify();
             }))
             .child(IconEl::new(Icon::Plus, theme.text).size(crate::tokens::icon::MD).rotate(if open {
