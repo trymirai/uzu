@@ -511,7 +511,7 @@ impl ChatView {
             card = card.child(slider_param(
                 "Temperature",
                 None,
-                format!("{}", round2(self.state.temperature)),
+                round2(self.state.temperature).to_string(),
                 (self.state.temperature / 2.0).clamp(0., 1.),
                 "temp-slider",
                 &theme,
@@ -554,7 +554,7 @@ impl ChatView {
             card = card.child(slider_param(
                 "Top P",
                 Some(topp_box.into_any_element()),
-                format!("{}", round2(self.state.top_p)),
+                round2(self.state.top_p).to_string(),
                 self.state.top_p.clamp(0., 1.),
                 "topp-slider",
                 &theme,
@@ -582,7 +582,7 @@ impl ChatView {
             card = card.child(slider_param(
                 "Min P",
                 Some(minp_box.into_any_element()),
-                format!("{}", round2(self.state.min_p)),
+                round2(self.state.min_p).to_string(),
                 self.state.min_p.clamp(0., 1.),
                 "minp-slider",
                 &theme,
@@ -652,8 +652,6 @@ impl ChatView {
         store.resolve_installed(self.state.model.as_ref())
     }
 
-    /// Find a model by display name across the local and cloud stores.
-    /// Find a model across the local and cloud stores by a predicate.
     fn find_model(
         &self,
         cx: &Context<Self>,

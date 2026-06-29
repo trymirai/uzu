@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn save_file(
     title: &str,
@@ -10,7 +10,7 @@ pub fn save_file(
 }
 
 pub fn write_bytes(
-    path: &PathBuf,
+    path: &Path,
     data: &[u8],
 ) -> bool {
     std::fs::write(path, data).is_ok()

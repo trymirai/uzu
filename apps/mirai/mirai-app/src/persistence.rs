@@ -426,13 +426,7 @@ fn perf_value(
         .and_then(|v| v.trim().trim_end_matches('s').parse::<f64>().ok())
 }
 
-/// Epoch-ms → `YYYY-MM-DD HH:MM UTC` (minute granularity).
-pub fn fmt_utc_public(ms: u64) -> String {
-    fmt_utc(ms)
-}
-
-/// Epoch-ms → `YYYY-MM-DD HH:MM UTC` (minute granularity).
-fn fmt_utc(ms: u64) -> String {
+pub fn fmt_utc(ms: u64) -> String {
     let secs = (ms / 1000) as i64;
     let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
     let rem = secs.rem_euclid(86_400);

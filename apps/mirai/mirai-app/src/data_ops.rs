@@ -214,7 +214,7 @@ pub fn export_chats_zip() -> Option<Vec<u8>> {
 }
 
 pub fn export_zip_default_name() -> String {
-    let stamp = persistence::fmt_utc_public(persistence::now_ms()).replace(':', ".").replace(" UTC", "");
+    let stamp = persistence::fmt_utc(persistence::now_ms()).replace(':', ".").replace(" UTC", "");
     format!("mirai-chats {stamp}.zip")
 }
 

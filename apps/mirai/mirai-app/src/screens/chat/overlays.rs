@@ -40,6 +40,7 @@ impl ChatView {
             toast::push(cx, "Maximum 5 files per message", ToastKind::Info);
             return;
         }
+        let remaining_slots = MAX_FILES - self.state.attached_files.len();
 
         let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
@@ -52,7 +53,7 @@ impl ChatView {
             let Ok(Ok(Some(paths))) = rx.await else {
                 return;
             };
-            for path in paths.iter().take(MAX_FILES) {
+            for path in paths.iter().take(remaining_slots) {
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("txt").to_lowercase();
                 if !SUPPORTED.contains(&ext.as_str()) {
                     let _ = this.update(cx, |_, cx| {
@@ -236,15 +237,16 @@ impl ChatView {
             return None;
         }
         let theme = cx.theme().clone();
-        // Match Electron's `performance-dropdown.tsx`: tps is `Math.round`,
-        // durations are seconds with 3 decimals ("0.234s"), "—" if absent.
-        let tps =
-            cur.tps.filter(|t| t.is_finite()).map(|t| format!("{}", t.round() as i64)).unwrap_or_else(|| "—".into());
-        let fmt_secs = |secs: Option<f32>| {
-            secs.filter(|v| v.is_finite()).map(|v| format!("{v:.3}s")).unwrap_or_else(|| "—".into())
+        let tps = cur
+            .tps
+            .filter(|value| value.is_finite())
+            .map(|value| (value.round() as i64).to_string())
+            .unwrap_or_else(|| "—".into());
+        let format_seconds = |seconds: Option<f32>| {
+            seconds.filter(|value| value.is_finite()).map(|value| format!("{value:.3}s")).unwrap_or_else(|| "—".into())
         };
-        let ttft = fmt_secs(cur.ttft);
-        let total = fmt_secs(cur.total_time);
+        let ttft = format_seconds(cur.ttft);
+        let total = format_seconds(cur.total_time);
         let stat = |value: String, label: &'static str| {
             div()
                 .flex()
