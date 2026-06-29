@@ -154,6 +154,9 @@ impl ChatView {
                 if let Some(msg_idx) = for_message {
                     this.regenerate_at_with_model(msg_idx, Some(model.clone()), cx);
                 } else {
+                    if this.state.streaming {
+                        this.cancel_stream();
+                    }
                     this.state.model = Some(model.clone());
                     this.clear_session();
                     this.close_popovers();

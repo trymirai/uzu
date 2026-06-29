@@ -23,7 +23,7 @@ use crate::{engine, persistence, title_gen};
 /// Messages bridged from the Tokio reply stream to the UI.
 pub(super) enum StreamMsg {
     Started(CancelToken),
-    Session(ChatSession),
+    Session(ChatSession, String),
     DropSession,
     Update {
         text: String,
@@ -115,6 +115,7 @@ impl ChatView {
         }
         self.close_popovers();
         self.state.streaming = true;
+        self.state.waiting_for_model = true;
         self.spawn_reply(cx);
     }
 
@@ -183,7 +184,7 @@ impl ChatView {
                 Some(session) => session,
                 None => match engine.chat(model.clone(), ChatConfig::default()).await {
                     Ok(session) => {
-                        let _ = tx.unbounded_send(StreamMsg::Session(session.clone()));
+                        let _ = tx.unbounded_send(StreamMsg::Session(session.clone(), model.identifier.clone()));
                         session
                     },
                     Err(err) => {
@@ -258,10 +259,8 @@ impl ChatView {
                 self.state.cancel = Some(token);
                 self.state.waiting_for_model = false;
             },
-            StreamMsg::Session(session) => {
-                if let Some(id) = self.state.model.as_ref().map(|m| m.identifier.clone()) {
-                    self.store_session(session, &id);
-                }
+            StreamMsg::Session(session, model_id) => {
+                self.store_session(session, &model_id);
             },
             StreamMsg::DropSession => self.clear_session(),
             StreamMsg::Update {
