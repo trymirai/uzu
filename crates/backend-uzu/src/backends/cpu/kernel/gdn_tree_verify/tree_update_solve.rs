@@ -4,8 +4,6 @@ use proc_macros::kernel;
 
 use crate::array::ArrayElement;
 
-const L2_NORM_EPSILON: f32 = 1e-6;
-
 /// Solves chunked GDN update coefficients: `(I + A) U = beta * (v - exp(prefix) * k @ h0)`.
 /// `batch_value_head_idx = batch * num_v_heads + hv` indexes A, Ainv, and U.
 #[kernel(GdnTreeUpdateSolve)]
@@ -28,7 +26,6 @@ pub fn gdn_tree_update_solve<T: ArrayElement + Float, const HEAD_K_DIM: u32, con
     num_v_heads: u32,
     num_k_heads: u32,
     head_v_dim: u32,
-    #[specialize] use_l2norm: bool,
 ) {
     let batch_size = batch_size as usize;
     let tree_size = tree_size as usize;
@@ -67,20 +64,6 @@ pub fn gdn_tree_update_solve<T: ArrayElement + Float, const HEAD_K_DIM: u32, con
                     let beta_val = unsafe { *beta.add(prefix_idx) };
                     let decay_from_h0 = unsafe { *prefix.add(prefix_idx) }.exp();
 
-                    let mut k_norm_sq = 0.0f32;
-                    if use_l2norm {
-                        for dk in 0..head_k_dim {
-                            let k_idx = (((batch * tree_size + token) * num_k_heads + hk) * head_k_dim) + dk;
-                            let k_val = unsafe { (*k.add(k_idx)).to_f32().unwrap() };
-                            k_norm_sq += k_val * k_val;
-                        }
-                    }
-                    let k_scale = if use_l2norm {
-                        1.0 / (k_norm_sq + L2_NORM_EPSILON).sqrt()
-                    } else {
-                        1.0
-                    };
-
                     for dv in 0..head_v_dim {
                         let v_idx = (((batch * tree_size + token) * num_v_heads + hv) * head_v_dim) + dv;
                         let v_val = unsafe { (*v.add(v_idx)).to_f32().unwrap() };
@@ -92,7 +75,6 @@ pub fn gdn_tree_update_solve<T: ArrayElement + Float, const HEAD_K_DIM: u32, con
                                 let k_idx = (((batch * tree_size + token) * num_k_heads + hk) * head_k_dim) + dk;
                                 let h0_idx = (((h0_slot * num_v_heads + hv) * head_v_dim + dv) * head_k_dim) + dk;
                                 kh0 += unsafe { (*k.add(k_idx)).to_f32().unwrap() }
-                                    * k_scale
                                     * unsafe { (*h0.add(h0_idx)).to_f32().unwrap() };
                             }
                         }

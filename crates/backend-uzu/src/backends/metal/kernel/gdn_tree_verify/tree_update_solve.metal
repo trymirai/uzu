@@ -7,8 +7,6 @@
 using namespace metal;
 using namespace uzu::matmul;
 
-constant float L2_NORM_EPSILON = 1e-6f;
-
 // Solves chunked GDN update coefficients:
 //   acc = beta * (v - exp(prefix) * k @ h0)
 //   acc -= A[cur_block, prev_block] @ U[prev_block]
@@ -51,8 +49,6 @@ PUBLIC KERNEL(GdnTreeUpdateSolve)(
     constant const uint& num_v_heads,
     constant const uint& num_k_heads,
     constant const uint& head_v_dim,
-    threadgroup float key_scale_tile[BT],
-    const bool use_l2norm SPECIALIZE,
     const uint batch_idx GROUPS(batch_size),
     const uint value_head_idx GROUPS(num_v_heads),
     const uint value_tile_idx GROUPS(head_v_dim.div_ceil(BV)),
@@ -100,22 +96,6 @@ PUBLIC KERNEL(GdnTreeUpdateSolve)(
     const uint row_base = block_idx * BT;
     const uint tile_rows = min(BT, tree_size - row_base);
 
-    if (lane_idx < BT) {
-      const uint token_idx = row_base + lane_idx;
-      float key_scale = 1.0f;
-      if (use_l2norm && token_idx < tree_size) {
-        float key_norm_sq = 0.0f;
-        for (uint key_dim_idx = 0; key_dim_idx < HEAD_K_DIM; ++key_dim_idx) {
-          const float key_value = float(key_head[token_idx * key_token_stride + key_dim_idx]);
-          key_norm_sq += key_value * key_value;
-        }
-        key_scale = rsqrt(key_norm_sq + L2_NORM_EPSILON);
-      }
-      key_scale_tile[lane_idx] = key_scale;
-    }
-
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
     TileFragment acc;
     acc.clear();
 
@@ -135,9 +115,6 @@ PUBLIC KERNEL(GdnTreeUpdateSolve)(
               fragment_source(key_block, key_token_stride).bounded(tile_rows, FragmentOps::FRAGMENT_ROWS)
           );
         }
-        key_frag.map_coords(lane_idx, [&](ushort local_row_idx, ushort, float key_value) {
-          return key_value * key_scale_tile[local_row_idx];
-        });
 
         if (tile_value_cols == BV) {
           h0_frag.load_from(lane_idx, fragment_source(h0_block, HEAD_K_DIM));

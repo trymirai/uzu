@@ -22,7 +22,6 @@ const HEAD_K_DIM: usize = 128;
 const HEAD_V_DIM: usize = 128;
 const BT: usize = 16;
 const BV: usize = 16;
-const USE_L2NORM: bool = true;
 
 const BENCH_SHAPES: &[(usize, usize)] = &[
     (1, 33),
@@ -166,7 +165,6 @@ fn bench_gdn_tree_update_solve(c: &mut Criterion) {
         HEAD_K_DIM as u32,
         BT as u32,
         BV as u32,
-        USE_L2NORM,
     )
     .expect("GdnTreeUpdateSolveKernel");
 

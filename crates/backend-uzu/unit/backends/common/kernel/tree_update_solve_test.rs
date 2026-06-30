@@ -23,7 +23,6 @@ struct SolveCase {
     num_v_heads: u32,
     num_k_heads: u32,
     head_v_dim: u32,
-    use_l2norm: bool,
 }
 
 const CASES: &[SolveCase] = &[
@@ -34,7 +33,6 @@ const CASES: &[SolveCase] = &[
         num_v_heads: 1,
         num_k_heads: 1,
         head_v_dim: 16,
-        use_l2norm: false,
     },
     SolveCase {
         name: "ragged_second_block",
@@ -43,7 +41,6 @@ const CASES: &[SolveCase] = &[
         num_v_heads: 2,
         num_k_heads: 1,
         head_v_dim: 20,
-        use_l2norm: true,
     },
     SolveCase {
         name: "common_small_tree",
@@ -52,7 +49,6 @@ const CASES: &[SolveCase] = &[
         num_v_heads: 4,
         num_k_heads: 2,
         head_v_dim: 32,
-        use_l2norm: true,
     },
     SolveCase {
         name: "batched_optional_h0",
@@ -61,7 +57,6 @@ const CASES: &[SolveCase] = &[
         num_v_heads: 2,
         num_k_heads: 1,
         head_v_dim: 16,
-        use_l2norm: false,
     },
 ];
 
@@ -73,7 +68,6 @@ fn run_case<B: Backend>(case: SolveCase) -> Vec<f32> {
         HEAD_K_DIM as u32,
         BT,
         BV,
-        case.use_l2norm,
     )
     .expect("kernel");
 
