@@ -45,6 +45,8 @@ pub trait Instance: Send + Sync {
         config: Self::StreamConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, Error>> + Send + 'a>>;
+
+    fn peak_memory_usage(&self) -> Option<usize>;
 }
 
 pub trait State: Send + Sync + 'static {

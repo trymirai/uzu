@@ -130,4 +130,8 @@ impl<B: Backend> ClassifierModel<B> {
 
         Ok(self.output_labels.iter().cloned().zip(probs).collect())
     }
+
+    pub fn data_type(&self) -> DataType {
+        self.data_type
+    }
 }

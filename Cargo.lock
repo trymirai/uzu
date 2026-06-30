@@ -1024,6 +1024,7 @@ name = "cli"
 version = "0.5.12"
 dependencies = [
  "anyhow",
+ "backend-uzu",
  "clap",
  "comfy-table",
  "indicatif",
@@ -1031,6 +1032,7 @@ dependencies = [
  "rocket",
  "serde",
  "serde_json",
+ "sysinfo",
  "tokio",
  "tokio-stream",
  "uuid",

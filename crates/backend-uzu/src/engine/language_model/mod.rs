@@ -29,6 +29,7 @@ pub struct LanguageModel<B: Backend> {
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
     vocab_size: usize,
+    data_type: DataType,
 }
 
 #[derive(Debug, Error)]
@@ -90,6 +91,7 @@ impl<B: Backend> Engine<B> {
             context_ring_update,
             generation_config,
             vocab_size,
+            data_type,
         })
     }
 }
@@ -143,5 +145,9 @@ impl<B: Backend> LanguageModel<B> {
 
     pub fn generation_config(&self) -> &GenerationConfig {
         &self.generation_config
+    }
+
+    pub fn data_type(&self) -> DataType {
+        self.data_type
     }
 }

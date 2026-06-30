@@ -77,6 +77,15 @@ enum Instance {
     Message(message::Session),
 }
 
+impl Instance {
+    pub fn peak_memory_usage(&self) -> Option<usize> {
+        match self {
+            Instance::Token(session) => session.peak_memory_usage(),
+            Instance::Message(session) => session.peak_memory_usage(),
+        }
+    }
+}
+
 #[bindings::export(Class)]
 #[derive(Clone)]
 pub struct ChatSession {
@@ -122,6 +131,10 @@ impl ChatSession {
             model_id,
             telemetry,
         })
+    }
+
+    pub async fn peak_memory_usage(&self) -> Option<usize> {
+        self.instance.lock().await.peak_memory_usage()
     }
 }
 

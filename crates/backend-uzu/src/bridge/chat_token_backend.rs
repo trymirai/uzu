@@ -39,6 +39,7 @@ use crate::{
 };
 
 pub struct UzuChatTokenBackendInstance<B: Backend> {
+    engine: SyncShared<Engine<B>>,
     model: SyncShared<LanguageModel<B>>,
     config: ChatConfig,
     tokenizer: Tokenizer,
@@ -68,6 +69,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
         let max_context_length = get_max_context_length(&model, config.context_length.clone());
 
         Ok(Self {
+            engine: SyncShared::new(engine),
             model: SyncShared::new(model),
             config,
             tokenizer: tokenizer.clone(),
@@ -174,6 +176,10 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         };
 
         Box::pin(AssertSend(stream).take_until(cancel_token.cancelled_owned()))
+    }
+
+    fn peak_memory_usage(&self) -> Option<usize> {
+        self.engine.lock().ok().and_then(|engine| engine.peak_memory_usage())
     }
 }
 

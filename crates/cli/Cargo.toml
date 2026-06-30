@@ -20,6 +20,7 @@ capability-grammar = ["uzu/capability-grammar"]
 capability-cli = ["uzu/capability-cli"]
 
 [dependencies]
+backend-uzu.workspace = true
 uzu = { workspace = true, default-features = false }
 tokio.workspace = true
 anyhow.workspace = true
@@ -32,6 +33,7 @@ jsonschema.workspace = true
 rocket.workspace = true
 uuid.workspace = true
 tokio-stream.workspace = true
+sysinfo.workspace = true
 
 [lints]
 workspace = true
