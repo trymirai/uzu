@@ -29,3 +29,5 @@ mod tensor_add_scale_test;
 mod tensor_add_swap_test;
 mod tensor_copy_test;
 mod token_copy_test;
+mod tree_update_solve_bench;
+mod tree_update_solve_test;
