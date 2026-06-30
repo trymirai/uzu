@@ -10,8 +10,15 @@ use crate::array::ArrayElement;
 #[variants(T, f32, bf16)]
 #[variants(HEAD_K_DIM, 128)]
 #[variants(BT, 16)]
-#[variants(BV, 16)]
-pub fn gdn_tree_update_solve<T: ArrayElement + Float, const HEAD_K_DIM: u32, const BT: u32, const BV: u32>(
+#[variants(BV, 16, 32, 64)]
+#[variants(USE_MXU, false)]
+pub fn gdn_tree_update_solve<
+    T: ArrayElement + Float,
+    const HEAD_K_DIM: u32,
+    const BT: u32,
+    const BV: u32,
+    const USE_MXU: bool,
+>(
     k: *const T,
     v: *const T,
     prefix: *const f32,

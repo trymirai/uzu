@@ -1,6 +1,6 @@
 #![cfg(metal_backend)]
 
-use std::{env, mem::size_of, time::Duration};
+use std::{mem::size_of, time::Duration};
 
 use criterion::{BenchmarkId, Criterion};
 use half::bf16;
@@ -124,7 +124,6 @@ fn buffers_bytes(
 #[uzu_bench]
 fn bench_build_tree_gram(c: &mut Criterion) {
     let context = <Metal as Backend>::Context::new().expect("metal context");
-    let cold_buffers = env::var("UZU_GRAM_COLD_BUFFERS").is_ok();
     let kernel_paths = if context.supports_mxu() {
         &[("Simdgroup", false), ("MXU", true)][..]
     } else {
@@ -170,24 +169,15 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                     );
                 };
 
-                if cold_buffers {
-                    let mut buffers = ColdPool::new(buffers_bytes(batch_size, tree_size), || {
-                        make_buffers(&context, batch_size, tree_size).0
+                let mut buffers = ColdPool::new(buffers_bytes(batch_size, tree_size), || {
+                    make_buffers(&context, batch_size, tree_size).0
+                });
+                group.bench_function(benchmark_id, |bencher| {
+                    iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
+                        let buffers = buffers.next_mut();
+                        encode(buffers, encoder);
                     });
-                    group.bench_function(benchmark_id, |bencher| {
-                        iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
-                            let buffers = buffers.next_mut();
-                            encode(buffers, encoder);
-                        });
-                    });
-                } else {
-                    let (mut buffers, _) = make_buffers(&context, batch_size, tree_size);
-                    group.bench_function(benchmark_id, |bencher| {
-                        iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
-                            encode(&mut buffers, encoder);
-                        });
-                    });
-                }
+                });
             }
         }
         group.finish();

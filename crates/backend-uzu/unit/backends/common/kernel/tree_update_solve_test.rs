@@ -1,8 +1,9 @@
+use half::bf16;
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::ArrayContextExt,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::GdnTreeUpdateSolveKernel},
         cpu::Cpu,
@@ -13,7 +14,7 @@ use crate::{
 
 const HEAD_K_DIM: usize = 128;
 const BT: u32 = 16;
-const BV: u32 = 16;
+const BVS: &[u32] = &[16, 32, 64];
 
 #[derive(Clone, Copy)]
 struct SolveCase {
@@ -48,7 +49,15 @@ const CASES: &[SolveCase] = &[
         tree_size: 33,
         num_v_heads: 4,
         num_k_heads: 2,
-        head_v_dim: 32,
+        head_v_dim: 128,
+    },
+    SolveCase {
+        name: "ragged_four_blocks",
+        batch_size: 1,
+        tree_size: 49,
+        num_v_heads: 4,
+        num_k_heads: 2,
+        head_v_dim: 128,
     },
     SolveCase {
         name: "batched_optional_h0",
@@ -60,14 +69,21 @@ const CASES: &[SolveCase] = &[
     },
 ];
 
-fn run_case<B: Backend>(case: SolveCase) -> Vec<f32> {
+fn run_case<B: Backend, T: ArrayElement + Copy>(
+    case: SolveCase,
+    bv: u32,
+    use_mxu: bool,
+    data_type: DataType,
+    cast: impl Fn(f32) -> T + Copy,
+) -> Vec<f32> {
     let context = B::Context::new().expect("context");
     let kernel = <<B as Backend>::Kernels as Kernels>::GdnTreeUpdateSolveKernel::new(
         &context,
-        DataType::F32,
+        data_type,
         HEAD_K_DIM as u32,
         BT,
-        BV,
+        bv,
+        use_mxu,
     )
     .expect("kernel");
 
@@ -84,8 +100,8 @@ fn run_case<B: Backend>(case: SolveCase) -> Vec<f32> {
     let h0_len = batch_size * num_v_heads * head_v_dim * HEAD_K_DIM;
     let u_len = batch_size * num_v_heads * tree_size * head_v_dim;
 
-    let k = (0..k_len).map(|i| ((i as f32 * 0.019).sin() * 0.2) + 0.01).collect::<Vec<_>>();
-    let v = (0..v_len).map(|i| ((i as f32 * 0.017).cos() * 0.18) - 0.02).collect::<Vec<_>>();
+    let k = (0..k_len).map(|i| cast(((i as f32 * 0.019).sin() * 0.2) + 0.01)).collect::<Vec<_>>();
+    let v = (0..v_len).map(|i| cast(((i as f32 * 0.017).cos() * 0.18) - 0.02)).collect::<Vec<_>>();
     let prefix = (0..scalar_len)
         .map(|i| -((i % tree_size) as f32) * 0.01 - ((i % num_v_heads) as f32) * 0.003)
         .collect::<Vec<_>>();
@@ -114,7 +130,7 @@ fn run_case<B: Backend>(case: SolveCase) -> Vec<f32> {
             }
         })
         .collect::<Vec<_>>();
-    let h0 = (0..h0_len).map(|i| ((i as f32 * 0.007).sin() * 0.05) - 0.01).collect::<Vec<_>>();
+    let h0 = (0..h0_len).map(|i| cast(((i as f32 * 0.007).sin() * 0.05) - 0.01)).collect::<Vec<_>>();
     let h0_idx = if case.name == "batched_optional_h0" {
         vec![0, -1]
     } else {
@@ -156,11 +172,28 @@ fn run_case<B: Backend>(case: SolveCase) -> Vec<f32> {
 
 #[uzu_test]
 fn test_gdn_tree_update_solve_cases() {
-    for &case in CASES {
-        let expected = run_case::<Cpu>(case);
-        for_each_non_cpu_backend!(|B| {
-            let output = run_case::<B>(case);
-            assert_eq_float(&expected, &output, 1e-4, case.name);
-        });
+    for &bv in BVS {
+        for &case in CASES {
+            let expected = run_case::<Cpu, f32>(case, bv, false, DataType::F32, |x| x);
+            for_each_non_cpu_backend!(|B| {
+                let output = run_case::<B, f32>(case, bv, false, DataType::F32, |x| x);
+                assert_eq_float(&expected, &output, 1e-4, &format!("{} BV{bv}", case.name));
+            });
+        }
+    }
+}
+
+#[uzu_test]
+fn test_gdn_tree_update_solve_mxu_cases() {
+    for &bv in &[32] {
+        for &case in CASES {
+            let expected = run_case::<Cpu, bf16>(case, bv, false, DataType::BF16, bf16::from_f32);
+            for_each_non_cpu_backend!(|B| {
+                if <B as Backend>::Context::new().expect("context").supports_mxu() {
+                    let output = run_case::<B, bf16>(case, bv, true, DataType::BF16, bf16::from_f32);
+                    assert_eq_float(&expected, &output, 1e-2, &format!("{} MXU BV{bv}", case.name));
+                }
+            });
+        }
     }
 }

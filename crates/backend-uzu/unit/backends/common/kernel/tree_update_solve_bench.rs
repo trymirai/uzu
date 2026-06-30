@@ -21,7 +21,8 @@ const NUM_V_HEADS: usize = 48;
 const HEAD_K_DIM: usize = 128;
 const HEAD_V_DIM: usize = 128;
 const BT: usize = 16;
-const BV: usize = 16;
+const BVS: &[usize] = &[16, 32, 64];
+const MXU_BVS: &[usize] = &[32];
 
 const BENCH_SHAPES: &[(usize, usize)] = &[
     (1, 33),
@@ -159,36 +160,50 @@ fn buffers_bytes(
 #[uzu_bench]
 fn bench_gdn_tree_update_solve(c: &mut Criterion) {
     let context = <Metal as Backend>::Context::new().expect("metal context");
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::GdnTreeUpdateSolveKernel::new(
-        &context,
-        DataType::BF16,
-        HEAD_K_DIM as u32,
-        BT as u32,
-        BV as u32,
-    )
-    .expect("GdnTreeUpdateSolveKernel");
+    let kernel_paths = if context.supports_mxu() {
+        &[("Simdgroup", false, BVS), ("MXU", true, MXU_BVS)][..]
+    } else {
+        &[("Simdgroup", false, BVS)][..]
+    };
 
-    let mut group = c.benchmark_group("Metal/Kernel/GDNTreeVerify/TreeUpdateSolve");
-    group.sample_size(10).warm_up_time(Duration::from_millis(100)).measurement_time(Duration::from_millis(500));
+    for &(kernel_path, use_mxu, bvs) in kernel_paths {
+        for &bv in bvs {
+            let kernel = <<Metal as Backend>::Kernels as Kernels>::GdnTreeUpdateSolveKernel::new(
+                &context,
+                DataType::BF16,
+                HEAD_K_DIM as u32,
+                BT as u32,
+                bv as u32,
+                use_mxu,
+            )
+            .expect("GdnTreeUpdateSolveKernel");
 
-    for &(batch_size, tree_size) in BENCH_SHAPES {
-        let benchmark_path = format!("Metal/Kernel/GDNTreeVerify/TreeUpdateSolve/B{batch_size}_T{tree_size}");
-        let benchmark_id = BenchmarkId::from_parameter(format!(
-            "B{batch_size}_T{tree_size}_Hg{NUM_K_HEADS}_HV{NUM_V_HEADS}_K{HEAD_K_DIM}_V{HEAD_V_DIM}_BV{BV}"
-        ));
-        let mut buffers =
-            ColdPool::new(buffers_bytes(batch_size, tree_size), || make_buffers(&context, batch_size, tree_size));
+            let mut group =
+                c.benchmark_group(format!("Metal/Kernel/GDNTreeVerify/TreeUpdateSolve/{kernel_path}/BV{bv}"));
+            group.sample_size(10).warm_up_time(Duration::from_millis(100)).measurement_time(Duration::from_millis(500));
 
-        group.throughput(Throughput::Elements((batch_size * tree_size * NUM_V_HEADS * HEAD_V_DIM) as u64));
-        group.bench_function(benchmark_id, |bencher| {
-            iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
-                let buffers = buffers.next_mut();
-                encode(&kernel, buffers, batch_size, tree_size, encoder);
-            });
-        });
+            for &(batch_size, tree_size) in BENCH_SHAPES {
+                let benchmark_path = format!(
+                    "Metal/Kernel/GDNTreeVerify/TreeUpdateSolve/{kernel_path}/BV{bv}/B{batch_size}_T{tree_size}"
+                );
+                let benchmark_id = BenchmarkId::from_parameter(format!(
+                    "B{batch_size}_T{tree_size}_Hg{NUM_K_HEADS}_HV{NUM_V_HEADS}_K{HEAD_K_DIM}_V{HEAD_V_DIM}_BV{bv}"
+                ));
+                let mut buffers = ColdPool::new(buffers_bytes(batch_size, tree_size), || {
+                    make_buffers(&context, batch_size, tree_size)
+                });
+
+                group.throughput(Throughput::Elements((batch_size * tree_size * NUM_V_HEADS * HEAD_V_DIM) as u64));
+                group.bench_function(benchmark_id, |bencher| {
+                    iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
+                        let buffers = buffers.next_mut();
+                        encode(&kernel, buffers, batch_size, tree_size, encoder);
+                    });
+                });
+            }
+            group.finish();
+        }
     }
-
-    group.finish();
 }
 
 fn encode(

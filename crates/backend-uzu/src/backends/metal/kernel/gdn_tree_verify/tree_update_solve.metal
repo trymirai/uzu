@@ -2,6 +2,7 @@
 #include "../common/defines.h"
 #include "../common/dsl.h"
 #include "../matmul/common/fragment.h"
+#include "../matmul/common/mxu_fragment_ops.h"
 #include "../matmul/common/simdgroup_fragment_ops.h"
 
 using namespace metal;
@@ -29,11 +30,14 @@ using namespace uzu::matmul;
 //   [BT,K]  @ [K,BV]  -> [BT,BV]
 //   [BT,BT] @ [BT,BV] -> [BT,BV]
 //   [BT,BT] @ [BT,BV] -> [BT,BV]
-template <typename T, uint HEAD_K_DIM, uint BT, uint BV>
+template <typename T, uint HEAD_K_DIM, uint BT, uint BV, bool USE_MXU>
 VARIANTS(T, float, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 VARIANTS(BT, 16)
-VARIANTS(BV, 16)
+VARIANTS(BV, 16, 32, 64)
+VARIANTS(USE_MXU, false, true)
+CONSTRAINT(!USE_MXU || T != "float")
+CONSTRAINT(!USE_MXU || BV == 32)
 PUBLIC KERNEL(GdnTreeUpdateSolve)(
     const device T* k,
     const device T* v,
@@ -54,15 +58,19 @@ PUBLIC KERNEL(GdnTreeUpdateSolve)(
     const uint value_tile_idx GROUPS(head_v_dim.div_ceil(BV)),
     const uint lane_idx THREADS(METAL_SIMD_SIZE)
 ) {
-  using FragmentOps = SimdgroupFragmentOps;
-  using TileFragment = Fragment<float, 2, 2, FragmentOps>;
-  using KeyFragment = OperandFragment<float, 2, 1, FragmentOps>;
-  using H0Fragment = OperandFragment<float, 1, 2, FragmentOps, ReadTranspose>;
-  using BlockMatrixFragment = OperandFragment<float, 2, 2, FragmentOps>;
-  using ValueTileFragment = OperandFragment<float, 2, 2, FragmentOps>;
+  using FragmentOps = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
+  constexpr ushort TOKEN_FRAGMENTS = BT / FragmentOps::FRAGMENT_ROWS;
+  constexpr ushort VALUE_FRAGMENTS = BV / FragmentOps::FRAGMENT_COLS;
+  using InputType = metal::conditional_t<USE_MXU, T, float>;
+  using TileFragment = Fragment<float, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, FragmentOps>;
+  using KeyFragment = OperandFragment<InputType, TOKEN_FRAGMENTS, 1, FragmentOps>;
+  using H0Fragment = OperandFragment<InputType, 1, VALUE_FRAGMENTS, FragmentOps, ReadTranspose>;
+  using BlockMatrixFragment = OperandFragment<float, TOKEN_FRAGMENTS, TOKEN_FRAGMENTS, FragmentOps>;
+  using ValueTileFragment = OperandFragment<float, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, FragmentOps>;
 
   static_assert(BT == 16, "GdnTreeUpdateSolve expects BT=16");
-  static_assert(BV == 16, "GdnTreeUpdateSolve expects BV=16");
+  static_assert(BT % FragmentOps::FRAGMENT_ROWS == 0, "BT must be a multiple of the fragment row size");
+  static_assert(BV % FragmentOps::FRAGMENT_COLS == 0, "BV must be a multiple of the fragment column size");
   static_assert(HEAD_K_DIM % FragmentOps::FRAGMENT_ROWS == 0, "HEAD_K_DIM must fit fragment rows");
 
   const uint batch_value_head_idx = batch_idx * num_v_heads + value_head_idx;
@@ -168,6 +176,6 @@ PUBLIC KERNEL(GdnTreeUpdateSolve)(
     fragment_mma(solved, inv_frag, acc);
     solved.store_safe(lane_idx, u_head_tile + row_base * head_v_dim, head_v_dim, short2(tile_value_cols, tile_rows));
 
-    threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+    threadgroup_barrier(mem_flags::mem_device);
   }
 }
