@@ -138,10 +138,15 @@ pub async fn run_session(
     let preferences = state.read().preferences;
     let thinking_support =
         state.read().model_state.as_ref().map(|model_state| model_state.capabilities.thinking).unwrap_or_default();
-    let mut user_message = ChatMessage::user().with_text(text);
-    if let Some(reasoning_effort) = thinking_support.with_preference(&preferences.thinking).reasoning_effort() {
-        user_message = user_message.with_reasoning_effort(reasoning_effort);
-    }
+
+    let user_message = ChatMessage::user().with_text(text);
+    let mut messages = vec![user_message];
+    if let Some(reasoning_effort) = thinking_support.with_preference(&preferences.thinking).reasoning_effort()
+        && session.messages().await.is_empty()
+    {
+        let system_message = ChatMessage::system().with_reasoning_effort(reasoning_effort);
+        messages.insert(0, system_message);
+    };
     let reply_config = ChatReplyConfig::default().with_sampling_policy(preferences.sampling_policy());
     {
         let mut state = state.write();
@@ -152,7 +157,7 @@ pub async fn run_session(
         }
     }
 
-    let stream = session.reply_with_stream(vec![user_message], reply_config).await;
+    let stream = session.reply_with_stream(messages, reply_config).await;
     let mut latest_reply: Option<ChatReply> = None;
     {
         let mut state = state.write();
