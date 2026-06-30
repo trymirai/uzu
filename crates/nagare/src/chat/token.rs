@@ -117,17 +117,13 @@ impl Session {
         &mut self,
         messages: &Vec<ChatMessage>,
     ) -> Result<StreamInput, ChatSessionError> {
-        let tokens_offset = self.encoding.state().tokens.len();
-        let messages_offset = self.encoding.state().messages.len();
-        let new_messages = messages.get(messages_offset..).ok_or_else(|| ChatSessionError::Backend {
-            message: "input message history is shorter than the encoding state".to_string(),
-        })?;
-
-        self.encoding.encode(new_messages.to_vec()).map_err(|err| ChatSessionError::Backend {
+        self.encoding.reset().map_err(|err| ChatSessionError::Backend {
             message: err.to_string(),
         })?;
-        let tokens =
-            self.encoding.state().tokens[tokens_offset..].iter().map(|token| token.id as u64).collect::<Vec<u64>>();
+        self.encoding.encode(messages.to_vec()).map_err(|err| ChatSessionError::Backend {
+            message: err.to_string(),
+        })?;
+        let tokens = self.encoding.state().tokens.iter().map(|token| token.id as u64).collect::<Vec<u64>>();
         Ok(tokens)
     }
 
