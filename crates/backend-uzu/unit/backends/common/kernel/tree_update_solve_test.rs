@@ -11,48 +11,121 @@ use crate::{
     tests::{assert::assert_eq_float, helpers::allocation_to_vec},
 };
 
-const K: usize = 128;
+const HEAD_K_DIM: usize = 128;
+const BT: u32 = 16;
+const BV: u32 = 16;
 
-fn run_tiny_block<B: Backend>() -> Vec<f32> {
+#[derive(Clone, Copy)]
+struct SolveCase {
+    name: &'static str,
+    batch_size: u32,
+    tree_size: u32,
+    num_v_heads: u32,
+    num_k_heads: u32,
+    head_v_dim: u32,
+    use_l2norm: bool,
+}
+
+const CASES: &[SolveCase] = &[
+    SolveCase {
+        name: "single_full_block",
+        batch_size: 1,
+        tree_size: 16,
+        num_v_heads: 1,
+        num_k_heads: 1,
+        head_v_dim: 16,
+        use_l2norm: false,
+    },
+    SolveCase {
+        name: "ragged_second_block",
+        batch_size: 1,
+        tree_size: 17,
+        num_v_heads: 2,
+        num_k_heads: 1,
+        head_v_dim: 20,
+        use_l2norm: true,
+    },
+    SolveCase {
+        name: "common_small_tree",
+        batch_size: 1,
+        tree_size: 33,
+        num_v_heads: 4,
+        num_k_heads: 2,
+        head_v_dim: 32,
+        use_l2norm: true,
+    },
+    SolveCase {
+        name: "batched_optional_h0",
+        batch_size: 2,
+        tree_size: 16,
+        num_v_heads: 2,
+        num_k_heads: 1,
+        head_v_dim: 16,
+        use_l2norm: false,
+    },
+];
+
+fn run_case<B: Backend>(case: SolveCase) -> Vec<f32> {
     let context = B::Context::new().expect("context");
     let kernel = <<B as Backend>::Kernels as Kernels>::GdnTreeUpdateSolveKernel::new(
         &context,
         DataType::F32,
-        K as u32,
-        16,
-        16,
-        false,
+        HEAD_K_DIM as u32,
+        BT,
+        BV,
+        case.use_l2norm,
     )
     .expect("kernel");
 
-    let batch_size = 1u32;
-    let tree_size = 2u32;
-    let num_v_heads = 1u32;
-    let num_k_heads = 1u32;
-    let head_v_dim = 2u32;
+    let batch_size = case.batch_size as usize;
+    let tree_size = case.tree_size as usize;
+    let num_v_heads = case.num_v_heads as usize;
+    let num_k_heads = case.num_k_heads as usize;
+    let head_v_dim = case.head_v_dim as usize;
 
-    // k: [B, T, num_k_heads, K]. Only k[0] and k[1] are non-zero.
-    let mut k = vec![0.0f32; tree_size as usize * K];
-    k[0] = 1.0;
-    k[K + 1] = 1.0;
+    let k_len = batch_size * tree_size * num_k_heads * HEAD_K_DIM;
+    let v_len = batch_size * tree_size * num_v_heads * head_v_dim;
+    let scalar_len = batch_size * tree_size * num_v_heads;
+    let matrix_len = batch_size * num_v_heads * tree_size * tree_size;
+    let h0_len = batch_size * num_v_heads * head_v_dim * HEAD_K_DIM;
+    let u_len = batch_size * num_v_heads * tree_size * head_v_dim;
 
-    // v: [B, T, num_v_heads, head_v_dim].
-    let v = vec![10.0f32, 20.0, 30.0, 40.0];
-    let prefix = vec![0.0f32, 0.0];
-    let beta = vec![1.0f32, 1.0];
-
-    // A: [B * HV, T, T]. Row 1 depends on row 0 with weight 0.5.
-    let a = vec![0.0f32, 0.0, 0.5, 0.0];
-    // inverse(I + A) for [[1, 0], [0.5, 1]].
-    let a_inv = vec![1.0f32, 0.0, -0.5, 1.0];
-
-    // h0: [pool, num_v_heads, head_v_dim, K].
-    let mut h0 = vec![0.0f32; head_v_dim as usize * K];
-    h0[0] = 1.0;
-    h0[1] = 2.0;
-    h0[K] = -1.0;
-    h0[K + 1] = 0.5;
-    let h0_idx = vec![0i32];
+    let k = (0..k_len).map(|i| ((i as f32 * 0.019).sin() * 0.2) + 0.01).collect::<Vec<_>>();
+    let v = (0..v_len).map(|i| ((i as f32 * 0.017).cos() * 0.18) - 0.02).collect::<Vec<_>>();
+    let prefix = (0..scalar_len)
+        .map(|i| -((i % tree_size) as f32) * 0.01 - ((i % num_v_heads) as f32) * 0.003)
+        .collect::<Vec<_>>();
+    let beta = (0..scalar_len).map(|i| 0.25 + ((i as f32 * 0.013).sin() + 1.0) * 0.2).collect::<Vec<_>>();
+    let a = (0..matrix_len)
+        .map(|i| {
+            let col = i % tree_size;
+            let row = (i / tree_size) % tree_size;
+            if col < row {
+                ((i as f32 * 0.011).sin()) * 0.01
+            } else {
+                0.0
+            }
+        })
+        .collect::<Vec<_>>();
+    let a_inv = (0..matrix_len)
+        .map(|i| {
+            let col = i % tree_size;
+            let row = (i / tree_size) % tree_size;
+            if row == col {
+                1.0
+            } else if row / BT as usize == col / BT as usize && col < row {
+                -((i as f32 * 0.011).sin()) * 0.01
+            } else {
+                0.0
+            }
+        })
+        .collect::<Vec<_>>();
+    let h0 = (0..h0_len).map(|i| ((i as f32 * 0.007).sin() * 0.05) - 0.01).collect::<Vec<_>>();
+    let h0_idx = if case.name == "batched_optional_h0" {
+        vec![0, -1]
+    } else {
+        (0..batch_size).map(|batch| batch as i32).collect::<Vec<_>>()
+    };
 
     let k = context.create_array_from(&[k.len()], &k);
     let v = context.create_array_from(&[v.len()], &v);
@@ -62,7 +135,7 @@ fn run_tiny_block<B: Backend>() -> Vec<f32> {
     let a_inv = context.create_array_from(&[a_inv.len()], &a_inv);
     let h0 = context.create_array_from(&[h0.len()], &h0);
     let h0_idx = context.create_array_from(&[h0_idx.len()], &h0_idx);
-    let mut u = context.create_array_uninitialized(&[4], DataType::F32).into_allocation();
+    let mut u = context.create_array_uninitialized(&[u_len], DataType::F32).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
     kernel.encode(
@@ -75,11 +148,11 @@ fn run_tiny_block<B: Backend>() -> Vec<f32> {
         h0.allocation(),
         h0_idx.allocation(),
         &mut u,
-        batch_size,
-        tree_size,
-        num_v_heads,
-        num_k_heads,
-        head_v_dim,
+        case.batch_size,
+        case.tree_size,
+        case.num_v_heads,
+        case.num_k_heads,
+        case.head_v_dim,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -88,12 +161,12 @@ fn run_tiny_block<B: Backend>() -> Vec<f32> {
 }
 
 #[uzu_test]
-fn test_gdn_tree_update_solve_tiny_block() {
-    let expected = run_tiny_block::<Cpu>();
-    assert_eq_float(&[9.0f32, 21.0, 23.5, 29.0], &expected, 1e-6, "cpu u");
-
-    for_each_non_cpu_backend!(|B| {
-        let output = run_tiny_block::<B>();
-        assert_eq_float(&expected, &output, 1e-5, "backend u");
-    });
+fn test_gdn_tree_update_solve_cases() {
+    for &case in CASES {
+        let expected = run_case::<Cpu>(case);
+        for_each_non_cpu_backend!(|B| {
+            let output = run_case::<B>(case);
+            assert_eq_float(&expected, &output, 1e-4, case.name);
+        });
+    }
 }

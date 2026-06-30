@@ -22,9 +22,34 @@ const HEAD_K_DIM: usize = 128;
 const HEAD_V_DIM: usize = 128;
 const BT: usize = 16;
 const BV: usize = 16;
-const BATCH_SIZES: &[usize] = &[1, 2, 4, 8];
-const TREE_SIZES: &[usize] = &[33, 49, 64, 128, 256, 512];
 const USE_L2NORM: bool = true;
+
+const BENCH_SHAPES: &[(usize, usize)] = &[
+    (1, 33),
+    (1, 49),
+    (1, 64),
+    (1, 128),
+    (1, 256),
+    (1, 512),
+    (2, 33),
+    (2, 49),
+    (2, 64),
+    (2, 128),
+    (2, 256),
+    (2, 512),
+    (4, 33),
+    (4, 49),
+    (4, 64),
+    (4, 128),
+    (4, 256),
+    (4, 512),
+    (8, 33),
+    (8, 49),
+    (8, 64),
+    (8, 128),
+    (8, 256),
+    (8, 512),
+];
 
 struct TreeUpdateSolveBuffers {
     k: Allocation<Metal>,
@@ -145,27 +170,24 @@ fn bench_gdn_tree_update_solve(c: &mut Criterion) {
     )
     .expect("GdnTreeUpdateSolveKernel");
 
-    let mut group = c.benchmark_group("Metal/Kernel/GDNTreeVerify/TreeUpdateSolve/Scalar");
+    let mut group = c.benchmark_group("Metal/Kernel/GDNTreeVerify/TreeUpdateSolve");
     group.sample_size(10).warm_up_time(Duration::from_millis(100)).measurement_time(Duration::from_millis(500));
 
-    for &batch_size in BATCH_SIZES {
-        for &tree_size in TREE_SIZES {
-            let benchmark_path =
-                format!("Metal/Kernel/GDNTreeVerify/TreeUpdateSolve/Scalar/B{batch_size}_T{tree_size}");
-            let benchmark_id = BenchmarkId::from_parameter(format!(
-                "B{batch_size}_T{tree_size}_Hg{NUM_K_HEADS}_HV{NUM_V_HEADS}_K{HEAD_K_DIM}_V{HEAD_V_DIM}"
-            ));
-            let mut buffers =
-                ColdPool::new(buffers_bytes(batch_size, tree_size), || make_buffers(&context, batch_size, tree_size));
+    for &(batch_size, tree_size) in BENCH_SHAPES {
+        let benchmark_path = format!("Metal/Kernel/GDNTreeVerify/TreeUpdateSolve/B{batch_size}_T{tree_size}");
+        let benchmark_id = BenchmarkId::from_parameter(format!(
+            "B{batch_size}_T{tree_size}_Hg{NUM_K_HEADS}_HV{NUM_V_HEADS}_K{HEAD_K_DIM}_V{HEAD_V_DIM}_BV{BV}"
+        ));
+        let mut buffers =
+            ColdPool::new(buffers_bytes(batch_size, tree_size), || make_buffers(&context, batch_size, tree_size));
 
-            group.throughput(Throughput::Elements((batch_size * tree_size * NUM_V_HEADS * HEAD_V_DIM) as u64));
-            group.bench_function(benchmark_id, |bencher| {
-                iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
-                    let buffers = buffers.next_mut();
-                    encode(&kernel, buffers, batch_size, tree_size, encoder);
-                });
+        group.throughput(Throughput::Elements((batch_size * tree_size * NUM_V_HEADS * HEAD_V_DIM) as u64));
+        group.bench_function(benchmark_id, |bencher| {
+            iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
+                let buffers = buffers.next_mut();
+                encode(&kernel, buffers, batch_size, tree_size, encoder);
             });
-        }
+        });
     }
 
     group.finish();
