@@ -10,67 +10,30 @@ using namespace metal;
 using namespace uzu::matmul;
 
 #define TREE_OUT_MATMUL_COLS 32u
+#define TREE_OUT_MATMUL_MXU_ROWS 16u
+#define TREE_OUT_MATMUL_SIMDGROUP_ROWS 8u
 #define TREE_OUT_MATMUL_SIMDGROUPS_PER_TG 4u
 
-template <typename T, bool USE_H0>
-METAL_FUNC void tree_out_scalar_position(
-    const device T* q,
-    const device float* prefix,
-    const device float* qkd,
-    const device T* u,
-    const device T* h0,
-    const device int* h0_indices,
-    device T* o,
-    const float scale,
-    const uint tree_size,
-    const uint qk_heads,
-    const uint value_heads,
-    const uint head_k_dim,
-    const uint head_v_dim,
-    const uint batch_idx,
-    const uint value_head_idx,
-    const uint row,
-    const uint value_col
-) {
-  const uint value_heads_per_qk_head = value_heads / qk_heads;
-  const uint qk_head_idx = value_head_idx / value_heads_per_qk_head;
-  const uint q_row_base = (batch_idx * tree_size * qk_heads + row * qk_heads + qk_head_idx) * head_k_dim;
-  const uint prefix_base = batch_idx * tree_size * value_heads + value_head_idx;
-  const uint qkd_base = (batch_idx * value_heads + value_head_idx) * tree_size * tree_size;
-  const uint u_base = (batch_idx * value_heads + value_head_idx) * tree_size * head_v_dim;
-  const uint out_offset = ((batch_idx * tree_size + row) * value_heads + value_head_idx) * head_v_dim + value_col;
-
-  float acc = 0.0f;
-
-  const int h0_index = USE_H0 ? h0_indices[batch_idx] : -1;
-  if (USE_H0 && h0_index >= 0) {
-    const uint h0_base = ((uint(h0_index) * value_heads + value_head_idx) * head_v_dim + value_col) * head_k_dim;
-    float dot = 0.0f;
-    for (uint dim = 0; dim < head_k_dim; dim++) {
-      dot += float(q[q_row_base + dim]) * float(h0[h0_base + dim]);
-    }
-    acc += exp(prefix[prefix_base + row * value_heads]) * scale * dot;
-  }
-
-  for (uint col = 0; col < tree_size; col++) {
-    acc += qkd[qkd_base + row * tree_size + col] * float(u[u_base + col * head_v_dim + value_col]);
-  }
-
-  o[out_offset] = T(acc);
-}
-
-// Reference-shaped scalar Metal path, kept only so the CPU BuildTreeOut trait
-// has a matching Metal implementation.
-template <typename T, bool USE_H0>
+// Build tree output for one (batch, value-head, row, value) tile.
+//
+// q:      [B, T, Hg, K], with query head hq = hv / (HV / Hg)
+// prefix: [B, T, HV] path log-decay prefix from BuildPrefixBeta
+// qkd:    [B, HV, T, T] from BuildTreeGram
+// u:      [B, HV, T, V]
+// h0:     [H0, HV, V, K]
+//
+// o[row, value] = exp(prefix[row]) * scale * dot(q[row], h0[value])
+//                 + sum_j qkd[row, j] * u[j, value]
+template <typename T, bool USE_MXU>
 VARIANTS(T, float, bfloat)
-VARIANTS(USE_H0, false, true)
+VARIANTS(USE_MXU, false, true)
 PUBLIC KERNEL(BuildTreeOut)(
     const device T* q,
     const device float* prefix,
     const device float* qkd,
     const device T* u,
-    const device T* h0 OPTIONAL(USE_H0),
-    const device int* h0_indices OPTIONAL(USE_H0),
+    const device T* h0 OPTIONAL(use_h0),
+    const device int* h0_indices OPTIONAL(use_h0),
     device T* o,
     constant const float& scale,
     constant const uint& batch_size,
@@ -79,63 +42,19 @@ PUBLIC KERNEL(BuildTreeOut)(
     constant const uint& value_heads,
     constant const uint& head_k_dim,
     constant const uint& head_v_dim,
-    const uint position AXIS(batch_size * value_heads * tree_size * head_v_dim, 256)
-) {
-  const uint value_col = position % head_v_dim;
-  const uint row = (position / head_v_dim) % tree_size;
-  const uint value_head_idx = (position / (head_v_dim * tree_size)) % value_heads;
-  const uint batch_idx = position / (head_v_dim * tree_size * value_heads);
-  tree_out_scalar_position<T, USE_H0>(
-      q,
-      prefix,
-      qkd,
-      u,
-      h0,
-      h0_indices,
-      o,
-      scale,
-      tree_size,
-      qk_heads,
-      value_heads,
-      head_k_dim,
-      head_v_dim,
-      batch_idx,
-      value_head_idx,
-      row,
-      value_col
-  );
-}
-
-// One simdgroup owns a direct-load output fragment. USE_MXU selects MPP MXU
-// fragments; false uses the portable simdgroup_matrix fragment path.
-template <typename T, bool USE_H0, bool USE_MXU>
-VARIANTS(T, bfloat)
-VARIANTS(USE_H0, false, true)
-VARIANTS(USE_MXU, false, true)
-PUBLIC KERNEL(BuildTreeOutOutputTileMatmulDirect)(
-    const device T* q,
-    const device float* prefix,
-    const device float* qkd,
-    const device T* u,
-    const device T* h0 OPTIONAL(USE_H0),
-    const device int* h0_indices OPTIONAL(USE_H0),
-    device T* o,
-    constant const float& scale,
-    constant const uint& batch_size,
-    constant const uint& tree_size,
-    constant const uint& qk_heads,
-    constant const uint& value_heads,
-    constant const uint& head_k_dim,
-    constant const uint& head_v_dim,
+    const bool use_h0 SPECIALIZE,
     const ThreadContext thread_context,
     const uint v_tile_idx GROUPS(head_v_dim.div_ceil(TREE_OUT_MATMUL_COLS)),
     const uint row_tile_group_idx GROUPS(tree_size.div_ceil(
-        if USE_MXU { TREE_OUT_MATMUL_SIMDGROUPS_PER_TG * 16 } else { TREE_OUT_MATMUL_SIMDGROUPS_PER_TG * 8 }
+        if USE_MXU {
+          TREE_OUT_MATMUL_SIMDGROUPS_PER_TG * TREE_OUT_MATMUL_MXU_ROWS
+        } else {
+          TREE_OUT_MATMUL_SIMDGROUPS_PER_TG * TREE_OUT_MATMUL_SIMDGROUP_ROWS
+        }
     )),
     const uint batch_value_head_idx GROUPS(batch_size * value_heads),
     const uint tid THREADS(TREE_OUT_MATMUL_SIMDGROUPS_PER_TG * METAL_SIMD_SIZE)
 ) {
-  (void)tid;
   using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
   using InputType = metal::conditional_t<USE_MXU, T, float>;
   constexpr ushort ROWS = Ops::FRAGMENT_ROWS;
@@ -160,8 +79,8 @@ PUBLIC KERNEL(BuildTreeOutOutputTileMatmulDirect)(
   AccFragment acc;
   acc.clear();
 
-  const int h0_index = USE_H0 ? h0_indices[batch_idx] : -1;
-  if (USE_H0 && h0_index >= 0) {
+  const int h0_index = use_h0 ? h0_indices[batch_idx] : -1;
+  if (use_h0 && h0_index >= 0) {
     const uint q_base = (batch_idx * tree_size * qk_heads + row_base * qk_heads + qk_head_idx) * head_k_dim;
     const uint h0_base = ((uint(h0_index) * value_heads + value_head_idx) * head_v_dim + value_base) * head_k_dim;
     for (uint k0 = 0; k0 < head_k_dim; k0 += ROWS) {

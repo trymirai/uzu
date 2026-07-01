@@ -5,10 +5,7 @@ use test_runner::for_each_non_cpu_backend;
 use crate::{
     array::ArrayContextExt,
     backends::{
-        common::{
-            Allocation, Backend, Context, Encoder, Kernels,
-            kernel::{BuildTreeOutKernel, BuildTreeOutOutputTileMatmulDirectKernel},
-        },
+        common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeOutKernel},
         cpu::Cpu,
     },
     data_type::DataType,
@@ -32,13 +29,6 @@ struct Inputs {
     u: Vec<bf16>,
     h0: Vec<bf16>,
     h0_indices: Vec<i32>,
-}
-
-#[derive(Clone, Copy)]
-enum Candidate {
-    Scalar,
-    OutputTileMatmulDirectSimdgroup,
-    OutputTileMatmulDirectMxu,
 }
 
 fn make_inputs(shape: Shape) -> Inputs {
@@ -69,168 +59,69 @@ fn make_inputs(shape: Shape) -> Inputs {
     }
 }
 
-fn run_cpu(
+fn run_build_tree_out<B: Backend>(
     shape: Shape,
     inputs: &Inputs,
     use_h0: bool,
-) -> Vec<bf16> {
-    let context = <Cpu as Backend>::Context::new().expect("Failed to create CPU context");
-    let kernel = <<Cpu as Backend>::Kernels as Kernels>::BuildTreeOutKernel::new(&context, DataType::BF16, use_h0)
-        .expect("Failed to create CPU BuildTreeOutKernel");
-    run_encoded::<Cpu, _>(context.as_ref(), shape, inputs, use_h0, |encoder, q, prefix, qkd, u, h0, h0_indices, o| {
-        kernel.encode(
-            q,
-            prefix,
-            qkd,
-            u,
-            h0,
-            h0_indices,
-            o,
-            (shape.head_k_dim as f32).sqrt().recip(),
-            shape.batch_size as u32,
-            shape.tree_size as u32,
-            shape.qk_heads as u32,
-            shape.value_heads as u32,
-            shape.head_k_dim as u32,
-            shape.head_v_dim as u32,
-            encoder,
-        );
-    })
-}
-
-fn run_candidate<B: Backend>(
-    shape: Shape,
-    inputs: &Inputs,
-    use_h0: bool,
-    candidate: Candidate,
+    use_mxu: bool,
 ) -> Vec<bf16> {
     let context = B::Context::new().expect("Failed to create Context");
-    match candidate {
-        Candidate::Scalar => {
-            let kernel =
-                <<B as Backend>::Kernels as Kernels>::BuildTreeOutKernel::new(&context, DataType::BF16, use_h0)
-                    .expect("BuildTreeOutKernel");
-            run_encoded::<B, _>(
-                context.as_ref(),
-                shape,
-                inputs,
-                use_h0,
-                |encoder, q, prefix, qkd, u, h0, h0_indices, o| {
-                    kernel.encode(
-                        q,
-                        prefix,
-                        qkd,
-                        u,
-                        h0,
-                        h0_indices,
-                        o,
-                        (shape.head_k_dim as f32).sqrt().recip(),
-                        shape.batch_size as u32,
-                        shape.tree_size as u32,
-                        shape.qk_heads as u32,
-                        shape.value_heads as u32,
-                        shape.head_k_dim as u32,
-                        shape.head_v_dim as u32,
-                        encoder,
-                    );
-                },
-            )
-        },
-        Candidate::OutputTileMatmulDirectSimdgroup | Candidate::OutputTileMatmulDirectMxu => {
-            let use_mxu = matches!(candidate, Candidate::OutputTileMatmulDirectMxu);
-            let kernel = <<B as Backend>::Kernels as Kernels>::BuildTreeOutOutputTileMatmulDirectKernel::new(
-                &context,
-                DataType::BF16,
-                use_h0,
-                use_mxu,
-            )
-            .expect("BuildTreeOutOutputTileMatmulDirectKernel");
-            run_encoded::<B, _>(
-                context.as_ref(),
-                shape,
-                inputs,
-                use_h0,
-                |encoder, q, prefix, qkd, u, h0, h0_indices, o| {
-                    kernel.encode(
-                        q,
-                        prefix,
-                        qkd,
-                        u,
-                        h0,
-                        h0_indices,
-                        o,
-                        (shape.head_k_dim as f32).sqrt().recip(),
-                        shape.batch_size as u32,
-                        shape.tree_size as u32,
-                        shape.qk_heads as u32,
-                        shape.value_heads as u32,
-                        shape.head_k_dim as u32,
-                        shape.head_v_dim as u32,
-                        encoder,
-                    );
-                },
-            )
-        },
-    }
-}
-
-fn run_encoded<
-    B: Backend,
-    F: FnOnce(
-        &mut Encoder<B>,
-        &Allocation<B>,
-        &Allocation<B>,
-        &Allocation<B>,
-        &Allocation<B>,
-        Option<&Allocation<B>>,
-        Option<&Allocation<B>>,
-        &mut Allocation<B>,
-    ),
->(
-    context: &B::Context,
-    shape: Shape,
-    inputs: &Inputs,
-    use_h0: bool,
-    encode: F,
-) -> Vec<bf16> {
-    let q = context.create_array_from(&[inputs.q.len()], &inputs.q).into_allocation();
-    let prefix = context.create_array_from(&[inputs.prefix.len()], &inputs.prefix).into_allocation();
-    let qkd = context.create_array_from(&[inputs.qkd.len()], &inputs.qkd).into_allocation();
-    let u = context.create_array_from(&[inputs.u.len()], &inputs.u).into_allocation();
-    let h0 = use_h0.then(|| context.create_array_from(&[inputs.h0.len()], &inputs.h0).into_allocation());
-    let h0_indices =
-        use_h0.then(|| context.create_array_from(&[inputs.h0_indices.len()], &inputs.h0_indices).into_allocation());
+    let kernel =
+        <<B as Backend>::Kernels as Kernels>::BuildTreeOutKernel::new(&context, DataType::BF16, use_mxu, use_h0)
+            .expect("BuildTreeOutKernel");
+    let q = context.as_ref().create_array_from(&[inputs.q.len()], &inputs.q).into_allocation();
+    let prefix = context.as_ref().create_array_from(&[inputs.prefix.len()], &inputs.prefix).into_allocation();
+    let qkd = context.as_ref().create_array_from(&[inputs.qkd.len()], &inputs.qkd).into_allocation();
+    let u = context.as_ref().create_array_from(&[inputs.u.len()], &inputs.u).into_allocation();
+    let h0 = use_h0.then(|| context.as_ref().create_array_from(&[inputs.h0.len()], &inputs.h0).into_allocation());
+    let h0_indices = use_h0
+        .then(|| context.as_ref().create_array_from(&[inputs.h0_indices.len()], &inputs.h0_indices).into_allocation());
     let mut o = context
+        .as_ref()
         .create_array_uninitialized(
             &[shape.batch_size * shape.tree_size * shape.value_heads * shape.head_v_dim],
             DataType::BF16,
         )
         .into_allocation();
 
-    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
-    encode(&mut encoder, &q, &prefix, &qkd, &u, h0.as_ref(), h0_indices.as_ref(), &mut o);
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    kernel.encode(
+        &q,
+        &prefix,
+        &qkd,
+        &u,
+        h0.as_ref(),
+        h0_indices.as_ref(),
+        &mut o,
+        (shape.head_k_dim as f32).sqrt().recip(),
+        shape.batch_size as u32,
+        shape.tree_size as u32,
+        shape.qk_heads as u32,
+        shape.value_heads as u32,
+        shape.head_k_dim as u32,
+        shape.head_v_dim as u32,
+        &mut encoder,
+    );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec(&o)
 }
 
 fn check_shape(shape: Shape) {
     let inputs = make_inputs(shape);
-    let candidates =
-        [Candidate::Scalar, Candidate::OutputTileMatmulDirectSimdgroup, Candidate::OutputTileMatmulDirectMxu];
+    let kernel_paths = [("Simdgroup", false), ("MXU", true)];
 
     for use_h0 in [false, true] {
-        let expected = run_cpu(shape, &inputs, use_h0);
+        let expected = run_build_tree_out::<Cpu>(shape, &inputs, use_h0, false);
         for_each_non_cpu_backend!(|B| {
             let context = <B as Backend>::Context::new().expect("Failed to create Context");
-            for candidate in candidates {
-                if matches!(candidate, Candidate::OutputTileMatmulDirectMxu) && !context.supports_mxu() {
+            for &(kernel_path, use_mxu) in &kernel_paths {
+                if use_mxu && !context.supports_mxu() {
                     continue;
                 }
-                let actual = run_candidate::<B>(shape, &inputs, use_h0, candidate);
+                let actual = run_build_tree_out::<B>(shape, &inputs, use_h0, use_mxu);
                 let msg = format!(
-                    "backend {} candidate {} use_h0 {use_h0} B{}_T{}_QK{}_HV{}_K{}_V{}",
+                    "backend {} kernel_path {kernel_path} use_h0 {use_h0} B{}_T{}_QK{}_HV{}_K{}_V{}",
                     std::any::type_name::<B>(),
-                    candidate_name(candidate),
                     shape.batch_size,
                     shape.tree_size,
                     shape.qk_heads,
@@ -244,16 +135,8 @@ fn check_shape(shape: Shape) {
     }
 }
 
-fn candidate_name(candidate: Candidate) -> &'static str {
-    match candidate {
-        Candidate::Scalar => "Scalar",
-        Candidate::OutputTileMatmulDirectSimdgroup => "OutputTileMatmulDirectSimdgroup",
-        Candidate::OutputTileMatmulDirectMxu => "OutputTileMatmulDirectMxu",
-    }
-}
-
 #[uzu_test]
-fn test_build_tree_out_candidates_match_cpu_small() {
+fn test_build_tree_out_small() {
     check_shape(Shape {
         batch_size: 2,
         tree_size: 17,
@@ -265,7 +148,7 @@ fn test_build_tree_out_candidates_match_cpu_small() {
 }
 
 #[uzu_test]
-fn test_build_tree_out_candidates_match_cpu_targetish() {
+fn test_build_tree_out_gdn_shape() {
     check_shape(Shape {
         batch_size: 1,
         tree_size: 49,

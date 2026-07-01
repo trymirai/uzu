@@ -4,14 +4,16 @@ use proc_macros::kernel;
 
 use crate::array::ArrayElement;
 
-#[allow(clippy::too_many_arguments)]
-fn build_tree_out_scalar<T: ArrayElement + Float, const USE_H0: bool>(
+#[kernel(BuildTreeOut)]
+#[variants(T, f32, bf16)]
+#[variants(USE_MXU, false, true)]
+pub fn build_tree_out<T: ArrayElement + Float, const USE_MXU: bool>(
     q: *const T,
     prefix: *const f32,
     qkd: *const f32,
     u: *const T,
-    h0: Option<*const T>,
-    h0_indices: Option<*const i32>,
+    #[optional(use_h0)] h0: Option<*const T>,
+    #[optional(use_h0)] h0_indices: Option<*const i32>,
     o: *mut T,
     scale: f32,
     batch_size: u32,
@@ -20,6 +22,9 @@ fn build_tree_out_scalar<T: ArrayElement + Float, const USE_H0: bool>(
     value_heads: u32,
     head_k_dim: u32,
     head_v_dim: u32,
+    #[allow(unused)]
+    #[specialize]
+    use_h0: bool,
 ) {
     let batch_size = batch_size as usize;
     let tree_size = tree_size as usize;
@@ -32,7 +37,7 @@ fn build_tree_out_scalar<T: ArrayElement + Float, const USE_H0: bool>(
     let h0_indices = h0_indices.unwrap_or(std::ptr::null());
 
     for batch in 0..batch_size {
-        let h0_index = if USE_H0 {
+        let h0_index = if use_h0 {
             unsafe { *h0_indices.add(batch) }
         } else {
             -1
@@ -50,7 +55,7 @@ fn build_tree_out_scalar<T: ArrayElement + Float, const USE_H0: bool>(
                 for value_col in 0..head_v_dim {
                     let mut acc = 0.0f32;
 
-                    if USE_H0 && h0_index >= 0 {
+                    if use_h0 && h0_index >= 0 {
                         let h0_base =
                             ((h0_index as usize * value_heads + value_head) * head_v_dim + value_col) * head_k_dim;
                         let mut dot = 0.0f32;
@@ -76,79 +81,4 @@ fn build_tree_out_scalar<T: ArrayElement + Float, const USE_H0: bool>(
             }
         }
     }
-}
-
-#[kernel(BuildTreeOut)]
-#[variants(T, f32, bf16)]
-#[variants(USE_H0, false, true)]
-pub fn build_tree_out<T: ArrayElement + Float, const USE_H0: bool>(
-    q: *const T,
-    prefix: *const f32,
-    qkd: *const f32,
-    u: *const T,
-    #[optional(USE_H0)] h0: Option<*const T>,
-    #[optional(USE_H0)] h0_indices: Option<*const i32>,
-    o: *mut T,
-    scale: f32,
-    batch_size: u32,
-    tree_size: u32,
-    qk_heads: u32,
-    value_heads: u32,
-    head_k_dim: u32,
-    head_v_dim: u32,
-) {
-    build_tree_out_scalar::<T, USE_H0>(
-        q,
-        prefix,
-        qkd,
-        u,
-        h0,
-        h0_indices,
-        o,
-        scale,
-        batch_size,
-        tree_size,
-        qk_heads,
-        value_heads,
-        head_k_dim,
-        head_v_dim,
-    );
-}
-
-#[kernel(BuildTreeOutOutputTileMatmulDirect)]
-#[variants(T, bf16)]
-#[variants(USE_H0, false, true)]
-#[variants(USE_MXU, false, true)]
-pub fn build_tree_out_output_tile_matmul_direct<T: ArrayElement + Float, const USE_H0: bool, const USE_MXU: bool>(
-    q: *const T,
-    prefix: *const f32,
-    qkd: *const f32,
-    u: *const T,
-    #[optional(USE_H0)] h0: Option<*const T>,
-    #[optional(USE_H0)] h0_indices: Option<*const i32>,
-    o: *mut T,
-    scale: f32,
-    batch_size: u32,
-    tree_size: u32,
-    qk_heads: u32,
-    value_heads: u32,
-    head_k_dim: u32,
-    head_v_dim: u32,
-) {
-    build_tree_out_scalar::<T, USE_H0>(
-        q,
-        prefix,
-        qkd,
-        u,
-        h0,
-        h0_indices,
-        o,
-        scale,
-        batch_size,
-        tree_size,
-        qk_heads,
-        value_heads,
-        head_k_dim,
-        head_v_dim,
-    );
 }
