@@ -11,7 +11,6 @@ pub struct LanguageModelState<B: Backend> {
     pub(super) last_output_token: Option<u64>, // TODO: this leaks previous LanguageModelStreamOptions
     pub(super) prng: PRng,
     pub(super) transformer_state: TransformerState<B>,
-    pub(super) max_context_length: Option<usize>,
 }
 
 impl<B: Backend> LanguageModelState<B> {
@@ -46,7 +45,6 @@ impl<B: Backend> LanguageModel<B> {
             last_output_token,
             prng,
             transformer_state,
-            max_context_length,
         })
     }
 }
