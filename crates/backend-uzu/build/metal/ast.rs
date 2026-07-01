@@ -1,12 +1,42 @@
 use anyhow::{Context, bail};
+use quote::quote;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
+    expr_rewrite::rewrite_paths_with,
     identifiers::{ArgumentName, KernelName},
     kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
 };
 
 pub type MetalAstNode = clang_ast::Node<MetalAstKind>;
+type IntegerObjectDefines = Box<[(Box<str>, u64)]>;
+
+fn integer_object_defines_from_source(source: &str) -> IntegerObjectDefines {
+    source
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim_start().strip_prefix("#define")?.trim_start();
+            let (name, value) = rest.split_once(char::is_whitespace)?;
+            let value = value.split_whitespace().next()?.trim_end_matches(['u', 'U']).parse::<u64>().ok()?;
+            Some((name.into(), value))
+        })
+        .collect()
+}
+
+fn expand_integer_defines_in_threadgroup_dimension(
+    dimension_expression: &str,
+    defines: &IntegerObjectDefines,
+) -> Box<str> {
+    let Ok(mut expr) = syn::parse_str::<syn::Expr>(dimension_expression) else {
+        return dimension_expression.into();
+    };
+    rewrite_paths_with(&mut expr, |path| {
+        let ident = path.get_ident()?;
+        let (_, value) = defines.iter().find(|(name, _)| ident == name.as_ref())?;
+        syn::parse_str::<syn::Expr>(&value.to_string()).ok()
+    });
+    quote!(#expr).to_string().into_boxed_str()
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MetalAstType {
@@ -183,6 +213,7 @@ impl MetalArgument {
     fn from_ast_node_and_source(
         argument_node: MetalAstNode,
         source: &str,
+        integer_defines: &IntegerObjectDefines,
     ) -> anyhow::Result<Self> {
         let MetalAstKind::ParmVarDecl {
             name,
@@ -215,7 +246,8 @@ impl MetalArgument {
         let source: Box<str> =
             str::from_utf8(&source.as_bytes()[start_offset..=end_offset]).context("source range is not utf-8")?.into();
 
-        let (argument_type, condition) = parse_argument_annotation(&c_type, &source, annotation.as_deref())?;
+        let (argument_type, condition) =
+            parse_argument_annotation(&c_type, &source, annotation.as_deref(), integer_defines)?;
 
         Ok(Self {
             name: ArgumentName::from(name),
@@ -245,6 +277,7 @@ fn parse_argument_annotation(
     c_type: &str,
     source: &str,
     annotation: Option<&[Box<str>]>,
+    integer_defines: &IntegerObjectDefines,
 ) -> anyhow::Result<(MetalArgumentType, Option<Box<str>>)> {
     if let Some(annotation) = annotation
         && annotation.first().map(|s| s.as_ref()) == Some("dsl.optional")
@@ -252,7 +285,7 @@ fn parse_argument_annotation(
         if annotation.len() != 2 {
             bail!("dsl.optional takes 1 argument, found {}", annotation.len() - 1);
         }
-        let argument_type = parse_argument_type(c_type, source, None)?;
+        let argument_type = parse_argument_type(c_type, source, None, integer_defines)?;
         if !matches!(
             argument_type,
             MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_) | MetalArgumentType::Shared(_)
@@ -262,7 +295,7 @@ fn parse_argument_annotation(
         return Ok((argument_type, Some(annotation[1].clone())));
     }
 
-    let argument_type = parse_argument_type(c_type, source, annotation)?;
+    let argument_type = parse_argument_type(c_type, source, annotation, integer_defines)?;
     Ok((argument_type, None))
 }
 
@@ -270,6 +303,7 @@ fn parse_argument_type(
     c_type: &str,
     source: &str,
     annotation: Option<&[Box<str>]>,
+    integer_defines: &IntegerObjectDefines,
 ) -> anyhow::Result<MetalArgumentType> {
     if let Some(annotation) = annotation {
         let mut annotation = annotation.to_vec();
@@ -349,7 +383,10 @@ fn parse_argument_type(
     if c_type.contains("threadgroup") && c_type.contains('*') {
         let lbracket = source.find('[').context("threadgroup missing size bracket")? + 1;
         let rbracket = source.rfind(']').context("threadgroup missing size bracket")?;
-        return Ok(MetalArgumentType::Shared(Some(source[lbracket..rbracket].into())));
+        return Ok(MetalArgumentType::Shared(Some(expand_integer_defines_in_threadgroup_dimension(
+            &source[lbracket..rbracket],
+            integer_defines,
+        ))));
     }
 
     if c_type.contains("threadgroup") && c_type.contains('&') {
@@ -621,9 +658,10 @@ impl MetalKernelInfo {
             })
             .collect::<anyhow::Result<_>>()?;
 
+        let integer_defines = integer_object_defines_from_source(source);
         let arguments = arg_nodes
             .into_iter()
-            .map(|an| MetalArgument::from_ast_node_and_source(an, source))
+            .map(|an| MetalArgument::from_ast_node_and_source(an, source, &integer_defines))
             .collect::<anyhow::Result<Box<[_]>>>()?;
 
         Ok(Some(MetalKernelInfo {
