@@ -244,7 +244,7 @@ impl ChatSession {
 
             let mut instance = instance.lock().await;
             let mut stream = match &mut *instance {
-                Instance::Token(session) => session.stream(&all_messages, config, cancel_token),
+                Instance::Token(session) => session.stream(&all_messages, config, cancel_token).await,
                 Instance::Message(session) => session.stream(&all_messages, config, cancel_token),
             };
 

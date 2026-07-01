@@ -78,12 +78,16 @@ impl Session {
         Ok(())
     }
 
-    pub fn stream<'a>(
+    pub async fn stream<'a>(
         &'a mut self,
         input: &'a Vec<ChatMessage>,
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
+        if let Err(err) = self.reset().await {
+            return error_stream(err);
+        }
+
         let start = Instant::now();
         self.input_tokens = match self.build_input(input) {
             Ok(input) => input,
@@ -121,9 +125,6 @@ impl Session {
         &mut self,
         messages: &Vec<ChatMessage>,
     ) -> Result<StreamInput, ChatSessionError> {
-        self.encoding.reset().map_err(|err| ChatSessionError::Backend {
-            message: err.to_string(),
-        })?;
         self.encoding.encode(messages.to_vec()).map_err(|err| ChatSessionError::Backend {
             message: err.to_string(),
         })?;
