@@ -47,9 +47,7 @@ PUBLIC KERNEL(BuildTreeOut)(
     constant const uint& value_heads,
     constant const uint& head_k_dim,
     constant const uint& head_v_dim,
-    // DSL OPTIONAL threadgroup sizes are also emitted into Rust, so this must stay literal.
-    // 8 * 32 == MATMUL_SIMDGROUP_ROWS * MATMUL_COLS.
-    threadgroup uint u_tile_scratch OPTIONAL(transposed_h0)[8 * 32],
+    threadgroup uint u_tile_scratch OPTIONAL(transposed_h0)[MATMUL_SIMDGROUP_ROWS * MATMUL_COLS],
     const bool use_h0 SPECIALIZE,
     const ThreadContext thread_context,
     const uint v_tile_idx GROUPS(head_v_dim.div_ceil(MATMUL_COLS)),
