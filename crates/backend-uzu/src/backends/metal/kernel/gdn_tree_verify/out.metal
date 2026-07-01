@@ -9,10 +9,10 @@
 using namespace metal;
 using namespace uzu::matmul;
 
-#define TREE_OUT_MATMUL_COLS 32u
-#define TREE_OUT_MATMUL_MXU_ROWS 16u
-#define TREE_OUT_MATMUL_SIMDGROUP_ROWS 8u
-#define TREE_OUT_MATMUL_SIMDGROUPS_PER_TG 4u
+#define MATMUL_MXU_ROWS 16u
+#define MATMUL_SIMDGROUP_ROWS 8u
+#define MATMUL_COLS 32u
+#define SIMDGROUPS_PER_TG 4u
 
 // Build tree output for one (batch, value-head, row, value) tile.
 //
@@ -24,15 +24,20 @@ using namespace uzu::matmul;
 //
 // o[row, value] = exp(prefix[row]) * scale * dot(q[row], h0[value])
 //                 + sum_j qkd[row, j] * u[j, value]
-template <typename T, bool USE_MXU>
+template <
+    typename T,
+    bool use_mxu,
+    bool transposed_h0>
 VARIANTS(T, float, bfloat)
-VARIANTS(USE_MXU, false, true)
+VARIANTS(use_mxu, false, true)
+VARIANTS(transposed_h0, false, true)
+CONSTRAINT(!(use_mxu && transposed_h0))
 PUBLIC KERNEL(BuildTreeOut)(
     const device T* q,
     const device float* prefix,
     const device float* qkd,
     const device T* u,
-    const device T* h0 OPTIONAL(use_h0),
+    const device float* h0 OPTIONAL(use_h0),
     const device int* h0_indices OPTIONAL(use_h0),
     device T* o,
     constant const float& scale,
@@ -42,39 +47,43 @@ PUBLIC KERNEL(BuildTreeOut)(
     constant const uint& value_heads,
     constant const uint& head_k_dim,
     constant const uint& head_v_dim,
+    // DSL OPTIONAL threadgroup sizes are also emitted into Rust, so this must stay literal.
+    // 8 * 32 == MATMUL_SIMDGROUP_ROWS * MATMUL_COLS.
+    threadgroup uint u_tile_scratch OPTIONAL(transposed_h0)[8 * 32],
     const bool use_h0 SPECIALIZE,
     const ThreadContext thread_context,
-    const uint v_tile_idx GROUPS(head_v_dim.div_ceil(TREE_OUT_MATMUL_COLS)),
+    const uint v_tile_idx GROUPS(head_v_dim.div_ceil(MATMUL_COLS)),
     const uint row_tile_group_idx GROUPS(tree_size.div_ceil(
-        if USE_MXU {
-          TREE_OUT_MATMUL_SIMDGROUPS_PER_TG * TREE_OUT_MATMUL_MXU_ROWS
+        if use_mxu {
+          SIMDGROUPS_PER_TG * MATMUL_MXU_ROWS
         } else {
-          TREE_OUT_MATMUL_SIMDGROUPS_PER_TG * TREE_OUT_MATMUL_SIMDGROUP_ROWS
+          SIMDGROUPS_PER_TG * MATMUL_SIMDGROUP_ROWS
         }
     )),
     const uint batch_value_head_idx GROUPS(batch_size * value_heads),
-    const uint tid THREADS(TREE_OUT_MATMUL_SIMDGROUPS_PER_TG * METAL_SIMD_SIZE)
+    const uint tid THREADS(SIMDGROUPS_PER_TG * METAL_SIMD_SIZE)
 ) {
-  using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
-  using InputType = metal::conditional_t<USE_MXU, T, float>;
+  using Ops = metal::conditional_t<use_mxu, MxuFragmentOps<>, SimdgroupFragmentOps>;
+  using InputType = metal::conditional_t<use_mxu, T, float>;
+  using H0Read = metal::conditional_t<transposed_h0, ReadTranspose, ReadDirect>;
   constexpr ushort ROWS = Ops::FRAGMENT_ROWS;
-  constexpr ushort COL_FRAGMENTS = TREE_OUT_MATMUL_COLS / Ops::FRAGMENT_COLS;
+  constexpr ushort COL_FRAGMENTS = MATMUL_COLS / Ops::FRAGMENT_COLS;
   using AccFragment = Fragment<float, 1, COL_FRAGMENTS, Ops>;
   using QFragment = OperandFragment<InputType, 1, 1, Ops>;
-  using H0Fragment = OperandFragment<InputType, 1, COL_FRAGMENTS, Ops>;
+  using H0Fragment = OperandFragment<float, 1, COL_FRAGMENTS, Ops, H0Read>;
   using QkdFragment = OperandFragment<float, 1, 1, Ops>;
   using UFragment = OperandFragment<InputType, 1, COL_FRAGMENTS, Ops>;
+  threadgroup T* u_tile = reinterpret_cast<threadgroup T*>(u_tile_scratch);
 
   const uint batch_idx = batch_value_head_idx / value_heads;
   const uint value_head_idx = batch_value_head_idx - batch_idx * value_heads;
   const uint value_heads_per_qk_head = value_heads / qk_heads;
   const uint qk_head_idx = value_head_idx / value_heads_per_qk_head;
-  const uint row_base =
-      (row_tile_group_idx * TREE_OUT_MATMUL_SIMDGROUPS_PER_TG + thread_context.simdgroup_index) * ROWS;
-  const uint value_base = v_tile_idx * TREE_OUT_MATMUL_COLS;
+  const uint row_base = (row_tile_group_idx * SIMDGROUPS_PER_TG + thread_context.simdgroup_index) * ROWS;
+  const uint value_base = v_tile_idx * MATMUL_COLS;
 
   const short valid_rows = short(min(uint(ROWS), tree_size - min(row_base, tree_size)));
-  const short valid_cols = short(min(TREE_OUT_MATMUL_COLS, head_v_dim - min(value_base, head_v_dim)));
+  const short valid_cols = short(min(MATMUL_COLS, head_v_dim - min(value_base, head_v_dim)));
 
   AccFragment acc;
   acc.clear();
@@ -91,10 +100,17 @@ PUBLIC KERNEL(BuildTreeOut)(
           thread_context.simd_lane_id,
           fragment_source(q + q_base + k0, int(qk_heads * head_k_dim)).bounded(valid_rows, valid_k)
       );
-      h0_frag.load_from(
-          thread_context.simd_lane_id,
-          fragment_source(h0 + h0_base + k0, 1, int(head_k_dim)).bounded(valid_k, valid_cols)
-      );
+      if constexpr (transposed_h0) {
+        h0_frag.load_from(
+            thread_context.simd_lane_id,
+            fragment_source(h0 + h0_base + k0, int(head_k_dim)).bounded(valid_cols, valid_k)
+        );
+      } else {
+        h0_frag.load_from(
+            thread_context.simd_lane_id,
+            fragment_source(h0 + h0_base + k0, 1, int(head_k_dim)).bounded(valid_k, valid_cols)
+        );
+      }
       fragment_mma(acc, q_frag, h0_frag);
     }
 
@@ -118,11 +134,27 @@ PUBLIC KERNEL(BuildTreeOut)(
         thread_context.simd_lane_id,
         fragment_source(qkd + qkd_base + j0, int(tree_size)).bounded(valid_rows, valid_j)
     );
-    u_frag.load_from(
-        thread_context.simd_lane_id,
-        fragment_source(u + u_base + j0 * head_v_dim, int(head_v_dim)).bounded(valid_j, valid_cols)
-    );
-    fragment_mma(acc, qkd_frag, u_frag);
+    if constexpr (transposed_h0) {
+      for (uint index = tid; index < uint(ROWS) * MATMUL_COLS; index += SIMDGROUPS_PER_TG * METAL_SIMD_SIZE) {
+        const uint local_j = index / MATMUL_COLS;
+        const uint local_col = index - local_j * MATMUL_COLS;
+        const bool in_bounds = local_j < uint(valid_j) && local_col < uint(valid_cols);
+        u_tile[index] = in_bounds ? u[u_base + (j0 + local_j) * head_v_dim + local_col] : T(0);
+      }
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      u_frag.load_from(
+          thread_context.simd_lane_id,
+          fragment_source(u_tile, int(MATMUL_COLS)).bounded(valid_j, valid_cols)
+      );
+      fragment_mma(acc, qkd_frag, u_frag);
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+    } else {
+      u_frag.load_from(
+          thread_context.simd_lane_id,
+          fragment_source(u + u_base + j0 * head_v_dim, int(head_v_dim)).bounded(valid_j, valid_cols)
+      );
+      fragment_mma(acc, qkd_frag, u_frag);
+    }
   }
 
   device T* out_tile =

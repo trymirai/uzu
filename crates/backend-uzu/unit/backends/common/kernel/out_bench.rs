@@ -20,8 +20,17 @@ const QK_HEADS: usize = 16;
 const VALUE_HEADS: usize = 48;
 const HEAD_K_DIM: usize = 128;
 const HEAD_V_DIM: usize = 128;
+const TREE_OUT_MATMUL_MXU_ROWS: usize = 16;
+const TREE_OUT_MATMUL_SIMDGROUP_ROWS: usize = 8;
 const TREE_SIZES: &[usize] = &[33, 49, 64, 128, 256, 512];
 const BATCH_SIZES: &[usize] = &[1, 2, 4, 8];
+const TREE_OUT_VALUE_COLS: usize = 32;
+const TREE_OUT_SIMDGROUPS_PER_TG: usize = 4;
+const BUILD_TREE_OUT_PATHS: &[(&str, bool, bool, usize)] = &[
+    ("Simdgroup/H0Direct", false, false, TREE_OUT_MATMUL_SIMDGROUP_ROWS),
+    ("Simdgroup/H0Transposed", false, true, TREE_OUT_MATMUL_SIMDGROUP_ROWS),
+    ("MXU/H0Direct", true, false, TREE_OUT_MATMUL_MXU_ROWS),
+];
 
 struct TreeOutBuffers {
     q: Allocation<Metal>,
@@ -49,7 +58,7 @@ fn make_buffers<T: ArrayElement + Float>(
         .collect::<Vec<_>>();
     let qkd = (0..qkd_len).map(|i| ((i as f32 * 0.013).cos() * 0.03) - 0.01).collect::<Vec<_>>();
     let u = (0..uv_len).map(|i| T::from(((i as f32 * 0.011).sin() * 0.3) + 0.04).unwrap()).collect::<Vec<_>>();
-    let h0 = (0..h0_len).map(|i| T::from(((i as f32 * 0.019).cos() * 0.2) - 0.01).unwrap()).collect::<Vec<_>>();
+    let h0 = (0..h0_len).map(|i| ((i as f32 * 0.019).cos() * 0.2) - 0.01).collect::<Vec<_>>();
     let h0_indices = (0..batch_size as i32).collect::<Vec<_>>();
 
     TreeOutBuffers {
@@ -75,22 +84,20 @@ fn bench_build_tree_out_type<T: ArrayElement + Float>(
     context: &<Metal as Backend>::Context,
     data_type_name: &str,
 ) {
-    let kernel_paths = if context.supports_mxu() {
-        &[("Simdgroup", false), ("MXU", true)][..]
-    } else {
-        &[("Simdgroup", false)][..]
-    };
-
-    for &(kernel_path, use_mxu) in kernel_paths {
+    for &(path, use_mxu, transposed_h0, tile_rows) in BUILD_TREE_OUT_PATHS {
+        if use_mxu && !context.supports_mxu() {
+            continue;
+        }
+        let tile_name = format!("Rows{tile_rows}_VCols{TREE_OUT_VALUE_COLS}_SG{TREE_OUT_SIMDGROUPS_PER_TG}");
         let mut group =
-            c.benchmark_group(format!("Metal/Kernel/GDNTreeVerify/BuildTreeOut/{data_type_name}/{kernel_path}"));
+            c.benchmark_group(format!("Metal/Kernel/GDNTreeVerify/BuildTreeOut/{data_type_name}/{path}/{tile_name}"));
         group.sample_size(10).warm_up_time(Duration::from_millis(100)).measurement_time(Duration::from_millis(500));
 
         for &batch_size in BATCH_SIZES {
             for &tree_size in TREE_SIZES {
                 let mut buffers = make_buffers::<T>(context, batch_size, tree_size);
                 let benchmark_path = format!(
-                    "Metal/Kernel/GDNTreeVerify/BuildTreeOut/{data_type_name}/{kernel_path}/B{batch_size}_T{tree_size}"
+                    "Metal/Kernel/GDNTreeVerify/BuildTreeOut/{data_type_name}/{path}/{tile_name}/B{batch_size}_T{tree_size}"
                 );
                 let benchmark_id = BenchmarkId::from_parameter(format!(
                     "B{batch_size}_T{tree_size}_QK{QK_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}_V{HEAD_V_DIM}"
@@ -100,6 +107,7 @@ fn bench_build_tree_out_type<T: ArrayElement + Float>(
                     context,
                     T::data_type(),
                     use_mxu,
+                    transposed_h0,
                     true,
                 )
                 .expect("BuildTreeOutKernel");

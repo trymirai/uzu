@@ -6,13 +6,12 @@ use crate::array::ArrayElement;
 
 #[kernel(BuildTreeOut)]
 #[variants(T, f32, bf16)]
-#[variants(USE_MXU, false, true)]
-pub fn build_tree_out<T: ArrayElement + Float, const USE_MXU: bool>(
+pub fn build_tree_out<T: ArrayElement + Float>(
     q: *const T,
     prefix: *const f32,
     qkd: *const f32,
     u: *const T,
-    #[optional(use_h0)] h0: Option<*const T>,
+    #[optional(use_h0)] h0: Option<*const f32>,
     #[optional(use_h0)] h0_indices: Option<*const i32>,
     o: *mut T,
     scale: f32,
@@ -22,6 +21,12 @@ pub fn build_tree_out<T: ArrayElement + Float, const USE_MXU: bool>(
     value_heads: u32,
     head_k_dim: u32,
     head_v_dim: u32,
+    #[allow(unused)]
+    #[specialize]
+    use_mxu: bool,
+    #[allow(unused)]
+    #[specialize]
+    transposed_h0: bool,
     #[allow(unused)]
     #[specialize]
     use_h0: bool,
@@ -61,7 +66,7 @@ pub fn build_tree_out<T: ArrayElement + Float, const USE_MXU: bool>(
                         let mut dot = 0.0f32;
                         for dim in 0..head_k_dim {
                             let qv = unsafe { (*q.add(q_row + dim)).to_f32().unwrap() };
-                            let hv = unsafe { (*h0.add(h0_base + dim)).to_f32().unwrap() };
+                            let hv = unsafe { *h0.add(h0_base + dim) };
                             dot += qv * hv;
                         }
                         let prefix_row = unsafe { *prefix.add(prefix_base + row * value_heads) };
