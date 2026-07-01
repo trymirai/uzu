@@ -38,9 +38,11 @@ impl BenchRunner {
     ) -> Result<Vec<BenchResult>> {
         let engine_config = EngineConfig::default();
         let engine = Engine::new(engine_config).await.with_context(|| "Can not create engine".to_string())?;
-        let model = engine.model(self.task.repo_id.clone()).await?.with_context(|| "Model not found".to_string())?;
-        let _ = engine.model_path(&model).await.with_context(|| "Model is not downloaded")?;
-
+        let model_path = self.model_path.trim_end_matches('/').to_string();
+        let model = engine
+            .model(model_path.clone())
+            .await?
+            .with_context(|| format!("Model not found at path: {model_path}"))?;
         let device = self.get_device_info();
 
         let messages: Vec<ChatMessage> = self.task.messages.iter().map(|msg| msg.to_chat_message()).collect();
@@ -87,7 +89,6 @@ impl BenchRunner {
                 device: device.clone(),
                 engine_version: VERSION.to_string(),
                 timestamp,
-                // TODO
                 data_type: DataType::BF16,
                 memory_used: session.peak_memory_usage().await,
                 tokens_count_input,
