@@ -34,6 +34,9 @@ rocket.workspace = true
 uuid.workspace = true
 tokio-stream.workspace = true
 sysinfo.workspace = true
+tokenizers.workspace = true
+minijinja.workspace = true
+minijinja-contrib.workspace = true
 
 [lints]
 workspace = true
