@@ -11,24 +11,24 @@ use uzu::{
     },
 };
 
-use crate::bench::model::{BenchDevice, BenchResult, BenchTask};
+use crate::bench::{
+    model::{BenchDevice, BenchResult, BenchTask},
+    stat::mean,
+};
 
 pub struct BenchRunner {
     pub task: BenchTask,
     pub model_path: String,
-    pub prefill_step_size: Option<usize>,
 }
 
 impl BenchRunner {
     pub fn new(
         task: BenchTask,
         model_path: String,
-        prefill_step_size: Option<usize>,
     ) -> Self {
         Self {
             task,
             model_path,
-            prefill_step_size,
         }
     }
 
@@ -57,7 +57,7 @@ impl BenchRunner {
         for run_idx in 0..self.task.number_of_runs {
             session.reset().await?;
 
-            let mut reply_config = ChatReplyConfig::default();
+            let mut reply_config = ChatReplyConfig::default().with_token_limit(Some(self.task.tokens_limit as u32));
             if self.task.greedy {
                 reply_config = reply_config.with_sampling_method(SamplingMethod::Greedy {})
             }
@@ -69,13 +69,15 @@ impl BenchRunner {
             let mut tokens_count_output = 0u64;
             let mut time_to_first_token = 0.0f64;
             let mut prompt_tokens_per_second = 0.0f64;
-            let mut generate_tokens_per_second = 0.0f64;
+            let mut generate_tokens_per_second = Vec::new();
             for reply in replies.iter() {
                 tokens_count_input += reply.stats.tokens_count_input.unwrap_or(0) as u64;
                 tokens_count_output += reply.stats.tokens_count_output.unwrap_or(0) as u64;
                 time_to_first_token += reply.stats.time_to_first_token.unwrap_or(0.0f64);
                 prompt_tokens_per_second += reply.stats.prefill_tokens_per_second.unwrap_or(0.0f64);
-                generate_tokens_per_second += reply.stats.generate_tokens_per_second.unwrap_or(0.0f64);
+                if let Some(value) = reply.stats.generate_tokens_per_second {
+                    generate_tokens_per_second.push(value);
+                }
             }
 
             let mut text: Option<String> = None;
@@ -83,9 +85,9 @@ impl BenchRunner {
                 let replies_count = replies.len() as f64;
                 time_to_first_token = time_to_first_token / replies_count;
                 prompt_tokens_per_second = prompt_tokens_per_second / replies_count;
-                generate_tokens_per_second = generate_tokens_per_second / replies_count;
                 text = replies.last().unwrap().message.text();
             }
+            let generate_tokens_per_second = mean(&generate_tokens_per_second);
 
             let result = BenchResult {
                 task: self.task.clone(),
@@ -98,7 +100,7 @@ impl BenchRunner {
                 tokens_count_output,
                 time_to_first_token,
                 prompt_tokens_per_second,
-                generate_tokens_per_second: Some(generate_tokens_per_second),
+                generate_tokens_per_second,
                 text: text.unwrap_or("".to_string()),
             };
             results.push(result);

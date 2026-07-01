@@ -23,7 +23,7 @@ pub async fn run_bench(
     let progress_bar = ProgressBar::new(task.number_of_runs);
     progress_bar.set_position(0);
 
-    let runner = BenchRunner::new(task.clone(), model_path, None);
+    let runner = BenchRunner::new(task.clone(), model_path);
     let results = runner
         .run(Some(|_progress| {
             progress_bar.inc(1);
