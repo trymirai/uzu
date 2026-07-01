@@ -97,6 +97,52 @@ fn malformed_response_format_passes_json_extraction() {
     }
 }
 
+#[test]
+fn reasoning_effort_maps_openai_values() {
+    let disabled = request(r#"{"messages":[],"reasoning_effort":"none"}"#);
+    assert_eq!(
+        disabled.reasoning_effort.as_deref().map(ReasoningEffort::from_openai),
+        Some(Ok(ReasoningEffort::Disabled))
+    );
+
+    let minimal = request(r#"{"messages":[],"reasoning_effort":"minimal"}"#);
+    assert_eq!(minimal.reasoning_effort.as_deref().map(ReasoningEffort::from_openai), Some(Ok(ReasoningEffort::Low)));
+
+    let high = request(r#"{"messages":[],"reasoning_effort":"high"}"#);
+    assert_eq!(high.reasoning_effort.as_deref().map(ReasoningEffort::from_openai), Some(Ok(ReasoningEffort::High)));
+
+    let extra_high = request(r#"{"messages":[],"reasoning_effort":"xhigh"}"#);
+    assert_eq!(
+        extra_high.reasoning_effort.as_deref().map(ReasoningEffort::from_openai),
+        Some(Ok(ReasoningEffort::High))
+    );
+}
+
+#[test]
+fn reasoning_effort_rejects_unknown_value() {
+    let request = request(r#"{"messages":[],"reasoning_effort":"turbo"}"#);
+    let effort = request.reasoning_effort.as_deref().map(ReasoningEffort::from_openai);
+    assert!(matches!(effort, Some(Err(_))));
+}
+
+#[test]
+fn reasoning_effort_attaches_to_last_message_only() {
+    let messages = vec![
+        OaiMessage {
+            role: "system".to_string(),
+            content: "sys".to_string(),
+        },
+        OaiMessage {
+            role: "user".to_string(),
+            content: "hi".to_string(),
+        },
+    ];
+    let chat_messages = to_chat_messages(&messages, Some(ReasoningEffort::Disabled));
+
+    assert_eq!(chat_messages[0].reasoning_effort(), None);
+    assert_eq!(chat_messages[1].reasoning_effort(), Some(ReasoningEffort::Disabled));
+}
+
 #[rocket::get("/err")]
 fn err_route() -> ChatCompletionResult {
     request_error_response(ResponseFormatError::InvalidResponseFormat("bad".to_string()))

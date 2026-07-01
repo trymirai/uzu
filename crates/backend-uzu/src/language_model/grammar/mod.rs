@@ -25,6 +25,9 @@ pub fn create_compiled_grammar(
     config: &GrammarConfig,
     tokenizer: &Tokenizer,
     stop_token_ids: Option<&[i32]>,
+    trigger_token_ids: &[u64],
+    pre_engagement_retained_tokens: usize,
+    pre_engagement_trim_slack_tokens: usize,
 ) -> Result<Box<dyn CompiledGrammar>, Error> {
     #[cfg(grammar_xgrammar)]
     {
@@ -33,7 +36,13 @@ pub fn create_compiled_grammar(
             TokenizerInfo::from_huggingface(tokenizer, None, stop_token_ids).map_err(Error::GrammarError)?;
 
         use xgram::CompiledXGrammar;
-        let grammar = CompiledXGrammar::from_config(config, None, &tokenizer_info)?;
+        let grammar = CompiledXGrammar::from_config(
+            config,
+            trigger_token_ids,
+            pre_engagement_retained_tokens,
+            pre_engagement_trim_slack_tokens,
+            &tokenizer_info,
+        )?;
 
         Ok(Box::new(grammar))
     }

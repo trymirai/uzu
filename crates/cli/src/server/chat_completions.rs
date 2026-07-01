@@ -23,7 +23,7 @@ use uuid::Uuid;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
     types::{
-        basic::{Grammar, SamplingMethod},
+        basic::{Grammar, ReasoningEffort, SamplingMethod},
         session::chat::{ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole},
     },
 };
@@ -55,6 +55,8 @@ pub struct ChatCompletionRequest {
     // Raw value (not typed) so a bad response_format is our 400, not Rocket's 422.
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
     #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
@@ -162,14 +164,25 @@ fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
-    messages
+fn to_chat_messages(
+    messages: &[OaiMessage],
+    reasoning_effort: Option<ReasoningEffort>,
+) -> Vec<ChatMessage> {
+    let mut chat_messages: Vec<ChatMessage> = messages
         .iter()
         .map(|message| {
             let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
             ChatMessage::for_role(role).with_text(message.content.clone())
         })
-        .collect()
+        .collect();
+
+    // OpenAI's `reasoning_effort` is request-level; the backend reads it from the most
+    // recent turn, so it is enough to carry it on the final message.
+    if let (Some(effort), Some(last)) = (reasoning_effort, chat_messages.last_mut()) {
+        *last = last.with_reasoning_effort(effort);
+    }
+
+    chat_messages
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -205,14 +218,22 @@ impl ResponseFormatError {
 }
 
 fn request_error_response(error: ResponseFormatError) -> ChatCompletionResult {
+    bad_request_response(error.message(), Some("response_format"), Some(error.code()))
+}
+
+fn bad_request_response(
+    message: impl Into<String>,
+    param: Option<&str>,
+    code: Option<&str>,
+) -> ChatCompletionResult {
     ChatCompletionResult::Error(status::Custom(
         Status::BadRequest,
         Json(OaiErrorResponse {
             error: OaiError {
-                message: error.message(),
+                message: message.into(),
                 kind: "invalid_request_error".to_string(),
-                param: Some("response_format".to_string()),
-                code: Some(error.code().to_string()),
+                param: param.map(str::to_string),
+                code: code.map(str::to_string),
             },
         }),
     ))
@@ -506,11 +527,20 @@ pub async fn handle_chat_completions(
     let model = state.model_name.clone();
     let is_stream = request.stream.unwrap_or(false);
 
+    let reasoning_effort = match request.reasoning_effort.as_deref() {
+        Some(effort) => match ReasoningEffort::from_openai(effort) {
+            Ok(value) => Some(value),
+            Err(message) => {
+                return bad_request_response(message, Some("reasoning_effort"), None);
+            },
+        },
+        None => None,
+    };
     let config = match build_reply_config(&request) {
         Ok(config) => config,
         Err(error) => return request_error_response(error),
     };
-    let messages = to_chat_messages(&request.messages);
+    let messages = to_chat_messages(&request.messages, reasoning_effort);
 
     if is_stream {
         let session = Arc::clone(&state.session);

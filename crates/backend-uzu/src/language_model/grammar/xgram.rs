@@ -1,6 +1,6 @@
 #![cfg(grammar_xgrammar)]
 
-use std::iter::repeat_n;
+use std::{collections::VecDeque, iter::repeat_n};
 
 use xgrammar::{
     DLDataType, DLDataTypeCode, DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher,
@@ -16,18 +16,51 @@ use crate::{
 enum CompiledGrammarEngagementState {
     Always,
     Triggered {
-        trigger_token_id: u64,
+        trigger_tokens: Vec<u64>,
+        pre_engagement: VecDeque<u64>,
+        pre_engagement_retained_tokens: usize,
+        pre_engagement_trim_slack_tokens: usize,
         trigger_distance: Option<usize>,
     },
 }
 
 impl CompiledGrammarEngagementState {
+    fn from_config(
+        trigger_token_ids: &[u64],
+        pre_engagement_retained_tokens: usize,
+        pre_engagement_trim_slack_tokens: usize,
+    ) -> Self {
+        if trigger_token_ids.is_empty() {
+            Self::Always
+        } else {
+            let retained = pre_engagement_retained_tokens.max(trigger_token_ids.len());
+            Self::Triggered {
+                trigger_tokens: trigger_token_ids.to_vec(),
+                pre_engagement: VecDeque::new(),
+                pre_engagement_retained_tokens: retained,
+                pre_engagement_trim_slack_tokens,
+                trigger_distance: None,
+            }
+        }
+    }
+
+    fn ends_with_tokens(
+        pre_engagement: &VecDeque<u64>,
+        trigger_tokens: &[u64],
+    ) -> bool {
+        if trigger_tokens.len() > pre_engagement.len() {
+            return false;
+        }
+
+        pre_engagement.iter().rev().zip(trigger_tokens.iter().rev()).all(|(observed, expected)| observed == expected)
+    }
+
     fn is_engaged(&self) -> bool {
         match self {
             Self::Always => true,
             Self::Triggered {
-                trigger_token_id: _,
                 trigger_distance,
+                ..
             } => trigger_distance.is_some(),
         }
     }
@@ -39,13 +72,27 @@ impl CompiledGrammarEngagementState {
         match self {
             Self::Always => (),
             Self::Triggered {
-                trigger_token_id,
+                trigger_tokens,
+                pre_engagement,
+                pre_engagement_retained_tokens,
+                pre_engagement_trim_slack_tokens,
                 trigger_distance,
             } => {
                 if let Some(trigger_distance) = trigger_distance {
                     *trigger_distance += 1;
-                } else if token_id == *trigger_token_id {
-                    *trigger_distance = Some(0);
+                } else {
+                    pre_engagement.push_back(token_id);
+                    let trim_threshold =
+                        pre_engagement_retained_tokens.saturating_add(*pre_engagement_trim_slack_tokens);
+                    if pre_engagement.len() > trim_threshold {
+                        let to_drop = pre_engagement.len() - *pre_engagement_retained_tokens;
+                        for _ in 0..to_drop {
+                            let _ = pre_engagement.pop_front();
+                        }
+                    }
+                    if Self::ends_with_tokens(pre_engagement, trigger_tokens) {
+                        *trigger_distance = Some(0);
+                    }
                 }
             },
         }
@@ -58,12 +105,25 @@ impl CompiledGrammarEngagementState {
         match self {
             Self::Always => num_tokens,
             Self::Triggered {
-                trigger_token_id: _,
+                pre_engagement,
                 trigger_distance,
-            } => {
-                let num_grammar_tokens = usize::min(trigger_distance.unwrap_or(0), num_tokens);
-                *trigger_distance = trigger_distance.and_then(|x| x.checked_sub(num_tokens));
-                num_grammar_tokens
+                ..
+            } => match *trigger_distance {
+                Some(distance) => {
+                    let num_grammar_tokens = usize::min(distance, num_tokens);
+                    if num_tokens <= distance {
+                        *trigger_distance = Some(distance - num_tokens);
+                    } else {
+                        *trigger_distance = None;
+                        let pre_rollback = num_tokens - distance;
+                        pre_engagement.truncate(pre_engagement.len().saturating_sub(pre_rollback));
+                    }
+                    num_grammar_tokens
+                },
+                None => {
+                    pre_engagement.truncate(pre_engagement.len().saturating_sub(num_tokens));
+                    0
+                },
             },
         }
     }
@@ -78,7 +138,9 @@ pub struct CompiledXGrammar {
 impl CompiledXGrammar {
     pub fn from_config(
         config: &GrammarConfig,
-        trigger_token_id: Option<u64>,
+        trigger_token_ids: &[u64],
+        pre_engagement_retained_tokens: usize,
+        pre_engagement_trim_slack_tokens: usize,
         tokenizer_info: &TokenizerInfo,
     ) -> Result<Self, Error> {
         let vocab_size = tokenizer_info.vocab_size();
@@ -105,14 +167,11 @@ impl CompiledXGrammar {
         let compiled = compiler.compile_grammar(&grammar).map_err(Error::GrammarError)?;
         let matcher = GrammarMatcher::new(&compiled, None, true, -1).map_err(Error::GrammarError)?;
 
-        let engagement_state = if let Some(trigger_token_id) = trigger_token_id {
-            CompiledGrammarEngagementState::Triggered {
-                trigger_token_id,
-                trigger_distance: None,
-            }
-        } else {
-            CompiledGrammarEngagementState::Always
-        };
+        let engagement_state = CompiledGrammarEngagementState::from_config(
+            trigger_token_ids,
+            pre_engagement_retained_tokens,
+            pre_engagement_trim_slack_tokens,
+        );
 
         Ok(Self {
             vocab_size,
@@ -216,3 +275,7 @@ impl From<DataType> for DLDataType {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/language_model/grammar/xgram_test.rs"]
+mod tests;
