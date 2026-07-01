@@ -1,11 +1,15 @@
 use std::{mem::size_of, rc::Rc};
 
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
+
 use crate::{
-    array::ArrayElement,
+    array::{ArrayContextExt, ArrayElement},
     backends::common::{
         Allocation, AllocationType, AsBufferRangeMut, Backend, Context, DenseBuffer, Encoder, SparseBuffer,
         SparseBufferExt,
     },
+    data_type::DataType,
+    dispatch_dtype,
 };
 
 pub fn allocation_size_bytes<T>(elements_count: usize) -> usize {
@@ -60,6 +64,29 @@ pub fn write_allocation<B: Backend, T: ArrayElement>(
         )
     };
     destination[..bytes.len()].copy_from_slice(bytes);
+}
+
+pub fn seed_from_label(label: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    label.hash(&mut hasher);
+    hasher.finish()
+}
+
+pub fn random_buffer<B: Backend>(
+    context: &B::Context,
+    shape: &[usize],
+    data_type: DataType,
+    seed: u64,
+) -> Allocation<B> {
+    let element_count: usize = shape.iter().product();
+    dispatch_dtype!(|(Element: data_type)| {
+        let mut random = SmallRng::seed_from_u64(seed);
+        let data: Vec<Element> = (0..element_count)
+            .map(|_| <Element as num_traits::NumCast>::from(random.random_range(-1.0f32..1.0f32)).unwrap())
+            .collect();
+        context.create_array_from(shape, &data).into_allocation()
+    })
 }
 
 pub fn create_context<B: Backend>() -> Rc<<B as Backend>::Context> {
