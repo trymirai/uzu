@@ -1,5 +1,6 @@
 [alias]
 tools = "run --quiet -p cli-tools --"
+profile = "test --quiet -p backend-uzu --lib profile_blocks -- --ignored --nocapture"
 
 [env]
 RUST_TEST_THREADS = "1"
