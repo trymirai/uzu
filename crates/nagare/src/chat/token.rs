@@ -69,9 +69,6 @@ impl Session {
     }
 
     pub async fn reset(&mut self) -> Result<(), ChatSessionError> {
-        self.encoding.reset().map_err(|err| ChatSessionError::Backend {
-            message: err.to_string(),
-        })?;
         self.state = self.instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
@@ -84,11 +81,6 @@ impl Session {
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
-        if let Err(err) = self.reset().await {
-            return error_stream(err);
-        }
-
-        let start = Instant::now();
         self.input_tokens = match self.build_input(input) {
             Ok(input) => input,
             Err(err) => {
@@ -105,7 +97,7 @@ impl Session {
             max_context_length: self.instance.max_context_length(),
             stop_token_ids: self.stop_token_ids.clone(),
 
-            time_start: start,
+            time_start: Instant::now(),
             time_first_token: None,
             total_tokens_input: self.input_tokens.len(),
             total_tokens_output: 0,
@@ -125,6 +117,9 @@ impl Session {
         &mut self,
         messages: &[ChatMessage],
     ) -> Result<StreamInput, ChatSessionError> {
+        self.encoding.reset().map_err(|err| ChatSessionError::Backend {
+            message: err.to_string(),
+        })?;
         self.encoding.encode(messages.to_vec()).map_err(|err| ChatSessionError::Backend {
             message: err.to_string(),
         })?;
@@ -213,7 +208,7 @@ struct StreamingState<'a> {
 
 impl StreamingState<'_> {
     fn get_stats(&self) -> ChatReplyStats {
-        let duration = Instant::now().duration_since(self.time_start).as_secs_f64();
+        let total_duration = self.time_start.elapsed().as_secs_f64();
         let time_to_first_token = self.time_first_token.map(|time| time.duration_since(self.time_start).as_secs_f64());
 
         let prefill_tokens_per_second = match time_to_first_token {
@@ -221,14 +216,14 @@ impl StreamingState<'_> {
             _ => None,
         };
         let generate_tokens_per_second = match time_to_first_token {
-            Some(ttft) if self.total_tokens_output > 0 && duration > ttft => {
-                Some((self.total_tokens_output - 1) as f64 / (duration - ttft))
+            Some(ttft) if self.total_tokens_output > 0 && total_duration > ttft => {
+                Some((self.total_tokens_output - 1) as f64 / (total_duration - ttft))
             },
             _ => None,
         };
 
         ChatReplyStats {
-            duration,
+            duration: total_duration,
             time_to_first_token,
             prefill_tokens_per_second,
             generate_tokens_per_second,
