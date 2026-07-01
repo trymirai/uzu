@@ -81,7 +81,8 @@ impl Session {
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
-        self.input_tokens = match self.build_input(input) {
+        let curr_all_tokens = self.encoding.state().tokens.clone();
+        let new_all_tokens = match self.build_input(input) {
             Ok(input) => input,
             Err(err) => {
                 return error_stream(ChatSessionError::Backend {
@@ -90,7 +91,27 @@ impl Session {
             },
         };
 
-        let mut state = StreamingState {
+        // if new_all_tokens = curr_all_tokens + suffix, then just encode suffix,
+        // else reset state and encode all tokens
+        let mut reset = new_all_tokens.len() <= curr_all_tokens.len();
+        if !reset {
+            for i in 0..curr_all_tokens.len() {
+                if new_all_tokens[i] != curr_all_tokens[i].id as u64 {
+                    reset = true;
+                    break;
+                }
+            }
+        }
+        self.input_tokens = if reset {
+            if let Err(err) = self.reset().await {
+                return error_stream(err);
+            }
+            new_all_tokens
+        } else {
+            new_all_tokens[curr_all_tokens.len()..].to_vec()
+        };
+
+        let mut stream_state = StreamingState {
             config: config.clone(),
             cancel_token: cancel_token.clone(),
             encoding: &mut self.encoding,
@@ -105,7 +126,7 @@ impl Session {
 
         self.instance
             .stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token)
-            .map(move |event| Self::build_output(event, &mut state))
+            .map(move |event| Self::build_output(event, &mut stream_state))
             .boxed()
     }
 
@@ -115,16 +136,16 @@ impl Session {
 
     fn build_input(
         &mut self,
-        messages: &[ChatMessage],
+        all_messages: &[ChatMessage],
     ) -> Result<StreamInput, ChatSessionError> {
         self.encoding.reset().map_err(|err| ChatSessionError::Backend {
             message: err.to_string(),
         })?;
-        self.encoding.encode(messages.to_vec()).map_err(|err| ChatSessionError::Backend {
+        self.encoding.encode(all_messages.to_vec()).map_err(|err| ChatSessionError::Backend {
             message: err.to_string(),
         })?;
-        let tokens = self.encoding.state().tokens.iter().map(|token| token.id as u64).collect::<Vec<u64>>();
-        Ok(tokens)
+        let all_tokens = self.encoding.state().tokens.iter().map(|token| token.id as u64).collect::<Vec<u64>>();
+        Ok(all_tokens)
     }
 
     fn build_output(
