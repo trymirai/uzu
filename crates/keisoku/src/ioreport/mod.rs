@@ -10,6 +10,7 @@ mod sample;
 mod subscription;
 
 pub use report::IoReport;
+pub(crate) use report::RawEnergySample;
 pub use sample::SocSample;
 
 kanka::ffi_table! {

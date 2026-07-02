@@ -1,6 +1,7 @@
 mod bandwidth;
 mod battery;
 mod cpu;
+mod energy;
 mod fans;
 mod gpu;
 mod memory;
@@ -13,6 +14,7 @@ pub use bandwidth::BandwidthMetrics;
 pub use battery::BatteryMetrics;
 pub(crate) use battery::read as read_battery;
 pub use cpu::CpuMetrics;
+pub use energy::EnergyMetrics;
 pub use fans::{Fan, FanMetrics};
 pub use gpu::GpuMetrics;
 pub use memory::MemoryMetrics;

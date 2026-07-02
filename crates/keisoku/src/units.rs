@@ -33,6 +33,7 @@ macro_rules! unit {
 }
 
 unit!(Watts(f32) = "W");
+unit!(Joules(f32) = "J");
 unit!(Percent(f32) = "%");
 unit!(Celsius(f32) = "°C");
 unit!(Megahertz(u32) = "MHz");

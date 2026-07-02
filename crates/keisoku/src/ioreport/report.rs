@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use obfstr::obfstr;
+use objc2_core_foundation::{CFDictionary, CFRetained};
 
 use super::{
     IoReportFunctions, SocSample,
@@ -9,13 +10,64 @@ use super::{
     frequency::{average_cluster_frequency, calculate_frequency, divide_or_zero},
     subscription::Subscription,
 };
-use crate::soc::SocInfo;
+use crate::{
+    EnergyMetrics, PowerMetrics,
+    soc::SocInfo,
+    units::{Joules, Watts},
+};
 
 const ANE_MAX_POWER_WATTS: f32 = 8.0;
 
 pub struct IoReport {
     functions: &'static IoReportFunctions,
     subscription: Subscription,
+}
+
+pub(crate) struct RawEnergySample(CFRetained<CFDictionary>);
+
+#[derive(Default)]
+struct EnergyTotals {
+    cpu: f32,
+    gpu: f32,
+    gpu_sram: f32,
+    ane: f32,
+    ram: f32,
+}
+
+impl EnergyTotals {
+    fn total(&self) -> f32 {
+        self.cpu + self.gpu + self.ane
+    }
+
+    fn energy_metrics(&self) -> EnergyMetrics {
+        let total = self.total();
+        EnergyMetrics {
+            cpu: Joules(self.cpu),
+            gpu: Joules(self.gpu),
+            gpu_sram: Joules(self.gpu_sram),
+            ane: Joules(self.ane),
+            ram: Joules(self.ram),
+            total: Joules(total),
+            package: Joules(total),
+        }
+    }
+
+    fn power_metrics(
+        &self,
+        elapsed: Duration,
+    ) -> PowerMetrics {
+        let elapsed_secs = elapsed.as_secs_f32().max(f32::EPSILON);
+        let total = self.total();
+        PowerMetrics {
+            cpu: Watts(self.cpu / elapsed_secs),
+            gpu: Watts(self.gpu / elapsed_secs),
+            gpu_sram: Watts(self.gpu_sram / elapsed_secs),
+            ane: Watts(self.ane / elapsed_secs),
+            ram: Watts(self.ram / elapsed_secs),
+            total: Watts(total / elapsed_secs),
+            package: Watts(total / elapsed_secs),
+        }
+    }
 }
 
 impl IoReport {
@@ -26,6 +78,21 @@ impl IoReport {
             functions,
             subscription,
         })
+    }
+
+    pub(crate) fn snapshot(&self) -> Option<RawEnergySample> {
+        self.subscription.snapshot(self.functions).map(RawEnergySample)
+    }
+
+    pub(crate) fn energy_delta(
+        &self,
+        before: &RawEnergySample,
+        after: &RawEnergySample,
+        elapsed: Duration,
+    ) -> Option<(EnergyMetrics, PowerMetrics)> {
+        let delta = self.functions.create_samples_delta(&before.0, &after.0)?;
+        let totals = energy_totals(self.functions, &delta);
+        Some((totals.energy_metrics(), totals.power_metrics(elapsed)))
     }
 
     pub fn sample(
@@ -55,6 +122,7 @@ impl IoReport {
         let mut pcpu_readings = Vec::new();
         let window_milliseconds = elapsed.as_millis().max(1) as u64;
         let mut bandwidth = BandwidthAccumulator::default();
+        let mut energy = EnergyTotals::default();
 
         for channel in decode_channels(functions, &delta) {
             if channel.group == obfstr!("CPU Stats") && channel.subgroup == obfstr!("CPU Core Performance States") {
@@ -68,17 +136,17 @@ impl IoReport {
                     result.gpu_usage = calculate_frequency(&channel.states, &soc.gpu_frequencies[1..]);
                 }
             } else if channel.group == obfstr!("Energy Model") {
-                let watts = watts(channel.integer_value, channel.unit.trim(), window_milliseconds);
+                let joules = joules(channel.integer_value, channel.unit.trim());
                 if channel.name == obfstr!("GPU Energy") {
-                    result.gpu_power += watts;
+                    energy.gpu += joules;
                 } else if channel.name.ends_with(obfstr!("CPU Energy")) {
-                    result.cpu_power += watts;
+                    energy.cpu += joules;
                 } else if channel.name.starts_with(obfstr!("ANE")) {
-                    result.ane_power += watts;
+                    energy.ane += joules;
                 } else if channel.name.starts_with(obfstr!("DRAM")) {
-                    result.ram_power += watts;
+                    energy.ram += joules;
                 } else if channel.name.starts_with(obfstr!("GPU SRAM")) {
-                    result.gpu_ram_power += watts;
+                    energy.gpu_sram += joules;
                 }
             } else if channel.group == obfstr!("AMC Stats") {
                 accumulate_amc_bandwidth(channel.integer_value, &channel.name, &mut bandwidth);
@@ -96,7 +164,13 @@ impl IoReport {
             result.ecpu_usage.1 * efficiency_cores + result.pcpu_usage.1 * performance_cores,
             efficiency_cores + performance_cores,
         );
-        result.total_power = result.cpu_power + result.gpu_power + result.ane_power;
+        let power = energy.power_metrics(Duration::from_millis(window_milliseconds));
+        result.cpu_power = power.cpu.value();
+        result.gpu_power = power.gpu.value();
+        result.gpu_ram_power = power.gpu_sram.value();
+        result.ane_power = power.ane.value();
+        result.ram_power = power.ram.value();
+        result.total_power = power.total.value();
 
         bandwidth.finish(window_milliseconds, &mut result);
         if result.ane_active_percent == 0.0 && result.ane_power > 0.0 {
@@ -106,18 +180,41 @@ impl IoReport {
     }
 }
 
-fn watts(
+fn energy_totals(
+    functions: &IoReportFunctions,
+    delta: &CFDictionary,
+) -> EnergyTotals {
+    let mut totals = EnergyTotals::default();
+    for channel in decode_channels(functions, delta) {
+        if channel.group != obfstr!("Energy Model") {
+            continue;
+        }
+        let joules = joules(channel.integer_value, channel.unit.trim());
+        if channel.name == obfstr!("GPU Energy") {
+            totals.gpu += joules;
+        } else if channel.name.ends_with(obfstr!("CPU Energy")) {
+            totals.cpu += joules;
+        } else if channel.name.starts_with(obfstr!("ANE")) {
+            totals.ane += joules;
+        } else if channel.name.starts_with(obfstr!("DRAM")) {
+            totals.ram += joules;
+        } else if channel.name.starts_with(obfstr!("GPU SRAM")) {
+            totals.gpu_sram += joules;
+        }
+    }
+    totals
+}
+
+fn joules(
     energy: i64,
     unit: &str,
-    window_milliseconds: u64,
 ) -> f32 {
-    let power = energy as f32 / (window_milliseconds as f32 / 1000.0);
     if unit == obfstr!("mJ") {
-        power / 1e3
+        energy as f32 / 1e3
     } else if unit == obfstr!("uJ") {
-        power / 1e6
+        energy as f32 / 1e6
     } else if unit == obfstr!("nJ") {
-        power / 1e9
+        energy as f32 / 1e9
     } else {
         0.0
     }

@@ -1,8 +1,9 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
 use crate::units::{GigabytesPerSecond, Megahertz, Percent, Watts};
 use crate::{
+    EnergyReading, EnergyWindow,
     metrics::{BandwidthMetrics, CpuMetrics, GpuMetrics, NeuralEngineMetrics, PowerMetrics, Temperatures},
     sensor::{Sensor, SensorKind},
     snapshot::Snapshot,
@@ -68,6 +69,40 @@ impl Collector {
 
     pub fn device(&self) -> crate::Device {
         crate::Device::detect(self)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn start_energy_window(&self) -> Option<EnergyWindow> {
+        let sample = self.ioreport.as_ref()?.snapshot()?;
+        Some(EnergyWindow::new(sample, Instant::now()))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn start_energy_window(&self) -> Option<EnergyWindow> {
+        None
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn end_energy_window(
+        &self,
+        window: EnergyWindow,
+    ) -> Option<EnergyReading> {
+        let elapsed = window.started_at.elapsed();
+        let next = self.ioreport.as_ref()?.snapshot()?;
+        let (energy, average_power) = self.ioreport.as_ref()?.energy_delta(&window.sample, &next, elapsed)?;
+        Some(EnergyReading {
+            energy,
+            average_power,
+            elapsed: Milliseconds(elapsed.as_millis() as u64),
+        })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn end_energy_window(
+        &self,
+        _window: EnergyWindow,
+    ) -> Option<EnergyReading> {
+        None
     }
 
     pub fn sample(

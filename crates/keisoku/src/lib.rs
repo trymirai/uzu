@@ -1,5 +1,7 @@
 mod collector;
 mod component;
+mod energy_reading;
+mod energy_window;
 mod metrics;
 mod recorder;
 mod sensor;
@@ -23,14 +25,16 @@ mod sys;
 
 pub use collector::Collector;
 pub use component::{Component, classify};
+pub use energy_reading::EnergyReading;
+pub use energy_window::EnergyWindow;
 pub use metrics::{
-    BandwidthMetrics, BatteryMetrics, CpuMetrics, Fan, FanMetrics, GpuMetrics, MemoryMetrics, NeuralEngineMetrics,
-    PowerMetrics, Temperatures, ThermalPressure,
+    BandwidthMetrics, BatteryMetrics, CpuMetrics, EnergyMetrics, Fan, FanMetrics, GpuMetrics, MemoryMetrics,
+    NeuralEngineMetrics, PowerMetrics, Temperatures, ThermalPressure,
 };
 pub use recorder::{Config, Device, RecorderHandle, Session, start};
 pub use sensor::{Sensor, SensorKind, current_sensors, thermal_sensors, voltage_sensors};
 pub use snapshot::Snapshot;
-pub use units::{Bytes, Celsius, GigabytesPerSecond, Megahertz, Milliseconds, Percent, Rpm, Watts};
+pub use units::{Bytes, Celsius, GigabytesPerSecond, Joules, Megahertz, Milliseconds, Percent, Rpm, Watts};
 
 #[cfg(target_vendor = "apple")]
 pub fn sensors(kind: SensorKind) -> Vec<Sensor> {
