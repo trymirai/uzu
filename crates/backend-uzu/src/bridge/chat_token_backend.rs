@@ -158,6 +158,9 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                     return;
                 },
             };
+            if token_limit == 0 {
+                return;
+            }
 
             let mut token_count = 0usize;
             for result in iterator {
