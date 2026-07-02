@@ -67,8 +67,4 @@ impl<B: Backend> BackendInstance for UzuClassificationBackendInstance<B> {
 #[derive(Debug, Clone)]
 struct State;
 
-impl ShojiState for State {
-    fn clone_boxed(&self) -> Box<dyn ShojiState> {
-        Box::new(self.clone())
-    }
-}
+impl ShojiState for State {}

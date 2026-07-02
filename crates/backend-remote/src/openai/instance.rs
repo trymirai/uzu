@@ -22,11 +22,7 @@ use crate::openai::{
 #[derive(Debug, Clone)]
 pub struct State;
 
-impl StateTrait for State {
-    fn clone_boxed(&self) -> Box<dyn StateTrait> {
-        Box::new(self.clone())
-    }
-}
+impl StateTrait for State {}
 
 pub struct Instance {
     client: Arc<Client<OpenAIConfig>>,

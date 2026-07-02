@@ -93,7 +93,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             model
                 .create_empty_state(max_context_length)
                 .map_err(|err| BackendError::from(err.to_string()))
-                .map(|state| UzuChatTokenBackendInstanceState::new(state).clone_boxed())
+                .map(|state| Box::new(UzuChatTokenBackendInstanceState::new(state)) as Box<dyn State>)
         })
     }
 

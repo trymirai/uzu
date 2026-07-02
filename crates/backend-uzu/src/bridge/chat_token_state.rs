@@ -16,10 +16,4 @@ impl<B: Backend> UzuChatTokenBackendInstanceState<B> {
     }
 }
 
-impl<B: Backend> LlmInstanceState for UzuChatTokenBackendInstanceState<B> {
-    fn clone_boxed(&self) -> Box<dyn LlmInstanceState> {
-        Box::new(Self {
-            value: self.value.clone(),
-        })
-    }
-}
+impl<B: Backend> LlmInstanceState for UzuChatTokenBackendInstanceState<B> {}
