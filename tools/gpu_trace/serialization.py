@@ -5,12 +5,20 @@ from enum import Enum
 from typing import Any
 
 import cattrs
+from cattrs.strategies import configure_tagged_union
 
 from .models import (
     CounterType,
+    GpuCounterDefinition,
+    GpuPerformanceStateInterval,
+    GpuUtilization,
+    KernelDispatch,
+    KernelStats,
     PerformanceState,
+    ShaderInfo,
     ShaderType,
     TraceExport,
+    TraceMetadata,
 )
 
 
@@ -38,22 +46,14 @@ def _make_converter() -> cattrs.Converter:
 _converter = _make_converter()
 
 
-def to_dict(
-    export: TraceExport,
-    include_counter_samples: bool = False,
-) -> dict[str, Any]:
+def to_dict(export: TraceExport) -> dict[str, Any]:
     data = _converter.unstructure(export)
-    if not include_counter_samples:
-        data.pop("counter_samples", None)
+    data.pop("counter_samples", None)
     return data
 
 
-def to_json(
-    export: TraceExport,
-    indent: int | None = 2,
-    include_counter_samples: bool = False,
-) -> str:
-    return json.dumps(to_dict(export, include_counter_samples), indent=indent)
+def to_json(export: TraceExport, indent: int | None = 2) -> str:
+    return json.dumps(to_dict(export), indent=indent)
 
 
 def from_dict(data: dict[str, Any]) -> TraceExport:

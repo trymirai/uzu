@@ -47,7 +47,9 @@ def _build_id_maps(
     return id_to_element, id_to_text
 
 
-def _deref(el: ET.Element | None, id_to_element: dict[str, ET.Element]) -> ET.Element | None:
+def _deref(
+    el: ET.Element | None, id_to_element: dict[str, ET.Element]
+) -> ET.Element | None:
     if el is None:
         return None
     ref = el.attrib.get("ref")
@@ -86,7 +88,9 @@ def _export_table(trace: Path, run_number: int, schema: str) -> ET.Element:
     return result
 
 
-def export_tables_parallel(trace: Path, run_number: int, schemas: list[str]) -> dict[str, ET.Element | None]:
+def export_tables_parallel(
+    trace: Path, run_number: int, schemas: list[str]
+) -> dict[str, ET.Element | None]:
     """Export multiple schemas in parallel via ThreadPoolExecutor.
 
     Returns {schema: ET.Element | None} — None for schemas that failed.
@@ -139,7 +143,11 @@ def extract_metadata_from_toc(toc: ET.Element, run_number: int) -> TraceMetadata
 
     summary = run.find("./info/summary")
     duration_el = summary.find("./duration") if summary is not None else None
-    duration_ns = int(float(duration_el.text) * 1e9) if duration_el is not None and duration_el.text else 0
+    duration_ns = (
+        int(float(duration_el.text) * 1e9)
+        if duration_el is not None and duration_el.text
+        else 0
+    )
 
     start_date_el = summary.find("./start-date") if summary is not None else None
     start_date = start_date_el.text if start_date_el is not None else ""
@@ -175,7 +183,11 @@ def extract_gpu_utilization(trace: Path, run_number: int) -> GpuUtilization:
         raise ValueError(f"Run {run_number} not found")
 
     duration_el = run.find("./info/summary/duration")
-    run_duration_ns = int(float(duration_el.text) * 1e9) if duration_el is not None and duration_el.text else 0
+    run_duration_ns = (
+        int(float(duration_el.text) * 1e9)
+        if duration_el is not None and duration_el.text
+        else 0
+    )
 
     pid_el = run.find("./info/target/process")
     pid = int(pid_el.attrib.get("pid", "0")) if pid_el is not None else 0
@@ -210,7 +222,9 @@ def extract_gpu_utilization(trace: Path, run_number: int) -> GpuUtilization:
         command_buffers: set[int] = set()
         for row in encoders.findall(".//row"):
             proc = _deref(row.find("./process"), enc_id_to_el)
-            proc_pid_s = _resolve_text(proc.find("./pid") if proc is not None else None, enc_id_to_text)
+            proc_pid_s = _resolve_text(
+                proc.find("./pid") if proc is not None else None, enc_id_to_text
+            )
             if proc_pid_s is None or int(proc_pid_s) != pid:
                 continue
             ids = row.findall("./metal-command-buffer-id")
@@ -265,7 +279,9 @@ def extract_gpu_utilization(trace: Path, run_number: int) -> GpuUtilization:
     )
 
 
-def extract_performance_states(trace: Path, run_number: int) -> tuple[GpuPerformanceStateInterval, ...]:
+def extract_performance_states(
+    trace: Path, run_number: int
+) -> tuple[GpuPerformanceStateInterval, ...]:
     try:
         root = _export_table(trace, run_number, "gpu-performance-state-intervals")
     except subprocess.CalledProcessError:
@@ -296,13 +312,15 @@ def extract_performance_states(trace: Path, run_number: int) -> tuple[GpuPerform
                 state=state,
                 is_induced=induced_s == "1",
                 gpu_name=gpu_s or "",
-            ),
+            )
         )
 
     return tuple(states)
 
 
-def extract_counter_definitions(trace: Path, run_number: int) -> tuple[GpuCounterDefinition, ...]:
+def extract_counter_definitions(
+    trace: Path, run_number: int
+) -> tuple[GpuCounterDefinition, ...]:
     try:
         root = _export_table(trace, run_number, "gpu-counter-info")
     except subprocess.CalledProcessError:
@@ -327,7 +345,9 @@ def extract_counter_definitions(trace: Path, run_number: int) -> tuple[GpuCounte
             continue
 
         try:
-            counter_type = CounterType(counter_type_s) if counter_type_s else CounterType.VALUE
+            counter_type = (
+                CounterType(counter_type_s) if counter_type_s else CounterType.VALUE
+            )
         except ValueError:
             counter_type = CounterType.VALUE
 
@@ -339,13 +359,15 @@ def extract_counter_definitions(trace: Path, run_number: int) -> tuple[GpuCounte
                 max_value=int(max_value_s) if max_value_s else 0,
                 counter_type=counter_type,
                 sample_interval_us=int(sample_interval_s) if sample_interval_s else 0,
-            ),
+            )
         )
 
     return tuple(counters)
 
 
-def extract_kernel_dispatches(trace: Path, run_number: int) -> tuple[KernelDispatch, ...]:
+def extract_kernel_dispatches(
+    trace: Path, run_number: int
+) -> tuple[KernelDispatch, ...]:
     toc = _toc_root(trace)
     pid_el = toc.find(f".//run[@number='{run_number}']/info/target/process")
     pid = int(pid_el.attrib.get("pid", "0")) if pid_el is not None else 0
@@ -360,7 +382,9 @@ def extract_kernel_dispatches(trace: Path, run_number: int) -> tuple[KernelDispa
 
     for row in root.findall(".//row"):
         proc = _deref(row.find("./process"), id_to_el)
-        pid_s = _resolve_text(proc.find("./pid") if proc is not None else None, id_to_text)
+        pid_s = _resolve_text(
+            proc.find("./pid") if proc is not None else None, id_to_text
+        )
         if pid_s is None or int(pid_s) != pid:
             continue
 
@@ -386,7 +410,7 @@ def extract_kernel_dispatches(trace: Path, run_number: int) -> tuple[KernelDispa
                 duration_ns=dur_ns,
                 command_buffer_id=int(cb_s) if cb_s else 0,
                 channel=channel or "",
-            ),
+            )
         )
 
     dispatches.sort(key=lambda d: d.start_ns)
@@ -408,7 +432,9 @@ def extract_shaders(trace: Path, run_number: int) -> tuple[ShaderInfo, ...]:
 
     for row in root.findall(".//row"):
         proc = _deref(row.find("./process"), id_to_el)
-        pid_s = _resolve_text(proc.find("./pid") if proc is not None else None, id_to_text)
+        pid_s = _resolve_text(
+            proc.find("./pid") if proc is not None else None, id_to_text
+        )
         if pid_s is None or int(pid_s) != pid:
             continue
 
@@ -422,7 +448,9 @@ def extract_shaders(trace: Path, run_number: int) -> tuple[ShaderInfo, ...]:
             continue
 
         try:
-            shader_type = ShaderType(shader_type_s) if shader_type_s else ShaderType.UNKNOWN
+            shader_type = (
+                ShaderType(shader_type_s) if shader_type_s else ShaderType.UNKNOWN
+            )
         except ValueError:
             shader_type = ShaderType.UNKNOWN
 
@@ -433,7 +461,7 @@ def extract_shaders(trace: Path, run_number: int) -> tuple[ShaderInfo, ...]:
                 shader_type=shader_type,
                 pc_start=int(pc_start_s) if pc_start_s else 0,
                 pc_end=int(pc_end_s) if pc_end_s else 0,
-            ),
+            )
         )
 
     return tuple(shaders)
@@ -457,7 +485,7 @@ def compute_kernel_summary(
                 count=len(durations),
                 min_ns=min(durations),
                 max_ns=max(durations),
-            ),
+            )
         )
 
     result.sort(key=lambda s: s.total_ns, reverse=True)
@@ -490,7 +518,7 @@ def extract_counter_samples(trace: Path, run_number: int) -> tuple[CounterSample
                 timestamp_ns=int(timestamp_s),
                 counter_id=int(counter_id_s),
                 value=float(value_s),
-            ),
+            )
         )
 
     samples.sort(key=lambda s: s.timestamp_ns)
@@ -549,7 +577,7 @@ def compute_kernel_counter_stats(
                 total_ns=total_ns,
                 count=count,
                 counters=tuple(avg_counters),
-            ),
+            )
         )
 
     result.sort(key=lambda s: s.total_ns, reverse=True)

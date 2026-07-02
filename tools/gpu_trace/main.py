@@ -4,19 +4,19 @@ import argparse
 import sys
 from pathlib import Path
 
-from .export import write_dispatch_csv
 from .extractors import (
     _toc_root,
     compute_kernel_counter_stats,
     compute_kernel_summary,
-    export_tables_parallel,
     extract_counter_definitions,
     extract_counter_samples,
     extract_gpu_utilization,
     extract_kernel_dispatches,
+    extract_metadata,
     extract_metadata_from_toc,
     extract_performance_states,
     extract_shaders,
+    export_tables_parallel,
 )
 from .formatting import (
     print_buffer_data,
@@ -81,7 +81,9 @@ def export_trace(trace: Path, run_number: int) -> TraceExport:
         counter_samples = extract_counter_samples(trace, run_number)
 
     with status("Correlating counters with kernels..."):
-        kernel_counter_stats = compute_kernel_counter_stats(dispatches, counter_samples, counter_definitions)
+        kernel_counter_stats = compute_kernel_counter_stats(
+            dispatches, counter_samples, counter_definitions
+        )
 
     return TraceExport(
         metadata=metadata,
@@ -126,12 +128,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     export = export_trace(output, 1)
     print_summary(export, verbose=args.verbose)
 
-    json_path = args.json or output.with_suffix(".json")
-    json_path.write_text(to_json(export, indent=2, include_counter_samples=args.include_counter_samples))
+    json_path = args.json if args.json else output.with_suffix(".json")
+    json_path.write_text(to_json(export, indent=2))
     print(f"JSON exported: {json_path}", file=sys.stderr)
-    if args.dispatch_csv:
-        write_dispatch_csv(export, args.dispatch_csv)
-        print(f"Dispatch CSV exported: {args.dispatch_csv}", file=sys.stderr)
 
     return 0
 
@@ -146,16 +145,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
     if args.json:
         indent = None if args.compact else 2
-        json_output = to_json(export, indent=indent, include_counter_samples=args.include_counter_samples)
+        json_output = to_json(export, indent=indent)
         if args.json == Path("-"):
             print(json_output)
         else:
             args.json.write_text(json_output)
             print(f"JSON exported: {args.json}", file=sys.stderr)
-
-    if args.dispatch_csv:
-        write_dispatch_csv(export, args.dispatch_csv)
-        print(f"Dispatch CSV exported: {args.dispatch_csv}", file=sys.stderr)
 
     return 0
 
@@ -413,8 +408,7 @@ def main(argv: list[str]) -> int:
         epilog=RUN_EPILOG,
     )
     run_p.add_argument(
-        "-o",
-        "--output",
+        "-o", "--output",
         type=Path,
         default=None,
         metavar="PATH",
@@ -459,20 +453,7 @@ def main(argv: list[str]) -> int:
         help="Export trace data to JSON file",
     )
     run_p.add_argument(
-        "--include-counter-samples",
-        action="store_true",
-        help="Include raw GPU counter samples in JSON output",
-    )
-    run_p.add_argument(
-        "--dispatch-csv",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help="Export one contextual row per kernel dispatch",
-    )
-    run_p.add_argument(
-        "-v",
-        "--verbose",
+        "-v", "--verbose",
         action="store_true",
         help="Show all hardware counters per kernel",
     )
@@ -515,20 +496,7 @@ def main(argv: list[str]) -> int:
         help="Compact JSON output (no indentation)",
     )
     analyze_p.add_argument(
-        "--include-counter-samples",
-        action="store_true",
-        help="Include raw GPU counter samples in JSON output",
-    )
-    analyze_p.add_argument(
-        "--dispatch-csv",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help="Export one contextual row per kernel dispatch",
-    )
-    analyze_p.add_argument(
-        "-v",
-        "--verbose",
+        "-v", "--verbose",
         action="store_true",
         help="Show all hardware counters per kernel",
     )
@@ -585,22 +553,19 @@ def main(argv: list[str]) -> int:
         help="Path to .gputrace bundle",
     )
     capture_p.add_argument(
-        "-b",
-        "--buffer",
+        "-b", "--buffer",
         default="",
         metavar="NAME",
         help="Buffer label or filename to inspect (empty = list all resources)",
     )
     capture_p.add_argument(
-        "-l",
-        "--layout",
+        "-l", "--layout",
         default="float4",
         metavar="LAYOUT",
         help="Buffer element layout (e.g., 'float4', 'float4,float4,float4')",
     )
     capture_p.add_argument(
-        "-i",
-        "--index",
+        "-i", "--index",
         default="0-10",
         metavar="RANGE",
         help="Element index or range (e.g., '100', '0-10')",
@@ -630,8 +595,7 @@ def main(argv: list[str]) -> int:
         help="Path to JSON file exported by 'analyze --json'",
     )
     view_p.add_argument(
-        "-v",
-        "--verbose",
+        "-v", "--verbose",
         action="store_true",
         help="Show all hardware counters per kernel",
     )
@@ -640,13 +604,13 @@ def main(argv: list[str]) -> int:
 
     if args.cmd == "run":
         return cmd_run(args)
-    if args.cmd == "analyze":
+    elif args.cmd == "analyze":
         return cmd_analyze(args)
-    if args.cmd == "compare":
+    elif args.cmd == "compare":
         return cmd_compare(args)
-    if args.cmd == "capture":
+    elif args.cmd == "capture":
         return cmd_capture(args)
-    if args.cmd == "view":
+    elif args.cmd == "view":
         return cmd_view(args)
 
     return 1
