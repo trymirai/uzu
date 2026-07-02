@@ -42,18 +42,7 @@ impl Config {
         path: String,
     ) -> Self {
         let models_path = PathBuf::from(&path).join("models");
-        let resolver: ModelResolver = Arc::new(move |mut model: Model| -> Result<Model, RegistryError> {
-            let model_path = model.local_external_path().ok_or_else(|| RegistryError::UnableToGetModels {
-                message: format!("Local model {} has no local path", model.identifier),
-            })?;
-            let model_path = PathBuf::from(model_path);
-            let specialization =
-                resolve_model_specialization(&model_path).map_err(|error| RegistryError::UnableToGetModels {
-                    message: format!("Unable to resolve specialization for {}: {error}", model_path.display()),
-                })?;
-            model.specializations = vec![specialization];
-            Ok(model)
-        });
+        let resolver: ModelResolver = Arc::new(Self::resolve_model);
         Self::new(
             "lalamo".to_string(),
             backend_identifier,
@@ -69,15 +58,20 @@ impl Config {
         backend_version: String,
         path: String,
     ) -> Self {
-        let model_path = PathBuf::from(path.clone());
-        let resolver: ModelResolver = Arc::new(move |mut model: Model| -> Result<Model, RegistryError> {
-            let specialization =
-                resolve_model_specialization(&model_path).map_err(|error| RegistryError::UnableToGetModels {
-                    message: format!("Unable to resolve specialization for {}: {error}", model_path.display()),
-                })?;
-            model.specializations = vec![specialization];
-            Ok(model)
-        });
+        let resolver: ModelResolver = Arc::new(Self::resolve_model);
         Self::new("local".to_string(), backend_identifier, backend_version, "Local".to_string(), path, Some(resolver))
+    }
+
+    fn resolve_model(mut model: Model) -> Result<Model, RegistryError> {
+        let model_path = model.local_external_path().ok_or_else(|| RegistryError::UnableToGetModels {
+            message: format!("Local model {} has no local path", model.identifier),
+        })?;
+        let model_path = PathBuf::from(model_path);
+        let specialization =
+            resolve_model_specialization(&model_path).map_err(|error| RegistryError::UnableToGetModels {
+                message: format!("Unable to resolve specialization for {}: {error}", model_path.display()),
+            })?;
+        model.specializations = vec![specialization];
+        Ok(model)
     }
 }

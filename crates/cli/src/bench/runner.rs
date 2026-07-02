@@ -1,15 +1,17 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
 use backend_uzu::{VERSION, data_type::DataType};
+use shoji::types::model::{ModelFamily, ModelReference};
 use sysinfo::System;
 use uzu::{
     engine::{Engine, EngineConfig},
     types::{
         basic::SamplingMethod,
+        model::ModelAccessibility,
         session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
     },
 };
@@ -39,17 +41,19 @@ impl BenchRunner {
         &self,
         mut progress: Option<F>,
     ) -> Result<Vec<BenchResult>> {
-        let model_path = self.model_path.trim_end_matches('/').to_string();
-
-        let parent_path =
-            PathBuf::from(&model_path).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        let model_path_string = self.model_path.trim_end_matches('/').to_string();
+        let model_path = PathBuf::from(&model_path_string);
+        let parent_path = model_path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
         let engine_config = EngineConfig::default().with_local_path(parent_path);
-
         let engine = Engine::new(engine_config).await.with_context(|| "Can not create engine".to_string())?;
-        let model = engine
-            .model(model_path.clone())
+
+        let model_family: Option<ModelFamily> = self.get_remote_model_family(&model_path, &engine).await?;
+        let mut model = engine
+            .model_by_path(model_path_string.clone())
             .await?
-            .with_context(|| format!("Model not found at path: {model_path}"))?;
+            .with_context(|| format!("Model not found at path: {model_path_string}"))?;
+        model.family = model_family;
+
         let device = self.get_device_info();
 
         let messages: Vec<ChatMessage> = self.task.messages.iter().map(|msg| msg.to_chat_message()).collect();
@@ -133,5 +137,46 @@ impl BenchRunner {
             cpu_name,
             memory_total,
         }
+    }
+
+    //
+    async fn get_remote_model_family(
+        &self,
+        model_path: &Path,
+        engine: &Engine,
+    ) -> Result<Option<ModelFamily>> {
+        let dir_name = model_path
+            .file_name()
+            .ok_or(anyhow::format_err!("Can not get directory name"))?
+            .to_string_lossy()
+            .into_owned();
+        let all_models = engine.models().await?;
+        for model in all_models {
+            if let ModelAccessibility::Local {
+                reference,
+            } = model.accessibility
+            {
+                if let ModelReference::Mirai {
+                    toolchain_version: _toolchain_version,
+                    repository,
+                    source_repository,
+                    files: _files,
+                } = reference
+                {
+                    if let Some(repo) = source_repository
+                        && repo.identifier.contains(&dir_name)
+                    {
+                        return Ok(model.family);
+                    }
+                    if let Some(repo) = repository
+                        && repo.identifier.contains(&dir_name)
+                    {
+                        return Ok(model.family);
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 }

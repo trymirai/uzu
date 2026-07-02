@@ -1033,6 +1033,7 @@ dependencies = [
  "rocket",
  "serde",
  "serde_json",
+ "shoji",
  "sysinfo",
  "tokio",
  "tokio-stream",

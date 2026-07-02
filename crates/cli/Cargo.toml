@@ -34,6 +34,7 @@ rocket.workspace = true
 uuid.workspace = true
 tokio-stream.workspace = true
 sysinfo.workspace = true
+shoji.workspace = true
 
 [lints]
 workspace = true
