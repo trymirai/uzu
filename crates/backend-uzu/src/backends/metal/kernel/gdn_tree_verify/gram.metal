@@ -16,28 +16,51 @@ using namespace uzu::trie;
 #define TREE_GRAM_THREADS METAL_SIMD_SIZE
 #define TREE_GRAM_INVALID_ROW 0xffffffffu
 
+// Ragged blocks are padded with identity columns so the 16x16 output is fully
+// initialized.
 METAL_FUNC void invert_tree_gram_diagonal_block(
-    device float* ainv,
+    device float* a_inv_block,
     threadgroup const float* diag_a_tile,
-    const uint mat_base,
-    const uint row_base,
-    const uint tree_size,
     const uint block_size,
     const uint thread_idx
-);
+) {
+  if (thread_idx >= TREE_GRAM_ROW_TILE) {
+    return;
+  }
 
-// Build tree gram matrices for one (batch, value-head) tile.
-//
-// q, k:   [B, T, Hg, K], with key head hk = hv / (HV / Hg)
-// trie:   [B, T] DFS intervals; col is an ancestor of row when row is in col's interval
-// prefix: [B, T, HV] path log-decay prefix from BuildPrefixBeta
-// beta:   [B, T, HV] sigmoid gate from BuildPrefixBeta
-//
-// a_mat[row, col] = beta[row] * exp(prefix[row] - prefix[col]) * dot(k[row], k[col])
-//                   for proper ancestors only
-// qkd[row, col]   = scale * exp(prefix[row] - prefix[col]) * dot(q[row], k[col])
-//                   for ancestor-or-self
-// ainv            = (I + A)^-1 for each diagonal block
+  const uint col = thread_idx;
+  float inverse_col[TREE_GRAM_ROW_TILE] = {};
+  inverse_col[col] = 1.0f;
+
+  METAL_PRAGMA_UNROLL
+  for (uint row = 0; row < TREE_GRAM_ROW_TILE; row++) {
+    if (row > col && row < block_size) {
+      float acc = 0.0f;
+      METAL_PRAGMA_UNROLL
+      for (uint prev_row = 0; prev_row < TREE_GRAM_ROW_TILE; prev_row++) {
+        if (prev_row < row) {
+          acc += diag_a_tile[row * TREE_GRAM_ROW_TILE + prev_row] * inverse_col[prev_row];
+        }
+      }
+      inverse_col[row] = -acc;
+    }
+  }
+
+  METAL_PRAGMA_UNROLL
+  for (uint row = 0; row < TREE_GRAM_ROW_TILE; row++) {
+    a_inv_block[row * TREE_GRAM_ROW_TILE + col] = inverse_col[row];
+  }
+}
+
+// Builds the tree-verify gram products for one (batch, value-head) 16x32 tile:
+// a_packed: A[row, col] = beta[row] * exp(prefix[row] - prefix[col]) * dot(k[row], k[col])
+//           for proper ancestors (trie interval test), packed block-pair tiles
+//           [B*HV, NB, ceil(NB/2), 16, 32] f32; only lower-triangle tiles written
+// qkd:      scale * exp(prefix[row] - prefix[col]) * dot(q[row], k[col]) for
+//           ancestor-or-self, dense [B*HV, T, T] f32
+// a_inv:    (I + A)^-1 per diagonal block, compact [B*HV, NB, 16, 16]
+// kh0:      k @ h0[h0_idx[batch]]^T, [B, T, HV, head_v_dim] in T; skipped when
+//           h0_idx[batch] < 0
 template <typename T, bool USE_MXU>
 VARIANTS(T, float, bfloat)
 VARIANTS(USE_MXU, false, true)
@@ -47,15 +70,19 @@ PUBLIC KERNEL(BuildTreeGram)(
     const device TrieNode* trie,
     const device float* prefix,
     const device float* beta,
-    device float* a_mat,
+    const device T* h0 OPTIONAL(use_h0),
+    const device int* h0_idx OPTIONAL(use_h0),
+    device float* a_packed,
     device float* qkd,
-    device float* ainv,
+    device float* a_inv,
+    device T* kh0 OPTIONAL(use_h0),
     constant const float& scale,
     constant const uint& batch_size,
     constant const uint& tree_size,
     constant const uint& k_heads,
     constant const uint& value_heads,
     constant const uint& head_k_dim,
+    constant const uint& head_v_dim,
     threadgroup float diag_a_tile[TREE_GRAM_ROW_TILE * TREE_GRAM_ROW_TILE],
     threadgroup float row_prefix[TREE_GRAM_ROW_TILE],
     threadgroup float row_beta[TREE_GRAM_ROW_TILE],
@@ -63,6 +90,7 @@ PUBLIC KERNEL(BuildTreeGram)(
     threadgroup float col_prefix[TREE_GRAM_COL_TILE],
     threadgroup uint col_trie_start[TREE_GRAM_COL_TILE],
     threadgroup uint col_trie_end[TREE_GRAM_COL_TILE],
+    const bool use_h0 SPECIALIZE,
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
     const uint value_head_idx GROUPS(value_heads),
@@ -104,9 +132,7 @@ PUBLIC KERNEL(BuildTreeGram)(
     for (uint idx = thread_idx; idx < tile_rows * tile_cols; idx += TREE_GRAM_THREADS) {
       const uint local_row = idx / tile_cols;
       const uint local_col = idx - local_row * tile_cols;
-      const uint offset = tile_base + local_row * tree_size + local_col;
-      a_mat[offset] = 0.0f;
-      qkd[offset] = 0.0f;
+      qkd[tile_base + local_row * tree_size + local_col] = 0.0f;
     }
     return;
   }
@@ -117,9 +143,7 @@ PUBLIC KERNEL(BuildTreeGram)(
   qk_acc.clear();
 
   for (uint k_block_start = 0; k_block_start < head_k_dim; k_block_start += Ops::FRAGMENT_ROWS) {
-    const uint k_remaining = head_k_dim - k_block_start;
-    const uint k_tile_size = Ops::FRAGMENT_ROWS;
-    const uint valid_k_cols = min(k_remaining, k_tile_size);
+    const uint valid_k_cols = min(head_k_dim - k_block_start, uint(Ops::FRAGMENT_ROWS));
 
     LeftFragment k_left;
     LeftFragment q_left;
@@ -131,7 +155,7 @@ PUBLIC KERNEL(BuildTreeGram)(
     const device T* q_rows = q + qk_row_base;
     const device T* k_cols = k + qk_col_base;
 
-    const bool full_k_tile = valid_k_cols == k_tile_size;
+    const bool full_k_tile = valid_k_cols == Ops::FRAGMENT_ROWS;
     if (full_k_tile && row_base + TREE_GRAM_ROW_TILE <= tree_size) {
       k_left.load_from(lane, fragment_source(k_rows, qk_stride));
       q_left.load_from(lane, fragment_source(q_rows, qk_stride));
@@ -151,7 +175,6 @@ PUBLIC KERNEL(BuildTreeGram)(
 
   const bool has_diag = col_base <= row_base && row_base < col_base + TREE_GRAM_COL_TILE;
   const uint diag_col_offset = has_diag ? row_base - col_base : 0;
-  const uint diag_size = min(TREE_GRAM_ROW_TILE, tree_size - row_base);
 
   if (thread_idx < TREE_GRAM_COL_TILE) {
     const uint col_token = col_base + thread_idx;
@@ -189,9 +212,9 @@ PUBLIC KERNEL(BuildTreeGram)(
         const float decay = exp(row_prefix[local_row] - col_prefix[local_col]);
         const float a_value = in_subtree && row_idx != col_idx ? row_beta[local_row] * decay * kk : 0.0f;
         const float qkd_value = in_subtree ? scale * decay * qk_dot : 0.0f;
-        if (has_diag && local_row < diag_size && local_col >= diag_col_offset) {
+        if (has_diag && local_row < tile_rows && local_col >= diag_col_offset) {
           const uint diag_col = local_col - diag_col_offset;
-          if (diag_col < diag_size) {
+          if (diag_col < tile_rows) {
             diag_a_tile[local_row * TREE_GRAM_ROW_TILE + diag_col] = a_value;
           }
         }
@@ -202,59 +225,75 @@ PUBLIC KERNEL(BuildTreeGram)(
       qk_acc
   );
 
-  const short2 tile_dims = short2(tile_cols, tile_rows);
-  device float* a_tile = a_mat + tile_base;
+  const uint num_blocks = div_ceil(tree_size, TREE_GRAM_ROW_TILE);
+  const uint num_col_pairs = div_ceil(num_blocks, 2u);
+  device float* a_tile =
+      a_packed +
+      (((batch_idx * value_heads + value_head_idx) * num_blocks + row_tile_idx) * num_col_pairs + col_tile_idx) *
+          (TREE_GRAM_ROW_TILE * TREE_GRAM_COL_TILE);
   device float* qkd_tile = qkd + tile_base;
+  if (row_base + TREE_GRAM_ROW_TILE <= tree_size) {
+    kk_acc.store(lane, a_tile, TREE_GRAM_COL_TILE);
+  } else {
+    kk_acc.store_safe(lane, a_tile, TREE_GRAM_COL_TILE, short2(TREE_GRAM_COL_TILE, tile_rows));
+  }
   if (row_base + TREE_GRAM_ROW_TILE <= tree_size && col_base + TREE_GRAM_COL_TILE <= tree_size) {
-    kk_acc.store(lane, a_tile, tree_size);
     qk_acc.store(lane, qkd_tile, tree_size);
   } else {
-    kk_acc.store_safe(lane, a_tile, tree_size, tile_dims);
-    qk_acc.store_safe(lane, qkd_tile, tree_size, tile_dims);
+    qk_acc.store_safe(lane, qkd_tile, tree_size, short2(tile_cols, tile_rows));
   }
 
   if (has_diag) {
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    invert_tree_gram_diagonal_block(ainv, diag_a_tile, mat_base, row_base, tree_size, diag_size, thread_idx);
-  }
-}
-
-METAL_FUNC void invert_tree_gram_diagonal_block(
-    device float* ainv,
-    threadgroup const float* diag_a_tile,
-    const uint mat_base,
-    const uint row_base,
-    const uint tree_size,
-    const uint block_size,
-    const uint thread_idx
-) {
-  if (thread_idx >= block_size) {
-    return;
+    device float* a_inv_block = a_inv + ((batch_idx * value_heads + value_head_idx) * num_blocks + row_tile_idx) *
+                                            (TREE_GRAM_ROW_TILE * TREE_GRAM_ROW_TILE);
+    invert_tree_gram_diagonal_block(a_inv_block, diag_a_tile, tile_rows, thread_idx);
   }
 
-  const uint col = thread_idx;
-  float inverse_col[TREE_GRAM_ROW_TILE] = {};
-  inverse_col[col] = 1.0f;
+  // kh0 dv chunks are distributed round-robin over this row's in-band col-tile
+  // TGs (above-diagonal TGs returned early); chunking also bounds registers.
+  const uint in_band_col_tiles = min(row_base / TREE_GRAM_COL_TILE + 1, col_tiles);
+  if (use_h0 && col_tile_idx < in_band_col_tiles) {
+    const int h0_slot = h0_idx[batch_idx];
+    if (h0_slot >= 0) {
+      const device T* h0_head = h0 + (uint(h0_slot) * value_heads + value_head_idx) * head_v_dim * head_k_dim;
+      device T* kh0_rows =
+          kh0 + (batch_idx * tree_size + row_base) * value_heads * head_v_dim + value_head_idx * head_v_dim;
+      const uint kh0_row_stride = value_heads * head_v_dim;
+      const bool full_rows = row_base + TREE_GRAM_ROW_TILE <= tree_size;
 
-  METAL_PRAGMA_UNROLL
-  for (uint row = 0; row < TREE_GRAM_ROW_TILE; row++) {
-    if (row > col && row < block_size) {
-      float acc = 0.0f;
-      METAL_PRAGMA_UNROLL
-      for (uint prev_row = 0; prev_row < TREE_GRAM_ROW_TILE; prev_row++) {
-        if (prev_row < row) {
-          acc += diag_a_tile[row * TREE_GRAM_ROW_TILE + prev_row] * inverse_col[prev_row];
+      for (uint dv_base = col_tile_idx * TREE_GRAM_COL_TILE; dv_base < head_v_dim;
+           dv_base += in_band_col_tiles * TREE_GRAM_COL_TILE) {
+        const uint tile_dvs = min(uint(TREE_GRAM_COL_TILE), head_v_dim - dv_base);
+        AccFragment kh0_acc;
+        kh0_acc.clear();
+
+        for (uint k_block_start = 0; k_block_start < head_k_dim; k_block_start += Ops::FRAGMENT_ROWS) {
+          const uint valid_k = min(head_k_dim - k_block_start, uint(Ops::FRAGMENT_ROWS));
+          LeftFragment k_left;
+          RightFragment h0_right;
+          const device T* k_rows = k + qk_base + row_base * qk_stride + k_block_start;
+          const device T* h0_tile = h0_head + dv_base * head_k_dim + k_block_start;
+
+          if (valid_k == Ops::FRAGMENT_ROWS && full_rows) {
+            k_left.load_from(lane, fragment_source(k_rows, qk_stride));
+          } else {
+            k_left.load_from(lane, fragment_source(k_rows, qk_stride).bounded(tile_rows, valid_k));
+          }
+          if (valid_k == Ops::FRAGMENT_ROWS && tile_dvs == TREE_GRAM_COL_TILE) {
+            h0_right.load_from(lane, fragment_source(h0_tile, head_k_dim));
+          } else {
+            h0_right.load_from(lane, fragment_source(h0_tile, head_k_dim).bounded(tile_dvs, valid_k));
+          }
+          fragment_mma(kh0_acc, k_left, h0_right);
+        }
+
+        if (full_rows && tile_dvs == TREE_GRAM_COL_TILE) {
+          kh0_acc.store(lane, kh0_rows + dv_base, kh0_row_stride);
+        } else {
+          kh0_acc.store_safe(lane, kh0_rows + dv_base, kh0_row_stride, short2(tile_dvs, tile_rows));
         }
       }
-      inverse_col[row] = -acc;
-    }
-  }
-
-  METAL_PRAGMA_UNROLL
-  for (uint row = 0; row < TREE_GRAM_ROW_TILE; row++) {
-    if (row < block_size) {
-      const uint ainv_offset = mat_base + (row_base + row) * tree_size + row_base + col;
-      ainv[ainv_offset] = inverse_col[row];
     }
   }
 }

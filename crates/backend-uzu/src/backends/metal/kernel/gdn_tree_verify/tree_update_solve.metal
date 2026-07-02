@@ -8,133 +8,97 @@
 using namespace metal;
 using namespace uzu::matmul;
 
-// Solves chunked GDN update coefficients:
-//   acc = beta * (v - exp(prefix) * k @ h0)
-//   acc -= A[cur_block, prev_block] @ U[prev_block]
-//   U[cur_block] = Ainv[cur_block] @ acc
+// Block forward substitution for (I + A) U = beta * (v - exp(prefix) * kh0).
+// Per 16-token block i, serially: acc_i = beta * (v_i - exp(prefix_i) * kh0_i);
+// acc_i -= A[i, j] @ U[j] for all j < i; U[i] = Ainv[i] @ acc_i.
 //
-// Shapes:
-//   k      [B, T, num_k_heads, HEAD_K_DIM]
-//   v      [B, T, num_v_heads, head_v_dim]
-//   prefix [B, T, num_v_heads]
-//   beta   [B, T, num_v_heads]
-//   A      [B * num_v_heads, T, T]
-//   Ainv   [B * num_v_heads, T, T]
-//   h0     [pool, num_v_heads, head_v_dim, HEAD_K_DIM]
-//   h0_idx [B], negative means zero initial state
-//   U      [B * num_v_heads, T, head_v_dim]
+// Shapes (NB = ceil(T/16)):
+//   kh0    [B, T, HV, head_v_dim] in T, from BuildTreeGram (absent when !use_h0)
+//   v      [B, T, HV, head_v_dim] in T
+//   prefix, beta [B, T, HV] f32
+//   A      [B*HV, NB, ceil(NB/2), 16, 32] f32 packed pair tiles from BuildTreeGram
+//          (block (i,j) at pair j/2, column (j%2)*16)
+//   Ainv   [B*HV, NB, 16, 16] f32 diagonal-block inverses from BuildTreeGram
+//   h0_idx [B] i32, negative = zero initial state (absent when !use_h0)
+//   U      [B*HV, T, head_v_dim] f32 (output)
 //
-// Grid: one simdgroup per (batch, value head, BV value-dim tile). Token blocks
-// are solved serially inside the simdgroup because each block depends on
-// previous U blocks. Within a block, the three update steps are fragment matmuls:
-//   [BT,K]  @ [K,BV]  -> [BT,BV]
-//   [BT,BT] @ [BT,BV] -> [BT,BV]
-//   [BT,BT] @ [BT,BV] -> [BT,BV]
-template <typename T, uint HEAD_K_DIM, uint BT, uint BV, bool USE_MXU>
+// Grid: one simdgroup per (batch, value head, BV value-dim tile); the history is
+// consumed one packed pair tile ([16,32] A x [32,BV] U) per fragment_mma plus a
+// single-block tail when i is odd.
+// ponytail: A stays f32; bf16 A only pays in bandwidth-bound large-batch shapes.
+template <typename T, uint BV, bool USE_MXU>
 VARIANTS(T, float, bfloat)
-VARIANTS(HEAD_K_DIM, 128)
-VARIANTS(BT, 16)
-VARIANTS(BV, 16, 32, 64)
+VARIANTS(BV, 16, 32)
 VARIANTS(USE_MXU, false, true)
 CONSTRAINT(!USE_MXU || T != "float")
-CONSTRAINT(!USE_MXU || BV == 32)
-PUBLIC KERNEL(GdnTreeUpdateSolve)(
-    const device T* k,
+CONSTRAINT(!USE_MXU || BV >= 32)
+PUBLIC KERNEL(TreeUpdateSolve)(
+    const device T* kh0 OPTIONAL(use_h0),
     const device T* v,
     const device float* prefix,
     const device float* beta,
-    const device float* a,
+    const device float* a_packed,
     const device float* a_inv,
-    const device T* h0,
-    const device int* h0_idx,
+    const device int* h0_idx OPTIONAL(use_h0),
     device float* u,
     constant const uint& batch_size,
     constant const uint& tree_size,
-    constant const uint& num_v_heads,
-    constant const uint& num_k_heads,
+    constant const uint& value_heads,
     constant const uint& head_v_dim,
+    const bool use_h0 SPECIALIZE,
     const uint batch_idx GROUPS(batch_size),
-    const uint value_head_idx GROUPS(num_v_heads),
+    const uint value_head_idx GROUPS(value_heads),
     const uint value_tile_idx GROUPS(head_v_dim.div_ceil(BV)),
     const uint lane_idx THREADS(METAL_SIMD_SIZE)
 ) {
+  constexpr uint BT = 16;
   using FragmentOps = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
   constexpr ushort TOKEN_FRAGMENTS = BT / FragmentOps::FRAGMENT_ROWS;
   constexpr ushort VALUE_FRAGMENTS = BV / FragmentOps::FRAGMENT_COLS;
-  using InputType = metal::conditional_t<USE_MXU, T, float>;
   using TileFragment = Fragment<float, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, FragmentOps>;
-  using KeyFragment = OperandFragment<InputType, TOKEN_FRAGMENTS, 1, FragmentOps>;
-  using H0Fragment = OperandFragment<InputType, 1, VALUE_FRAGMENTS, FragmentOps, ReadTranspose>;
   using BlockMatrixFragment = OperandFragment<float, TOKEN_FRAGMENTS, TOKEN_FRAGMENTS, FragmentOps>;
   using ValueTileFragment = OperandFragment<float, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, FragmentOps>;
+  using PairMatrixFragment = OperandFragment<float, TOKEN_FRAGMENTS, 2 * TOKEN_FRAGMENTS, FragmentOps>;
+  using PairValueFragment = OperandFragment<float, 2 * TOKEN_FRAGMENTS, VALUE_FRAGMENTS, FragmentOps>;
 
-  static_assert(BT == 16, "GdnTreeUpdateSolve expects BT=16");
-  static_assert(BT % FragmentOps::FRAGMENT_ROWS == 0, "BT must be a multiple of the fragment row size");
   static_assert(BV % FragmentOps::FRAGMENT_COLS == 0, "BV must be a multiple of the fragment column size");
-  static_assert(HEAD_K_DIM % FragmentOps::FRAGMENT_ROWS == 0, "HEAD_K_DIM must fit fragment rows");
 
-  const uint batch_value_head_idx = batch_idx * num_v_heads + value_head_idx;
-
-  const uint value_heads_per_key_head = num_v_heads / num_k_heads;
-  const uint key_head_idx = value_head_idx / value_heads_per_key_head;
+  const uint batch_value_head_idx = batch_idx * value_heads + value_head_idx;
 
   const uint value_dim_base = value_tile_idx * BV;
   const uint tile_value_cols = min(BV, head_v_dim - value_dim_base);
-  const uint num_blocks = (tree_size + BT - 1u) / BT;
-  const int h0_slot = h0_idx[batch_idx];
+  const uint num_blocks = div_ceil(tree_size, BT);
+  const int h0_slot = use_h0 ? h0_idx[batch_idx] : -1;
 
-  const uint key_token_stride = num_k_heads * HEAD_K_DIM;
-  const uint value_token_stride = num_v_heads * head_v_dim;
-  const uint scalar_token_stride = num_v_heads;
+  const uint value_token_stride = value_heads * head_v_dim;
+  const uint scalar_token_stride = value_heads;
 
-  const device T* key_head = k + (batch_idx * tree_size * num_k_heads + key_head_idx) * HEAD_K_DIM;
+  const device T* kh0_head_tile =
+      kh0 + (batch_idx * tree_size * value_heads + value_head_idx) * head_v_dim + value_dim_base;
   const device T* value_head_tile =
-      v + (batch_idx * tree_size * num_v_heads + value_head_idx) * head_v_dim + value_dim_base;
-  const device float* prefix_head = prefix + batch_idx * tree_size * num_v_heads + value_head_idx;
-  const device float* beta_head = beta + batch_idx * tree_size * num_v_heads + value_head_idx;
-  const device float* a_matrix = a + batch_value_head_idx * tree_size * tree_size;
-  const device float* a_inv_matrix = a_inv + batch_value_head_idx * tree_size * tree_size;
+      v + (batch_idx * tree_size * value_heads + value_head_idx) * head_v_dim + value_dim_base;
+  const device float* prefix_head = prefix + batch_idx * tree_size * value_heads + value_head_idx;
+  const device float* beta_head = beta + batch_idx * tree_size * value_heads + value_head_idx;
+  const uint num_col_pairs = div_ceil(num_blocks, 2u);
+  const device float* a_blocks = a_packed + batch_value_head_idx * num_blocks * num_col_pairs * (BT * 2 * BT);
+  const device float* a_inv_blocks = a_inv + batch_value_head_idx * num_blocks * (BT * BT);
   device float* u_head_tile = u + batch_value_head_idx * tree_size * head_v_dim + value_dim_base;
-  const device T* h0_head_tile =
-      h0_slot >= 0
-          ? h0 + (uint(h0_slot) * num_v_heads + value_head_idx) * head_v_dim * HEAD_K_DIM + value_dim_base * HEAD_K_DIM
-          : nullptr;
 
   for (uint block_idx = 0; block_idx < num_blocks; ++block_idx) {
     const uint row_base = block_idx * BT;
     const uint tile_rows = min(BT, tree_size - row_base);
 
     TileFragment acc;
-    acc.clear();
 
     if (h0_slot >= 0) {
-      for (uint key_dim_base = 0; key_dim_base < HEAD_K_DIM; key_dim_base += FragmentOps::FRAGMENT_ROWS) {
-        KeyFragment key_frag;
-        H0Fragment h0_frag;
-
-        const device T* key_block = key_head + row_base * key_token_stride + key_dim_base;
-        const device T* h0_block = h0_head_tile + key_dim_base;
-
-        if (tile_rows == BT) {
-          key_frag.load_from(lane_idx, fragment_source(key_block, key_token_stride));
-        } else {
-          key_frag.load_from(
-              lane_idx,
-              fragment_source(key_block, key_token_stride).bounded(tile_rows, FragmentOps::FRAGMENT_ROWS)
-          );
-        }
-
-        if (tile_value_cols == BV) {
-          h0_frag.load_from(lane_idx, fragment_source(h0_block, HEAD_K_DIM));
-        } else {
-          h0_frag.load_from(
-              lane_idx,
-              fragment_source(h0_block, HEAD_K_DIM).bounded(tile_value_cols, FragmentOps::FRAGMENT_ROWS)
-          );
-        }
-
-        fragment_mma(acc, key_frag, h0_frag);
+      const device T* kh0_block = kh0_head_tile + row_base * value_token_stride;
+      if (tile_rows == BT && tile_value_cols == BV) {
+        acc.load_from(lane_idx, fragment_source(kh0_block, value_token_stride));
+      } else {
+        acc.load_from(lane_idx, fragment_source(kh0_block, value_token_stride).bounded(tile_rows, tile_value_cols));
       }
+    } else {
+      acc.clear();
     }
 
     acc.map_coords(lane_idx, [&](ushort local_row_idx, ushort local_value_col_idx, float kh0_value) {
@@ -150,19 +114,34 @@ PUBLIC KERNEL(GdnTreeUpdateSolve)(
       return beta_value * (value - exp(prefix_value) * kh0_value);
     });
 
-    for (uint prev_block_idx = 0; prev_block_idx < block_idx; ++prev_block_idx) {
+    const uint num_full_pairs = block_idx / 2;
+    for (uint pair_idx = 0; pair_idx < num_full_pairs; ++pair_idx) {
+      PairMatrixFragment a_frag;
+      PairValueFragment u_prev_frag;
+
+      const device float* a_pair = a_blocks + (block_idx * num_col_pairs + pair_idx) * (BT * 2 * BT);
+      const device float* u_prev_block = u_head_tile + pair_idx * 2 * BT * head_v_dim;
+      if (tile_rows == BT && tile_value_cols == BV) {
+        a_frag.load_from(lane_idx, fragment_source(a_pair, 2 * BT));
+        u_prev_frag.load_from(lane_idx, fragment_source(u_prev_block, head_v_dim));
+      } else {
+        a_frag.load_from(lane_idx, fragment_source(a_pair, 2 * BT).bounded(tile_rows, 2 * BT));
+        u_prev_frag.load_from(lane_idx, fragment_source(u_prev_block, head_v_dim).bounded(2 * BT, tile_value_cols));
+      }
+      a_frag.map([](float value) { return -value; });
+      fragment_mma(acc, a_frag, u_prev_frag);
+    }
+
+    for (uint prev_block_idx = num_full_pairs * 2; prev_block_idx < block_idx; ++prev_block_idx) {
       const uint prev_row_base = prev_block_idx * BT;
-      const uint prev_tile_rows = min(BT, tree_size - prev_row_base);
       BlockMatrixFragment a_frag;
       ValueTileFragment u_prev_frag;
 
-      const device float* a_block = a_matrix + row_base * tree_size + prev_row_base;
+      const device float* a_block =
+          a_blocks + (block_idx * num_col_pairs + prev_block_idx / 2) * (BT * 2 * BT) + (prev_block_idx % 2) * BT;
+      a_frag.load_from(lane_idx, fragment_source(a_block, 2 * BT).bounded(tile_rows, BT));
       const device float* u_prev_block = u_head_tile + prev_row_base * head_v_dim;
-      a_frag.load_from(lane_idx, fragment_source(a_block, tree_size).bounded(tile_rows, prev_tile_rows));
-      u_prev_frag.load_from(
-          lane_idx,
-          fragment_source(u_prev_block, head_v_dim).bounded(prev_tile_rows, tile_value_cols)
-      );
+      u_prev_frag.load_from(lane_idx, fragment_source(u_prev_block, head_v_dim).bounded(BT, tile_value_cols));
       a_frag.map([](float value) { return -value; });
       fragment_mma(acc, a_frag, u_prev_frag);
     }
@@ -171,8 +150,8 @@ PUBLIC KERNEL(GdnTreeUpdateSolve)(
     TileFragment solved;
     solved.clear();
 
-    const device float* inv_block = a_inv_matrix + row_base * tree_size + row_base;
-    inv_frag.load_from(lane_idx, fragment_source(inv_block, tree_size).bounded(tile_rows, tile_rows));
+    const device float* inv_block = a_inv_blocks + block_idx * (BT * BT);
+    inv_frag.load_from(lane_idx, fragment_source(inv_block, BT).bounded(tile_rows, tile_rows));
     fragment_mma(solved, inv_frag, acc);
     solved.store_safe(lane_idx, u_head_tile + row_base * head_v_dim, head_v_dim, short2(tile_value_cols, tile_rows));
 
