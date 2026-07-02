@@ -1,6 +1,6 @@
 use std::{pin::Pin, time::Instant};
 
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, stream};
 use hanashi::{Encoding as EncodingTrait, chat::Encoding};
 use shoji::{
     traits::{
@@ -112,7 +112,7 @@ impl Session {
             new_all_tokens[curr_all_tokens.len()..].to_vec()
         };
 
-        let mut stream_state = StreamingState {
+        let stream_state = StreamingState {
             config: config.clone(),
             cancel_token: cancel_token.clone(),
             encoding: &mut self.encoding,
@@ -125,10 +125,31 @@ impl Session {
             total_tokens_output: 0,
         };
 
-        self.instance
-            .stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token)
-            .map(move |event| Self::build_output(event, &mut stream_state))
-            .boxed()
+        let stream = self.instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token);
+        stream::unfold(
+            (stream, stream_state, false, false),
+            |(mut inner, mut state, terminated, tail_done)| async move {
+                if tail_done {
+                    return None;
+                }
+                match inner.next().await {
+                    Some(event) => {
+                        let output = Self::build_output(event, &mut state);
+                        let terminated = terminated || matches!(&output, Ok(out) if out.finish_reason.is_some());
+                        Some((output, (inner, state, terminated, false)))
+                    },
+                    None => {
+                        if !terminated && state.cancel_token.is_cancelled() {
+                            let output = Ok(Self::render_output(&state, Some(ChatReplyFinishReason::Cancelled)));
+                            Some((output, (inner, state, true, true)))
+                        } else {
+                            None
+                        }
+                    },
+                }
+            },
+        )
+        .boxed()
     }
 
     pub fn peak_memory_usage(&self) -> Option<usize> {
@@ -176,25 +197,6 @@ impl Session {
             });
         }
 
-        let message = match state.encoding.state().messages.last() {
-            Some(msg) => msg,
-            None => return Ok(Output::default()),
-        };
-
-        let tool_calls_states = message
-            .content
-            .iter()
-            .filter_map(|block| match block {
-                ChatContentBlock::ToolCall {
-                    value,
-                } => Some(ToolCallState::Finished(value.clone())),
-                ChatContentBlock::ToolCallCandidate {
-                    value,
-                } => Some(ToolCallState::Candidate(value.json.clone())),
-                _ => None,
-            })
-            .collect();
-
         let tokens_count = state.encoding.state().tokens.len();
         let finish_reason = if state.cancel_token.is_cancelled() {
             Some(ChatReplyFinishReason::Cancelled)
@@ -212,13 +214,42 @@ impl Session {
             None
         };
 
-        Ok(Output {
+        Ok(Self::render_output(state, finish_reason))
+    }
+
+    fn render_output(
+        state: &StreamingState,
+        finish_reason: Option<ChatReplyFinishReason>,
+    ) -> Output {
+        let Some(message) = state.encoding.state().messages.last() else {
+            return Output {
+                finish_reason,
+                stats: state.get_stats(),
+                ..Default::default()
+            };
+        };
+
+        let tool_calls = message
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ChatContentBlock::ToolCall {
+                    value,
+                } => Some(ToolCallState::Finished(value.clone())),
+                ChatContentBlock::ToolCallCandidate {
+                    value,
+                } => Some(ToolCallState::Candidate(value.json.clone())),
+                _ => None,
+            })
+            .collect();
+
+        Output {
             reasoning: message.reasoning(),
             text: message.text(),
-            tool_calls: tool_calls_states,
+            tool_calls,
             finish_reason,
             stats: state.get_stats(),
-        })
+        }
     }
 }
 
