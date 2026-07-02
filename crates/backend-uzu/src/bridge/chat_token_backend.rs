@@ -13,7 +13,7 @@ use shoji::{
             Error as BackendError, Instance as BackendInstance,
             chat_token::{
                 Instance as ChatTokenBackendInstance, StreamInput as ChatTokenStreamInput,
-                StreamOutput as ChatTokenStreamOutput,
+                StreamOutput as ChatTokenStreamOutput, TokenStreamOutput,
             },
         },
     },
@@ -113,12 +113,6 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         #[allow(clippy::await_holding_lock)]
         let stream = async_stream::stream! {
-            let spec_options = self.speculator.as_ref().map(|(speculator, budget)| LanguageModelStreamSpeculatorOptions {
-                speculator: speculator.as_ref(),
-                speculation_budget: *budget,
-                trie_creation_config: Default::default(),
-            });
-
             let model_guard = match model.lock() {
                 Ok(model) => model,
                 Err(err) => {
@@ -149,8 +143,14 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             let options = LanguageModelStreamOptions {
                 sampling_method: get_sampling_method::<B>(&model_guard, &config.sampling_policy),
                 grammar,
-                speculator: spec_options,
+                speculator: self.speculator.as_ref().map(|(speculator, budget)| LanguageModelStreamSpeculatorOptions {
+                    speculator: speculator.as_ref(),
+                    speculation_budget: *budget,
+                    trie_creation_config: Default::default(),
+                }),
             };
+
+            yield Ok(TokenStreamOutput::PrefillStarted);
             let iterator = match model_guard.stream(input, &mut state_guard, options) {
                 Ok(iter) => iter,
                 Err(err) => {
@@ -158,6 +158,8 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                     return;
                 },
             };
+            yield Ok(TokenStreamOutput::PrefillFinished);
+
             if token_limit == 0 {
                 return;
             }
@@ -166,7 +168,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             for result in iterator {
                 match result {
                     Ok(token) => {
-                        yield Ok(token);
+                        yield Ok(TokenStreamOutput::Token(token));
                         token_count += 1;
                         if token_count >= token_limit {
                             return;

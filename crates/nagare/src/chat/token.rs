@@ -82,6 +82,8 @@ impl Session {
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
+        let time_start = Instant::now();
+
         let curr_all_tokens = self.encoding.state().tokens.clone();
         let new_all_tokens = match self.build_input(input) {
             Ok(input) => input,
@@ -119,7 +121,10 @@ impl Session {
             max_context_length: self.instance.max_context_length(),
             stop_token_ids: self.stop_token_ids.clone(),
 
-            time_start: Instant::now(),
+            time_start,
+            time_last_token: None,
+            time_prefill_start: None,
+            time_prefill_finish: None,
             time_first_token: None,
             total_tokens_input: self.input_tokens.len(),
             total_tokens_output: 0,
@@ -181,40 +186,37 @@ impl Session {
         event: Result<StreamOutput, Error>,
         state: &mut StreamingState,
     ) -> Result<Output, ChatSessionError> {
-        let token = event.map_err(|err| ChatSessionError::Backend {
+        let now = Instant::now();
+        let result = event.map_err(|err| ChatSessionError::Backend {
             message: err.to_string(),
         })?;
 
-        let now = Instant::now();
-        if state.total_tokens_output == 0 {
-            state.time_first_token = Some(now)
+        match result {
+            StreamOutput::PrefillStarted => {
+                state.time_prefill_start = Some(now);
+                Ok(Self::render_output(state, None))
+            },
+            StreamOutput::PrefillFinished => {
+                state.time_prefill_finish = Some(now);
+                Ok(Self::render_output(state, None))
+            },
+            StreamOutput::Token(token) => {
+                if state.total_tokens_output == 0 {
+                    state.time_first_token = Some(now)
+                }
+                state.total_tokens_output += 1;
+                state.time_last_token = Some(now);
+
+                if let Err(err) = state.encoding.decode(vec![token as TokenId]) {
+                    return Err(ChatSessionError::Backend {
+                        message: err.to_string(),
+                    });
+                }
+
+                let finish_reason = state.get_finish_reason(token);
+                Ok(Self::render_output(state, finish_reason))
+            },
         }
-        state.total_tokens_output += 1;
-
-        if let Err(err) = state.encoding.decode(vec![token as TokenId]) {
-            return Err(ChatSessionError::Backend {
-                message: err.to_string(),
-            });
-        }
-
-        let tokens_count = state.encoding.state().tokens.len();
-        let finish_reason = if state.cancel_token.is_cancelled() {
-            Some(ChatReplyFinishReason::Cancelled)
-        } else if state.stop_token_ids.contains(&token) {
-            Some(ChatReplyFinishReason::Stop)
-        } else if let Some(token_limit) = state.config.token_limit
-            && state.total_tokens_output >= token_limit as usize
-        {
-            Some(ChatReplyFinishReason::Length)
-        } else if let Some(length) = state.max_context_length
-            && tokens_count >= length
-        {
-            Some(ChatReplyFinishReason::ContextLimitReached)
-        } else {
-            None
-        };
-
-        Ok(Self::render_output(state, finish_reason))
     }
 
     fn render_output(
@@ -261,32 +263,69 @@ struct StreamingState<'a> {
     stop_token_ids: Box<[u64]>,
 
     time_start: Instant,
+    time_last_token: Option<Instant>,
+    time_prefill_start: Option<Instant>,
+    time_prefill_finish: Option<Instant>,
     time_first_token: Option<Instant>,
     total_tokens_input: usize,
     total_tokens_output: usize,
 }
 
 impl StreamingState<'_> {
-    fn get_stats(&self) -> ChatReplyStats {
-        let total_duration = self.time_start.elapsed().as_secs_f64();
-        let time_to_first_token = self.time_first_token.map(|time| time.duration_since(self.time_start).as_secs_f64());
+    fn get_finish_reason(
+        &self,
+        token: u64,
+    ) -> Option<ChatReplyFinishReason> {
+        let tokens_count = self.encoding.state().tokens.len();
+        if self.cancel_token.is_cancelled() {
+            Some(ChatReplyFinishReason::Cancelled)
+        } else if self.stop_token_ids.contains(&token) {
+            Some(ChatReplyFinishReason::Stop)
+        } else if let Some(token_limit) = self.config.token_limit
+            && self.total_tokens_output >= token_limit as usize
+        {
+            Some(ChatReplyFinishReason::Length)
+        } else if let Some(length) = self.max_context_length
+            && tokens_count >= length
+        {
+            Some(ChatReplyFinishReason::ContextLimitReached)
+        } else {
+            None
+        }
+    }
 
-        let prefill_tokens_per_second = match time_to_first_token {
-            Some(ttft) if ttft > 0.0 => Some(self.total_tokens_input as f64 / ttft),
-            _ => None,
+    fn get_stats(&self) -> ChatReplyStats {
+        let total_duration = self.time_last_token.unwrap_or(Instant::now()).duration_since(self.time_start);
+        let ttft_duration = if let (Some(start), Some(finish)) = (self.time_prefill_start, self.time_first_token) {
+            Some(finish.duration_since(start))
+        } else {
+            None
         };
-        let generate_tokens_per_second = match time_to_first_token {
-            Some(ttft) if self.total_tokens_output > 0 && total_duration > ttft => {
-                Some((self.total_tokens_output - 1) as f64 / (total_duration - ttft))
-            },
-            _ => None,
+
+        let prefill_duration = if let (Some(start), Some(finish)) = (self.time_prefill_start, self.time_prefill_finish)
+        {
+            Some(finish.duration_since(start))
+        } else {
+            None
+        };
+        let prefill_tps = prefill_duration.map(|duration| self.total_tokens_input as f64 / duration.as_secs_f64());
+
+        let generate_duration = if let (Some(start), Some(finish)) = (self.time_first_token, self.time_last_token) {
+            Some(finish.duration_since(start))
+        } else {
+            None
+        };
+        let generate_tps = if self.total_tokens_output > 0 {
+            generate_duration.map(|duration| (self.total_tokens_output - 1) as f64 / duration.as_secs_f64())
+        } else {
+            None
         };
 
         ChatReplyStats {
-            duration: total_duration,
-            time_to_first_token,
-            prefill_tokens_per_second,
-            generate_tokens_per_second,
+            duration: total_duration.as_secs_f64(),
+            time_to_first_token: ttft_duration.map(|time| time.as_secs_f64()),
+            prefill_tokens_per_second: prefill_tps,
+            generate_tokens_per_second: generate_tps,
             tokens_count_input: Some(self.total_tokens_input as u32),
             tokens_count_output: Some(self.total_tokens_output as u32),
             memory_used_bytes: None, // TODO

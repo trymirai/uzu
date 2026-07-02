@@ -7,8 +7,14 @@ use crate::{
     types::session::chat::{ChatConfig, ChatReplyConfig},
 };
 
+pub enum TokenStreamOutput {
+    PrefillStarted,
+    PrefillFinished,
+    Token(u64),
+}
+
 pub type StreamInput = Vec<u64>;
-pub type StreamOutput = u64;
+pub type StreamOutput = TokenStreamOutput;
 
 pub trait Backend: Send + Sync {
     fn instance<'a>(
