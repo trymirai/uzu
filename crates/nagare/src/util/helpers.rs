@@ -5,10 +5,7 @@ use hanashi::{
     Encoding as EncodingTrait,
     chat::{Config, Context as HanashiContext, Encoding, TokenizerLocation, hanashi::Config as HanashiConfig},
 };
-use shoji::{
-    traits::backend::chat_message::Output,
-    types::model::{Model, ModelFamily},
-};
+use shoji::{traits::backend::chat_message::Output, types::model::Model};
 
 use crate::chat::ChatSessionError;
 
@@ -22,9 +19,11 @@ pub fn build_encoding(
     reference: String,
     model: &Model,
 ) -> Result<Encoding, io::Error> {
-    let family: &ModelFamily =
-        model.family.as_ref().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing model family"))?;
-    let model_name = family.metadata.name.to_lowercase();
+    let model_name = match model.family.as_ref() {
+        Some(family) => family.metadata.name.clone(),
+        None => model.identifier.clone(),
+    }
+    .to_lowercase();
     let hanashi_config: HanashiConfig = serde_json::from_value(serde_json::json!({ "name": model_name }))
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
     let encoding_config = Config::Hanashi(hanashi_config);
