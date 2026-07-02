@@ -89,6 +89,44 @@ pub fn random_buffer<B: Backend>(
     })
 }
 
+pub fn zeroed_buffer<B: Backend>(
+    context: &B::Context,
+    shape: &[usize],
+    data_type: DataType,
+) -> Allocation<B> {
+    let element_count: usize = shape.iter().product();
+    macro_rules! zeros {
+        ($element:ty) => {
+            context.create_array_from(shape, &vec![<$element>::default(); element_count]).into_allocation()
+        };
+    }
+    match data_type {
+        DataType::U8 => zeros!(u8),
+        DataType::I8 => zeros!(i8),
+        DataType::U16 => zeros!(u16),
+        DataType::I16 => zeros!(i16),
+        DataType::U32 => zeros!(u32),
+        DataType::I32 => zeros!(i32),
+        DataType::U64 => zeros!(u64),
+        DataType::I64 => zeros!(i64),
+        _ => random_buffer::<B>(context, shape, data_type, 0),
+    }
+}
+
+pub fn measurement_buffer<B: Backend>(
+    context: &B::Context,
+    shape: &[usize],
+    data_type: DataType,
+    seed: u64,
+) -> Allocation<B> {
+    match data_type {
+        DataType::F16 | DataType::BF16 | DataType::F32 | DataType::F64 => {
+            random_buffer::<B>(context, shape, data_type, seed)
+        },
+        _ => zeroed_buffer::<B>(context, shape, data_type),
+    }
+}
+
 pub fn create_context<B: Backend>() -> Rc<<B as Backend>::Context> {
     B::Context::new().unwrap_or_else(|_| panic!("Failed to create context for {}", std::any::type_name::<B>()))
 }
