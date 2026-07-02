@@ -3811,6 +3811,7 @@ dependencies = [
  "hanashi",
  "indexmap 2.14.0",
  "inventory",
+ "keisoku",
  "napi",
  "napi-build",
  "napi-derive",

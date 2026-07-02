@@ -23,7 +23,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     chat::ChatSessionError,
-    util::helpers::{build_encoding, error_stream},
+    util::{
+        helpers::{build_encoding, error_stream},
+        power::PowerRecorder,
+    },
 };
 
 pub struct Session {
@@ -83,6 +86,7 @@ impl Session {
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
         let time_start = Instant::now();
+        let power_recorder = <dyn PowerRecorder>::start();
 
         let curr_all_tokens = self.encoding.state().tokens.clone();
         let new_all_tokens = match self.build_input(input) {
@@ -120,6 +124,7 @@ impl Session {
             encoding: &mut self.encoding,
             max_context_length: self.instance.max_context_length(),
             stop_token_ids: self.stop_token_ids.clone(),
+            power_recorder,
 
             time_start,
             time_last_token: None,
@@ -227,10 +232,11 @@ impl Session {
         state: &StreamingState,
         finish_reason: Option<ChatReplyFinishReason>,
     ) -> Output {
+        let have_finish_reason = finish_reason.is_some();
         let Some(message) = state.encoding.state().messages.last() else {
             return Output {
                 finish_reason,
-                stats: state.get_stats(),
+                stats: state.get_stats(have_finish_reason),
                 ..Default::default()
             };
         };
@@ -254,7 +260,7 @@ impl Session {
             text: message.text(),
             tool_calls,
             finish_reason,
-            stats: state.get_stats(),
+            stats: state.get_stats(have_finish_reason),
         }
     }
 }
@@ -265,6 +271,7 @@ struct StreamingState<'a> {
     encoding: &'a mut Encoding,
     max_context_length: Option<usize>,
     stop_token_ids: Box<[u64]>,
+    power_recorder: Box<dyn PowerRecorder>,
 
     time_start: Instant,
     time_last_token: Option<Instant>,
@@ -299,7 +306,12 @@ impl StreamingState<'_> {
         }
     }
 
-    fn get_stats(&self) -> ChatReplyStats {
+    fn get_stats(
+        &self,
+        with_power_stats: bool,
+    ) -> ChatReplyStats {
+        let power_stats = with_power_stats.then(|| self.power_recorder.stop()).flatten();
+
         let total_duration = self.time_last_token.unwrap_or(Instant::now()).duration_since(self.time_start);
         let ttft_duration = if let (Some(start), Some(finish)) = (self.time_prefill_start, self.time_first_token) {
             Some(finish.duration_since(start))
@@ -334,7 +346,7 @@ impl StreamingState<'_> {
             tokens_count_input: Some(self.total_tokens_input as u32),
             tokens_count_output: Some(self.total_tokens_output as u32),
             memory_used_bytes: self.memory_usage.map(|bytes| bytes as i64),
-            power_stats: None, // TODO
+            power_stats,
         }
     }
 }

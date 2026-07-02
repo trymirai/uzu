@@ -79,6 +79,9 @@ tsify = { workspace = true, optional = true }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 uuid.workspace = true
 
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
+keisoku.workspace = true
+
 [build-dependencies]
 napi-build = { workspace = true, optional = true }
 pyo3-build-config = { workspace = true, optional = true }
