@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use shoji::traits::State as LlmInstanceState;
 
 use crate::{
@@ -23,9 +21,5 @@ impl<B: Backend> LlmInstanceState for UzuChatTokenBackendInstanceState<B> {
         Box::new(Self {
             value: self.value.clone(),
         })
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }

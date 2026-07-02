@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     path::PathBuf,
     pin::Pin,
     task::{Context, Poll},
@@ -104,7 +105,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, BackendError>> + Send + 'a>> {
         let model = self.model.clone();
-        let state = match state.as_any_mut().downcast_mut::<UzuChatTokenBackendInstanceState<B>>() {
+        let state = match (state as &mut dyn Any).downcast_mut::<UzuChatTokenBackendInstanceState<B>>() {
             Some(state) => state.value.clone(),
             None => return error_stream("unexpected state type for uzu chat token instance".to_string()),
         };

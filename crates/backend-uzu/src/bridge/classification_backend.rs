@@ -1,4 +1,4 @@
-use std::{any::Any, path::PathBuf, pin::Pin};
+use std::{path::PathBuf, pin::Pin};
 
 use futures::{Stream, StreamExt, stream};
 use shoji::traits::{
@@ -70,9 +70,5 @@ struct State;
 impl ShojiState for State {
     fn clone_boxed(&self) -> Box<dyn ShojiState> {
         Box::new(self.clone())
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }

@@ -49,8 +49,6 @@ pub trait Instance: Send + Sync {
     fn peak_memory_usage(&self) -> Option<usize>;
 }
 
-pub trait State: Send + Sync + 'static {
+pub trait State: Send + Sync + Any + 'static {
     fn clone_boxed(&self) -> Box<dyn State>;
-
-    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
