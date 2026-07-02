@@ -43,7 +43,7 @@ macro_rules! block_bench {
             $buffers_parameters: &Parameters,
         ) -> Buffers {
             Buffers {
-                $($buffer_name: $crate::tests::helpers::random_buffer(
+                $($buffer_name: $crate::tests::helpers::measurement_buffer(
                     context,
                     &[$buffer_shape],
                     $buffer_data_type,
@@ -57,12 +57,46 @@ macro_rules! block_bench {
             $build_parameters: &Parameters,
         ) -> $block_type $build_body
 
+        #[allow(unused_variables)]
         pub fn encode(
-            $encode_kernel: &$block_type,
+            $encode_kernel: &mut $block_type,
             $encode_buffers: &mut Buffers,
             $encode_parameters: &Parameters,
             $encode_encoder: &mut $crate::backends::common::Encoder<$crate::backends::metal::Metal>,
         ) $encode_body
+
+        pub fn profile_parameters(
+            context: &$crate::backends::metal::MetalContext,
+            parameters_list: &[Parameters],
+            output_directory: &std::path::Path,
+            window: std::time::Duration,
+        ) {
+            use $crate::tests::profiling::measurement::{Measurement, OUTPUT_BUFFER_ROTATION};
+            let mut lines = vec![format!("{},{}", Parameters::csv_header(), Measurement::csv_header())];
+            for parameters in parameters_list {
+                let mut kernel = build(context, parameters);
+                let mut buffer_sets: Vec<Buffers> =
+                    (0..OUTPUT_BUFFER_ROTATION).map(|_| make_buffers(context, parameters)).collect();
+                let mut rotation_index = 0usize;
+                let measurement = Measurement::measure(context, window, |encoder| {
+                    encode(&mut kernel, &mut buffer_sets[rotation_index % OUTPUT_BUFFER_ROTATION], parameters, encoder);
+                    rotation_index += 1;
+                });
+                eprintln!("{} {:?}: {} samples", NAME, parameters, measurement.power_samples.len());
+                lines.extend(measurement.csv_rows(&parameters.csv_fields()));
+            }
+            let path = output_directory.join(format!("{}.csv", NAME));
+            std::fs::write(&path, lines.join("\n")).unwrap();
+            eprintln!("wrote {} rows to {}", lines.len() - 1, path.display());
+        }
+
+        pub fn profile_and_write(
+            context: &$crate::backends::metal::MetalContext,
+            output_directory: &std::path::Path,
+            window: std::time::Duration,
+        ) {
+            profile_parameters(context, &parameter_grid(), output_directory, window);
+        }
     };
 }
 

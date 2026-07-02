@@ -9,6 +9,8 @@ const WARMUP_BATCHES: usize = 2;
 const BATCH_SIZE: u64 = 64;
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
+pub(crate) const OUTPUT_BUFFER_ROTATION: usize = 4;
+
 #[derive(Clone, Copy)]
 pub struct PowerSample {
     pub elapsed_milliseconds: u64,
@@ -21,8 +23,7 @@ pub struct PowerSample {
 }
 
 impl PowerSample {
-    const CSV_COLUMNS: &str =
-        "elapsed_milliseconds,cpu_watts,gpu_watts,gpu_sram_watts,ram_watts,dram_read_gigabytes_per_second,dram_write_gigabytes_per_second";
+    const CSV_COLUMNS: &str = "elapsed_milliseconds,cpu_watts,gpu_watts,gpu_sram_watts,ram_watts,dram_read_gigabytes_per_second,dram_write_gigabytes_per_second";
 
     fn csv_row(&self) -> String {
         format!(
