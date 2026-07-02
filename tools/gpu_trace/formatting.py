@@ -6,7 +6,6 @@ from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 
 from .gputrace import BufferElement, BufferStats, CaptureInfo
 from .models import KernelCounterStats, TraceExport
@@ -136,9 +135,7 @@ def _print_kernel_detail(kcs: KernelCounterStats) -> None:
     bottleneck = _find_bottleneck(counter_dict)
     if bottleneck:
         bn_name, bn_value = bottleneck
-        table.add_row(
-            "[red]⚠ Bottleneck[/]", f"[red bold]{bn_name} ({bn_value:.1f}%)[/]"
-        )
+        table.add_row("[red]⚠ Bottleneck[/]", f"[red bold]{bn_name} ({bn_value:.1f}%)[/]")
 
     console.print(table)
 
@@ -186,12 +183,8 @@ def print_summary(export: TraceExport, verbose: bool = False) -> None:
         f"[{t_color}]{t_val}[/]",
         _fmt_ns(util.target_active_ns),
     )
-    util_table.add_row(
-        "Window Util (peak)", _bar(window_pct), f"[{w_color}]{w_val}[/]", "when active"
-    )
-    util_table.add_row(
-        "Command Buffers", "", f"[cyan]{util.command_buffer_count}[/]", ""
-    )
+    util_table.add_row("Window Util (peak)", _bar(window_pct), f"[{w_color}]{w_val}[/]", "when active")
+    util_table.add_row("Command Buffers", "", f"[cyan]{util.command_buffer_count}[/]", "")
     console.print(util_table)
     console.print()
 
@@ -209,22 +202,18 @@ def print_summary(export: TraceExport, verbose: bool = False) -> None:
         for state_name, duration in sorted(states.items(), key=lambda x: -x[1]):
             ps_table.add_row(state_name, _fmt_ns(duration))
         if induced_count:
-            ps_table.add_row(
-                "[dim]⚠ Induced states[/]", f"[dim]{induced_count} intervals[/]"
-            )
+            ps_table.add_row("[dim]⚠ Induced states[/]", f"[dim]{induced_count} intervals[/]")
         console.print(ps_table)
         console.print()
 
     # Counters available
     if export.counter_definitions:
-        console.print(
-            f"[dim]{len(export.counter_definitions)} GPU hardware counters available[/]"
-        )
+        console.print(f"[dim]{len(export.counter_definitions)} GPU hardware counters available[/]")
         console.print()
 
     # Dispatch summary
     console.print(
-        f"[bold]Kernel Dispatches:[/] {len(export.dispatches):,} total, {len(export.kernel_summary)} unique, {len(export.shaders)} shaders compiled"
+        f"[bold]Kernel Dispatches:[/] {len(export.dispatches):,} total, {len(export.kernel_summary)} unique, {len(export.shaders)} shaders compiled",
     )
     console.print()
 
@@ -243,16 +232,10 @@ def print_summary(export: TraceExport, verbose: bool = False) -> None:
             no_wrap=True,
             overflow="ellipsis",
         )
-        kernel_table.add_column(
-            "Total", justify="right", style="green", no_wrap=True, min_width=10
-        )
+        kernel_table.add_column("Total", justify="right", style="green", no_wrap=True, min_width=10)
         kernel_table.add_column("Share", no_wrap=True, min_width=18)
-        kernel_table.add_column(
-            "Count", justify="right", style="dim", no_wrap=True, min_width=6
-        )
-        kernel_table.add_column(
-            "Avg", justify="right", style="cyan", no_wrap=True, min_width=10
-        )
+        kernel_table.add_column("Count", justify="right", style="dim", no_wrap=True, min_width=6)
+        kernel_table.add_column("Avg", justify="right", style="cyan", no_wrap=True, min_width=10)
 
         total_ns = sum(k.total_ns for k in export.kernel_summary)
         for k in export.kernel_summary[:15]:
@@ -275,7 +258,7 @@ def print_summary(export: TraceExport, verbose: bool = False) -> None:
                 Panel(
                     "[bold magenta]📊 Top 10 Kernels - Detailed HW Counters[/]",
                     box=box.ROUNDED,
-                )
+                ),
             )
             console.print()
             for kcs in export.kernel_counter_stats[:10]:
@@ -297,15 +280,9 @@ def print_summary(export: TraceExport, verbose: bool = False) -> None:
                 overflow="ellipsis",
             )
             counter_table.add_column("ALU", justify="right", no_wrap=True, min_width=8)
-            counter_table.add_column(
-                "BufLoad", justify="right", no_wrap=True, min_width=9
-            )
-            counter_table.add_column(
-                "BufStore", justify="right", no_wrap=True, min_width=9
-            )
-            counter_table.add_column(
-                "Occupancy", justify="right", no_wrap=True, min_width=10
-            )
+            counter_table.add_column("BufLoad", justify="right", no_wrap=True, min_width=9)
+            counter_table.add_column("BufStore", justify="right", no_wrap=True, min_width=9)
+            counter_table.add_column("Occupancy", justify="right", no_wrap=True, min_width=10)
             counter_table.add_column("LLC", justify="right", no_wrap=True, min_width=7)
 
             for kcs in export.kernel_counter_stats[:10]:
@@ -343,9 +320,7 @@ def print_comparison(
     label2: str,
 ) -> None:
     console.print()
-    console.print(
-        Panel(f"[bold]GPU Trace Comparison[/]\n{label1} vs {label2}", box=box.ROUNDED)
-    )
+    console.print(Panel(f"[bold]GPU Trace Comparison[/]\n{label1} vs {label2}", box=box.ROUNDED))
     console.print()
 
     def _diff_str(v1: float, v2: float) -> tuple[str, str]:
@@ -393,9 +368,7 @@ def print_comparison(
 
     # Kernel comparison
     kernel_table = Table(title="[bold]Top Kernels Comparison[/]", box=box.ROUNDED)
-    kernel_table.add_column(
-        "Kernel", style="white", max_width=40, no_wrap=True, overflow="ellipsis"
-    )
+    kernel_table.add_column("Kernel", style="white", max_width=40, no_wrap=True, overflow="ellipsis")
     kernel_table.add_column(label1, justify="right", style="cyan")
     kernel_table.add_column(label2, justify="right", style="cyan")
     kernel_table.add_column("Diff", justify="right")

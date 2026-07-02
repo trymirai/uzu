@@ -121,19 +121,12 @@ def extract_buffer_labels(gputrace: Path) -> dict[str, str]:
         data = (gputrace / fname).read_bytes()
         strings = _extract_strings(data)
 
-        resource_refs = [
-            (off, s)
-            for off, s in strings
-            if re.match(r"MTL(Buffer|Texture)-\d+-\d+", s)
-        ]
+        resource_refs = [(off, s) for off, s in strings if re.match(r"MTL(Buffer|Texture)-\d+-\d+", s)]
 
         label_strings = [
             (off, s)
             for off, s in strings
-            if " " in s
-            and len(s) >= 5
-            and not s.startswith("MTL")
-            and not s.startswith("/")
+            if " " in s and len(s) >= 5 and not s.startswith("MTL") and not s.startswith("/")
         ]
 
         for roff, rname in resource_refs:
@@ -198,7 +191,7 @@ def extract_shader_info(
 _LAYOUT_FORMATS: dict[str, tuple[str, int, int]] = {
     "float": ("f", 1, 1),
     "float2": ("ff", 2, 2),
-    "float3": ("ffff", 4, 3),        # Metal simd_float3 is 16-byte aligned; 4th float is padding
+    "float3": ("ffff", 4, 3),  # Metal simd_float3 is 16-byte aligned; 4th float is padding
     "packed_float3": ("fff", 3, 3),  # Metal packed_float3, no alignment padding
     "float4": ("ffff", 4, 4),
     "uint32": ("I", 1, 1),
@@ -265,9 +258,7 @@ def read_buffer(
             if n_report == 1:
                 field_entries.append((f"field{ci}", values[vi]))
             else:
-                field_entries.append(
-                    (f"field{ci}", list(values[vi : vi + n_report]))
-                )
+                field_entries.append((f"field{ci}", list(values[vi : vi + n_report])))
             vi += n_read
         results.append(BufferElement(index=idx, fields=tuple(field_entries)))
 
@@ -307,7 +298,7 @@ def list_resources(gputrace: Path) -> CaptureInfo:
                 size_bytes=size,
                 label=label,
                 kind=kind,
-            )
+            ),
         )
 
     return CaptureInfo(
