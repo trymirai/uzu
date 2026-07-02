@@ -143,7 +143,7 @@ impl ClassificationSession {
                         let time_before_forward_pass = Instant::now();
                         let mut stream = instance.stream(&input, backend_state.as_mut(), (), cancel_token);
                         let output = stream.next().await;
-                        duration_forward_pass = Instant::now().duration_since(time_before_forward_pass);
+                        duration_forward_pass = time_before_forward_pass.elapsed();
                         drop(stream);
 
                         match output {
@@ -161,7 +161,7 @@ impl ClassificationSession {
             };
 
             let output = result.map(|result| {
-                let time_before = Instant::now();
+                let time_before_postprocessing = Instant::now();
                 let logits_f64 = result.logits.iter().map(|&value| value as f64).collect::<Vec<f64>>();
                 let (predicted_label, confidence) = result
                     .probabilities
@@ -173,9 +173,8 @@ impl ClassificationSession {
                 let preprocessing_duration = duration_preprocessing.as_secs_f64();
                 let forward_pass_duration = duration_forward_pass.as_secs_f64();
 
-                let time_now = Instant::now();
-                let postprocessing_duration = time_now.duration_since(time_before).as_secs_f64();
-                let total_duration = time_now.duration_since(time_start).as_secs_f64();
+                let postprocessing_duration = time_before_postprocessing.elapsed().as_secs_f64();
+                let total_duration = time_start.elapsed().as_secs_f64();
 
                 let tokens_per_second = if forward_pass_duration > 0.0 {
                     tokens_count as f64 / forward_pass_duration

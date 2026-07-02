@@ -1,4 +1,7 @@
-use std::{pin::Pin, time::Instant};
+use std::{
+    pin::Pin,
+    time::{Duration, Instant},
+};
 
 use futures::{Stream, StreamExt, stream};
 use hanashi::{Encoding as EncodingTrait, chat::Encoding};
@@ -129,7 +132,6 @@ impl Session {
             time_start,
             time_last_token: None,
             time_prefill_start: None,
-            time_prefill_finish: None,
             time_first_token: None,
             total_tokens_input: self.input_tokens.len(),
             total_tokens_output: 0,
@@ -145,9 +147,9 @@ impl Session {
                     return None;
                 }
 
-                state.memory_usage = instance.peak_memory_usage();
                 match inner.next().await {
                     Some(event) => {
+                        state.memory_usage = instance.peak_memory_usage();
                         let output = Self::build_output(event, &mut state);
                         let terminated = terminated || matches!(&output, Ok(out) if out.finish_reason.is_some());
                         Some((output, (inner, state, terminated, false)))
@@ -201,13 +203,15 @@ impl Session {
         })?;
 
         match result {
+            StreamOutput::LimitReached => Ok(Self::render_output(state, Some(ChatReplyFinishReason::Length))),
             StreamOutput::PrefillStarted => {
                 state.time_prefill_start = Some(now);
-                Ok(Self::render_output(state, None))
-            },
-            StreamOutput::PrefillFinished => {
-                state.time_prefill_finish = Some(now);
-                Ok(Self::render_output(state, None))
+                // No token has been decoded yet, so the encoding's last message is still the
+                // input message. Emit a stats-only chunk instead of rendering it as the reply.
+                Ok(Output {
+                    stats: state.get_stats(false),
+                    ..Default::default()
+                })
             },
             StreamOutput::Token(token) => {
                 if state.total_tokens_output == 0 {
@@ -276,7 +280,6 @@ struct StreamingState<'a> {
     time_start: Instant,
     time_last_token: Option<Instant>,
     time_prefill_start: Option<Instant>,
-    time_prefill_finish: Option<Instant>,
     time_first_token: Option<Instant>,
     total_tokens_input: usize,
     total_tokens_output: usize,
@@ -308,9 +311,9 @@ impl StreamingState<'_> {
 
     fn get_stats(
         &self,
-        with_power_stats: bool,
+        last_stat: bool,
     ) -> ChatReplyStats {
-        let power_stats = with_power_stats.then(|| self.power_recorder.stop()).flatten();
+        let power_stats = last_stat.then(|| self.power_recorder.stop()).flatten();
 
         let total_duration = self.time_last_token.unwrap_or(Instant::now()).duration_since(self.time_start);
         let ttft_duration = if let (Some(start), Some(finish)) = (self.time_prefill_start, self.time_first_token) {
@@ -318,25 +321,17 @@ impl StreamingState<'_> {
         } else {
             None
         };
-
-        let prefill_duration = if let (Some(start), Some(finish)) = (self.time_prefill_start, self.time_prefill_finish)
-        {
-            Some(finish.duration_since(start))
-        } else {
-            None
-        };
-        let prefill_tps = prefill_duration.map(|duration| self.total_tokens_input as f64 / duration.as_secs_f64());
+        let prefill_tps = ttft_duration.and_then(|duration| {
+            (self.total_tokens_input > 0 && !duration.is_zero())
+                .then(|| self.total_tokens_input as f64 / duration.as_secs_f64())
+        });
 
         let generate_duration = if let (Some(start), Some(finish)) = (self.time_first_token, self.time_last_token) {
             Some(finish.duration_since(start))
         } else {
             None
         };
-        let generate_tps = if self.total_tokens_output > 0 {
-            generate_duration.map(|duration| (self.total_tokens_output - 1) as f64 / duration.as_secs_f64())
-        } else {
-            None
-        };
+        let generate_tps = calculate_rate(self.total_tokens_output, generate_duration);
 
         ChatReplyStats {
             duration: total_duration.as_secs_f64(),
@@ -345,8 +340,24 @@ impl StreamingState<'_> {
             generate_tokens_per_second: generate_tps,
             tokens_count_input: Some(self.total_tokens_input as u32),
             tokens_count_output: Some(self.total_tokens_output as u32),
-            memory_used_bytes: self.memory_usage.map(|bytes| bytes as i64),
+            memory_used_bytes: last_stat.then(|| self.memory_usage.map(|bytes| bytes as i64)).flatten(),
             power_stats,
         }
     }
+}
+
+fn calculate_rate(
+    tokens: usize,
+    duration: Option<Duration>,
+) -> Option<f64> {
+    if tokens < 2 {
+        return None;
+    }
+
+    let duration = duration?;
+    if duration.is_zero() {
+        return None;
+    }
+
+    Some((tokens - 1) as f64 / duration.as_secs_f64())
 }

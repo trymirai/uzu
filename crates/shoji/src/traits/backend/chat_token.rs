@@ -8,8 +8,8 @@ use crate::{
 };
 
 pub enum TokenStreamOutput {
+    LimitReached,
     PrefillStarted,
-    PrefillFinished,
     Token(u64),
 }
 

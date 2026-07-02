@@ -158,27 +158,28 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                     return;
                 },
             };
-            yield Ok(TokenStreamOutput::PrefillFinished);
 
+            // here additional condition to prevent iterator start
             if token_limit == 0 {
+                yield Ok(TokenStreamOutput::LimitReached);
                 return;
             }
 
             let mut token_count = 0usize;
-            for result in iterator {
+            for result in iterator.take(token_limit) {
                 match result {
                     Ok(token) => {
                         yield Ok(TokenStreamOutput::Token(token));
                         token_count += 1;
-                        if token_count >= token_limit {
-                            return;
-                        }
                     },
                     Err(err) => {
                         yield Err(BackendError::from(err.to_string()));
                         return;
                     },
                 }
+            }
+            if token_count >= token_limit {
+                yield Ok(TokenStreamOutput::LimitReached);
             }
         };
 

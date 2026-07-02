@@ -934,6 +934,7 @@ export declare class EngineConfig {
   applicationIdentifier?: string
   miraiApiKey?: string
   lalamoPath?: string
+  localPath?: string
   huggingfaceApiKey?: string
   openaiApiKey?: string
   anthropicApiKey?: string
@@ -944,12 +945,13 @@ export declare class EngineConfig {
   allowOllamaUsage: boolean
   allowLmstudioUsage: boolean
   downloadManagerType: DownloadManagerType
-  constructor(applicationIdentifier?: string, miraiApiKey?: string, lalamoPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, allowOllamaUsage: boolean, allowLmstudioUsage: boolean, downloadManagerType: DownloadManagerType)
+  constructor(applicationIdentifier?: string, miraiApiKey?: string, lalamoPath?: string, localPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, allowOllamaUsage: boolean, allowLmstudioUsage: boolean, downloadManagerType: DownloadManagerType)
 
   static create(): EngineConfig
   withApplicationIdentifier(applicationIdentifier: string): EngineConfig
   withMiraiApiKey(miraiApiKey: string): EngineConfig
   withLalamoPath(lalamoPath: string): EngineConfig
+  withLocalPath(localPath: string): EngineConfig
   withHuggingfaceApiKey(huggingfaceApiKey: string): EngineConfig
   withOpenaiApiKey(openaiApiKey: string): EngineConfig
   withAnthropicApiKey(anthropicApiKey: string): EngineConfig

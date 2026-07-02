@@ -47,12 +47,15 @@ impl BenchRunner {
         let engine_config = EngineConfig::default().with_local_path(parent_path);
         let engine = Engine::new(engine_config).await.with_context(|| "Can not create engine".to_string())?;
 
-        let model_family: Option<ModelFamily> = self.get_remote_model_family(&model_path, &engine).await?;
         let mut model = engine
             .model_by_path(model_path_string.clone())
             .await?
             .with_context(|| format!("Model not found at path: {model_path_string}"))?;
-        model.family = model_family;
+        if model.family.is_none()
+            && let Some(model_family) = self.get_remote_model_family(&model_path, &engine).await?
+        {
+            model.family = Some(model_family);
+        }
 
         let device = self.get_device_info();
 
@@ -139,7 +142,6 @@ impl BenchRunner {
         }
     }
 
-    //
     async fn get_remote_model_family(
         &self,
         model_path: &Path,
@@ -149,30 +151,29 @@ impl BenchRunner {
             .file_name()
             .ok_or(anyhow::format_err!("Can not get directory name"))?
             .to_string_lossy()
-            .into_owned();
+            .into_owned()
+            .to_lowercase();
         let all_models = engine.models().await?;
         for model in all_models {
             if let ModelAccessibility::Local {
-                reference,
+                reference:
+                    ModelReference::Mirai {
+                        toolchain_version: _toolchain_version,
+                        repository,
+                        source_repository,
+                        files: _files,
+                    },
             } = model.accessibility
             {
-                if let ModelReference::Mirai {
-                    toolchain_version: _toolchain_version,
-                    repository,
-                    source_repository,
-                    files: _files,
-                } = reference
+                if let Some(repo) = source_repository
+                    && repo.identifier.to_lowercase().contains(&dir_name)
                 {
-                    if let Some(repo) = source_repository
-                        && repo.identifier.contains(&dir_name)
-                    {
-                        return Ok(model.family);
-                    }
-                    if let Some(repo) = repository
-                        && repo.identifier.contains(&dir_name)
-                    {
-                        return Ok(model.family);
-                    }
+                    return Ok(model.family);
+                }
+                if let Some(repo) = repository
+                    && repo.identifier.to_lowercase().contains(&dir_name)
+                {
+                    return Ok(model.family);
                 }
             }
         }
