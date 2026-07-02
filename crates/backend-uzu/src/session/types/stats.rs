@@ -12,73 +12,35 @@ pub struct PowerStats {
     pub average_package_watts: f64,
     pub max_package_watts: f64,
     pub energy_joules: f64,
+    pub prefill_energy_joules: Option<f64>,
+    pub decode_energy_joules: Option<f64>,
 }
 
 #[cfg(target_vendor = "apple")]
 impl PowerStats {
-    pub(crate) fn from_keisoku_session(session: &keisoku::Session) -> Option<Self> {
-        let mut samples_count = 0_u64;
-        // Each accumulator integrates watts over time (watts × seconds); the time-weighted
-        // average is the integral divided by total_elapsed_secs.
-        let mut cpu_joules = 0.0_f64;
-        let mut gpu_joules = 0.0_f64;
-        let mut gpu_sram_joules = 0.0_f64;
-        let mut ane_joules = 0.0_f64;
-        let mut ram_joules = 0.0_f64;
-        let mut total_joules = 0.0_f64;
-        let mut energy_joules = 0.0_f64;
-        let mut max_package_watts = 0.0_f64;
-        let mut previous_elapsed_secs = 0.0_f64;
-        let mut total_elapsed_secs = 0.0_f64;
-
-        for snapshot in &session.snapshots {
-            // elapsed is stamped after each sample, so consecutive gaps partition the
-            // recording timeline without overlap.
-            let elapsed_secs = snapshot.elapsed.value() as f64 / 1000.0;
-            let window_secs = (elapsed_secs - previous_elapsed_secs).max(0.0);
-            previous_elapsed_secs = elapsed_secs;
-
-            // Prefer SoC IOReport power (macOS); fall back to HID rail power on iOS.
-            let wall_watts = match snapshot.power.as_ref() {
-                Some(power) => {
-                    cpu_joules += power.cpu.value() as f64 * window_secs;
-                    gpu_joules += power.gpu.value() as f64 * window_secs;
-                    gpu_sram_joules += power.gpu_sram.value() as f64 * window_secs;
-                    ane_joules += power.ane.value() as f64 * window_secs;
-                    ram_joules += power.ram.value() as f64 * window_secs;
-                    total_joules += power.total.value() as f64 * window_secs;
-                    power.package.value() as f64
-                },
-                None => match snapshot.rail_power() {
-                    Some(rail_watts) => {
-                        let rail_watts = rail_watts.value() as f64;
-                        total_joules += rail_watts * window_secs;
-                        rail_watts
-                    },
-                    None => continue,
-                },
-            };
-            samples_count += 1;
-            max_package_watts = max_package_watts.max(wall_watts);
-            energy_joules += wall_watts * window_secs;
-            total_elapsed_secs = elapsed_secs;
-        }
-
-        if samples_count == 0 || total_elapsed_secs <= 0.0 {
+    pub(crate) fn from_energy_readings(
+        total: keisoku::EnergyReading,
+        prefill: Option<keisoku::EnergyReading>,
+        decode: Option<keisoku::EnergyReading>,
+    ) -> Option<Self> {
+        let energy_joules = total.energy.package.value() as f64;
+        if energy_joules <= 0.0 {
             return None;
         }
-
+        let average_package_watts = total.average_power.package.value() as f64;
         Some(Self {
-            samples_count,
-            average_cpu_watts: cpu_joules / total_elapsed_secs,
-            average_gpu_watts: gpu_joules / total_elapsed_secs,
-            average_gpu_sram_watts: gpu_sram_joules / total_elapsed_secs,
-            average_ane_watts: ane_joules / total_elapsed_secs,
-            average_ram_watts: ram_joules / total_elapsed_secs,
-            average_total_watts: total_joules / total_elapsed_secs,
-            average_package_watts: energy_joules / total_elapsed_secs,
-            max_package_watts,
+            samples_count: 1,
+            average_cpu_watts: total.average_power.cpu.value() as f64,
+            average_gpu_watts: total.average_power.gpu.value() as f64,
+            average_gpu_sram_watts: total.average_power.gpu_sram.value() as f64,
+            average_ane_watts: total.average_power.ane.value() as f64,
+            average_ram_watts: total.average_power.ram.value() as f64,
+            average_total_watts: total.average_power.total.value() as f64,
+            average_package_watts,
+            max_package_watts: average_package_watts,
             energy_joules,
+            prefill_energy_joules: prefill.map(|reading| reading.energy.package.value() as f64),
+            decode_energy_joules: decode.map(|reading| reading.energy.package.value() as f64),
         })
     }
 }

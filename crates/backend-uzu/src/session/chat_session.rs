@@ -209,7 +209,7 @@ impl ChatSession {
         progress: Option<impl Fn(Output) -> bool>,
     ) -> Result<Output, Error> {
         let run_start = Instant::now();
-        let power_recorder = PowerRecorder::start();
+        let mut power_recorder = PowerRecorder::start();
         let text = self.input_processor.process(&input, config.enable_thinking, config.tokens_limit > 0)?;
         let tokens: Vec<u64> = self
             .tokenizer
@@ -239,6 +239,7 @@ impl ChatSession {
             None
         };
 
+        let prefill_window = power_recorder.start_phase();
         let prefill_start = Instant::now();
         let sample_suffix = config.tokens_limit > 0;
         let prefill_result = language_model_generator.prefill(
@@ -248,6 +249,7 @@ impl ChatSession {
             prefix_offset,
             sample_suffix,
         )?;
+        power_recorder.finish_prefill(prefill_window);
         let prefill_tokens = prefill_result.tokens.clone();
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
 
@@ -305,6 +307,7 @@ impl ChatSession {
 
         let can_use_async = language_model_generator.generate_suffix_length() == 1 && compiled_grammar.is_none();
 
+        let decode_window = power_recorder.start_phase();
         let generate_output = if can_use_async {
             let batch_size = language_model_generator.async_batch_size(&self.model_path)?;
             Self::run_async_batch(
@@ -327,6 +330,7 @@ impl ChatSession {
                 &progress,
             )?
         };
+        power_recorder.finish_decode(decode_window);
 
         Ok(Self::attach_runtime_stats(
             generate_output,
