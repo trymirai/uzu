@@ -66,7 +66,7 @@ pub fn get_max_context_length<B: Backend>(
         } => model.max_context_length(),
         ContextLength::Custom {
             length,
-        } => Some(length as usize),
+        } => Some(length.max(0) as usize),
     }
 }
 
