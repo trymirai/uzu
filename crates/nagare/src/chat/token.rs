@@ -69,9 +69,10 @@ impl Session {
     }
 
     pub async fn reset(&mut self) -> Result<(), ChatSessionError> {
-        self.state = self.instance.state().await.map_err(|error| ChatSessionError::Backend {
+        self.encoding.reset().map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
+        self.state_reset().await?;
         Ok(())
     }
 
@@ -103,7 +104,7 @@ impl Session {
             }
         }
         self.input_tokens = if reset {
-            if let Err(err) = self.reset().await {
+            if let Err(err) = self.state_reset().await {
                 return error_stream(err);
             }
             new_all_tokens
@@ -132,6 +133,13 @@ impl Session {
 
     pub fn peak_memory_usage(&self) -> Option<usize> {
         self.instance.peak_memory_usage()
+    }
+
+    async fn state_reset(&mut self) -> Result<(), ChatSessionError> {
+        self.state = self.instance.state().await.map_err(|error| ChatSessionError::Backend {
+            message: error.to_string(),
+        })?;
+        Ok(())
     }
 
     fn build_input(
