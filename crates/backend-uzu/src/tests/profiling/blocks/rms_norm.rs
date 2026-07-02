@@ -14,7 +14,7 @@ block_bench! {
     block: RmsNormKernel,
     params {
         tokens: usize = model_shapes::REAL_TOKEN_COUNTS,
-        model_dim: usize = model_shapes::model_dimensions(),
+        model_dim: usize = model_shapes::profiling_model_dimensions(),
         data_type: DataType = [DataType::F32, DataType::BF16],
         full_layer_upcast: bool = [false, true],
     },
