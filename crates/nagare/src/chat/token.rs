@@ -69,9 +69,6 @@ impl Session {
     }
 
     pub async fn reset(&mut self) -> Result<(), ChatSessionError> {
-        self.encoding.reset().map_err(|err| ChatSessionError::Backend {
-            message: err.to_string(),
-        })?;
         self.state = self.instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
@@ -84,12 +81,8 @@ impl Session {
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
-        if let Err(err) = self.reset().await {
-            return error_stream(err);
-        }
-
-        let start = Instant::now();
-        self.input_tokens = match self.build_input(input) {
+        let curr_all_tokens = self.encoding.state().tokens.clone();
+        let new_all_tokens = match self.build_input(input) {
             Ok(input) => input,
             Err(err) => {
                 return error_stream(ChatSessionError::Backend {
@@ -98,14 +91,34 @@ impl Session {
             },
         };
 
-        let mut state = StreamingState {
+        // if new_all_tokens = curr_all_tokens + suffix, then just encode suffix,
+        // else reset state and encode all tokens
+        let mut reset = new_all_tokens.len() <= curr_all_tokens.len();
+        if !reset {
+            for i in 0..curr_all_tokens.len() {
+                if new_all_tokens[i] != curr_all_tokens[i].id as u64 {
+                    reset = true;
+                    break;
+                }
+            }
+        }
+        self.input_tokens = if reset {
+            if let Err(err) = self.reset().await {
+                return error_stream(err);
+            }
+            new_all_tokens
+        } else {
+            new_all_tokens[curr_all_tokens.len()..].to_vec()
+        };
+
+        let mut stream_state = StreamingState {
             config: config.clone(),
             cancel_token: cancel_token.clone(),
             encoding: &mut self.encoding,
             max_context_length: self.instance.max_context_length(),
             stop_token_ids: self.stop_token_ids.clone(),
 
-            time_start: start,
+            time_start: Instant::now(),
             time_first_token: None,
             total_tokens_input: self.input_tokens.len(),
             total_tokens_output: 0,
@@ -113,7 +126,7 @@ impl Session {
 
         self.instance
             .stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token)
-            .map(move |event| Self::build_output(event, &mut state))
+            .map(move |event| Self::build_output(event, &mut stream_state))
             .boxed()
     }
 
@@ -123,13 +136,16 @@ impl Session {
 
     fn build_input(
         &mut self,
-        messages: &[ChatMessage],
+        all_messages: &[ChatMessage],
     ) -> Result<StreamInput, ChatSessionError> {
-        self.encoding.encode(messages.to_vec()).map_err(|err| ChatSessionError::Backend {
+        self.encoding.reset().map_err(|err| ChatSessionError::Backend {
             message: err.to_string(),
         })?;
-        let tokens = self.encoding.state().tokens.iter().map(|token| token.id as u64).collect::<Vec<u64>>();
-        Ok(tokens)
+        self.encoding.encode(all_messages.to_vec()).map_err(|err| ChatSessionError::Backend {
+            message: err.to_string(),
+        })?;
+        let all_tokens = self.encoding.state().tokens.iter().map(|token| token.id as u64).collect::<Vec<u64>>();
+        Ok(all_tokens)
     }
 
     fn build_output(
@@ -213,7 +229,7 @@ struct StreamingState<'a> {
 
 impl StreamingState<'_> {
     fn get_stats(&self) -> ChatReplyStats {
-        let duration = Instant::now().duration_since(self.time_start).as_secs_f64();
+        let total_duration = self.time_start.elapsed().as_secs_f64();
         let time_to_first_token = self.time_first_token.map(|time| time.duration_since(self.time_start).as_secs_f64());
 
         let prefill_tokens_per_second = match time_to_first_token {
@@ -221,14 +237,14 @@ impl StreamingState<'_> {
             _ => None,
         };
         let generate_tokens_per_second = match time_to_first_token {
-            Some(ttft) if self.total_tokens_output > 0 && duration > ttft => {
-                Some((self.total_tokens_output - 1) as f64 / (duration - ttft))
+            Some(ttft) if self.total_tokens_output > 0 && total_duration > ttft => {
+                Some((self.total_tokens_output - 1) as f64 / (total_duration - ttft))
             },
             _ => None,
         };
 
         ChatReplyStats {
-            duration,
+            duration: total_duration,
             time_to_first_token,
             prefill_tokens_per_second,
             generate_tokens_per_second,
