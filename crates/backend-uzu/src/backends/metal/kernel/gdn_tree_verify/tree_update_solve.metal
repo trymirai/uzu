@@ -92,27 +92,48 @@ PUBLIC KERNEL(TreeUpdateSolve)(
 
     if (h0_slot >= 0) {
       const device T* kh0_block = kh0_head_tile + row_base * value_token_stride;
-      if (tile_rows == BT && tile_value_cols == BV) {
-        acc.load_from(lane_idx, fragment_source(kh0_block, value_token_stride));
-      } else {
-        acc.load_from(lane_idx, fragment_source(kh0_block, value_token_stride).bounded(tile_rows, tile_value_cols));
-      }
+      acc.load_maybe_bounded(
+          lane_idx,
+          kh0_block,
+          value_token_stride,
+          tile_rows == BT && tile_value_cols == BV,
+          tile_rows,
+          tile_value_cols
+      );
     } else {
       acc.clear();
     }
 
-    acc.map_coords(lane_idx, [&](ushort local_row_idx, ushort local_value_col_idx, float kh0_value) {
-      const uint token_idx = row_base + local_row_idx;
-      const bool valid_output = local_row_idx < tile_rows && local_value_col_idx < tile_value_cols;
-      if (!valid_output) {
-        return 0.0f;
-      }
+    // prefix/beta/exp are per-row: one lane computes them, consumers read via simd_shuffle.
+    float lane_beta = 0.0f;
+    float lane_decay = 0.0f;
+    if (lane_idx < tile_rows) {
+      const uint token_idx = row_base + lane_idx;
+      lane_beta = beta_head[token_idx * scalar_token_stride];
+      lane_decay = exp(prefix_head[token_idx * scalar_token_stride]);
+    }
 
-      const float value = float(value_head_tile[token_idx * value_token_stride + local_value_col_idx]);
-      const float prefix_value = prefix_head[token_idx * scalar_token_stride];
-      const float beta_value = beta_head[token_idx * scalar_token_stride];
-      return beta_value * (value - exp(prefix_value) * kh0_value);
-    });
+    TileFragment v_frag;
+    const device T* v_block = value_head_tile + row_base * value_token_stride;
+    v_frag.load_maybe_bounded(
+        lane_idx,
+        v_block,
+        value_token_stride,
+        tile_rows == BT && tile_value_cols == BV,
+        tile_rows,
+        tile_value_cols
+    );
+
+    TileFragment::zip_for_each_coord(
+        lane_idx,
+        [&](ushort local_row_idx, ushort, thread float& acc_value, thread float& v_value) {
+          const float beta_row = simd_shuffle(lane_beta, local_row_idx);
+          const float decay_row = simd_shuffle(lane_decay, local_row_idx);
+          acc_value = beta_row * (v_value - decay_row * acc_value);
+        },
+        acc,
+        v_frag
+    );
 
     const uint num_full_pairs = block_idx / 2;
     for (uint pair_idx = 0; pair_idx < num_full_pairs; ++pair_idx) {
@@ -121,13 +142,9 @@ PUBLIC KERNEL(TreeUpdateSolve)(
 
       const device float* a_pair = a_blocks + (block_idx * num_col_pairs + pair_idx) * (BT * 2 * BT);
       const device float* u_prev_block = u_head_tile + pair_idx * 2 * BT * head_v_dim;
-      if (tile_rows == BT && tile_value_cols == BV) {
-        a_frag.load_from(lane_idx, fragment_source(a_pair, 2 * BT));
-        u_prev_frag.load_from(lane_idx, fragment_source(u_prev_block, head_v_dim));
-      } else {
-        a_frag.load_from(lane_idx, fragment_source(a_pair, 2 * BT).bounded(tile_rows, 2 * BT));
-        u_prev_frag.load_from(lane_idx, fragment_source(u_prev_block, head_v_dim).bounded(2 * BT, tile_value_cols));
-      }
+      const bool full = tile_rows == BT && tile_value_cols == BV;
+      a_frag.load_maybe_bounded(lane_idx, a_pair, 2 * BT, full, tile_rows, 2 * BT);
+      u_prev_frag.load_maybe_bounded(lane_idx, u_prev_block, head_v_dim, full, 2 * BT, tile_value_cols);
       a_frag.map([](float value) { return -value; });
       fragment_mma(acc, a_frag, u_prev_frag);
     }
