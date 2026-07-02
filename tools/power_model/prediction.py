@@ -44,7 +44,9 @@ def enumerate_block_instances(
     norm_count = layer_norm_count + 1
 
     projection_shapes = _matmul_projection_shapes(layer_configs, model_dim, hidden_dim)
-    attention_layers = [layer for layer in layer_configs if (layer.get("mixer_config") or {}).get("type") == "AttentionConfig"]
+    attention_layers = [
+        layer for layer in layer_configs if (layer.get("mixer_config") or {}).get("type") == "AttentionConfig"
+    ]
     rope_layer_count = sum(1 for layer in layer_configs if layer.get("rope_config") is not None)
     gated_mlp_dimensions = [
         layer.get("hidden_dim") or hidden_dim
@@ -55,15 +57,23 @@ def enumerate_block_instances(
 
     instances: list[BlockInstance] = []
     if prefill_tokens > 0:
-        instances.append(BlockInstance("full_precision_embedding", _embedding_parameters(prefill_tokens, model_dim), 1))
+        instances.append(
+            BlockInstance("full_precision_embedding", _embedding_parameters(prefill_tokens, model_dim), 1),
+        )
         instances.append(BlockInstance("rms_norm", _norm_parameters(prefill_tokens, model_dim), norm_count))
         instances.append(BlockInstance("rope", _rope_parameters(prefill_tokens), rope_layer_count))
         for gated_dimension in gated_mlp_dimensions:
-            instances.append(BlockInstance("gated_act_mul", _gated_act_mul_parameters(prefill_tokens, gated_dimension), 1))
-        instances.append(BlockInstance("attention_update_kv_cache", _attention_parameters(prefill_tokens), len(attention_layers)))
+            instances.append(
+                BlockInstance("gated_act_mul", _gated_act_mul_parameters(prefill_tokens, gated_dimension), 1),
+            )
+        instances.append(
+            BlockInstance("attention_update_kv_cache", _attention_parameters(prefill_tokens), len(attention_layers)),
+        )
         for input_dimension, output_dimension, occurrences in projection_shapes:
             instances.append(
-                BlockInstance("matmul", _matmul_parameters(prefill_tokens, input_dimension, output_dimension), occurrences)
+                BlockInstance(
+                    "matmul", _matmul_parameters(prefill_tokens, input_dimension, output_dimension), occurrences,
+                ),
             )
         instances.append(BlockInstance("matmul", _matmul_parameters(1, model_dim, vocab_size), 1))
         instances.append(BlockInstance("unified_sampling", _sampling_parameters(vocab_size), 1))
@@ -72,16 +82,26 @@ def enumerate_block_instances(
         instances.append(BlockInstance("rms_norm", _norm_parameters(1, model_dim), norm_count * decode_tokens))
         instances.append(BlockInstance("rope", _rope_parameters(1), rope_layer_count * decode_tokens))
         for gated_dimension in gated_mlp_dimensions:
-            instances.append(BlockInstance("gated_act_mul", _gated_act_mul_parameters(1, gated_dimension), decode_tokens))
+            instances.append(
+                BlockInstance("gated_act_mul", _gated_act_mul_parameters(1, gated_dimension), decode_tokens),
+            )
         instances.append(
-            BlockInstance("attention_single_pass", _attention_parameters(average_context), len(attention_layers) * decode_tokens)
+            BlockInstance(
+                "attention_single_pass", _attention_parameters(average_context), len(attention_layers) * decode_tokens,
+            ),
         )
         instances.append(
-            BlockInstance("attention_update_kv_cache", _attention_parameters(average_context), len(attention_layers) * decode_tokens)
+            BlockInstance(
+                "attention_update_kv_cache",
+                _attention_parameters(average_context),
+                len(attention_layers) * decode_tokens,
+            ),
         )
         for input_dimension, output_dimension, occurrences in projection_shapes:
             instances.append(
-                BlockInstance("matmul", _matmul_parameters(1, input_dimension, output_dimension), occurrences * decode_tokens)
+                BlockInstance(
+                    "matmul", _matmul_parameters(1, input_dimension, output_dimension), occurrences * decode_tokens,
+                ),
             )
         instances.append(BlockInstance("matmul", _matmul_parameters(1, model_dim, vocab_size), decode_tokens))
         instances.append(BlockInstance("unified_sampling", _sampling_parameters(vocab_size), decode_tokens))
@@ -107,7 +127,10 @@ def _matmul_projection_shapes(
             _add_shape(shapes, model_dim, layer_hidden_dimension)
             _add_shape(shapes, model_dim, layer_hidden_dimension)
             _add_shape(shapes, layer_hidden_dimension, model_dim)
-    return [(input_dimension, output_dimension, occurrences) for (input_dimension, output_dimension), occurrences in shapes.items()]
+    return [
+        (input_dimension, output_dimension, occurrences)
+        for (input_dimension, output_dimension), occurrences in shapes.items()
+    ]
 
 
 def _add_shape(
@@ -185,10 +208,14 @@ def predict_total(
 
 def load_whole_model_measurement(csv_path: Path) -> dict:
     row = pd.read_csv(csv_path).iloc[0]
-    return {
+    measurement = {
         "prefill_tokens": int(row["prefill_tokens"]),
         "decode_tokens": int(row["decode_tokens"]),
         "prefill_seconds": float(row["prefill_seconds"]),
         "decode_seconds": float(row["decode_seconds"]),
         "total_seconds": float(row["total_seconds"]),
     }
+    for column in ("prefill_joules", "decode_joules", "total_joules", "decode_joules_per_token"):
+        if column in row and not pd.isna(row[column]):
+            measurement[column] = float(row[column])
+    return measurement

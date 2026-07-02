@@ -51,8 +51,12 @@ def fit(
     typer.echo(f"block: {curve.block_name}   metric: {curve.metric}   r_squared: {curve.r_squared:.4f}")
     typer.echo(f"compute = product of {curve.numeric_parameters}; memory = sum of leave-one-out products")
     for group_key, (overhead, compute_rate, memory_rate) in curve.coefficients_by_group.items():
-        group_label = ", ".join(f"{name}={value}" for name, value in zip(curve.categorical_parameters, group_key)) or "all"
-        typer.echo(f"  [{group_label}] {curve.metric} = {overhead:.3e} + {compute_rate:.3e} * compute + {memory_rate:.3e} * memory")
+        group_label = (
+            ", ".join(f"{name}={value}" for name, value in zip(curve.categorical_parameters, group_key)) or "all"
+        )
+        typer.echo(
+            f"  [{group_label}] {curve.metric} = {overhead:.3e} + {compute_rate:.3e} * compute + {memory_rate:.3e} * memory",
+        )
 
 
 @app.command()
@@ -90,6 +94,14 @@ def predict(
         ratio = predicted_seconds / measured_seconds if measured_seconds else float("nan")
         typer.echo("")
         typer.echo(f"measured whole-model wall-clock: {measured_seconds:.3f} s (GPU-bound)")
+        if "total_joules" in measurement:
+            typer.echo(f"measured whole-model energy: {measurement['total_joules']:.3f} J")
+        if "prefill_joules" in measurement:
+            typer.echo(f"measured prefill energy: {measurement['prefill_joules']:.3f} J")
+        if "decode_joules" in measurement:
+            typer.echo(f"measured decode energy: {measurement['decode_joules']:.3f} J")
+        if "decode_joules_per_token" in measurement:
+            typer.echo(f"measured decode energy/token: {measurement['decode_joules_per_token']:.3e} J")
         typer.echo(f"predicted modeled-kernel GPU execution time: {predicted_seconds:.3f} s")
         typer.echo(f"predicted GPU time / measured wall-clock: {ratio:.3f}")
 

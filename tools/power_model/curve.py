@@ -20,7 +20,7 @@ class Curve:
     def predict(self, shape: dict) -> float:
         group_key = tuple(str(shape[column]) for column in self.categorical_parameters)
         overhead, compute_rate, memory_rate = self.coefficients_by_group.get(
-            group_key, next(iter(self.coefficients_by_group.values()))
+            group_key, next(iter(self.coefficients_by_group.values())),
         )
         values = [float(shape[column]) for column in self.numeric_parameters]
         return max(0.0, overhead + compute_rate * compute_feature(values) + memory_rate * memory_feature(values))
