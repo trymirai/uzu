@@ -128,15 +128,19 @@ impl Session {
             time_first_token: None,
             total_tokens_input: self.input_tokens.len(),
             total_tokens_output: 0,
+            memory_usage: None,
         };
 
-        let stream = self.instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token);
+        let instance = self.instance.as_ref();
+        let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token);
         stream::unfold(
             (stream, stream_state, false, false),
-            |(mut inner, mut state, terminated, tail_done)| async move {
+            move |(mut inner, mut state, terminated, tail_done)| async move {
                 if tail_done {
                     return None;
                 }
+
+                state.memory_usage = instance.peak_memory_usage();
                 match inner.next().await {
                     Some(event) => {
                         let output = Self::build_output(event, &mut state);
@@ -269,6 +273,7 @@ struct StreamingState<'a> {
     time_first_token: Option<Instant>,
     total_tokens_input: usize,
     total_tokens_output: usize,
+    memory_usage: Option<usize>,
 }
 
 impl StreamingState<'_> {
@@ -328,8 +333,8 @@ impl StreamingState<'_> {
             generate_tokens_per_second: generate_tps,
             tokens_count_input: Some(self.total_tokens_input as u32),
             tokens_count_output: Some(self.total_tokens_output as u32),
-            memory_used_bytes: None, // TODO
-            power_stats: None,       // TODO
+            memory_used_bytes: self.memory_usage.map(|bytes| bytes as i64),
+            power_stats: None, // TODO
         }
     }
 }
