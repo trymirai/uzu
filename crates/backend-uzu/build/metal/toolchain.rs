@@ -102,23 +102,18 @@ impl MetalToolchain {
         let sdk = MetalSdk::from_env().context("cannot get sdk")?;
         let std = MetalStd::Metal4_0;
 
-        println!("cargo::rerun-if-env-changed=UZU_METAL_DEBUG_SOURCE");
-        let metal_debug_source = env::var("UZU_METAL_DEBUG_SOURCE").is_ok();
-        let mut opt_flags: Vec<_> = match env::var("OPT_LEVEL").context("missing OPT_LEVEL")?.as_str() {
+        let opt_flags = match env::var("OPT_LEVEL").context("missing OPT_LEVEL")?.as_str() {
             "0" => {
-                vec![
+                [
                     OsString::from("-O1"), // matmul kernels compiled with -O0 are broken and require a reboot to unfreeze the os
                     OsString::from("-gline-tables-only"), // debug with line tables only
                     OsString::from("-frecord-sources"), // include source code
                 ]
+                .into()
             },
-            "1" => vec![OsString::from("-O1")],
-            _ => vec![OsString::from("-O2")], // treat levels 2,3,s,z as O2 for metal
+            "1" => [OsString::from("-O1")].into(),
+            _ => [OsString::from("-O2")].into(), // treat levels 2,3,s,z as O2 for metal
         };
-        if metal_debug_source && !opt_flags.iter().any(|flag| flag == "-frecord-sources") {
-            opt_flags.extend([OsString::from("-gline-tables-only"), OsString::from("-frecord-sources")]);
-        }
-        let opt_flags = opt_flags.into();
 
         let extra_options = Box::new([
             OsString::from(format!("-m{}-version-min={}", sdk.os(), std.min_os())),
