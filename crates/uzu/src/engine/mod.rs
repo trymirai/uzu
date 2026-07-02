@@ -136,11 +136,19 @@ impl Engine {
 
             if let Some(lalamo_path) = config.lalamo_path {
                 let lalamo_registry = LocalRegistry::new(LocalRegistryConfig::lalamo(
-                    uzu_backend_identifier,
-                    uzu_backend_version,
+                    uzu_backend_identifier.clone(),
+                    uzu_backend_version.clone(),
                     lalamo_path,
                 ))?;
                 engine.add_registry(Box::new(lalamo_registry)).await?;
+            }
+            if let Some(local_path) = config.local_path {
+                let local_registry = LocalRegistry::new(LocalRegistryConfig::local(
+                    uzu_backend_identifier.clone(),
+                    uzu_backend_version.clone(),
+                    local_path,
+                ))?;
+                engine.add_registry(Box::new(local_registry)).await?;
             }
         }
 

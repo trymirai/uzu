@@ -63,4 +63,21 @@ impl Config {
             Some(resolver),
         )
     }
+
+    pub fn local(
+        backend_identifier: String,
+        backend_version: String,
+        path: String,
+    ) -> Self {
+        let model_path = PathBuf::from(path.clone());
+        let resolver: ModelResolver = Arc::new(move |mut model: Model| -> Result<Model, RegistryError> {
+            let specialization =
+                resolve_model_specialization(&model_path).map_err(|error| RegistryError::UnableToGetModels {
+                    message: format!("Unable to resolve specialization for {}: {error}", model_path.display()),
+                })?;
+            model.specializations = vec![specialization];
+            Ok(model)
+        });
+        Self::new("local".to_string(), backend_identifier, backend_version, "Local".to_string(), path, Some(resolver))
+    }
 }

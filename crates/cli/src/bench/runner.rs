@@ -1,4 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{Context, Result};
 use backend_uzu::{VERSION, data_type::DataType};
@@ -36,9 +39,13 @@ impl BenchRunner {
         &self,
         mut progress: Option<F>,
     ) -> Result<Vec<BenchResult>> {
-        let engine_config = EngineConfig::default();
-        let engine = Engine::new(engine_config).await.with_context(|| "Can not create engine".to_string())?;
         let model_path = self.model_path.trim_end_matches('/').to_string();
+
+        let parent_path =
+            PathBuf::from(&model_path).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        let engine_config = EngineConfig::default().with_local_path(parent_path);
+
+        let engine = Engine::new(engine_config).await.with_context(|| "Can not create engine".to_string())?;
         let model = engine
             .model(model_path.clone())
             .await?
