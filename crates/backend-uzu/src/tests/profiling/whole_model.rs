@@ -30,15 +30,26 @@ fn profile_whole_model() {
     let prefill_seconds = statistics.prefill_stats.duration;
     let decode_seconds = statistics.generate_stats.as_ref().map(|stats| stats.duration).unwrap_or(0.0);
     let total_seconds = statistics.total_stats.duration;
+    let total_joules = statistics.power_stats.as_ref().map(|stats| stats.energy_joules).unwrap_or(0.0);
+    let prefill_joules = statistics.power_stats.as_ref().and_then(|stats| stats.prefill_energy_joules).unwrap_or(0.0);
+    let decode_joules = statistics.power_stats.as_ref().and_then(|stats| stats.decode_energy_joules).unwrap_or(0.0);
+    let decode_joules_per_token = if decode_tokens == 0 {
+        0.0
+    } else {
+        decode_joules / decode_tokens as f64
+    };
 
     eprintln!(
         "prefill_tokens={prefill_tokens} decode_tokens={decode_tokens} \
-         prefill_seconds={prefill_seconds:.4} decode_seconds={decode_seconds:.4} total_seconds={total_seconds:.4}"
+         prefill_seconds={prefill_seconds:.4} decode_seconds={decode_seconds:.4} total_seconds={total_seconds:.4} \
+         prefill_joules={prefill_joules:.4} decode_joules={decode_joules:.4} total_joules={total_joules:.4}"
     );
 
     let lines = vec![
-        "prefill_tokens,decode_tokens,prefill_seconds,decode_seconds,total_seconds".to_string(),
-        format!("{prefill_tokens},{decode_tokens},{prefill_seconds},{decode_seconds},{total_seconds}"),
+        "prefill_tokens,decode_tokens,prefill_seconds,decode_seconds,total_seconds,prefill_joules,decode_joules,total_joules,decode_joules_per_token".to_string(),
+        format!(
+            "{prefill_tokens},{decode_tokens},{prefill_seconds},{decode_seconds},{total_seconds},{prefill_joules},{decode_joules},{total_joules},{decode_joules_per_token}"
+        ),
     ];
 
     let output_path = output_directory().join("whole_model.csv");
