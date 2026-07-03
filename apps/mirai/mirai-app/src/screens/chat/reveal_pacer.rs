@@ -49,7 +49,9 @@ impl RevealPacer {
         if self.show_all {
             return false;
         }
-        self.elapsed += dt;
+        if received > 0 {
+            self.elapsed += dt;
+        }
         let received = received as f32;
         let arrival_rate = received / self.elapsed.max(MIN_ELAPSED_SECONDS);
         let buffer = (received - self.revealed).max(0.0);
