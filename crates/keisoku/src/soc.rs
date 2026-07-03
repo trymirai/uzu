@@ -35,10 +35,12 @@ fn dvfs_frequencies(
     Some(frequencies)
 }
 
-fn to_megahertz(
-    frequencies: Vec<u32>,
-    scale: u32,
-) -> Vec<u32> {
+fn to_megahertz(frequencies: Vec<u32>) -> Vec<u32> {
+    let scale = if frequencies.iter().copied().max().unwrap_or(0) >= 10_000_000 {
+        1_000_000
+    } else {
+        1_000
+    };
     frequencies.iter().map(|frequency| frequency / scale).collect()
 }
 
@@ -66,10 +68,9 @@ fn cpu_frequencies(
     dictionary: &CFDictionary,
     key: &str,
     is_efficiency_cluster: bool,
-    scale: u32,
 ) -> Option<Vec<u32>> {
     if let Some(frequencies) = dvfs_frequencies(dictionary, key) {
-        return Some(to_megahertz(frequencies, scale));
+        return Some(to_megahertz(frequencies));
     }
     let (ecpu_key, pcpu_key) = cluster_voltage_state_keys(dictionary)?;
     let key = if is_efficiency_cluster {
@@ -77,7 +78,7 @@ fn cpu_frequencies(
     } else {
         pcpu_key
     };
-    Some(to_megahertz(dvfs_frequencies(dictionary, &key)?, scale))
+    Some(to_megahertz(dvfs_frequencies(dictionary, &key)?))
 }
 
 fn parse_cpu_cores(processors: &str) -> (u64, u64, bool) {
@@ -124,14 +125,6 @@ impl SocInfo {
             .and_then(|cores| cores.parse::<u64>().ok())
             .unwrap_or(0) as u8;
 
-        let before_m4 = chip_name.contains("M1") || chip_name.contains("M2") || chip_name.contains("M3");
-        let cpu_scale: u32 = if before_m4 {
-            1000 * 1000
-        } else {
-            1000
-        };
-        let gpu_scale: u32 = 1000 * 1000;
-
         let mut soc_info = SocInfo {
             chip_name,
             mac_model,
@@ -157,18 +150,39 @@ impl SocInfo {
                 continue;
             }
             if let Some(properties) = registry_properties(entry) {
-                if let Some(frequencies) = cpu_frequencies(&properties, "voltage-states1-sram", true, cpu_scale) {
+                if let Some(frequencies) = cpu_frequencies(&properties, "voltage-states1-sram", true) {
                     soc_info.ecpu_frequencies = frequencies;
                 }
-                if let Some(frequencies) = cpu_frequencies(&properties, "voltage-states5-sram", false, cpu_scale) {
+                if let Some(frequencies) = cpu_frequencies(&properties, "voltage-states5-sram", false) {
                     soc_info.pcpu_frequencies = frequencies;
                 }
                 if let Some(frequencies) = dvfs_frequencies(&properties, "voltage-states9") {
-                    soc_info.gpu_frequencies = to_megahertz(frequencies, gpu_scale);
+                    soc_info.gpu_frequencies = to_megahertz(frequencies);
                 }
             }
         }
 
         Some(soc_info)
+    }
+}
+
+#[cfg(test)]
+mod frequency_dump {
+    use super::SocInfo;
+
+    #[test]
+    #[ignore]
+    fn dump_detected_frequencies() {
+        println!("KEISOKU_SOC_BEGIN");
+        match SocInfo::new() {
+            Some(soc) => {
+                println!("CHIP\t{}", soc.chip_name);
+                println!("ECPU_MHZ\t{:?}", soc.ecpu_frequencies);
+                println!("PCPU_MHZ\t{:?}", soc.pcpu_frequencies);
+                println!("GPU_MHZ\t{:?}", soc.gpu_frequencies);
+            },
+            None => println!("STATUS\tSocInfo unavailable"),
+        }
+        println!("KEISOKU_SOC_END");
     }
 }
