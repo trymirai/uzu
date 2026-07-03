@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
-use crate::units::{GigabytesPerSecond, Megahertz, Percent, Watts};
+use crate::units::{GigabytesPerSecond, Joules, Megahertz, Percent, Watts};
 use crate::{
     EnergyReading, EnergyWindow,
     metrics::{BandwidthMetrics, CpuMetrics, GpuMetrics, NeuralEngineMetrics, PowerMetrics, Temperatures},
@@ -74,7 +74,8 @@ impl Collector {
     #[cfg(target_os = "macos")]
     pub fn start_energy_window(&self) -> Option<EnergyWindow> {
         let sample = self.ioreport.as_ref()?.snapshot()?;
-        Some(EnergyWindow::new(sample, Instant::now()))
+        let package_watts_start = self.smc.as_ref().and_then(|smc| smc.package_watts()).map(|watts| watts.value());
+        Some(EnergyWindow::new(sample, Instant::now(), package_watts_start))
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -89,7 +90,13 @@ impl Collector {
     ) -> Option<EnergyReading> {
         let elapsed = window.started_at.elapsed();
         let next = self.ioreport.as_ref()?.snapshot()?;
-        let (energy, average_power) = self.ioreport.as_ref()?.energy_delta(&window.sample, &next, elapsed)?;
+        let (mut energy, mut average_power) = self.ioreport.as_ref()?.energy_delta(&window.sample, &next, elapsed)?;
+        let package_watts_end = self.smc.as_ref().and_then(|smc| smc.package_watts()).map(|watts| watts.value());
+        if let (Some(start), Some(end)) = (window.package_watts_start, package_watts_end) {
+            let mean_package_watts = (start + end) / 2.0;
+            average_power.package = Watts(mean_package_watts);
+            energy.package = Joules(mean_package_watts * elapsed.as_secs_f32());
+        }
         Some(EnergyReading {
             energy,
             average_power,
