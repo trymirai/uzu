@@ -1,9 +1,13 @@
-use gpui::{AnyElement, Context, CursorStyle, FontWeight, IntoElement, SharedString, div, prelude::*, px};
+use gpui::{
+    AnyElement, Context, CursorStyle, FontWeight, IntoElement, SharedString, black, div, prelude::*, px,
+    transparent_black,
+};
 
-use super::view::SettingsView;
+use super::{event::SettingsEvent, view::SettingsView};
 use crate::{
     components::{Button, ButtonKind, ButtonSize},
     data_ops::{self, CleanupCategory},
+    engine,
     theme::ActiveTheme,
 };
 
@@ -64,7 +68,7 @@ impl SettingsView {
                         .bg(if checked {
                             theme.info.opacity(0.15)
                         } else {
-                            gpui::transparent_black()
+                            transparent_black()
                         })
                         .flex()
                         .items_center()
@@ -203,7 +207,7 @@ impl SettingsView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(gpui::black().opacity(0.5))
+                .bg(black().opacity(0.5))
                 .occlude()
                 .child(
                     div()
@@ -222,5 +226,96 @@ impl SettingsView {
                 )
                 .into_any_element(),
         )
+    }
+
+    pub(super) fn open_clear_data(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_data_open = true;
+        self.clear_data_step = ClearDataStep::Select;
+        self.clear_data_results.clear();
+        self.clear_data_busy = false;
+        self.clear_data_preview = data_ops::cleanup_preview_disk();
+        self.clear_data_selected = CleanupCategory::ALL.into_iter().collect();
+        if self.clear_data_preview.dialogs.count == 0 {
+            self.clear_data_selected.remove(&CleanupCategory::Dialogs);
+        }
+        if self.clear_data_preview.files.count == 0 {
+            self.clear_data_selected.remove(&CleanupCategory::Files);
+        }
+        if self.clear_data_preview.logs_size_bytes == 0 {
+            self.clear_data_selected.remove(&CleanupCategory::Logs);
+        }
+        cx.notify();
+
+        if let Some(engine) = engine::try_engine(cx) {
+            let view = cx.entity();
+            cx.spawn(async move |_, cx| {
+                let models = data_ops::model_cleanup_stats(&engine).await;
+                view.update(cx, |this, cx| {
+                    if !this.clear_data_open {
+                        return;
+                    }
+                    this.clear_data_preview.models = models;
+                    if this.clear_data_preview.models.count == 0 {
+                        this.clear_data_selected.remove(&CleanupCategory::Models);
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+    }
+
+    pub(super) fn close_clear_data(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_data_open = false;
+        self.clear_data_busy = false;
+        cx.notify();
+    }
+
+    pub(super) fn toggle_clear_category(
+        &mut self,
+        cat: CleanupCategory,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.clear_data_selected.remove(&cat) {
+            self.clear_data_selected.insert(cat);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn run_clear_data(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let selected: Vec<CleanupCategory> =
+            CleanupCategory::ALL.into_iter().filter(|c| self.clear_data_selected.contains(c)).collect();
+        if selected.is_empty() {
+            return;
+        }
+        self.clear_data_busy = true;
+        cx.notify();
+
+        let engine = engine::try_engine(cx);
+        let view = cx.entity();
+        cx.spawn(async move |_, cx| {
+            let results = data_ops::execute_cleanup(engine.as_ref(), &selected).await;
+            view.update(cx, |this, cx| {
+                this.clear_data_busy = false;
+                this.clear_data_results = results;
+                this.clear_data_step = ClearDataStep::Result;
+
+                cx.emit(SettingsEvent::DataCleared {
+                    dialogs: selected.contains(&CleanupCategory::Dialogs),
+                    audio: selected.contains(&CleanupCategory::Files),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
