@@ -21,6 +21,19 @@ const REVEAL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16
 const MIN_REVEAL_CHARS: usize = 3;
 const REVEAL_CATCHUP_DIVISOR: usize = 8;
 
+fn safe_split(prefix: &str) -> usize {
+    let mut boundary = 0;
+    let mut index = 0;
+    while let Some(offset) = prefix[index..].find("\n\n") {
+        let candidate = index + offset + 2;
+        if prefix[..candidate].matches("```").count().is_multiple_of(2) {
+            boundary = candidate;
+        }
+        index = candidate;
+    }
+    boundary
+}
+
 pub(super) enum StreamMsg {
     Started(CancelToken),
     Session(ChatSession, String),
@@ -169,6 +182,7 @@ impl ChatView {
         let gen_id = self.state.stream_gen;
         self.state.revealed_chars = 0;
         self.state.stream_parsed = None;
+        self.state.stream_stable_len = 0;
         self.state.stream_parse_in_flight = false;
         self.state.stream_parse_pending = false;
 
@@ -300,10 +314,15 @@ impl ChatView {
         if message.role != Role::Assistant {
             return;
         }
-        let prefix: String = message.cur().text.chars().take(self.state.revealed_chars).collect();
+        let revealed: String = message.cur().text.chars().take(self.state.revealed_chars).collect();
+        let boundary = safe_split(&revealed);
+        if boundary == 0 {
+            return;
+        }
+        let stable = revealed[..boundary].to_string();
         self.state.stream_parse_in_flight = true;
         let gen_id = self.state.stream_gen;
-        let parse_task = cx.background_executor().spawn(async move { markdown::parse(&prefix) });
+        let parse_task = cx.background_executor().spawn(async move { markdown::parse(&stable) });
         cx.spawn(async move |this, cx| {
             let parsed = parse_task.await;
             let _ = this.update(cx, |view, cx| {
@@ -311,6 +330,7 @@ impl ChatView {
                     return;
                 }
                 view.state.stream_parsed = Some(parsed);
+                view.state.stream_stable_len = boundary;
                 view.state.stream_parse_in_flight = false;
                 cx.notify();
                 if view.state.stream_parse_pending {
