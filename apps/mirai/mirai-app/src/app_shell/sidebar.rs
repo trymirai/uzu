@@ -3,7 +3,7 @@ use gpui::{Context, CursorStyle, IntoElement, SharedString, div, prelude::*, px,
 use super::{route::Route, section::Section, shell::MiraiApp};
 use crate::{
     components::{Icon, IconEl, Toggle},
-    engine_capabilities::TEXT_TO_SPEECH,
+    engine_capabilities::{CLASSIFICATION, TEXT_TO_SPEECH},
     settings_state,
     text::truncate_with_ellipsis,
     theme::{ActiveTheme, layout::SIDEBAR_WIDTH},
@@ -122,6 +122,14 @@ impl MiraiApp {
                         Route::LocalModels,
                         section == Section::LocalModels,
                     ))
+                    .child(self.nav_item(
+                        cx,
+                        "nav-cloud",
+                        Icon::Lightning,
+                        "Cloud Models",
+                        Route::CloudModels,
+                        section == Section::CloudModels,
+                    ))
                     .when(TEXT_TO_SPEECH, |column| {
                         column.child(self.nav_item(
                             cx,
@@ -130,6 +138,16 @@ impl MiraiApp {
                             "Text to Speech",
                             Route::Tts,
                             section == Section::Tts,
+                        ))
+                    })
+                    .when(CLASSIFICATION, |column| {
+                        column.child(self.nav_item(
+                            cx,
+                            "nav-routers",
+                            Icon::Routers,
+                            "Routers",
+                            Route::Routers,
+                            section == Section::Routers,
                         ))
                     })
                     .child(self.apps_soon_item(cx)),

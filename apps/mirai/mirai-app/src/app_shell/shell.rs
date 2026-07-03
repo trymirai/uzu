@@ -1,5 +1,3 @@
-use std::env;
-
 use gpui::{
     AnyElement, App, Bounds, Context, CursorStyle, Entity, IntoElement, Render, TitlebarOptions, Window, WindowBounds,
     WindowOptions, div, point, prelude::*, px, size,
@@ -8,7 +6,6 @@ use gpui::{
 use super::route::Route;
 use crate::{
     components::{Icon, IconEl},
-    engine_capabilities::{CLASSIFICATION, TEXT_TO_SPEECH},
     menu_bar::{self, TrayAction},
     models_store::{ModelKind, ModelsStore},
     persistence,
@@ -127,17 +124,10 @@ impl MiraiApp {
         })
         .detach();
 
-        let route = match env::var("MIRAI_SCREEN").ok().as_deref() {
-            Some("chat") => Route::Chat(None),
-            Some("chats") => Route::Chats,
-            Some("local") => Route::LocalModels,
-            Some("cloud") => Route::CloudModels,
-            Some("routers") if CLASSIFICATION => Route::Routers,
-            Some("tts") if TEXT_TO_SPEECH => Route::Tts,
-            Some("settings") => Route::Settings,
-            Some("welcome") => Route::Welcome,
-            _ if persistence::has_seen_welcome() => Route::LocalModels,
-            _ => Route::Welcome,
+        let route = if persistence::has_seen_welcome() {
+            Route::LocalModels
+        } else {
+            Route::Welcome
         };
 
         Self {
