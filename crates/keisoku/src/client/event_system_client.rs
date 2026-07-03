@@ -28,10 +28,10 @@ impl EventSystemClient {
         &self,
         page: i32,
         usage: i32,
-    ) -> Vec<ServiceClient> {
+    ) -> Box<[ServiceClient]> {
         let io_kit = self.io_kit;
         let Some(array) = self.services_matching(page, usage) else {
-            return Vec::new();
+            return Box::default();
         };
         array.to_vec().into_iter().map(|inner| ServiceClient::new(io_kit, inner)).collect()
     }

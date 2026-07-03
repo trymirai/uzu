@@ -43,9 +43,9 @@ impl IoReport {
         Some(energy_totals(self.functions, &delta))
     }
 
-    pub(crate) fn energy_model_channels(&self) -> Vec<EnergyModelChannel> {
+    pub(crate) fn energy_model_channels(&self) -> Box<[EnergyModelChannel]> {
         let Some(sample) = self.snapshot() else {
-            return Vec::new();
+            return Box::default();
         };
         decode_channels(self.functions, &sample.0)
             .into_iter()

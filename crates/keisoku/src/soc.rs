@@ -13,15 +13,15 @@ pub struct SocInfo {
     pub ecpu_label: String,
     pub pcpu_label: String,
     pub gpu_cores: u8,
-    pub ecpu_frequencies: Vec<u32>,
-    pub pcpu_frequencies: Vec<u32>,
-    pub gpu_frequencies: Vec<u32>,
+    pub ecpu_frequencies: Box<[u32]>,
+    pub pcpu_frequencies: Box<[u32]>,
+    pub gpu_frequencies: Box<[u32]>,
 }
 
 fn dvfs_frequencies(
     dictionary: &CFDictionary,
     key: &str,
-) -> Option<Vec<u32>> {
+) -> Option<Box<[u32]>> {
     let bytes = dictionary_data(dictionary, key)?;
     if bytes.len() < 8 {
         return None;
@@ -35,7 +35,7 @@ fn dvfs_frequencies(
     Some(frequencies)
 }
 
-fn to_megahertz(frequencies: Vec<u32>) -> Vec<u32> {
+fn to_megahertz(frequencies: &[u32]) -> Box<[u32]> {
     let scale = if frequencies.iter().copied().max().unwrap_or(0) >= 10_000_000 {
         1_000_000
     } else {
@@ -68,9 +68,9 @@ fn cpu_frequencies(
     dictionary: &CFDictionary,
     key: &str,
     is_efficiency_cluster: bool,
-) -> Option<Vec<u32>> {
+) -> Option<Box<[u32]>> {
     if let Some(frequencies) = dvfs_frequencies(dictionary, key) {
-        return Some(to_megahertz(frequencies));
+        return Some(to_megahertz(&frequencies));
     }
     let (ecpu_key, pcpu_key) = cluster_voltage_state_keys(dictionary)?;
     let key = if is_efficiency_cluster {
@@ -78,7 +78,7 @@ fn cpu_frequencies(
     } else {
         pcpu_key
     };
-    Some(to_megahertz(dvfs_frequencies(dictionary, &key)?))
+    Some(to_megahertz(&dvfs_frequencies(dictionary, &key)?))
 }
 
 fn parse_cpu_cores(processors: &str) -> (u64, u64, bool) {
@@ -157,7 +157,7 @@ impl SocInfo {
                     soc_info.pcpu_frequencies = frequencies;
                 }
                 if let Some(frequencies) = dvfs_frequencies(&properties, "voltage-states9") {
-                    soc_info.gpu_frequencies = to_megahertz(frequencies);
+                    soc_info.gpu_frequencies = to_megahertz(&frequencies);
                 }
             }
         }

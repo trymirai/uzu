@@ -75,7 +75,7 @@ impl Collector {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn energy_model_channels(&self) -> Vec<EnergyModelChannel> {
+    pub fn energy_model_channels(&self) -> Box<[EnergyModelChannel]> {
         self.ioreport.as_ref().map(IoReport::energy_model_channels).unwrap_or_default()
     }
 

@@ -3,23 +3,23 @@ use crate::units::Percent;
 const STATES: usize = libc::CPU_STATE_MAX as usize;
 
 pub struct CpuLoad {
-    last: Vec<[u64; STATES]>,
+    last: Box<[[u64; STATES]]>,
 }
 
 impl CpuLoad {
     pub fn new() -> Self {
         Self {
-            last: Vec::new(),
+            last: Box::default(),
         }
     }
 
-    pub fn sample(&mut self) -> Vec<Percent> {
+    pub fn sample(&mut self) -> Box<[Percent]> {
         let Some(ticks) = read_ticks() else {
-            return Vec::new();
+            return Box::default();
         };
         if ticks.len() != self.last.len() {
             self.last = ticks;
-            return vec![Percent(0.0); self.last.len()];
+            return vec![Percent(0.0); self.last.len()].into_boxed_slice();
         }
         let usage = ticks
             .iter()
@@ -44,7 +44,7 @@ impl CpuLoad {
 }
 
 #[allow(deprecated)]
-fn read_ticks() -> Option<Vec<[u64; STATES]>> {
+fn read_ticks() -> Option<Box<[[u64; STATES]]>> {
     let mut cpu_count: libc::natural_t = 0;
     let mut info: libc::processor_info_array_t = core::ptr::null_mut();
     let mut info_count: libc::mach_msg_type_number_t = 0;

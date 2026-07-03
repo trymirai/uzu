@@ -40,7 +40,7 @@ pub use sensor::{Sensor, SensorKind, current_sensors, thermal_sensors, voltage_s
 pub use snapshot::Snapshot;
 pub use units::{Bytes, Celsius, GigabytesPerSecond, Joules, Megahertz, Milliseconds, Percent, Rpm, Watts};
 
-pub fn sensors(kind: SensorKind) -> Vec<Sensor> {
+pub fn sensors(kind: SensorKind) -> Box<[Sensor]> {
     client::collect(kind)
 }
 

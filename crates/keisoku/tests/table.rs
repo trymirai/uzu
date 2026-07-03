@@ -56,7 +56,7 @@ fn render_table() {
         ],
         ["────────".into(), "──────".into(), "──────────".into()],
     ];
-    for sensor in &snapshot.sensors {
+    for sensor in snapshot.sensors.iter() {
         lines.push([sensor.name.clone(), format!("{:.1}", sensor.value), sensor.component.to_string()]);
     }
 

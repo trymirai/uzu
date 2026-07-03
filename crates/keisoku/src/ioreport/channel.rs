@@ -18,9 +18,9 @@ pub(super) struct ChannelSample {
 pub(super) fn decode_channels(
     functions: &IoReportFunctions,
     delta: &CFDictionary,
-) -> Vec<ChannelSample> {
+) -> Box<[ChannelSample]> {
     let Some(channels) = dictionary_get::<CFArray>(delta, obfstr!("IOReportChannels")) else {
-        return Vec::new();
+        return Box::default();
     };
     let channels: CFRetained<CFArray<CFType>> = unsafe { CFRetained::from_raw(CFRetained::into_raw(channels).cast()) };
     channels.iter().map(|channel| decode_channel(functions, &channel)).collect()

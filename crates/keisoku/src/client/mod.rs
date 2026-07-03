@@ -46,9 +46,9 @@ pub(crate) fn is_available() -> bool {
     IOKit::get().is_some()
 }
 
-pub(crate) fn collect(kind: SensorKind) -> Vec<Sensor> {
+pub(crate) fn collect(kind: SensorKind) -> Box<[Sensor]> {
     let Some(client) = EventSystemClient::new() else {
-        return Vec::new();
+        return Box::default();
     };
     let (page, usage) = kind.matching();
     let event_type = kind.event_type();
@@ -71,7 +71,7 @@ pub(crate) fn collect(kind: SensorKind) -> Vec<Sensor> {
             kind,
         });
     }
-    readings
+    readings.into_boxed_slice()
 }
 
 struct CachedSensor {
@@ -133,7 +133,7 @@ impl SensorReader {
         })
     }
 
-    pub(crate) fn read(&mut self) -> Vec<Sensor> {
+    pub(crate) fn read(&mut self) -> Box<[Sensor]> {
         let refresh_cold = self.last_cold_read.is_none_or(|at| at.elapsed() >= COLD_REFRESH);
         if refresh_cold {
             self.last_cold_read = Some(Instant::now());

@@ -56,10 +56,10 @@ fn available_telemetry() {
     for sensor in snapshot.sensors.iter().take(24) {
         println!("  {:<26} {:>8.2}  [{}]", sensor.name, sensor.value, sensor.component);
     }
-    for volts in &snapshot.voltage {
+    for volts in snapshot.voltage.iter() {
         println!("  {:<26} {:>8.3} V  [{}]", volts.name, volts.value, volts.component);
     }
-    for amps in &snapshot.current {
+    for amps in snapshot.current.iter() {
         println!("  {:<26} {:>8.3} A  [{}]", amps.name, amps.value, amps.component);
     }
 }

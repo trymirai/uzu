@@ -32,17 +32,17 @@ pub fn dictionary_get<V: ConcreteType>(
 pub fn dictionary_data(
     dictionary: &CFDictionary,
     key: &str,
-) -> Option<Vec<u8>> {
-    dictionary_get::<CFData>(dictionary, key).map(|data| cf_data_to_vec(&data))
+) -> Option<Box<[u8]>> {
+    dictionary_get::<CFData>(dictionary, key).map(|data| cf_data_to_bytes(&data))
 }
 
-fn cf_data_to_vec(data: &CFData) -> Vec<u8> {
+fn cf_data_to_bytes(data: &CFData) -> Box<[u8]> {
     let length = data.length();
     let bytes = data.byte_ptr();
     if length <= 0 || bytes.is_null() {
-        return Vec::new();
+        return Box::default();
     }
-    unsafe { core::slice::from_raw_parts(bytes, length as usize) }.to_vec()
+    unsafe { core::slice::from_raw_parts(bytes, length as usize) }.into()
 }
 
 pub fn registry_properties(entry: objc2_io_kit::io_registry_entry_t) -> Option<CFRetained<CFDictionary>> {
