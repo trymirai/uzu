@@ -546,6 +546,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-stream"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b5a71a6f37880a80d1d7f19efd781e4b5de42c88f0722cc13bcb6cc2cfe8476"
+dependencies = [
+ "async-stream-impl",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "async-stream-impl"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "async-task"
 version = "4.7.1"
 source = "git+https://github.com/smol-rs/async-task.git?rev=b4486cd71e4e94fbda54ce6302444de14f4d190e#b4486cd71e4e94fbda54ce6302444de14f4d190e"
@@ -735,6 +757,7 @@ name = "backend-uzu"
 version = "0.5.12"
 dependencies = [
  "anyhow",
+ "async-stream",
  "async-trait",
  "bindgen 0.72.1",
  "bitflags 2.13.0",
@@ -748,6 +771,7 @@ dependencies = [
  "futures",
  "half",
  "itertools 0.14.0",
+ "keisoku",
  "libc",
  "libm",
  "memmap2",
@@ -4188,6 +4212,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "kanka"
+version = "0.5.12"
+dependencies = [
+ "libc",
+ "obfstr",
+ "objc2-core-foundation",
+]
+
+[[package]]
+name = "keisoku"
+version = "0.5.12"
+dependencies = [
+ "kanka",
+ "libc",
+ "obfstr",
+ "objc2-core-foundation",
+ "objc2-io-kit",
+ "serde",
+ "serde_json",
+ "sysinfo 0.38.4",
+]
+
+[[package]]
 name = "keyboard-types"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4867,13 +4914,13 @@ dependencies = [
  "futures",
  "hanashi",
  "indexmap 2.14.0",
+ "keisoku",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
  "shoji",
  "thiserror 2.0.18",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "tracing",
  "uuid",
@@ -7298,6 +7345,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio-util",
 ]
 
