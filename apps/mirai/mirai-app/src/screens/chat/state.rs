@@ -4,7 +4,6 @@ use uzu::{
 };
 
 use super::{chat_turn::ChatTurn, sampling::SamplingMode};
-use crate::components::markdown::ParsedMarkdown;
 
 pub(super) struct ChatState {
     pub messages: Vec<ChatTurn>,
@@ -14,10 +13,6 @@ pub(super) struct ChatState {
     pub cancel: Option<CancelToken>,
     pub stream_gen: u64,
     pub revealed_chars: usize,
-    pub stream_parsed: Option<ParsedMarkdown>,
-    pub stream_stable_len: usize,
-    pub stream_parse_in_flight: bool,
-    pub stream_parse_pending: bool,
     pub chat_id: Option<String>,
     pub created_at: u64,
     pub model_picker_open: bool,

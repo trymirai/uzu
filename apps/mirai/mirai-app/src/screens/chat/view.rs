@@ -92,10 +92,6 @@ impl ChatView {
                 cancel: None,
                 stream_gen: 0,
                 revealed_chars: usize::MAX,
-                stream_parsed: None,
-                stream_stable_len: 0,
-                stream_parse_in_flight: false,
-                stream_parse_pending: false,
                 chat_id: None,
                 created_at: persistence::now_ms(),
                 model_picker_open: false,
@@ -155,8 +151,6 @@ impl ChatView {
         self.state.streaming = false;
         self.state.waiting_for_model = false;
         self.state.revealed_chars = usize::MAX;
-        self.state.stream_parsed = None;
-        self.state.stream_stable_len = 0;
     }
 
     pub(super) fn cached_session(
@@ -771,28 +765,8 @@ impl Render for ChatView {
                                 )
                                 .into_any_element()
                         } else if revealing_here {
-                            let revealed_byte = cur
-                                .text
-                                .char_indices()
-                                .nth(self.state.revealed_chars)
-                                .map(|(byte, _)| byte)
-                                .unwrap_or(cur.text.len());
-                            let stable_len = self.state.stream_stable_len.min(revealed_byte);
-                            let tail = cur.text[stable_len..revealed_byte].to_string();
-                            div()
-                                .w_full()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .text_color(theme.text)
-                                .children(
-                                    self.state
-                                        .stream_parsed
-                                        .as_ref()
-                                        .map(|parsed| crate::components::markdown::render(parsed, &theme, idx)),
-                                )
-                                .child(tail)
-                                .into_any_element()
+                            let shown: String = cur.text.chars().take(self.state.revealed_chars).collect();
+                            div().w_full().min_w_0().text_color(theme.text).child(shown).into_any_element()
                         } else {
                             div()
                                 .w_full()
