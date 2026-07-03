@@ -68,7 +68,6 @@ PUBLIC KERNEL(UnifiedSampling) (
   const bool is_stochastic SPECIALIZE,
   const bool has_bitmask SPECIALIZE,
   const bool has_temperature SPECIALIZE,
-  const bool temperature_after_filters SPECIALIZE,
   const bool has_top_k SPECIALIZE,
   const bool has_top_p SPECIALIZE,
   const bool has_min_p SPECIALIZE,
@@ -109,7 +108,7 @@ PUBLIC KERNEL(UnifiedSampling) (
       logit.value = mask ? logit.value : -INFINITY;
     }
 
-    if (has_temperature && !temperature_after_filters) {
+    if (has_temperature) {
       logit.value *= recip_temperature;
     }
 
@@ -123,10 +122,6 @@ PUBLIC KERNEL(UnifiedSampling) (
       thread_pre_filter_logit_max = new_thread_pre_filter_logit_max;
     } else if (has_min_p) {
       thread_pre_filter_logit_max = max(thread_pre_filter_logit_max, logit.value);
-    }
-
-    if (has_temperature && temperature_after_filters) {
-      logit.value *= recip_temperature;
     }
 
     if (is_stochastic) {
@@ -162,7 +157,7 @@ PUBLIC KERNEL(UnifiedSampling) (
 
   for (uint32_t iteration = 0; iteration < MAX_ITERS; iteration++) {
     Logit candidate_logit_pre_filter = Logit::load(logits, candidate_logit_post_gumbel.index);
-    if (has_temperature && !temperature_after_filters) {
+    if (has_temperature) {
       candidate_logit_pre_filter.value *= recip_temperature;
     }
     if (is_stochastic) {
@@ -180,7 +175,7 @@ PUBLIC KERNEL(UnifiedSampling) (
         logit.value = mask ? logit.value : -INFINITY;
       }
 
-      if (has_temperature && !temperature_after_filters) {
+      if (has_temperature) {
         logit.value *= recip_temperature;
       }
 
@@ -193,10 +188,6 @@ PUBLIC KERNEL(UnifiedSampling) (
         if (has_top_p) {
           thread_mass_above_candidate += exp(logit.value - pre_filter_logit_max) / pre_filter_logit_norm;
         }
-      }
-
-      if (has_temperature && temperature_after_filters) {
-        logit.value *= recip_temperature;
       }
 
       if (is_stochastic) {

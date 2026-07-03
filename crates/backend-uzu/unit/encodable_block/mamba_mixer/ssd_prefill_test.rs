@@ -1,12 +1,21 @@
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
-use super::{SSDPrefillArguments, SSDPrefillBlock, SSDPrefillMode};
 use crate::{
-    backends::common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dScanKernel},
+    backends::common::{
+        Backend, Context, Encoder, Kernels,
+        gpu_types::ActivationType,
+        kernel::{Conv1dScanKernel, SSDPrefill64Kernel, SSDPrefillKernel},
+    },
     data_type::DataType,
-    tests::helpers::{alloc_allocation_with_data, allocation_to_vec},
+    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
+
+#[derive(Debug, Clone, Copy)]
+enum SSDPrefillMode {
+    Universal,
+    Special64,
+}
 
 fn ssd_prefill_cpu_reference(
     suffix_len: usize,
@@ -135,10 +144,9 @@ impl SSDPrefillFixture {
 
 fn run_prefill_kernel_mode<B: Backend>(
     ctx: &B::Context,
-    block: &SSDPrefillBlock<B>,
     fixture: &SSDPrefillFixture,
     mode: SSDPrefillMode,
-) -> (Vec<f32>, Vec<f32>, Option<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)>) {
+) -> (Vec<f32>, Vec<f32>) {
     let x_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.x_data);
     let dt_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.dt_data);
     let b_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.b_data);
@@ -146,35 +154,72 @@ fn run_prefill_kernel_mode<B: Backend>(
     let d_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.d_data);
     let z_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.z_data);
     let mut state_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.state_init);
+    let mut y_buf = alloc_allocation::<B, f32>(ctx, fixture.suffix_len * fixture.num_heads * fixture.head_dim);
 
-    let args = SSDPrefillArguments {
-        x: &x_buf,
-        dt: &dt_buf,
-        b: &b_buf,
-        c: &c_buf,
-        d: &d_buf,
-        z: &z_buf,
-        state: &mut state_buf,
-        suffix_len: fixture.suffix_len,
-        group_size: fixture.group_size as u32,
-        state_size: fixture.state_dim as u32,
-        x_strides: fixture.x_strides,
-        dt_strides: fixture.dt_strides,
-        cb_strides: fixture.cb_strides,
-        state_strides: fixture.state_strides,
-        channels: fixture.num_heads,
-        head_dim: fixture.head_dim,
-    };
+    let x_strides = fixture.x_strides.map(|stride| stride as u32);
+    let dt_strides = fixture.dt_strides.map(|stride| stride as u32);
+    let cb_strides = fixture.cb_strides.map(|stride| stride as u32);
+    let state_strides = fixture.state_strides.map(|stride| stride as u32);
 
     let mut encoder = Encoder::new(ctx).unwrap();
-    let y_buf = block.encode(&mut encoder, args, mode).expect("Failed to encode SSD prefill");
+    match mode {
+        SSDPrefillMode::Universal => {
+            let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(ctx, DataType::F32)
+                .expect("Failed to create SSD prefill kernel");
+            kernel.encode(
+                &x_buf,
+                &dt_buf,
+                &b_buf,
+                &c_buf,
+                &d_buf,
+                &z_buf,
+                &mut state_buf,
+                &mut y_buf,
+                fixture.suffix_len as u32,
+                fixture.group_size as u32,
+                fixture.state_dim as u32,
+                &x_strides,
+                &dt_strides,
+                &cb_strides,
+                &state_strides,
+                fixture.num_heads as u32,
+                fixture.head_dim as u32,
+                &mut encoder,
+            );
+        },
+        SSDPrefillMode::Special64 => {
+            assert_eq!(fixture.state_dim, 64);
+            let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefill64Kernel::new(ctx, DataType::F32)
+                .expect("Failed to create SSD prefill64 kernel");
+            kernel.encode(
+                &x_buf,
+                &dt_buf,
+                &b_buf,
+                &c_buf,
+                &d_buf,
+                &z_buf,
+                &mut state_buf,
+                &mut y_buf,
+                fixture.suffix_len as u32,
+                fixture.group_size as u32,
+                fixture.state_dim as u32,
+                &x_strides,
+                &dt_strides,
+                &cb_strides,
+                &state_strides,
+                fixture.num_heads as u32,
+                fixture.head_dim as u32,
+                &mut encoder,
+            );
+        },
+    }
     let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_vec = allocation_to_vec::<B, f32>(&y_buf);
     let state_vec = allocation_to_vec::<B, f32>(&state_buf);
     drop(y_buf);
     drop(completed);
-    (y_vec, state_vec, None)
+    (y_vec, state_vec)
 }
 
 fn run_conv_scan_once<B: Backend>(
@@ -198,14 +243,14 @@ fn run_conv_scan_once<B: Backend>(
     let mut y_buf = if alias_io {
         alloc_allocation_with_data::<B, _>(ctx, x_data)
     } else {
-        alloc_allocation_with_data::<B, _>(ctx, &vec![0.0f32; total_x])
+        alloc_allocation::<B, f32>(ctx, total_x)
     };
-    let mut b_out_buf = alloc_allocation_with_data::<B, _>(ctx, &vec![0.0f32; total_x]);
-    let mut c_out_buf = alloc_allocation_with_data::<B, _>(ctx, &vec![0.0f32; total_x]);
+    let mut b_out_buf = alloc_allocation::<B, f32>(ctx, total_x);
+    let mut c_out_buf = alloc_allocation::<B, f32>(ctx, total_x);
     let w_buf = alloc_allocation_with_data::<B, _>(ctx, w_data);
     let b_buf = alloc_allocation_with_data::<B, _>(ctx, b_data);
     let mut state_buf = alloc_allocation_with_data::<B, _>(ctx, state_init);
-    let scratch_buf = alloc_allocation_with_data::<B, _>(ctx, &vec![0.0f32; total_state]);
+    let mut scratch_buf = alloc_allocation::<B, f32>(ctx, total_state);
 
     let padded_len = tap_count + suffix_len;
     let mut padded_host = vec![0.0f32; padded_len * channels];
@@ -222,6 +267,9 @@ fn run_conv_scan_once<B: Backend>(
     let padded_buf = alloc_allocation_with_data::<B, _>(ctx, &padded_host);
 
     let mut encoder = Encoder::new(ctx).unwrap();
+    if use_scratch && tap_count > 0 {
+        encoder.encode_fill(&mut scratch_buf, 0);
+    }
     kernel.encode(
         &padded_buf,
         &w_buf,
@@ -258,11 +306,10 @@ fn assert_deterministic_for_mode<B: Backend>(mode: SSDPrefillMode) {
         eprintln!("Skipping SSD prefill determinism test: no Metal device");
         return;
     };
-    let block = SSDPrefillBlock::<B>::new(&ctx, DataType::F32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
-    let (y_a, state_a, _) = run_prefill_kernel_mode::<B>(&ctx, &block, &fixture, mode);
-    let (y_b, state_b, _) = run_prefill_kernel_mode::<B>(&ctx, &block, &fixture, mode);
+    let (y_a, state_a) = run_prefill_kernel_mode::<B>(&ctx, &fixture, mode);
+    let (y_b, state_b) = run_prefill_kernel_mode::<B>(&ctx, &fixture, mode);
 
     assert_eq!(y_a, y_b, "Prefill outputs differ in {:?} mode", mode);
     assert_eq!(state_a, state_b, "Prefill states differ in {:?} mode", mode);
@@ -273,7 +320,6 @@ fn assert_matches_cpu_reference<B: Backend>(mode: SSDPrefillMode) {
         eprintln!("Skipping SSD prefill reference test: no Metal device");
         return;
     };
-    let block = SSDPrefillBlock::<B>::new(&ctx, DataType::F32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
     let (y_ref, state_ref) = ssd_prefill_cpu_reference(
@@ -295,7 +341,7 @@ fn assert_matches_cpu_reference<B: Backend>(mode: SSDPrefillMode) {
         fixture.state_strides,
     );
 
-    let (y_gpu, state_gpu, _) = run_prefill_kernel_mode::<B>(&ctx, &block, &fixture, mode);
+    let (y_gpu, state_gpu) = run_prefill_kernel_mode::<B>(&ctx, &fixture, mode);
 
     let tolerance = 5e-5f32;
     let mut max_y_diff = 0.0f32;
@@ -391,30 +437,30 @@ fn conv1d_scan_deterministic_internal<B: Backend>() {
 }
 
 #[uzu_test]
-fn ssd_prefill_sequential_is_deterministic() {
+fn ssd_prefill_universal_is_deterministic() {
     for_each_non_cpu_backend!(|B| {
-        assert_deterministic_for_mode::<B>(SSDPrefillMode::Sequential);
+        assert_deterministic_for_mode::<B>(SSDPrefillMode::Universal);
     });
 }
 
 #[uzu_test]
-fn ssd_prefill_single_pass_is_deterministic() {
+fn ssd_prefill_special64_is_deterministic() {
     for_each_non_cpu_backend!(|B| {
-        assert_deterministic_for_mode::<B>(SSDPrefillMode::SinglePass);
+        assert_deterministic_for_mode::<B>(SSDPrefillMode::Special64);
     });
 }
 
 #[uzu_test]
-fn ssd_prefill_sequential_matches_cpu_reference() {
+fn ssd_prefill_universal_matches_cpu_reference() {
     for_each_non_cpu_backend!(|B| {
-        assert_matches_cpu_reference::<B>(SSDPrefillMode::Sequential);
+        assert_matches_cpu_reference::<B>(SSDPrefillMode::Universal);
     });
 }
 
 #[uzu_test]
-fn ssd_prefill_single_pass_matches_cpu_reference() {
+fn ssd_prefill_special64_matches_cpu_reference() {
     for_each_non_cpu_backend!(|B| {
-        assert_matches_cpu_reference::<B>(SSDPrefillMode::SinglePass);
+        assert_matches_cpu_reference::<B>(SSDPrefillMode::Special64);
     });
 }
 

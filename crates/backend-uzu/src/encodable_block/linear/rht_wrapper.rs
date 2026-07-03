@@ -1,6 +1,5 @@
 use thiserror::Error;
 
-use super::{Linear, OutputHadamardLinearError};
 use crate::{
     backends::common::{
         Allocation, Backend, Encoder,
@@ -12,6 +11,7 @@ use crate::{
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
+    encodable_block::linear::{Linear, OutputHadamardLinearError},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 

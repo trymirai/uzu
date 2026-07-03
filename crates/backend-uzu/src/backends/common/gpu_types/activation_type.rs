@@ -9,7 +9,6 @@ pub enum ActivationType {
     SILU,
     GELUApprox,
     GELUExact,
-    TANH,
     IDENTITY,
     SOFTPLUS,
 }
@@ -23,7 +22,6 @@ impl ActivationType {
             ActivationType::SILU => silu(x),
             ActivationType::GELUApprox => gelu_approx(x),
             ActivationType::GELUExact => gelu_exact(x),
-            ActivationType::TANH => tanh_activation(x),
             ActivationType::IDENTITY => x,
             ActivationType::SOFTPLUS => softplus(x),
         }
@@ -54,11 +52,6 @@ fn gelu_exact<T: Float>(x: T) -> T {
     let x_float = x.to_f32().unwrap();
     let y_float = 0.5f32 * x_float * (1.0f32 + libm::erff(x_float * std::f32::consts::FRAC_1_SQRT_2));
     T::from(y_float).unwrap()
-}
-
-fn tanh_activation<T: Float>(x: T) -> T {
-    let x_float = x.to_f32().unwrap();
-    T::from(x_float.tanh()).unwrap()
 }
 
 fn softplus<T: Float>(x: T) -> T {

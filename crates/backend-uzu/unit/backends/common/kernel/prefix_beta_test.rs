@@ -2,13 +2,15 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::ArrayContextExt,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BuildPrefixBetaKernel},
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::{assert::assert_eq_float, helpers::allocation_to_vec},
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 fn get_output<B: Backend>(
@@ -26,21 +28,21 @@ fn get_output<B: Backend>(
         .expect("Failed to create BuildPrefixBetaKernel");
 
     let output_len = a_transposed.len();
-    let trie = context.create_array_from(&[trie.len()], trie);
-    let a_transposed = context.create_array_from(&[a_transposed.len()], a_transposed);
-    let b = context.create_array_from(&[b.len()], b);
-    let a_log = context.create_array_from(&[a_log.len()], a_log);
-    let dt_bias = context.create_array_from(&[dt_bias.len()], dt_bias);
-    let mut prefix = context.create_array_uninitialized(&[output_len], DataType::F32).into_allocation();
-    let mut beta = context.create_array_uninitialized(&[output_len], DataType::F32).into_allocation();
+    let trie = alloc_allocation_with_data::<B, u32>(&context, trie);
+    let a_transposed = alloc_allocation_with_data::<B, f32>(&context, a_transposed);
+    let b = alloc_allocation_with_data::<B, f32>(&context, b);
+    let a_log = alloc_allocation_with_data::<B, f32>(&context, a_log);
+    let dt_bias = alloc_allocation_with_data::<B, f32>(&context, dt_bias);
+    let mut prefix = alloc_allocation::<B, f32>(&context, output_len);
+    let mut beta = alloc_allocation::<B, f32>(&context, output_len);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        trie.allocation(),
-        a_transposed.allocation(),
-        b.allocation(),
-        a_log.allocation(),
-        dt_bias.allocation(),
+        &trie,
+        &a_transposed,
+        &b,
+        &a_log,
+        &dt_bias,
         &mut prefix,
         &mut beta,
         batch_size,

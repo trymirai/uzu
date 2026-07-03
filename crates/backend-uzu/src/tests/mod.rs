@@ -4,7 +4,6 @@
 pub extern crate test;
 
 pub mod assert;
-pub mod audio;
 pub mod cold_pool;
 pub mod helpers;
 pub mod matmul;

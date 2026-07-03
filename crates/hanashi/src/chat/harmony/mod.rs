@@ -19,6 +19,7 @@ use shoji::types::{
     basic::{Token, TokenId},
     session::chat::ChatMessage,
 };
+use tokenizers::Tokenizer;
 
 use crate::{
     Encoding as EncodingTrait,
@@ -109,6 +110,10 @@ impl EncodingTrait for Encoding {
 
         self.update_messages_from_parser_state()?;
         Ok(())
+    }
+
+    fn tokenizer(&self) -> Option<&Tokenizer> {
+        None
     }
 }
 

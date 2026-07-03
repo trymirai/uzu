@@ -2,13 +2,15 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::ArrayContextExt,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::{assert::assert_eq_float, helpers::allocation_to_vec},
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 const BATCH_SIZE: usize = 2;
@@ -31,22 +33,22 @@ fn get_output<B: Backend>(
         .expect("Failed to create BuildTreeGramKernel");
 
     let output_len = BATCH_SIZE * VALUE_HEADS * tree_size * tree_size;
-    let q = context.create_array_from(&[q.len()], q);
-    let k = context.create_array_from(&[k.len()], k);
-    let trie = context.create_array_from(&[trie.len()], trie);
-    let prefix = context.create_array_from(&[prefix.len()], prefix);
-    let beta = context.create_array_from(&[beta.len()], beta);
-    let mut a_mat = context.create_array_uninitialized(&[output_len], DataType::F32).into_allocation();
-    let mut qkd = context.create_array_uninitialized(&[output_len], DataType::F32).into_allocation();
-    let mut ainv = context.create_array_uninitialized(&[output_len], DataType::F32).into_allocation();
+    let q = alloc_allocation_with_data::<B, f32>(&context, q);
+    let k = alloc_allocation_with_data::<B, f32>(&context, k);
+    let trie = alloc_allocation_with_data::<B, u32>(&context, trie);
+    let prefix = alloc_allocation_with_data::<B, f32>(&context, prefix);
+    let beta = alloc_allocation_with_data::<B, f32>(&context, beta);
+    let mut a_mat = alloc_allocation::<B, f32>(&context, output_len);
+    let mut qkd = alloc_allocation::<B, f32>(&context, output_len);
+    let mut ainv = alloc_allocation::<B, f32>(&context, output_len);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        q.allocation(),
-        k.allocation(),
-        trie.allocation(),
-        prefix.allocation(),
-        beta.allocation(),
+        &q,
+        &k,
+        &trie,
+        &prefix,
+        &beta,
         &mut a_mat,
         &mut qkd,
         &mut ainv,

@@ -15,14 +15,13 @@ path = "src/main.rs"
 [features]
 default = ["backend-metal", "capability-grammar", "capability-cli"]
 backend-cpu = ["uzu/backend-cpu"]
-backend-metal = ["uzu/backend-metal", "benchmarks/metal"]
+backend-metal = ["uzu/backend-metal"]
 capability-grammar = ["uzu/capability-grammar"]
-capability-tracing = ["uzu/capability-tracing"]
 capability-cli = ["uzu/capability-cli"]
 
 [dependencies]
+backend-uzu.workspace = true
 uzu = { workspace = true, default-features = false }
-benchmarks = { workspace = true, default-features = false }
 tokio.workspace = true
 anyhow.workspace = true
 clap.workspace = true
@@ -34,6 +33,8 @@ jsonschema.workspace = true
 rocket.workspace = true
 uuid.workspace = true
 tokio-stream.workspace = true
+sysinfo.workspace = true
+shoji.workspace = true
 
 [lints]
 workspace = true
