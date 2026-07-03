@@ -1,3 +1,6 @@
+#[cfg(not(target_vendor = "apple"))]
+compile_error!("kanshi supports Apple platforms only (macOS and iOS)");
+
 mod chart;
 mod color;
 mod disk_row;
