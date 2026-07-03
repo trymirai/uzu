@@ -5,7 +5,7 @@ use gpui::{
     px,
 };
 
-use super::{clear_data::ClearDataStep, event::SettingsEvent};
+use super::{clear_data::ClearDataStep, event::SettingsEvent, setting_kind::SettingKind, settings_tab::SettingsTab};
 use crate::{
     components::{Button, ButtonKind, ButtonSize, Icon, IconEl, InputEvent, TextInput, Toggle},
     data_ops::{self, CleanupCategory, CleanupPreview},
@@ -14,22 +14,6 @@ use crate::{
 };
 
 const DISCORD_URL: &str = "https://discord.com/invite/gUhyn6Rb7x";
-
-#[derive(Clone, Copy)]
-enum SettingKind {
-    Reasoning,
-    RunOnStartup,
-    ShowInMenuBar,
-    AutoEject,
-    ShareUsage,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SettingsTab {
-    General,
-    Privacy,
-    About,
-}
 
 pub struct SettingsView {
     instructions: Entity<TextInput>,

@@ -1,5 +1,6 @@
-//! Text-to-speech screen: editor + model picker + audio playback/history.
-
+mod pending_generation;
+mod right_pane_tab;
+mod synthesis_message;
 mod view;
 mod vm;
 

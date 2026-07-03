@@ -2,18 +2,13 @@ use futures::{StreamExt, channel::mpsc};
 use gpui::{Context, CursorStyle, Entity, FontWeight, IntoElement, Render, Window, div, prelude::*, px};
 use uzu::types::{model::Model, session::classification::ClassificationMessage};
 
-use super::vm::RouterVm;
+use super::{classification_outcome::ClassificationOutcome, vm::RouterVm};
 use crate::{
     components::{Button, ButtonKind, Icon, IconButton, IconEl, InputEvent, Loader, TextInput, VendorIcon},
     engine,
     models_store::ModelsStore,
     theme::{ActiveTheme, Theme, layout::CONTENT_MAX_WIDTH},
 };
-
-enum ClassMsg {
-    Ok(Vec<(String, f64)>),
-    Err(String),
-}
 
 pub struct RoutersView {
     store: Entity<ModelsStore>,
@@ -100,21 +95,21 @@ impl RoutersView {
             return;
         };
 
-        let (tx, mut rx) = mpsc::unbounded::<ClassMsg>();
+        let (tx, mut rx) = mpsc::unbounded::<ClassificationOutcome>();
         gpui_tokio::Tokio::spawn(cx, async move {
             match engine.classification(model).await {
                 Ok(session) => match session.classify(vec![ClassificationMessage::user(text)]).await {
                     Ok(output) => {
                         let mut values: Vec<(String, f64)> = output.probabilities.values.into_iter().collect();
                         values.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-                        let _ = tx.unbounded_send(ClassMsg::Ok(values));
+                        let _ = tx.unbounded_send(ClassificationOutcome::Ok(values));
                     },
                     Err(err) => {
-                        let _ = tx.unbounded_send(ClassMsg::Err(format!("{err:?}")));
+                        let _ = tx.unbounded_send(ClassificationOutcome::Err(format!("{err:?}")));
                     },
                 },
                 Err(err) => {
-                    let _ = tx.unbounded_send(ClassMsg::Err(err.to_string()));
+                    let _ = tx.unbounded_send(ClassificationOutcome::Err(err.to_string()));
                 },
             }
         })
@@ -127,8 +122,8 @@ impl RoutersView {
                         return false;
                     }
                     match msg {
-                        ClassMsg::Ok(values) => view.result = Some(values),
-                        ClassMsg::Err(err) => view.error = Some(err),
+                        ClassificationOutcome::Ok(values) => view.result = Some(values),
+                        ClassificationOutcome::Err(err) => view.error = Some(err),
                     }
                     view.classifying = false;
                     cx.notify();

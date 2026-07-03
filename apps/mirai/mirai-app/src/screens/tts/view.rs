@@ -11,7 +11,9 @@ use uzu::{
     },
 };
 
-use super::vm::TtsVm;
+use super::{
+    pending_generation::PendingGeneration, right_pane_tab::RightPaneTab, synthesis_message::SynthesisMessage, vm::TtsVm,
+};
 use crate::{
     components::{Button, ButtonKind, Icon, IconButton, IconEl, InputEvent, Loader, TextInput, VendorIcon},
     engine,
@@ -21,25 +23,6 @@ use crate::{
 };
 
 const CHAR_LIMIT: usize = 2000;
-
-enum TtsMsg {
-    Started(CancelToken),
-    Batch(PcmBatch),
-    Done,
-    Error(String),
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TtsTab {
-    Settings,
-    History,
-}
-
-struct PendingGen {
-    text: String,
-    model: Model,
-    vendor: String,
-}
 
 pub struct TtsView {
     store: Entity<ModelsStore>,
@@ -53,8 +36,8 @@ pub struct TtsView {
     history: Vec<TtsHistoryEntry>,
     playing_id: Option<String>,
     pending_batches: Vec<PcmBatch>,
-    pending_gen: Option<PendingGen>,
-    right_tab: TtsTab,
+    pending_gen: Option<PendingGeneration>,
+    right_tab: RightPaneTab,
 }
 
 impl TtsView {
@@ -95,7 +78,7 @@ impl TtsView {
             playing_id: None,
             pending_batches: Vec::new(),
             pending_gen: None,
-            right_tab: TtsTab::Settings,
+            right_tab: RightPaneTab::Settings,
         }
     }
 
@@ -195,7 +178,7 @@ impl TtsView {
         self.error = None;
         self.playing_id = None;
         self.pending_batches.clear();
-        self.pending_gen = Some(PendingGen {
+        self.pending_gen = Some(PendingGeneration {
             text: text.clone(),
             model: model.clone(),
             vendor: self
@@ -216,32 +199,32 @@ impl TtsView {
             return;
         };
 
-        let (tx, mut rx) = mpsc::unbounded::<TtsMsg>();
+        let (tx, mut rx) = mpsc::unbounded::<SynthesisMessage>();
         gpui_tokio::Tokio::spawn(cx, async move {
             let session = match engine.text_to_speech(model).await {
                 Ok(session) => session,
                 Err(err) => {
-                    let _ = tx.unbounded_send(TtsMsg::Error(err.to_string()));
+                    let _ = tx.unbounded_send(SynthesisMessage::Error(err.to_string()));
                     return;
                 },
             };
             let stream = session.synthesize_stream(text).await;
-            let _ = tx.unbounded_send(TtsMsg::Started(stream.cancel_token()));
+            let _ = tx.unbounded_send(SynthesisMessage::Started(stream.cancel_token()));
             while let Some(event) = stream.next().await {
                 match event {
                     TextToSpeechSessionStreamChunk::Output {
                         output,
                     } => {
-                        let _ = tx.unbounded_send(TtsMsg::Batch(output.pcm_batch));
+                        let _ = tx.unbounded_send(SynthesisMessage::Batch(output.pcm_batch));
                     },
                     TextToSpeechSessionStreamChunk::Error {
                         error,
                     } => {
-                        let _ = tx.unbounded_send(TtsMsg::Error(format!("{error}")));
+                        let _ = tx.unbounded_send(SynthesisMessage::Error(format!("{error}")));
                     },
                 }
             }
-            let _ = tx.unbounded_send(TtsMsg::Done);
+            let _ = tx.unbounded_send(SynthesisMessage::Done);
         })
         .detach();
 
@@ -264,12 +247,12 @@ impl TtsView {
 
     fn apply(
         &mut self,
-        msg: TtsMsg,
+        msg: SynthesisMessage,
         cx: &mut Context<Self>,
     ) {
         match msg {
-            TtsMsg::Started(token) => self.cancel = Some(token),
-            TtsMsg::Batch(batch) => {
+            SynthesisMessage::Started(token) => self.cancel = Some(token),
+            SynthesisMessage::Batch(batch) => {
                 if !self.generating {
                     return;
                 }
@@ -279,7 +262,7 @@ impl TtsView {
                     self.generating = false;
                 }
             },
-            TtsMsg::Done => {
+            SynthesisMessage::Done => {
                 self.generating = false;
                 self.cancel = None;
                 if self.error.is_none() {
@@ -299,7 +282,7 @@ impl TtsView {
                 self.clear_gen();
                 cx.notify();
             },
-            TtsMsg::Error(err) => {
+            SynthesisMessage::Error(err) => {
                 self.error = Some(err);
                 self.generating = false;
                 self.cancel = None;
@@ -604,7 +587,7 @@ impl TtsView {
         &self,
         cx: &mut Context<Self>,
         label: &'static str,
-        tab: TtsTab,
+        tab: RightPaneTab,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let active = self.right_tab == tab;
@@ -716,8 +699,8 @@ impl Render for TtsView {
         };
 
         let right_body = match self.right_tab {
-            TtsTab::Settings => settings_content.into_any_element(),
-            TtsTab::History => history_content,
+            RightPaneTab::Settings => settings_content.into_any_element(),
+            RightPaneTab::History => history_content,
         };
 
         let status = if self.generating {
@@ -830,8 +813,8 @@ impl Render for TtsView {
                                     .flex()
                                     .border_b_1()
                                     .border_color(theme.border)
-                                    .child(self.tab_button(cx, "Settings", TtsTab::Settings))
-                                    .child(self.tab_button(cx, "History", TtsTab::History)),
+                                    .child(self.tab_button(cx, "Settings", RightPaneTab::Settings))
+                                    .child(self.tab_button(cx, "History", RightPaneTab::History)),
                             )
                             .child(
                                 div().id("tts-right-scroll").flex_1().min_h_0().overflow_y_scroll().child(right_body),
