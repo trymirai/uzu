@@ -13,7 +13,7 @@ using namespace uzu::matmul;
 // acc_i -= A[i, j] @ U[j] for all j < i; U[i] = Ainv[i] @ acc_i.
 //
 // Shapes (NB = ceil(T/16)):
-//   kh0    [B, T, HV, head_v_dim] in T, from BuildTreeGram (absent when !use_h0)
+//   kh0    [B, T, HV, head_v_dim] f32, from BuildTreeGram (absent when !use_h0)
 //   v      [B, T, HV, head_v_dim] in T
 //   prefix, beta [B, T, HV] f32
 //   A      [B*HV, NB, ceil(NB/2), 16, 32] f32 packed pair tiles from BuildTreeGram
@@ -25,7 +25,8 @@ using namespace uzu::matmul;
 // Grid: one simdgroup per (batch, value head, BV value-dim tile); the history is
 // consumed one packed pair tile ([16,32] A x [32,BV] U) per fragment_mma plus a
 // single-block tail when i is odd.
-// ponytail: A stays f32; bf16 A only pays in bandwidth-bound large-batch shapes.
+// A and Ainv are kept in f32: the (I + A)^-1 forward-substitution cascade is
+// precision-sensitive.
 template <typename T, uint BV, bool USE_MXU>
 VARIANTS(T, float, bfloat)
 VARIANTS(BV, 16, 32)
@@ -33,7 +34,7 @@ VARIANTS(USE_MXU, false, true)
 CONSTRAINT(!USE_MXU || T != "float")
 CONSTRAINT(!USE_MXU || BV >= 32)
 PUBLIC KERNEL(TreeUpdateSolve)(
-    const device T* kh0 OPTIONAL(use_h0),
+    const device float* kh0 OPTIONAL(use_h0),
     const device T* v,
     const device float* prefix,
     const device float* beta,
@@ -73,7 +74,7 @@ PUBLIC KERNEL(TreeUpdateSolve)(
   const uint value_token_stride = value_heads * head_v_dim;
   const uint scalar_token_stride = value_heads;
 
-  const device T* kh0_head_tile =
+  const device float* kh0_head_tile =
       kh0 + (batch_idx * tree_size * value_heads + value_head_idx) * head_v_dim + value_dim_base;
   const device T* value_head_tile =
       v + (batch_idx * tree_size * value_heads + value_head_idx) * head_v_dim + value_dim_base;
@@ -91,7 +92,7 @@ PUBLIC KERNEL(TreeUpdateSolve)(
     TileFragment acc;
 
     if (h0_slot >= 0) {
-      const device T* kh0_block = kh0_head_tile + row_base * value_token_stride;
+      const device float* kh0_block = kh0_head_tile + row_base * value_token_stride;
       acc.load_maybe_bounded(
           lane_idx,
           kh0_block,
@@ -172,6 +173,8 @@ PUBLIC KERNEL(TreeUpdateSolve)(
     fragment_mma(solved, inv_frag, acc);
     solved.store_safe(lane_idx, u_head_tile + row_base * head_v_dim, head_v_dim, short2(tile_value_cols, tile_rows));
 
-    threadgroup_barrier(mem_flags::mem_device);
+    // The threadgroup is a single simdgroup, so the block-serial U dependency
+    // only needs a simdgroup-scoped device-memory fence.
+    simdgroup_barrier(mem_flags::mem_device);
   }
 }

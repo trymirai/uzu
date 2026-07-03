@@ -65,6 +65,15 @@ const CASES: &[SolveCase] = &[
         head_v_dim: 64,
     },
     SolveCase {
+        // NB=16: the large-tree regime this kernel exists for; num_full_pairs
+        // reaches 7, so the deep packed-pair accumulation is exercised.
+        name: "large_tree",
+        batch_size: 1,
+        tree_size: 256,
+        num_v_heads: 2,
+        head_v_dim: 64,
+    },
+    SolveCase {
         name: "batched_optional_h0",
         batch_size: 2,
         tree_size: 16,
@@ -99,7 +108,7 @@ fn run_case<B: Backend, T: ArrayElement + Copy>(
     let inv_len = batch_size * num_v_heads * num_blocks * (BT * BT) as usize;
     let u_len = batch_size * num_v_heads * tree_size * head_v_dim;
 
-    let kh0 = (0..v_len).map(|i| cast(((i as f32 * 0.019).sin() * 0.2) + 0.01)).collect::<Vec<_>>();
+    let kh0 = (0..v_len).map(|i| ((i as f32 * 0.019).sin() * 0.2) + 0.01).collect::<Vec<f32>>();
     let v = (0..v_len).map(|i| cast(((i as f32 * 0.017).cos() * 0.18) - 0.02)).collect::<Vec<_>>();
     let prefix = (0..scalar_len)
         .map(|i| -((i % tree_size) as f32) * 0.01 - ((i % num_v_heads) as f32) * 0.003)

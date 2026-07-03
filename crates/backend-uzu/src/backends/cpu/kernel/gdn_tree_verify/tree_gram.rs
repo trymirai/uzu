@@ -20,7 +20,7 @@ pub fn build_tree_gram<T: ArrayElement + Float, const USE_MXU: bool>(
     a_packed: *mut f32,
     qkd: *mut f32,
     a_inv: *mut f32,
-    #[optional(use_h0)] kh0: Option<*mut T>,
+    #[optional(use_h0)] kh0: Option<*mut f32>,
     scale: f32,
     batch_size: u32,
     tree_size: u32,
@@ -154,7 +154,7 @@ pub fn build_tree_gram<T: ArrayElement + Float, const USE_MXU: bool>(
                             sum += unsafe { (*k.add(k_off + d)).to_f32().unwrap() }
                                 * unsafe { (*h0.add(h0_head + dv * head_k_dim + d)).to_f32().unwrap() };
                         }
-                        unsafe { *kh0.add(kh0_off + dv) = T::from(sum).unwrap() };
+                        unsafe { *kh0.add(kh0_off + dv) = sum };
                     }
                 }
             }

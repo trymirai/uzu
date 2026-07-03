@@ -102,7 +102,7 @@ fn make_buffers(
     let a_len = batch_size * NUM_V_HEADS * num_blocks * num_col_pairs * BT * 2 * BT;
     let u_len = batch_size * NUM_V_HEADS * tree_size * HEAD_V_DIM;
 
-    let kh0 = (0..v_len).map(|i| bf16::from_f32(((i as f32 * 0.019).sin() * 0.2) + 0.01)).collect::<Vec<_>>();
+    let kh0 = (0..v_len).map(|i| ((i as f32 * 0.019).sin() * 0.2) + 0.01).collect::<Vec<f32>>();
     let v = (0..v_len).map(|i| bf16::from_f32(((i as f32 * 0.017).cos() * 0.18) - 0.02)).collect::<Vec<_>>();
     let prefix = (0..scalar_len)
         .map(|i| -((i % tree_size) as f32) * 0.01 - ((i % NUM_V_HEADS) as f32) * 0.003)
@@ -161,8 +161,8 @@ fn buffers_bytes(
     let u_len = batch_size * NUM_V_HEADS * tree_size * HEAD_V_DIM;
 
     let inv_len = batch_size * NUM_V_HEADS * num_blocks * BT * BT;
-    (v_len * 2) * size_of::<bf16>()
-        + (scalar_len * 2 + a_len + inv_len + u_len) * size_of::<f32>()
+    v_len * size_of::<bf16>()
+        + (scalar_len * 2 + a_len + inv_len + u_len + v_len) * size_of::<f32>()
         + batch_size * size_of::<i32>()
 }
 

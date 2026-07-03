@@ -11,7 +11,7 @@ use crate::array::ArrayElement;
 #[variants(BV, 16, 32)]
 #[variants(USE_MXU, false)]
 pub fn tree_update_solve<T: ArrayElement + Float, const BV: u32, const USE_MXU: bool>(
-    #[optional(use_h0)] kh0: Option<*const T>,
+    #[optional(use_h0)] kh0: Option<*const f32>,
     v: *const T,
     prefix: *const f32,
     beta: *const f32,
@@ -70,7 +70,7 @@ pub fn tree_update_solve<T: ArrayElement + Float, const BV: u32, const USE_MXU: 
                         let v_val = unsafe { (*v.add(v_idx)).to_f32().unwrap() };
 
                         let kh0_val = if h0_slot >= 0 {
-                            unsafe { (*kh0.add(v_idx)).to_f32().unwrap() }
+                            unsafe { *kh0.add(v_idx) }
                         } else {
                             0.0
                         };

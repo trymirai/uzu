@@ -62,7 +62,7 @@ METAL_FUNC void invert_tree_gram_diagonal_block(
 // qkd:      scale * exp(prefix[row] - prefix[col]) * dot(q[row], k[col]) for
 //           ancestor-or-self, dense [B*HV, T, T] f32
 // a_inv:    (I + A)^-1 per diagonal block, compact [B*HV, NB, 16, 16]
-// kh0:      k @ h0[h0_idx[batch]]^T, [B, T, HV, head_v_dim] in T; skipped when
+// kh0:      k @ h0[h0_idx[batch]]^T, [B, T, HV, head_v_dim] f32; skipped when
 //           h0_idx[batch] < 0
 template <typename T, bool USE_MXU>
 VARIANTS(T, float, bfloat)
@@ -78,7 +78,7 @@ PUBLIC KERNEL(BuildTreeGram)(
     device float* a_packed,
     device float* qkd,
     device float* a_inv,
-    device T* kh0 OPTIONAL(use_h0),
+    device float* kh0 OPTIONAL(use_h0),
     constant const float& scale,
     constant const uint& batch_size,
     constant const uint& tree_size,
@@ -253,7 +253,7 @@ PUBLIC KERNEL(BuildTreeGram)(
     const int h0_slot = h0_idx[batch_idx];
     if (h0_slot >= 0) {
       const device T* h0_head = h0 + (uint(h0_slot) * value_heads + value_head_idx) * head_v_dim * head_k_dim;
-      device T* kh0_rows =
+      device float* kh0_rows =
           kh0 + (batch_idx * tree_size + row_base) * value_heads * head_v_dim + value_head_idx * head_v_dim;
       const uint kh0_row_stride = value_heads * head_v_dim;
 

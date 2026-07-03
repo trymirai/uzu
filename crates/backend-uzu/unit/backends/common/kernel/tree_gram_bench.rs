@@ -116,7 +116,7 @@ fn make_buffers(
             a_packed: context.create_array_uninitialized(&[a_len], DataType::F32).into_allocation(),
             qkd: context.create_array_uninitialized(&[out_len], DataType::F32).into_allocation(),
             a_inv: context.create_array_uninitialized(&[a_inv_len], DataType::F32).into_allocation(),
-            kh0: context.create_array_uninitialized(&[kh0_len], DataType::BF16).into_allocation(),
+            kh0: context.create_array_uninitialized(&[kh0_len], DataType::F32).into_allocation(),
         },
         scale,
     )
@@ -134,10 +134,10 @@ fn buffers_bytes(
     let a_inv_len = batch_size * VALUE_HEADS * num_blocks * 16 * 16;
     let h0_len = batch_size * VALUE_HEADS * HEAD_V_DIM * HEAD_K_DIM;
     let kh0_len = batch_size * tree_size * VALUE_HEADS * HEAD_V_DIM;
-    (qk_len * 2 + h0_len + kh0_len) * size_of::<bf16>()
+    (qk_len * 2 + h0_len) * size_of::<bf16>()
         + batch_size * tree_size * 3 * size_of::<u32>()
         + scalar_len * size_of::<f32>() * 2
-        + (out_len + a_len + a_inv_len) * size_of::<f32>()
+        + (out_len + a_len + a_inv_len + kh0_len) * size_of::<f32>()
         + batch_size * size_of::<i32>()
 }
 
