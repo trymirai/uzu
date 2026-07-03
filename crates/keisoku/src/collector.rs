@@ -90,17 +90,19 @@ impl Collector {
     ) -> Option<EnergyReading> {
         let elapsed = window.started_at.elapsed();
         let next = self.ioreport.as_ref()?.snapshot()?;
-        let (mut energy, mut average_power) = self.ioreport.as_ref()?.energy_delta(&window.sample, &next, elapsed)?;
+        let totals = self.ioreport.as_ref()?.energy_delta(&window.sample, &next)?;
         let package_watts_end = self.smc.as_ref().and_then(|smc| smc.package_watts()).map(|watts| watts.value());
-        let package_from_smc = matches!((window.package_watts_start, package_watts_end), (Some(_), Some(_)));
-        if let (Some(start), Some(end)) = (window.package_watts_start, package_watts_end) {
-            let mean_package_watts = (start + end) / 2.0;
-            average_power.package = Watts(mean_package_watts);
-            energy.package = Joules(mean_package_watts * elapsed.as_secs_f32());
-        }
+        let mean_package_watts = match (window.package_watts_start, package_watts_end) {
+            (Some(start), Some(end)) => Some((start + end) / 2.0),
+            _ => None,
+        };
+        let package_from_smc = mean_package_watts.is_some();
+        let elapsed_secs = elapsed.as_secs_f32().max(0.001);
+        let package_energy = mean_package_watts.map(|watts| Joules(watts * elapsed_secs)).unwrap_or_else(|| Joules(totals.total()));
+        let package_power = mean_package_watts.map(Watts).unwrap_or_else(|| Watts(totals.total() / elapsed_secs));
         Some(EnergyReading {
-            energy,
-            average_power,
+            energy: totals.energy_metrics(package_energy),
+            average_power: totals.power_metrics(elapsed, package_power),
             elapsed: Milliseconds(elapsed.as_millis() as u64),
             package_from_smc,
         })

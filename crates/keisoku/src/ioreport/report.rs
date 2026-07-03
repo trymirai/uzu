@@ -26,7 +26,7 @@ pub struct IoReport {
 pub(crate) struct RawEnergySample(CFRetained<CFDictionary>);
 
 #[derive(Default)]
-struct EnergyTotals {
+pub(crate) struct EnergyTotals {
     cpu: f32,
     gpu: f32,
     gpu_sram: f32,
@@ -35,36 +35,38 @@ struct EnergyTotals {
 }
 
 impl EnergyTotals {
-    fn total(&self) -> f32 {
+    pub(crate) fn total(&self) -> f32 {
         self.cpu + self.gpu + self.gpu_sram + self.ane + self.ram
     }
 
-    fn energy_metrics(&self) -> EnergyMetrics {
-        let total = self.total();
+    pub(crate) fn energy_metrics(
+        &self,
+        package: Joules,
+    ) -> EnergyMetrics {
         EnergyMetrics {
             cpu: Joules(self.cpu),
             gpu: Joules(self.gpu),
             gpu_sram: Joules(self.gpu_sram),
             ane: Joules(self.ane),
             ram: Joules(self.ram),
-            package: Joules(total),
+            package,
         }
     }
 
-    fn power_metrics(
+    pub(crate) fn power_metrics(
         &self,
         elapsed: Duration,
+        package: Watts,
     ) -> PowerMetrics {
         let elapsed_secs = elapsed.as_secs_f32().max(0.001);
-        let total = self.total();
         PowerMetrics {
             cpu: Watts(self.cpu / elapsed_secs),
             gpu: Watts(self.gpu / elapsed_secs),
             gpu_sram: Watts(self.gpu_sram / elapsed_secs),
             ane: Watts(self.ane / elapsed_secs),
             ram: Watts(self.ram / elapsed_secs),
-            total: Watts(total / elapsed_secs),
-            package: Watts(total / elapsed_secs),
+            total: Watts(self.total() / elapsed_secs),
+            package,
         }
     }
 }
@@ -87,11 +89,9 @@ impl IoReport {
         &self,
         before: &RawEnergySample,
         after: &RawEnergySample,
-        elapsed: Duration,
-    ) -> Option<(EnergyMetrics, PowerMetrics)> {
+    ) -> Option<EnergyTotals> {
         let delta = self.functions.create_samples_delta(&before.0, &after.0)?;
-        let totals = energy_totals(self.functions, &delta);
-        Some((totals.energy_metrics(), totals.power_metrics(elapsed)))
+        Some(energy_totals(self.functions, &delta))
     }
 
     pub fn sample(
@@ -152,7 +152,9 @@ impl IoReport {
             result.ecpu_usage.1 * efficiency_cores + result.pcpu_usage.1 * performance_cores,
             efficiency_cores + performance_cores,
         );
-        let power = energy.power_metrics(Duration::from_millis(window_milliseconds));
+        let window = Duration::from_millis(window_milliseconds);
+        let package = Watts(energy.total() / window.as_secs_f32().max(0.001));
+        let power = energy.power_metrics(window, package);
         result.cpu_power = power.cpu.value();
         result.gpu_power = power.gpu.value();
         result.gpu_ram_power = power.gpu_sram.value();
