@@ -3,7 +3,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use super::{Config, Session};
@@ -53,11 +53,8 @@ pub fn start(config: Config) -> RecorderHandle {
         let snapshots = Arc::clone(&snapshots);
         std::thread::spawn(move || {
             let mut collector = Collector::new();
-            // Start the clock after Collector::new() so elapsed excludes init overhead.
-            let started_at = Instant::now();
             while !stop_flag.load(Ordering::Relaxed) {
-                let mut snapshot = collector.sample(interval);
-                snapshot.elapsed = Milliseconds(started_at.elapsed().as_millis() as u64);
+                let snapshot = collector.sample(interval);
                 if let Ok(mut collected) = snapshots.lock() {
                     collected.push(snapshot);
                 }

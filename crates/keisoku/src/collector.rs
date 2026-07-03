@@ -92,6 +92,7 @@ impl Collector {
         let next = self.ioreport.as_ref()?.snapshot()?;
         let (mut energy, mut average_power) = self.ioreport.as_ref()?.energy_delta(&window.sample, &next, elapsed)?;
         let package_watts_end = self.smc.as_ref().and_then(|smc| smc.package_watts()).map(|watts| watts.value());
+        let package_from_smc = matches!((window.package_watts_start, package_watts_end), (Some(_), Some(_)));
         if let (Some(start), Some(end)) = (window.package_watts_start, package_watts_end) {
             let mean_package_watts = (start + end) / 2.0;
             average_power.package = Watts(mean_package_watts);
@@ -101,6 +102,7 @@ impl Collector {
             energy,
             average_power,
             elapsed: Milliseconds(elapsed.as_millis() as u64),
+            package_from_smc,
         })
     }
 
@@ -135,7 +137,7 @@ impl Collector {
         let current = crate::sensors(SensorKind::Current);
         let temperatures = (!sensors.is_empty()).then(|| temperatures_from(&sensors));
         Snapshot {
-            elapsed: Milliseconds(0),
+            elapsed: Milliseconds(interval.as_millis() as u64),
             cpu: soc.cpu,
             gpu: soc.gpu,
             neural_engine: soc.neural_engine,
