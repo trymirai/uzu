@@ -4,7 +4,7 @@ use ndarray::{Array4, s};
 use proc_macros::uzu_test;
 use test_tag::tag;
 
-use super::{AttentionGemmArguments, AttentionGemmBlock};
+use super::{AttentionCoreEncodeArguments, AttentionCoreNewArguments, gemm::AttentionGemmCore};
 use crate::{
     backends::{
         common::{
@@ -14,6 +14,7 @@ use crate::{
         metal::Metal,
     },
     data_type::DataType,
+    encodable_block::mixer::attention::state::AttentionStateType,
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder},
 };
 
@@ -301,7 +302,6 @@ fn create_two_pass_kernels(
 }
 
 fn run_gemm_attention(
-    kernel: &AttentionGemmBlock<Metal>,
     context: &<Metal as Backend>::Context,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
@@ -313,41 +313,50 @@ fn run_gemm_attention(
     let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
     let (_batch_size, num_kv_heads, _seq_len, _head_dim) = keys.dim();
 
+    let core = AttentionGemmCore::<Metal>::new(
+        &AttentionCoreNewArguments {
+            head_dim,
+            num_groups: num_kv_heads,
+            num_q_heads: num_heads,
+            has_sinks: sinks.is_some(),
+            is_kv_cache_ring: false,
+            is_causal,
+            is_trie: false,
+            sliding_window_size: None,
+            scale: Some(scale),
+            data_type: DataType::F32,
+        },
+        false,
+        context,
+    )?;
+
     let query_allocation = create_query_allocation(queries, context);
     let key_allocation = create_attention_cache_allocation(keys, seq_len, context);
     let value_allocation = create_attention_cache_allocation(values, seq_len, context);
 
     let sinks_allocation = sinks.map(|sinks| create_sinks_allocation(sinks, context));
-
-    let mut output_allocation = alloc_allocation::<Metal, f32>(context, num_heads * seq_len * head_dim);
+    let state_type = AttentionStateType::Full {
+        length: 0,
+    };
 
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
-    let args = AttentionGemmArguments {
+    let args = AttentionCoreEncodeArguments {
         queries: &query_allocation,
         keys: &key_allocation,
         values: &value_allocation,
-        output: &mut output_allocation,
+        suffix_length: seq_len,
         trie: None,
         sinks: sinks_allocation.as_ref(),
-        num_heads,
-        num_groups: num_kv_heads,
-        suffix_length: seq_len,
-        sequence_length: seq_len,
-        segment_prefix_length: 0,
-        ring_params: None,
-        head_dim,
-        sliding_window_size: None,
-        is_causal,
-        scale,
-        k_head_stride: head_dim as u64,
-        k_seq_stride: (num_kv_heads * head_dim) as u64,
-        v_head_stride: head_dim as u64,
-        v_seq_stride: (num_kv_heads * head_dim) as u64,
+        state_type: &state_type,
     };
 
-    kernel.encode(&mut encoder, args)?;
-    submit_encoder(encoder);
+    let pooled_output = core.encode(args, &mut encoder)?;
+    let mut output_allocation = alloc_allocation::<Metal, f32>(context, num_heads * seq_len * head_dim);
+    encoder.encode_copy(&pooled_output, .., &mut output_allocation, ..);
+    let completed = encoder.end_encoding().submit().wait_until_completed()?;
+    drop(pooled_output);
+    drop(completed);
 
     let output: Vec<f32> = allocation_to_vec(&output_allocation);
 
@@ -408,10 +417,9 @@ fn test_gemm_attention_basic() {
 
     let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
 
-    let kernel = AttentionGemmBlock::new(DataType::F32);
     let reference_output = reference_attention(&queries, &keys, &values, None, scale, false);
-    let kernel_output = run_gemm_attention(&kernel, &context, &queries, &keys, &values, None, scale, false)
-        .expect("run gemm attention");
+    let kernel_output =
+        run_gemm_attention(&context, &queries, &keys, &values, None, scale, false).expect("run gemm attention");
 
     compare_results(&kernel_output, &reference_output, 1e-2, "Gemm attention").unwrap();
 }
@@ -429,9 +437,8 @@ fn test_gemm_attention_f32_head_dim_128() {
 
     let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 456);
 
-    let kernel = AttentionGemmBlock::new(DataType::F32);
     let reference_output = reference_attention(&queries, &keys, &values, None, scale, false);
-    let kernel_output = run_gemm_attention(&kernel, &context, &queries, &keys, &values, None, scale, false)
+    let kernel_output = run_gemm_attention(&context, &queries, &keys, &values, None, scale, false)
         .expect("run gemm attention f32 head_dim=128");
 
     compare_results(&kernel_output, &reference_output, 1e-2, "Gemm attention f32 head_dim=128").unwrap();
@@ -455,9 +462,8 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
     let kernel = create_single_pass_kernel(&context, head_dim, false, is_causal);
     let vector_output = run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, scale)
         .expect("run vector attention");
-    let gemm_kernel = AttentionGemmBlock::new(DataType::F32);
-    let matrix_output = run_gemm_attention(&gemm_kernel, &context, &queries, &keys, &values, None, scale, is_causal)
-        .expect("run matrix attention");
+    let matrix_output =
+        run_gemm_attention(&context, &queries, &keys, &values, None, scale, is_causal).expect("run matrix attention");
     let tol_cpu = 5e-2;
     compare_results(&vector_output, &reference_output, tol_cpu, "vector single-pass attention vs CPU").unwrap();
     compare_results(&matrix_output, &reference_output, tol_cpu, "matrix attention vs CPU").unwrap();

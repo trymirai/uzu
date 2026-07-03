@@ -7,11 +7,11 @@ use gate_act_mul::MlpGateActMulEncodable;
 pub use moe::{MoeBlock, MoeBlockError};
 use thiserror::Error;
 
-use super::linear::{Linear, LinearBlockError};
 use crate::{
     backends::common::{Allocation, Backend, Encoder},
     config::mlp::AnyMLPConfig,
     data_type::DataType,
+    encodable_block::linear::{Linear, LinearBlockError},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 

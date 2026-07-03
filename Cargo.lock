@@ -154,9 +154,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "apple-native-keyring-store"
@@ -466,6 +466,7 @@ name = "backend-uzu"
 version = "0.5.12"
 dependencies = [
  "anyhow",
+ "async-stream",
  "async-trait",
  "bindgen",
  "bitflags 2.13.0",
@@ -568,15 +569,6 @@ name = "beef"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
-
-[[package]]
-name = "benchmarks"
-version = "0.5.12"
-dependencies = [
- "backend-uzu",
- "serde",
- "sysinfo",
-]
 
 [[package]]
 name = "binascii"
@@ -1033,7 +1025,7 @@ name = "cli"
 version = "0.5.12"
 dependencies = [
  "anyhow",
- "benchmarks",
+ "backend-uzu",
  "clap",
  "comfy-table",
  "indicatif",
@@ -1041,6 +1033,8 @@ dependencies = [
  "rocket",
  "serde",
  "serde_json",
+ "shoji",
+ "sysinfo",
  "tokio",
  "tokio-stream",
  "uuid",
@@ -3818,6 +3812,7 @@ dependencies = [
  "hanashi",
  "indexmap 2.14.0",
  "inventory",
+ "keisoku",
  "napi",
  "napi-build",
  "napi-derive",
@@ -3832,7 +3827,6 @@ dependencies = [
  "shoji",
  "thiserror 2.0.18",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "tracing",
  "tsify",
@@ -6201,6 +6195,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio-util",
  "tsify",
  "uniffi",

@@ -1,10 +1,6 @@
 pub mod dispatch_dtype;
-pub mod env_utils;
 pub mod fs;
-pub mod memory;
-#[cfg(metal_backend)]
-pub mod model_size;
+pub mod maybe_mut;
 pub mod pointers;
 pub mod strict_serde;
 pub mod version;
-pub use version::{TOOLCHAIN_VERSION, VERSION};

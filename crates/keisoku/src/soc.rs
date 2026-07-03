@@ -26,8 +26,12 @@ fn dvfs_frequencies(
     if bytes.len() < 8 {
         return None;
     }
-    let frequencies =
-        bytes.chunks_exact(8).map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])).collect();
+    let frequencies = bytes
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect();
     Some(frequencies)
 }
 
@@ -43,8 +47,12 @@ fn cluster_voltage_state_keys(dictionary: &CFDictionary) -> Option<(String, Stri
     if data.len() < 8 {
         return None;
     }
-    let mut clusters: Vec<(u8, String)> =
-        data.chunks_exact(8).map(|cluster| (cluster[1], format!("voltage-states{}-sram", cluster[0]))).collect();
+    let mut clusters: Vec<(u8, String)> = data
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|cluster| (cluster[1], format!("voltage-states{}-sram", cluster[0])))
+        .collect();
     clusters.sort_by_key(|cluster| cluster.0);
     if clusters.len() < 2 {
         return None;

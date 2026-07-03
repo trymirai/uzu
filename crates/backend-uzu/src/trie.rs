@@ -1,7 +1,11 @@
+use itertools::Itertools;
 use thiserror::Error;
 
 use crate::{
-    language_model::{grammar::CompiledGrammar, gumbel::speculator_sample, rng::PRng},
+    backends::common::gpu_types::trie::TrieNode as GpuTrieNode,
+    data_type::DataType,
+    encodable_block::sampling::{PRng, speculator_sample},
+    engine::language_model::grammar::{Grammar, GrammarError},
     speculators::speculator::Speculator,
 };
 
@@ -26,7 +30,6 @@ impl Default for TrieCreationConfig {
 #[derive(Debug)]
 pub struct TrieNode {
     token: u64,
-    mask: Option<Box<[u32]>>,
     seed: u64,
     next: Vec<TrieNode>,
 }
@@ -46,12 +49,10 @@ pub struct FlatTrie<'a> {
 impl TrieNode {
     pub fn new(
         token: u64,
-        mask: Option<Box<[u32]>>,
         seed: u64,
     ) -> Self {
         Self {
             token,
-            mask,
             seed,
             next: Vec::new(),
         }
@@ -92,16 +93,18 @@ impl TrieNode {
         self.seed
     }
 
-    pub fn from_speculator(
+    pub fn from_speculator<'grammar>(
         prefix: &[u64],
-        seed: &PRng,
-        mut compiled_grammar: Option<&mut (dyn CompiledGrammar + 'static)>,
+        prng: &PRng,
+        mut grammar: Option<&mut (dyn Grammar + 'grammar)>,
         speculator: &dyn Speculator,
         vocab_size: usize,
         creation_config: &TrieCreationConfig,
         max_length: usize,
+        max_height: Option<usize>,
     ) -> Self {
         assert!(max_length >= 1, "can't have zero sized trie");
+        assert!(max_height.is_none_or(|max_height| max_height > 0), "max height cannot be 0");
         assert!(!prefix.is_empty(), "need seed node");
 
         let prefix_length = prefix.len();
@@ -109,8 +112,7 @@ impl TrieNode {
 
         let mut length = 1;
         let mut height = 0;
-        let mask = compiled_grammar.as_deref_mut().and_then(|g| g.next_bitmask().unwrap());
-        let mut root = Self::new(*prefix.last().unwrap(), mask, seed.derive((prefix_length - 1) as u64));
+        let mut root = Self::new(*prefix.last().unwrap(), prng.derive((prefix_length - 1) as u64));
 
         let mut cur_node = &mut root;
         let mut cur_node_width = 0;
@@ -118,26 +120,21 @@ impl TrieNode {
 
         let mut next_node = None;
 
-        while length < max_length {
+        while length < max_length && max_height.is_none_or(|max_height| height < max_height) {
             // Guuumbel speculator trick: both speculator and llm sample via gumbel max trick using the same noise for increased acceptance rate
             if let Some(next_speculated_token) =
                 speculator_sample(cur_node.seed(), vocab_size, &cur_node_speculator_weights)
             {
                 // Add speculated token to the trie
-                let mask = if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
-                    if compiled_grammar.accept_token(next_speculated_token).is_err() {
+                if let Some(grammar) = grammar.as_deref_mut() {
+                    if grammar.accept_token(next_speculated_token).is_err() {
                         cur_node_speculator_weights.remove(&next_speculated_token);
                         continue;
                     }
-                    let next_bitmask = compiled_grammar.next_bitmask().unwrap();
-                    compiled_grammar.rollback(1);
+                    grammar.rollback(1);
+                }
 
-                    next_bitmask
-                } else {
-                    None
-                };
-
-                let leaf_node = Self::new(next_speculated_token, mask, seed.derive((prefix_length + height) as u64));
+                let leaf_node = Self::new(next_speculated_token, prng.derive((prefix_length + height) as u64));
                 cur_node.add(leaf_node).unwrap();
 
                 // If this is the first node we sampled (most likely to be selected after gumbel noise application) - set it as the next one
@@ -156,8 +153,8 @@ impl TrieNode {
             } else if let Some(next_node_token) = next_node.take() {
                 // Out of speculated tokens for this node, move onto the likeliest next node
                 speculated_suffix.push(next_node_token);
-                if let Some(compiled_grammar) = compiled_grammar.as_deref_mut()
-                    && compiled_grammar.accept_token(next_node_token).is_err()
+                if let Some(grammar) = grammar.as_deref_mut()
+                    && grammar.accept_token(next_node_token).is_err()
                 {
                     break;
                 }
@@ -172,8 +169,26 @@ impl TrieNode {
             };
         }
 
-        if let Some(compiled_grammar) = compiled_grammar {
-            compiled_grammar.rollback(height);
+        if let Some(grammar) = grammar {
+            grammar.rollback(height);
+        }
+
+        root
+    }
+
+    pub fn flat(
+        prefix_length: usize,
+        tokens: &[u64],
+        prng: &PRng,
+    ) -> Self {
+        assert!(!tokens.is_empty(), "need seed node");
+
+        let mut root = TrieNode::new(tokens[0], prng.derive(prefix_length as u64));
+        let mut leaf = &mut root;
+
+        for (index, token) in tokens.iter().copied().enumerate().skip(1) {
+            leaf.add(TrieNode::new(token, prng.derive((prefix_length + index) as u64))).unwrap();
+            leaf = &mut leaf.next[0];
         }
 
         root
@@ -231,24 +246,53 @@ impl<'a> FlatTrie<'a> {
         self.tokens.iter().map(|n| n.node.token)
     }
 
-    pub fn token_subtrie_ranges(&self) -> impl Iterator<Item = [u32; 3]> {
+    pub fn token_subtrie_ranges(&self) -> impl Iterator<Item = GpuTrieNode> {
         self.tokens.iter().map(|n| {
             let (start, end) = n.subtrie_range;
 
-            [start as u32, end as u32, n.height as u32]
+            GpuTrieNode {
+                trie_start: start as u32,
+                trie_end: end as u32,
+                height: n.height as u32,
+            }
         })
-    }
-
-    pub fn token_positions(&self) -> impl Iterator<Item = usize> {
-        self.tokens.iter().map(|n| n.height)
-    }
-
-    pub fn token_masks(&self) -> impl Iterator<Item = Option<&[u32]>> {
-        self.tokens.iter().map(|n| n.node.mask.as_deref())
     }
 
     pub fn token_seeds(&self) -> impl Iterator<Item = u64> {
         self.tokens.iter().map(|n| n.node.seed)
+    }
+
+    pub fn fill_bitmasks<'grammar>(
+        &self,
+        bitmasks: &mut [u32],
+        vocab_size: usize,
+        grammar: &mut (dyn Grammar + 'grammar),
+    ) -> bool {
+        let vocab_size_in_u32s = vocab_size.div_ceil(DataType::U32.size_in_bits());
+        assert!(bitmasks.len() == self.tokens.len() * vocab_size_in_u32s);
+
+        let mut any_non_full = false;
+        let mut last_token_height = 0;
+        for ((token_index, token), bitmask) in
+            self.tokens.iter().enumerate().zip_eq(bitmasks.chunks_exact_mut(vocab_size_in_u32s))
+        {
+            if token_index > 0 {
+                if token.height <= last_token_height {
+                    grammar.rollback(last_token_height - token.height + 1);
+                }
+                grammar.accept_token(token.node.token).expect("flat trie doesn't match grammar");
+            }
+
+            any_non_full |= grammar.next_bitmask(bitmask);
+
+            last_token_height = token.height;
+        }
+
+        if last_token_height > 0 {
+            grammar.rollback(last_token_height);
+        }
+
+        any_non_full
     }
 
     pub fn root(&self) -> Option<&TrieNode> {
@@ -262,38 +306,36 @@ impl<'a> FlatTrie<'a> {
         self.tokens.iter().position(|n| std::ptr::eq(n.node, node))
     }
 
-    pub fn accept(
+    pub fn accept<'grammar>(
         &self,
         sampled_tokens: &[u64],
-        mut compiled_grammar: Option<&mut (dyn CompiledGrammar + 'static)>,
-    ) -> (Vec<u64>, Vec<usize>) {
+        mut grammar: Option<&mut (dyn Grammar + 'grammar)>,
+    ) -> Result<Box<[(usize, u64, u64)]>, GrammarError> {
         let mut current_token = self.root().unwrap();
-        let mut accepted_tokens = Vec::new();
-        let mut accepted_token_indices = Vec::new();
+        let mut accepted = Vec::new();
         loop {
             let current_token_index = self.index(current_token).unwrap();
             let current_token_id = sampled_tokens[current_token_index];
 
-            accepted_token_indices.push(current_token_index);
-            accepted_tokens.push(current_token_id);
-            if let Some(compiled_grammar) = compiled_grammar.as_deref_mut()
-                && !compiled_grammar.is_terminated()
+            accepted.push((current_token_index, current_token.token, current_token_id));
+            if let Some(grammar) = grammar.as_deref_mut()
+                && !grammar.is_terminated()
             {
-                compiled_grammar.accept_token(current_token_id).unwrap();
+                grammar.accept_token(current_token_id)?;
             }
 
             let Some(next_token) = current_token.get(current_token_id) else {
                 break;
             };
 
-            if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
-                assert!(!compiled_grammar.is_terminated(), "Grammar has terminated but llm continued generation");
+            if let Some(grammar) = grammar.as_deref_mut() {
+                assert!(!grammar.is_terminated(), "Grammar has terminated but llm continued generation");
             }
 
             current_token = next_token;
         }
 
-        (accepted_tokens, accepted_token_indices)
+        Ok(accepted.into_boxed_slice())
     }
 }
 

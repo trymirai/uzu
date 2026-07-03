@@ -13,7 +13,6 @@ members = [
     "crates/download-manager",
     "crates/mock-registry",
     "crates/uzu",
-    "crates/benchmarks",
     "crates/cli",
     "crates/cli-storage",
     "crates/cli-tools",
@@ -59,7 +58,6 @@ hanashi = { path = "crates/hanashi", default-features = false }
 nagare = { path = "crates/nagare", default-features = false }
 download-manager = { path = "crates/download-manager", default-features = false }
 mock-registry = { path = "crates/mock-registry", default-features = false }
-benchmarks = { path = "crates/benchmarks", default-features = false }
 keisoku = { path = "crates/keisoku", default-features = false }
 kanka = { path = "crates/kanka", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
@@ -110,6 +108,7 @@ tempfile = "3.24"
 clang-ast = "0.1"
 rangemap = "1.7.1"
 futures = "0.3"
+async-stream = "0.3"
 tokio = { version = "1.49", features = ["full"] }
 blake3 = "1.8"
 quote = "1.0"

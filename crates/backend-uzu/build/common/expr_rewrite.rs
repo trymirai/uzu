@@ -1,5 +1,5 @@
 use syn::{
-    Expr, ExprPath, Path,
+    Expr, ExprPath, LitInt, Path,
     visit_mut::{self, VisitMut},
 };
 
@@ -34,5 +34,20 @@ impl<F: FnMut(&Path) -> Option<Expr>> VisitMut for Walker<F> {
         {
             *expr = replacement;
         }
+    }
+
+    fn visit_lit_int_mut(
+        &mut self,
+        literal: &mut LitInt,
+    ) {
+        let suffix = literal.suffix();
+        let rust_suffix = match suffix {
+            "u" | "U" => "u32",
+            _ => return,
+        };
+
+        let text = literal.to_string();
+        let digits = &text[..text.len() - suffix.len()];
+        *literal = LitInt::new(&format!("{digits}{rust_suffix}"), literal.span());
     }
 }

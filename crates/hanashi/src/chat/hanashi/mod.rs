@@ -5,8 +5,6 @@ mod ordering;
 pub mod renderer;
 mod token;
 
-use std::path::PathBuf;
-
 pub use config::Config;
 pub use error::Error;
 use shoji::types::{
@@ -20,12 +18,11 @@ use self::{config::ResolvedConfig, messages::streamed::Message as StreamedMessag
 use crate::{
     Encoding as EncodingTrait,
     chat::{
-        Context, State, SynchronizationError, SynchronizationResult, TokenizerLocation,
+        Context, State, SynchronizationError, SynchronizationResult,
         hanashi::{messages::rendered::FieldConfig, renderer::Renderer, token::ToParserToken},
     },
+    util::tokenizer::load_tokenizer,
 };
-
-const DEFAULT_TOKENIZER_FILENAME: &str = "tokenizer.json";
 
 pub struct Encoding {
     config: ResolvedConfig,
@@ -53,19 +50,7 @@ impl EncodingTrait for Encoding {
         context: Self::Context,
     ) -> Result<Self, Self::Error> {
         let config = config.resolve()?;
-        let tokenizer_path = match &context.tokenizer_location {
-            TokenizerLocation::File {
-                path,
-            } => PathBuf::from(path),
-            TokenizerLocation::Directory {
-                path,
-                name,
-            } => match name {
-                Some(name) => PathBuf::from(path).join(name),
-                None => PathBuf::from(path).join(DEFAULT_TOKENIZER_FILENAME),
-            },
-        };
-        let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|_| Error::UnableToLoadTokenizer)?;
+        let tokenizer = load_tokenizer(&context.tokenizer_location).map_err(|_| Error::UnableToLoadTokenizer)?;
         let parser = TokenStreamParser::new(config.parsing.clone())?;
         let renderer = Renderer::new(config.rendering.clone());
         let validator = Validator::new(config.ordering.clone());
@@ -132,6 +117,10 @@ impl EncodingTrait for Encoding {
 
         self.update_messages_from_parser_state()?;
         Ok(())
+    }
+
+    fn tokenizer(&self) -> Option<&Tokenizer> {
+        Some(&self.tokenizer)
     }
 }
 

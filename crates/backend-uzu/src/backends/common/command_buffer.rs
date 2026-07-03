@@ -91,17 +91,6 @@ pub trait CommandBufferEncoding {
         before: AccessFlags,
     );
 
-    fn add_completion_handler(
-        &mut self,
-        handler: impl FnOnce(
-            Result<
-                &<Self::CommandBuffer as CommandBuffer>::Completed,
-                <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error,
-            >,
-        ) + Send
-        + 'static,
-    );
-
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }
 
