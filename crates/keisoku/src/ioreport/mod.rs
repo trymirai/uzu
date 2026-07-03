@@ -12,7 +12,7 @@ mod sample;
 mod subscription;
 
 pub use report::IoReport;
-pub(crate) use report::RawEnergySample;
+pub(crate) use energy_totals::EnergyTotals;
 pub use sample::SocSample;
 
 kanka::ffi_table! {

@@ -1,18 +1,16 @@
 use std::time::Duration;
 
 #[cfg(target_os = "macos")]
-use std::time::Instant;
-#[cfg(target_os = "macos")]
 use crate::{
     EnergyModelChannel,
     cpu_load::CpuLoad,
     ioreport::IoReport,
     smc::Smc,
     soc::SocInfo,
-    units::{GigabytesPerSecond, Joules, Megahertz, Percent, Watts},
+    units::{GigabytesPerSecond, Megahertz, Percent, Watts},
 };
 use crate::{
-    Component, Device, EnergyReading, EnergyWindow,
+    Component, Device,
     client::SensorReader,
     metrics::{
         BandwidthMetrics, CpuMetrics, FanMetrics, GpuMetrics, NeuralEngineMetrics, PowerMetrics, Temperatures,
@@ -81,51 +79,6 @@ impl Collector {
 
     pub fn device(&self) -> Device {
         Device::detect(self)
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn start_energy_window(&self) -> Option<EnergyWindow> {
-        let sample = self.ioreport.as_ref()?.snapshot()?;
-        let package_watts_start = self.smc.as_ref().and_then(|smc| smc.package_watts()).map(|watts| watts.value());
-        Some(EnergyWindow::new(sample, Instant::now(), package_watts_start))
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub fn start_energy_window(&self) -> Option<EnergyWindow> {
-        None
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn end_energy_window(
-        &self,
-        window: EnergyWindow,
-    ) -> Option<EnergyReading> {
-        let next = self.ioreport.as_ref()?.snapshot()?;
-        let totals = self.ioreport.as_ref()?.energy_delta(&window.sample, &next)?;
-        let package_watts_end = self.smc.as_ref().and_then(|smc| smc.package_watts()).map(|watts| watts.value());
-        let elapsed = window.started_at.elapsed();
-        let mean_package_watts = match (window.package_watts_start, package_watts_end) {
-            (Some(start), Some(end)) => Some((start + end) / 2.0),
-            _ => None,
-        };
-        let package_from_smc = mean_package_watts.is_some();
-        let elapsed_secs = elapsed.as_secs_f32().max(0.001);
-        let package_energy = mean_package_watts.map(|watts| Joules(watts * elapsed_secs)).unwrap_or_else(|| Joules(totals.total()));
-        let package_power = mean_package_watts.map(Watts).unwrap_or_else(|| Watts(totals.total() / elapsed_secs));
-        Some(EnergyReading {
-            energy: totals.energy_metrics(package_energy),
-            average_power: totals.power_metrics(elapsed, package_power),
-            elapsed: Milliseconds(elapsed.as_millis() as u64),
-            package_from_smc,
-        })
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub fn end_energy_window(
-        &self,
-        _window: EnergyWindow,
-    ) -> Option<EnergyReading> {
-        None
     }
 
     pub fn sample(

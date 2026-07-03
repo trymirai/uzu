@@ -485,7 +485,6 @@ dependencies = [
  "indicatif",
  "is_close",
  "itertools 0.14.0",
- "keisoku",
  "libc",
  "libm",
  "memmap2",

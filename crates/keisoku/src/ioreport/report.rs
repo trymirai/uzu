@@ -34,13 +34,9 @@ impl IoReport {
         self.subscription.snapshot(self.functions).map(RawEnergySample)
     }
 
-    pub(crate) fn energy_delta(
-        &self,
-        before: &RawEnergySample,
-        after: &RawEnergySample,
-    ) -> Option<EnergyTotals> {
-        let delta = self.functions.create_samples_delta(&before.0, &after.0)?;
-        Some(energy_totals(self.functions, &delta))
+    pub(crate) fn cumulative_energy(&self) -> Option<EnergyTotals> {
+        let sample = self.snapshot()?;
+        Some(energy_totals(self.functions, &sample.0))
     }
 
     pub(crate) fn energy_model_channels(&self) -> Box<[EnergyModelChannel]> {
@@ -116,7 +112,7 @@ impl IoReport {
             result.ecpu_usage.1 * efficiency_cores + result.pcpu_usage.1 * performance_cores,
             efficiency_cores + performance_cores,
         );
-        let package = Watts(energy.total() / elapsed.as_secs_f32().max(0.001));
+        let package = Watts((energy.total() / elapsed.as_secs_f64().max(0.001)) as f32);
         let power = energy.power_metrics(elapsed, package);
         result.cpu_power = power.cpu.value();
         result.gpu_power = power.gpu.value();

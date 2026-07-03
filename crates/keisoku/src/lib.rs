@@ -5,10 +5,9 @@ mod collector;
 mod component;
 mod device;
 mod energy_channel;
+mod energy_meter;
 mod energy_reading;
-mod energy_window;
 mod metrics;
-mod recorder;
 mod sensor;
 mod snapshot;
 mod units;
@@ -31,13 +30,12 @@ pub use collector::Collector;
 pub use component::{Component, classify};
 pub use device::Device;
 pub use energy_channel::EnergyModelChannel;
+pub use energy_meter::EnergyMeter;
 pub use energy_reading::EnergyReading;
-pub use energy_window::EnergyWindow;
 pub use metrics::{
     BandwidthMetrics, BatteryMetrics, CpuMetrics, EnergyMetrics, Fan, FanMetrics, GpuMetrics, MemoryMetrics,
     NeuralEngineMetrics, PowerMetrics, Temperatures, ThermalPressure,
 };
-pub use recorder::{Config, RecorderHandle, Session, start};
 pub use sensor::{Sensor, SensorKind, current_sensors, thermal_sensors, voltage_sensors};
 pub use snapshot::Snapshot;
 pub use units::{Bytes, Celsius, GigabytesPerSecond, Joules, Megahertz, Milliseconds, Percent, Rpm, Watts};

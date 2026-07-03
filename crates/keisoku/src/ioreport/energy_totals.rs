@@ -7,13 +7,13 @@ use crate::{
     units::{Joules, Watts},
 };
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub(crate) struct EnergyTotals {
-    cpu: f32,
-    gpu: f32,
-    gpu_sram: f32,
-    ane: f32,
-    ram: f32,
+    cpu: f64,
+    gpu: f64,
+    gpu_sram: f64,
+    ane: f64,
+    ram: f64,
 }
 
 impl EnergyTotals {
@@ -37,7 +37,20 @@ impl EnergyTotals {
         }
     }
 
-    pub(crate) fn total(&self) -> f32 {
+    pub(crate) fn since(
+        &self,
+        earlier: &Self,
+    ) -> Self {
+        Self {
+            cpu: self.cpu - earlier.cpu,
+            gpu: self.gpu - earlier.gpu,
+            gpu_sram: self.gpu_sram - earlier.gpu_sram,
+            ane: self.ane - earlier.ane,
+            ram: self.ram - earlier.ram,
+        }
+    }
+
+    pub(crate) fn total(&self) -> f64 {
         self.cpu + self.gpu + self.ane + self.ram
     }
 
@@ -46,11 +59,11 @@ impl EnergyTotals {
         package: Joules,
     ) -> EnergyMetrics {
         EnergyMetrics {
-            cpu: Joules(self.cpu),
-            gpu: Joules(self.gpu),
-            gpu_sram: Joules(self.gpu_sram),
-            ane: Joules(self.ane),
-            ram: Joules(self.ram),
+            cpu: Joules(self.cpu as f32),
+            gpu: Joules(self.gpu as f32),
+            gpu_sram: Joules(self.gpu_sram as f32),
+            ane: Joules(self.ane as f32),
+            ram: Joules(self.ram as f32),
             package,
         }
     }
@@ -60,13 +73,13 @@ impl EnergyTotals {
         elapsed: Duration,
         package: Watts,
     ) -> PowerMetrics {
-        let elapsed_secs = elapsed.as_secs_f32().max(0.001);
+        let elapsed_secs = elapsed.as_secs_f64().max(0.001);
         PowerMetrics {
-            cpu: Watts(self.cpu / elapsed_secs),
-            gpu: Watts(self.gpu / elapsed_secs),
-            gpu_sram: Watts(self.gpu_sram / elapsed_secs),
-            ane: Watts(self.ane / elapsed_secs),
-            ram: Watts(self.ram / elapsed_secs),
+            cpu: Watts((self.cpu / elapsed_secs) as f32),
+            gpu: Watts((self.gpu / elapsed_secs) as f32),
+            gpu_sram: Watts((self.gpu_sram / elapsed_secs) as f32),
+            ane: Watts((self.ane / elapsed_secs) as f32),
+            ram: Watts((self.ram / elapsed_secs) as f32),
             package,
         }
     }
@@ -75,8 +88,8 @@ impl EnergyTotals {
 fn joules(
     energy: i64,
     unit: &str,
-) -> f32 {
-    let energy = energy as f32;
+) -> f64 {
+    let energy = energy as f64;
     let Some(prefix) = unit.trim().strip_suffix('J') else {
         return 0.0;
     };
