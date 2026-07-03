@@ -81,21 +81,23 @@ impl Smc {
         &self,
         key: &str,
     ) -> Option<f32> {
-        let (data_type, bytes) = self.read_key(key)?;
-        (data_type == fourcc(obfstr!("flt "))?).then(|| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        let (data_type, data_size, bytes) = self.read_key(key)?;
+        (data_type == fourcc(obfstr!("flt "))? && data_size >= 4)
+            .then(|| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
     fn read_u8(
         &self,
         key: &str,
     ) -> Option<u8> {
-        self.read_key(key).map(|(_, bytes)| bytes[0])
+        let (_, data_size, bytes) = self.read_key(key)?;
+        (data_size >= 1).then_some(bytes[0])
     }
 
     fn read_key(
         &self,
         key: &str,
-    ) -> Option<(u32, [u8; 32])> {
+    ) -> Option<(u32, u32, [u8; 32])> {
         let key = fourcc(key)?;
         let info = self.call(&SmcKeyData {
             key,
@@ -111,7 +113,7 @@ impl Smc {
             data8: SMC_CMD_READ_BYTES,
             ..Default::default()
         })?;
-        Some((info.key_info.data_type, value.bytes))
+        Some((info.key_info.data_type, info.key_info.data_size, value.bytes))
     }
 
     fn call(
