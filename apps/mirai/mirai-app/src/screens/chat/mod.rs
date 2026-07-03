@@ -1,12 +1,14 @@
-//! Chat screen: streaming local inference with a reasoning panel, perf stats,
-//! and a composer.
-
+mod chat_turn;
 mod conversation;
+mod event;
 mod overlays;
 mod params;
+mod role;
 mod sampling;
 mod state;
 mod stream;
+mod version;
 mod view;
 
-pub use view::{ChatEvent, ChatView};
+pub use event::ChatEvent;
+pub use view::ChatView;

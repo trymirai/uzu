@@ -1,10 +1,7 @@
 use gpui::{Anchor, App, Context, FontWeight, IntoElement, anchored, deferred, div, prelude::*, px};
 use uzu::types::model::Model;
 
-use super::{
-    conversation::Version,
-    view::{ChatEvent, ChatView},
-};
+use super::{event::ChatEvent, version::Version, view::ChatView};
 use crate::{
     components::{Icon, IconEl, VendorIcon},
     theme::ActiveTheme,

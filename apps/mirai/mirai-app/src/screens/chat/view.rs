@@ -7,10 +7,13 @@ use gpui::{
 use uzu::{session::chat::ChatSession, types::model::Model};
 
 use super::{
-    conversation::{ChatMsg, Role, Version},
+    chat_turn::ChatTurn,
+    event::ChatEvent,
     params::{param_checkbox, param_row, round2, slider_param},
+    role::Role,
     sampling::SamplingMode,
     state::ChatState,
+    version::Version,
 };
 use crate::{
     components::{Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, TextInput, Toggle, VendorIcon},
@@ -20,11 +23,6 @@ use crate::{
     theme::{ActiveTheme, FONT_MONO, layout::CONTENT_MAX_WIDTH},
     title_gen,
 };
-
-pub enum ChatEvent {
-    Updated,
-    OpenLocalModels,
-}
 
 fn dark_icon_url(model: &Model) -> Option<String> {
     let icons = &model.family.as_ref()?.vendor.metadata.icons;
@@ -269,7 +267,7 @@ impl ChatView {
         self.state.messages = stored
             .messages
             .into_iter()
-            .map(|m| ChatMsg {
+            .map(|m| ChatTurn {
                 role: if m.role == "assistant" {
                     Role::Assistant
                 } else {

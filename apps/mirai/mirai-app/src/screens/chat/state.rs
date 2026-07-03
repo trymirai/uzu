@@ -1,41 +1,25 @@
-//! `ChatState` — the chat's domain + UI data, kept separate from the GPUI
-//! handles (entities, scroll handles, frame counters) on `ChatView`.
-
 use uzu::{
     session::chat::ChatSession,
     types::{basic::CancelToken, model::Model},
 };
 
-use super::{conversation::ChatMsg, sampling::SamplingMode};
+use super::{chat_turn::ChatTurn, sampling::SamplingMode};
 
 pub(super) struct ChatState {
-    pub messages: Vec<ChatMsg>,
+    pub messages: Vec<ChatTurn>,
     pub model: Option<Model>,
     pub streaming: bool,
-    /// True between "send" and the first `Started` token — model is loading.
     pub waiting_for_model: bool,
     pub cancel: Option<CancelToken>,
-    /// Monotonic id for the current reply stream. Bumped whenever a stream is
-    /// started, stopped, or the chat is reset, so a superseded stream's late
-    /// updates/`Done` (which arrive after `cancel()`) are dropped instead of
-    /// landing on the next conversation's assistant message.
     pub stream_gen: u64,
     pub chat_id: Option<String>,
     pub created_at: u64,
     pub model_picker_open: bool,
-    /// Message index whose per-message model menu is open.
     pub msg_model_picker_open: Option<usize>,
-    /// Assistant message to regenerate once a model is picked from Local Models.
-    /// Set when "More local models" is opened from a per-message switcher; the
-    /// intent survives the round-trip so the reply regenerates instead of the
-    /// chat resetting (Electron's `useRegenerateMessage` parity).
     pub pending_regen: Option<usize>,
-    /// Message index whose performance popover is open (`None` = closed).
     pub perf_open_msg: Option<usize>,
     pub file_upload_open: bool,
-    /// Files attached to the next message: (display_name, extension, content).
     pub attached_files: Vec<(String, String, String)>,
-    /// Name of the model the UI considers "loaded" (set once a chat runs).
     pub loaded_model: Option<String>,
     pub gen_settings_open: bool,
     pub sampling_mode: SamplingMode,

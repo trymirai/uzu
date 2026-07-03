@@ -12,9 +12,8 @@ use uzu::{
 };
 
 use super::{
-    conversation::{ChatMsg, Role, Version, conversation_for_request},
-    sampling::sampling_method,
-    view::{ChatEvent, ChatView},
+    chat_turn::ChatTurn, conversation::conversation_for_request, event::ChatEvent, role::Role,
+    sampling::sampling_method, version::Version, view::ChatView,
 };
 use crate::{engine, persistence, title_gen};
 
@@ -59,7 +58,7 @@ impl ChatView {
             combined
         };
         let first_user = !self.state.messages.iter().any(|m| m.role == Role::User);
-        self.state.messages.push(ChatMsg::user(full_text));
+        self.state.messages.push(ChatTurn::user(full_text));
         if first_user {
             self.state.title_pending = true;
         }
@@ -71,7 +70,7 @@ impl ChatView {
         cx: &mut Context<Self>,
     ) {
         let model_name = self.state.model.as_ref().map(|m| m.name());
-        self.state.messages.push(ChatMsg::assistant(Version {
+        self.state.messages.push(ChatTurn::assistant(Version {
             model_name,
             ..Default::default()
         }));
@@ -235,7 +234,7 @@ impl ChatView {
         cx.notify();
     }
 
-    fn last_assistant_mut(&mut self) -> Option<&mut ChatMsg> {
+    fn last_assistant_mut(&mut self) -> Option<&mut ChatTurn> {
         self.state.messages.last_mut().filter(|message| message.role == Role::Assistant)
     }
 
