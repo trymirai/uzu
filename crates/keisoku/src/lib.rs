@@ -7,6 +7,7 @@ mod device;
 mod energy_channel;
 mod energy_meter;
 mod energy_reading;
+mod gauges;
 mod metrics;
 mod sensor;
 mod snapshot;
@@ -32,6 +33,7 @@ pub use device::Device;
 pub use energy_channel::EnergyModelChannel;
 pub use energy_meter::EnergyMeter;
 pub use energy_reading::EnergyReading;
+pub use gauges::Gauges;
 pub use metrics::{
     BandwidthMetrics, BatteryMetrics, CpuMetrics, EnergyMetrics, Fan, FanMetrics, GpuMetrics, MemoryMetrics,
     NeuralEngineMetrics, PowerMetrics, Temperatures, ThermalPressure,

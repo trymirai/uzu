@@ -7,6 +7,7 @@ fn available_telemetry() {
     let mut collector = Collector::new();
     let device = collector.device();
     let snapshot = collector.sample(Duration::from_millis(300));
+    let rail_power = collector.gauges().rail_power();
     let flag = |present: bool| {
         if present {
             "yes"
@@ -36,7 +37,7 @@ fn available_telemetry() {
     println!("sensors    {}", snapshot.sensors.len());
     println!("voltage    {}", snapshot.voltage.len());
     println!("current    {}", snapshot.current.len());
-    println!("rail_power {}", snapshot.rail_power().map_or("--".into(), |w| format!("{:.2} W", w.value())));
+    println!("rail_power {}", rail_power.map_or("--".into(), |w| format!("{:.2} W", w.value())));
 
     if let Some(memory) = &snapshot.memory {
         println!(

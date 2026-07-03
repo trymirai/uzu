@@ -10,7 +10,7 @@ use crate::{
     units::{GigabytesPerSecond, Megahertz, Percent, Watts},
 };
 use crate::{
-    Component, Device,
+    Component, Device, Gauges,
     client::SensorReader,
     metrics::{
         BandwidthMetrics, CpuMetrics, FanMetrics, GpuMetrics, NeuralEngineMetrics, PowerMetrics, Temperatures,
@@ -81,34 +81,51 @@ impl Collector {
         Device::detect(self)
     }
 
+    /// Instantaneous telemetry only (RAM, temps, HID sensors, fans, battery, thermal pressure, SMC
+    /// package watts). No IOReport subscription, so this is cheap — unlike [`Collector::sample`].
+    pub fn gauges(&mut self) -> Gauges {
+        let sensors = self.temperature_reader.as_mut().map(SensorReader::read).unwrap_or_default();
+        let voltage = self.voltage_reader.as_mut().map(SensorReader::read).unwrap_or_default();
+        let current = self.current_reader.as_mut().map(SensorReader::read).unwrap_or_default();
+        let temperatures = (!sensors.is_empty()).then(|| temperatures_from(&sensors));
+        #[cfg(target_os = "macos")]
+        let package_watts = self.smc.as_ref().and_then(|smc| smc.package_watts());
+        #[cfg(not(target_os = "macos"))]
+        let package_watts = None;
+        Gauges {
+            memory: read_memory(),
+            fans: self.read_fans(),
+            battery: read_battery(),
+            temperatures,
+            thermal_pressure: read_thermal_pressure(),
+            package_watts,
+            sensors,
+            voltage,
+            current,
+        }
+    }
+
     pub fn sample(
         &mut self,
         interval: Duration,
     ) -> Snapshot {
         let soc = self.sample_soc(interval);
-        let memory = read_memory();
-        let fans = self.read_fans();
-        let battery = read_battery();
-        let thermal_pressure = read_thermal_pressure();
-        let sensors = self.temperature_reader.as_mut().map(SensorReader::read).unwrap_or_default();
-        let voltage = self.voltage_reader.as_mut().map(SensorReader::read).unwrap_or_default();
-        let current = self.current_reader.as_mut().map(SensorReader::read).unwrap_or_default();
-        let temperatures = (!sensors.is_empty()).then(|| temperatures_from(&sensors));
+        let gauges = self.gauges();
         Snapshot {
             elapsed: Milliseconds(interval.as_millis() as u64),
             cpu: soc.cpu,
             gpu: soc.gpu,
             neural_engine: soc.neural_engine,
             power: soc.power,
-            memory,
             bandwidth: soc.bandwidth,
-            fans,
-            battery,
-            temperatures,
-            thermal_pressure,
-            sensors,
-            voltage,
-            current,
+            memory: gauges.memory,
+            fans: gauges.fans,
+            battery: gauges.battery,
+            temperatures: gauges.temperatures,
+            thermal_pressure: gauges.thermal_pressure,
+            sensors: gauges.sensors,
+            voltage: gauges.voltage,
+            current: gauges.current,
         }
     }
 
