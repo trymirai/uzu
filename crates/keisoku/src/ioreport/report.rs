@@ -16,8 +16,6 @@ use crate::{
     units::{Joules, Watts},
 };
 
-const ANE_MAX_POWER_WATTS: f32 = 8.0;
-
 pub struct IoReport {
     functions: &'static IoReportFunctions,
     subscription: Subscription,
@@ -163,9 +161,6 @@ impl IoReport {
         result.total_power = power.total.value();
 
         bandwidth.finish(window_milliseconds, &mut result);
-        if result.ane_active_percent == 0.0 && result.ane_power > 0.0 {
-            result.ane_active_percent = (result.ane_power / ANE_MAX_POWER_WATTS * 100.0).min(100.0);
-        }
         result
     }
 }
