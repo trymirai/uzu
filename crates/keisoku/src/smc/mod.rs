@@ -1,3 +1,6 @@
+mod fourcc;
+mod key_data;
+
 use core::ffi::c_void;
 
 use obfstr::obfstr;
@@ -7,6 +10,10 @@ use objc2_io_kit::{
     IOServiceMatching, IOServiceOpen, io_connect_t, io_iterator_t,
 };
 
+use self::{
+    fourcc::fourcc,
+    key_data::{SmcKeyData, SmcKeyInfo},
+};
 use crate::{
     metrics::{Fan, FanMetrics},
     units::{Rpm, Watts},
@@ -15,50 +22,6 @@ use crate::{
 const KERNEL_INDEX_SMC: u32 = 2;
 const SMC_CMD_READ_BYTES: u8 = 5;
 const SMC_CMD_READ_KEYINFO: u8 = 9;
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct SmcVersion {
-    major: u8,
-    minor: u8,
-    build: u8,
-    reserved: u8,
-    release: u16,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct SmcLimitData {
-    version: u16,
-    length: u16,
-    cpu_plimit: u32,
-    gpu_plimit: u32,
-    mem_plimit: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct SmcKeyInfo {
-    data_size: u32,
-    data_type: u32,
-    data_attributes: u8,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct SmcKeyData {
-    key: u32,
-    version: SmcVersion,
-    limit: SmcLimitData,
-    key_info: SmcKeyInfo,
-    result: u8,
-    status: u8,
-    data8: u8,
-    data32: u32,
-    bytes: [u8; 32],
-}
-
-const _: () = assert!(core::mem::size_of::<SmcKeyData>() == 80);
 
 pub struct Smc {
     connection: io_connect_t,
@@ -175,12 +138,4 @@ impl Drop for Smc {
     fn drop(&mut self) {
         IOServiceClose(self.connection);
     }
-}
-
-fn fourcc(key: &str) -> Option<u32> {
-    let bytes = key.as_bytes();
-    if bytes.len() != 4 {
-        return None;
-    }
-    Some((bytes[0] as u32) << 24 | (bytes[1] as u32) << 16 | (bytes[2] as u32) << 8 | bytes[3] as u32)
 }
