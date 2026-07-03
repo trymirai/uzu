@@ -8,7 +8,6 @@ pub mod audio;
 pub mod cold_pool;
 pub mod helpers;
 pub mod matmul;
-pub mod profiling;
 pub mod proptest;
 pub mod util;
 

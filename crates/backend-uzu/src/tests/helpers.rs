@@ -1,15 +1,11 @@
 use std::{mem::size_of, rc::Rc};
 
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
-
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::common::{
         Allocation, AllocationType, AsBufferRangeMut, Backend, Context, DenseBuffer, Encoder, SparseBuffer,
         SparseBufferExt,
     },
-    data_type::DataType,
-    dispatch_dtype,
 };
 
 pub fn allocation_size_bytes<T>(elements_count: usize) -> usize {
@@ -64,67 +60,6 @@ pub fn write_allocation<B: Backend, T: ArrayElement>(
         )
     };
     destination[..bytes.len()].copy_from_slice(bytes);
-}
-
-pub fn seed_from_label(label: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    label.hash(&mut hasher);
-    hasher.finish()
-}
-
-pub fn random_buffer<B: Backend>(
-    context: &B::Context,
-    shape: &[usize],
-    data_type: DataType,
-    seed: u64,
-) -> Allocation<B> {
-    let element_count: usize = shape.iter().product();
-    dispatch_dtype!(|(Element: data_type)| {
-        let mut random = SmallRng::seed_from_u64(seed);
-        let data: Vec<Element> = (0..element_count)
-            .map(|_| <Element as num_traits::NumCast>::from(random.random_range(-1.0f32..1.0f32)).unwrap())
-            .collect();
-        context.create_array_from(shape, &data).into_allocation()
-    })
-}
-
-pub fn zeroed_buffer<B: Backend>(
-    context: &B::Context,
-    shape: &[usize],
-    data_type: DataType,
-) -> Allocation<B> {
-    let element_count: usize = shape.iter().product();
-    macro_rules! zeros {
-        ($element:ty) => {
-            context.create_array_from(shape, &vec![<$element>::default(); element_count]).into_allocation()
-        };
-    }
-    match data_type {
-        DataType::U8 => zeros!(u8),
-        DataType::I8 => zeros!(i8),
-        DataType::U16 => zeros!(u16),
-        DataType::I16 => zeros!(i16),
-        DataType::U32 => zeros!(u32),
-        DataType::I32 => zeros!(i32),
-        DataType::U64 => zeros!(u64),
-        DataType::I64 => zeros!(i64),
-        _ => random_buffer::<B>(context, shape, data_type, 0),
-    }
-}
-
-pub fn measurement_buffer<B: Backend>(
-    context: &B::Context,
-    shape: &[usize],
-    data_type: DataType,
-    seed: u64,
-) -> Allocation<B> {
-    match data_type {
-        DataType::F16 | DataType::BF16 | DataType::F32 | DataType::F64 => {
-            random_buffer::<B>(context, shape, data_type, seed)
-        },
-        _ => zeroed_buffer::<B>(context, shape, data_type),
-    }
 }
 
 pub fn create_context<B: Backend>() -> Rc<<B as Backend>::Context> {
