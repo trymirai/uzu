@@ -36,7 +36,7 @@ pub(crate) struct EnergyTotals {
 
 impl EnergyTotals {
     pub(crate) fn total(&self) -> f32 {
-        self.cpu + self.gpu + self.gpu_sram + self.ane + self.ram
+        self.cpu + self.gpu + self.ane + self.ram
     }
 
     pub(crate) fn energy_metrics(
