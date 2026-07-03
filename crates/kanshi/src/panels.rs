@@ -167,7 +167,7 @@ fn render_power(
             "DRAM:",
             power.ram.value(),
         )));
-        lines.push(Line::from(format!("{:<6}{:>6.2} W", "Total:", power.total.value())));
+        lines.push(Line::from(format!("{:<6}{:>6.2} W", "Total:", power.total().value())));
         lines.push(Line::from(format!("{:<6}{:>6.2} W", "Pkg:", power.package.value())));
     }
     let thermals =

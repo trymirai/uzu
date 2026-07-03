@@ -10,7 +10,11 @@ pub struct PowerMetrics {
     pub ane: Watts,
     pub ram: Watts,
 
-    pub total: Watts,
-
     pub package: Watts,
+}
+
+impl PowerMetrics {
+    pub fn total(&self) -> Watts {
+        Watts(self.cpu.value() + self.gpu.value() + self.ane.value() + self.ram.value())
+    }
 }

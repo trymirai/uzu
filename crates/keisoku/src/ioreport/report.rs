@@ -123,7 +123,7 @@ impl IoReport {
         result.gpu_ram_power = power.gpu_sram.value();
         result.ane_power = power.ane.value();
         result.ram_power = power.ram.value();
-        result.total_power = power.total.value();
+        result.total_power = power.total().value();
 
         bandwidth.finish(window_milliseconds, &mut result);
         result

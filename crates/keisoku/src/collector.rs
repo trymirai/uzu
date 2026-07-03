@@ -193,7 +193,6 @@ impl Collector {
                 gpu_sram: Watts(sample.gpu_ram_power),
                 ane: Watts(sample.ane_power),
                 ram: Watts(sample.ram_power),
-                total: Watts(sample.total_power),
                 package,
             }),
             bandwidth: Some(BandwidthMetrics {

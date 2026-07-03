@@ -67,7 +67,6 @@ impl EnergyTotals {
             gpu_sram: Watts(self.gpu_sram / elapsed_secs),
             ane: Watts(self.ane / elapsed_secs),
             ram: Watts(self.ram / elapsed_secs),
-            total: Watts(self.total() / elapsed_secs),
             package,
         }
     }

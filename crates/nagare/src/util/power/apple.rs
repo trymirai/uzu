@@ -55,7 +55,7 @@ impl PowerRecorder for ApplePowerRecorder {
                     gpu_sram_joules += power.gpu_sram.value() as f64 * window_secs;
                     ane_joules += power.ane.value() as f64 * window_secs;
                     ram_joules += power.ram.value() as f64 * window_secs;
-                    total_joules += power.total.value() as f64 * window_secs;
+                    total_joules += power.total().value() as f64 * window_secs;
                     power.package.value() as f64
                 },
                 None => match snapshot.rail_power() {
