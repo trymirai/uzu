@@ -165,24 +165,3 @@ impl SocInfo {
         Some(soc_info)
     }
 }
-
-#[cfg(test)]
-mod frequency_dump {
-    use super::SocInfo;
-
-    #[test]
-    #[ignore]
-    fn dump_detected_frequencies() {
-        println!("KEISOKU_SOC_BEGIN");
-        match SocInfo::new() {
-            Some(soc) => {
-                println!("CHIP\t{}", soc.chip_name);
-                println!("ECPU_MHZ\t{:?}", soc.ecpu_frequencies);
-                println!("PCPU_MHZ\t{:?}", soc.pcpu_frequencies);
-                println!("GPU_MHZ\t{:?}", soc.gpu_frequencies);
-            },
-            None => println!("STATUS\tSocInfo unavailable"),
-        }
-        println!("KEISOKU_SOC_END");
-    }
-}

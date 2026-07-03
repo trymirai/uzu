@@ -67,6 +67,11 @@ impl Collector {
         self.soc.as_ref()
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn energy_model_channels(&self) -> Vec<(String, String, i64)> {
+        self.ioreport.as_ref().map(crate::ioreport::IoReport::energy_model_channels).unwrap_or_default()
+    }
+
     pub fn device(&self) -> crate::Device {
         crate::Device::detect(self)
     }
