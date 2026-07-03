@@ -9,7 +9,6 @@ use super::{
 enum Flow {
     Read,
     Write,
-    Combined,
 }
 
 #[derive(Clone, Copy)]
@@ -22,10 +21,8 @@ enum Subsystem {
 pub(super) struct BandwidthAccumulator {
     dram_read_bytes: f64,
     dram_write_bytes: f64,
-    dram_combined_bytes: f64,
     ane_read_bytes: f64,
     ane_write_bytes: f64,
-    ane_combined_bytes: f64,
     dram_read_histogram_gbps: f32,
     dram_write_histogram_gbps: f32,
     ane_read_histogram_gbps: f32,
@@ -41,7 +38,6 @@ impl BandwidthAccumulator {
         match flow {
             Flow::Read => self.dram_read_bytes += bytes,
             Flow::Write => self.dram_write_bytes += bytes,
-            Flow::Combined => self.dram_combined_bytes += bytes,
         }
     }
 
@@ -53,26 +49,16 @@ impl BandwidthAccumulator {
         match flow {
             Flow::Read => self.ane_read_bytes += bytes,
             Flow::Write => self.ane_write_bytes += bytes,
-            Flow::Combined => self.ane_combined_bytes += bytes,
         }
     }
 
     pub(super) fn finish(
-        mut self,
+        self,
         window_milliseconds: u64,
         result: &mut SocSample,
     ) {
         let window_seconds = (window_milliseconds as f64 / 1000.0).max(0.001);
         let to_gbps = |bytes: f64| (bytes / window_seconds / 1e9) as f32;
-
-        if self.dram_read_bytes == 0.0 && self.dram_write_bytes == 0.0 && self.dram_combined_bytes > 0.0 {
-            self.dram_read_bytes = self.dram_combined_bytes / 2.0;
-            self.dram_write_bytes = self.dram_combined_bytes / 2.0;
-        }
-        if self.ane_read_bytes == 0.0 && self.ane_write_bytes == 0.0 && self.ane_combined_bytes > 0.0 {
-            self.ane_read_bytes = self.ane_combined_bytes / 2.0;
-            self.ane_write_bytes = self.ane_combined_bytes / 2.0;
-        }
 
         result.dram_read_gbps = if self.dram_read_bytes > 0.0 {
             to_gbps(self.dram_read_bytes)
@@ -143,9 +129,9 @@ pub(super) fn accumulate_pmp(
     } else if subgroup == obfstr!("DRAM BW") {
         let gbps = residency_weighted_gbps(states);
         match flow(channel) {
-            Flow::Read => bandwidth.dram_read_histogram_gbps = bandwidth.dram_read_histogram_gbps.max(gbps),
-            Flow::Write => bandwidth.dram_write_histogram_gbps = bandwidth.dram_write_histogram_gbps.max(gbps),
-            Flow::Combined => {},
+            Some(Flow::Read) => bandwidth.dram_read_histogram_gbps = bandwidth.dram_read_histogram_gbps.max(gbps),
+            Some(Flow::Write) => bandwidth.dram_write_histogram_gbps = bandwidth.dram_write_histogram_gbps.max(gbps),
+            None => {},
         }
     }
 }
@@ -158,14 +144,14 @@ fn strip_die_prefix(channel: &str) -> &str {
     rest.strip_prefix(' ').unwrap_or(channel)
 }
 
-fn flow(channel: &str) -> Flow {
+fn flow(channel: &str) -> Option<Flow> {
     if channel.contains(obfstr!("RD+WR")) || channel.ends_with(obfstr!("RW")) {
-        Flow::Combined
+        None
     } else if channel.contains(obfstr!("WR")) {
-        Flow::Write
+        Some(Flow::Write)
     } else if channel.contains(obfstr!("RD")) {
-        Flow::Read
+        Some(Flow::Read)
     } else {
-        Flow::Combined
+        None
     }
 }
