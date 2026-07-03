@@ -1,5 +1,7 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 #[cfg(target_os = "macos")]
 use crate::{
     EnergyModelChannel,
@@ -9,10 +11,9 @@ use crate::{
     soc::SocInfo,
     units::{GigabytesPerSecond, Joules, Megahertz, Percent, Watts},
 };
-#[cfg(target_vendor = "apple")]
-use crate::client::SensorReader;
 use crate::{
     Component, Device, EnergyReading, EnergyWindow,
+    client::SensorReader,
     metrics::{
         BandwidthMetrics, CpuMetrics, FanMetrics, GpuMetrics, NeuralEngineMetrics, PowerMetrics, Temperatures,
         read_battery, read_memory, read_thermal_pressure,
@@ -40,11 +41,8 @@ pub struct Collector {
     cpu_load: CpuLoad,
     #[cfg(target_os = "macos")]
     smc: Option<Smc>,
-    #[cfg(target_vendor = "apple")]
     temperature_reader: Option<SensorReader>,
-    #[cfg(target_vendor = "apple")]
     voltage_reader: Option<SensorReader>,
-    #[cfg(target_vendor = "apple")]
     current_reader: Option<SensorReader>,
 }
 
@@ -65,11 +63,8 @@ impl Collector {
             cpu_load: CpuLoad::new(),
             #[cfg(target_os = "macos")]
             smc: Smc::new(),
-            #[cfg(target_vendor = "apple")]
             temperature_reader: SensorReader::new(SensorKind::Temperature),
-            #[cfg(target_vendor = "apple")]
             voltage_reader: SensorReader::new(SensorKind::Voltage),
-            #[cfg(target_vendor = "apple")]
             current_reader: SensorReader::new(SensorKind::Current),
         }
     }
@@ -142,18 +137,9 @@ impl Collector {
         let fans = self.read_fans();
         let battery = read_battery();
         let thermal_pressure = read_thermal_pressure();
-        #[cfg(target_vendor = "apple")]
         let sensors = self.temperature_reader.as_mut().map(SensorReader::read).unwrap_or_default();
-        #[cfg(not(target_vendor = "apple"))]
-        let sensors = crate::sensors(SensorKind::Temperature);
-        #[cfg(target_vendor = "apple")]
         let voltage = self.voltage_reader.as_mut().map(SensorReader::read).unwrap_or_default();
-        #[cfg(not(target_vendor = "apple"))]
-        let voltage = crate::sensors(SensorKind::Voltage);
-        #[cfg(target_vendor = "apple")]
         let current = self.current_reader.as_mut().map(SensorReader::read).unwrap_or_default();
-        #[cfg(not(target_vendor = "apple"))]
-        let current = crate::sensors(SensorKind::Current);
         let temperatures = (!sensors.is_empty()).then(|| temperatures_from(&sensors));
         Snapshot {
             elapsed: Milliseconds(interval.as_millis() as u64),

@@ -36,7 +36,7 @@ impl Device {
             };
         }
 
-        #[cfg(all(target_vendor = "apple", not(target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         #[allow(clippy::needless_return)]
         {
             let (performance_cores, efficiency_cores) = perflevel_cores();
@@ -50,7 +50,7 @@ impl Device {
             };
         }
 
-        #[cfg(not(all(target_vendor = "apple", not(target_os = "macos"))))]
+        #[cfg(target_os = "macos")]
         Device {
             os,
             chip,
@@ -60,7 +60,7 @@ impl Device {
     }
 }
 
-#[cfg(all(target_vendor = "apple", not(target_os = "macos")))]
+#[cfg(not(target_os = "macos"))]
 fn sysctl_string(name: &str) -> Option<String> {
     let name = std::ffi::CString::new(name).ok()?;
     let mut len = 0usize;
@@ -80,7 +80,7 @@ fn sysctl_string(name: &str) -> Option<String> {
     String::from_utf8(buffer).ok()
 }
 
-#[cfg(all(target_vendor = "apple", not(target_os = "macos")))]
+#[cfg(not(target_os = "macos"))]
 fn sysctl_u32(name: &str) -> Option<u32> {
     let name = std::ffi::CString::new(name).ok()?;
     let mut value = 0u32;
@@ -91,7 +91,7 @@ fn sysctl_u32(name: &str) -> Option<u32> {
     (read == 0).then_some(value)
 }
 
-#[cfg(all(target_vendor = "apple", not(target_os = "macos")))]
+#[cfg(not(target_os = "macos"))]
 fn perflevel_cores() -> (u8, u8) {
     let performance = sysctl_u32("hw.perflevel0.logicalcpu").unwrap_or(0);
     let efficiency = if sysctl_u32("hw.nperflevels").unwrap_or(1) > 1 {

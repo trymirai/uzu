@@ -1,3 +1,6 @@
+#[cfg(not(target_vendor = "apple"))]
+compile_error!("keisoku supports Apple platforms only (macOS and iOS)");
+
 mod collector;
 mod component;
 mod energy_channel;
@@ -9,10 +12,11 @@ mod sensor;
 mod snapshot;
 mod units;
 
+mod client;
+mod sys;
+
 #[cfg(target_os = "macos")]
 mod cf;
-#[cfg(target_vendor = "apple")]
-mod client;
 #[cfg(target_os = "macos")]
 mod cpu_load;
 #[cfg(target_os = "macos")]
@@ -21,8 +25,6 @@ mod ioreport;
 mod smc;
 #[cfg(target_os = "macos")]
 mod soc;
-#[cfg(target_vendor = "apple")]
-mod sys;
 
 pub use collector::Collector;
 pub use component::{Component, classify};
@@ -38,22 +40,10 @@ pub use sensor::{Sensor, SensorKind, current_sensors, thermal_sensors, voltage_s
 pub use snapshot::Snapshot;
 pub use units::{Bytes, Celsius, GigabytesPerSecond, Joules, Megahertz, Milliseconds, Percent, Rpm, Watts};
 
-#[cfg(target_vendor = "apple")]
 pub fn sensors(kind: SensorKind) -> Vec<Sensor> {
     client::collect(kind)
 }
 
-#[cfg(target_vendor = "apple")]
 pub fn sensors_available() -> bool {
     client::is_available()
-}
-
-#[cfg(not(target_vendor = "apple"))]
-pub fn sensors(_kind: SensorKind) -> Vec<Sensor> {
-    Vec::new()
-}
-
-#[cfg(not(target_vendor = "apple"))]
-pub fn sensors_available() -> bool {
-    false
 }

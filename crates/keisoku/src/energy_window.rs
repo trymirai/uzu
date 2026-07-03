@@ -1,10 +1,14 @@
-use std::{marker::PhantomData, rc::Rc, time::Instant};
+use std::{marker::PhantomData, rc::Rc};
+
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use crate::ioreport::RawEnergySample;
 
 #[must_use]
 pub struct EnergyWindow {
+    #[cfg(target_os = "macos")]
     pub(crate) started_at: Instant,
     #[cfg(target_os = "macos")]
     pub(crate) sample: RawEnergySample,

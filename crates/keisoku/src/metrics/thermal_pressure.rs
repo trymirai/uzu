@@ -9,7 +9,6 @@ pub enum ThermalPressure {
     Sleeping,
 }
 
-#[cfg(target_vendor = "apple")]
 impl ThermalPressure {
     fn from_level(level: u64) -> Option<Self> {
         match level {
@@ -23,7 +22,6 @@ impl ThermalPressure {
     }
 }
 
-#[cfg(target_vendor = "apple")]
 pub(crate) fn read() -> Option<ThermalPressure> {
     use core::ffi::c_char;
 
@@ -51,9 +49,4 @@ pub(crate) fn read() -> Option<ThermalPressure> {
         return None;
     }
     ThermalPressure::from_level(level)
-}
-
-#[cfg(not(target_vendor = "apple"))]
-pub(crate) fn read() -> Option<ThermalPressure> {
-    None
 }

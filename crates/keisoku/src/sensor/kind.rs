@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-#[cfg(target_vendor = "apple")]
 use crate::sys;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -20,7 +19,6 @@ impl SensorKind {
     }
 }
 
-#[cfg(target_vendor = "apple")]
 impl SensorKind {
     pub(crate) fn matching(self) -> (i32, i32) {
         match self {
