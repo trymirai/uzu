@@ -7,7 +7,7 @@ pub(super) struct Channels(CFRetained<CFMutableDictionary>);
 
 impl Channels {
     fn new(functions: &IoReportFunctions) -> Option<Self> {
-        let mut groups: Vec<CFRetained<CFDictionary>> = Vec::with_capacity(5);
+        let mut groups: Vec<CFRetained<CFMutableDictionary>> = Vec::with_capacity(5);
         for (group, subgroup) in [
             (obfstr!("Energy Model"), None::<&str>),
             (obfstr!("CPU Stats"), Some(obfstr!("CPU Core Performance States"))),

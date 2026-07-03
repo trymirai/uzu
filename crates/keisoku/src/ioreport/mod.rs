@@ -49,16 +49,16 @@ impl IoReportFunctions {
         &self,
         group: &CFString,
         subgroup: Option<&CFString>,
-    ) -> Option<CFRetained<CFDictionary>> {
+    ) -> Option<CFRetained<CFMutableDictionary>> {
         let subgroup_pointer = subgroup.map_or(core::ptr::null_mut(), raw);
         let channels = unsafe { (self.copy_channels_in_group)(raw(group), subgroup_pointer, 0, 0, 0) };
-        retained_dictionary(channels)
+        retained_mutable_dictionary(channels)
     }
 
     fn merge_channels(
         &self,
-        first: &CFDictionary,
-        other: &CFDictionary,
+        first: &CFMutableDictionary,
+        other: &CFMutableDictionary,
     ) {
         unsafe { (self.merge_channels)(raw(first), raw(other), core::ptr::null()) };
     }
@@ -101,4 +101,8 @@ fn raw<T: Type>(value: &T) -> *mut c_void {
 
 fn retained_dictionary(value: *const c_void) -> Option<CFRetained<CFDictionary>> {
     NonNull::new(value.cast_mut().cast::<CFDictionary>()).map(|pointer| unsafe { CFRetained::from_raw(pointer) })
+}
+
+fn retained_mutable_dictionary(value: *const c_void) -> Option<CFRetained<CFMutableDictionary>> {
+    NonNull::new(value.cast_mut().cast::<CFMutableDictionary>()).map(|pointer| unsafe { CFRetained::from_raw(pointer) })
 }
