@@ -52,6 +52,94 @@ METAL_FUNC void invert_tree_gram_diagonal_block(
   }
 }
 
+// Unscaled gram dots for one tile: kk = k[rows].k[cols], qk = q[rows].k[cols].
+template <typename T, typename Ops, typename AccFragment, typename LeftFragment, typename RightFragment>
+METAL_FUNC void tree_gram_dots(
+    const device T* k_rows,
+    const device T* q_rows,
+    const device T* k_cols,
+    const uint head_k_dim,
+    const uint qk_stride,
+    const bool full_rows,
+    const uint tile_rows,
+    const bool full_cols,
+    const uint tile_cols,
+    const ushort lane,
+    thread AccFragment& kk_acc,
+    thread AccFragment& qk_acc
+) {
+  kk_acc.clear();
+  qk_acc.clear();
+  // head_k_dim is a multiple of the fragment K depth, so the contraction has no tail.
+  for (uint kb = 0; kb < head_k_dim; kb += Ops::FRAGMENT_ROWS) {
+    LeftFragment k_left;
+    LeftFragment q_left;
+    RightFragment k_right;
+    k_left.load_maybe_bounded(lane, k_rows + kb, qk_stride, full_rows, tile_rows, Ops::FRAGMENT_ROWS);
+    q_left.load_maybe_bounded(lane, q_rows + kb, qk_stride, full_rows, tile_rows, Ops::FRAGMENT_ROWS);
+    k_right.load_maybe_bounded(lane, k_cols + kb, qk_stride, full_cols, tile_cols, Ops::FRAGMENT_ROWS);
+    fragment_mma(kk_acc, k_left, k_right);
+    fragment_mma(qk_acc, q_left, k_right);
+  }
+}
+
+// kh0 = k @ h0[h0_idx[batch]]^T for one row-tile, walking head_v_dim in COL_TILE
+// chunks from dv_start by dv_stride. No-op for a zero initial state.
+template <typename T, typename Ops, typename AccFragment, typename LeftFragment, typename RightFragment>
+METAL_FUNC void tree_kh0(
+    const device T* k_rows,
+    const device T* h0,
+    const device int* h0_idx,
+    device float* kh0,
+    const uint batch_idx,
+    const uint value_head_idx,
+    const uint row_base,
+    const uint tile_rows,
+    const bool full_rows,
+    const uint tree_size,
+    const uint value_heads,
+    const uint head_k_dim,
+    const uint head_v_dim,
+    const uint qk_stride,
+    const uint dv_start,
+    const uint dv_stride,
+    const ushort lane
+) {
+  const int h0_slot = h0_idx[batch_idx];
+  if (h0_slot < 0) {
+    return;
+  }
+  const device T* h0_head = h0 + (uint(h0_slot) * value_heads + value_head_idx) * head_v_dim * head_k_dim;
+  device float* kh0_rows =
+      kh0 + (batch_idx * tree_size + row_base) * value_heads * head_v_dim + value_head_idx * head_v_dim;
+  const uint kh0_row_stride = value_heads * head_v_dim;
+
+  for (uint dv_base = dv_start; dv_base < head_v_dim; dv_base += dv_stride) {
+    const uint tile_dvs = min(uint(COL_TILE), head_v_dim - dv_base);
+    AccFragment kh0_acc;
+    kh0_acc.clear();
+
+    const device T* h0_tile = h0_head + dv_base * head_k_dim;
+    const bool full_dvs = tile_dvs == COL_TILE;
+
+    for (uint kb = 0; kb < head_k_dim; kb += Ops::FRAGMENT_ROWS) {
+      LeftFragment k_left;
+      RightFragment h0_right;
+      k_left.load_maybe_bounded(lane, k_rows + kb, qk_stride, full_rows, tile_rows, Ops::FRAGMENT_ROWS);
+      h0_right.load_maybe_bounded(lane, h0_tile + kb, head_k_dim, full_dvs, tile_dvs, Ops::FRAGMENT_ROWS);
+      fragment_mma(kh0_acc, k_left, h0_right);
+    }
+
+    kh0_acc.store_maybe_bounded(
+        lane,
+        kh0_rows + dv_base,
+        kh0_row_stride,
+        full_rows && full_dvs,
+        short2(tile_dvs, tile_rows)
+    );
+  }
+}
+
 // Builds the tree-verify gram products for one (batch, value-head, row-tile,
 // col-tile-group) strip; each of the threadgroup's simdgroups owns one 16x32
 // column tile (above-diagonal tiles are just zero-filled in qkd) and the row's
@@ -174,25 +262,25 @@ PUBLIC KERNEL(BuildTreeGram)(
       sg_col_prefix[lane] = 0.0f;
     }
 
-    AccFragment kk_acc;
-    AccFragment qk_acc;
-    kk_acc.clear();
-    qk_acc.clear();
-
     const device T* k_cols = k + qk_base + col_base * qk_stride;
     const bool full_cols = col_base + COL_TILE <= tree_size;
 
-    // head_k_dim is a multiple of the fragment K depth, so the contraction has no tail.
-    for (uint kb = 0; kb < head_k_dim; kb += Ops::FRAGMENT_ROWS) {
-      LeftFragment k_left;
-      LeftFragment q_left;
-      RightFragment k_right;
-      k_left.load_maybe_bounded(lane, k_rows + kb, qk_stride, full_rows, tile_rows, Ops::FRAGMENT_ROWS);
-      q_left.load_maybe_bounded(lane, q_rows + kb, qk_stride, full_rows, tile_rows, Ops::FRAGMENT_ROWS);
-      k_right.load_maybe_bounded(lane, k_cols + kb, qk_stride, full_cols, tile_cols, Ops::FRAGMENT_ROWS);
-      fragment_mma(kk_acc, k_left, k_right);
-      fragment_mma(qk_acc, q_left, k_right);
-    }
+    AccFragment kk_acc;
+    AccFragment qk_acc;
+    tree_gram_dots<T, Ops, AccFragment, LeftFragment, RightFragment>(
+        k_rows,
+        q_rows,
+        k_cols,
+        head_k_dim,
+        qk_stride,
+        full_rows,
+        tile_rows,
+        full_cols,
+        tile_cols,
+        lane,
+        kk_acc,
+        qk_acc
+    );
 
     const bool has_diag = col_tile_idx == diag_col_tile;
     simdgroup_barrier(mem_flags::mem_threadgroup);
@@ -250,38 +338,25 @@ PUBLIC KERNEL(BuildTreeGram)(
   // kh0 dv chunks are distributed round-robin over this row tile's simdgroups
   // (across its col-tile-group threadgroups); chunking also bounds registers.
   if (use_h0) {
-    const int h0_slot = h0_idx[batch_idx];
-    if (h0_slot >= 0) {
-      const device T* h0_head = h0 + (uint(h0_slot) * value_heads + value_head_idx) * head_v_dim * head_k_dim;
-      device float* kh0_rows =
-          kh0 + (batch_idx * tree_size + row_base) * value_heads * head_v_dim + value_head_idx * head_v_dim;
-      const uint kh0_row_stride = value_heads * head_v_dim;
-
-      const uint row_simdgroups = col_tile_groups * NUM_SIMDGROUPS;
-      for (uint dv_base = col_tile_idx * COL_TILE; dv_base < head_v_dim; dv_base += row_simdgroups * COL_TILE) {
-        const uint tile_dvs = min(uint(COL_TILE), head_v_dim - dv_base);
-        AccFragment kh0_acc;
-        kh0_acc.clear();
-
-        const device T* h0_tile = h0_head + dv_base * head_k_dim;
-        const bool full_dvs = tile_dvs == COL_TILE;
-
-        for (uint kb = 0; kb < head_k_dim; kb += Ops::FRAGMENT_ROWS) {
-          LeftFragment k_left;
-          RightFragment h0_right;
-          k_left.load_maybe_bounded(lane, k_rows + kb, qk_stride, full_rows, tile_rows, Ops::FRAGMENT_ROWS);
-          h0_right.load_maybe_bounded(lane, h0_tile + kb, head_k_dim, full_dvs, tile_dvs, Ops::FRAGMENT_ROWS);
-          fragment_mma(kh0_acc, k_left, h0_right);
-        }
-
-        kh0_acc.store_maybe_bounded(
-            lane,
-            kh0_rows + dv_base,
-            kh0_row_stride,
-            full_rows && full_dvs,
-            short2(tile_dvs, tile_rows)
-        );
-      }
-    }
+    const uint row_simdgroups = col_tile_groups * NUM_SIMDGROUPS;
+    tree_kh0<T, Ops, AccFragment, LeftFragment, RightFragment>(
+        k_rows,
+        h0,
+        h0_idx,
+        kh0,
+        batch_idx,
+        value_head_idx,
+        row_base,
+        tile_rows,
+        full_rows,
+        tree_size,
+        value_heads,
+        head_k_dim,
+        head_v_dim,
+        qk_stride,
+        col_tile_idx * COL_TILE,
+        row_simdgroups * COL_TILE,
+        lane
+    );
   }
 }

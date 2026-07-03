@@ -125,7 +125,9 @@ fn run_case<B: Backend, T: ArrayElement + Copy>(
             let row = block * BT as usize + local_row;
             let col = pair * 2 * BT as usize + local_col;
             if col < tree_size && row < tree_size && col / (BT as usize) < block {
-                ((i as f32 * 0.011).sin()) * 0.01
+                // ~0.05 per entry: with the dense lower-triangle fill this puts the
+                // per-row A magnitude near the real l2-normed-key / softplus-decay regime.
+                ((i as f32 * 0.011).sin()) * 0.05
             } else {
                 0.0
             }
@@ -139,7 +141,7 @@ fn run_case<B: Backend, T: ArrayElement + Copy>(
             if row == col {
                 1.0
             } else if col < row {
-                -((i as f32 * 0.011).sin()) * 0.01
+                -((i as f32 * 0.011).sin()) * 0.05
             } else {
                 0.0
             }

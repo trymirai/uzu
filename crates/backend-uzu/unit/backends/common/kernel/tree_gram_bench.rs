@@ -9,7 +9,7 @@ use proc_macros::uzu_bench;
 use crate::{
     array::ArrayContextExt,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
+        common::{Allocation, Backend, Context, Kernels, kernel::BuildTreeGramKernel},
         metal::Metal,
     },
     data_type::DataType,
@@ -170,37 +170,33 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                     "B{batch_size}_T{tree_size}_Hg{K_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}"
                 ));
 
-                let encode = |buffers: &mut TreeGramBuffers, encoder: &mut Encoder<Metal>| {
-                    kernel.encode(
-                        &buffers.q,
-                        &buffers.k,
-                        &buffers.trie,
-                        &buffers.prefix,
-                        &buffers.beta,
-                        Some(&buffers.h0),
-                        Some(&buffers.h0_idx),
-                        &mut buffers.a_packed,
-                        &mut buffers.qkd,
-                        &mut buffers.a_inv,
-                        Some(&mut buffers.kh0),
-                        scale,
-                        batch_size as u32,
-                        tree_size as u32,
-                        K_HEADS as u32,
-                        VALUE_HEADS as u32,
-                        HEAD_K_DIM as u32,
-                        HEAD_V_DIM as u32,
-                        encoder,
-                    );
-                };
-
                 let mut buffers = ColdPool::new(buffers_bytes(batch_size, tree_size), || {
                     make_buffers(&context, batch_size, tree_size).0
                 });
                 group.bench_function(benchmark_id, |bencher| {
                     iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
                         let buffers = buffers.next_mut();
-                        encode(buffers, encoder);
+                        kernel.encode(
+                            &buffers.q,
+                            &buffers.k,
+                            &buffers.trie,
+                            &buffers.prefix,
+                            &buffers.beta,
+                            Some(&buffers.h0),
+                            Some(&buffers.h0_idx),
+                            &mut buffers.a_packed,
+                            &mut buffers.qkd,
+                            &mut buffers.a_inv,
+                            Some(&mut buffers.kh0),
+                            scale,
+                            batch_size as u32,
+                            tree_size as u32,
+                            K_HEADS as u32,
+                            VALUE_HEADS as u32,
+                            HEAD_K_DIM as u32,
+                            HEAD_V_DIM as u32,
+                            encoder,
+                        );
                     });
                 });
             }
