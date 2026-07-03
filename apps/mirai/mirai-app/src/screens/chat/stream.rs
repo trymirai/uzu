@@ -17,6 +17,10 @@ use super::{
 };
 use crate::{engine, persistence, title_gen};
 
+const REVEAL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
+const MIN_REVEAL_CHARS: usize = 3;
+const REVEAL_CATCHUP_DIVISOR: usize = 8;
+
 pub(super) enum StreamMsg {
     Started(CancelToken),
     Session(ChatSession, String),
@@ -163,6 +167,7 @@ impl ChatView {
 
         self.state.stream_gen = self.state.stream_gen.wrapping_add(1);
         let gen_id = self.state.stream_gen;
+        self.state.revealed_chars = 0;
 
         let (tx, mut rx) = mpsc::unbounded::<StreamMsg>();
 
@@ -230,12 +235,51 @@ impl ChatView {
         })
         .detach();
 
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(REVEAL_INTERVAL).await;
+                let keep = this.update(cx, |view, cx| {
+                    if view.state.stream_gen != gen_id {
+                        return false;
+                    }
+                    view.advance_reveal(cx)
+                });
+                if !matches!(keep, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
+
         self.pin_to_bottom();
         cx.notify();
     }
 
     fn last_assistant_mut(&mut self) -> Option<&mut ChatTurn> {
         self.state.messages.last_mut().filter(|message| message.role == Role::Assistant)
+    }
+
+    fn advance_reveal(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let full = {
+            let Some(message) = self.state.messages.last() else {
+                return false;
+            };
+            if message.role != Role::Assistant {
+                return false;
+            }
+            message.cur().text.chars().count()
+        };
+        if self.state.revealed_chars < full {
+            let remaining = full - self.state.revealed_chars;
+            let step = (remaining / REVEAL_CATCHUP_DIVISOR).max(MIN_REVEAL_CHARS);
+            self.state.revealed_chars = self.state.revealed_chars.saturating_add(step).min(full);
+            cx.notify();
+            return true;
+        }
+        self.state.streaming
     }
 
     fn apply_stream(

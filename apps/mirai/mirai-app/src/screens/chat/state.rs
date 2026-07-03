@@ -12,6 +12,7 @@ pub(super) struct ChatState {
     pub waiting_for_model: bool,
     pub cancel: Option<CancelToken>,
     pub stream_gen: u64,
+    pub revealed_chars: usize,
     pub chat_id: Option<String>,
     pub created_at: u64,
     pub model_picker_open: bool,
