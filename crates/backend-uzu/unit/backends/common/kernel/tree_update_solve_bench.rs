@@ -7,13 +7,16 @@ use half::bf16;
 use proc_macros::uzu_bench;
 
 use crate::{
-    array::ArrayContextExt,
     backends::{
         common::{Allocation, Backend, Context, Encoder, Kernels, kernel::TreeUpdateSolveKernel},
         metal::Metal,
     },
     data_type::DataType,
-    tests::{cold_pool::ColdPool, matmul::iter_encode_loop_named},
+    tests::{
+        cold_pool::ColdPool,
+        helpers::{alloc_allocation, alloc_allocation_with_data},
+        matmul::iter_encode_loop_named,
+    },
 };
 
 const NUM_V_HEADS: usize = 48;
@@ -125,7 +128,7 @@ fn make_buffers(
             }
         })
         .collect::<Vec<_>>();
-    let a = context.create_array_from(&[a_f32.len()], &a_f32).into_allocation();
+    let a = alloc_allocation_with_data::<Metal, f32>(context, &a_f32);
     let inv_len = batch_size * NUM_V_HEADS * tree_size.div_ceil(BT) * BT * BT;
     let a_inv = (0..inv_len)
         .map(|i| {
@@ -139,14 +142,14 @@ fn make_buffers(
     let h0_idx = (0..batch_size).map(|i| i as i32).collect::<Vec<_>>();
 
     TreeUpdateSolveBuffers {
-        kh0: context.create_array_from(&[kh0.len()], &kh0).into_allocation(),
-        v: context.create_array_from(&[v.len()], &v).into_allocation(),
-        prefix: context.create_array_from(&[prefix.len()], &prefix).into_allocation(),
-        beta: context.create_array_from(&[beta.len()], &beta).into_allocation(),
+        kh0: alloc_allocation_with_data::<Metal, f32>(context, &kh0),
+        v: alloc_allocation_with_data::<Metal, bf16>(context, &v),
+        prefix: alloc_allocation_with_data::<Metal, f32>(context, &prefix),
+        beta: alloc_allocation_with_data::<Metal, f32>(context, &beta),
         a,
-        a_inv: context.create_array_from(&[a_inv.len()], &a_inv).into_allocation(),
-        h0_idx: context.create_array_from(&[h0_idx.len()], &h0_idx).into_allocation(),
-        u: context.create_array_uninitialized(&[u_len], DataType::F32).into_allocation(),
+        a_inv: alloc_allocation_with_data::<Metal, f32>(context, &a_inv),
+        h0_idx: alloc_allocation_with_data::<Metal, i32>(context, &h0_idx),
+        u: alloc_allocation::<Metal, f32>(context, u_len),
     }
 }
 

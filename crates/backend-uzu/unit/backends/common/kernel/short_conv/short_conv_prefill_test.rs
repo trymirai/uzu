@@ -6,13 +6,16 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::ShortConvPrefillKernel},
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -39,23 +42,23 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     )
     .expect("Failed to create ShortConvPrefillKernel");
 
-    let padded_array = context.create_array_from(&[input.padded.len()], &input.padded);
-    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
-    let w_array = context.create_array_from(&[input.w.len()], &input.w);
-    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b));
+    let padded = alloc_allocation_with_data::<B, T>(&context, &input.padded);
+    let in_proj = alloc_allocation_with_data::<B, T>(&context, &input.in_proj);
+    let w = alloc_allocation_with_data::<B, f32>(&context, &input.w);
+    let b = input.b.as_ref().map(|b| alloc_allocation_with_data::<B, f32>(&context, b));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
-    let mut out = context.create_array_uninitialized(&[out_size], T::data_type()).into_allocation();
+    let mut out = alloc_allocation::<B, T>(&context, out_size);
 
     let state_out_size = input.model_dim as usize * input.state_stride as usize;
-    let mut state_out = context.create_array_uninitialized(&[state_out_size], T::data_type()).into_allocation();
+    let mut state_out = alloc_allocation::<B, T>(&context, state_out_size);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        padded_array.allocation(),
-        in_proj_array.allocation(),
-        w_array.allocation(),
-        b_array.as_ref().map(|bias| bias.allocation()),
+        &padded,
+        &in_proj,
+        &w,
+        b.as_ref(),
         &mut out,
         &mut state_out,
         input.suffix_len,
@@ -67,7 +70,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (crate::tests::helpers::allocation_to_vec(&out), crate::tests::helpers::allocation_to_vec(&state_out))
+    (allocation_to_vec(&out), allocation_to_vec(&state_out))
 }
 
 fn get_test_data_basic<T: ArrayElement + Float>(

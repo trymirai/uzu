@@ -7,13 +7,16 @@ use half::bf16;
 use proc_macros::uzu_bench;
 
 use crate::{
-    array::ArrayContextExt,
     backends::{
         common::{Allocation, Backend, Context, Kernels, kernel::BuildTreeGramKernel},
         metal::Metal,
     },
     data_type::DataType,
-    tests::{cold_pool::ColdPool, matmul::iter_encode_loop_named},
+    tests::{
+        cold_pool::ColdPool,
+        helpers::{alloc_allocation, alloc_allocation_with_data},
+        matmul::iter_encode_loop_named,
+    },
 };
 
 const K_HEADS: usize = 16;
@@ -106,17 +109,17 @@ fn make_buffers(
     let scale = (HEAD_K_DIM as f32).sqrt().recip();
     (
         TreeGramBuffers {
-            q: context.create_array_from(&[q.len()], &q).into_allocation(),
-            k: context.create_array_from(&[k.len()], &k).into_allocation(),
-            trie: context.create_array_from(&[trie.len()], &trie).into_allocation(),
-            prefix: context.create_array_from(&[prefix.len()], &prefix).into_allocation(),
-            beta: context.create_array_from(&[beta.len()], &beta).into_allocation(),
-            h0: context.create_array_from(&[h0.len()], &h0).into_allocation(),
-            h0_idx: context.create_array_from(&[h0_idx.len()], &h0_idx).into_allocation(),
-            a_packed: context.create_array_uninitialized(&[a_len], DataType::F32).into_allocation(),
-            qkd: context.create_array_uninitialized(&[out_len], DataType::F32).into_allocation(),
-            a_inv: context.create_array_uninitialized(&[a_inv_len], DataType::F32).into_allocation(),
-            kh0: context.create_array_uninitialized(&[kh0_len], DataType::F32).into_allocation(),
+            q: alloc_allocation_with_data::<Metal, bf16>(context, &q),
+            k: alloc_allocation_with_data::<Metal, bf16>(context, &k),
+            trie: alloc_allocation_with_data::<Metal, u32>(context, &trie),
+            prefix: alloc_allocation_with_data::<Metal, f32>(context, &prefix),
+            beta: alloc_allocation_with_data::<Metal, f32>(context, &beta),
+            h0: alloc_allocation_with_data::<Metal, bf16>(context, &h0),
+            h0_idx: alloc_allocation_with_data::<Metal, i32>(context, &h0_idx),
+            a_packed: alloc_allocation::<Metal, f32>(context, a_len),
+            qkd: alloc_allocation::<Metal, f32>(context, out_len),
+            a_inv: alloc_allocation::<Metal, f32>(context, a_inv_len),
+            kh0: alloc_allocation::<Metal, f32>(context, kh0_len),
         },
         scale,
     )

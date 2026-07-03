@@ -5,13 +5,16 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Backend, Encoder, Kernels, kernel::MoeFinalizeKernel},
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::{assert::assert_eq_float, helpers::create_context},
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, create_context},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -25,17 +28,17 @@ struct Input<T: ArrayElement + Float> {
 
 fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = create_context::<B>();
-    let tok2row_array = context.create_array_from(&[input.tok2row.len()], &input.tok2row);
-    let probs_array = context.create_array_from(&[input.probs.len()], &input.probs);
-    let y_partial_array = context.create_array_from(&[input.y_partial.len()], &input.y_partial);
-    let mut y_out = context.create_array_uninitialized(&[input.t * input.d_model], T::data_type()).into_allocation();
+    let tok2row = alloc_allocation_with_data::<B, i32>(&context, &input.tok2row);
+    let probs = alloc_allocation_with_data::<B, T>(&context, &input.probs);
+    let y_partial = alloc_allocation_with_data::<B, T>(&context, &input.y_partial);
+    let mut y_out = alloc_allocation::<B, T>(&context, input.t * input.d_model);
 
     let finalize = <B::Kernels as Kernels>::MoeFinalizeKernel::new(&context, DataType::BF16).expect("finalize kernel");
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     finalize.encode(
-        tok2row_array.allocation(),
-        probs_array.allocation(),
-        y_partial_array.allocation(),
+        &tok2row,
+        &probs,
+        &y_partial,
         &mut y_out,
         input.t as u32,
         input.d_model as u32,
@@ -44,7 +47,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::tests::helpers::allocation_to_vec(&y_out)
+    allocation_to_vec(&y_out)
 }
 
 fn test_finalize_internal(

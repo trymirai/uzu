@@ -3,13 +3,16 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::TreeUpdateSolveKernel},
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::{assert::assert_eq_float, helpers::allocation_to_vec},
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 const BT: u32 = 16;
@@ -153,24 +156,24 @@ fn run_case<B: Backend, T: ArrayElement + Copy>(
         (0..batch_size).map(|batch| batch as i32).collect::<Vec<_>>()
     };
 
-    let kh0 = context.create_array_from(&[kh0.len()], &kh0);
-    let v = context.create_array_from(&[v.len()], &v);
-    let prefix = context.create_array_from(&[prefix.len()], &prefix);
-    let beta = context.create_array_from(&[beta.len()], &beta);
-    let a = context.create_array_from(&[a_f32.len()], &a_f32);
-    let a_inv = context.create_array_from(&[a_inv.len()], &a_inv);
-    let h0_idx = context.create_array_from(&[h0_idx.len()], &h0_idx);
-    let mut u = context.create_array_uninitialized(&[u_len], DataType::F32).into_allocation();
+    let kh0 = alloc_allocation_with_data::<B, f32>(&context, &kh0);
+    let v = alloc_allocation_with_data::<B, T>(&context, &v);
+    let prefix = alloc_allocation_with_data::<B, f32>(&context, &prefix);
+    let beta = alloc_allocation_with_data::<B, f32>(&context, &beta);
+    let a = alloc_allocation_with_data::<B, f32>(&context, &a_f32);
+    let a_inv = alloc_allocation_with_data::<B, f32>(&context, &a_inv);
+    let h0_idx = alloc_allocation_with_data::<B, i32>(&context, &h0_idx);
+    let mut u = alloc_allocation::<B, f32>(&context, u_len);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
     kernel.encode(
-        use_h0.then(|| kh0.allocation()),
-        v.allocation(),
-        prefix.allocation(),
-        beta.allocation(),
-        a.allocation(),
-        a_inv.allocation(),
-        use_h0.then(|| h0_idx.allocation()),
+        use_h0.then_some(&kh0),
+        &v,
+        &prefix,
+        &beta,
+        &a,
+        &a_inv,
+        use_h0.then_some(&h0_idx),
         &mut u,
         case.batch_size,
         case.tree_size,

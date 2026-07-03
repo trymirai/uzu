@@ -352,7 +352,7 @@ private func uniffiTraitInterfaceCallWithError<T, E>(
         callStatus.pointee.errorBuf = FfiConverterString.lower(String(describing: error))
     }
 }
-// Initial value and increment amount for handles. 
+// Initial value and increment amount for handles.
 // These ensure that SWIFT handles always have the lowest bit set
 fileprivate let UNIFFI_HANDLEMAP_INITIAL: UInt64 = 1
 fileprivate let UNIFFI_HANDLEMAP_DELTA: UInt64 = 2
@@ -461,17 +461,17 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 public protocol ChatSessionProtocol: AnyObject, Sendable {
-    
+
     func messages() async  -> [ChatMessage]
-    
+
     func reply(input: [ChatMessage], config: ChatReplyConfig) async throws  -> [ChatReply]
-    
+
     func replyWithStream(input: [ChatMessage], config: ChatReplyConfig) async  -> ChatSessionStream
-    
-    func reset() async throws 
-    
+
+    func reset() async throws
+
     func state() async  -> ChatSessionState
-    
+
 }
 open class ChatSession: ChatSessionProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -523,16 +523,16 @@ open class ChatSession: ChatSessionProtocol, @unchecked Sendable {
         try! rustCall { uniffi_nagare_fn_free_chatsession(handle, $0) }
     }
 
-    
 
-    
+
+
 open func messages()async  -> [ChatMessage]  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_nagare_fn_method_chatsession_messages(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_nagare_rust_future_poll_rust_buffer,
@@ -540,10 +540,10 @@ open func messages()async  -> [ChatMessage]  {
             freeFunc: ffi_nagare_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeChatMessage.lift,
             errorHandler: nil
-            
+
         )
 }
-    
+
 open func reply(input: [ChatMessage], config: ChatReplyConfig)async throws  -> [ChatReply]  {
     return
         try  await uniffiRustCallAsync(
@@ -560,7 +560,7 @@ open func reply(input: [ChatMessage], config: ChatReplyConfig)async throws  -> [
             errorHandler: FfiConverterTypeChatSessionError_lift
         )
 }
-    
+
 open func replyWithStream(input: [ChatMessage], config: ChatReplyConfig)async  -> ChatSessionStream  {
     return
         try!  await uniffiRustCallAsync(
@@ -575,17 +575,17 @@ open func replyWithStream(input: [ChatMessage], config: ChatReplyConfig)async  -
             freeFunc: ffi_nagare_rust_future_free_u64,
             liftFunc: FfiConverterTypeChatSessionStream_lift,
             errorHandler: nil
-            
+
         )
 }
-    
+
 open func reset()async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_nagare_fn_method_chatsession_reset(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_nagare_rust_future_poll_void,
@@ -595,14 +595,14 @@ open func reset()async throws   {
             errorHandler: FfiConverterTypeChatSessionError_lift
         )
 }
-    
+
 open func state()async  -> ChatSessionState  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_nagare_fn_method_chatsession_state(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_nagare_rust_future_poll_rust_buffer,
@@ -610,12 +610,12 @@ open func state()async  -> ChatSessionState  {
             freeFunc: ffi_nagare_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeChatSessionState_lift,
             errorHandler: nil
-            
+
         )
 }
-    
 
-    
+
+
 }
 
 
@@ -665,11 +665,11 @@ public func FfiConverterTypeChatSession_lower(_ value: ChatSession) -> UInt64 {
 
 
 public protocol ChatSessionStreamProtocol: AnyObject, Sendable {
-    
+
     func cancelToken()  -> CancelToken
-    
+
     func next() async  -> ChatSessionStreamChunk?
-    
+
 }
 open class ChatSessionStream: ChatSessionStreamProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -721,9 +721,9 @@ open class ChatSessionStream: ChatSessionStreamProtocol, @unchecked Sendable {
         try! rustCall { uniffi_nagare_fn_free_chatsessionstream(handle, $0) }
     }
 
-    
 
-    
+
+
 open func cancelToken() -> CancelToken  {
     return try!  FfiConverterTypeCancelToken_lift(try! rustCall() {
     uniffi_nagare_fn_method_chatsessionstream_cancel_token(
@@ -731,14 +731,14 @@ open func cancelToken() -> CancelToken  {
     )
 })
 }
-    
+
 open func next()async  -> ChatSessionStreamChunk?  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_nagare_fn_method_chatsessionstream_next(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_nagare_rust_future_poll_rust_buffer,
@@ -746,12 +746,12 @@ open func next()async  -> ChatSessionStreamChunk?  {
             freeFunc: ffi_nagare_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeChatSessionStreamChunk.lift,
             errorHandler: nil
-            
+
         )
 }
-    
 
-    
+
+
 }
 
 
@@ -801,11 +801,11 @@ public func FfiConverterTypeChatSessionStream_lower(_ value: ChatSessionStream) 
 
 
 public protocol ClassificationSessionProtocol: AnyObject, Sendable {
-    
+
     func classify(input: [ClassificationMessage]) async throws  -> ClassificationOutput
-    
+
     func state() async  -> ClassificationSessionState
-    
+
 }
 open class ClassificationSession: ClassificationSessionProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -857,9 +857,9 @@ open class ClassificationSession: ClassificationSessionProtocol, @unchecked Send
         try! rustCall { uniffi_nagare_fn_free_classificationsession(handle, $0) }
     }
 
-    
 
-    
+
+
 open func classify(input: [ClassificationMessage])async throws  -> ClassificationOutput  {
     return
         try  await uniffiRustCallAsync(
@@ -876,14 +876,14 @@ open func classify(input: [ClassificationMessage])async throws  -> Classificatio
             errorHandler: FfiConverterTypeClassificationSessionError_lift
         )
 }
-    
+
 open func state()async  -> ClassificationSessionState  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_nagare_fn_method_classificationsession_state(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_nagare_rust_future_poll_rust_buffer,
@@ -891,12 +891,12 @@ open func state()async  -> ClassificationSessionState  {
             freeFunc: ffi_nagare_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeClassificationSessionState_lift,
             errorHandler: nil
-            
+
         )
 }
-    
 
-    
+
+
 }
 
 
@@ -946,13 +946,13 @@ public func FfiConverterTypeClassificationSession_lower(_ value: ClassificationS
 
 
 public protocol TextToSpeechSessionProtocol: AnyObject, Sendable {
-    
+
     func state() async  -> TextToSpeechSessionState
-    
+
     func synthesize(input: String) async throws  -> TextToSpeechOutput
-    
+
     func synthesizeStream(input: String) async  -> TextToSpeechSessionStream
-    
+
 }
 open class TextToSpeechSession: TextToSpeechSessionProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1004,16 +1004,16 @@ open class TextToSpeechSession: TextToSpeechSessionProtocol, @unchecked Sendable
         try! rustCall { uniffi_nagare_fn_free_texttospeechsession(handle, $0) }
     }
 
-    
 
-    
+
+
 open func state()async  -> TextToSpeechSessionState  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_nagare_fn_method_texttospeechsession_state(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_nagare_rust_future_poll_rust_buffer,
@@ -1021,10 +1021,10 @@ open func state()async  -> TextToSpeechSessionState  {
             freeFunc: ffi_nagare_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeTextToSpeechSessionState_lift,
             errorHandler: nil
-            
+
         )
 }
-    
+
 open func synthesize(input: String)async throws  -> TextToSpeechOutput  {
     return
         try  await uniffiRustCallAsync(
@@ -1041,7 +1041,7 @@ open func synthesize(input: String)async throws  -> TextToSpeechOutput  {
             errorHandler: FfiConverterTypeTextToSpeechSessionError_lift
         )
 }
-    
+
 open func synthesizeStream(input: String)async  -> TextToSpeechSessionStream  {
     return
         try!  await uniffiRustCallAsync(
@@ -1056,12 +1056,12 @@ open func synthesizeStream(input: String)async  -> TextToSpeechSessionStream  {
             freeFunc: ffi_nagare_rust_future_free_u64,
             liftFunc: FfiConverterTypeTextToSpeechSessionStream_lift,
             errorHandler: nil
-            
+
         )
 }
-    
 
-    
+
+
 }
 
 
@@ -1111,11 +1111,11 @@ public func FfiConverterTypeTextToSpeechSession_lower(_ value: TextToSpeechSessi
 
 
 public protocol TextToSpeechSessionStreamProtocol: AnyObject, Sendable {
-    
+
     func cancelToken()  -> CancelToken
-    
+
     func next() async  -> TextToSpeechSessionStreamChunk?
-    
+
 }
 open class TextToSpeechSessionStream: TextToSpeechSessionStreamProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1167,9 +1167,9 @@ open class TextToSpeechSessionStream: TextToSpeechSessionStreamProtocol, @unchec
         try! rustCall { uniffi_nagare_fn_free_texttospeechsessionstream(handle, $0) }
     }
 
-    
 
-    
+
+
 open func cancelToken() -> CancelToken  {
     return try!  FfiConverterTypeCancelToken_lift(try! rustCall() {
     uniffi_nagare_fn_method_texttospeechsessionstream_cancel_token(
@@ -1177,14 +1177,14 @@ open func cancelToken() -> CancelToken  {
     )
 })
 }
-    
+
 open func next()async  -> TextToSpeechSessionStreamChunk?  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_nagare_fn_method_texttospeechsessionstream_next(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_nagare_rust_future_poll_rust_buffer,
@@ -1192,12 +1192,12 @@ open func next()async  -> TextToSpeechSessionStreamChunk?  {
             freeFunc: ffi_nagare_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeTextToSpeechSessionStreamChunk.lift,
             errorHandler: nil
-            
+
         )
 }
-    
 
-    
+
+
 }
 
 
@@ -1246,23 +1246,25 @@ public func FfiConverterTypeTextToSpeechSessionStream_lower(_ value: TextToSpeec
 
 public enum ChatSessionError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
-    
-    
+
+
     case Backend(message: String
+    )
+    case Loading(message: String
     )
     case UnsupportedModel
     case UnableToPerformOperationInCurrentState
     case NoResponse
 
-    
 
-    
 
-    
+
+
+
     public var errorDescription: String? {
         String(reflecting: self)
     }
-    
+
 }
 
 #if compiler(>=6)
@@ -1279,15 +1281,18 @@ public struct FfiConverterTypeChatSessionError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        
 
-        
+
+
         case 1: return .Backend(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 2: return .UnsupportedModel
-        case 3: return .UnableToPerformOperationInCurrentState
-        case 4: return .NoResponse
+        case 2: return .Loading(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 3: return .UnsupportedModel
+        case 4: return .UnableToPerformOperationInCurrentState
+        case 5: return .NoResponse
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1296,26 +1301,31 @@ public struct FfiConverterTypeChatSessionError: FfiConverterRustBuffer {
     public static func write(_ value: ChatSessionError, into buf: inout [UInt8]) {
         switch value {
 
-        
 
-        
-        
+
+
+
         case let .Backend(message):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(message, into: &buf)
-            
-        
-        case .UnsupportedModel:
+
+
+        case let .Loading(message):
             writeInt(&buf, Int32(2))
-        
-        
-        case .UnableToPerformOperationInCurrentState:
+            FfiConverterString.write(message, into: &buf)
+
+
+        case .UnsupportedModel:
             writeInt(&buf, Int32(3))
-        
-        
-        case .NoResponse:
+
+
+        case .UnableToPerformOperationInCurrentState:
             writeInt(&buf, Int32(4))
-        
+
+
+        case .NoResponse:
+            writeInt(&buf, Int32(5))
+
         }
     }
 }
@@ -1339,7 +1349,7 @@ public func FfiConverterTypeChatSessionError_lower(_ value: ChatSessionError) ->
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum ChatSessionState: Equatable, Hashable, Codable {
-    
+
     case idle
     case generation
     case toolCalling
@@ -1364,38 +1374,38 @@ public struct FfiConverterTypeChatSessionState: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatSessionState {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .idle
-        
+
         case 2: return .generation
-        
+
         case 3: return .toolCalling
-        
+
         case 4: return .resetting
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: ChatSessionState, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .idle:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .generation:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .toolCalling:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .resetting:
             writeInt(&buf, Int32(4))
-        
+
         }
     }
 }
@@ -1420,7 +1430,7 @@ public func FfiConverterTypeChatSessionState_lower(_ value: ChatSessionState) ->
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum ChatSessionStreamChunk: Equatable, Hashable, Codable {
-    
+
     case replies(replies: [ChatReply]
     )
     case error(error: ChatSessionError
@@ -1445,30 +1455,30 @@ public struct FfiConverterTypeChatSessionStreamChunk: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatSessionStreamChunk {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .replies(replies: try FfiConverterSequenceTypeChatReply.read(from: &buf)
         )
-        
+
         case 2: return .error(error: try FfiConverterTypeChatSessionError.read(from: &buf)
         )
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: ChatSessionStreamChunk, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case let .replies(replies):
             writeInt(&buf, Int32(1))
             FfiConverterSequenceTypeChatReply.write(replies, into: &buf)
-            
-        
+
+
         case let .error(error):
             writeInt(&buf, Int32(2))
             FfiConverterTypeChatSessionError.write(error, into: &buf)
-            
+
         }
     }
 }
@@ -1492,23 +1502,23 @@ public func FfiConverterTypeChatSessionStreamChunk_lower(_ value: ChatSessionStr
 
 public enum ClassificationSessionError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
-    
-    
+
+
     case Backend(message: String
     )
     case UnsupportedModel
     case UnableToPerformOperationInCurrentState
     case NoResponse
 
-    
 
-    
 
-    
+
+
+
     public var errorDescription: String? {
         String(reflecting: self)
     }
-    
+
 }
 
 #if compiler(>=6)
@@ -1525,9 +1535,9 @@ public struct FfiConverterTypeClassificationSessionError: FfiConverterRustBuffer
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        
 
-        
+
+
         case 1: return .Backend(
             message: try FfiConverterString.read(from: &buf)
             )
@@ -1542,26 +1552,26 @@ public struct FfiConverterTypeClassificationSessionError: FfiConverterRustBuffer
     public static func write(_ value: ClassificationSessionError, into buf: inout [UInt8]) {
         switch value {
 
-        
 
-        
-        
+
+
+
         case let .Backend(message):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(message, into: &buf)
-            
-        
+
+
         case .UnsupportedModel:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .UnableToPerformOperationInCurrentState:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .NoResponse:
             writeInt(&buf, Int32(4))
-        
+
         }
     }
 }
@@ -1585,7 +1595,7 @@ public func FfiConverterTypeClassificationSessionError_lower(_ value: Classifica
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum ClassificationSessionState: Equatable, Hashable, Codable {
-    
+
     case idle
     case classifying
 
@@ -1608,26 +1618,26 @@ public struct FfiConverterTypeClassificationSessionState: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClassificationSessionState {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .idle
-        
+
         case 2: return .classifying
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: ClassificationSessionState, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .idle:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .classifying:
             writeInt(&buf, Int32(2))
-        
+
         }
     }
 }
@@ -1651,23 +1661,23 @@ public func FfiConverterTypeClassificationSessionState_lower(_ value: Classifica
 
 public enum TextToSpeechSessionError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
-    
-    
+
+
     case Backend(message: String
     )
     case UnsupportedModel
     case UnableToPerformOperationInCurrentState
     case NoResponse
 
-    
 
-    
 
-    
+
+
+
     public var errorDescription: String? {
         String(reflecting: self)
     }
-    
+
 }
 
 #if compiler(>=6)
@@ -1684,9 +1694,9 @@ public struct FfiConverterTypeTextToSpeechSessionError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        
 
-        
+
+
         case 1: return .Backend(
             message: try FfiConverterString.read(from: &buf)
             )
@@ -1701,26 +1711,26 @@ public struct FfiConverterTypeTextToSpeechSessionError: FfiConverterRustBuffer {
     public static func write(_ value: TextToSpeechSessionError, into buf: inout [UInt8]) {
         switch value {
 
-        
 
-        
-        
+
+
+
         case let .Backend(message):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(message, into: &buf)
-            
-        
+
+
         case .UnsupportedModel:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .UnableToPerformOperationInCurrentState:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .NoResponse:
             writeInt(&buf, Int32(4))
-        
+
         }
     }
 }
@@ -1744,7 +1754,7 @@ public func FfiConverterTypeTextToSpeechSessionError_lower(_ value: TextToSpeech
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum TextToSpeechSessionState: Equatable, Hashable, Codable {
-    
+
     case idle
     case synthesizing
 
@@ -1767,26 +1777,26 @@ public struct FfiConverterTypeTextToSpeechSessionState: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TextToSpeechSessionState {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .idle
-        
+
         case 2: return .synthesizing
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: TextToSpeechSessionState, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .idle:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .synthesizing:
             writeInt(&buf, Int32(2))
-        
+
         }
     }
 }
@@ -1811,7 +1821,7 @@ public func FfiConverterTypeTextToSpeechSessionState_lower(_ value: TextToSpeech
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum TextToSpeechSessionStreamChunk: Equatable, Hashable, Codable {
-    
+
     case output(output: TextToSpeechOutput
     )
     case error(error: TextToSpeechSessionError
@@ -1836,30 +1846,30 @@ public struct FfiConverterTypeTextToSpeechSessionStreamChunk: FfiConverterRustBu
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TextToSpeechSessionStreamChunk {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .output(output: try FfiConverterTypeTextToSpeechOutput.read(from: &buf)
         )
-        
+
         case 2: return .error(error: try FfiConverterTypeTextToSpeechSessionError.read(from: &buf)
         )
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: TextToSpeechSessionStreamChunk, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case let .output(output):
             writeInt(&buf, Int32(1))
             FfiConverterTypeTextToSpeechOutput.write(output, into: &buf)
-            
-        
+
+
         case let .error(error):
             writeInt(&buf, Int32(2))
             FfiConverterTypeTextToSpeechSessionError.write(error, into: &buf)
-            
+
         }
     }
 }

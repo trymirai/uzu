@@ -352,7 +352,7 @@ private func uniffiTraitInterfaceCallWithError<T, E>(
         callStatus.pointee.errorBuf = FfiConverterString.lower(String(describing: error))
     }
 }
-// Initial value and increment amount for handles. 
+// Initial value and increment amount for handles.
 // These ensure that SWIFT handles always have the lowest bit set
 fileprivate let UNIFFI_HANDLEMAP_INITIAL: UInt64 = 1
 fileprivate let UNIFFI_HANDLEMAP_DELTA: UInt64 = 2
@@ -523,9 +523,9 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 public protocol CliApplicationProtocol: AnyObject, Sendable {
-    
-    func run() async throws 
-    
+
+    func run() async throws
+
 }
 open class CliApplication: CliApplicationProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -577,16 +577,16 @@ open class CliApplication: CliApplicationProtocol, @unchecked Sendable {
         try! rustCall { uniffi_uzu_fn_free_cliapplication(handle, $0) }
     }
 
-    
 
-    
+
+
 open func run()async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_cliapplication_run(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_void,
@@ -596,9 +596,9 @@ open func run()async throws   {
             errorHandler: FfiConverterTypeCliError_lift
         )
 }
-    
 
-    
+
+
 }
 
 
@@ -648,17 +648,17 @@ public func FfiConverterTypeCliApplication_lower(_ value: CliApplication) -> UIn
 
 
 public protocol DownloaderProtocol: AnyObject, Sendable {
-    
-    func delete() async throws 
-    
-    func pause() async throws 
-    
+
+    func delete() async throws
+
+    func pause() async throws
+
     func progress() async throws  -> DownloaderStream
-    
-    func resume() async throws 
-    
+
+    func resume() async throws
+
     func state() async  -> DownloadState?
-    
+
 }
 open class Downloader: DownloaderProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -710,16 +710,16 @@ open class Downloader: DownloaderProtocol, @unchecked Sendable {
         try! rustCall { uniffi_uzu_fn_free_downloader(handle, $0) }
     }
 
-    
 
-    
+
+
 open func delete()async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_downloader_delete(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_void,
@@ -729,14 +729,14 @@ open func delete()async throws   {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func pause()async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_downloader_pause(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_void,
@@ -746,14 +746,14 @@ open func pause()async throws   {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func progress()async throws  -> DownloaderStream  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_downloader_progress(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_u64,
@@ -763,14 +763,14 @@ open func progress()async throws  -> DownloaderStream  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func resume()async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_downloader_resume(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_void,
@@ -780,14 +780,14 @@ open func resume()async throws   {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func state()async  -> DownloadState?  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_downloader_state(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -795,12 +795,12 @@ open func state()async  -> DownloadState?  {
             freeFunc: ffi_uzu_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeDownloadState.lift,
             errorHandler: nil
-            
+
         )
 }
-    
 
-    
+
+
 }
 
 
@@ -850,9 +850,9 @@ public func FfiConverterTypeDownloader_lower(_ value: Downloader) -> UInt64 {
 
 
 public protocol DownloaderStreamProtocol: AnyObject, Sendable {
-    
+
     func next() async  -> DownloaderStreamUpdate?
-    
+
 }
 open class DownloaderStream: DownloaderStreamProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -904,16 +904,16 @@ open class DownloaderStream: DownloaderStreamProtocol, @unchecked Sendable {
         try! rustCall { uniffi_uzu_fn_free_downloaderstream(handle, $0) }
     }
 
-    
 
-    
+
+
 open func next()async  -> DownloaderStreamUpdate?  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_downloaderstream_next(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -921,12 +921,12 @@ open func next()async  -> DownloaderStreamUpdate?  {
             freeFunc: ffi_uzu_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeDownloaderStreamUpdate.lift,
             errorHandler: nil
-            
+
         )
 }
-    
 
-    
+
+
 }
 
 
@@ -976,67 +976,67 @@ public func FfiConverterTypeDownloaderStream_lower(_ value: DownloaderStream) ->
 
 
 public protocol EngineProtocol: AnyObject, Sendable {
-    
+
     func chat(model: Model, config: ChatConfig) async throws  -> ChatSession
-    
+
     func classification(model: Model) async throws  -> ClassificationSession
-    
+
     func download(model: Model) async throws  -> DownloaderStream
-    
+
     func downloadState(model: Model) async  -> DownloadState?
-    
+
     func downloadStates() async  -> [String: DownloadState]
-    
+
     func downloader(model: Model)  -> Downloader
-    
+
     func model(identifier: String) async throws  -> Model?
-    
+
     func modelByIdentifier(identifier: String) async throws  -> Model?
-    
+
     func modelByPath(path: String) async throws  -> Model?
-    
+
     func modelByRepoId(repoId: String) async throws  -> Model?
-    
+
     func modelFamilies() async throws  -> [ModelFamily]
-    
+
     func modelPath(model: Model) async  -> String?
-    
+
     func modelRegistries() async throws  -> [ModelRegistry]
-    
+
     func modelVendors() async throws  -> [ModelVendor]
-    
+
     func models() async throws  -> [Model]
-    
+
     func modelsByFamily(familyIdentifier: String) async throws  -> [Model]
-    
+
     func modelsByVendor(vendorIdentifier: String) async throws  -> [Model]
-    
+
     func modelsDownloadable() async throws  -> [Model]
-    
+
     func modelsForChat() async throws  -> [Model]
-    
+
     func modelsForClassification() async throws  -> [Model]
-    
+
     func modelsForSpeculation() async throws  -> [Model]
-    
+
     func modelsForTextToSpeech() async throws  -> [Model]
-    
+
     func modelsForTranslation() async throws  -> [Model]
-    
+
     func modelsLocal() async throws  -> [Model]
-    
+
     func modelsRemote() async throws  -> [Model]
-    
-    func registerCallback(callback: EngineCallback) async throws 
-    
-    func removeBackend(identifier: String) async 
-    
-    func removeRegistry(registryIdentifier: String) async throws 
-    
+
+    func registerCallback(callback: EngineCallback) async throws
+
+    func removeBackend(identifier: String) async
+
+    func removeRegistry(registryIdentifier: String) async throws
+
     func settings() async throws  -> Settings
-    
+
     func textToSpeech(model: Model) async throws  -> TextToSpeechSession
-    
+
 }
 open class Engine: EngineProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1088,9 +1088,9 @@ open class Engine: EngineProtocol, @unchecked Sendable {
         try! rustCall { uniffi_uzu_fn_free_engine(handle, $0) }
     }
 
-    
 
-    
+
+
 open func chat(model: Model, config: ChatConfig)async throws  -> ChatSession  {
     return
         try  await uniffiRustCallAsync(
@@ -1107,7 +1107,7 @@ open func chat(model: Model, config: ChatConfig)async throws  -> ChatSession  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func classification(model: Model)async throws  -> ClassificationSession  {
     return
         try  await uniffiRustCallAsync(
@@ -1124,7 +1124,7 @@ open func classification(model: Model)async throws  -> ClassificationSession  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func download(model: Model)async throws  -> DownloaderStream  {
     return
         try  await uniffiRustCallAsync(
@@ -1141,7 +1141,7 @@ open func download(model: Model)async throws  -> DownloaderStream  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func downloadState(model: Model)async  -> DownloadState?  {
     return
         try!  await uniffiRustCallAsync(
@@ -1156,17 +1156,17 @@ open func downloadState(model: Model)async  -> DownloadState?  {
             freeFunc: ffi_uzu_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeDownloadState.lift,
             errorHandler: nil
-            
+
         )
 }
-    
+
 open func downloadStates()async  -> [String: DownloadState]  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_download_states(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1174,10 +1174,10 @@ open func downloadStates()async  -> [String: DownloadState]  {
             freeFunc: ffi_uzu_rust_future_free_rust_buffer,
             liftFunc: FfiConverterDictionaryStringTypeDownloadState.lift,
             errorHandler: nil
-            
+
         )
 }
-    
+
 open func downloader(model: Model) -> Downloader  {
     return try!  FfiConverterTypeDownloader_lift(try! rustCall() {
     uniffi_uzu_fn_method_engine_downloader(
@@ -1186,7 +1186,7 @@ open func downloader(model: Model) -> Downloader  {
     )
 })
 }
-    
+
 open func model(identifier: String)async throws  -> Model?  {
     return
         try  await uniffiRustCallAsync(
@@ -1203,7 +1203,7 @@ open func model(identifier: String)async throws  -> Model?  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelByIdentifier(identifier: String)async throws  -> Model?  {
     return
         try  await uniffiRustCallAsync(
@@ -1220,7 +1220,7 @@ open func modelByIdentifier(identifier: String)async throws  -> Model?  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelByPath(path: String)async throws  -> Model?  {
     return
         try  await uniffiRustCallAsync(
@@ -1237,7 +1237,7 @@ open func modelByPath(path: String)async throws  -> Model?  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelByRepoId(repoId: String)async throws  -> Model?  {
     return
         try  await uniffiRustCallAsync(
@@ -1254,14 +1254,14 @@ open func modelByRepoId(repoId: String)async throws  -> Model?  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelFamilies()async throws  -> [ModelFamily]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_model_families(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1271,7 +1271,7 @@ open func modelFamilies()async throws  -> [ModelFamily]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelPath(model: Model)async  -> String?  {
     return
         try!  await uniffiRustCallAsync(
@@ -1286,17 +1286,17 @@ open func modelPath(model: Model)async  -> String?  {
             freeFunc: ffi_uzu_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionString.lift,
             errorHandler: nil
-            
+
         )
 }
-    
+
 open func modelRegistries()async throws  -> [ModelRegistry]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_model_registries(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1306,14 +1306,14 @@ open func modelRegistries()async throws  -> [ModelRegistry]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelVendors()async throws  -> [ModelVendor]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_model_vendors(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1323,14 +1323,14 @@ open func modelVendors()async throws  -> [ModelVendor]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func models()async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_models(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1340,7 +1340,7 @@ open func models()async throws  -> [Model]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelsByFamily(familyIdentifier: String)async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
@@ -1357,7 +1357,7 @@ open func modelsByFamily(familyIdentifier: String)async throws  -> [Model]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelsByVendor(vendorIdentifier: String)async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
@@ -1374,14 +1374,14 @@ open func modelsByVendor(vendorIdentifier: String)async throws  -> [Model]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelsDownloadable()async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_models_downloadable(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1391,14 +1391,14 @@ open func modelsDownloadable()async throws  -> [Model]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelsForChat()async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_models_for_chat(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1408,14 +1408,14 @@ open func modelsForChat()async throws  -> [Model]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelsForClassification()async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_models_for_classification(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1425,14 +1425,14 @@ open func modelsForClassification()async throws  -> [Model]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelsForSpeculation()async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_models_for_speculation(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1442,14 +1442,14 @@ open func modelsForSpeculation()async throws  -> [Model]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelsForTextToSpeech()async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_models_for_text_to_speech(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1459,14 +1459,14 @@ open func modelsForTextToSpeech()async throws  -> [Model]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelsForTranslation()async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_models_for_translation(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1476,14 +1476,14 @@ open func modelsForTranslation()async throws  -> [Model]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelsLocal()async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_models_local(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1493,14 +1493,14 @@ open func modelsLocal()async throws  -> [Model]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func modelsRemote()async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_models_remote(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
@@ -1510,7 +1510,7 @@ open func modelsRemote()async throws  -> [Model]  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func registerCallback(callback: EngineCallback)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -1527,7 +1527,7 @@ open func registerCallback(callback: EngineCallback)async throws   {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func removeBackend(identifier: String)async   {
     return
         try!  await uniffiRustCallAsync(
@@ -1542,10 +1542,10 @@ open func removeBackend(identifier: String)async   {
             freeFunc: ffi_uzu_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: nil
-            
+
         )
 }
-    
+
 open func removeRegistry(registryIdentifier: String)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -1562,14 +1562,14 @@ open func removeRegistry(registryIdentifier: String)async throws   {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func settings()async throws  -> Settings  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_uzu_fn_method_engine_settings(
                     self.uniffiCloneHandle()
-                    
+
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_u64,
@@ -1579,7 +1579,7 @@ open func settings()async throws  -> Settings  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
+
 open func textToSpeech(model: Model)async throws  -> TextToSpeechSession  {
     return
         try  await uniffiRustCallAsync(
@@ -1596,9 +1596,9 @@ open func textToSpeech(model: Model)async throws  -> TextToSpeechSession  {
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
-    
 
-    
+
+
 }
 
 
@@ -1648,7 +1648,7 @@ public func FfiConverterTypeEngine_lower(_ value: Engine) -> UInt64 {
 
 
 public protocol EngineCallbackProtocol: AnyObject, Sendable {
-    
+
 }
 open class EngineCallback: EngineCallbackProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1700,7 +1700,7 @@ open class EngineCallback: EngineCallbackProtocol, @unchecked Sendable {
         try! rustCall { uniffi_uzu_fn_free_enginecallback(handle, $0) }
     }
 
-    
+
 public static func create(handler: EngineCallbackHandler) -> EngineCallback  {
     return try!  FfiConverterTypeEngineCallback_lift(try! rustCall() {
     uniffi_uzu_fn_constructor_enginecallback_create(
@@ -1708,11 +1708,11 @@ public static func create(handler: EngineCallbackHandler) -> EngineCallback  {
     )
 })
 }
-    
 
-    
 
-    
+
+
+
 }
 
 
@@ -1762,11 +1762,11 @@ public func FfiConverterTypeEngineCallback_lower(_ value: EngineCallback) -> UIn
 
 
 public protocol PlayerProtocol: AnyObject, Sendable {
-    
-    func appendPcmBatch(batch: PcmBatch) throws 
-    
-    func stop() 
-    
+
+    func appendPcmBatch(batch: PcmBatch) throws
+
+    func stop()
+
 }
 open class Player: PlayerProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1818,9 +1818,9 @@ open class Player: PlayerProtocol, @unchecked Sendable {
         try! rustCall { uniffi_uzu_fn_free_player(handle, $0) }
     }
 
-    
 
-    
+
+
 open func appendPcmBatch(batch: PcmBatch)throws   {try rustCallWithError(FfiConverterTypePlayerError_lift) {
     uniffi_uzu_fn_method_player_append_pcm_batch(
             self.uniffiCloneHandle(),
@@ -1828,16 +1828,16 @@ open func appendPcmBatch(batch: PcmBatch)throws   {try rustCallWithError(FfiConv
     )
 }
 }
-    
+
 open func stop()  {try! rustCall() {
     uniffi_uzu_fn_method_player_stop(
             self.uniffiCloneHandle(),$0
     )
 }
 }
-    
 
-    
+
+
 }
 
 
@@ -1887,13 +1887,13 @@ public func FfiConverterTypePlayer_lower(_ value: Player) -> UInt64 {
 
 
 public protocol SettingsProtocol: AnyObject, Sendable {
-    
-    func clear() throws 
-    
+
+    func clear() throws
+
     func load(kind: SettingKind, key: String) throws  -> String?
-    
-    func save(kind: SettingKind, key: String, value: String?) throws 
-    
+
+    func save(kind: SettingKind, key: String, value: String?) throws
+
 }
 open class Settings: SettingsProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1945,16 +1945,16 @@ open class Settings: SettingsProtocol, @unchecked Sendable {
         try! rustCall { uniffi_uzu_fn_free_settings(handle, $0) }
     }
 
-    
 
-    
+
+
 open func clear()throws   {try rustCallWithError(FfiConverterTypeSettingsError_lift) {
     uniffi_uzu_fn_method_settings_clear(
             self.uniffiCloneHandle(),$0
     )
 }
 }
-    
+
 open func load(kind: SettingKind, key: String)throws  -> String?  {
     return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeSettingsError_lift) {
     uniffi_uzu_fn_method_settings_load(
@@ -1964,7 +1964,7 @@ open func load(kind: SettingKind, key: String)throws  -> String?  {
     )
 })
 }
-    
+
 open func save(kind: SettingKind, key: String, value: String?)throws   {try rustCallWithError(FfiConverterTypeSettingsError_lift) {
     uniffi_uzu_fn_method_settings_save(
             self.uniffiCloneHandle(),
@@ -1974,9 +1974,9 @@ open func save(kind: SettingKind, key: String, value: String?)throws   {try rust
     )
 }
 }
-    
 
-    
+
+
 }
 
 
@@ -2038,9 +2038,9 @@ public struct Device: Equatable, Hashable, Codable {
         self.homePath = homePath
     }
 
-    
 
-    
+
+
 }
 
 #if compiler(>=6)
@@ -2054,9 +2054,9 @@ public struct FfiConverterTypeDevice: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Device {
         return
             try Device(
-                osName: FfiConverterOptionString.read(from: &buf), 
-                cpuName: FfiConverterOptionString.read(from: &buf), 
-                memoryTotal: FfiConverterInt64.read(from: &buf), 
+                osName: FfiConverterOptionString.read(from: &buf),
+                cpuName: FfiConverterOptionString.read(from: &buf),
+                memoryTotal: FfiConverterInt64.read(from: &buf),
                 homePath: FfiConverterString.read(from: &buf)
         )
     }
@@ -2098,7 +2098,7 @@ public struct DownloadState: Equatable, Hashable, Codable {
         self.phase = phase
     }
 
-    
+
 public func canDelete() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_uzu_fn_method_downloadstate_can_delete(
@@ -2106,7 +2106,7 @@ public func canDelete() -> Bool  {
     )
 })
 }
-    
+
 public func canPause() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_uzu_fn_method_downloadstate_can_pause(
@@ -2114,7 +2114,7 @@ public func canPause() -> Bool  {
     )
 })
 }
-    
+
 public func isInProgress() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_uzu_fn_method_downloadstate_is_in_progress(
@@ -2122,7 +2122,7 @@ public func isInProgress() -> Bool  {
     )
 })
 }
-    
+
 public func name() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_uzu_fn_method_downloadstate_name(
@@ -2130,7 +2130,7 @@ public func name() -> String  {
     )
 })
 }
-    
+
 public func progress() -> Float  {
     return try!  FfiConverterFloat.lift(try! rustCall() {
     uniffi_uzu_fn_method_downloadstate_progress(
@@ -2138,9 +2138,9 @@ public func progress() -> Float  {
     )
 })
 }
-    
 
-    
+
+
 }
 
 #if compiler(>=6)
@@ -2154,8 +2154,8 @@ public struct FfiConverterTypeDownloadState: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DownloadState {
         return
             try DownloadState(
-                totalBytes: FfiConverterInt64.read(from: &buf), 
-                downloadedBytes: FfiConverterInt64.read(from: &buf), 
+                totalBytes: FfiConverterInt64.read(from: &buf),
+                downloadedBytes: FfiConverterInt64.read(from: &buf),
                 phase: FfiConverterTypeDownloadPhase.read(from: &buf)
         )
     }
@@ -2194,7 +2194,7 @@ public struct DownloaderStreamUpdate: Equatable, Hashable, Codable {
         self.bytesDownloaded = bytesDownloaded
     }
 
-    
+
 public func progress() -> Float  {
     return try!  FfiConverterFloat.lift(try! rustCall() {
     uniffi_uzu_fn_method_downloaderstreamupdate_progress(
@@ -2202,9 +2202,9 @@ public func progress() -> Float  {
     )
 })
 }
-    
 
-    
+
+
 }
 
 #if compiler(>=6)
@@ -2218,7 +2218,7 @@ public struct FfiConverterTypeDownloaderStreamUpdate: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DownloaderStreamUpdate {
         return
             try DownloaderStreamUpdate(
-                bytesTotal: FfiConverterInt64.read(from: &buf), 
+                bytesTotal: FfiConverterInt64.read(from: &buf),
                 bytesDownloaded: FfiConverterInt64.read(from: &buf)
         )
     }
@@ -2249,6 +2249,7 @@ public struct EngineConfig: Equatable, Hashable, Codable {
     public var applicationIdentifier: String?
     public var miraiApiKey: String?
     public var lalamoPath: String?
+    public var localPath: String?
     public var huggingfaceApiKey: String?
     public var openaiApiKey: String?
     public var anthropicApiKey: String?
@@ -2262,10 +2263,11 @@ public struct EngineConfig: Equatable, Hashable, Codable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(applicationIdentifier: String?, miraiApiKey: String?, lalamoPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, downloadManagerType: DownloadManagerType) {
+    public init(applicationIdentifier: String?, miraiApiKey: String?, lalamoPath: String?, localPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, downloadManagerType: DownloadManagerType) {
         self.applicationIdentifier = applicationIdentifier
         self.miraiApiKey = miraiApiKey
         self.lalamoPath = lalamoPath
+        self.localPath = localPath
         self.huggingfaceApiKey = huggingfaceApiKey
         self.openaiApiKey = openaiApiKey
         self.anthropicApiKey = anthropicApiKey
@@ -2278,7 +2280,7 @@ public struct EngineConfig: Equatable, Hashable, Codable {
         self.downloadManagerType = downloadManagerType
     }
 
-    
+
 public func withAllowLmstudioUsage(allowLmstudioUsage: Bool) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_allow_lmstudio_usage(
@@ -2287,7 +2289,7 @@ public func withAllowLmstudioUsage(allowLmstudioUsage: Bool) -> EngineConfig  {
     )
 })
 }
-    
+
 public func withAllowOllamaUsage(allowOllamaUsage: Bool) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_allow_ollama_usage(
@@ -2296,7 +2298,7 @@ public func withAllowOllamaUsage(allowOllamaUsage: Bool) -> EngineConfig  {
     )
 })
 }
-    
+
 public func withAnthropicApiKey(anthropicApiKey: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_anthropic_api_key(
@@ -2305,7 +2307,7 @@ public func withAnthropicApiKey(anthropicApiKey: String) -> EngineConfig  {
     )
 })
 }
-    
+
 public func withApplicationIdentifier(applicationIdentifier: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_application_identifier(
@@ -2314,7 +2316,7 @@ public func withApplicationIdentifier(applicationIdentifier: String) -> EngineCo
     )
 })
 }
-    
+
 public func withBasetenApiKey(basetenApiKey: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_baseten_api_key(
@@ -2323,7 +2325,7 @@ public func withBasetenApiKey(basetenApiKey: String) -> EngineConfig  {
     )
 })
 }
-    
+
 public func withDownloadManagerType(downloadManagerType: DownloadManagerType) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_download_manager_type(
@@ -2332,7 +2334,7 @@ public func withDownloadManagerType(downloadManagerType: DownloadManagerType) ->
     )
 })
 }
-    
+
 public func withGeminiApiKey(geminiApiKey: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_gemini_api_key(
@@ -2341,7 +2343,7 @@ public func withGeminiApiKey(geminiApiKey: String) -> EngineConfig  {
     )
 })
 }
-    
+
 public func withHuggingfaceApiKey(huggingfaceApiKey: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_huggingface_api_key(
@@ -2350,7 +2352,7 @@ public func withHuggingfaceApiKey(huggingfaceApiKey: String) -> EngineConfig  {
     )
 })
 }
-    
+
 public func withLalamoPath(lalamoPath: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_lalamo_path(
@@ -2359,7 +2361,16 @@ public func withLalamoPath(lalamoPath: String) -> EngineConfig  {
     )
 })
 }
-    
+
+public func withLocalPath(localPath: String) -> EngineConfig  {
+    return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
+    uniffi_uzu_fn_method_engineconfig_with_local_path(
+            FfiConverterTypeEngineConfig_lower(self),
+        FfiConverterString.lower(localPath),$0
+    )
+})
+}
+
 public func withMiraiApiKey(miraiApiKey: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_mirai_api_key(
@@ -2368,7 +2379,7 @@ public func withMiraiApiKey(miraiApiKey: String) -> EngineConfig  {
     )
 })
 }
-    
+
 public func withOpenaiApiKey(openaiApiKey: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_openai_api_key(
@@ -2377,7 +2388,7 @@ public func withOpenaiApiKey(openaiApiKey: String) -> EngineConfig  {
     )
 })
 }
-    
+
 public func withOpenrouterApiKey(openrouterApiKey: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_openrouter_api_key(
@@ -2386,7 +2397,7 @@ public func withOpenrouterApiKey(openrouterApiKey: String) -> EngineConfig  {
     )
 })
 }
-    
+
 public func withXaiApiKey(xaiApiKey: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_xai_api_key(
@@ -2395,9 +2406,9 @@ public func withXaiApiKey(xaiApiKey: String) -> EngineConfig  {
     )
 })
 }
-    
 
-    
+
+
 }
 
 #if compiler(>=6)
@@ -2411,18 +2422,19 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EngineConfig {
         return
             try EngineConfig(
-                applicationIdentifier: FfiConverterOptionString.read(from: &buf), 
-                miraiApiKey: FfiConverterOptionString.read(from: &buf), 
-                lalamoPath: FfiConverterOptionString.read(from: &buf), 
-                huggingfaceApiKey: FfiConverterOptionString.read(from: &buf), 
-                openaiApiKey: FfiConverterOptionString.read(from: &buf), 
-                anthropicApiKey: FfiConverterOptionString.read(from: &buf), 
-                geminiApiKey: FfiConverterOptionString.read(from: &buf), 
-                xaiApiKey: FfiConverterOptionString.read(from: &buf), 
-                basetenApiKey: FfiConverterOptionString.read(from: &buf), 
-                openrouterApiKey: FfiConverterOptionString.read(from: &buf), 
-                allowOllamaUsage: FfiConverterBool.read(from: &buf), 
-                allowLmstudioUsage: FfiConverterBool.read(from: &buf), 
+                applicationIdentifier: FfiConverterOptionString.read(from: &buf),
+                miraiApiKey: FfiConverterOptionString.read(from: &buf),
+                lalamoPath: FfiConverterOptionString.read(from: &buf),
+                localPath: FfiConverterOptionString.read(from: &buf),
+                huggingfaceApiKey: FfiConverterOptionString.read(from: &buf),
+                openaiApiKey: FfiConverterOptionString.read(from: &buf),
+                anthropicApiKey: FfiConverterOptionString.read(from: &buf),
+                geminiApiKey: FfiConverterOptionString.read(from: &buf),
+                xaiApiKey: FfiConverterOptionString.read(from: &buf),
+                basetenApiKey: FfiConverterOptionString.read(from: &buf),
+                openrouterApiKey: FfiConverterOptionString.read(from: &buf),
+                allowOllamaUsage: FfiConverterBool.read(from: &buf),
+                allowLmstudioUsage: FfiConverterBool.read(from: &buf),
                 downloadManagerType: FfiConverterTypeDownloadManagerType.read(from: &buf)
         )
     }
@@ -2431,6 +2443,7 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.applicationIdentifier, into: &buf)
         FfiConverterOptionString.write(value.miraiApiKey, into: &buf)
         FfiConverterOptionString.write(value.lalamoPath, into: &buf)
+        FfiConverterOptionString.write(value.localPath, into: &buf)
         FfiConverterOptionString.write(value.huggingfaceApiKey, into: &buf)
         FfiConverterOptionString.write(value.openaiApiKey, into: &buf)
         FfiConverterOptionString.write(value.anthropicApiKey, into: &buf)
@@ -2462,8 +2475,8 @@ public func FfiConverterTypeEngineConfig_lower(_ value: EngineConfig) -> RustBuf
 
 public enum CliError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
-    
-    
+
+
     case Engine(EngineError
     )
     case Settigs(SettingsError
@@ -2471,15 +2484,15 @@ public enum CliError: Swift.Error, Equatable, Hashable, Codable, Foundation.Loca
     case RenderingError(message: String
     )
 
-    
 
-    
 
-    
+
+
+
     public var errorDescription: String? {
         String(reflecting: self)
     }
-    
+
 }
 
 #if compiler(>=6)
@@ -2496,9 +2509,9 @@ public struct FfiConverterTypeCliError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        
 
-        
+
+
         case 1: return .Engine(
             try FfiConverterTypeEngineError.read(from: &buf)
             )
@@ -2516,24 +2529,24 @@ public struct FfiConverterTypeCliError: FfiConverterRustBuffer {
     public static func write(_ value: CliError, into buf: inout [UInt8]) {
         switch value {
 
-        
 
-        
-        
+
+
+
         case let .Engine(v1):
             writeInt(&buf, Int32(1))
             FfiConverterTypeEngineError.write(v1, into: &buf)
-            
-        
+
+
         case let .Settigs(v1):
             writeInt(&buf, Int32(2))
             FfiConverterTypeSettingsError.write(v1, into: &buf)
-            
-        
+
+
         case let .RenderingError(message):
             writeInt(&buf, Int32(3))
             FfiConverterString.write(message, into: &buf)
-            
+
         }
     }
 }
@@ -2556,19 +2569,19 @@ public func FfiConverterTypeCliError_lower(_ value: CliError) -> RustBuffer {
 
 public enum DeviceError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
-    
-    
+
+
     case UnsupportedDevice
 
-    
 
-    
 
-    
+
+
+
     public var errorDescription: String? {
         String(reflecting: self)
     }
-    
+
 }
 
 #if compiler(>=6)
@@ -2585,9 +2598,9 @@ public struct FfiConverterTypeDeviceError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        
 
-        
+
+
         case 1: return .UnsupportedDevice
 
          default: throw UniffiInternalError.unexpectedEnumCase
@@ -2597,13 +2610,13 @@ public struct FfiConverterTypeDeviceError: FfiConverterRustBuffer {
     public static func write(_ value: DeviceError, into buf: inout [UInt8]) {
         switch value {
 
-        
 
-        
-        
+
+
+
         case .UnsupportedDevice:
             writeInt(&buf, Int32(1))
-        
+
         }
     }
 }
@@ -2627,7 +2640,7 @@ public func FfiConverterTypeDeviceError_lower(_ value: DeviceError) -> RustBuffe
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum DownloadManagerType: Equatable, Hashable, Codable {
-    
+
     case native
     case universal
 
@@ -2650,26 +2663,26 @@ public struct FfiConverterTypeDownloadManagerType: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DownloadManagerType {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .native
-        
+
         case 2: return .universal
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: DownloadManagerType, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .native:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .universal:
             writeInt(&buf, Int32(2))
-        
+
         }
     }
 }
@@ -2694,7 +2707,7 @@ public func FfiConverterTypeDownloadManagerType_lower(_ value: DownloadManagerTy
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum DownloadPhase: Equatable, Hashable, Codable {
-    
+
     case notDownloaded
     case downloading
     case paused
@@ -2722,52 +2735,52 @@ public struct FfiConverterTypeDownloadPhase: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DownloadPhase {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .notDownloaded
-        
+
         case 2: return .downloading
-        
+
         case 3: return .paused
-        
+
         case 4: return .downloaded
-        
+
         case 5: return .locked
-        
+
         case 6: return .error(message: try FfiConverterString.read(from: &buf)
         )
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: DownloadPhase, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .notDownloaded:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .downloading:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .paused:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .downloaded:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .locked:
             writeInt(&buf, Int32(5))
-        
-        
+
+
         case let .error(message):
             writeInt(&buf, Int32(6))
             FfiConverterString.write(message, into: &buf)
-            
+
         }
     }
 }
@@ -2791,8 +2804,8 @@ public func FfiConverterTypeDownloadPhase_lower(_ value: DownloadPhase) -> RustB
 
 public enum EngineError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
-    
-    
+
+
     case TokioError(message: String
     )
     case Device(DeviceError
@@ -2814,15 +2827,15 @@ public enum EngineError: Swift.Error, Equatable, Hashable, Codable, Foundation.L
     )
     case SettingsNotAvailable
 
-    
 
-    
 
-    
+
+
+
     public var errorDescription: String? {
         String(reflecting: self)
     }
-    
+
 }
 
 #if compiler(>=6)
@@ -2839,9 +2852,9 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        
 
-        
+
+
         case 1: return .TokioError(
             message: try FfiConverterString.read(from: &buf)
             )
@@ -2878,65 +2891,65 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
     public static func write(_ value: EngineError, into buf: inout [UInt8]) {
         switch value {
 
-        
 
-        
-        
+
+
+
         case let .TokioError(message):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(message, into: &buf)
-            
-        
+
+
         case let .Device(v1):
             writeInt(&buf, Int32(2))
             FfiConverterTypeDeviceError.write(v1, into: &buf)
-            
-        
+
+
         case let .Settings(v1):
             writeInt(&buf, Int32(3))
             FfiConverterTypeSettingsError.write(v1, into: &buf)
-            
-        
+
+
         case let .Storage(v1):
             writeInt(&buf, Int32(4))
             FfiConverterTypeStorageError.write(v1, into: &buf)
-            
-        
+
+
         case let .Registry(v1):
             writeInt(&buf, Int32(5))
             FfiConverterTypeRegistryError.write(v1, into: &buf)
-            
-        
+
+
         case .UnableToCreateBackend:
             writeInt(&buf, Int32(6))
-        
-        
+
+
         case .BackendNotFound:
             writeInt(&buf, Int32(7))
-        
-        
+
+
         case .UnableToGetDownloaderProgressStream:
             writeInt(&buf, Int32(8))
-        
-        
+
+
         case let .ChatSession(v1):
             writeInt(&buf, Int32(9))
             FfiConverterTypeChatSessionError.write(v1, into: &buf)
-            
-        
+
+
         case let .ClassificationSession(v1):
             writeInt(&buf, Int32(10))
             FfiConverterTypeClassificationSessionError.write(v1, into: &buf)
-            
-        
+
+
         case let .TextToSpeechSession(v1):
             writeInt(&buf, Int32(11))
             FfiConverterTypeTextToSpeechSessionError.write(v1, into: &buf)
-            
-        
+
+
         case .SettingsNotAvailable:
             writeInt(&buf, Int32(12))
-        
+
         }
     }
 }
@@ -2959,22 +2972,22 @@ public func FfiConverterTypeEngineError_lower(_ value: EngineError) -> RustBuffe
 
 public enum PlayerError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
-    
-    
+
+
     case RodioError(message: String
     )
     case InvalidPcmBatch(message: String
     )
 
-    
 
-    
 
-    
+
+
+
     public var errorDescription: String? {
         String(reflecting: self)
     }
-    
+
 }
 
 #if compiler(>=6)
@@ -2991,9 +3004,9 @@ public struct FfiConverterTypePlayerError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        
 
-        
+
+
         case 1: return .RodioError(
             message: try FfiConverterString.read(from: &buf)
             )
@@ -3008,19 +3021,19 @@ public struct FfiConverterTypePlayerError: FfiConverterRustBuffer {
     public static func write(_ value: PlayerError, into buf: inout [UInt8]) {
         switch value {
 
-        
 
-        
-        
+
+
+
         case let .RodioError(message):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(message, into: &buf)
-            
-        
+
+
         case let .InvalidPcmBatch(message):
             writeInt(&buf, Int32(2))
             FfiConverterString.write(message, into: &buf)
-            
+
         }
     }
 }
@@ -3043,8 +3056,8 @@ public func FfiConverterTypePlayerError_lower(_ value: PlayerError) -> RustBuffe
 
 public enum RegistryError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
-    
-    
+
+
     case UnableToCreate(message: String
     )
     case UnableToGetModels(message: String
@@ -3052,15 +3065,15 @@ public enum RegistryError: Swift.Error, Equatable, Hashable, Codable, Foundation
     case UnableToAddRegistry(identifier: String
     )
 
-    
 
-    
 
-    
+
+
+
     public var errorDescription: String? {
         String(reflecting: self)
     }
-    
+
 }
 
 #if compiler(>=6)
@@ -3077,9 +3090,9 @@ public struct FfiConverterTypeRegistryError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        
 
-        
+
+
         case 1: return .UnableToCreate(
             message: try FfiConverterString.read(from: &buf)
             )
@@ -3097,24 +3110,24 @@ public struct FfiConverterTypeRegistryError: FfiConverterRustBuffer {
     public static func write(_ value: RegistryError, into buf: inout [UInt8]) {
         switch value {
 
-        
 
-        
-        
+
+
+
         case let .UnableToCreate(message):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(message, into: &buf)
-            
-        
+
+
         case let .UnableToGetModels(message):
             writeInt(&buf, Int32(2))
             FfiConverterString.write(message, into: &buf)
-            
-        
+
+
         case let .UnableToAddRegistry(identifier):
             writeInt(&buf, Int32(3))
             FfiConverterString.write(identifier, into: &buf)
-            
+
         }
     }
 }
@@ -3138,7 +3151,7 @@ public func FfiConverterTypeRegistryError_lower(_ value: RegistryError) -> RustB
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum SettingKind: Equatable, Hashable, Codable {
-    
+
     case config
     case secret
 
@@ -3161,26 +3174,26 @@ public struct FfiConverterTypeSettingKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SettingKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .config
-        
+
         case 2: return .secret
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: SettingKind, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .config:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .secret:
             writeInt(&buf, Int32(2))
-        
+
         }
     }
 }
@@ -3204,20 +3217,20 @@ public func FfiConverterTypeSettingKind_lower(_ value: SettingKind) -> RustBuffe
 
 public enum SettingsError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
-    
-    
+
+
     case BackendError(message: String
     )
 
-    
 
-    
 
-    
+
+
+
     public var errorDescription: String? {
         String(reflecting: self)
     }
-    
+
 }
 
 #if compiler(>=6)
@@ -3234,9 +3247,9 @@ public struct FfiConverterTypeSettingsError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        
 
-        
+
+
         case 1: return .BackendError(
             message: try FfiConverterString.read(from: &buf)
             )
@@ -3248,14 +3261,14 @@ public struct FfiConverterTypeSettingsError: FfiConverterRustBuffer {
     public static func write(_ value: SettingsError, into buf: inout [UInt8]) {
         switch value {
 
-        
 
-        
-        
+
+
+
         case let .BackendError(message):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(message, into: &buf)
-            
+
         }
     }
 }
@@ -3278,8 +3291,8 @@ public func FfiConverterTypeSettingsError_lower(_ value: SettingsError) -> RustB
 
 public enum StorageError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
-    
-    
+
+
     case UnableToCreateDirectory(path: String
     )
     case UnableToCreateDownloadManager(message: String
@@ -3299,15 +3312,15 @@ public enum StorageError: Swift.Error, Equatable, Hashable, Codable, Foundation.
     case UnsupportedItem(identifier: String
     )
 
-    
 
-    
 
-    
+
+
+
     public var errorDescription: String? {
         String(reflecting: self)
     }
-    
+
 }
 
 #if compiler(>=6)
@@ -3324,9 +3337,9 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        
 
-        
+
+
         case 1: return .UnableToCreateDirectory(
             path: try FfiConverterString.read(from: &buf)
             )
@@ -3337,11 +3350,11 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
             message: try FfiConverterString.read(from: &buf)
             )
         case 4: return .HashNotFound(
-            identifier: try FfiConverterString.read(from: &buf), 
+            identifier: try FfiConverterString.read(from: &buf),
             name: try FfiConverterString.read(from: &buf)
             )
         case 5: return .InvalidStateTransition(
-            from: try FfiConverterTypeDownloadPhase.read(from: &buf), 
+            from: try FfiConverterTypeDownloadPhase.read(from: &buf),
             to: try FfiConverterTypeDownloadPhase.read(from: &buf)
             )
         case 6: return .Io(
@@ -3364,56 +3377,56 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
     public static func write(_ value: StorageError, into buf: inout [UInt8]) {
         switch value {
 
-        
 
-        
-        
+
+
+
         case let .UnableToCreateDirectory(path):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(path, into: &buf)
-            
-        
+
+
         case let .UnableToCreateDownloadManager(message):
             writeInt(&buf, Int32(2))
             FfiConverterString.write(message, into: &buf)
-            
-        
+
+
         case let .DownloadManager(message):
             writeInt(&buf, Int32(3))
             FfiConverterString.write(message, into: &buf)
-            
-        
+
+
         case let .HashNotFound(identifier,name):
             writeInt(&buf, Int32(4))
             FfiConverterString.write(identifier, into: &buf)
             FfiConverterString.write(name, into: &buf)
-            
-        
+
+
         case let .InvalidStateTransition(from,to):
             writeInt(&buf, Int32(5))
             FfiConverterTypeDownloadPhase.write(from, into: &buf)
             FfiConverterTypeDownloadPhase.write(to, into: &buf)
-            
-        
+
+
         case let .Io(message):
             writeInt(&buf, Int32(6))
             FfiConverterString.write(message, into: &buf)
-            
-        
+
+
         case let .ItemNotFound(identifier):
             writeInt(&buf, Int32(7))
             FfiConverterString.write(identifier, into: &buf)
-            
-        
+
+
         case let .Registry(v1):
             writeInt(&buf, Int32(8))
             FfiConverterTypeRegistryError.write(v1, into: &buf)
-            
-        
+
+
         case let .UnsupportedItem(identifier):
             writeInt(&buf, Int32(9))
             FfiConverterString.write(identifier, into: &buf)
-            
+
         }
     }
 }
@@ -3437,9 +3450,9 @@ public func FfiConverterTypeStorageError_lower(_ value: StorageError) -> RustBuf
 
 
 public protocol EngineCallbackHandler: AnyObject, Sendable {
-    
-    func onEvent() 
-    
+
+    func onEvent()
+
 }
 
 
@@ -3480,7 +3493,7 @@ fileprivate struct UniffiCallbackInterfaceEngineCallbackHandler {
                 )
             }
 
-            
+
             let writeReturn = { () }
             uniffiTraitInterfaceCall(
                 callStatus: uniffiCallStatus,
