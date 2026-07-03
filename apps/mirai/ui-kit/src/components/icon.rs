@@ -1,4 +1,4 @@
-use gpui::{App, Hsla, IntoElement, RenderOnce, Styled, Window, px, svg};
+use gpui::{App, Hsla, IntoElement, RenderOnce, Styled, Transformation, Window, px, radians, svg};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Icon {
@@ -130,7 +130,7 @@ impl RenderOnce for IconEl {
     ) -> impl IntoElement {
         let mut el = svg().path(self.icon.path()).w(px(self.size)).h(px(self.size)).flex_none().text_color(self.color);
         if self.rotate_deg != 0.0 {
-            el = el.with_transformation(gpui::Transformation::rotate(gpui::radians(self.rotate_deg.to_radians())));
+            el = el.with_transformation(Transformation::rotate(radians(self.rotate_deg.to_radians())));
         }
         el
     }

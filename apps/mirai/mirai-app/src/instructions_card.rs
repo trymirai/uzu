@@ -6,6 +6,7 @@ use crate::{
     components::{Icon, IconEl, InputEvent, TextInput},
     persistence,
     theme::ActiveTheme,
+    tokens,
 };
 
 pub struct InstructionsCard {
@@ -64,7 +65,7 @@ impl Render for InstructionsCard {
                 }
                 cx.notify();
             }))
-            .child(IconEl::new(Icon::Plus, theme.text).size(crate::tokens::icon::MD).rotate(if open {
+            .child(IconEl::new(Icon::Plus, theme.text).size(tokens::icon::MD).rotate(if open {
                 45.
             } else {
                 0.

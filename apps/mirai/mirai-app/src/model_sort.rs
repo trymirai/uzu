@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum ModelSort {
     #[default]
@@ -19,14 +21,14 @@ impl ModelSort {
 pub fn sort_by_name(
     a: &str,
     b: &str,
-) -> std::cmp::Ordering {
+) -> Ordering {
     a.to_lowercase().cmp(&b.to_lowercase())
 }
 
 pub fn sort_by_newest(
     a: &str,
     b: &str,
-) -> std::cmp::Ordering {
+) -> Ordering {
     fn score(name: &str) -> (i64, i64) {
         let params = parse_params(name).map(|p| (p * 1000.0) as i64).unwrap_or(0);
         let dated = name

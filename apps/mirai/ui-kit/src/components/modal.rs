@@ -1,4 +1,4 @@
-use gpui::{App, ClickEvent, FontWeight, IntoElement, RenderOnce, SharedString, Window, div, prelude::*, px};
+use gpui::{App, ClickEvent, FontWeight, IntoElement, RenderOnce, SharedString, Window, black, div, prelude::*, px};
 
 use super::ClickHandler;
 use crate::{
@@ -88,28 +88,20 @@ impl RenderOnce for ConfirmModal {
             confirm = confirm.on_click(handler);
         }
 
-        div()
-            .absolute()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(gpui::black().opacity(0.5))
-            .occlude()
-            .child(
-                div()
-                    .w(px(360.))
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .p_4()
-                    .rounded_xl()
-                    .bg(theme.card)
-                    .border_1()
-                    .border_color(theme.border)
-                    .child(div().text_color(theme.text).font_weight(FontWeight::MEDIUM).child(self.title))
-                    .child(div().text_sm().text_color(theme.text_muted).child(self.message))
-                    .child(div().flex().justify_end().gap_2().child(cancel).child(confirm)),
-            )
+        div().absolute().size_full().flex().items_center().justify_center().bg(black().opacity(0.5)).occlude().child(
+            div()
+                .w(px(360.))
+                .flex()
+                .flex_col()
+                .gap_3()
+                .p_4()
+                .rounded_xl()
+                .bg(theme.card)
+                .border_1()
+                .border_color(theme.border)
+                .child(div().text_color(theme.text).font_weight(FontWeight::MEDIUM).child(self.title))
+                .child(div().text_sm().text_color(theme.text_muted).child(self.message))
+                .child(div().flex().justify_end().gap_2().child(cancel).child(confirm)),
+        )
     }
 }

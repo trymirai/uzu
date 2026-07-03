@@ -1,4 +1,6 @@
 use std::{
+    cmp::Reverse,
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -182,7 +184,7 @@ pub fn rename_chat(
 pub fn list_chats() -> Vec<StoredChat> {
     let dir = chats_dir();
     let mut chats: Vec<StoredChat> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen: HashSet<String> = HashSet::new();
 
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -215,7 +217,7 @@ pub fn list_chats() -> Vec<StoredChat> {
             }
         }
     }
-    chats.sort_by_key(|chat| std::cmp::Reverse(chat.updated_at));
+    chats.sort_by_key(|chat| Reverse(chat.updated_at));
     chats
 }
 

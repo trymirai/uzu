@@ -1,6 +1,6 @@
 use gpui::{
     App, ClickEvent, CursorStyle, ElementId, FontWeight, IntoElement, RenderOnce, SharedString, Window, div,
-    prelude::*, px,
+    prelude::*, px, transparent_black, white,
 };
 
 use super::ClickHandler;
@@ -111,9 +111,9 @@ impl RenderOnce for Button {
 
         let (bg, fg, border) = match self.kind {
             ButtonKind::Primary => (theme.text, theme.bg, None),
-            ButtonKind::Secondary => (gpui::transparent_black(), theme.text, Some(theme.button_border)),
-            ButtonKind::Danger => (theme.error, gpui::white(), None),
-            ButtonKind::Ghost => (gpui::transparent_black(), theme.text_muted, None),
+            ButtonKind::Secondary => (transparent_black(), theme.text, Some(theme.button_border)),
+            ButtonKind::Danger => (theme.error, white(), None),
+            ButtonKind::Ghost => (transparent_black(), theme.text_muted, None),
         };
         let hover_bg = match self.kind {
             ButtonKind::Primary => theme.text.opacity(0.85),

@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs,
     io::{Cursor, Write},
     path::{Path, PathBuf},
@@ -160,7 +161,7 @@ pub async fn model_cleanup_stats(engine: &Engine) -> CategoryStats {
 pub fn export_chats_zip() -> Option<Vec<u8>> {
     let dir = persistence::chats_dir();
     let mut names: Vec<String> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen: HashSet<String> = HashSet::new();
 
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {

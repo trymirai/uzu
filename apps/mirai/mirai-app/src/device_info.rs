@@ -1,5 +1,7 @@
+use uzu::device::Device;
+
 pub fn description() -> String {
-    let Ok(device) = uzu::device::Device::create() else {
+    let Ok(device) = Device::create() else {
         return String::new();
     };
     let mem_gb = (device.memory_total as f64 / (1024.0 * 1024.0 * 1024.0)).round() as i64;

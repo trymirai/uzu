@@ -5,6 +5,7 @@ use std::{collections::HashMap, fs, path::PathBuf};
 
 use futures::{StreamExt, channel::mpsc};
 use gpui::Context;
+use gpui_tokio::Tokio;
 pub use model_kind::ModelKind;
 pub use model_row::ModelRow;
 use uzu::{
@@ -12,7 +13,10 @@ use uzu::{
     types::model::Model,
 };
 
-use crate::engine;
+use crate::{
+    engine, persistence,
+    toast::{self, ToastKind},
+};
 
 pub struct ModelsStore {
     kind: ModelKind,
@@ -65,11 +69,11 @@ impl ModelsStore {
     }
 
     fn installed_at_path() -> PathBuf {
-        crate::persistence::mirai_data_dir().join("installed-at.json")
+        persistence::mirai_data_dir().join("installed-at.json")
     }
 
     fn save_installed_at(map: &HashMap<String, u64>) {
-        if fs::create_dir_all(crate::persistence::mirai_data_dir()).is_ok()
+        if fs::create_dir_all(persistence::mirai_data_dir()).is_ok()
             && let Ok(json) = serde_json::to_string(map)
         {
             let _ = fs::write(Self::installed_at_path(), json);
@@ -101,7 +105,7 @@ impl ModelsStore {
             .detach();
             return;
         };
-        let task = gpui_tokio::Tokio::spawn_result(cx, async move {
+        let task = Tokio::spawn_result(cx, async move {
             let models = engine.models().await?;
             let states = engine.download_states().await;
             let rows: Vec<ModelRow> = models
@@ -141,7 +145,7 @@ impl ModelsStore {
         };
         let (tx, mut rx) = mpsc::unbounded::<(String, DownloadState)>();
 
-        gpui_tokio::Tokio::spawn(cx, async move {
+        Tokio::spawn(cx, async move {
             let mut stream = engine.storage_subscribe().await;
             while let Some(item) = stream.next().await {
                 if let Ok(event) = item
@@ -163,7 +167,7 @@ impl ModelsStore {
                             let now_installed = row.is_installed();
                             let just_installed = !was_installed && now_installed;
                             if just_installed {
-                                store.installed_at.insert(id.clone(), crate::persistence::now_ms());
+                                store.installed_at.insert(id.clone(), persistence::now_ms());
                                 Self::save_installed_at(&store.installed_at);
                             } else if was_installed && !now_installed {
                                 store.installed_at.remove(&id);
@@ -172,7 +176,7 @@ impl ModelsStore {
                             let downloaded_name = just_installed.then(|| row.name());
                             cx.notify();
                             if let Some(name) = downloaded_name {
-                                crate::toast::push(cx, format!("{name} downloaded"), crate::toast::ToastKind::Success);
+                                toast::push(cx, format!("{name} downloaded"), ToastKind::Success);
                             }
                         }
                     })
@@ -196,7 +200,7 @@ impl ModelsStore {
         let Some(model) = self.rows.iter().find(|r| r.id() == id).map(|r| r.model.clone()) else {
             return;
         };
-        gpui_tokio::Tokio::spawn(cx, async move {
+        Tokio::spawn(cx, async move {
             let downloader = engine.downloader(&model);
             match downloader.state().await.map(|s| s.phase) {
                 Some(DownloadPhase::Downloading {}) => {
@@ -222,7 +226,7 @@ impl ModelsStore {
         let Some(model) = self.rows.iter().find(|r| r.id() == id).map(|r| r.model.clone()) else {
             return;
         };
-        gpui_tokio::Tokio::spawn(cx, async move {
+        Tokio::spawn(cx, async move {
             let _ = engine.downloader(&model).delete().await;
         })
         .detach();

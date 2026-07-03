@@ -1,3 +1,5 @@
+use std::env;
+
 use gpui::{
     AnyElement, App, Bounds, Context, CursorStyle, Entity, IntoElement, Render, TitlebarOptions, Window, WindowBounds,
     WindowOptions, div, point, prelude::*, px, size,
@@ -7,7 +9,7 @@ use super::route::Route;
 use crate::{
     components::{Icon, IconEl},
     engine_capabilities::{CLASSIFICATION, TEXT_TO_SPEECH},
-    menu_bar::TrayAction,
+    menu_bar::{self, TrayAction},
     models_store::{ModelKind, ModelsStore},
     persistence,
     screens::{
@@ -16,7 +18,7 @@ use crate::{
     },
     settings_state,
     theme::{self, ActiveTheme, FONT_SANS, TEXT_SIZE, layout::FOOTER_HEIGHT},
-    toast,
+    toast, tokens,
 };
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -47,7 +49,7 @@ impl MiraiApp {
         toast::observe(cx, |_, cx| cx.notify()).detach();
 
         let weak = cx.entity().downgrade();
-        crate::menu_bar::register_app(cx, weak);
+        menu_bar::register_app(cx, weak);
 
         let models = cx.new(|cx| ModelsStore::new(ModelKind::Chat, cx));
         let cloud_store = cx.new(|cx| ModelsStore::new(ModelKind::CloudChat, cx));
@@ -125,7 +127,7 @@ impl MiraiApp {
         })
         .detach();
 
-        let route = match std::env::var("MIRAI_SCREEN").ok().as_deref() {
+        let route = match env::var("MIRAI_SCREEN").ok().as_deref() {
             Some("chat") => Route::Chat(None),
             Some("chats") => Route::Chats,
             Some("local") => Route::LocalModels,
@@ -273,7 +275,7 @@ impl MiraiApp {
             .border_t_1()
             .border_color(theme.border)
             .text_color(theme.text_muted)
-            .text_size(crate::tokens::font::CAPTION)
+            .text_size(tokens::font::CAPTION)
             .child(left)
             .child(div().child(format!("v{APP_VERSION}")))
     }

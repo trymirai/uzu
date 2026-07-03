@@ -19,16 +19,19 @@ mod text;
 mod title_gen;
 mod toast;
 mod tts_history;
+use std::sync::Arc;
+
 use gpui::{App, KeyBinding, Menu, MenuItem, actions};
 use gpui_platform::application;
+use gpui_tokio::Tokio;
+use reqwest_client::ReqwestClient;
 pub(crate) use ui_kit::{components, theme, tokens};
+use uzu::engine::{Engine, EngineConfig};
 
 actions!(mirai, [Quit]);
 
 fn main() {
-    let app = application()
-        .with_http_client(std::sync::Arc::new(reqwest_client::ReqwestClient::new()))
-        .with_assets(assets::Assets::new());
+    let app = application().with_http_client(Arc::new(ReqwestClient::new())).with_assets(assets::Assets::new());
     app.on_reopen(|cx| {
         if cx.windows().is_empty() {
             app_shell::open_window(cx);
@@ -54,15 +57,14 @@ fn main() {
         cx.set_menus([Menu::new("Mirai").items([MenuItem::action("Quit Mirai", Quit)])]);
 
         gpui_tokio::init(cx);
-        let engine = gpui_tokio::Tokio::handle(cx).block_on(async {
-            let config = uzu::engine::EngineConfig::default()
-                .with_application_identifier(provider_keys::APPLICATION_ID.to_string());
-            uzu::engine::Engine::new(config).await
+        let engine = Tokio::handle(cx).block_on(async {
+            let config = EngineConfig::default().with_application_identifier(provider_keys::APPLICATION_ID.to_string());
+            Engine::new(config).await
         });
         match engine {
             Ok(engine) => {
                 engine.set_usage_reporting(settings_state::current(cx).share_usage_data);
-                crate::engine::init(cx, engine);
+                engine::init(cx, engine);
             },
             Err(error) => eprintln!("uzu engine init failed: {error}"),
         }

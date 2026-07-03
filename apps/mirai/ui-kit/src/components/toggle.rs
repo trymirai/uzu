@@ -1,4 +1,4 @@
-use gpui::{App, ClickEvent, CursorStyle, ElementId, IntoElement, RenderOnce, Window, div, prelude::*, px};
+use gpui::{App, ClickEvent, CursorStyle, ElementId, IntoElement, RenderOnce, Window, div, prelude::*, px, white};
 
 use super::ClickHandler;
 use crate::theme::ActiveTheme;
@@ -40,7 +40,7 @@ impl RenderOnce for Toggle {
         let theme = cx.theme().clone();
 
         let on_track = if theme.dark {
-            gpui::white()
+            white()
         } else {
             theme.text
         };
@@ -52,7 +52,7 @@ impl RenderOnce for Toggle {
         let knob = if self.on {
             theme.bg
         } else {
-            gpui::white()
+            white()
         };
         let mut el = div()
             .id(self.id)

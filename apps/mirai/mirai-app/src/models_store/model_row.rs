@@ -1,6 +1,9 @@
 use uzu::{
     storage::types::{DownloadPhase, DownloadState},
-    types::{basic::ImageTheme, model::Model},
+    types::{
+        basic::{Image, ImageTheme},
+        model::Model,
+    },
 };
 
 pub struct ModelRow {
@@ -31,7 +34,7 @@ impl ModelRow {
         } else {
             ImageTheme::Light
         };
-        let is_svg = |i: &&uzu::types::basic::Image| i.url.ends_with(".svg");
+        let is_svg = |i: &&Image| i.url.ends_with(".svg");
         icons
             .iter()
             .find(|i| i.theme == want && is_svg(i))

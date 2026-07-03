@@ -1,4 +1,4 @@
-use gpui::{Context, CursorStyle, IntoElement, SharedString, div, prelude::*, px};
+use gpui::{Context, CursorStyle, IntoElement, SharedString, div, prelude::*, px, transparent_black};
 
 use super::{route::Route, section::Section, shell::MiraiApp};
 use crate::{
@@ -7,6 +7,7 @@ use crate::{
     settings_state,
     text::truncate_with_ellipsis,
     theme::{ActiveTheme, layout::SIDEBAR_WIDTH},
+    tokens,
 };
 
 impl MiraiApp {
@@ -24,7 +25,7 @@ impl MiraiApp {
         let bg = if active {
             theme.bg_hover
         } else {
-            gpui::transparent_black()
+            transparent_black()
         };
         let hover_bg = theme.bg_hover;
 
@@ -42,7 +43,7 @@ impl MiraiApp {
             .text_sm()
             .cursor(CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover_bg))
-            .child(IconEl::new(icon, fg).size(crate::tokens::icon::LG))
+            .child(IconEl::new(icon, fg).size(tokens::icon::LG))
             .child(label)
             .on_click(cx.listener(move |this, _event, _window, cx| {
                 this.navigate(target.clone(), cx);
@@ -69,7 +70,7 @@ impl MiraiApp {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(IconEl::new(Icon::Apps, theme.text).size(crate::tokens::icon::LG))
+                    .child(IconEl::new(Icon::Apps, theme.text).size(tokens::icon::LG))
                     .child("Apps"),
             )
             .child(div().text_xs().text_color(theme.text_muted).child("Soon"))
@@ -169,7 +170,7 @@ impl MiraiApp {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(IconEl::new(Icon::Settings, theme.text).size(crate::tokens::icon::LG))
+                        .child(IconEl::new(Icon::Settings, theme.text).size(tokens::icon::LG))
                         .child("Settings"),
                 )
                 .child(
@@ -181,7 +182,7 @@ impl MiraiApp {
                         },
                         theme.text_muted,
                     )
-                    .size(crate::tokens::icon::SM),
+                    .size(tokens::icon::SM),
                 ),
         );
 
@@ -207,7 +208,7 @@ impl MiraiApp {
                         .cursor(CursorStyle::PointingHand)
                         .hover(move |s| s.text_color(link_hover).bg(hover))
                         .on_click(move |_, _, cx| cx.open_url(&url))
-                        .child(IconEl::new(icon, muted).size(crate::tokens::icon::LG)),
+                        .child(IconEl::new(icon, muted).size(tokens::icon::LG)),
                 );
             }
             wrap = wrap
@@ -280,7 +281,7 @@ impl MiraiApp {
             let bg = if is_active {
                 theme.bg_hover
             } else {
-                gpui::transparent_black()
+                transparent_black()
             };
             col = col.child(
                 div()

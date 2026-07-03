@@ -1,6 +1,6 @@
 use gpui::{
     App, ClickEvent, CursorStyle, ElementId, FontWeight, IntoElement, RenderOnce, SharedString, Window, div,
-    prelude::*, px,
+    prelude::*, px, white,
 };
 
 use super::ClickHandler;
@@ -84,7 +84,7 @@ impl RenderOnce for SegmentedControl {
                 } else {
                     theme.text
                 };
-                cell = cell.bg(gpui::white()).text_color(label_color).font_weight(FontWeight::MEDIUM);
+                cell = cell.bg(white()).text_color(label_color).font_weight(FontWeight::MEDIUM);
             } else {
                 let hover = theme.bg_hover;
                 cell = cell.text_color(theme.text_muted).hover(move |s| s.bg(hover));

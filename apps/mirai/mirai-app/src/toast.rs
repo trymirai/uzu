@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use gpui::{App, Context, Global, IntoElement, SharedString, Subscription, div, prelude::*, px};
+use gpui::{AnyElement, App, Context, Global, IntoElement, SharedString, Subscription, div, prelude::*, px, white};
 
 use crate::theme::ActiveTheme;
 
@@ -65,7 +65,7 @@ pub fn observe<V: 'static>(
     cx.observe_global::<GlobalToasts>(move |this, cx| on_change(this, cx))
 }
 
-pub fn render_overlay(cx: &App) -> Option<gpui::AnyElement> {
+pub fn render_overlay(cx: &App) -> Option<AnyElement> {
     let toasts = cx.try_global::<GlobalToasts>()?;
     if toasts.items.is_empty() {
         return None;
@@ -74,8 +74,8 @@ pub fn render_overlay(cx: &App) -> Option<gpui::AnyElement> {
     let mut col = div().absolute().top_8().right_4().flex().flex_col().gap_2();
     for toast in &toasts.items {
         let (bg, fg) = match toast.kind {
-            ToastKind::Success => (theme.success, gpui::white()),
-            ToastKind::Error => (theme.error, gpui::white()),
+            ToastKind::Success => (theme.success, white()),
+            ToastKind::Error => (theme.error, white()),
             ToastKind::Info => (theme.card, theme.text),
         };
         col = col.child(

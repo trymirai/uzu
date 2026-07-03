@@ -4,8 +4,8 @@ use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, InspectorElementId, KeyBinding,
     LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine,
-    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill, point, prelude::*, px,
-    relative, size,
+    SharedString, Style, TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill, point,
+    prelude::*, px, relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -844,14 +844,7 @@ impl Element for TextElement {
             let lines = std::mem::take(&mut prepaint.lines);
             for (y, _b, shaped) in &lines {
                 shaped
-                    .paint(
-                        point(bounds.left(), bounds.top() + *y),
-                        line_height,
-                        gpui::TextAlign::Left,
-                        None,
-                        window,
-                        cx,
-                    )
+                    .paint(point(bounds.left(), bounds.top() + *y), line_height, TextAlign::Left, None, window, cx)
                     .ok();
             }
             if focus_handle.is_focused(window)
@@ -868,7 +861,7 @@ impl Element for TextElement {
         }
 
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), gpui::TextAlign::Left, None, window, cx).unwrap();
+        line.paint(bounds.origin, window.line_height(), TextAlign::Left, None, window, cx).unwrap();
 
         if focus_handle.is_focused(window)
             && let Some(cursor) = prepaint.cursor.take()

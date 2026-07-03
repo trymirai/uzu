@@ -1,5 +1,7 @@
 mod tray_action;
 
+use std::time::Duration;
+
 use gpui::{App, AsyncApp, Global, WeakEntity};
 pub use tray_action::TrayAction;
 use tray_icon::{
@@ -7,7 +9,10 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
 };
 
-use crate::app_shell::{self, MiraiApp};
+use crate::{
+    app_shell::{self, MiraiApp},
+    settings_state,
+};
 
 const OPEN: &str = "mirai.open";
 const NEW_CHAT: &str = "mirai.new_chat";
@@ -26,7 +31,7 @@ pub fn init(cx: &mut App) {
     cx.set_global(MenuBar::default());
     cx.spawn(async move |cx: &mut AsyncApp| {
         loop {
-            cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
+            cx.background_executor().timer(Duration::from_millis(250)).await;
             cx.update(tick);
         }
     })
@@ -44,7 +49,7 @@ pub fn register_app(
 }
 
 fn tick(cx: &mut App) {
-    let want = crate::settings_state::current(cx).show_in_menu_bar;
+    let want = settings_state::current(cx).show_in_menu_bar;
     {
         let mb = cx.global_mut::<MenuBar>();
         if want && mb.tray.is_none() {
