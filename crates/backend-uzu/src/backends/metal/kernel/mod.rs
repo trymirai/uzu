@@ -6,6 +6,8 @@ use crate::backends::{
     metal::Metal,
 };
 
+#[path = "gdn_tree_verify/build_tree_out_dispatch_helper.rs"]
+mod build_tree_out_dispatch_helper;
 pub mod matmul;
 
 pub const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));

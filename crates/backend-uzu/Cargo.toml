@@ -38,6 +38,7 @@ itertools.workspace = true
 schemars.workspace = true
 rustix.workspace = true
 futures.workspace = true
+async-stream.workspace = true
 tokio-util.workspace = true
 
 xgrammar = { workspace = true, optional = true }
@@ -48,6 +49,8 @@ objc2-foundation = { workspace = true, optional = true }
 bytesize = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 obfstr = { workspace = true, optional = true }
+# Power telemetry: macOS reads SoC IOReport; iOS reports HID charger "wall" power.
+keisoku.workspace = true
 
 [dev-dependencies]
 test-tag.workspace = true
@@ -102,7 +105,6 @@ metal = [
     "dep:obfstr",
 ]
 grammar = ["dep:xgrammar"]
-tracing = []
 
 [lints]
 workspace = true

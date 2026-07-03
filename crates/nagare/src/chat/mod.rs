@@ -76,6 +76,15 @@ enum Instance {
     Message(message::Session),
 }
 
+impl Instance {
+    pub fn peak_memory_usage(&self) -> Option<usize> {
+        match self {
+            Instance::Token(session) => session.peak_memory_usage(),
+            Instance::Message(session) => session.peak_memory_usage(),
+        }
+    }
+}
+
 #[bindings::export(Class)]
 #[derive(Clone)]
 pub struct ChatSession {
@@ -102,7 +111,7 @@ impl ChatSession {
 
         let instance = tokio::spawn(async move {
             if let Some(token_backend) = backend.as_chat_via_token_capable() {
-                token::Session::new(token_backend, config, reference).await.map(Instance::Token)
+                token::Session::new(token_backend, config, reference, &model).await.map(Instance::Token)
             } else if let Some(message_backend) = backend.as_chat_via_message_capable() {
                 message::Session::new(message_backend, config, reference).await.map(Instance::Message)
             } else {
@@ -121,6 +130,10 @@ impl ChatSession {
             model_id,
             telemetry,
         })
+    }
+
+    pub async fn peak_memory_usage(&self) -> Option<usize> {
+        self.instance.lock().await.peak_memory_usage()
     }
 }
 
@@ -230,7 +243,7 @@ impl ChatSession {
 
             let mut instance = instance.lock().await;
             let mut stream = match &mut *instance {
-                Instance::Token(session) => session.stream(&all_messages, config, cancel_token),
+                Instance::Token(session) => session.stream(&all_messages, config, cancel_token).await,
                 Instance::Message(session) => session.stream(&all_messages, config, cancel_token),
             };
 
@@ -240,10 +253,11 @@ impl ChatSession {
                 match partial_output {
                     Ok(backend_output) => {
                         let message = build_message(&backend_output);
+                        let finish_reason = backend_output.finish_reason;
                         let output = ChatReply {
                             message: message.clone(),
                             stats: backend_output.stats.clone(),
-                            finish_reason: backend_output.finish_reason.clone(),
+                            finish_reason: finish_reason.clone(),
                         };
                         let is_new = outputs.insert(turn_index, output).is_none();
 
@@ -257,6 +271,9 @@ impl ChatSession {
                         }
 
                         if sender.send(Ok(outputs.values().cloned().collect())).is_err() {
+                            break;
+                        }
+                        if finish_reason.is_some() {
                             break;
                         }
                     },

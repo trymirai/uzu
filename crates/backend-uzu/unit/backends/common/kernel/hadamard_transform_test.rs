@@ -6,10 +6,11 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::common::{
         Backend, Context, Encoder, Kernels, gpu_types::HadamardTransformOrder, kernel::HadamardTransformKernel,
     },
+    tests::helpers::{alloc_allocation_with_data, allocation_to_vec},
 };
 
 const BLOCK_SIZE: usize = 32;
@@ -108,21 +109,14 @@ fn run_kernel<T: ArrayElement + Float, B: Backend>(input: &TestInput<T>) -> Vec<
     )
     .expect("Failed to create HadamardTransformKernel");
 
-    let total_elements = input.batch_count * input.channel_count;
-    let mut data = context.create_array_from(&[total_elements], &input.data).into_allocation();
-    let factors_array = context.create_array_from::<i32>(&[input.channel_count], &input.factors);
+    let mut data = alloc_allocation_with_data::<B, T>(&context, &input.data);
+    let factors_allocation = alloc_allocation_with_data::<B, i32>(&context, &input.factors);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        &mut data,
-        factors_array.allocation(),
-        input.channel_count as u32,
-        input.batch_count as u32,
-        &mut encoder,
-    );
+    kernel.encode(&mut data, &factors_allocation, input.channel_count as u32, input.batch_count as u32, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::tests::helpers::allocation_to_vec(&data)
+    allocation_to_vec(&data)
 }
 
 fn test_hadamard_transform<T: ArrayElement + Float + Debug>(tolerance: f64) {

@@ -14,7 +14,7 @@ use std::{
 };
 
 use backend_remote::openai::Backend as OpenAIBackend;
-use backend_uzu::inference::Backend as UzuBackend;
+use backend_uzu::bridge::UzuLlmBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
 pub use download_manager::DownloadManagerType;
@@ -127,7 +127,7 @@ impl Engine {
         engine.spawn_storage_listener().await;
 
         {
-            let uzu_backend = UzuBackend::new();
+            let uzu_backend = UzuLlmBackend::new();
             let uzu_backend_identifier = uzu_backend.identifier();
             let uzu_backend_version = uzu_backend.version();
 
@@ -148,11 +148,19 @@ impl Engine {
 
             if let Some(lalamo_path) = config.lalamo_path {
                 let lalamo_registry = LocalRegistry::new(LocalRegistryConfig::lalamo(
-                    uzu_backend_identifier,
-                    uzu_backend_version,
+                    uzu_backend_identifier.clone(),
+                    uzu_backend_version.clone(),
                     lalamo_path,
                 ))?;
                 engine.add_registry(Box::new(lalamo_registry)).await?;
+            }
+            if let Some(local_path) = config.local_path {
+                let local_registry = LocalRegistry::new(LocalRegistryConfig::local(
+                    uzu_backend_identifier.clone(),
+                    uzu_backend_version.clone(),
+                    local_path,
+                ))?;
+                engine.add_registry(Box::new(local_registry)).await?;
             }
         }
 

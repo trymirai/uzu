@@ -62,7 +62,13 @@ impl RegistryTrait for Registry {
 
                 let model = self.model(name);
                 let model = match self.config.resolver.as_ref() {
-                    Some(resolver) => resolver(model)?,
+                    Some(resolver) => match resolver(model) {
+                        Ok(model) => model,
+                        Err(error) => {
+                            tracing::warn!(?error, path = %path.display(), "skipping invalid local model");
+                            continue;
+                        },
+                    },
                     None => model,
                 };
                 models.push(model);

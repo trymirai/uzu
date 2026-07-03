@@ -120,27 +120,7 @@ struct ClassificationView: View {
                 .textSelection(.enabled)
 
             if let stats = viewModel.stats {
-                Rectangle()
-                    .fill(MiraiAsset.cardBorder.swiftUIColor)
-                    .frame(height: 1)
-                    .padding(.vertical, 4)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    metricRow(
-                        label: "Time to first token:",
-                        value: String(format: "%.3f s", stats.timeToFirstToken)
-                    )
-                    if stats.tokensPerSecond > 0 {
-                        metricRow(
-                            label: "Tokens per second:",
-                            value: String(format: "%.3f t/s", stats.tokensPerSecond)
-                        )
-                    }
-                    metricRow(
-                        label: "Total time:",
-                        value: String(format: "%.3f s", stats.totalTime)
-                    )
-                }
+                ReplyStatsView(stats: stats)
             }
         }
         .padding(.leading, 16)
@@ -219,18 +199,6 @@ struct ClassificationView: View {
         }
         return isInputDisabled || !isInputValid
             ? MiraiAsset.card.swiftUIColor : MiraiAsset.primary.swiftUIColor
-    }
-
-    // MARK: - Metric row helper
-
-    @ViewBuilder
-    private func metricRow(label: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(label)
-                .font(.monoCaption12)
-            Text(value)
-                .font(.monoBody16)
-        }
     }
 
     init(identifier: String) {

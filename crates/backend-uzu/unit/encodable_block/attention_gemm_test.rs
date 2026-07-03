@@ -5,14 +5,18 @@ use num_traits::Float;
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
-use super::{AttentionGemmArguments, AttentionGemmBlock};
+use super::AttentionGemmCore;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Allocation, Backend, Context, Encoder},
+        common::{Backend, Context, Encoder},
         cpu::Cpu,
     },
     data_type::DataType,
+    encodable_block::mixer::attention::{
+        core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
+        state::AttentionStateType,
+    },
     tests::{
         assert::assert_eq_float,
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
@@ -46,13 +50,13 @@ fn get_test_data<T: ArrayElement + Float>(
         queries[i] = T::from((i as f32 * 0.13 + 0.5).sin() * 0.5).unwrap();
     }
 
-    let k_size = num_kv_heads * sequence_length * head_dim;
+    let k_size = sequence_length * num_kv_heads * head_dim;
     let mut keys = vec![T::zero(); k_size];
     for i in 0..k_size {
         keys[i] = T::from((i as f32 * 0.07 + 1.0).cos() * 0.5).unwrap();
     }
 
-    let v_size = num_kv_heads * sequence_length * head_dim;
+    let v_size = sequence_length * num_kv_heads * head_dim;
     let mut values = vec![T::zero(); v_size];
     for i in 0..v_size {
         values[i] = T::from((i as f32 * 0.11 + 2.0).sin() * 0.5).unwrap();
@@ -80,43 +84,51 @@ fn get_test_data<T: ArrayElement + Float>(
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let block = AttentionGemmBlock::<B>::new(T::data_type());
+    let core = AttentionGemmCore::<B>::new(
+        &AttentionCoreNewArguments {
+            head_dim: input.head_dim,
+            num_groups: input.num_kv_heads,
+            num_q_heads: input.num_heads,
+            has_sinks: false,
+            is_kv_cache_ring: false,
+            is_causal: input.do_causal,
+            is_trie: false,
+            sliding_window_size: None,
+            scale: Some(input.scale),
+            data_type: T::data_type(),
+        },
+        false,
+        context.as_ref(),
+    )
+    .expect("Failed to create AttentionGemmCore");
 
     let queries_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.queries);
     let keys_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.keys);
     let values_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.values);
 
-    let output_size = input.suffix_length * input.num_heads * input.head_dim;
-    let mut output_allocation = alloc_allocation::<B, T>(context.as_ref(), output_size);
-
     let segment_prefix_length = input.sequence_length - input.suffix_length;
+    let state_type = AttentionStateType::Full {
+        length: segment_prefix_length,
+    };
 
-    let args = AttentionGemmArguments::<B, Allocation<B>> {
+    let args = AttentionCoreEncodeArguments {
         queries: &queries_allocation,
         keys: &keys_allocation,
         values: &values_allocation,
-        output: &mut output_allocation,
+        suffix_length: input.suffix_length,
         trie: None,
         sinks: None,
-        num_heads: input.num_heads,
-        num_groups: input.num_kv_heads,
-        suffix_length: input.suffix_length,
-        sequence_length: input.sequence_length,
-        segment_prefix_length,
-        ring_params: None,
-        head_dim: input.head_dim,
-        sliding_window_size: None,
-        is_causal: input.do_causal,
-        scale: input.scale,
-        k_head_stride: (input.sequence_length * input.head_dim) as u64,
-        k_seq_stride: input.head_dim as u64,
-        v_head_stride: (input.sequence_length * input.head_dim) as u64,
-        v_seq_stride: input.head_dim as u64,
+        state_type: &state_type,
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    block.encode(&mut encoder, args).expect("Failed to encode AttentionGemm");
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let pooled_output = core.encode(args, &mut encoder).expect("Failed to encode AttentionGemm");
+    let mut output_allocation =
+        alloc_allocation::<B, T>(context.as_ref(), input.suffix_length * input.num_heads * input.head_dim);
+    encoder.encode_copy(&pooled_output, .., &mut output_allocation, ..);
+    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+    drop(pooled_output);
+    drop(completed);
 
     allocation_to_vec::<B, T>(&output_allocation)
 }

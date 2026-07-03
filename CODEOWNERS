@@ -11,7 +11,6 @@
 /crates/backend-uzu/src/session @uuuvn @LuckyIYI
 /crates/backend-uzu/src/parameters @uuuvn
 /crates/backend-uzu/src/speculators @uuuvn
-/crates/backend-uzu/src/tracer @uuuvn
 /crates/benchmarks @uuuvn
 /crates/bindings @alexxale
 /crates/cli @alexxale
