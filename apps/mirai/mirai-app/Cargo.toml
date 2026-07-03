@@ -14,13 +14,14 @@ path = "src/main.rs"
 # later when needed.
 uzu = { path = "../../../crates/uzu", default-features = false, features = ["backend-metal"] }
 
-# GPUI UI framework + platform entry point + Tokio bridge, from the local Zed
-# checkout. `font-kit` on gpui_platform is required for glyph rasterization.
-gpui = { path = "../../../external/zed/crates/gpui" }
-gpui_platform = { path = "../../../external/zed/crates/gpui_platform", features = ["font-kit"] }
-gpui_tokio = { path = "../../../external/zed/crates/gpui_tokio" }
+# GPUI UI framework + platform entry point + Tokio bridge, pinned to an upstream
+# Zed commit (see workspace.dependencies). `font-kit` on gpui_platform is required
+# for glyph rasterization.
+gpui = { workspace = true }
+gpui_platform = { workspace = true, features = ["font-kit"] }
+gpui_tokio = { workspace = true }
 # HTTP client for loading remote provider-icon images via gpui's image cache.
-reqwest_client = { path = "../../../external/zed/crates/reqwest_client" }
+reqwest_client = { workspace = true }
 
 # Mirai design system (theme + reusable components), mirroring the structure of
 # @trymirai-schemas/ui-kit. The app builds its UI from this crate.

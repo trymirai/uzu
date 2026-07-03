@@ -11,5 +11,5 @@ name = "ui_kit"
 path = "src/lib.rs"
 
 [dependencies]
-gpui = { path = "../../../external/zed/crates/gpui" }
+gpui = { workspace = true }
 unicode-segmentation = "1"
