@@ -215,7 +215,7 @@ fn accumulate_energy(
         totals.cpu += joules;
     } else if name.starts_with(obfstr!("ANE")) {
         totals.ane += joules;
-    } else if name.starts_with(obfstr!("DRAM")) {
+    } else if name.starts_with(obfstr!("DRAM")) || name.starts_with(obfstr!("DCS")) || name.starts_with(obfstr!("AMCC")) {
         totals.ram += joules;
     } else if name.starts_with(obfstr!("GPU SRAM")) {
         totals.gpu_sram += joules;
