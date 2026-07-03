@@ -47,7 +47,6 @@ impl EnergyTotals {
             gpu_sram: Joules(self.gpu_sram),
             ane: Joules(self.ane),
             ram: Joules(self.ram),
-            total: Joules(total),
             package: Joules(total),
         }
     }

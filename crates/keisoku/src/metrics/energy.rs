@@ -10,7 +10,17 @@ pub struct EnergyMetrics {
     pub ane: Joules,
     pub ram: Joules,
 
-    pub total: Joules,
-
     pub package: Joules,
+}
+
+impl EnergyMetrics {
+    pub fn total(&self) -> Joules {
+        Joules(
+            self.cpu.value()
+                + self.gpu.value()
+                + self.gpu_sram.value()
+                + self.ane.value()
+                + self.ram.value(),
+        )
+    }
 }
