@@ -2,6 +2,7 @@ use std::{thread::sleep, time::Duration};
 
 const COOL_GPU_TEMP: f32 = 60.0;
 
+#[cfg(target_vendor = "apple")]
 fn get_gpu_temp() -> f32 {
     let (sum, count) = keisoku::thermal_sensors()
         .iter()
@@ -12,6 +13,11 @@ fn get_gpu_temp() -> f32 {
     } else {
         sum / count as f32
     }
+}
+
+#[cfg(not(target_vendor = "apple"))]
+fn get_gpu_temp() -> f32 {
+    0.0
 }
 
 pub fn wait_gpu_cooldown() {
