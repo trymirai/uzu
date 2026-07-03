@@ -111,10 +111,10 @@ pub fn load_settings() -> AppSettings {
 }
 
 pub fn save_settings(settings: &AppSettings) {
-    if fs::create_dir_all(mirai_dir()).is_ok() {
-        if let Ok(json) = serde_json::to_string_pretty(settings) {
-            let _ = fs::write(settings_path(), json);
-        }
+    if fs::create_dir_all(mirai_dir()).is_ok()
+        && let Ok(json) = serde_json::to_string_pretty(settings)
+    {
+        let _ = fs::write(settings_path(), json);
     }
 }
 
@@ -149,10 +149,10 @@ pub fn save_chat(chat: &StoredChat) {
 
 pub fn load_chat(id: &str) -> Option<StoredChat> {
     let dir = chats_dir();
-    if let Ok(bytes) = fs::read(dir.join(format!("{id}.json"))) {
-        if let Ok(chat) = serde_json::from_slice(&bytes) {
-            return Some(chat);
-        }
+    if let Ok(bytes) = fs::read(dir.join(format!("{id}.json")))
+        && let Ok(chat) = serde_json::from_slice(&bytes)
+    {
+        return Some(chat);
     }
 
     let md_path = dir.join(format!("{id}.md"));
@@ -187,13 +187,12 @@ pub fn list_chats() -> Vec<StoredChat> {
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                if let Ok(bytes) = fs::read(&path) {
-                    if let Ok(chat) = serde_json::from_slice::<StoredChat>(&bytes) {
-                        seen.insert(chat.id.clone());
-                        chats.push(chat);
-                    }
-                }
+            if path.extension().and_then(|e| e.to_str()) == Some("json")
+                && let Ok(bytes) = fs::read(&path)
+                && let Ok(chat) = serde_json::from_slice::<StoredChat>(&bytes)
+            {
+                seen.insert(chat.id.clone());
+                chats.push(chat);
             }
         }
     }
@@ -209,14 +208,14 @@ pub fn list_chats() -> Vec<StoredChat> {
             if seen.contains(stem) {
                 continue;
             }
-            if let Ok(text) = fs::read_to_string(&path) {
-                if let Some(chat) = parse_markdown(&text, stem, file_mtime_ms(&path)) {
-                    chats.push(chat);
-                }
+            if let Ok(text) = fs::read_to_string(&path)
+                && let Some(chat) = parse_markdown(&text, stem, file_mtime_ms(&path))
+            {
+                chats.push(chat);
             }
         }
     }
-    chats.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    chats.sort_by_key(|chat| std::cmp::Reverse(chat.updated_at));
     chats
 }
 
@@ -224,7 +223,6 @@ pub fn global_instructions() -> String {
     fs::read_to_string(global_instructions_path()).unwrap_or_default()
 }
 
-#[allow(dead_code)]
 pub fn set_global_instructions(text: &str) {
     let dir = chats_dir();
     if fs::create_dir_all(&dir).is_ok() {

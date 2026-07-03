@@ -107,15 +107,12 @@ impl ChatView {
     fn picker_row(
         &self,
         cx: &mut Context<Self>,
-        id: String,
-        model: Model,
-        name: String,
-        vendor: String,
-        icon_url: Option<String>,
+        entry: ModelEntry,
         is_local: bool,
         hover: gpui::Hsla,
         for_message: Option<usize>,
     ) -> gpui::AnyElement {
+        let (id, model, name, vendor, icon_url) = entry;
         let theme = cx.theme().clone();
 
         let badge =
@@ -168,11 +165,11 @@ impl ChatView {
             list = list
                 .child(div().px(px(14.)).py_2().text_sm().text_color(theme.text_muted).child("No models available"));
         } else {
-            for (id, model, name, vendor, icon_url) in local {
-                list = list.child(self.picker_row(cx, id, model, name, vendor, icon_url, true, hover, for_message));
+            for entry in local {
+                list = list.child(self.picker_row(cx, entry, true, hover, for_message));
             }
-            for (id, model, name, vendor, icon_url) in cloud {
-                list = list.child(self.picker_row(cx, id, model, name, vendor, icon_url, false, hover, for_message));
+            for entry in cloud {
+                list = list.child(self.picker_row(cx, entry, false, hover, for_message));
             }
         }
 

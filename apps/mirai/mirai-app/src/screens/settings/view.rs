@@ -109,9 +109,7 @@ impl SettingsView {
         cat: CleanupCategory,
         cx: &mut Context<Self>,
     ) {
-        if self.clear_data_selected.contains(&cat) {
-            self.clear_data_selected.remove(&cat);
-        } else {
+        if !self.clear_data_selected.remove(&cat) {
             self.clear_data_selected.insert(cat);
         }
         cx.notify();
@@ -405,20 +403,6 @@ impl SettingsView {
                     .child(stepper("idle-inc", "+").on_click(cx.listener(|this, _, _, cx| this.bump_idle(1, cx)))),
             )
             .into_any_element()
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn select_tab(
-        &mut self,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        self.tab = match index {
-            1 => SettingsTab::Privacy,
-            2 => SettingsTab::About,
-            _ => SettingsTab::General,
-        };
-        cx.notify();
     }
 
     fn nav_item(

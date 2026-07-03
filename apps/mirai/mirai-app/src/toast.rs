@@ -47,7 +47,7 @@ pub fn push<T: 'static>(
     });
     cx.spawn(async move |_this, cx| {
         cx.background_executor().timer(Duration::from_secs(4)).await;
-        let _ = cx.update(|cx| {
+        cx.update(|cx| {
             if cx.has_global::<GlobalToasts>() {
                 cx.update_global::<GlobalToasts, _>(|toasts, _| {
                     toasts.items.retain(|t| t.id != id);

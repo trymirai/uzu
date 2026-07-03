@@ -328,7 +328,7 @@ pub fn open_window(cx: &mut App) {
             window_min_size: Some(size(px(720.), px(560.))),
             ..Default::default()
         },
-        |_, cx| cx.new(|cx| MiraiApp::new(cx)),
+        |_, cx| cx.new(MiraiApp::new),
     );
     if window.is_ok() {
         cx.activate(true);

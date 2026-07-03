@@ -187,46 +187,6 @@ impl ChatView {
         self.state.file_upload_open = false;
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn open_model_picker(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
-        self.close_popovers();
-        self.state.model_picker_open = true;
-        cx.notify();
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn open_file_upload(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
-        self.close_popovers();
-        self.state.file_upload_open = true;
-        cx.notify();
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn open_perf_panel(
-        &mut self,
-        msg_idx: usize,
-        cx: &mut Context<Self>,
-    ) {
-        self.close_popovers();
-        self.state.perf_open_msg = Some(msg_idx);
-        cx.notify();
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn open_gen_settings(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
-        self.state.gen_settings_open = true;
-        cx.notify();
-    }
-
     pub fn start_new(
         &mut self,
         cx: &mut Context<Self>,
@@ -701,89 +661,86 @@ impl Render for ChatView {
                     Role::Assistant => {
                         let mut block = div().flex().flex_col().gap_2().w_full().min_w_0().pb_3();
 
-                        if show_reasoning {
-                            if let Some(reasoning) = &cur.reasoning {
-                                if !reasoning.trim().is_empty() {
-                                    let collapsed = msg.reasoning_collapsed;
-                                    let chevron = if collapsed {
-                                        Icon::ChevronDown
-                                    } else {
-                                        Icon::ChevronUp
-                                    };
-                                    let header = div()
-                                        .id(SharedString::from(format!("think-hdr-{idx}")))
+                        if show_reasoning
+                            && let Some(reasoning) = &cur.reasoning
+                            && !reasoning.trim().is_empty()
+                        {
+                            let collapsed = msg.reasoning_collapsed;
+                            let chevron = if collapsed {
+                                Icon::ChevronDown
+                            } else {
+                                Icon::ChevronUp
+                            };
+                            let header = div()
+                                .id(SharedString::from(format!("think-hdr-{idx}")))
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .text_xs()
+                                .text_color(theme.text_muted)
+                                .cursor(CursorStyle::PointingHand)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if let Some(m) = this.state.messages.get_mut(idx) {
+                                        m.reasoning_collapsed = !m.reasoning_collapsed;
+                                        cx.notify();
+                                    }
+                                }))
+                                .child(
+                                    div()
                                         .flex()
                                         .items_center()
-                                        .justify_between()
-                                        .text_xs()
-                                        .text_color(theme.text_muted)
-                                        .cursor(CursorStyle::PointingHand)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            if let Some(m) = this.state.messages.get_mut(idx) {
-                                                m.reasoning_collapsed = !m.reasoning_collapsed;
-                                                cx.notify();
-                                            }
-                                        }))
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .gap_1()
-                                                .child(IconEl::new(Icon::Thinking, theme.text_muted).size(13.))
-                                                .child(if streaming_here {
-                                                    "thinking…"
-                                                } else {
-                                                    "Thoughts"
-                                                }),
-                                        )
-                                        .child(IconEl::new(chevron, theme.text_muted).size(crate::tokens::icon::XS));
-
-                                    let mut panel = div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_2()
-                                        .p_3()
-                                        .rounded_lg()
-                                        .bg(theme.bg_sub)
-                                        .border_l_2()
-                                        .border_color(theme.border)
-                                        .child(header);
-
-                                    if !collapsed {
-                                        let text = div()
-                                            .font_family(FONT_MONO)
-                                            .text_size(crate::tokens::font::SMALL)
-                                            .text_color(theme.text_muted)
-                                            .child(reasoning.clone());
-                                        if streaming_here {
-                                            panel = panel.child(
-                                                div()
-                                                    .relative()
-                                                    .child(
-                                                        div()
-                                                            .id(SharedString::from(format!("think-body-{idx}")))
-                                                            .max_h(px(180.))
-                                                            .overflow_y_scroll()
-                                                            .track_scroll(&self.reasoning_scroll)
-                                                            .child(text),
-                                                    )
-                                                    .child(
-                                                        div().absolute().bottom_0().left_0().right_0().h(px(28.)).bg(
-                                                            gpui::linear_gradient(
-                                                                180.,
-                                                                gpui::linear_color_stop(theme.bg_sub.opacity(0.), 0.),
-                                                                gpui::linear_color_stop(theme.bg_sub, 1.),
-                                                            ),
-                                                        ),
-                                                    ),
-                                            );
+                                        .gap_1()
+                                        .child(IconEl::new(Icon::Thinking, theme.text_muted).size(13.))
+                                        .child(if streaming_here {
+                                            "thinking…"
                                         } else {
-                                            panel = panel.child(text);
-                                        }
-                                    }
-                                    block = block.child(panel);
+                                            "Thoughts"
+                                        }),
+                                )
+                                .child(IconEl::new(chevron, theme.text_muted).size(crate::tokens::icon::XS));
+
+                            let mut panel = div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .p_3()
+                                .rounded_lg()
+                                .bg(theme.bg_sub)
+                                .border_l_2()
+                                .border_color(theme.border)
+                                .child(header);
+
+                            if !collapsed {
+                                let text = div()
+                                    .font_family(FONT_MONO)
+                                    .text_size(crate::tokens::font::SMALL)
+                                    .text_color(theme.text_muted)
+                                    .child(reasoning.clone());
+                                if streaming_here {
+                                    panel = panel.child(
+                                        div()
+                                            .relative()
+                                            .child(
+                                                div()
+                                                    .id(SharedString::from(format!("think-body-{idx}")))
+                                                    .max_h(px(180.))
+                                                    .overflow_y_scroll()
+                                                    .track_scroll(&self.reasoning_scroll)
+                                                    .child(text),
+                                            )
+                                            .child(div().absolute().bottom_0().left_0().right_0().h(px(28.)).bg(
+                                                gpui::linear_gradient(
+                                                    180.,
+                                                    gpui::linear_color_stop(theme.bg_sub.opacity(0.), 0.),
+                                                    gpui::linear_color_stop(theme.bg_sub, 1.),
+                                                ),
+                                            )),
+                                    );
+                                } else {
+                                    panel = panel.child(text);
                                 }
                             }
+                            block = block.child(panel);
                         }
 
                         let body = if cur.error {

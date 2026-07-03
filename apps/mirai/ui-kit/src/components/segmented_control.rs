@@ -3,13 +3,12 @@ use gpui::{
     prelude::*, px,
 };
 
+use super::ClickHandler;
 use crate::{theme::ActiveTheme, tokens};
-
-type SegHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 struct Segment {
     label: SharedString,
-    on_click: Option<SegHandler>,
+    on_click: Option<ClickHandler>,
 }
 
 #[derive(IntoElement)]
@@ -91,7 +90,7 @@ impl RenderOnce for SegmentedControl {
                 cell = cell.text_color(theme.text_muted).hover(move |s| s.bg(hover));
             }
             if let Some(handler) = seg.on_click {
-                cell = cell.on_click(move |e, w, cx| handler(e, w, cx));
+                cell = cell.on_click(handler);
             }
             row = row.child(cell);
         }

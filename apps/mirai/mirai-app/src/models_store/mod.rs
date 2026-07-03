@@ -144,10 +144,10 @@ impl ModelsStore {
         gpui_tokio::Tokio::spawn(cx, async move {
             let mut stream = engine.storage_subscribe().await;
             while let Some(item) = stream.next().await {
-                if let Ok(event) = item {
-                    if tx.unbounded_send(event).is_err() {
-                        break;
-                    }
+                if let Ok(event) = item
+                    && tx.unbounded_send(event).is_err()
+                {
+                    break;
                 }
             }
         })
@@ -161,16 +161,17 @@ impl ModelsStore {
                             let was_installed = row.is_installed();
                             row.state = Some(state);
                             let now_installed = row.is_installed();
-                            let name = row.name();
-                            if !was_installed && now_installed {
+                            let just_installed = !was_installed && now_installed;
+                            if just_installed {
                                 store.installed_at.insert(id.clone(), crate::persistence::now_ms());
                                 Self::save_installed_at(&store.installed_at);
                             } else if was_installed && !now_installed {
                                 store.installed_at.remove(&id);
                                 Self::save_installed_at(&store.installed_at);
                             }
+                            let downloaded_name = just_installed.then(|| row.name());
                             cx.notify();
-                            if !was_installed && now_installed {
+                            if let Some(name) = downloaded_name {
                                 crate::toast::push(cx, format!("{name} downloaded"), crate::toast::ToastKind::Success);
                             }
                         }

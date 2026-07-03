@@ -167,14 +167,6 @@ pub fn render(
     col.into_any_element()
 }
 
-pub fn markdown(
-    text: &str,
-    theme: &Theme,
-    id_seed: usize,
-) -> AnyElement {
-    render(&parse(text), theme, id_seed)
-}
-
 fn code_block(
     lang: &str,
     code: &str,

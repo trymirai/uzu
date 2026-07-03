@@ -19,6 +19,7 @@ impl RouterVm {
         row: &ModelRow,
         dark: bool,
     ) -> Self {
+        let phase = row.phase();
         Self {
             id: row.id().to_string(),
             name: row.name(),
@@ -26,8 +27,8 @@ impl RouterVm {
             icon_url: row.icon_url(dark),
             size: format_size(row.display_size_bytes()),
             installed: row.is_installed(),
-            downloading: matches!(row.phase(), DownloadPhase::Downloading {}),
-            paused: matches!(row.phase(), DownloadPhase::Paused {}),
+            downloading: matches!(phase, DownloadPhase::Downloading {}),
+            paused: matches!(phase, DownloadPhase::Paused {}),
             progress: row.progress(),
         }
     }

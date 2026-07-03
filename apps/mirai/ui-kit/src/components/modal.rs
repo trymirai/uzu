@@ -1,11 +1,10 @@
 use gpui::{App, ClickEvent, FontWeight, IntoElement, RenderOnce, SharedString, Window, div, prelude::*, px};
 
+use super::ClickHandler;
 use crate::{
     components::{Button, ButtonKind, ButtonSize},
     theme::ActiveTheme,
 };
-
-type Handler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 #[derive(IntoElement)]
 pub struct ConfirmModal {
@@ -13,8 +12,8 @@ pub struct ConfirmModal {
     message: SharedString,
     confirm_label: SharedString,
     danger: bool,
-    on_confirm: Option<Handler>,
-    on_cancel: Option<Handler>,
+    on_confirm: Option<ClickHandler>,
+    on_cancel: Option<ClickHandler>,
 }
 
 impl ConfirmModal {
@@ -75,7 +74,7 @@ impl RenderOnce for ConfirmModal {
 
         let mut cancel = Button::new("modal-cancel", "Cancel").kind(ButtonKind::Secondary).size(ButtonSize::Small);
         if let Some(handler) = self.on_cancel {
-            cancel = cancel.on_click(move |event, window, cx| handler(event, window, cx));
+            cancel = cancel.on_click(handler);
         }
 
         let mut confirm = Button::new("modal-confirm", self.confirm_label)
@@ -86,7 +85,7 @@ impl RenderOnce for ConfirmModal {
             })
             .size(ButtonSize::Small);
         if let Some(handler) = self.on_confirm {
-            confirm = confirm.on_click(move |event, window, cx| handler(event, window, cx));
+            confirm = confirm.on_click(handler);
         }
 
         div()

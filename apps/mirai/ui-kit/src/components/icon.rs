@@ -130,9 +130,7 @@ impl RenderOnce for IconEl {
     ) -> impl IntoElement {
         let mut el = svg().path(self.icon.path()).w(px(self.size)).h(px(self.size)).flex_none().text_color(self.color);
         if self.rotate_deg != 0.0 {
-            el = el.with_transformation(gpui::Transformation::rotate(gpui::radians(
-                self.rotate_deg * std::f32::consts::PI / 180.0,
-            )));
+            el = el.with_transformation(gpui::Transformation::rotate(gpui::radians(self.rotate_deg.to_radians())));
         }
         el
     }

@@ -165,12 +165,11 @@ pub fn export_chats_zip() -> Option<Vec<u8>> {
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("md") {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if seen.insert(name.to_string()) {
-                        names.push(name.to_string());
-                    }
-                }
+            if path.extension().and_then(|e| e.to_str()) == Some("md")
+                && let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && seen.insert(name.to_string())
+            {
+                names.push(name.to_string());
             }
         }
     }

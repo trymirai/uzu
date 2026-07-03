@@ -1,12 +1,13 @@
 use gpui::{App, ClickEvent, CursorStyle, ElementId, IntoElement, RenderOnce, Window, div, prelude::*, px};
 
+use super::ClickHandler;
 use crate::theme::ActiveTheme;
 
 #[derive(IntoElement)]
 pub struct Toggle {
     id: ElementId,
     on: bool,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_click: Option<ClickHandler>,
 }
 
 impl Toggle {
@@ -75,7 +76,7 @@ impl RenderOnce for Toggle {
                     .bg(knob),
             );
         if let Some(handler) = self.on_click {
-            el = el.on_click(move |event, window, cx| handler(event, window, cx));
+            el = el.on_click(handler);
         }
         el
     }

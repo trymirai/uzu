@@ -1,5 +1,6 @@
 use gpui::{App, ClickEvent, CursorStyle, ElementId, Hsla, IntoElement, RenderOnce, Window, div, prelude::*, px};
 
+use super::ClickHandler;
 use crate::{
     components::icon::{Icon, IconEl},
     theme::ActiveTheme,
@@ -14,7 +15,7 @@ pub struct IconButton {
     color: Option<Hsla>,
     background: Option<Hsla>,
     disabled: bool,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_click: Option<ClickHandler>,
 }
 
 impl IconButton {
@@ -113,7 +114,7 @@ impl RenderOnce for IconButton {
         } else {
             let mut el = el.cursor(CursorStyle::PointingHand).hover(move |s| s.bg(hover_bg));
             if let Some(handler) = self.on_click {
-                el = el.on_click(move |event, window, cx| handler(event, window, cx));
+                el = el.on_click(handler);
             }
             el
         }

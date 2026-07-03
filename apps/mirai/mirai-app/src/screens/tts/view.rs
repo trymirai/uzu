@@ -265,19 +265,17 @@ impl TtsView {
             SynthesisMessage::Done => {
                 self.generating = false;
                 self.cancel = None;
-                if self.error.is_none() {
-                    if let Some(pending) = self.pending_gen.as_ref() {
-                        if tts_history::save_generation(
-                            &pending.model,
-                            &pending.vendor,
-                            &pending.text,
-                            &self.pending_batches,
-                        )
-                        .is_some()
-                        {
-                            self.reload_history();
-                        }
-                    }
+                if self.error.is_none()
+                    && let Some(pending) = self.pending_gen.as_ref()
+                    && tts_history::save_generation(
+                        &pending.model,
+                        &pending.vendor,
+                        &pending.text,
+                        &self.pending_batches,
+                    )
+                    .is_some()
+                {
+                    self.reload_history();
                 }
                 self.clear_gen();
                 cx.notify();
