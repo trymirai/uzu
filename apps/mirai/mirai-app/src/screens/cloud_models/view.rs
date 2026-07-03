@@ -79,8 +79,6 @@ impl CloudModelsView {
         cx.spawn(async move |this, cx| {
             let existing = provider_keys::load_key(&engine, settings_key).await.unwrap_or_default();
             let _ = this.update(cx, |this, cx| {
-                // Drop the result if the user switched provider editors meanwhile,
-                // so one provider's key can't show/save under another.
                 if this.key_editor == Some(provider_id) {
                     input.update(cx, |field, cx| field.set_text(existing, cx));
                 }
@@ -343,7 +341,7 @@ impl CloudModelsView {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
         let id = vm.id.clone();
-        // Whole row is clickable → starts a chat (mirai-chat ModelCard).
+
         div()
             .id(gpui::SharedString::from(format!("use-{}", vm.id)))
             .flex()

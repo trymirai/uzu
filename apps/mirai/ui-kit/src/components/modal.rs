@@ -1,6 +1,3 @@
-//! A centered confirmation modal (dim backdrop + card with Cancel/Confirm).
-//! The owning view holds the "is it open" state and renders this as an overlay.
-
 use gpui::{App, ClickEvent, FontWeight, IntoElement, RenderOnce, SharedString, Window, div, prelude::*, px};
 
 use crate::{
@@ -99,7 +96,7 @@ impl RenderOnce for ConfirmModal {
             .items_center()
             .justify_center()
             .bg(gpui::black().opacity(0.5))
-            .occlude() // block interaction with the screen behind
+            .occlude()
             .child(
                 div()
                     .w(px(360.))

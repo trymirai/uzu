@@ -1,6 +1,3 @@
-//! Labeled button. Kinds mirror mirai-chat's `Button` (primary/secondary/
-//! danger/ghost) at two sizes.
-
 use gpui::{
     App, ClickEvent, CursorStyle, ElementId, FontWeight, IntoElement, RenderOnce, SharedString, Window, div,
     prelude::*, px,

@@ -1,5 +1,3 @@
-//! Spinner + optional label (a rotated SVG), mirroring ui-kit's `Loader`.
-
 use std::time::Duration;
 
 use gpui::{

@@ -98,16 +98,11 @@ pub async fn set_provider_key(
 
     let trimmed = api_key.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-    // Apply to the live engine first (registry + execution backend, so the
-    // provider is usable without a restart); only persist once it is accepted.
-    // Saving a rejected key would reload it on next launch and fail engine init.
     if let Some(key) = trimmed {
         let config = openai_config(provider.id, key.to_string()).ok_or("unknown provider")?;
-        // Replaces atomically — the existing provider stays if the key is invalid.
+
         engine.connect_openai(config).await.map_err(|e| e.to_string())?;
     } else {
-        // Clearing: drop both the registry and the live backend so the session
-        // can't keep calling the removed provider with the old key.
         let _ = engine.remove_registry(provider.id.to_string()).await;
         engine.remove_backend(provider.id.to_string()).await;
     }

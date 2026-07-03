@@ -1,5 +1,3 @@
-//! Welcome / onboarding screen shown on first launch.
-
 use std::time::Duration;
 
 use gpui::{
@@ -26,8 +24,6 @@ impl WelcomeView {
     }
 }
 
-/// A plain feature item: icon + label inline (no pill background), matching
-/// mirai-chat's welcome screen.
 fn feature(
     icon: Icon,
     label: &'static str,
@@ -120,8 +116,6 @@ impl Render for WelcomeView {
                     .child(div().text_xs().text_color(theme.text_muted).child("Share anonymous usage data")),
             );
 
-        // Fade the content in on first launch. Skipped under `cfg!(test)` so the
-        // `welcome` snapshot captures a deterministic (settled) frame.
         let content = if cfg!(test) {
             content.into_any_element()
         } else {

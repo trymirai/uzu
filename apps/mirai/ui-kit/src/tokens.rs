@@ -1,14 +1,5 @@
-//! App-wide design tokens: font-size, icon-size, radius, and layout scales.
-//!
-//! Colors live in [`crate::theme`] (the only theme-dependent values); sizes are
-//! constant, so they're compile-time `const`s. GPUI's Tailwind helpers
-//! (`.gap_2`, `.rounded_lg`, …) are already a scale and stay as-is — these cover
-//! only the raw literals that bypass one: `.text_size(px(..))`, numeric icon
-//! `.size(n.)`, and `.rounded(px(..))`.
-
 use gpui::{Pixels, px};
 
-/// Font sizes for `.text_size(..)`.
 pub mod font {
     use super::*;
     pub const CAPTION: Pixels = px(11.0);
@@ -23,7 +14,6 @@ pub mod font {
     pub const DISPLAY: Pixels = px(32.0);
 }
 
-/// Icon glyph sizes (`f32`, matching `IconEl::size`).
 pub mod icon {
     pub const XS: f32 = 12.0;
     pub const SM: f32 = 14.0;
@@ -34,13 +24,11 @@ pub mod icon {
     pub const HERO: f32 = 64.0;
 }
 
-/// Corner radii for `.rounded(..)` (Tailwind `.rounded_*` helpers stay as-is).
 pub mod radius {
     use super::*;
     pub const SM: Pixels = px(4.0);
 }
 
-/// Layout dimensions (`f32`; wrap with `px(..)` where `Pixels` is needed).
 pub mod layout {
     pub const SIDEBAR_WIDTH: f32 = 200.0;
     pub const FOOTER_HEIGHT: f32 = 24.0;

@@ -2,7 +2,6 @@ use uzu::storage::types::DownloadPhase;
 
 use crate::models_store::ModelRow;
 
-/// Display data for one TTS model row, projected from a [`ModelRow`].
 pub(super) struct TtsVm {
     pub id: String,
     pub name: String,

@@ -2,7 +2,6 @@ use uzu::storage::types::DownloadPhase;
 
 use crate::{models_store::ModelRow, screens::local_models::format_size};
 
-/// Display data for one router-model row, projected from a [`ModelRow`].
 pub(super) struct RouterVm {
     pub id: String,
     pub name: String,

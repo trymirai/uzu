@@ -1,7 +1,3 @@
-//! A horizontal slider: a track with a filled portion and a draggable thumb.
-//! `value` is a normalized fraction in `0.0..=1.0`; the caller maps it to/from
-//! the real parameter range. Supports click-to-set and drag.
-
 use std::{cell::Cell, rc::Rc};
 
 use gpui::{
@@ -21,7 +17,6 @@ pub struct Slider {
 }
 
 impl Slider {
-    /// `value` is the normalized fraction (0.0–1.0).
     pub fn new(
         id: impl Into<ElementId>,
         value: f32,
@@ -33,7 +28,6 @@ impl Slider {
         }
     }
 
-    /// Called with the new fraction (0.0–1.0) on click or drag.
     pub fn on_change(
         mut self,
         handler: impl Fn(f32, &mut Window, &mut App) + 'static,
@@ -43,7 +37,6 @@ impl Slider {
     }
 }
 
-/// Drag flag, kept in element state so it survives between frames.
 #[derive(Default, Clone)]
 struct SliderState {
     dragging: Rc<Cell<bool>>,

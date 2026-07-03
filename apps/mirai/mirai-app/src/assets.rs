@@ -1,9 +1,3 @@
-//! `AssetSource` serving the SVG icons in `assets/`. `rust-embed` reads from
-//! disk in debug builds (live icon reload) and embeds the bytes into the binary
-//! in release, so a shipped `.app` bundle is self-contained (no dependency on
-//! the source checkout's `assets/` dir at runtime). Fonts are embedded
-//! separately via `include_bytes!` in `ui-kit/theme.rs`.
-
 use std::borrow::Cow;
 
 use anyhow::Result;

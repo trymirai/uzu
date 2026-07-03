@@ -1,5 +1,3 @@
-//! uzu `Engine` as a GPUI global, set once at startup.
-
 use gpui::{App, Global};
 use uzu::engine::Engine;
 
@@ -14,7 +12,6 @@ pub fn init(
     cx.set_global(GlobalEngine(engine));
 }
 
-/// The engine, or `None` if init failed.
 pub fn try_engine(cx: &App) -> Option<Engine> {
     cx.try_global::<GlobalEngine>().map(|g| g.0.clone())
 }

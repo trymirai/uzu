@@ -1,5 +1,3 @@
-//! Square, icon-only button (sidebar toggle, copy, close, send/stop, …).
-
 use gpui::{App, ClickEvent, CursorStyle, ElementId, Hsla, IntoElement, RenderOnce, Window, div, prelude::*, px};
 
 use crate::{
@@ -44,7 +42,6 @@ impl IconButton {
         self
     }
 
-    /// Persistent fill behind the glyph (e.g. download pause/cancel controls).
     pub fn background(
         mut self,
         background: Hsla,
@@ -94,8 +91,7 @@ impl RenderOnce for IconButton {
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let color = self.color.unwrap_or(theme.text_muted);
-        // A button with a persistent fill brightens on hover; a flat one just
-        // picks up the standard hover wash.
+
         let hover_bg = if self.background.is_some() {
             theme.bg_sub_hover
         } else {

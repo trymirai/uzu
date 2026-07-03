@@ -1,5 +1,3 @@
-//! The multi-step "Clear data" wizard (select categories → confirm → result).
-
 use gpui::{AnyElement, Context, CursorStyle, FontWeight, IntoElement, SharedString, div, prelude::*, px};
 
 use super::view::SettingsView;

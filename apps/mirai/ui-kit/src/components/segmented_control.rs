@@ -1,6 +1,3 @@
-//! Segmented control (one highlighted option), mirroring ui-kit's
-//! `SegmentedControl`. Each segment carries its own click handler.
-
 use gpui::{
     App, ClickEvent, CursorStyle, ElementId, FontWeight, IntoElement, RenderOnce, SharedString, Window, div,
     prelude::*, px,
@@ -34,7 +31,6 @@ impl SegmentedControl {
         }
     }
 
-    /// Append a segment with its own click handler (use `cx.listener(...)`).
     pub fn segment(
         mut self,
         label: impl Into<SharedString>,
@@ -84,10 +80,6 @@ impl RenderOnce for SegmentedControl {
                 .child(seg.label);
 
             if is_sel {
-                // Active segment is a white pill (mirai-chat parity), so its text
-                // must be the theme's dark tone — `bg` in dark mode, `text` in
-                // light mode (`bg`/`text_inverse` are light in light mode, which
-                // left the label invisible on the white pill).
                 let label_color = if theme.dark {
                     theme.bg
                 } else {

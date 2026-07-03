@@ -1,9 +1,5 @@
-//! Monochrome SVG icons. GPUI paints an SVG as an alpha mask tinted by the
-//! element's `text_color`, so an `Icon` just names a bundled svg and a color.
-
 use gpui::{App, Hsla, IntoElement, RenderOnce, Styled, Window, px, svg};
 
-/// The bundled icon set. Each maps to a file under `assets/icons/`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Icon {
     Logo,
@@ -87,14 +83,12 @@ impl Icon {
     }
 }
 
-/// A renderable icon element. Defaults to a 16px glyph; color must be supplied
-/// (typically `cx.theme().text` / `text_muted`).
 #[derive(IntoElement)]
 pub struct IconEl {
     icon: Icon,
     size: f32,
     color: Hsla,
-    /// Rotation in degrees, applied around the icon's center.
+
     rotate_deg: f32,
 }
 
@@ -119,7 +113,6 @@ impl IconEl {
         self
     }
 
-    /// Rotate the glyph by `deg` degrees (e.g. a `+` → `×` at 45°).
     pub fn rotate(
         mut self,
         deg: f32,

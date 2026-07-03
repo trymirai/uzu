@@ -1,5 +1,3 @@
-//! Local model families and family detail (download, chat).
-
 use gpui::{
     Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString, Window, deferred, div,
     prelude::*, px, relative,
@@ -28,9 +26,7 @@ pub struct LocalModelsView {
     recommended_id: Option<String>,
     sort: ModelSort,
     sort_open: bool,
-    /// Memoized `families()` output, tagged with the theme it was built for.
-    /// Rebuilt only when the store, recommended id, or theme changes — not on
-    /// every frame (search/sort are applied to this cached list in `render`).
+
     families_cache: Option<(bool, Vec<FamilyViewModel>)>,
 }
 
@@ -42,9 +38,7 @@ impl LocalModelsView {
         cx: &mut Context<Self>,
     ) -> Self {
         let search = cx.new(|cx| TextInput::new(cx, "Search families"));
-        // A store change (catalog load, download progress) invalidates the
-        // families cache so it rebuilds on the next render; a search change only
-        // re-renders (the query is applied to the cached list).
+
         cx.observe(&store, |this, _, cx| {
             this.families_cache = None;
             cx.notify();
@@ -112,8 +106,7 @@ impl LocalModelsView {
                 Some(f) => (f.identifier.clone(), f.name(), f.vendor.name()),
                 None => ("other".to_string(), "Other".to_string(), String::new()),
             };
-            // The recommendation API returns a repository id, which differs from
-            // the model identifier — match against the model's repo ids.
+
             let is_recommended = recommended_id.is_some_and(|rid| row.model.repo_ids().iter().any(|r| r == rid));
             if is_recommended {
                 recommended_family = Some(key.clone());
@@ -191,9 +184,6 @@ impl LocalModelsView {
         list
     }
 
-    /// Rebuild `families_cache` only if it's missing or was built for a
-    /// different theme. `render` then takes the cached list, applies the live
-    /// search/sort, and restores it.
     fn ensure_families(
         &mut self,
         cx: &Context<Self>,
@@ -226,9 +216,7 @@ impl LocalModelsView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
-        // Outlined pill (mirai-chat parity): green text+border for accent chips,
-        // a transparent pill with a visible outline + muted text for neutral ones
-        // (no grey fill).
+
         let (fg, bg, border) = if accent {
             (theme.success, theme.success.opacity(0.08), theme.success.opacity(0.45))
         } else {
@@ -301,7 +289,6 @@ impl LocalModelsView {
             .h(px(56.))
             .px_4()
             .rounded_lg()
-            // Bordered card row (mirai-chat parity).
             .border_1()
             .border_color(theme.border)
             .bg(theme.card)
@@ -333,8 +320,6 @@ impl LocalModelsView {
         let hover = theme.bg_hover;
         let id = vm.id.clone();
 
-        // Left info area — clickable to start a chat when installed. Shows the
-        // provider logo (same as the family list), not a generic glyph.
         let vendor_icon =
             VendorIcon::new(vendor.to_string()).size(crate::tokens::icon::XL).icon_url(icon_url.map(|u| u.to_string()));
         let name_label = div()
@@ -442,30 +427,21 @@ impl LocalModelsView {
             .child(info)
             .child(div().w(px(80.)).text_sm().text_color(theme.text_muted).child(vm.size.clone()))
             .child(div().w(px(140.)).text_sm().text_color(theme.text_muted).child(vm.quant.clone()))
-            // Fixed-width, right-aligned control slot so the Size/Quantization
-            // columns don't shift as the controls change between phases
-            // (idle download button vs %+pause+cancel during download).
             .child(div().w(px(100.)).flex().justify_end().child(action));
 
         div()
-            // Stable id so hover state persists and updates on mouse-move
-            // (not only on scroll-triggered repaints).
             .id(SharedString::from(format!("model-{}", vm.id)))
             .flex()
             .flex_col()
             .px_4()
             .rounded_lg()
-            // Bordered card row, matching the families/providers list.
             .border_1()
             .border_color(theme.border)
             .bg(theme.card)
             .cursor(CursorStyle::PointingHand)
-            // Mirai-quantized rows get a full green tint (mirai-chat parity),
-            // not just a left edge.
             .when(vm.is_mirai, |el| el.bg(theme.success.opacity(0.12)))
             .hover(move |s| s.bg(hover))
             .child(content)
-            // Active downloads grow a thin progress bar along the bottom edge.
             .when(active_dl, |el| {
                 el.child(
                     div().w_full().pb(px(6.)).child(
@@ -572,9 +548,6 @@ impl LocalModelsView {
                     .child(IconEl::new(Icon::ChevronDown, theme.text_muted).size(crate::tokens::icon::SM)),
             )
             .when(self.sort_open, |el| {
-                // `deferred` paints the menu in the top layer so the list rows
-                // below it don't render on top (it stays positioned by the
-                // `.absolute()` offset relative to this `.relative()` trigger).
                 el.child(
                     deferred(
                         div()
@@ -604,15 +577,12 @@ impl Render for LocalModelsView {
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let query = self.search.read(cx).text().to_lowercase();
-        // Take the memoized family list (rebuilt only on store/recommend/theme
-        // change) and restore it before returning, so render does no per-frame
-        // catalog rebuild — only the cheap query filter + sort below.
+
         self.ensure_families(cx);
         let cache = self.families_cache.take().expect("ensure_families populates cache");
         let families: &[FamilyViewModel] = &cache.1;
         let selected = self.selected_family.clone();
 
-        // Delete-confirm modal (shared across both levels).
         let modal = self.confirm_delete.clone().map(|(id, name)| {
             ConfirmModal::new("Delete model", format!("Delete \"{name}\"? You can download it again later."))
                 .confirm_label("Delete")
@@ -667,8 +637,6 @@ impl Render for LocalModelsView {
             },
         };
 
-        // Reuse the `recommended` flag computed in `families()` (matched by repo
-        // id), rather than re-matching the API's repo id against the model id.
         let recommended =
             families.iter().find_map(|f| f.models.iter().find(|m| m.recommended).map(|vm| (vm.clone(), f.key.clone())));
 
@@ -724,7 +692,6 @@ impl Render for LocalModelsView {
             },
         }
 
-        // `families` is fully consumed above; restore the cache for next frame.
         self.families_cache = Some(cache);
 
         div()

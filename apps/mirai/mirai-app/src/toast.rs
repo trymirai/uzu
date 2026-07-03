@@ -1,7 +1,3 @@
-//! Transient toast notifications, as a GPUI global. Any view can `toast::push`;
-//! the app root renders them (top-right) and they auto-dismiss after a few
-//! seconds.
-
 use std::time::Duration;
 
 use gpui::{App, Context, Global, IntoElement, SharedString, Subscription, div, prelude::*, px};
@@ -33,7 +29,6 @@ pub fn init(cx: &mut App) {
     cx.set_global(GlobalToasts::default());
 }
 
-/// Show a toast; it removes itself after ~4s.
 pub fn push<T: 'static>(
     cx: &mut Context<T>,
     message: impl Into<SharedString>,
@@ -70,7 +65,6 @@ pub fn observe<V: 'static>(
     cx.observe_global::<GlobalToasts>(move |this, cx| on_change(this, cx))
 }
 
-/// The toast stack, positioned top-right. Returns None when empty.
 pub fn render_overlay(cx: &App) -> Option<gpui::AnyElement> {
     let toasts = cx.try_global::<GlobalToasts>()?;
     if toasts.items.is_empty() {

@@ -1,5 +1,3 @@
-//! Top-level screens routed by the app shell.
-
 pub mod chat;
 pub mod chats;
 pub mod cloud_models;

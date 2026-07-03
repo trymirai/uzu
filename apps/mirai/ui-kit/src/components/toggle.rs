@@ -1,5 +1,3 @@
-//! A pill switch toggle.
-
 use gpui::{App, ClickEvent, CursorStyle, ElementId, IntoElement, RenderOnce, Window, div, prelude::*, px};
 
 use crate::theme::ActiveTheme;
@@ -39,10 +37,7 @@ impl RenderOnce for Toggle {
         cx: &mut App,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
-        // ON track is a high-contrast pill: white in dark mode, the dark `text`
-        // tone in light mode (a hardcoded white would vanish on the light page).
-        // The knob is the inverse (`bg`), so it reads as a dark dot on the white
-        // dark-mode pill and a white dot on the dark light-mode pill.
+
         let on_track = if theme.dark {
             gpui::white()
         } else {

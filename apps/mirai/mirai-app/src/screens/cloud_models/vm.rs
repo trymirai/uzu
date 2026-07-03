@@ -1,6 +1,5 @@
 use crate::models_store::ModelRow;
 
-/// Display data for one cloud-model row, projected from a [`ModelRow`].
 pub(super) struct CloudVm {
     pub id: String,
     pub name: String,

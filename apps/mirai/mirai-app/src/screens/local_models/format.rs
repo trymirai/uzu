@@ -1,9 +1,6 @@
-//! Pure formatting helpers for the local-models lists (no view state).
-
 use gpui::{FontWeight, IntoElement, div, prelude::*, px};
 use uzu::types::model::Model;
 
-/// Column header row for a family detail section (Installed / Available).
 pub(super) fn section_header(
     label: &str,
     theme: &crate::theme::Theme,
@@ -25,8 +22,6 @@ pub(super) fn section_header(
 }
 
 pub(super) fn quant_label(model: &Model) -> String {
-    // `method` is already the clean short label, e.g. "mirai-m", "mirai-l",
-    // "mlx" → "MIRAI-M · 4-bit", "MLX · 4-bit".
     match &model.quantization {
         Some(q) => format!("{} · {}-bit", q.method.to_uppercase(), q.bits_per_weight),
         None => "Unquantized".to_string(),

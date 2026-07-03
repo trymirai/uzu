@@ -1,5 +1,3 @@
-//! Chat history: saved chats, search, bulk delete, rename in selection mode.
-
 use std::collections::HashSet;
 
 use gpui::{
@@ -195,9 +193,7 @@ impl ChatsView {
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.instructions_open = !this.instructions_open;
-                // Refresh from disk on open — Settings may have changed the
-                // shared instructions since this view was built, and editing a
-                // stale buffer would overwrite the newer text.
+
                 if this.instructions_open {
                     let current = persistence::global_instructions();
                     this.instructions.update(cx, |input, cx| input.set_text(&current, cx));
@@ -209,16 +205,11 @@ impl ChatsView {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(
-                        IconEl::new(Icon::Plus, theme.text)
-                            .size(crate::tokens::icon::MD)
-                            // The `+` rotates 45° into an `×` when expanded.
-                            .rotate(if open {
-                                45.
-                            } else {
-                                0.
-                            }),
-                    )
+                    .child(IconEl::new(Icon::Plus, theme.text).size(crate::tokens::icon::MD).rotate(if open {
+                        45.
+                    } else {
+                        0.
+                    }))
                     .child(
                         div()
                             .text_sm()
@@ -255,8 +246,7 @@ impl ChatsView {
         cx: &mut Context<Self>,
     ) {
         self.chats = persistence::list_chats();
-        // The list changed (delete/rename/nav) — let the shell refresh the
-        // sidebar's cached recents too.
+
         cx.emit(ChatsEvent::Changed);
         cx.notify();
     }
@@ -273,7 +263,6 @@ impl ChatsView {
         let click_id = chat.id.clone();
         let subtitle = relative_time(chat.updated_at);
 
-        // Selection checkbox (built from primitives — no Checkbox component yet).
         let mut checkbox = div()
             .size(px(18.))
             .flex_none()
@@ -347,8 +336,6 @@ impl ChatsView {
             .into_any_element()
     }
 
-    /// "Your chats" row (search + Select), or the selection toolbar in select
-    /// mode (select-all · count · Delete · exit), mirroring mirai-chat.
     fn toolbar(
         &self,
         cx: &mut Context<Self>,
@@ -497,8 +484,6 @@ impl Render for ChatsView {
         let filtered: Vec<String> = self.chats.iter().filter(|c| hit(c)).map(|c| c.id.clone()).collect();
         let toolbar = self.toolbar(cx, filtered.clone(), chats_empty);
 
-        // Virtualized chat list: only visible rows are built (the saved-chat
-        // count grows unbounded). Empty/no-match states render in their place.
         let empty_msg = if chats_empty {
             Some("No chats yet. Start a new conversation!")
         } else if filtered.is_empty() {

@@ -1,8 +1,5 @@
-//! Sampling-mode selection and its mapping to a uzu `SamplingMethod`.
-
 use uzu::types::basic::SamplingMethod;
 
-/// Sampling mode (mirrors ui-kit). `Default` uses the model's own config.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum SamplingMode {
     Default,
@@ -10,8 +7,6 @@ pub(super) enum SamplingMode {
     Stochastic,
 }
 
-/// Map the UI sampling mode + params to a uzu `SamplingMethod`. `Default`
-/// leaves it to the model's own config (`None`); a param of 0 means "off".
 pub(super) fn sampling_method(
     mode: SamplingMode,
     temperature: f32,

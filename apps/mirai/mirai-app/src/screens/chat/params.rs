@@ -1,6 +1,3 @@
-//! Pure UI builders for the generation-settings drawer: stepper buttons, value
-//! boxes, checkboxes, and slider/stepper parameter rows. None touch view state.
-
 use gpui::{AnyElement, App, ClickEvent, CursorStyle, Hsla, IntoElement, Window, div, prelude::*, px};
 
 use crate::{
@@ -8,7 +5,6 @@ use crate::{
     theme::Theme,
 };
 
-/// Small square −/+ stepper button.
 fn step_button(
     id: &'static str,
     symbol: &'static str,
@@ -34,12 +30,10 @@ fn step_button(
         .child(symbol)
 }
 
-/// Round a 0–1 sampling value to 2 decimals (avoids float drift across steps).
 pub(super) fn round2(v: f32) -> f32 {
     (v * 100.0).round() / 100.0
 }
 
-/// Read-only numeric value box on the right of a parameter row.
 fn value_box(
     text: String,
     theme: &Theme,
@@ -57,7 +51,6 @@ fn value_box(
         .child(text)
 }
 
-/// Small square checkbox used to enable/disable an optional sampling param.
 pub(super) fn param_checkbox(
     id: &'static str,
     checked: bool,
@@ -82,9 +75,6 @@ pub(super) fn param_checkbox(
     b
 }
 
-/// A sampling parameter: label (+ optional checkbox) and value box on top, a
-/// slider below. `frac` is the slider's normalized position; `on_change`
-/// receives the new fraction.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn slider_param(
     label: &'static str,
@@ -117,7 +107,6 @@ pub(super) fn slider_param(
         .child(Slider::new(slider_id, frac).on_change(on_change))
 }
 
-/// A labeled −/+ stepper row used in the generation-settings panel.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn param_row(
     label: &str,

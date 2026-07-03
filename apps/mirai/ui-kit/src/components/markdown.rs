@@ -1,12 +1,3 @@
-//! Markdown for chat bodies, mirroring ui-kit's `MarkdownRenderer`: code blocks
-//! (with copy), headings, lists, blockquotes, inline bold/italic/code/links
-//! (clickable). No tables/math/syntax-highlight yet.
-//!
-//! Parsing is split from rendering: [`parse`] produces a theme-independent
-//! [`ParsedMarkdown`] (cheap to clone/cache), and [`render`] builds elements
-//! from it. Callers that render the same text every frame (e.g. chat messages)
-//! cache the parse and only rebuild elements, avoiding a per-frame text scan.
-
 use std::ops::Range;
 
 use gpui::{
@@ -20,8 +11,6 @@ use crate::{
     tokens,
 };
 
-/// A parsed markdown document — theme-independent and cheap to clone, so callers
-/// can cache it and rebuild elements each frame without re-scanning the text.
 #[derive(Clone)]
 pub struct ParsedMarkdown {
     blocks: Vec<Block>,
@@ -52,7 +41,6 @@ enum Line {
     Plain(Inline),
 }
 
-/// Inline text with theme-independent style runs (colors applied at render).
 #[derive(Clone, Default)]
 struct Inline {
     text: String,
@@ -68,7 +56,6 @@ enum RunKind {
     Link,
 }
 
-/// Parse markdown into a reusable, theme-independent structure.
 pub fn parse(text: &str) -> ParsedMarkdown {
     let mut blocks = Vec::new();
     let mut in_code = false;
@@ -115,9 +102,6 @@ fn parse_prose(prose: &str) -> Block {
     Block::Prose(lines)
 }
 
-/// Classify one prose line: heading (`#`), blockquote (`> `), unordered
-/// (`- `/`* `) or ordered (`N. `) list item, blank, or plain — and parse its
-/// inline styling.
 fn parse_line(line: &str) -> Line {
     if line.trim().is_empty() {
         return Line::Blank;
@@ -148,13 +132,9 @@ fn parse_line(line: &str) -> Line {
         };
     }
 
-    // Plain lines keep their original (un-trimmed) text, matching prior behavior.
     Line::Plain(parse_inline(line))
 }
 
-/// Renders a parsed document as a vertical stack of prose + code blocks.
-/// `id_seed` must be unique per message so code-block copy buttons and link
-/// hit-targets get stable, non-colliding ids.
 pub fn render(
     parsed: &ParsedMarkdown,
     theme: &Theme,
@@ -165,8 +145,6 @@ pub fn render(
 
     for (bi, block) in parsed.blocks.iter().enumerate() {
         col = col.child(match block {
-            // Prose: one element per line so single newlines (lists, breaks)
-            // survive, while each line still wraps.
             Block::Prose(lines) => {
                 let mut p = div().flex().flex_col().w_full().min_w_0().gap_1();
                 for line in lines {
@@ -189,7 +167,6 @@ pub fn render(
     col.into_any_element()
 }
 
-/// Convenience: parse + render in one call (for callers that don't cache).
 pub fn markdown(
     text: &str,
     theme: &Theme,
@@ -198,8 +175,6 @@ pub fn markdown(
     render(&parse(text), theme, id_seed)
 }
 
-/// A fenced code block: header (language label + copy button) over a monospace
-/// body, mirroring ui-kit's code-block styling.
 fn code_block(
     lang: &str,
     code: &str,
@@ -271,12 +246,10 @@ fn code_block(
         .into_any_element()
 }
 
-/// Wrap prose so long lines wrap inside the chat column instead of overflowing.
 fn prose_wrap(el: AnyElement) -> AnyElement {
     div().w_full().min_w_0().overflow_hidden().child(el).into_any_element()
 }
 
-/// Build one parsed prose line into an element. `id` keeps link hit-targets unique.
 fn render_line(
     line: &Line,
     theme: &Theme,
@@ -288,7 +261,6 @@ fn render_line(
             level,
             inline,
         } => {
-            // h1=24px h2=20px h3=18px h4–h6=14px (body size), matching Electron.
             let size = match level {
                 1 => tokens::font::H1,
                 2 => tokens::font::H2,
@@ -341,7 +313,6 @@ fn render_line(
     }
 }
 
-/// Map a parsed inline run kind to a themed highlight style.
 fn style_for(
     kind: RunKind,
     theme: &Theme,
@@ -367,8 +338,6 @@ fn style_for(
     }
 }
 
-/// Build inline text: a `StyledText`, upgraded to an `InteractiveText`
-/// (clickable links opening in the browser) when it contains `[text](url)`.
 fn inline_el(
     inline: &Inline,
     theme: &Theme,
@@ -391,9 +360,6 @@ fn inline_el(
         .into_any_element()
 }
 
-/// Parse `**bold**`, `*italic*`, `` `code` ``, and `[text](url)` links into plain
-/// text + theme-independent style runs. Unclosed markers (common mid-stream)
-/// consume to end.
 fn parse_inline(line: &str) -> Inline {
     let mut out = String::new();
     let mut runs: Vec<(Range<usize>, RunKind)> = Vec::new();
@@ -425,7 +391,7 @@ fn parse_inline(line: &str) -> Inline {
                     link_text.push(nc);
                 }
                 if found_close && chars.peek() == Some(&'(') {
-                    chars.next(); // '('
+                    chars.next();
                     let mut url = String::new();
                     while let Some(&nc) = chars.peek() {
                         chars.next();
@@ -447,7 +413,7 @@ fn parse_inline(line: &str) -> Inline {
                 }
             },
             '*' if chars.peek() == Some(&'*') => {
-                chars.next(); // second '*'
+                chars.next();
                 let start = out.len();
                 loop {
                     match chars.next() {
@@ -473,9 +439,6 @@ fn parse_inline(line: &str) -> Inline {
                 runs.push((start..out.len(), RunKind::Italic));
             },
             '_' => {
-                // Underscores only delimit emphasis at word boundaries, so
-                // identifiers like `foo_bar` stay literal (CommonMark intraword
-                // rule). `*` keeps its intraword behaviour above.
                 if out.chars().last().is_some_and(char::is_alphanumeric) {
                     out.push('_');
                 } else {
@@ -494,7 +457,6 @@ fn parse_inline(line: &str) -> Inline {
                         out.push_str(&content);
                         runs.push((start..out.len(), RunKind::Italic));
                     } else {
-                        // No word-boundary close — keep the opener literal.
                         out.push('_');
                         out.push_str(&content);
                     }

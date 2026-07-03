@@ -1,5 +1,3 @@
-//! Reusable UI components built directly on GPUI (no Zed `ui`/`theme` crates).
-
 pub mod button;
 pub mod icon;
 pub mod icon_button;

@@ -1,9 +1,5 @@
-//! Pure helpers for the Chats screen: relative timestamps and rename validation.
-
 use crate::persistence;
 
-/// Human-readable "time ago" for a millisecond timestamp (à la date-fns
-/// `formatDistanceToNow`), used as the chat row subtitle.
 pub(super) fn relative_time(updated_at: u64) -> String {
     let now = persistence::now_ms();
     let secs = now.saturating_sub(updated_at) / 1000;

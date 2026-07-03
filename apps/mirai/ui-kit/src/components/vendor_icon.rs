@@ -1,9 +1,3 @@
-//! Vendor badge: the provider's remote logo when available (loaded by URL from
-//! the engine's model metadata), falling back to the vendor's initial on a
-//! deterministic per-vendor color. The colored initial is always rendered as a
-//! base, so offline / before-load it shows a neutral stand-in (no bundled
-//! third-party brand assets).
-
 use gpui::{App, FontWeight, IntoElement, RenderOnce, SharedString, Window, div, hsla, img, prelude::*, px, white};
 
 #[derive(IntoElement)]
@@ -30,8 +24,6 @@ impl VendorIcon {
         self
     }
 
-    /// Remote logo URL (from the model's vendor/family metadata). When set and
-    /// reachable, it's overlaid on the fallback initial.
     pub fn icon_url(
         mut self,
         url: Option<impl Into<SharedString>>,
@@ -52,7 +44,6 @@ impl RenderOnce for VendorIcon {
         let base = div().w(px(size)).h(px(size)).flex_none().rounded_md().overflow_hidden();
 
         match self.icon_url {
-            // Remote logo: the brand asset has its own background — no tint behind it.
             Some(url) => base.child(img(url).size_full()),
             None => {
                 let initial = name
@@ -73,7 +64,6 @@ impl RenderOnce for VendorIcon {
     }
 }
 
-/// Deterministic hue (0–1) from the vendor name (FNV-1a hash).
 fn vendor_hue(name: &str) -> f32 {
     let mut h: u32 = 2166136261;
     for b in name.to_lowercase().bytes() {

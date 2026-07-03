@@ -1,8 +1,3 @@
-//! Single-line text input, ported and themed from GPUI's `examples/input.rs`.
-//! Emits `InputEvent::Submit(text)` on Enter (used by the chat composer and,
-//! later, search boxes). GPUI has no built-in text field, so this implements the
-//! `EntityInputHandler` (IME/clipboard) + a custom painted `TextElement`.
-
 use std::ops::Range;
 
 use gpui::{
@@ -21,8 +16,6 @@ actions!(
     [Backspace, Delete, Left, Right, SelectLeft, SelectRight, SelectAll, Home, End, Paste, Cut, Copy, Submit, Newline,]
 );
 
-/// Registers the text-input keybindings (scoped to focused inputs via the
-/// `TextInput` key context). Call once at startup.
 pub fn register(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("backspace", Backspace, Some("TextInput")),
@@ -42,10 +35,9 @@ pub fn register(cx: &mut App) {
     ]);
 }
 
-/// Emitted to the owning view.
 pub enum InputEvent {
     Submit(String),
-    /// Content changed on every edit — used for autosave (e.g. instructions).
+
     Changed(String),
 }
 
@@ -59,15 +51,13 @@ pub struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
-    /// Multiline mode: renders content across hard newlines and auto-grows.
+
     multiline: bool,
-    /// Whether Enter submits (true) or inserts a newline (false). Single-line
-    /// always submits; the multiline composer submits with Shift+Enter for a
-    /// newline, while the instructions editor inserts newlines on Enter.
+
     submit_on_enter: bool,
     min_rows: usize,
     max_rows: usize,
-    /// Per-hard-line shaped layouts + their byte starts, for multiline hit-testing.
+
     last_lines: Vec<(usize, ShapedLine)>,
     last_line_height: Pixels,
 }
@@ -98,9 +88,6 @@ impl TextInput {
         }
     }
 
-    /// Enable multiline mode (auto-grows from `min`..`max` rows). When
-    /// `submit_on_enter` is true, Enter submits and Shift+Enter inserts a
-    /// newline; when false, Enter inserts a newline (textarea behaviour).
     pub fn multiline(
         mut self,
         submit_on_enter: bool,
@@ -152,9 +139,7 @@ impl TextInput {
         if text.trim().is_empty() {
             return;
         }
-        // Emit only; consumers that want the field cleared (e.g. the chat
-        // composer) do so themselves. Auto-clearing here erased API-key and
-        // search fields that don't act on Submit.
+
         cx.emit(InputEvent::Submit(text));
     }
 
@@ -644,7 +629,7 @@ struct TextElement {
 
 struct PrepaintState {
     line: Option<ShapedLine>,
-    /// Multiline: (y-offset, byte-start, shaped line) per hard newline.
+
     lines: Vec<(Pixels, usize, ShapedLine)>,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
