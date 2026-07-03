@@ -1,4 +1,5 @@
 mod chart;
+mod color;
 mod disk_row;
 mod format;
 mod host_info;

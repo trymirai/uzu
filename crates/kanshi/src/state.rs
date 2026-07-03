@@ -15,6 +15,16 @@ const THEMES: [(&str, Color); 7] = [
     ("white", Color::White),
 ];
 
+const THEME_RGB: [(u8, u8, u8); 7] = [
+    (57, 211, 83),
+    (34, 211, 238),
+    (59, 130, 246),
+    (217, 70, 239),
+    (250, 204, 21),
+    (248, 113, 113),
+    (229, 231, 235),
+];
+
 const MIN_INTERVAL_MS: u64 = 100;
 const MAX_INTERVAL_MS: u64 = 5000;
 const INTERVAL_STEP_MS: u64 = 100;
@@ -33,12 +43,28 @@ pub(crate) fn accent() -> Color {
     theme().1
 }
 
+pub(crate) fn accent_rgb() -> (u8, u8, u8) {
+    THEME_RGB[THEME_INDEX.load(Ordering::Relaxed) % THEME_RGB.len()]
+}
+
 pub(crate) fn background() -> Color {
     if DARK_BACKGROUND.load(Ordering::Relaxed) {
         Color::Black
     } else {
         Color::Reset
     }
+}
+
+pub(crate) fn background_rgb() -> (u8, u8, u8) {
+    if DARK_BACKGROUND.load(Ordering::Relaxed) {
+        (0, 0, 0)
+    } else {
+        (255, 255, 255)
+    }
+}
+
+pub(crate) fn foreground_rgb() -> (u8, u8, u8) {
+    (180, 180, 180)
 }
 
 pub(crate) fn interval() -> Duration {
