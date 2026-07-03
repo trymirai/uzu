@@ -9,17 +9,16 @@ pub(super) struct ServiceClient {
     inner: CFRetained<IOHIDServiceClient>,
 }
 
-impl ServiceClient {
-    pub(super) fn new(
-        io_kit: &'static IOKit,
-        inner: CFRetained<IOHIDServiceClient>,
-    ) -> Self {
+impl From<(&'static IOKit, CFRetained<IOHIDServiceClient>)> for ServiceClient {
+    fn from((io_kit, inner): (&'static IOKit, CFRetained<IOHIDServiceClient>)) -> Self {
         Self {
             io_kit,
             inner,
         }
     }
+}
 
+impl ServiceClient {
     fn property<T: ConcreteType>(
         &self,
         key: &str,

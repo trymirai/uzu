@@ -33,7 +33,7 @@ impl EventSystemClient {
         let Some(array) = self.services_matching(page, usage) else {
             return Box::default();
         };
-        array.to_vec().into_iter().map(|inner| ServiceClient::new(io_kit, inner)).collect()
+        array.to_vec().into_iter().map(|inner| (io_kit, inner).into()).collect()
     }
 
     fn services_matching(
