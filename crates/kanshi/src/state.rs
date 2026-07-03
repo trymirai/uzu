@@ -5,25 +5,17 @@ use std::{
 
 use ratatui::style::Color;
 
-const THEMES: [(&str, Color); 7] = [
-    ("green", Color::Green),
-    ("cyan", Color::Cyan),
-    ("blue", Color::Blue),
-    ("magenta", Color::Magenta),
-    ("yellow", Color::Yellow),
-    ("red", Color::Red),
-    ("white", Color::White),
+const THEMES: [(&str, Color, (u8, u8, u8)); 7] = [
+    ("green", Color::Green, (57, 211, 83)),
+    ("cyan", Color::Cyan, (34, 211, 238)),
+    ("blue", Color::Blue, (59, 130, 246)),
+    ("magenta", Color::Magenta, (217, 70, 239)),
+    ("yellow", Color::Yellow, (250, 204, 21)),
+    ("red", Color::Red, (248, 113, 113)),
+    ("white", Color::White, (229, 231, 235)),
 ];
 
-const THEME_RGB: [(u8, u8, u8); 7] = [
-    (57, 211, 83),
-    (34, 211, 238),
-    (59, 130, 246),
-    (217, 70, 239),
-    (250, 204, 21),
-    (248, 113, 113),
-    (229, 231, 235),
-];
+const NEUTRAL_FOREGROUND: (u8, u8, u8) = (180, 180, 180);
 
 const MIN_INTERVAL_MS: u64 = 100;
 const MAX_INTERVAL_MS: u64 = 5000;
@@ -35,7 +27,7 @@ static DARK_BACKGROUND: AtomicBool = AtomicBool::new(true);
 static SHOW_INFO: AtomicBool = AtomicBool::new(false);
 static DATA_VERSION: AtomicU64 = AtomicU64::new(0);
 
-pub(crate) fn theme() -> (&'static str, Color) {
+pub(crate) fn theme() -> (&'static str, Color, (u8, u8, u8)) {
     THEMES[THEME_INDEX.load(Ordering::Relaxed) % THEMES.len()]
 }
 
@@ -44,7 +36,7 @@ pub(crate) fn accent() -> Color {
 }
 
 pub(crate) fn accent_rgb() -> (u8, u8, u8) {
-    THEME_RGB[THEME_INDEX.load(Ordering::Relaxed) % THEME_RGB.len()]
+    theme().2
 }
 
 pub(crate) fn background() -> Color {
@@ -64,7 +56,7 @@ pub(crate) fn background_rgb() -> (u8, u8, u8) {
 }
 
 pub(crate) fn foreground_rgb() -> (u8, u8, u8) {
-    (180, 180, 180)
+    NEUTRAL_FOREGROUND
 }
 
 pub(crate) fn interval() -> Duration {
