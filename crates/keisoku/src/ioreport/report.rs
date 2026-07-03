@@ -55,7 +55,7 @@ impl EnergyTotals {
         &self,
         elapsed: Duration,
     ) -> PowerMetrics {
-        let elapsed_secs = elapsed.as_secs_f32().max(f32::EPSILON);
+        let elapsed_secs = elapsed.as_secs_f32().max(0.001);
         let total = self.total();
         PowerMetrics {
             cpu: Watts(self.cpu / elapsed_secs),
@@ -135,18 +135,7 @@ impl IoReport {
                     result.gpu_usage = calculate_frequency(&channel.states, &soc.gpu_frequencies[1..]);
                 }
             } else if channel.group == obfstr!("Energy Model") {
-                let joules = joules(channel.integer_value, channel.unit.trim());
-                if channel.name == obfstr!("GPU Energy") {
-                    energy.gpu += joules;
-                } else if channel.name.ends_with(obfstr!("CPU Energy")) {
-                    energy.cpu += joules;
-                } else if channel.name.starts_with(obfstr!("ANE")) {
-                    energy.ane += joules;
-                } else if channel.name.starts_with(obfstr!("DRAM")) {
-                    energy.ram += joules;
-                } else if channel.name.starts_with(obfstr!("GPU SRAM")) {
-                    energy.gpu_sram += joules;
-                }
+                accumulate_energy(&mut energy, &channel.name, joules(channel.integer_value, channel.unit.trim()));
             } else if channel.group == obfstr!("AMC Stats") {
                 accumulate_amc_bandwidth(channel.integer_value, &channel.name, &mut bandwidth);
             } else if channel.group == obfstr!("PMP") {
@@ -188,18 +177,7 @@ fn energy_totals(
         if channel.group != obfstr!("Energy Model") {
             continue;
         }
-        let joules = joules(channel.integer_value, channel.unit.trim());
-        if channel.name == obfstr!("GPU Energy") {
-            totals.gpu += joules;
-        } else if channel.name.ends_with(obfstr!("CPU Energy")) {
-            totals.cpu += joules;
-        } else if channel.name.starts_with(obfstr!("ANE")) {
-            totals.ane += joules;
-        } else if channel.name.starts_with(obfstr!("DRAM")) {
-            totals.ram += joules;
-        } else if channel.name.starts_with(obfstr!("GPU SRAM")) {
-            totals.gpu_sram += joules;
-        }
+        accumulate_energy(&mut totals, &channel.name, joules(channel.integer_value, channel.unit.trim()));
     }
     totals
 }
@@ -208,13 +186,36 @@ fn joules(
     energy: i64,
     unit: &str,
 ) -> f32 {
-    if unit == obfstr!("mJ") {
-        energy as f32 / 1e3
-    } else if unit == obfstr!("uJ") {
-        energy as f32 / 1e6
-    } else if unit == obfstr!("nJ") {
-        energy as f32 / 1e9
-    } else {
-        0.0
+    let energy = energy as f32;
+    let Some(prefix) = unit.trim().strip_suffix('J') else {
+        return 0.0;
+    };
+    let scale = match prefix {
+        "k" => 1e3,
+        "" => 1.0,
+        "m" => 1e-3,
+        "u" | "µ" => 1e-6,
+        "n" => 1e-9,
+        "p" => 1e-12,
+        _ => return 0.0,
+    };
+    energy * scale
+}
+
+fn accumulate_energy(
+    totals: &mut EnergyTotals,
+    name: &str,
+    joules: f32,
+) {
+    if name == obfstr!("GPU Energy") {
+        totals.gpu += joules;
+    } else if name.ends_with(obfstr!("CPU Energy")) {
+        totals.cpu += joules;
+    } else if name.starts_with(obfstr!("ANE")) {
+        totals.ane += joules;
+    } else if name.starts_with(obfstr!("DRAM")) {
+        totals.ram += joules;
+    } else if name.starts_with(obfstr!("GPU SRAM")) {
+        totals.gpu_sram += joules;
     }
 }
