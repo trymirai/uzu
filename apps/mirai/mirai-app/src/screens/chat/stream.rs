@@ -15,7 +15,7 @@ use super::{
     chat_turn::ChatTurn, conversation::conversation_for_request, event::ChatEvent, role::Role,
     sampling::sampling_method, version::Version, view::ChatView,
 };
-use crate::{engine, persistence, title_gen};
+use crate::{components::markdown, engine, persistence, title_gen};
 
 const REVEAL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
 const MIN_REVEAL_CHARS: usize = 3;
@@ -168,6 +168,9 @@ impl ChatView {
         self.state.stream_gen = self.state.stream_gen.wrapping_add(1);
         let gen_id = self.state.stream_gen;
         self.state.revealed_chars = 0;
+        self.state.stream_parsed = None;
+        self.state.stream_parse_in_flight = false;
+        self.state.stream_parse_pending = false;
 
         let (tx, mut rx) = mpsc::unbounded::<StreamMsg>();
 
@@ -276,10 +279,47 @@ impl ChatView {
             let remaining = full - self.state.revealed_chars;
             let step = (remaining / REVEAL_CATCHUP_DIVISOR).max(MIN_REVEAL_CHARS);
             self.state.revealed_chars = self.state.revealed_chars.saturating_add(step).min(full);
+            self.request_stream_parse(cx);
             cx.notify();
             return true;
         }
         self.state.streaming
+    }
+
+    fn request_stream_parse(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        if self.state.stream_parse_in_flight {
+            self.state.stream_parse_pending = true;
+            return;
+        }
+        let Some(message) = self.state.messages.last() else {
+            return;
+        };
+        if message.role != Role::Assistant {
+            return;
+        }
+        let prefix: String = message.cur().text.chars().take(self.state.revealed_chars).collect();
+        self.state.stream_parse_in_flight = true;
+        let gen_id = self.state.stream_gen;
+        let parse_task = cx.background_executor().spawn(async move { markdown::parse(&prefix) });
+        cx.spawn(async move |this, cx| {
+            let parsed = parse_task.await;
+            let _ = this.update(cx, |view, cx| {
+                if view.state.stream_gen != gen_id {
+                    return;
+                }
+                view.state.stream_parsed = Some(parsed);
+                view.state.stream_parse_in_flight = false;
+                cx.notify();
+                if view.state.stream_parse_pending {
+                    view.state.stream_parse_pending = false;
+                    view.request_stream_parse(cx);
+                }
+            });
+        })
+        .detach();
     }
 
     fn apply_stream(
