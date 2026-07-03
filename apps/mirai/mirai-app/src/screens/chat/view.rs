@@ -520,7 +520,7 @@ impl Render for ChatView {
                                 .text_color(theme.error)
                                 .child(cur.text.clone())
                                 .into_any_element()
-                        } else if cur.text.is_empty() && streaming {
+                        } else if streaming && self.state.reveal.revealed_chars() == 0 {
                             let label = if self.state.waiting_for_model {
                                 "Waiting for model…"
                             } else {
