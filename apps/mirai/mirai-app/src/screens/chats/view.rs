@@ -1,32 +1,26 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, ops::Range};
 
-use gpui::{
-    AnyElement, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString, Window, div,
-    prelude::*, px, uniform_list,
-};
+use gpui::{Context, Entity, EventEmitter, FontWeight, IntoElement, Render, Window, div, prelude::*, px, uniform_list};
 
-use super::{
-    event::ChatsEvent,
-    util::{relative_time, validate_rename_name},
-};
+use super::event::ChatsEvent;
 use crate::{
-    components::{Button, ButtonKind, ButtonSize, ConfirmModal, Icon, IconButton, IconEl, InputEvent, TextInput},
+    components::{ConfirmModal, InputEvent, TextInput},
     instructions_card::InstructionsCard,
     persistence::{self, StoredChat},
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
 };
 
 pub struct ChatsView {
-    chats: Vec<StoredChat>,
-    search: Entity<TextInput>,
-    instructions: Entity<InstructionsCard>,
-    rename_input: Entity<TextInput>,
-    rename_open: bool,
-    rename_error: Option<&'static str>,
-    confirm_delete: Option<(String, String)>,
-    selection_mode: bool,
-    selected: HashSet<String>,
-    confirm_bulk_delete: bool,
+    pub(super) chats: Vec<StoredChat>,
+    pub(super) search: Entity<TextInput>,
+    pub(super) instructions: Entity<InstructionsCard>,
+    pub(super) rename_input: Entity<TextInput>,
+    pub(super) rename_open: bool,
+    pub(super) rename_error: Option<&'static str>,
+    pub(super) confirm_delete: Option<(String, String)>,
+    pub(super) selection_mode: bool,
+    pub(super) selected: HashSet<String>,
+    pub(super) confirm_bulk_delete: bool,
 }
 
 impl EventEmitter<ChatsEvent> for ChatsView {}
@@ -60,110 +54,6 @@ impl ChatsView {
         }
     }
 
-    fn open_rename(
-        &mut self,
-        title: &str,
-        cx: &mut Context<Self>,
-    ) {
-        self.rename_open = true;
-        self.rename_error = None;
-        self.rename_input.update(cx, |input, cx| input.set_text(title, cx));
-        cx.notify();
-    }
-
-    fn close_rename(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
-        self.rename_open = false;
-        self.rename_error = None;
-        cx.notify();
-    }
-
-    fn confirm_rename(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(id) = self.selected.iter().next().cloned().filter(|_| self.selected.len() == 1) else {
-            return;
-        };
-        let text = self.rename_input.read(cx).text();
-        match validate_rename_name(&text) {
-            Err(msg) => {
-                self.rename_error = Some(msg);
-                cx.notify();
-            },
-            Ok(title) => {
-                if persistence::rename_chat(&id, &title) {
-                    self.close_rename(cx);
-                    self.reload(cx);
-                } else {
-                    self.rename_error = Some("failed to rename chat");
-                    cx.notify();
-                }
-            },
-        }
-    }
-
-    fn rename_modal(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
-        if !self.rename_open {
-            return None;
-        }
-        let theme = cx.theme().clone();
-        let error = self.rename_error;
-
-        Some(
-            div()
-                .absolute()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(gpui::black().opacity(0.5))
-                .occlude()
-                .child(
-                    div()
-                        .w(px(400.))
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .p_4()
-                        .rounded_xl()
-                        .bg(theme.card)
-                        .border_1()
-                        .border_color(theme.border)
-                        .child(div().text_color(theme.text).font_weight(FontWeight::MEDIUM).child("Rename chat"))
-                        .child(self.rename_input.clone())
-                        .children(error.map(|msg| div().text_xs().text_color(theme.error).child(msg)))
-                        .child(
-                            div()
-                                .flex()
-                                .justify_end()
-                                .gap_2()
-                                .child(
-                                    Button::new("rename-cancel", "Cancel")
-                                        .kind(ButtonKind::Secondary)
-                                        .size(ButtonSize::Small)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.close_rename(cx);
-                                        })),
-                                )
-                                .child(
-                                    Button::new("rename-save", "Save")
-                                        .kind(ButtonKind::Primary)
-                                        .size(ButtonSize::Small)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.confirm_rename(cx);
-                                        })),
-                                ),
-                        ),
-                ),
-        )
-    }
-
     pub fn reload(
         &mut self,
         cx: &mut Context<Self>,
@@ -172,222 +62,6 @@ impl ChatsView {
 
         cx.emit(ChatsEvent::Changed);
         cx.notify();
-    }
-
-    fn row(
-        &self,
-        cx: &mut Context<Self>,
-        chat: &StoredChat,
-        selection_mode: bool,
-        selected: bool,
-    ) -> AnyElement {
-        let theme = cx.theme().clone();
-        let hover_bg = theme.bg_hover;
-        let click_id = chat.id.clone();
-        let subtitle = relative_time(chat.updated_at);
-
-        let mut checkbox = div()
-            .size(px(18.))
-            .flex_none()
-            .rounded(crate::tokens::radius::SM)
-            .border_1()
-            .border_color(theme.border)
-            .flex()
-            .items_center()
-            .justify_center();
-        if selected {
-            checkbox =
-                checkbox.bg(theme.info).child(IconEl::new(Icon::Check, theme.card).size(crate::tokens::icon::XS));
-        }
-
-        let mut left = div().flex().flex_1().min_w_0().items_center().gap_3();
-        if selection_mode {
-            left = left.child(checkbox);
-        } else {
-            left = left.child(IconEl::new(Icon::Chats, theme.text_muted).size(crate::tokens::icon::LG));
-        }
-        left = left.child(
-            div()
-                .min_w_0()
-                .overflow_hidden()
-                .text_sm()
-                .text_color(theme.text)
-                .font_weight(FontWeight::MEDIUM)
-                .child(chat.title.clone()),
-        );
-
-        let timestamp = div()
-            .flex_none()
-            .font_family(crate::theme::FONT_MONO)
-            .text_xs()
-            .text_color(theme.text_muted)
-            .child(subtitle);
-
-        let border = if selected {
-            theme.info
-        } else {
-            theme.border
-        };
-        div()
-            .pb_2()
-            .child(
-                div()
-                    .id(SharedString::from(chat.id.clone()))
-                    .flex()
-                    .w_full()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .min_h(px(46.))
-                    .px_3()
-                    .py_1p5()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(border)
-                    .bg(theme.card)
-                    .cursor(CursorStyle::PointingHand)
-                    .hover(move |s| s.bg(hover_bg))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.selection_mode {
-                            if !this.selected.remove(&click_id) {
-                                this.selected.insert(click_id.clone());
-                            }
-                            cx.notify();
-                        } else {
-                            cx.emit(ChatsEvent::Open(click_id.clone()));
-                        }
-                    }))
-                    .child(left)
-                    .child(timestamp),
-            )
-            .into_any_element()
-    }
-
-    fn toolbar(
-        &self,
-        cx: &mut Context<Self>,
-        filtered: Vec<String>,
-        empty: bool,
-    ) -> AnyElement {
-        let theme = cx.theme().clone();
-
-        if self.selection_mode {
-            let total = filtered.len();
-            let count = self.selected.len();
-            let all = total > 0 && count == total;
-
-            let mut select_all = div()
-                .id("select-all")
-                .size(px(18.))
-                .flex_none()
-                .rounded(crate::tokens::radius::SM)
-                .border_1()
-                .border_color(theme.border)
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor(CursorStyle::PointingHand)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.selected.len() == filtered.len() && !filtered.is_empty() {
-                        this.selected.clear();
-                    } else {
-                        this.selected = filtered.iter().cloned().collect();
-                    }
-                    cx.notify();
-                }));
-            if all {
-                select_all =
-                    select_all.bg(theme.info).child(IconEl::new(Icon::Check, theme.card).size(crate::tokens::icon::XS));
-            }
-
-            let show_rename = count == 1 && !all;
-
-            let mut actions = div().flex().items_center().gap_2();
-            if show_rename {
-                let title = self
-                    .chats
-                    .iter()
-                    .find(|c| self.selected.contains(&c.id))
-                    .map(|c| c.title.clone())
-                    .unwrap_or_default();
-                actions = actions.child(IconButton::new("rename-one", Icon::Rename).color(theme.text_muted).on_click(
-                    cx.listener(move |this, _, _, cx| {
-                        this.open_rename(&title, cx);
-                    }),
-                ));
-            }
-            actions = actions
-                .child(
-                    Button::new("bulk-delete", "Delete")
-                        .kind(ButtonKind::Danger)
-                        .size(ButtonSize::Small)
-                        .disabled(count == 0)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if !this.selected.is_empty() {
-                                this.confirm_bulk_delete = true;
-                                cx.notify();
-                            }
-                        })),
-                )
-                .child(IconButton::new("sel-exit", Icon::Close).color(theme.text_muted).on_click(cx.listener(
-                    |this, _, _, cx| {
-                        this.selection_mode = false;
-                        this.selected.clear();
-                        cx.notify();
-                    },
-                )));
-
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .mb_3()
-                .child(div().flex().items_center().gap_3().child(select_all).child(
-                    div().text_sm().text_color(theme.text_muted).child(if count == 0 {
-                        "Select all".to_string()
-                    } else if all {
-                        "All selected".to_string()
-                    } else {
-                        format!("{count} selected")
-                    }),
-                ))
-                .child(actions)
-                .into_any_element()
-        } else {
-            div()
-                .flex()
-                .items_center()
-                .gap_3()
-                .mb_3()
-                .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.text).child("Your chats"))
-                .child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px_3()
-                        .py_2()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.card)
-                        .child(IconEl::new(Icon::Search, theme.text_muted).size(crate::tokens::icon::SM))
-                        .child(self.search.clone()),
-                )
-                .child(
-                    Button::new("select-mode", "Select")
-                        .kind(ButtonKind::Secondary)
-                        .size(ButtonSize::Small)
-                        .disabled(empty)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.selection_mode = true;
-                            this.selected.clear();
-                            cx.notify();
-                        })),
-                )
-                .into_any_element()
-        }
     }
 }
 
@@ -431,7 +105,7 @@ impl Render for ChatsView {
                 uniform_list(
                     "chats-list",
                     ids.len(),
-                    cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                    cx.processor(move |this, range: Range<usize>, _window, cx| {
                         range
                             .filter_map(|ix| {
                                 let id = ids.get(ix)?;

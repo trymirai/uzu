@@ -1,4 +1,7 @@
 mod event;
+mod rename;
+mod rows;
+mod toolbar;
 mod util;
 mod view;
 

@@ -1,4 +1,6 @@
 mod event;
+mod keys;
+mod rows;
 mod view;
 mod vm;
 
