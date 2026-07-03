@@ -4805,7 +4805,6 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
- "tokio",
  "tray-icon",
  "ui-kit",
  "uzu",
