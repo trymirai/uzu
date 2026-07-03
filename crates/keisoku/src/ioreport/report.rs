@@ -133,7 +133,7 @@ impl IoReport {
                     result.gpu_usage = calculate_frequency(&channel.states, &soc.gpu_frequencies[1..]);
                 }
             } else if channel.group == obfstr!("Energy Model") {
-                accumulate_energy(&mut energy, &channel.name, joules(channel.integer_value, channel.unit.trim()));
+                accumulate_energy(&mut energy, &channel.name, joules(channel.integer_value, &channel.unit));
             } else if channel.group == obfstr!("AMC Stats") {
                 accumulate_amc_bandwidth(channel.integer_value, &channel.name, &mut bandwidth);
             } else if channel.group == obfstr!("PMP") {
@@ -150,9 +150,8 @@ impl IoReport {
             result.ecpu_usage.1 * efficiency_cores + result.pcpu_usage.1 * performance_cores,
             efficiency_cores + performance_cores,
         );
-        let window = Duration::from_millis(window_milliseconds);
-        let package = Watts(energy.total() / window.as_secs_f32().max(0.001));
-        let power = energy.power_metrics(window, package);
+        let package = Watts(energy.total() / elapsed.as_secs_f32().max(0.001));
+        let power = energy.power_metrics(elapsed, package);
         result.cpu_power = power.cpu.value();
         result.gpu_power = power.gpu.value();
         result.gpu_ram_power = power.gpu_sram.value();
@@ -174,7 +173,7 @@ fn energy_totals(
         if channel.group != obfstr!("Energy Model") {
             continue;
         }
-        accumulate_energy(&mut totals, &channel.name, joules(channel.integer_value, channel.unit.trim()));
+        accumulate_energy(&mut totals, &channel.name, joules(channel.integer_value, &channel.unit));
     }
     totals
 }
