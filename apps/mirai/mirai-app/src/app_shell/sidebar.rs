@@ -10,6 +10,7 @@ use super::{
 };
 use crate::{
     components::{Icon, IconEl, Toggle},
+    engine_capabilities::TEXT_TO_SPEECH,
     settings_state,
     theme::{ActiveTheme, layout::SIDEBAR_WIDTH},
 };
@@ -130,7 +131,7 @@ impl MiraiApp {
                         Route::LocalModels,
                         section == Section::LocalModels,
                     ))
-                    .when(crate::engine_capabilities::TEXT_TO_SPEECH, |column| {
+                    .when(TEXT_TO_SPEECH, |column| {
                         column.child(self.nav_item(
                             cx,
                             "nav-tts",

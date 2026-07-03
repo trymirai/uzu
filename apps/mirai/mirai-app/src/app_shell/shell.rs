@@ -6,6 +6,7 @@ use gpui::{
 use super::route::Route;
 use crate::{
     components::{Icon, IconEl},
+    engine_capabilities::{CLASSIFICATION, TEXT_TO_SPEECH},
     menu_bar::TrayAction,
     models_store::{ModelKind, ModelsStore},
     persistence,
@@ -129,8 +130,8 @@ impl MiraiApp {
             Some("chats") => Route::Chats,
             Some("local") => Route::LocalModels,
             Some("cloud") => Route::CloudModels,
-            Some("routers") if crate::engine_capabilities::CLASSIFICATION => Route::Routers,
-            Some("tts") if crate::engine_capabilities::TEXT_TO_SPEECH => Route::Tts,
+            Some("routers") if CLASSIFICATION => Route::Routers,
+            Some("tts") if TEXT_TO_SPEECH => Route::Tts,
             Some("settings") => Route::Settings,
             Some("welcome") => Route::Welcome,
             _ if persistence::has_seen_welcome() => Route::LocalModels,
