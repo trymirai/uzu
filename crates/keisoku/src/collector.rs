@@ -88,10 +88,10 @@ impl Collector {
         &self,
         window: EnergyWindow,
     ) -> Option<EnergyReading> {
-        let elapsed = window.started_at.elapsed();
         let next = self.ioreport.as_ref()?.snapshot()?;
         let totals = self.ioreport.as_ref()?.energy_delta(&window.sample, &next)?;
         let package_watts_end = self.smc.as_ref().and_then(|smc| smc.package_watts()).map(|watts| watts.value());
+        let elapsed = window.started_at.elapsed();
         let mean_package_watts = match (window.package_watts_start, package_watts_end) {
             (Some(start), Some(end)) => Some((start + end) / 2.0),
             _ => None,
