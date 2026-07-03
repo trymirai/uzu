@@ -1,22 +1,16 @@
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Anchor, Animation, AnimationExt, Context, CursorStyle, Entity, EventEmitter, FontWeight, IntoElement, Render,
-    ScrollHandle, SharedString, Window, div, prelude::*, px,
+    Anchor, Animation, AnimationExt, Context, CursorStyle, Entity, EventEmitter, IntoElement, Render, ScrollHandle,
+    SharedString, Window, div, prelude::*, px,
 };
 use uzu::{session::chat::ChatSession, types::model::Model};
 
 use super::{
-    chat_turn::ChatTurn,
-    event::ChatEvent,
-    params::{param_checkbox, param_row, round2, slider_param},
-    role::Role,
-    sampling::SamplingMode,
-    state::ChatState,
-    version::Version,
+    chat_turn::ChatTurn, event::ChatEvent, role::Role, sampling::SamplingMode, state::ChatState, version::Version,
 };
 use crate::{
-    components::{Icon, IconButton, IconEl, InputEvent, Loader, SegmentedControl, TextInput, Toggle, VendorIcon},
+    components::{Icon, IconButton, IconEl, InputEvent, Loader, TextInput, VendorIcon},
     models_store::ModelsStore,
     persistence::{self, StoredChat, StoredMessage},
     settings_state,
@@ -25,7 +19,7 @@ use crate::{
     title_gen,
 };
 
-fn dark_icon_url(model: &Model) -> Option<String> {
+pub(super) fn dark_icon_url(model: &Model) -> Option<String> {
     let icons = &model.family.as_ref()?.vendor.metadata.icons;
     icons
         .iter()
@@ -326,233 +320,6 @@ impl ChatView {
             updated_at: persistence::now_ms(),
             messages,
         });
-    }
-
-    fn gen_settings_overlay(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        if !self.state.gen_settings_open {
-            return None;
-        }
-        let theme = cx.theme().clone();
-        let hover = theme.bg_hover;
-        let border = theme.border;
-        let fg = theme.text;
-
-        let mode_row = div().flex().flex_col().gap_1().child(div().text_sm().text_color(fg).child("Sampling")).child(
-            SegmentedControl::new("sampling-mode", self.state.sampling_mode as usize)
-                .segment(
-                    "Default",
-                    cx.listener(|this, _, _, cx| {
-                        this.state.sampling_mode = SamplingMode::Default;
-                        cx.notify();
-                    }),
-                )
-                .segment(
-                    "Argmax",
-                    cx.listener(|this, _, _, cx| {
-                        this.state.sampling_mode = SamplingMode::Argmax;
-                        cx.notify();
-                    }),
-                )
-                .segment(
-                    "Stochastic",
-                    cx.listener(|this, _, _, cx| {
-                        this.state.sampling_mode = SamplingMode::Stochastic;
-                        cx.notify();
-                    }),
-                ),
-        );
-
-        let resolved = self.resolved_model(cx);
-        let model_name = resolved.as_ref().map(|m| m.name()).unwrap_or_else(|| "No model".to_string());
-        let vendor = resolved.as_ref().and_then(|m| m.family.as_ref().map(|f| f.vendor.name())).unwrap_or_default();
-        let icon_url = resolved.as_ref().and_then(dark_icon_url);
-        let reasoning_on = settings_state::current(cx).reasoning;
-
-        let header = div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).text_color(fg).child("Edit parameters"))
-            .child(
-                IconButton::new("gen-close", Icon::Close)
-                    .color(theme.text_muted)
-                    .icon_size(16.)
-                    .hit_size(28.)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.state.gen_settings_open = false;
-                        cx.notify();
-                    })),
-            );
-
-        let model_row = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(VendorIcon::new(vendor).size(crate::tokens::icon::XL).icon_url(icon_url))
-            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(fg).child(model_name))
-            .child(IconEl::new(Icon::ChevronDown, theme.text_muted).size(crate::tokens::icon::MD));
-
-        let reasoning_row = div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .child(div().text_sm().text_color(fg).child("Reasoning"))
-            .child(Toggle::new("gen-reasoning", reasoning_on).on_click(|_, _, cx| {
-                let mut s = settings_state::current(cx);
-                s.reasoning = !s.reasoning;
-                settings_state::set(cx, s);
-            }));
-
-        let mut card = div()
-            .occlude()
-            .absolute()
-            .top_0()
-            .right_0()
-            .bottom_0()
-            .w(px(380.))
-            .flex()
-            .flex_col()
-            .gap_4()
-            .p_5()
-            .bg(theme.bg)
-            .border_l_1()
-            .border_color(theme.border)
-            .child(header)
-            .child(model_row)
-            .child(mode_row);
-
-        if self.state.sampling_mode == SamplingMode::Stochastic {
-            let view = cx.entity();
-            let v = view.clone();
-            card = card.child(slider_param(
-                "Temperature",
-                None,
-                round2(self.state.temperature).to_string(),
-                (self.state.temperature / 2.0).clamp(0., 1.),
-                "temp-slider",
-                &theme,
-                move |frac, _, cx| {
-                    v.update(cx, |this, cx| {
-                        this.state.temperature = round2(frac * 2.0);
-                        cx.notify();
-                    });
-                },
-            ));
-            let v = view.clone();
-            card = card.child(slider_param(
-                "Top K",
-                None,
-                self.state.top_k.to_string(),
-                (self.state.top_k as f32 / 200.0).clamp(0., 1.),
-                "topk-slider",
-                &theme,
-                move |frac, _, cx| {
-                    v.update(cx, |this, cx| {
-                        this.state.top_k = (frac * 200.0).round() as u32;
-                        cx.notify();
-                    });
-                },
-            ));
-            let v = view.clone();
-            let topp_box = param_checkbox("topp-cb", self.state.top_p > 0.0, &theme, {
-                let v = view.clone();
-                move |_, _, cx| {
-                    v.update(cx, |this, cx| {
-                        this.state.top_p = if this.state.top_p > 0.0 {
-                            0.0
-                        } else {
-                            0.95
-                        };
-                        cx.notify();
-                    });
-                }
-            });
-            card = card.child(slider_param(
-                "Top P",
-                Some(topp_box.into_any_element()),
-                round2(self.state.top_p).to_string(),
-                self.state.top_p.clamp(0., 1.),
-                "topp-slider",
-                &theme,
-                move |frac, _, cx| {
-                    v.update(cx, |this, cx| {
-                        this.state.top_p = round2(frac);
-                        cx.notify();
-                    });
-                },
-            ));
-            let v = view.clone();
-            let minp_box = param_checkbox("minp-cb", self.state.min_p > 0.0, &theme, {
-                let v = view.clone();
-                move |_, _, cx| {
-                    v.update(cx, |this, cx| {
-                        this.state.min_p = if this.state.min_p > 0.0 {
-                            0.0
-                        } else {
-                            0.05
-                        };
-                        cx.notify();
-                    });
-                }
-            });
-            card = card.child(slider_param(
-                "Min P",
-                Some(minp_box.into_any_element()),
-                round2(self.state.min_p).to_string(),
-                self.state.min_p.clamp(0., 1.),
-                "minp-slider",
-                &theme,
-                move |frac, _, cx| {
-                    v.update(cx, |this, cx| {
-                        this.state.min_p = round2(frac);
-                        cx.notify();
-                    });
-                },
-            ));
-        }
-
-        card = card.child(div().h_px().bg(border)).child(reasoning_row);
-
-        let tokens_str = if self.state.max_tokens == 0 {
-            "∞".to_string()
-        } else {
-            self.state.max_tokens.to_string()
-        };
-        card = card.child(param_row(
-            "Max tokens",
-            tokens_str,
-            "tok-dec",
-            "tok-inc",
-            border,
-            fg,
-            hover,
-            cx.listener(|this, _, _, cx| {
-                this.state.max_tokens = this.state.max_tokens.saturating_sub(128);
-                cx.notify();
-            }),
-            cx.listener(|this, _, _, cx| {
-                this.state.max_tokens = (this.state.max_tokens + 128).min(8192);
-                cx.notify();
-            }),
-        ));
-
-        Some(
-            div()
-                .id("gen-settings-backdrop")
-                .absolute()
-                .size_full()
-                .bg(gpui::black().opacity(0.4))
-                .occlude()
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.state.gen_settings_open = false;
-                    cx.notify();
-                }))
-                .child(card)
-                .into_any_element(),
-        )
     }
 
     pub(super) fn resolved_model(

@@ -1,6 +1,7 @@
 mod chat_turn;
 mod conversation;
 mod event;
+mod gen_settings;
 mod overlays;
 mod params;
 mod role;
