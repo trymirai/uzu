@@ -306,33 +306,37 @@ impl ChatsView {
             theme.border
         };
         div()
-            .id(SharedString::from(chat.id.clone()))
-            .flex()
-            .w_full()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .min_h(px(56.))
-            .px_3()
-            .py_2()
-            .rounded_lg()
-            .border_1()
-            .border_color(border)
-            .bg(theme.card)
-            .cursor(CursorStyle::PointingHand)
-            .hover(move |s| s.bg(hover_bg))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if this.selection_mode {
-                    if !this.selected.remove(&click_id) {
-                        this.selected.insert(click_id.clone());
-                    }
-                    cx.notify();
-                } else {
-                    cx.emit(ChatsEvent::Open(click_id.clone()));
-                }
-            }))
-            .child(left)
-            .child(timestamp)
+            .pb_2()
+            .child(
+                div()
+                    .id(SharedString::from(chat.id.clone()))
+                    .flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .min_h(px(46.))
+                    .px_3()
+                    .py_1p5()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(border)
+                    .bg(theme.card)
+                    .cursor(CursorStyle::PointingHand)
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.selection_mode {
+                            if !this.selected.remove(&click_id) {
+                                this.selected.insert(click_id.clone());
+                            }
+                            cx.notify();
+                        } else {
+                            cx.emit(ChatsEvent::Open(click_id.clone()));
+                        }
+                    }))
+                    .child(left)
+                    .child(timestamp),
+            )
             .into_any_element()
     }
 
