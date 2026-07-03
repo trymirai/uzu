@@ -1,24 +1,9 @@
-//! Top-level navigation route and the coarse grouping used for sidebar
-//! active-state highlighting.
+use super::section::Section;
 
-/// Which top-level screen is showing. `Chat(None)` is a fresh chat.
 #[derive(Clone)]
 pub(super) enum Route {
     Welcome,
     Chat(Option<String>),
-    Chats,
-    LocalModels,
-    CloudModels,
-    Routers,
-    Tts,
-    Settings,
-}
-
-/// Coarse grouping used for sidebar active-state highlighting.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Section {
-    Welcome,
-    Chat,
     Chats,
     LocalModels,
     CloudModels,

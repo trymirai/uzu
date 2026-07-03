@@ -1,6 +1,5 @@
-//! App shell: window chrome, sidebar navigation, content outlet, and footer.
-
 mod route;
+mod section;
 mod shell;
 mod sidebar;
 

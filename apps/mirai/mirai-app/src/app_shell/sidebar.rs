@@ -1,13 +1,6 @@
-//! Left navigation sidebar: top nav items, the "Apps (soon)" row, the
-//! expandable bottom Settings menu (social links + theme toggle), and the
-//! recent-chats list. All are `impl MiraiApp` builders.
-
 use gpui::{Context, CursorStyle, IntoElement, SharedString, div, prelude::*, px};
 
-use super::{
-    route::{Route, Section},
-    shell::MiraiApp,
-};
+use super::{route::Route, section::Section, shell::MiraiApp};
 use crate::{
     components::{Icon, IconEl, Toggle},
     engine_capabilities::TEXT_TO_SPEECH,
@@ -26,7 +19,6 @@ impl MiraiApp {
         active: bool,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
-        // Labels/icons are always white; only the active row gets a highlight bg.
         let fg = theme.text;
         let bg = if active {
             theme.bg_hover
@@ -56,7 +48,6 @@ impl MiraiApp {
             }))
     }
 
-    /// Disabled "Apps" nav row with a trailing "Soon" tag (mirai-chat parity).
     fn apps_soon_item(
         &self,
         cx: &mut Context<Self>,
@@ -99,8 +90,6 @@ impl MiraiApp {
             .bg(theme.bg_sidebar)
             .border_r_1()
             .border_color(theme.border)
-            // Empty header spacer to clear the macOS traffic lights at y≈18
-            // (the Electron app shows no logo/name in the sidebar).
             .child(div().h(px(52.)))
             .child(
                 div()
@@ -143,14 +132,10 @@ impl MiraiApp {
                     })
                     .child(self.apps_soon_item(cx)),
             )
-            // Recent chats fill the space between nav and the pinned Settings.
             .child(self.render_recent_chats(cx))
-            // Settings menu pinned to the bottom; expands upward (mirai-chat parity).
             .child(self.render_settings_menu(cx))
     }
 
-    /// Bottom "Settings" row that expands an inline menu upward: external links,
-    /// a Settings entry, and a dark-mode toggle, mirroring mirai-chat.
     fn render_settings_menu(
         &self,
         cx: &mut Context<Self>,
@@ -162,7 +147,6 @@ impl MiraiApp {
 
         let mut wrap = div().flex().flex_col().border_t_1().border_color(theme.border);
 
-        // Trigger at the top of the group; content expands below it.
         wrap = wrap.child(
             div()
                 .id("settings-trigger")
@@ -264,7 +248,6 @@ impl MiraiApp {
         wrap
     }
 
-    /// Scrollable list of recent chats in the sidebar (mirai-chat parity).
     fn render_recent_chats(
         &self,
         cx: &mut Context<Self>,

@@ -7,8 +7,9 @@ use gpui::{
 
 use super::{
     event::LocalModelsEvent,
+    family_view_model::FamilyViewModel,
     format::{format_params, format_size, quant_label, section_header},
-    vm::{FamilyVm, ModelVm},
+    model_view_model::ModelViewModel,
 };
 use crate::{
     components::{ConfirmModal, Icon, IconButton, IconEl, Loader, TextInput, VendorIcon},
@@ -30,7 +31,7 @@ pub struct LocalModelsView {
     /// Memoized `families()` output, tagged with the theme it was built for.
     /// Rebuilt only when the store, recommended id, or theme changes — not on
     /// every frame (search/sort are applied to this cached list in `render`).
-    families_cache: Option<(bool, Vec<FamilyVm>)>,
+    families_cache: Option<(bool, Vec<FamilyViewModel>)>,
 }
 
 impl EventEmitter<LocalModelsEvent> for LocalModelsView {}
@@ -98,12 +99,12 @@ impl LocalModelsView {
     fn families(
         &self,
         cx: &Context<Self>,
-    ) -> Vec<FamilyVm> {
+    ) -> Vec<FamilyViewModel> {
         let dark = cx.theme().dark;
         let store = self.store.read(cx);
         let recommended_id = self.recommended_id.as_deref();
         let mut order: Vec<String> = Vec::new();
-        let mut families: std::collections::HashMap<String, FamilyVm> = Default::default();
+        let mut families: std::collections::HashMap<String, FamilyViewModel> = Default::default();
         let mut recommended_family: Option<String> = None;
 
         for row in &store.rows {
@@ -126,7 +127,7 @@ impl LocalModelsView {
                 .unwrap_or(false);
             let bytes = row.display_size_bytes();
             let installed_at = store.installed_at(row.id());
-            let vm = ModelVm {
+            let vm = ModelViewModel {
                 id: row.id().to_string(),
                 name: row.name(),
                 size: format_size(bytes),
@@ -139,7 +140,7 @@ impl LocalModelsView {
             };
             let entry = families.entry(key.clone()).or_insert_with(|| {
                 order.push(key.clone());
-                FamilyVm {
+                FamilyViewModel {
                     key: key.clone(),
                     name,
                     vendor,
@@ -167,11 +168,11 @@ impl LocalModelsView {
             }
         }
 
-        let mut list: Vec<FamilyVm> = order.into_iter().filter_map(|k| families.remove(&k)).collect();
+        let mut list: Vec<FamilyViewModel> = order.into_iter().filter_map(|k| families.remove(&k)).collect();
 
         let rec_key = recommended_family;
         list.sort_by(|a, b| {
-            let rank = |f: &FamilyVm| -> u8 {
+            let rank = |f: &FamilyViewModel| -> u8 {
                 if f.has_mirai {
                     0
                 } else if rec_key.as_deref() == Some(f.key.as_str()) {
@@ -207,7 +208,7 @@ impl LocalModelsView {
 
     fn sort_models(
         &self,
-        models: &mut [ModelVm],
+        models: &mut [ModelViewModel],
     ) {
         match self.sort {
             ModelSort::Size => {
@@ -250,7 +251,7 @@ impl LocalModelsView {
     fn family_row(
         &self,
         cx: &mut Context<Self>,
-        fam: &FamilyVm,
+        fam: &FamilyViewModel,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
@@ -324,7 +325,7 @@ impl LocalModelsView {
     fn model_row(
         &self,
         cx: &mut Context<Self>,
-        vm: &ModelVm,
+        vm: &ModelViewModel,
         vendor: &str,
         icon_url: Option<&str>,
     ) -> impl IntoElement {
@@ -482,7 +483,7 @@ impl LocalModelsView {
     fn recommended_row(
         &self,
         cx: &mut Context<Self>,
-        vm: &ModelVm,
+        vm: &ModelViewModel,
         family_key: &str,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
@@ -608,7 +609,7 @@ impl Render for LocalModelsView {
         // catalog rebuild — only the cheap query filter + sort below.
         self.ensure_families(cx);
         let cache = self.families_cache.take().expect("ensure_families populates cache");
-        let families: &[FamilyVm] = &cache.1;
+        let families: &[FamilyViewModel] = &cache.1;
         let selected = self.selected_family.clone();
 
         // Delete-confirm modal (shared across both levels).
@@ -677,7 +678,7 @@ impl Render for LocalModelsView {
                 if let Some((vm, key)) = recommended {
                     list = list.child(self.recommended_row(cx, &vm, &key));
                 }
-                let visible: Vec<&FamilyVm> = families
+                let visible: Vec<&FamilyViewModel> = families
                     .iter()
                     .filter(|f| {
                         query.is_empty()
@@ -695,15 +696,15 @@ impl Render for LocalModelsView {
             },
             Some(key) => {
                 if let Some(fam) = families.iter().find(|f| &f.key == key) {
-                    let mut matched: Vec<ModelVm> = fam
+                    let mut matched: Vec<ModelViewModel> = fam
                         .models
                         .iter()
                         .filter(|m| query.is_empty() || m.name.to_lowercase().contains(&query))
                         .cloned()
                         .collect();
                     self.sort_models(&mut matched);
-                    let installed: Vec<&ModelVm> = matched.iter().filter(|m| m.installed()).collect();
-                    let available: Vec<&ModelVm> = matched.iter().filter(|m| !m.installed()).collect();
+                    let installed: Vec<&ModelViewModel> = matched.iter().filter(|m| m.installed()).collect();
+                    let available: Vec<&ModelViewModel> = matched.iter().filter(|m| !m.installed()).collect();
 
                     let vendor = fam.vendor.clone();
                     let icon_url = fam.icon_url.clone();

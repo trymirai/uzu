@@ -1,13 +1,7 @@
-//! Menu-bar status item ("Show in menu bar", Electron's `Tray`). GPUI has no
-//! status-item API, so this uses `tray-icon` to own an `NSStatusItem`.
-//!
-//! The item and its event poll live at the *App* level (a global), not on the
-//! window's root view — so closing the last window (the app stays resident; see
-//! `on_reopen`) doesn't remove the menu-bar item. Clicks arrive on
-//! `tray_icon::menu::MenuEvent`'s global channel, which isn't wired into GPUI's
-//! run loop, so a short timer drains it and routes each id.
+mod tray_action;
 
 use gpui::{App, AsyncApp, Global, WeakEntity};
+pub use tray_action::TrayAction;
 use tray_icon::{
     Icon, TrayIcon, TrayIconBuilder,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
@@ -21,16 +15,6 @@ const OPEN_CHATS: &str = "mirai.open_chats";
 const SETTINGS: &str = "mirai.settings";
 const QUIT: &str = "mirai.quit";
 
-/// What a status-item menu click routes to in the window's root view.
-#[derive(Clone, Copy)]
-pub enum TrayAction {
-    NewChat,
-    OpenChats,
-    Settings,
-}
-
-/// App-level state: the live status item (kept alive past window close) and a
-/// weak handle to the current window's root view for routing clicks.
 #[derive(Default)]
 struct MenuBar {
     tray: Option<TrayIcon>,
@@ -38,7 +22,6 @@ struct MenuBar {
 }
 impl Global for MenuBar {}
 
-/// Start the menu-bar reconcile + click poll. Call once at launch.
 pub fn init(cx: &mut App) {
     cx.set_global(MenuBar::default());
     cx.spawn(async move |cx: &mut AsyncApp| {
@@ -50,7 +33,6 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-/// Register the current window's root view so menu clicks can route to it.
 pub fn register_app(
     cx: &mut App,
     app: WeakEntity<MiraiApp>,
@@ -62,7 +44,6 @@ pub fn register_app(
 }
 
 fn tick(cx: &mut App) {
-    // Reconcile the item with the "Show in menu bar" toggle.
     let want = crate::settings_state::current(cx).show_in_menu_bar;
     {
         let mb = cx.global_mut::<MenuBar>();
@@ -84,8 +65,6 @@ fn tick(cx: &mut App) {
     }
 }
 
-/// Bring the app forward (opening a window if all are closed) and optionally
-/// route a navigation action to the root view.
 fn focus_window(
     cx: &mut App,
     action: Option<TrayAction>,
@@ -103,7 +82,6 @@ fn focus_window(
     }
 }
 
-/// Build the status item, or `None` if the platform rejects it (e.g. headless).
 fn build() -> Option<TrayIcon> {
     let menu = Menu::new();
     menu.append_items(&[
@@ -127,7 +105,7 @@ fn build() -> Option<TrayIcon> {
 }
 
 fn icon() -> Option<Icon> {
-    let rgba = image::load_from_memory(include_bytes!("../assets/icons/tray.png")).ok()?.to_rgba8();
+    let rgba = image::load_from_memory(include_bytes!("../../assets/icons/tray.png")).ok()?.to_rgba8();
     let (w, h) = rgba.dimensions();
     Icon::from_rgba(rgba.into_raw(), w, h).ok()
 }
