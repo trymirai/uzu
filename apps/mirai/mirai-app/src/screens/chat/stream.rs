@@ -17,6 +17,8 @@ use super::{
 };
 use crate::{engine, persistence, title_gen};
 
+const STREAM_RENDER_INTERVAL: std::time::Duration = std::time::Duration::from_millis(30);
+
 pub(super) enum StreamMsg {
     Started(CancelToken),
     Session(ChatSession, String),
@@ -215,17 +217,41 @@ impl ChatView {
         .detach();
 
         cx.spawn(async move |this, cx| {
-            while let Some(msg) = rx.next().await {
+            loop {
+                let Some(first_message) = rx.next().await else {
+                    break;
+                };
+                let mut batch = vec![first_message];
+                while let Ok(next_message) = rx.try_recv() {
+                    batch.push(next_message);
+                }
                 let keep = this.update(cx, |view, cx| {
                     if view.state.stream_gen != gen_id {
                         return false;
                     }
-                    view.apply_stream(msg, cx);
+                    let mut pending_update = None;
+                    for message in batch {
+                        match message {
+                            update @ StreamMsg::Update {
+                                ..
+                            } => pending_update = Some(update),
+                            control => {
+                                if let Some(update) = pending_update.take() {
+                                    view.apply_stream(update, cx);
+                                }
+                                view.apply_stream(control, cx);
+                            },
+                        }
+                    }
+                    if let Some(update) = pending_update {
+                        view.apply_stream(update, cx);
+                    }
                     true
                 });
                 if !matches!(keep, Ok(true)) {
                     break;
                 }
+                cx.background_executor().timer(STREAM_RENDER_INTERVAL).await;
             }
         })
         .detach();
