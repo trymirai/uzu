@@ -4,6 +4,7 @@ mod data_ops;
 mod device_info;
 mod engine;
 mod engine_capabilities;
+mod instructions_card;
 mod menu_bar;
 mod model_recommend;
 mod model_sort;

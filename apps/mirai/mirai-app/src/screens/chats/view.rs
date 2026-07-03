@@ -11,6 +11,7 @@ use super::{
 };
 use crate::{
     components::{Button, ButtonKind, ButtonSize, ConfirmModal, Icon, IconButton, IconEl, InputEvent, TextInput},
+    instructions_card::InstructionsCard,
     persistence::{self, StoredChat},
     theme::{ActiveTheme, layout::CONTENT_MAX_WIDTH},
 };
@@ -18,8 +19,7 @@ use crate::{
 pub struct ChatsView {
     chats: Vec<StoredChat>,
     search: Entity<TextInput>,
-    instructions: Entity<TextInput>,
-    instructions_open: bool,
+    instructions: Entity<InstructionsCard>,
     rename_input: Entity<TextInput>,
     rename_open: bool,
     rename_error: Option<&'static str>,
@@ -36,15 +36,7 @@ impl ChatsView {
         let search = cx.new(|cx| TextInput::new(cx, "Search chats…"));
         cx.observe(&search, |_, _, cx| cx.notify()).detach();
 
-        let instructions = cx.new(|cx| TextInput::new(cx, "Tailor the way the model responds").multiline(false, 3, 6));
-        let current = persistence::global_instructions();
-        if !current.is_empty() {
-            instructions.update(cx, |input, cx| input.set_text(current, cx));
-        }
-        cx.subscribe(&instructions, |_this, _input, event, _cx| match event {
-            InputEvent::Submit(text) | InputEvent::Changed(text) => persistence::set_global_instructions(text),
-        })
-        .detach();
+        let instructions = cx.new(|cx| InstructionsCard::new(cx, "instr-card", "Tailor the way the model responds"));
 
         let rename_input = cx.new(|cx| TextInput::new(cx, "Enter chat name"));
         cx.subscribe(&rename_input, |this, _, event, cx| {
@@ -58,7 +50,6 @@ impl ChatsView {
             chats: persistence::list_chats(),
             search,
             instructions,
-            instructions_open: false,
             rename_input,
             rename_open: false,
             rename_error: None,
@@ -171,74 +162,6 @@ impl ChatsView {
                         ),
                 ),
         )
-    }
-
-    fn instructions_card(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = cx.theme().clone();
-        let hover = theme.bg_hover;
-        let open = self.instructions_open;
-
-        let header = div()
-            .id("instr-card")
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .px_4()
-            .py_3()
-            .cursor(CursorStyle::PointingHand)
-            .hover(move |s| s.bg(hover))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.instructions_open = !this.instructions_open;
-
-                if this.instructions_open {
-                    let current = persistence::global_instructions();
-                    this.instructions.update(cx, |input, cx| input.set_text(&current, cx));
-                }
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(IconEl::new(Icon::Plus, theme.text).size(crate::tokens::icon::MD).rotate(if open {
-                        45.
-                    } else {
-                        0.
-                    }))
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child("Add instructions to all chats"),
-                    ),
-            )
-            .child(div().text_xs().text_color(theme.text_muted).child("Tailor the way the model responds"));
-
-        let mut card =
-            div().w_full().mb_3().rounded_lg().border_1().border_color(theme.border).bg(theme.card).child(header);
-
-        if open {
-            card = card.child(
-                div().px_4().pb_3().child(
-                    div()
-                        .w_full()
-                        .px_3()
-                        .py_2()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.bg)
-                        .child(self.instructions.clone()),
-                ),
-            );
-        }
-        card.into_any_element()
     }
 
     pub fn reload(
@@ -575,7 +498,7 @@ impl Render for ChatsView {
                     .flex_col()
                     .px_6()
                     .child(div().pt_10().pb_2().text_xl().font_weight(FontWeight::MEDIUM).child("Chat history"))
-                    .child(self.instructions_card(cx))
+                    .child(div().mb_3().child(self.instructions.clone()))
                     .child(div().h_px().w_full().bg(theme.border).mb_3())
                     .child(toolbar)
                     .child(list_area),

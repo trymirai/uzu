@@ -7,17 +7,18 @@ use gpui::{
 
 use super::{clear_data::ClearDataStep, event::SettingsEvent, setting_kind::SettingKind, settings_tab::SettingsTab};
 use crate::{
-    components::{Button, ButtonKind, ButtonSize, Icon, IconEl, InputEvent, TextInput, Toggle},
+    components::{Button, ButtonKind, ButtonSize, Icon, IconEl, Toggle},
     data_ops::{self, CleanupCategory, CleanupPreview},
-    engine, native_dialog, persistence, settings_state,
+    engine,
+    instructions_card::InstructionsCard,
+    native_dialog, settings_state,
     theme::{ActiveTheme, Theme},
 };
 
 const DISCORD_URL: &str = "https://discord.com/invite/gUhyn6Rb7x";
 
 pub struct SettingsView {
-    instructions: Entity<TextInput>,
-    instructions_open: bool,
+    instructions: Entity<InstructionsCard>,
     tab: SettingsTab,
     pub(super) clear_data_open: bool,
     pub(super) clear_data_step: ClearDataStep,
@@ -32,19 +33,10 @@ impl EventEmitter<SettingsEvent> for SettingsView {}
 impl SettingsView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let instructions =
-            cx.new(|cx| TextInput::new(cx, "Instructions applied to every chat…").multiline(false, 3, 6));
-        let current = persistence::global_instructions();
-        if !current.is_empty() {
-            instructions.update(cx, |input, cx| input.set_text(current, cx));
-        }
-        cx.subscribe(&instructions, |_this, _input, event, _cx| match event {
-            InputEvent::Submit(text) | InputEvent::Changed(text) => persistence::set_global_instructions(text),
-        })
-        .detach();
+            cx.new(|cx| InstructionsCard::new(cx, "settings-instr-card", "Instructions applied to every chat…"));
         settings_state::observe(cx, |_, cx| cx.notify()).detach();
         Self {
             instructions,
-            instructions_open: false,
             tab: SettingsTab::General,
             clear_data_open: false,
             clear_data_step: ClearDataStep::Select,
@@ -212,70 +204,6 @@ impl SettingsView {
             .child(IconEl::new(icon, theme.text_muted).size(13.))
             .child(label)
             .into_any_element()
-    }
-
-    fn instructions_card(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = cx.theme().clone();
-        let hover = theme.bg_hover;
-        let open = self.instructions_open;
-
-        let header = div()
-            .id("settings-instr-card")
-            .flex()
-            .items_center()
-            .gap_3()
-            .px_4()
-            .py_3()
-            .cursor(CursorStyle::PointingHand)
-            .hover(move |s| s.bg(hover))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.instructions_open = !this.instructions_open;
-                if this.instructions_open {
-                    let current = persistence::global_instructions();
-                    this.instructions.update(cx, |input, cx| input.set_text(&current, cx));
-                }
-                cx.notify();
-            }))
-            .child(IconEl::new(Icon::Plus, theme.text).size(crate::tokens::icon::MD).rotate(if open {
-                45.
-            } else {
-                0.
-            }))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child("Add instructions to all chats"),
-                    )
-                    .child(div().text_xs().text_color(theme.text_muted).child("Tailor the way the model responds")),
-            );
-
-        let mut card = div().w_full().rounded_lg().border_1().border_color(theme.border).bg(theme.card).child(header);
-
-        if open {
-            card = card.child(
-                div().px_4().pb_3().child(
-                    div()
-                        .w_full()
-                        .px_3()
-                        .py_2()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.bg)
-                        .child(self.instructions.clone()),
-                ),
-            );
-        }
-        card.into_any_element()
     }
 
     fn flip(
@@ -518,7 +446,7 @@ impl SettingsView {
             .flex()
             .flex_col()
             .gap_3()
-            .child(self.instructions_card(cx))
+            .child(self.instructions.clone())
             .child(self.divider(cx))
             .child(self.toggle_row(
                 cx,
