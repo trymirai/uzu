@@ -98,8 +98,46 @@ pub fn parse(text: &str) -> ParsedMarkdown {
 }
 
 fn parse_prose(prose: &str) -> Block {
-    let lines = prose.trim_matches('\n').split('\n').map(parse_line).collect();
+    let mut lines: Vec<Line> = Vec::new();
+    let mut paragraph: Vec<Inline> = Vec::new();
+    for raw in prose.trim_matches('\n').split('\n') {
+        match parse_line(raw) {
+            Line::Plain(inline) => paragraph.push(inline),
+            other => {
+                flush_paragraph(&mut paragraph, &mut lines);
+                lines.push(other);
+            },
+        }
+    }
+    flush_paragraph(&mut paragraph, &mut lines);
     Block::Prose(lines)
+}
+
+fn flush_paragraph(
+    paragraph: &mut Vec<Inline>,
+    lines: &mut Vec<Line>,
+) {
+    if !paragraph.is_empty() {
+        lines.push(Line::Plain(merge_inlines(std::mem::take(paragraph))));
+    }
+}
+
+fn merge_inlines(parts: Vec<Inline>) -> Inline {
+    let mut merged = Inline::default();
+    for part in parts {
+        if !merged.text.is_empty() {
+            merged.text.push('\n');
+        }
+        let offset = merged.text.len();
+        merged.text.push_str(&part.text);
+        for (range, kind) in part.runs {
+            merged.runs.push((offset + range.start..offset + range.end, kind));
+        }
+        for (range, url) in part.links {
+            merged.links.push((offset + range.start..offset + range.end, url));
+        }
+    }
+    merged
 }
 
 fn parse_line(line: &str) -> Line {
@@ -209,19 +247,15 @@ fn code_block(
                 }),
         );
 
-    let mut body = div()
+    let body = div()
         .font_family(FONT_MONO)
         .text_size(tokens::font::SMALL)
         .text_color(theme.text)
         .p_3()
-        .flex()
-        .flex_col()
         .w_full()
         .min_w_0()
-        .overflow_hidden();
-    for line in code.split('\n') {
-        body = body.child(div().child(line.to_string()));
-    }
+        .overflow_hidden()
+        .child(StyledText::new(code.to_string()));
 
     div()
         .flex()
@@ -462,5 +496,92 @@ fn parse_inline(line: &str) -> Inline {
         text: out,
         runs,
         links,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prose(md: &ParsedMarkdown) -> &[Line] {
+        match &md.blocks[0] {
+            Block::Prose(lines) => lines,
+            _ => panic!("expected prose block"),
+        }
+    }
+
+    #[test]
+    fn merges_consecutive_plain_lines_into_one_paragraph() {
+        let md = parse("line one\nline two");
+        let lines = prose(&md);
+        assert_eq!(lines.len(), 1);
+        let Line::Plain(inline) = &lines[0] else {
+            panic!("expected plain paragraph");
+        };
+        assert_eq!(inline.text, "line one\nline two");
+    }
+
+    #[test]
+    fn parses_heading_level_and_text() {
+        let md = parse("## Title");
+        let Line::Heading {
+            level,
+            inline,
+        } = &prose(&md)[0]
+        else {
+            panic!("expected heading");
+        };
+        assert_eq!(*level, 2);
+        assert_eq!(inline.text, "Title");
+    }
+
+    #[test]
+    fn parses_inline_bold_and_code_runs() {
+        let md = parse("a **b** `c`");
+        let Line::Plain(inline) = &prose(&md)[0] else {
+            panic!("expected plain");
+        };
+        assert_eq!(inline.text, "a b c");
+        assert!(inline.runs.iter().any(|(r, k)| *k == RunKind::Bold && &inline.text[r.clone()] == "b"));
+        assert!(inline.runs.iter().any(|(r, k)| *k == RunKind::Code && &inline.text[r.clone()] == "c"));
+    }
+
+    #[test]
+    fn parses_link_range_and_url() {
+        let md = parse("see [label](https://example.com)");
+        let Line::Plain(inline) = &prose(&md)[0] else {
+            panic!("expected plain");
+        };
+        assert_eq!(inline.text, "see label");
+        assert_eq!(inline.links.len(), 1);
+        let (range, url) = &inline.links[0];
+        assert_eq!(&inline.text[range.clone()], "label");
+        assert_eq!(url, "https://example.com");
+    }
+
+    #[test]
+    fn parses_fenced_code_block_with_language() {
+        let md = parse("```rust\nfn main() {}\n```");
+        let Block::Code {
+            lang,
+            code,
+        } = &md.blocks[0]
+        else {
+            panic!("expected code block");
+        };
+        assert_eq!(lang, "rust");
+        assert_eq!(code, "fn main() {}");
+    }
+
+    #[test]
+    fn merged_paragraph_offsets_runs_across_lines() {
+        let md = parse("plain\n**bold**");
+        let Line::Plain(inline) = &prose(&md)[0] else {
+            panic!("expected plain");
+        };
+        assert_eq!(inline.text, "plain\nbold");
+        let (range, kind) = &inline.runs[0];
+        assert_eq!(*kind, RunKind::Bold);
+        assert_eq!(&inline.text[range.clone()], "bold");
     }
 }
