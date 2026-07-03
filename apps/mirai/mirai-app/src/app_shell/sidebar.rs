@@ -130,14 +130,16 @@ impl MiraiApp {
                         Route::LocalModels,
                         section == Section::LocalModels,
                     ))
-                    .child(self.nav_item(
-                        cx,
-                        "nav-tts",
-                        Icon::Speech,
-                        "Text to Speech",
-                        Route::Tts,
-                        section == Section::Tts,
-                    ))
+                    .when(crate::engine_capabilities::TEXT_TO_SPEECH, |column| {
+                        column.child(self.nav_item(
+                            cx,
+                            "nav-tts",
+                            Icon::Speech,
+                            "Text to Speech",
+                            Route::Tts,
+                            section == Section::Tts,
+                        ))
+                    })
                     .child(self.apps_soon_item(cx)),
             )
             // Recent chats fill the space between nav and the pinned Settings.
