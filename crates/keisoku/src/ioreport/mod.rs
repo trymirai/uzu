@@ -4,8 +4,10 @@ use objc2_core_foundation::{CFDictionary, CFMutableDictionary, CFRetained, CFStr
 
 mod bandwidth;
 mod channel;
+mod energy_totals;
 mod frequency;
 mod report;
+mod residency;
 mod sample;
 mod subscription;
 

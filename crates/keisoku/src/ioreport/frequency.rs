@@ -1,4 +1,4 @@
-use super::channel::{ResidencyState, is_idle_state};
+use super::residency::{ResidencyState, is_idle_state};
 
 pub(super) fn calculate_frequency(
     states: &[ResidencyState],

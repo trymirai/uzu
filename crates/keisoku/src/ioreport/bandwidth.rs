@@ -2,7 +2,7 @@ use obfstr::obfstr;
 
 use super::{
     SocSample,
-    channel::{ResidencyState, residency_active_percent, residency_weighted_gbps},
+    residency::{ResidencyState, residency_active_percent, residency_weighted_gbps},
 };
 
 #[derive(Clone, Copy)]

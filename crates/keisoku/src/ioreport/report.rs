@@ -7,14 +7,11 @@ use super::{
     IoReportFunctions, SocSample,
     bandwidth::{BandwidthAccumulator, accumulate_amc_bandwidth, accumulate_pmp},
     channel::decode_channels,
+    energy_totals::EnergyTotals,
     frequency::{average_cluster_frequency, calculate_frequency, divide_or_zero},
     subscription::Subscription,
 };
-use crate::{
-    EnergyMetrics, EnergyModelChannel, PowerMetrics,
-    soc::SocInfo,
-    units::{Joules, Watts},
-};
+use crate::{EnergyModelChannel, soc::SocInfo, units::Watts};
 
 pub struct IoReport {
     functions: &'static IoReportFunctions,
@@ -22,52 +19,6 @@ pub struct IoReport {
 }
 
 pub(crate) struct RawEnergySample(CFRetained<CFDictionary>);
-
-#[derive(Default)]
-pub(crate) struct EnergyTotals {
-    cpu: f32,
-    gpu: f32,
-    gpu_sram: f32,
-    ane: f32,
-    ram: f32,
-}
-
-impl EnergyTotals {
-    pub(crate) fn total(&self) -> f32 {
-        self.cpu + self.gpu + self.ane + self.ram
-    }
-
-    pub(crate) fn energy_metrics(
-        &self,
-        package: Joules,
-    ) -> EnergyMetrics {
-        EnergyMetrics {
-            cpu: Joules(self.cpu),
-            gpu: Joules(self.gpu),
-            gpu_sram: Joules(self.gpu_sram),
-            ane: Joules(self.ane),
-            ram: Joules(self.ram),
-            package,
-        }
-    }
-
-    pub(crate) fn power_metrics(
-        &self,
-        elapsed: Duration,
-        package: Watts,
-    ) -> PowerMetrics {
-        let elapsed_secs = elapsed.as_secs_f32().max(0.001);
-        PowerMetrics {
-            cpu: Watts(self.cpu / elapsed_secs),
-            gpu: Watts(self.gpu / elapsed_secs),
-            gpu_sram: Watts(self.gpu_sram / elapsed_secs),
-            ane: Watts(self.ane / elapsed_secs),
-            ram: Watts(self.ram / elapsed_secs),
-            total: Watts(self.total() / elapsed_secs),
-            package,
-        }
-    }
-}
 
 impl IoReport {
     pub fn new() -> Option<Self> {
@@ -148,7 +99,7 @@ impl IoReport {
                     result.gpu_usage = calculate_frequency(&channel.states, &soc.gpu_frequencies[1..]);
                 }
             } else if channel.group == obfstr!("Energy Model") {
-                accumulate_energy(&mut energy, &channel.name, joules(channel.integer_value, &channel.unit));
+                energy.accumulate(&channel.name, channel.integer_value, &channel.unit);
             } else if channel.group == obfstr!("AMC Stats") {
                 accumulate_amc_bandwidth(channel.integer_value, &channel.name, &mut bandwidth);
             } else if channel.group == obfstr!("PMP") {
@@ -188,45 +139,7 @@ fn energy_totals(
         if channel.group != obfstr!("Energy Model") {
             continue;
         }
-        accumulate_energy(&mut totals, &channel.name, joules(channel.integer_value, &channel.unit));
+        totals.accumulate(&channel.name, channel.integer_value, &channel.unit);
     }
     totals
-}
-
-fn joules(
-    energy: i64,
-    unit: &str,
-) -> f32 {
-    let energy = energy as f32;
-    let Some(prefix) = unit.trim().strip_suffix('J') else {
-        return 0.0;
-    };
-    let scale = match prefix {
-        "k" => 1e3,
-        "" => 1.0,
-        "m" => 1e-3,
-        "u" | "µ" => 1e-6,
-        "n" => 1e-9,
-        "p" => 1e-12,
-        _ => return 0.0,
-    };
-    energy * scale
-}
-
-fn accumulate_energy(
-    totals: &mut EnergyTotals,
-    name: &str,
-    joules: f32,
-) {
-    if name == obfstr!("GPU Energy") {
-        totals.gpu += joules;
-    } else if name.ends_with(obfstr!("CPU Energy")) {
-        totals.cpu += joules;
-    } else if name.starts_with(obfstr!("ANE")) {
-        totals.ane += joules;
-    } else if name.starts_with(obfstr!("DRAM")) || name.starts_with(obfstr!("DCS")) || name.starts_with(obfstr!("AMCC")) {
-        totals.ram += joules;
-    } else if name.starts_with(obfstr!("GPU SRAM")) {
-        totals.gpu_sram += joules;
-    }
 }
