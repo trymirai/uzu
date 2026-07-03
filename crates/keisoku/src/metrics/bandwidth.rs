@@ -6,4 +6,6 @@ use crate::units::GigabytesPerSecond;
 pub struct BandwidthMetrics {
     pub dram_read: GigabytesPerSecond,
     pub dram_write: GigabytesPerSecond,
+    pub ane_read: GigabytesPerSecond,
+    pub ane_write: GigabytesPerSecond,
 }

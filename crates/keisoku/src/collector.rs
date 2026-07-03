@@ -185,10 +185,7 @@ impl Collector {
                 usage: Percent(sample.gpu_usage.1 * 100.0),
             }),
             neural_engine: Some(NeuralEngineMetrics {
-                power: Watts(sample.ane_power),
                 active: Percent(sample.ane_active_percent),
-                read_bandwidth: GigabytesPerSecond(sample.ane_read_gbps),
-                write_bandwidth: GigabytesPerSecond(sample.ane_write_gbps),
             }),
             power: Some(PowerMetrics {
                 cpu: Watts(sample.cpu_power),
@@ -202,6 +199,8 @@ impl Collector {
             bandwidth: Some(BandwidthMetrics {
                 dram_read: GigabytesPerSecond(sample.dram_read_gbps),
                 dram_write: GigabytesPerSecond(sample.dram_write_gbps),
+                ane_read: GigabytesPerSecond(sample.ane_read_gbps),
+                ane_write: GigabytesPerSecond(sample.ane_write_gbps),
             }),
         }
     }

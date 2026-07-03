@@ -111,10 +111,14 @@ fn gpu_title(state: &Telemetry) -> String {
 }
 
 fn ane_title(state: &Telemetry) -> String {
-    match state.snapshot.as_ref().and_then(|s| s.neural_engine.as_ref()) {
-        Some(ane) => format!("ANE Usage: {:.2}% @ {:.2} W", ane.active.value(), ane.power.value()),
-        None => "ANE Usage".to_string(),
-    }
+    let Some(snapshot) = state.snapshot.as_ref() else {
+        return "ANE Usage".to_string();
+    };
+    let Some(ane) = snapshot.neural_engine.as_ref() else {
+        return "ANE Usage".to_string();
+    };
+    let watts = snapshot.power.as_ref().map_or(0.0, |power| power.ane.value());
+    format!("ANE Usage: {:.2}% @ {:.2} W", ane.active.value(), watts)
 }
 
 fn memory_title(state: &Telemetry) -> String {
