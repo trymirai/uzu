@@ -1,9 +1,11 @@
 use gpui::{FontWeight, IntoElement, div, prelude::*, px};
 use uzu::types::model::Model;
 
+use crate::theme::Theme;
+
 pub(super) fn section_header(
     label: &str,
-    theme: &crate::theme::Theme,
+    theme: &Theme,
 ) -> impl IntoElement {
     div()
         .flex()
