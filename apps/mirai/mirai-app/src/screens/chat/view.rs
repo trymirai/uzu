@@ -7,7 +7,8 @@ use gpui::{
 use uzu::{session::chat::ChatSession, types::model::Model};
 
 use super::{
-    chat_turn::ChatTurn, event::ChatEvent, role::Role, sampling::SamplingMode, state::ChatState, version::Version,
+    chat_turn::ChatTurn, event::ChatEvent, reveal_pacer::RevealPacer, role::Role, sampling::SamplingMode,
+    state::ChatState, version::Version,
 };
 use crate::{
     components::{Icon, IconButton, IconEl, InputEvent, Loader, TextInput, VendorIcon},
@@ -85,7 +86,7 @@ impl ChatView {
                 waiting_for_model: false,
                 cancel: None,
                 stream_gen: 0,
-                revealed_chars: usize::MAX,
+                reveal: RevealPacer::shown(),
                 chat_id: None,
                 created_at: persistence::now_ms(),
                 model_picker_open: false,
@@ -144,7 +145,7 @@ impl ChatView {
         self.state.stream_gen = self.state.stream_gen.wrapping_add(1);
         self.state.streaming = false;
         self.state.waiting_for_model = false;
-        self.state.revealed_chars = usize::MAX;
+        self.state.reveal = RevealPacer::shown();
     }
 
     pub(super) fn cached_session(
@@ -398,8 +399,8 @@ impl Render for ChatView {
             for (idx, msg) in self.state.messages.iter().enumerate() {
                 let streaming_here = streaming && idx + 1 == msg_count;
                 let cur = msg.cur();
-                let revealing_here =
-                    idx + 1 == msg_count && (streaming || self.state.revealed_chars < cur.text.chars().count());
+                let revealing_here = idx + 1 == msg_count
+                    && (streaming || self.state.reveal.revealed_chars() < cur.text.chars().count());
                 column = column.child(match msg.role {
                     Role::User => div()
                         .flex()
@@ -532,7 +533,7 @@ impl Render for ChatView {
                                 )
                                 .into_any_element()
                         } else if revealing_here {
-                            let shown: String = cur.text.chars().take(self.state.revealed_chars).collect();
+                            let shown: String = cur.text.chars().take(self.state.reveal.revealed_chars()).collect();
                             div().w_full().min_w_0().text_color(theme.text).child(shown).into_any_element()
                         } else {
                             div()

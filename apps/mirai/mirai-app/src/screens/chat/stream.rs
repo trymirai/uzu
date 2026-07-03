@@ -12,14 +12,12 @@ use uzu::{
 };
 
 use super::{
-    chat_turn::ChatTurn, conversation::conversation_for_request, event::ChatEvent, role::Role,
-    sampling::sampling_method, version::Version, view::ChatView,
+    chat_turn::ChatTurn, conversation::conversation_for_request, event::ChatEvent, reveal_pacer::RevealPacer,
+    role::Role, sampling::sampling_method, version::Version, view::ChatView,
 };
 use crate::{engine, persistence, title_gen};
 
 const REVEAL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
-const MIN_REVEAL_CHARS: usize = 3;
-const REVEAL_CATCHUP_DIVISOR: usize = 8;
 
 pub(super) enum StreamMsg {
     Started(CancelToken),
@@ -167,7 +165,7 @@ impl ChatView {
 
         self.state.stream_gen = self.state.stream_gen.wrapping_add(1);
         let gen_id = self.state.stream_gen;
-        self.state.revealed_chars = 0;
+        self.state.reveal = RevealPacer::streaming();
 
         let (tx, mut rx) = mpsc::unbounded::<StreamMsg>();
 
@@ -272,14 +270,12 @@ impl ChatView {
             }
             message.cur().text.chars().count()
         };
-        if self.state.revealed_chars < full {
-            let remaining = full - self.state.revealed_chars;
-            let step = (remaining / REVEAL_CATCHUP_DIVISOR).max(MIN_REVEAL_CHARS);
-            self.state.revealed_chars = self.state.revealed_chars.saturating_add(step).min(full);
+        let before = self.state.reveal.revealed_chars();
+        let keep = self.state.reveal.advance(full, REVEAL_INTERVAL.as_secs_f32(), !self.state.streaming);
+        if self.state.reveal.revealed_chars() != before {
             cx.notify();
-            return true;
         }
-        self.state.streaming
+        keep
     }
 
     fn apply_stream(

@@ -3,7 +3,7 @@ use uzu::{
     types::{basic::CancelToken, model::Model},
 };
 
-use super::{chat_turn::ChatTurn, sampling::SamplingMode};
+use super::{chat_turn::ChatTurn, reveal_pacer::RevealPacer, sampling::SamplingMode};
 
 pub(super) struct ChatState {
     pub messages: Vec<ChatTurn>,
@@ -12,7 +12,7 @@ pub(super) struct ChatState {
     pub waiting_for_model: bool,
     pub cancel: Option<CancelToken>,
     pub stream_gen: u64,
-    pub revealed_chars: usize,
+    pub reveal: RevealPacer,
     pub chat_id: Option<String>,
     pub created_at: u64,
     pub model_picker_open: bool,

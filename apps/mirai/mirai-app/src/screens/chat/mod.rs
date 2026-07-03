@@ -4,6 +4,7 @@ mod event;
 mod gen_settings;
 mod overlays;
 mod params;
+mod reveal_pacer;
 mod role;
 mod sampling;
 mod state;
