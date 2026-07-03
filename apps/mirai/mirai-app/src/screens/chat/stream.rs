@@ -15,9 +15,22 @@ use super::{
     chat_turn::ChatTurn, conversation::conversation_for_request, event::ChatEvent, reveal_pacer::RevealPacer,
     role::Role, sampling::sampling_method, version::Version, view::ChatView,
 };
-use crate::{engine, persistence, title_gen};
+use crate::{components::markdown, engine, persistence, title_gen};
 
 const REVEAL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
+
+fn safe_split(prefix: &str) -> usize {
+    let mut boundary = 0;
+    let mut index = 0;
+    while let Some(offset) = prefix[index..].find("\n\n") {
+        let candidate = index + offset + 2;
+        if prefix[..candidate].matches("```").count().is_multiple_of(2) {
+            boundary = candidate;
+        }
+        index = candidate;
+    }
+    boundary
+}
 
 pub(super) enum StreamMsg {
     Started(CancelToken),
@@ -166,6 +179,10 @@ impl ChatView {
         self.state.stream_gen = self.state.stream_gen.wrapping_add(1);
         let gen_id = self.state.stream_gen;
         self.state.reveal = RevealPacer::streaming();
+        self.state.stream_parsed = None;
+        self.state.stream_stable_len = 0;
+        self.state.stream_parse_in_flight = false;
+        self.state.stream_parse_pending = false;
 
         let (tx, mut rx) = mpsc::unbounded::<StreamMsg>();
 
@@ -273,9 +290,55 @@ impl ChatView {
         let before = self.state.reveal.revealed_chars();
         let keep = self.state.reveal.advance(full, REVEAL_INTERVAL.as_secs_f32(), !self.state.streaming);
         if self.state.reveal.revealed_chars() != before {
+            self.request_stream_parse(cx);
+            if self.should_auto_scroll() {
+                self.pin_to_bottom();
+            }
             cx.notify();
         }
         keep
+    }
+
+    fn request_stream_parse(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        if self.state.stream_parse_in_flight {
+            self.state.stream_parse_pending = true;
+            return;
+        }
+        let Some(message) = self.state.messages.last() else {
+            return;
+        };
+        if message.role != Role::Assistant {
+            return;
+        }
+        let revealed: String = message.cur().text.chars().take(self.state.reveal.revealed_chars()).collect();
+        let boundary = safe_split(&revealed);
+        if boundary == 0 {
+            return;
+        }
+        let stable = revealed[..boundary].to_string();
+        self.state.stream_parse_in_flight = true;
+        let gen_id = self.state.stream_gen;
+        let parse_task = cx.background_executor().spawn(async move { markdown::parse(&stable) });
+        cx.spawn(async move |this, cx| {
+            let parsed = parse_task.await;
+            let _ = this.update(cx, |view, cx| {
+                if view.state.stream_gen != gen_id {
+                    return;
+                }
+                view.state.stream_parsed = Some(parsed);
+                view.state.stream_stable_len = boundary;
+                view.state.stream_parse_in_flight = false;
+                cx.notify();
+                if view.state.stream_parse_pending {
+                    view.state.stream_parse_pending = false;
+                    view.request_stream_parse(cx);
+                }
+            });
+        })
+        .detach();
     }
 
     fn apply_stream(
@@ -312,9 +375,6 @@ impl ChatView {
                     if !had_text && !message.cur().text.is_empty() {
                         message.reasoning_collapsed = true;
                     }
-                }
-                if self.should_auto_scroll() {
-                    self.pin_to_bottom();
                 }
                 self.reasoning_scroll.scroll_to_bottom();
                 cx.notify();
