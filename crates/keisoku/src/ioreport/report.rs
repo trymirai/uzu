@@ -221,3 +221,43 @@ fn accumulate_energy(
         totals.gpu_sram += joules;
     }
 }
+
+#[cfg(test)]
+mod energy_dump {
+    use std::collections::BTreeSet;
+
+    use obfstr::obfstr;
+
+    use super::{IoReport, decode_channels};
+
+    #[test]
+    #[ignore]
+    fn dump_energy_model_channels() {
+        println!("KEISOKU_ENERGY_BEGIN");
+        let Some(report) = IoReport::new() else {
+            println!("STATUS\tIOReport unavailable (subscription blocked or no permission)");
+            println!("KEISOKU_ENERGY_END");
+            return;
+        };
+        let Some(sample) = report.snapshot() else {
+            println!("STATUS\tsnapshot unavailable");
+            println!("KEISOKU_ENERGY_END");
+            return;
+        };
+        let channels = decode_channels(report.functions, &sample.0);
+        let mut groups = BTreeSet::new();
+        let mut rails = 0;
+        for channel in &channels {
+            groups.insert(channel.group.clone());
+            if channel.group == obfstr!("Energy Model") {
+                rails += 1;
+                println!("RAIL\t{}\t{}\t{}", channel.name, channel.unit, channel.integer_value);
+            }
+        }
+        println!("STATUS\t{} energy-model rails, {} channels total", rails, channels.len());
+        for group in &groups {
+            println!("GROUP\t{}", group);
+        }
+        println!("KEISOKU_ENERGY_END");
+    }
+}
