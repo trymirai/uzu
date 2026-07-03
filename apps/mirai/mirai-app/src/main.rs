@@ -14,6 +14,7 @@ mod provider_keys;
 mod screens;
 mod settings_state;
 mod startup;
+mod text;
 mod title_gen;
 mod toast;
 mod tts_history;

@@ -18,6 +18,7 @@ use crate::{
     components::{Button, ButtonKind, Icon, IconButton, IconEl, InputEvent, Loader, TextInput, VendorIcon},
     engine,
     models_store::ModelsStore,
+    text::truncate_with_ellipsis,
     theme::ActiveTheme,
     tts_history::{self, TtsHistoryEntry},
 };
@@ -511,7 +512,7 @@ impl TtsView {
         let theme = cx.theme().clone();
         let hover = theme.bg_hover;
         let playing = self.playing_id.as_deref() == Some(entry.id.as_str());
-        let preview = truncate_line(&entry.text, 72);
+        let preview = truncate_with_ellipsis(&entry.text, 72);
         let id = entry.id.clone();
         let play_id = id.clone();
         let del_id = id.clone();
@@ -615,17 +616,6 @@ impl TtsView {
             }))
             .child(label)
     }
-}
-
-fn truncate_line(
-    text: &str,
-    max: usize,
-) -> String {
-    let trimmed = text.trim();
-    if trimmed.chars().count() <= max {
-        return trimmed.to_string();
-    }
-    trimmed.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
 }
 
 impl Render for TtsView {

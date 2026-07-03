@@ -5,6 +5,7 @@ use crate::{
     components::{Icon, IconEl, Toggle},
     engine_capabilities::TEXT_TO_SPEECH,
     settings_state,
+    text::truncate_with_ellipsis,
     theme::{ActiveTheme, layout::SIDEBAR_WIDTH},
 };
 
@@ -295,18 +296,9 @@ impl MiraiApp {
                     .cursor(CursorStyle::PointingHand)
                     .hover(move |s| s.bg(hover_bg))
                     .on_click(cx.listener(move |this, _, _, cx| this.open_chat(id.clone(), cx)))
-                    .child(truncate_title(&chat.title)),
+                    .child(truncate_with_ellipsis(&chat.title, 26)),
             );
         }
         col.into_any_element()
-    }
-}
-
-fn truncate_title(s: &str) -> String {
-    let s = s.trim();
-    if s.chars().count() <= 26 {
-        s.to_string()
-    } else {
-        format!("{}…", s.chars().take(26).collect::<String>())
     }
 }

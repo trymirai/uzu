@@ -20,6 +20,7 @@ use crate::{
     models_store::ModelsStore,
     persistence::{self, StoredChat, StoredMessage},
     settings_state,
+    text::truncate_with_ellipsis,
     theme::{ActiveTheme, FONT_MONO, layout::CONTENT_MAX_WIDTH},
     title_gen,
 };
@@ -291,7 +292,7 @@ impl ChatView {
                 .messages
                 .iter()
                 .find(|m| m.role == Role::User)
-                .map(|m| truncate(&m.cur().text, 48))
+                .map(|m| truncate_with_ellipsis(&m.cur().text, 48))
                 .unwrap_or_else(|| "New chat".to_string())
         } else {
             self.state.chat_title.clone()
@@ -583,19 +584,6 @@ impl ChatView {
         let text = self.input.read(cx).text();
         self.input.update(cx, |input, cx| input.clear(cx));
         self.send(text, cx);
-    }
-}
-
-fn truncate(
-    s: &str,
-    max: usize,
-) -> String {
-    let trimmed = s.trim();
-    if trimmed.chars().count() <= max {
-        trimmed.to_string()
-    } else {
-        let cut: String = trimmed.chars().take(max).collect();
-        format!("{cut}…")
     }
 }
 
