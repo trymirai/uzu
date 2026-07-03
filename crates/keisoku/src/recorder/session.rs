@@ -1,8 +1,7 @@
-use crate::{snapshot::Snapshot, units::Milliseconds};
+use crate::snapshot::Snapshot;
 
-/// Snapshots collected between `start` and `stop`, with the sampling interval.
+/// Snapshots collected between `start` and `stop`.
 #[derive(Debug, Default, Clone)]
 pub struct Session {
-    pub interval: Milliseconds,
     pub snapshots: Vec<Snapshot>,
 }

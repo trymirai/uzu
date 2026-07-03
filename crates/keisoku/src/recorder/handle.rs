@@ -1,16 +1,12 @@
-use std::{
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 
 use super::{Config, Session};
-use crate::{Collector, snapshot::Snapshot, units::Milliseconds};
+use crate::{Collector, snapshot::Snapshot};
 
 pub struct RecorderHandle {
-    interval: Duration,
     stop_flag: Arc<AtomicBool>,
     snapshots: Arc<Mutex<Vec<Snapshot>>>,
     // Option so both stop() and Drop can take ownership to join.
@@ -27,7 +23,6 @@ impl RecorderHandle {
         }
         let snapshots = self.snapshots.lock().map(|mut collected| std::mem::take(&mut *collected)).unwrap_or_default();
         Session {
-            interval: Milliseconds(self.interval.as_millis() as u64),
             snapshots,
         }
     }
@@ -63,7 +58,6 @@ pub fn start(config: Config) -> RecorderHandle {
     };
 
     RecorderHandle {
-        interval,
         stop_flag,
         snapshots,
         worker: Some(worker),
