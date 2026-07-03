@@ -1,6 +1,6 @@
 use uzu::storage::types::DownloadPhase;
 
-use crate::models_store::ModelRow;
+use crate::{models_store::ModelRow, screens::local_models::format_size};
 
 pub(super) struct TtsVm {
     pub id: String,
@@ -23,7 +23,7 @@ impl TtsVm {
             name: row.name(),
             vendor: row.vendor().unwrap_or_else(|| "Other".to_string()),
             icon_url: row.icon_url(dark),
-            size: crate::screens::local_models::format_size(row.display_size_bytes()),
+            size: format_size(row.display_size_bytes()),
             installed: row.is_installed(),
             downloading: matches!(row.phase(), DownloadPhase::Downloading {} | DownloadPhase::Paused {}),
             progress: row.progress(),
