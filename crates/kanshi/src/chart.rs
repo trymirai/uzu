@@ -3,11 +3,13 @@ use std::collections::VecDeque;
 use ratatui::{Frame, layout::Rect};
 
 use crate::{
-    state::{accent, background},
+    color::{level_for, level_style},
+    state::{accent, accent_rgb, background, background_rgb, foreground_rgb},
     widgets::panel_owned,
 };
 
-const BRAILLE_DOTS: [[u16; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
+const BOX_GLYPH: char = '■';
+const COLUMN_STRIDE: usize = 2;
 
 pub(crate) fn render_chart(
     frame: &mut Frame,
@@ -23,57 +25,34 @@ pub(crate) fn render_chart(
         return;
     }
 
-    let columns = inner.width as usize;
-    let shown: Vec<f64> = history.iter().rev().take(columns).rev().copied().collect();
-    if shown.is_empty() {
-        return;
-    }
-    let offset = columns - shown.len();
+    let box_columns = (inner.width as usize).div_ceil(COLUMN_STRIDE);
+    let rows = inner.height as usize;
     let ceiling = ceiling.max(1e-9);
-    let cell_rows = inner.height as usize;
-    let sub_rows = cell_rows * 4;
-    let last = shown.len() - 1;
-    let color = accent();
+    let accent = accent();
+    let accent_rgb = accent_rgb();
+    let foreground_rgb = foreground_rgb();
     let background = background();
+    let background_rgb = background_rgb();
+    let off_style = level_style(0, accent_rgb, foreground_rgb, background_rgb, accent).bg(background);
 
-    let fill_at = |sub_x: usize| -> Option<usize> {
-        let position = sub_x as f64 / 2.0 - offset as f64;
-        if position < 0.0 {
-            return None;
-        }
-        let low = (position.floor() as usize).min(last);
-        let high = (low + 1).min(last);
-        let blend = position - low as f64;
-        let value = shown[low] * (1.0 - blend) + shown[high] * blend;
-        Some(((value / ceiling).clamp(0.0, 1.0) * sub_rows as f64).round() as usize)
-    };
+    let shown: Vec<f64> = history.iter().rev().take(box_columns).rev().copied().collect();
+    let offset = box_columns - shown.len();
 
     let buffer = frame.buffer_mut();
-    for cell_x in 0..columns {
-        let fills = [fill_at(cell_x * 2), fill_at(cell_x * 2 + 1)];
-        if fills.iter().all(Option::is_none) {
-            continue;
-        }
-        let x = inner.left() + cell_x as u16;
-        for row in 0..cell_rows {
-            let mut dots = 0u16;
-            for (sub, fill) in fills.iter().enumerate() {
-                let Some(fill) = fill else {
-                    continue;
-                };
-                for internal in 0..4 {
-                    if row * 4 + (3 - internal) < *fill {
-                        dots |= BRAILLE_DOTS[sub][internal];
-                    }
-                }
-            }
-            if dots == 0 {
-                continue;
-            }
-            let symbol = char::from_u32(0x2800 + dots as u32).unwrap_or(' ');
+    for column in 0..box_columns {
+        let fraction = match column.checked_sub(offset).and_then(|index| shown.get(index)) {
+            Some(value) => (value / ceiling).clamp(0.0, 1.0),
+            None => 0.0,
+        };
+        let filled_rows = (fraction * rows as f64).round() as usize;
+        let data_style =
+            level_style(level_for(fraction), accent_rgb, foreground_rgb, background_rgb, accent).bg(background);
+        let x = inner.left() + (column * COLUMN_STRIDE) as u16;
+        for row in 0..rows {
+            let style = if row < filled_rows { data_style } else { off_style };
             let y = inner.bottom() - 1 - row as u16;
             if let Some(cell) = buffer.cell_mut((x, y)) {
-                cell.set_char(symbol).set_fg(color).set_bg(background);
+                cell.set_char(BOX_GLYPH).set_style(style);
             }
         }
     }
