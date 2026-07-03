@@ -1,10 +1,22 @@
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
-use crate::units::{GigabytesPerSecond, Joules, Megahertz, Percent, Watts};
 use crate::{
-    EnergyReading, EnergyWindow,
-    metrics::{BandwidthMetrics, CpuMetrics, GpuMetrics, NeuralEngineMetrics, PowerMetrics, Temperatures},
+    EnergyModelChannel,
+    cpu_load::CpuLoad,
+    ioreport::IoReport,
+    smc::Smc,
+    soc::SocInfo,
+    units::{GigabytesPerSecond, Joules, Megahertz, Percent, Watts},
+};
+#[cfg(target_vendor = "apple")]
+use crate::client::SensorReader;
+use crate::{
+    Component, Device, EnergyReading, EnergyWindow,
+    metrics::{
+        BandwidthMetrics, CpuMetrics, FanMetrics, GpuMetrics, NeuralEngineMetrics, PowerMetrics, Temperatures,
+        read_battery, read_memory, read_thermal_pressure,
+    },
     sensor::{Sensor, SensorKind},
     snapshot::Snapshot,
     units::{Celsius, Milliseconds},
@@ -21,19 +33,19 @@ struct SocMetrics {
 
 pub struct Collector {
     #[cfg(target_os = "macos")]
-    soc: Option<crate::soc::SocInfo>,
+    soc: Option<SocInfo>,
     #[cfg(target_os = "macos")]
-    ioreport: Option<crate::ioreport::IoReport>,
+    ioreport: Option<IoReport>,
     #[cfg(target_os = "macos")]
-    cpu_load: crate::cpu_load::CpuLoad,
+    cpu_load: CpuLoad,
     #[cfg(target_os = "macos")]
-    smc: Option<crate::smc::Smc>,
+    smc: Option<Smc>,
     #[cfg(target_vendor = "apple")]
-    temperature_reader: Option<crate::client::SensorReader>,
+    temperature_reader: Option<SensorReader>,
     #[cfg(target_vendor = "apple")]
-    voltage_reader: Option<crate::client::SensorReader>,
+    voltage_reader: Option<SensorReader>,
     #[cfg(target_vendor = "apple")]
-    current_reader: Option<crate::client::SensorReader>,
+    current_reader: Option<SensorReader>,
 }
 
 impl Default for Collector {
@@ -46,34 +58,34 @@ impl Collector {
     pub fn new() -> Self {
         Self {
             #[cfg(target_os = "macos")]
-            soc: crate::soc::SocInfo::new(),
+            soc: SocInfo::new(),
             #[cfg(target_os = "macos")]
-            ioreport: crate::ioreport::IoReport::new(),
+            ioreport: IoReport::new(),
             #[cfg(target_os = "macos")]
-            cpu_load: crate::cpu_load::CpuLoad::new(),
+            cpu_load: CpuLoad::new(),
             #[cfg(target_os = "macos")]
-            smc: crate::smc::Smc::new(),
+            smc: Smc::new(),
             #[cfg(target_vendor = "apple")]
-            temperature_reader: crate::client::SensorReader::new(SensorKind::Temperature),
+            temperature_reader: SensorReader::new(SensorKind::Temperature),
             #[cfg(target_vendor = "apple")]
-            voltage_reader: crate::client::SensorReader::new(SensorKind::Voltage),
+            voltage_reader: SensorReader::new(SensorKind::Voltage),
             #[cfg(target_vendor = "apple")]
-            current_reader: crate::client::SensorReader::new(SensorKind::Current),
+            current_reader: SensorReader::new(SensorKind::Current),
         }
     }
 
     #[cfg(target_os = "macos")]
-    pub fn soc(&self) -> Option<&crate::soc::SocInfo> {
+    pub fn soc(&self) -> Option<&SocInfo> {
         self.soc.as_ref()
     }
 
     #[cfg(target_os = "macos")]
-    pub fn energy_model_channels(&self) -> Vec<(String, String, i64)> {
-        self.ioreport.as_ref().map(crate::ioreport::IoReport::energy_model_channels).unwrap_or_default()
+    pub fn energy_model_channels(&self) -> Vec<EnergyModelChannel> {
+        self.ioreport.as_ref().map(IoReport::energy_model_channels).unwrap_or_default()
     }
 
-    pub fn device(&self) -> crate::Device {
-        crate::Device::detect(self)
+    pub fn device(&self) -> Device {
+        Device::detect(self)
     }
 
     #[cfg(target_os = "macos")]
@@ -126,20 +138,20 @@ impl Collector {
         interval: Duration,
     ) -> Snapshot {
         let soc = self.sample_soc(interval);
-        let memory = crate::metrics::read_memory();
+        let memory = read_memory();
         let fans = self.read_fans();
-        let battery = crate::metrics::read_battery();
-        let thermal_pressure = crate::metrics::read_thermal_pressure();
+        let battery = read_battery();
+        let thermal_pressure = read_thermal_pressure();
         #[cfg(target_vendor = "apple")]
-        let sensors = self.temperature_reader.as_mut().map(crate::client::SensorReader::read).unwrap_or_default();
+        let sensors = self.temperature_reader.as_mut().map(SensorReader::read).unwrap_or_default();
         #[cfg(not(target_vendor = "apple"))]
         let sensors = crate::sensors(SensorKind::Temperature);
         #[cfg(target_vendor = "apple")]
-        let voltage = self.voltage_reader.as_mut().map(crate::client::SensorReader::read).unwrap_or_default();
+        let voltage = self.voltage_reader.as_mut().map(SensorReader::read).unwrap_or_default();
         #[cfg(not(target_vendor = "apple"))]
         let voltage = crate::sensors(SensorKind::Voltage);
         #[cfg(target_vendor = "apple")]
-        let current = self.current_reader.as_mut().map(crate::client::SensorReader::read).unwrap_or_default();
+        let current = self.current_reader.as_mut().map(SensorReader::read).unwrap_or_default();
         #[cfg(not(target_vendor = "apple"))]
         let current = crate::sensors(SensorKind::Current);
         let temperatures = (!sensors.is_empty()).then(|| temperatures_from(&sensors));
@@ -218,12 +230,12 @@ impl Collector {
     }
 
     #[cfg(target_os = "macos")]
-    fn read_fans(&self) -> Option<crate::metrics::FanMetrics> {
+    fn read_fans(&self) -> Option<FanMetrics> {
         self.smc.as_ref().map(|smc| smc.fans())
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn read_fans(&self) -> Option<crate::metrics::FanMetrics> {
+    fn read_fans(&self) -> Option<FanMetrics> {
         None
     }
 }
@@ -237,7 +249,6 @@ fn average(values: &[f32]) -> f32 {
 }
 
 fn temperatures_from(sensors: &[Sensor]) -> Temperatures {
-    use crate::Component;
     let average_of = |components: &[Component]| {
         let values: Vec<f32> = sensors
             .iter()

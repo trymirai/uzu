@@ -11,7 +11,7 @@ use super::{
     subscription::Subscription,
 };
 use crate::{
-    EnergyMetrics, PowerMetrics,
+    EnergyMetrics, EnergyModelChannel, PowerMetrics,
     soc::SocInfo,
     units::{Joules, Watts},
 };
@@ -92,14 +92,18 @@ impl IoReport {
         Some(energy_totals(self.functions, &delta))
     }
 
-    pub(crate) fn energy_model_channels(&self) -> Vec<(String, String, i64)> {
+    pub(crate) fn energy_model_channels(&self) -> Vec<EnergyModelChannel> {
         let Some(sample) = self.snapshot() else {
             return Vec::new();
         };
         decode_channels(self.functions, &sample.0)
             .into_iter()
             .filter(|channel| channel.group == obfstr!("Energy Model"))
-            .map(|channel| (channel.name, channel.unit, channel.integer_value))
+            .map(|channel| EnergyModelChannel {
+                name: channel.name,
+                unit: channel.unit,
+                value: channel.integer_value,
+            })
             .collect()
     }
 

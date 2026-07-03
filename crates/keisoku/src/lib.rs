@@ -1,5 +1,6 @@
 mod collector;
 mod component;
+mod energy_channel;
 mod energy_reading;
 mod energy_window;
 mod metrics;
@@ -25,6 +26,7 @@ mod sys;
 
 pub use collector::Collector;
 pub use component::{Component, classify};
+pub use energy_channel::EnergyModelChannel;
 pub use energy_reading::EnergyReading;
 pub use energy_window::EnergyWindow;
 pub use metrics::{

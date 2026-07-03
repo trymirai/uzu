@@ -1,17 +1,18 @@
 mod kind;
 mod reading;
 
+use crate::sensors;
 pub use kind::SensorKind;
 pub use reading::Sensor;
 
 pub fn thermal_sensors() -> Vec<Sensor> {
-    crate::sensors(SensorKind::Temperature)
+    sensors(SensorKind::Temperature)
 }
 
 pub fn voltage_sensors() -> Vec<Sensor> {
-    crate::sensors(SensorKind::Voltage)
+    sensors(SensorKind::Voltage)
 }
 
 pub fn current_sensors() -> Vec<Sensor> {
-    crate::sensors(SensorKind::Current)
+    sensors(SensorKind::Current)
 }
