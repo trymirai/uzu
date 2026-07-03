@@ -760,6 +760,8 @@ impl Render for ChatView {
                                     },
                                 )
                                 .into_any_element()
+                        } else if streaming_here {
+                            div().w_full().min_w_0().text_color(theme.text).child(cur.text.clone()).into_any_element()
                         } else {
                             div()
                                 .w_full()
