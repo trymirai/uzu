@@ -1,44 +1,57 @@
 # keisoku
 
-System telemetry collector for Apple platforms — CPU/GPU/ANE power, memory, bandwidth,
-frequencies, temperatures and sensors. Power is read from the SoC's IOReport/SMC counters,
-so sampling runs off your work thread and adds no measurable load.
+System telemetry for Apple platforms — CPU/GPU/ANE power and energy, memory, bandwidth,
+frequencies, temperatures and sensors. Power is read from the SoC's IOReport/SMC counters.
 
-## Two ways to use it
+## Three ways to read it
 
-**One-shot** — take a single reading averaged over a window:
+**Gauges** — instantaneous values, each meaningful from a single read (RAM, temperatures,
+voltage/current, fans, battery, thermal pressure, SMC package watts). No IOReport subscription,
+so this is cheap:
+
+```rust
+let mut collector = keisoku::Collector::new();
+let gauges = collector.gauges();
+if let Some(memory) = gauges.memory {
+    println!("ram {} / {}", memory.ram_usage, memory.ram_total);
+}
+```
+
+**Energy meter** — energy and average power over a window, measured by differencing the SoC's
+cumulative counters between `start` and `stop`:
+
+```rust
+let meter = keisoku::EnergyMeter::start();
+// ... run the work you want to measure ...
+if let Some(reading) = meter.stop() {
+    println!("{} over {}", reading.energy.total(), reading.elapsed);        // Joules / ms
+    println!("gpu {} / total {}", reading.average_power.gpu, reading.average_power.total()); // Watts
+}
+```
+
+**Live snapshot** — everything at once, averaged over a window (gauges plus the windowed rates):
 
 ```rust
 let mut collector = keisoku::Collector::new();
 let snapshot = collector.sample(std::time::Duration::from_millis(100));
 if let Some(power) = snapshot.power {
-    println!("gpu {} / total {}", power.gpu, power.total); // Watts
+    println!("gpu {} / total {}", power.gpu, power.total()); // Watts
 }
-```
-
-**Background recorder** — sample at an interval while something runs, then collect:
-
-```rust
-let recorder = keisoku::start(keisoku::Config {
-    interval: std::time::Duration::from_millis(100),
-});
-// ... do work ...
-let session = recorder.stop();          // stops the sampler, returns what it collected
-let samples = session.snapshots.len();
 ```
 
 ## What you get back
 
-- `Session { interval, snapshots }` — the snapshots sampled between `start` and `stop`.
-- `Snapshot { elapsed, power, memory, cpu, gpu, neural_engine, bandwidth, temperatures, .. }`.
-- `PowerMetrics { cpu, gpu, gpu_sram, ane, ram, total, package }` — all `Watts`.
+- `Gauges { memory, fans, battery, temperatures, thermal_pressure, package_watts, sensors, voltage, current }`.
+- `EnergyReading { energy, average_power, elapsed, package_from_smc }`.
+- `Snapshot { elapsed, cpu, gpu, neural_engine, power, memory, bandwidth, temperatures, .. }`.
+- `PowerMetrics { cpu, gpu, gpu_sram, ane, ram, package }` — all `Watts`; `total()` sums the disjoint rails.
 - `Device { chip, gpu_cores, performance_cores, efficiency_cores, ram_total, os }`.
 
 ## Platform
 
-Real numbers on Apple Silicon (macOS, and iOS for the subset exposed there). On other
-platforms the power/SoC fields are `None` and the calls are safe no-ops, so code that
-depends on keisoku still builds and runs everywhere.
+Apple platforms only — the crate does not build elsewhere. Full SoC power and energy come from
+IOReport on macOS; on iOS keisoku reports the subset exposed there, including HID charger "wall"
+power.
 
 Used by [`kanshi`](../kanshi) (live monitor); reaches Apple's private counters via
 [`kanka`](../kanka).
