@@ -40,12 +40,22 @@ jobs:
         if: ${{ always() && steps.setup.outcome == 'success' }}
         run: cargo +nightly fmt --check
 
+      - name: Check Rust formatting (mirai app)
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        working-directory: apps/mirai
+        run: cargo +nightly fmt --all --check
+
       - name: Check Metal formatting
         if: ${{ always() && steps.setup.outcome == 'success' }}
         run: ./scripts/clang-format.sh --check
 
       - name: Lint with clippy
         if: ${{ always() && steps.setup.outcome == 'success' }}
+        run: cargo +nightly clippy --workspace --all-targets -- -D warnings
+
+      - name: Lint mirai app with clippy
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        working-directory: apps/mirai
         run: cargo +nightly clippy --workspace --all-targets -- -D warnings
 
       - name: Check that Cargo.lock is consistent with Cargo.toml

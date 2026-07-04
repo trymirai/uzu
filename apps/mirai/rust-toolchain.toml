@@ -1,0 +1,7 @@
+# Match uzu's toolchain — uzu requires nightly, and GPUI builds fine on it
+# (nightly is a superset of the stable 1.95 Zed pins).
+[toolchain]
+channel = "nightly"
+profile = "default"
+components = ["rust-src", "rust-analyzer"]
+targets = ["aarch64-apple-darwin"]
