@@ -25,9 +25,19 @@ BIN="$APP_WS/target/$TARGET_SUBDIR/mirai-app"
 APP="$APP_WS/target/Mirai.app"
 DMG="$APP_WS/target/Mirai.dmg"
 
+ENV_FILE="$(cd "$SCRIPT_DIR/../../.." && pwd)/.env"
+read_env() { { [[ -f "$ENV_FILE" ]] && grep -m1 "^$1=" "$ENV_FILE" | cut -d= -f2-; } || true; }
+if key="$(read_env MIRAI_API_KEY)" && [[ -n "$key" ]]; then
+	export MIRAI_BUNDLED_API_KEY="$key"
+	echo "==> Embedding MIRAI_API_KEY from .env"
+fi
+unset key
+
 echo "==> Building mirai-app ($PROFILE, v$VERSION)"
-# shellcheck disable=SC2086 # $CARGO_FLAG is intentionally word-split (empty = no flag)
+# shellcheck disable=SC2086
 (cd "$APP_WS" && cargo build -p mirai-app $CARGO_FLAG)
+
+unset MIRAI_BUNDLED_API_KEY
 
 echo "==> Assembling $APP"
 rm -rf "$APP"

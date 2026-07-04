@@ -58,7 +58,13 @@ fn main() {
 
         gpui_tokio::init(cx);
         let engine = Tokio::handle(cx).block_on(async {
-            let config = EngineConfig::default().with_application_identifier(provider_keys::APPLICATION_ID.to_string());
+            let mut config =
+                EngineConfig::default().with_application_identifier(provider_keys::APPLICATION_ID.to_string());
+            if config.mirai_api_key.is_none()
+                && let Some(key) = option_env!("MIRAI_BUNDLED_API_KEY")
+            {
+                config = config.with_mirai_api_key(key.to_string());
+            }
             Engine::new(config).await
         });
         match engine {
