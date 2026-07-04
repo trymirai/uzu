@@ -10,8 +10,8 @@ use crate::{
     models_store::{ModelKind, ModelsStore},
     persistence,
     screens::{
-        ChatEvent, ChatView, ChatsEvent, ChatsView, CloudEvent, CloudModelsView, LocalModelsEvent, LocalModelsView,
-        RoutersView, SettingsEvent, SettingsView, TtsView, WelcomeEvent, WelcomeView,
+        ChatEvent, ChatView, ChatsEvent, ChatsView, LocalModelsEvent, LocalModelsView, RoutersView, SettingsEvent,
+        SettingsView, TtsView, WelcomeEvent, WelcomeView,
     },
     settings_state,
     theme::{self, ActiveTheme, FONT_SANS, TEXT_SIZE, layout::FOOTER_HEIGHT},
@@ -29,7 +29,6 @@ pub struct MiraiApp {
     settings: Entity<SettingsView>,
     routers: Entity<RoutersView>,
     tts: Entity<TtsView>,
-    cloud: Entity<CloudModelsView>,
 
     pub(super) recent_chats: Vec<persistence::StoredChat>,
 
@@ -68,16 +67,6 @@ impl MiraiApp {
         let routers = cx.new(|cx| RoutersView::new(routers_store, cx));
         let tts_store = cx.new(|cx| ModelsStore::new(ModelKind::TextToSpeech, cx));
         let tts = cx.new(|cx| TtsView::new(tts_store, cx));
-        let cloud = cx.new(|cx| CloudModelsView::new(cloud_store, cx));
-
-        cx.subscribe(&cloud, |this, _cloud, event, cx| match event {
-            CloudEvent::UseModel(model) => {
-                this.chat.update(cx, |chat, cx| chat.use_model(model.clone(), cx));
-                this.route = Route::Chat(None);
-                cx.notify();
-            },
-        })
-        .detach();
 
         cx.subscribe(&chats, |this, _chats, event, cx| match event {
             ChatsEvent::Open(id) => this.open_chat(id.clone(), cx),
@@ -139,7 +128,6 @@ impl MiraiApp {
             settings,
             routers,
             tts,
-            cloud,
             recent_chats: persistence::list_chats(),
             settings_menu_open: false,
         }
@@ -208,7 +196,6 @@ impl MiraiApp {
     ) -> AnyElement {
         match &self.route {
             Route::LocalModels => self.local_models.clone().into_any_element(),
-            Route::CloudModels => self.cloud.clone().into_any_element(),
             Route::Chat(_) => self.chat.clone().into_any_element(),
             Route::Chats => self.chats.clone().into_any_element(),
             Route::Routers => self.routers.clone().into_any_element(),

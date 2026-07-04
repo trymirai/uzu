@@ -4,7 +4,6 @@ pub(super) enum Section {
     Chat,
     Chats,
     LocalModels,
-    CloudModels,
     Routers,
     Tts,
     Settings,

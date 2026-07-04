@@ -19,7 +19,6 @@ use crate::{
 };
 
 pub struct ModelsStore {
-    kind: ModelKind,
     pub rows: Vec<ModelRow>,
     pub loading: bool,
     pub error: Option<String>,
@@ -34,7 +33,6 @@ impl ModelsStore {
         Self::spawn_load(kind, cx);
         Self::spawn_watch(cx);
         Self {
-            kind,
             rows: Vec::new(),
             loading: true,
             error: None,
@@ -78,16 +76,6 @@ impl ModelsStore {
         {
             let _ = fs::write(Self::installed_at_path(), json);
         }
-    }
-
-    pub fn reload(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
-        self.loading = true;
-        self.error = None;
-        cx.notify();
-        Self::spawn_load(self.kind, cx);
     }
 
     fn spawn_load(

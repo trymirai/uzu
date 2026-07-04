@@ -122,14 +122,6 @@ impl MiraiApp {
                         Route::LocalModels,
                         section == Section::LocalModels,
                     ))
-                    .child(self.nav_item(
-                        cx,
-                        "nav-cloud",
-                        Icon::Lightning,
-                        "Cloud Models",
-                        Route::CloudModels,
-                        section == Section::CloudModels,
-                    ))
                     .when(TEXT_TO_SPEECH, |column| {
                         column.child(self.nav_item(
                             cx,
