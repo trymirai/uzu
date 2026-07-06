@@ -30,6 +30,18 @@ impl IoReport {
         })
     }
 
+    /// Subscribes to the "Energy Model" group only. Building the four rate groups too costs ~4×
+    /// as long (`IOReportCopyChannelsInGroup` dominates), so paths that read energy alone — the
+    /// [`crate::EnergyMeter`] — use this instead of [`IoReport::new`].
+    pub(crate) fn energy_only() -> Option<Self> {
+        let functions = IoReportFunctions::get()?;
+        let subscription = Subscription::energy_model(functions)?;
+        Some(Self {
+            functions,
+            subscription,
+        })
+    }
+
     pub(crate) fn snapshot(&self) -> Option<RawEnergySample> {
         self.subscription.snapshot(self.functions).map(RawEnergySample)
     }

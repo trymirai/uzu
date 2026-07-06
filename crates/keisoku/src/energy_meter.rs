@@ -71,7 +71,7 @@ struct Counters {
 #[cfg(target_os = "macos")]
 impl Counters {
     fn read() -> Option<Self> {
-        let energy = IoReport::new()?.cumulative_energy()?;
+        let energy = IoReport::energy_only()?.cumulative_energy()?;
         let package_watts = Smc::new().and_then(|smc| smc.package_watts()).map(|watts| watts.value());
         Some(Self {
             energy,

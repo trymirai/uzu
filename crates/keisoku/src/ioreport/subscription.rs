@@ -6,7 +6,7 @@ use super::IoReportFunctions;
 pub(super) struct Channels(CFRetained<CFMutableDictionary>);
 
 impl Channels {
-    fn new(functions: &IoReportFunctions) -> Option<Self> {
+    fn all(functions: &IoReportFunctions) -> Option<Self> {
         let mut groups: Vec<CFRetained<CFMutableDictionary>> = Vec::with_capacity(5);
         for (group, subgroup) in [
             (obfstr!("Energy Model"), None::<&str>),
@@ -21,7 +21,19 @@ impl Channels {
                 groups.push(group_channels);
             }
         }
+        Self::merged(&groups, functions)
+    }
 
+    fn energy_model(functions: &IoReportFunctions) -> Option<Self> {
+        let group_name = CFString::from_str(obfstr!("Energy Model"));
+        let group_channels = functions.copy_channels_in_group(&group_name, None)?;
+        Self::merged(&[group_channels], functions)
+    }
+
+    fn merged(
+        groups: &[CFRetained<CFMutableDictionary>],
+        functions: &IoReportFunctions,
+    ) -> Option<Self> {
         let (first, rest) = groups.split_first()?;
         for other in rest {
             functions.merge_channels(first, other);
@@ -38,7 +50,17 @@ pub(super) struct Subscription {
 
 impl Subscription {
     pub(super) fn new(functions: &IoReportFunctions) -> Option<Self> {
-        let channels = Channels::new(functions)?;
+        Self::over(Channels::all(functions)?, functions)
+    }
+
+    pub(super) fn energy_model(functions: &IoReportFunctions) -> Option<Self> {
+        Self::over(Channels::energy_model(functions)?, functions)
+    }
+
+    fn over(
+        channels: Channels,
+        functions: &IoReportFunctions,
+    ) -> Option<Self> {
         let (handle, subscribed) = functions.create_subscription(&channels.0)?;
         drop(subscribed);
         Some(Self {
