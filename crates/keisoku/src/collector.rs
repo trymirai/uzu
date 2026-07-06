@@ -13,8 +13,8 @@ use crate::{
     Component, Device, Gauges,
     client::SensorReader,
     metrics::{
-        BandwidthMetrics, CpuMetrics, FanMetrics, GpuMetrics, NeuralEngineMetrics, PowerMetrics, Temperatures,
-        read_battery, read_memory, read_thermal_pressure,
+        BandwidthMetrics, CpuMetrics, FanMetrics, GpuMetrics, MemoryMetrics, NeuralEngineMetrics, PowerMetrics,
+        Temperatures, read_battery, read_thermal_pressure,
     },
     sensor::{Sensor, SensorKind},
     snapshot::Snapshot,
@@ -91,7 +91,7 @@ impl Collector {
         #[cfg(not(target_os = "macos"))]
         let package_watts = None;
         Gauges {
-            memory: read_memory(),
+            memory: MemoryMetrics::read(),
             fans: self.read_fans(),
             battery: read_battery(),
             temperatures,

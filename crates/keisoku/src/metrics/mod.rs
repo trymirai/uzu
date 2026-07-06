@@ -20,7 +20,6 @@ pub use fan::Fan;
 pub use fans::FanMetrics;
 pub use gpu::GpuMetrics;
 pub use memory::MemoryMetrics;
-pub(crate) use memory::read as read_memory;
 pub use neural_engine::NeuralEngineMetrics;
 pub use power::PowerMetrics;
 pub use temperatures::Temperatures;
