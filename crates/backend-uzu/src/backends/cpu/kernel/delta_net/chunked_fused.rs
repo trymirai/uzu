@@ -20,7 +20,6 @@ pub fn delta_net_chunked_fused_apply<T: ArrayElement + Float, const VT: u32>(
     k_norm: *const f32,
     qk_scaled: *const f32,
     g: *const f32,
-    decay_scale: *const f32,
     state: *mut f32,
     out: *mut T,
     num_v_heads: u32,
@@ -100,7 +99,10 @@ pub fn delta_net_chunked_fused_apply<T: ArrayElement + Float, const VT: u32>(
                 }
             }
 
-            // Phase 3: S^T <- alpha . S^T + (decay_scale (.) K)^T . Vnew.
+            // Phase 3: S^T <- alpha . S^T + (decay_scale (.) K)^T . Vnew, where
+            // decay_scale[t] = exp(g_last - g_t) is folded in on the fly (this
+            // replaces the separate DecayScale dispatch; beta is already baked
+            // into Vnew via U/W, so it does not appear here).
             let g_last = unsafe { *g.add((token_base + valid_tokens - 1) * num_v_heads + hv) };
             let alpha = g_last.exp();
             for dv in 0..head_v_dim {
@@ -110,7 +112,8 @@ pub fn delta_net_chunked_fused_apply<T: ArrayElement + Float, const VT: u32>(
                     for local_t in 0..valid_tokens {
                         let token = token_base + local_t;
                         let k = unsafe { *k_norm.add(token * key_dim + hk * HEAD_K_DIM + dk) };
-                        let decay = unsafe { *decay_scale.add(chunk_head_base * CHUNK_SIZE + local_t) };
+                        let g_t = unsafe { *g.add(token * num_v_heads + hv) };
+                        let decay = (g_last - g_t).exp();
                         value += vnew[local_t * head_v_dim + dv] * k * decay;
                     }
                     unsafe { *state.add(state_row + dk) = value };

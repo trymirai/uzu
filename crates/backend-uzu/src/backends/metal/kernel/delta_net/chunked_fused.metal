@@ -31,7 +31,6 @@ PUBLIC KERNEL(DeltaNetChunkedFusedApply)(
     device const float* k_norm,
     device const float* qk_scaled,
     device const float* g,
-    device const float* decay_scale,
     device float* state,
     device T* out,
     constant const uint& num_v_heads,
@@ -178,7 +177,8 @@ PUBLIC KERNEL(DeltaNetChunkedFusedApply)(
     {
       const uint key_base = sg * FUSED_KEY_TILE;
       const uint g_last_token = token_base + (valid_tokens > 0 ? valid_tokens - 1 : 0u);
-      const float alpha = fast::exp(g[g_last_token * num_v_heads + hv_idx]);
+      const float g_last = g[g_last_token * num_v_heads + hv_idx];
+      const float alpha = fast::exp(g_last);
 
       UpdAccFragment acc;
       acc.clear();
@@ -193,8 +193,11 @@ PUBLIC KERNEL(DeltaNetChunkedFusedApply)(
           if (uint(row) >= valid_j) {
             return 0.0f;
           }
-          const uint local_t = j0 + uint(row);
-          return value * decay_scale[chunk_head_base * FUSED_CHUNK + local_t];
+          const uint token = token_base + j0 + uint(row);
+          // decay_scale[t] = exp(g_last - g_t), folded in on the fly (this
+          // replaces the separate DecayScale dispatch; beta is already baked
+          // into Vnew via U/W, so it does not appear here).
+          return value * fast::exp(g_last - g[token * num_v_heads + hv_idx]);
         });
         fragment_mma(acc, v_frag, k_frag);
       }
