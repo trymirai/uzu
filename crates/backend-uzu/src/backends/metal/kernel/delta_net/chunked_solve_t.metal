@@ -1,80 +1,113 @@
 #include <metal_stdlib>
 #include "../common/defines.h"
 #include "../common/dsl.h"
+#include "../matmul/common/fragment.h"
+#include "../matmul/common/simdgroup_fragment_ops.h"
 
 using namespace metal;
+using namespace uzu::matmul;
 
-#define SOLVE_T_THREADS 128u
+#define SOLVE_T_BLOCK 16u
 
 // Emits the DENSE unit-lower-triangular inverse T = (I + A)^{-1} per
-// (chunk, v-head), where A[i,k] = beta_i * exp(g_i - g_k) * kk[i,k] for k < i
-// (else 0) is the same strictly-lower chunk matrix that `DeltaNetChunkedSolve`
-// factors into block inverses. Mode L's mega kernel applies T as one dense
-// [C,C] x [C,VT] MMA (Vnew = T . R), so W/U (and BuildWU) disappear; this kernel
-// replaces Solve in that pipeline. It is self-contained: it reads the same
-// (kk, beta, g) inputs as Solve and does one forward substitution with an
-// identity RHS. T is stored BF16 -- exactly the precision the old W/U operands
-// carried, so numerics are no worse (state stays f32 throughout the scan).
-//
-// Layout: one threadgroup per (chunk, v-head). A is staged in threadgroup
-// memory (16KB f32) so exp() runs once per entry; T is built in threadgroup
-// memory (8KB bf16), column j owned by thread j (columns are independent). The
-// per-column recurrence T[i,j] = delta(i,j) - sum_{k=j..i-1} A[i,k] T[k,j] reads
-// only entries this thread wrote, so no barrier is needed inside it.
-template <uint CHUNK_SIZE>
+// (chunk, v-head) as BF16, for Mode L's mega kernel (Vnew = T . R). It is
+// structurally BuildWU with the RHS replaced by the identity: T = T . I, so one
+// block forward substitution over the SAME block inverses (a_packed strips +
+// a_inv diagonal-block inverses) that `DeltaNetChunkedSolve` already produced
+// yields T directly. W/U (and their traffic) disappear. T is bf16 -- exactly
+// the precision the old W/U operands carried, so numerics are no worse (state
+// stays f32). Output T is [chunks, HV, C, C], one BV-wide column slice per tile.
+template <uint CHUNK_SIZE, uint BV>
 VARIANTS(CHUNK_SIZE, 16, 32, 64)
+VARIANTS(BV, 16, 32)
 PUBLIC KERNEL(DeltaNetChunkedSolveT)(
-    device const float* kk,
-    device const float* beta,
-    device const float* g,
+    device const float* a_packed,
+    device const float* a_inv,
     device bfloat* t_out,
     constant const uint& num_v_heads,
-    constant const uint& num_k_heads,
     constant const uint& suffix_len,
-    threadgroup float a_tg[CHUNK_SIZE * CHUNK_SIZE],
-    threadgroup bfloat t_tg[CHUNK_SIZE * CHUNK_SIZE],
     const uint chunk_idx GROUPS(suffix_len.div_ceil(CHUNK_SIZE)),
     const uint hv_idx GROUPS(num_v_heads),
-    const uint tid THREADS(SOLVE_T_THREADS)
+    const uint tile_idx GROUPS(CHUNK_SIZE.div_ceil(BV)),
+    const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
-  const uint groups_per_head = num_v_heads / num_k_heads;
-  const uint hk_idx = hv_idx / groups_per_head;
+  using Ops = SimdgroupFragmentOps;
+  constexpr ushort TOKEN_FRAGMENTS = SOLVE_T_BLOCK / Ops::FRAGMENT_ROWS;
+  constexpr ushort VALUE_FRAGMENTS = BV / Ops::FRAGMENT_COLS;
+  static_assert(BV % Ops::FRAGMENT_COLS == 0, "BV must align to fragment columns");
+  using TileFragment = Fragment<float, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
+  using MatrixFragment = OperandFragment<float, TOKEN_FRAGMENTS, TOKEN_FRAGMENTS, Ops>;
+  using ValueFragment = OperandFragment<float, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
+  using PairMatrixFragment = OperandFragment<float, TOKEN_FRAGMENTS, 2 * TOKEN_FRAGMENTS, Ops>;
+  using PairValueFragment = OperandFragment<float, 2 * TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
+
+  constexpr uint num_blocks = (CHUNK_SIZE + SOLVE_T_BLOCK - 1) / SOLVE_T_BLOCK;
+  constexpr uint num_col_pairs = (num_blocks + 1) / 2;
+  const uint slice_base = tile_idx * BV;
+  const uint tile_cols = min(BV, CHUNK_SIZE - slice_base);
   const uint token_base = chunk_idx * CHUNK_SIZE;
-  const uint valid = token_base < suffix_len ? min(uint(CHUNK_SIZE), suffix_len - token_base) : 0u;
-  const uint kk_base = (chunk_idx * num_k_heads + hk_idx) * CHUNK_SIZE * CHUNK_SIZE;
 
-  // Stage the scaled strictly-lower matrix A and zero T.
-  for (uint idx = tid; idx < CHUNK_SIZE * CHUNK_SIZE; idx += SOLVE_T_THREADS) {
-    const uint i = idx / CHUNK_SIZE;
-    const uint k = idx - i * CHUNK_SIZE;
-    float a = 0.0f;
-    if (k < i && i < valid && k < valid) {
-      const float beta_i = beta[(token_base + i) * num_v_heads + hv_idx];
-      const float g_i = g[(token_base + i) * num_v_heads + hv_idx];
-      const float g_k = g[(token_base + k) * num_v_heads + hv_idx];
-      a = beta_i * fast::exp(g_i - g_k) * kk[kk_base + i * CHUNK_SIZE + k];
+  const device float* a_blocks =
+      a_packed + (chunk_idx * num_v_heads + hv_idx) * num_blocks * num_col_pairs * (SOLVE_T_BLOCK * 2 * SOLVE_T_BLOCK);
+  const device float* inv_blocks =
+      a_inv + (chunk_idx * num_v_heads + hv_idx) * num_blocks * (SOLVE_T_BLOCK * SOLVE_T_BLOCK);
+  device bfloat* t_head = t_out + (chunk_idx * num_v_heads + hv_idx) * CHUNK_SIZE * CHUNK_SIZE + slice_base;
+
+  for (uint block_idx = 0; block_idx < num_blocks; ++block_idx) {
+    const uint row_base = block_idx * SOLVE_T_BLOCK;
+
+    // -- RHS = identity slice: acc[row, col] = (row_base+row == slice_base+col) -
+    TileFragment acc_t;
+    acc_t.clear();
+    acc_t.map_coords(lane, [&](short local_row, short local_col, float) {
+      const uint global_row = row_base + uint(local_row);
+      const uint global_col = slice_base + uint(local_col);
+      return global_row == global_col ? 1.0f : 0.0f;
+    });
+
+    // -- Forward substitution: subtract A . T_prev (T_prev in bf16, own slice) --
+    const uint num_full_pairs = block_idx / 2;
+    for (uint pair_idx = 0; pair_idx < num_full_pairs; ++pair_idx) {
+      PairMatrixFragment a_frag;
+      const device float* a_pair =
+          a_blocks + (block_idx * num_col_pairs + pair_idx) * (SOLVE_T_BLOCK * 2 * SOLVE_T_BLOCK);
+      a_frag.load_from(lane, fragment_source(a_pair, 2 * SOLVE_T_BLOCK));
+      a_frag.map([](float value) { return -value; });
+
+      PairValueFragment t_prev_frag;
+      const device bfloat* t_prev = t_head + pair_idx * 2 * SOLVE_T_BLOCK * CHUNK_SIZE;
+      t_prev_frag.load_from(lane, fragment_source(t_prev, CHUNK_SIZE).bounded(2 * SOLVE_T_BLOCK, tile_cols));
+      fragment_mma(acc_t, a_frag, t_prev_frag);
     }
-    a_tg[idx] = a;
-    t_tg[idx] = bfloat(0.0f);
-  }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  // Forward substitution, one column per thread. T is unit lower triangular:
-  // rows above the diagonal stay 0 (already zeroed above).
-  const uint j = tid;
-  if (j < CHUNK_SIZE) {
-    for (uint i = j; i < CHUNK_SIZE; ++i) {
-      float acc = (i == j) ? 1.0f : 0.0f;
-      for (uint k = j; k < i; ++k) {
-        acc -= a_tg[i * CHUNK_SIZE + k] * float(t_tg[k * CHUNK_SIZE + j]);
-      }
-      t_tg[i * CHUNK_SIZE + j] = bfloat(acc);
+    for (uint prev_block_idx = num_full_pairs * 2; prev_block_idx < block_idx; ++prev_block_idx) {
+      MatrixFragment a_frag;
+      const device float* a_block =
+          a_blocks + (block_idx * num_col_pairs + prev_block_idx / 2) * (SOLVE_T_BLOCK * 2 * SOLVE_T_BLOCK) +
+          (prev_block_idx % 2) * SOLVE_T_BLOCK;
+      a_frag.load_from(lane, fragment_source(a_block, 2 * SOLVE_T_BLOCK));
+      a_frag.map([](float value) { return -value; });
+
+      ValueFragment t_prev_frag;
+      const device bfloat* t_prev = t_head + prev_block_idx * SOLVE_T_BLOCK * CHUNK_SIZE;
+      t_prev_frag.load_from(lane, fragment_source(t_prev, CHUNK_SIZE).bounded(SOLVE_T_BLOCK, tile_cols));
+      fragment_mma(acc_t, a_frag, t_prev_frag);
     }
-  }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  const uint t_base = (chunk_idx * num_v_heads + hv_idx) * CHUNK_SIZE * CHUNK_SIZE;
-  for (uint idx = tid; idx < CHUNK_SIZE * CHUNK_SIZE; idx += SOLVE_T_THREADS) {
-    t_out[t_base + idx] = t_tg[idx];
+    // -- Apply the diagonal-block inverse and store T ------------------------
+    MatrixFragment inv_frag;
+    inv_frag.load_from(lane, fragment_source(inv_blocks + block_idx * SOLVE_T_BLOCK * SOLVE_T_BLOCK, SOLVE_T_BLOCK));
+
+    TileFragment solved_t;
+    solved_t.clear();
+    fragment_mma(solved_t, inv_frag, acc_t);
+    solved_t.store_safe(lane, t_head + row_base * CHUNK_SIZE, CHUNK_SIZE, short2(tile_cols, SOLVE_T_BLOCK));
+
+    simdgroup_barrier(mem_flags::mem_device);
   }
+
+  // Suppress unused warnings when suffix_len bounds are not needed on the fast
+  // path (invalid rows carry identity via a_inv, matching BuildWU).
+  (void)token_base;
+  (void)suffix_len;
 }

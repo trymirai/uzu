@@ -1,72 +1,80 @@
 use half::bf16;
+use num_traits::NumCast;
 use proc_macros::kernel;
 
-// CPU mirror of `DeltaNetChunkedSolveT`: emits the dense unit-lower-triangular
-// inverse T = (I + A)^{-1} per (chunk, v-head) as BF16, where
-// A[i,k] = beta_i * exp(g_i - g_k) * kk[i,k] for k < i (else 0). The forward
-// substitution accumulates through the BF16 intermediate exactly as the Metal
-// kernel does (matching the old W/U precision contract).
+// CPU mirror of `DeltaNetChunkedSolveT`: the dense unit-lower-triangular inverse
+// T = (I + A)^{-1} per (chunk, v-head) via one block forward substitution over
+// the block inverses (a_packed strips + a_inv diagonal-block inverses) with an
+// identity RHS -- BuildWU with RHS = I. T is BF16 and the substitution reads it
+// back in BF16 (matching the Metal kernel and the old W/U precision contract).
 #[kernel(DeltaNetChunkedSolveT)]
 #[variants(CHUNK_SIZE, 16, 32, 64)]
-pub fn delta_net_chunked_solve_t<const CHUNK_SIZE: u32>(
-    kk: *const f32,
-    beta: *const f32,
-    g: *const f32,
+#[variants(BV, 16, 32)]
+pub fn delta_net_chunked_solve_t<const CHUNK_SIZE: u32, const BV: u32>(
+    a_packed: *const f32,
+    a_inv: *const f32,
     t_out: *mut bf16,
     num_v_heads: u32,
-    num_k_heads: u32,
     suffix_len: u32,
 ) {
+    let _ = BV;
     let chunk_size = CHUNK_SIZE as usize;
     let num_v_heads = num_v_heads as usize;
-    let num_k_heads = num_k_heads as usize;
     let suffix_len = suffix_len as usize;
     let num_chunks = suffix_len.div_ceil(chunk_size);
-    let groups_per_head = num_v_heads / num_k_heads;
-
-    let mut a = vec![0.0f32; chunk_size * chunk_size];
-    let mut t = vec![bf16::from_f32(0.0); chunk_size * chunk_size];
+    let block = 16usize;
+    let num_blocks = chunk_size.div_ceil(block);
+    let num_col_pairs = num_blocks.div_ceil(2);
 
     for chunk in 0..num_chunks {
-        let token_base = chunk * chunk_size;
-        let valid = suffix_len.saturating_sub(token_base).min(chunk_size);
         for hv in 0..num_v_heads {
-            let hk = hv / groups_per_head;
-            let kk_base = (chunk * num_k_heads + hk) * chunk_size * chunk_size;
+            for block_idx in 0..num_blocks {
+                let row_base = block_idx * block;
 
-            for i in 0..chunk_size {
-                for k in 0..chunk_size {
-                    let value = if k < i && i < valid && k < valid {
-                        let beta_i = unsafe { *beta.add((token_base + i) * num_v_heads + hv) };
-                        let g_i = unsafe { *g.add((token_base + i) * num_v_heads + hv) };
-                        let g_k = unsafe { *g.add((token_base + k) * num_v_heads + hv) };
-                        let kk_value = unsafe { *kk.add(kk_base + i * chunk_size + k) };
-                        beta_i * (g_i - g_k).exp() * kk_value
-                    } else {
-                        0.0
-                    };
-                    a[i * chunk_size + k] = value;
-                    t[i * chunk_size + k] = bf16::from_f32(0.0);
-                }
-            }
-
-            for j in 0..chunk_size {
-                for i in j..chunk_size {
-                    let mut acc = if i == j {
-                        1.0f32
-                    } else {
-                        0.0f32
-                    };
-                    for k in j..i {
-                        acc -= a[i * chunk_size + k] * t[k * chunk_size + j].to_f32();
+                // RHS = identity: acc[row][col] = (row_base+row == col) ? 1 : 0.
+                let mut acc_t = vec![0.0f32; block * chunk_size];
+                for row in 0..block {
+                    let global_row = row_base + row;
+                    if global_row < chunk_size {
+                        acc_t[row * chunk_size + global_row] = 1.0;
                     }
-                    t[i * chunk_size + j] = bf16::from_f32(acc);
                 }
-            }
 
-            let t_base = (chunk * num_v_heads + hv) * chunk_size * chunk_size;
-            for idx in 0..chunk_size * chunk_size {
-                unsafe { *t_out.add(t_base + idx) = t[idx] };
+                for prev_block in 0..block_idx {
+                    for row in 0..block {
+                        for prev_row in 0..block {
+                            let local_col = (prev_block % 2) * block + prev_row;
+                            let a_idx = (((chunk * num_v_heads + hv) * num_blocks + block_idx) * num_col_pairs
+                                + prev_block / 2)
+                                * (block * 2 * block)
+                                + row * (2 * block)
+                                + local_col;
+                            let a = unsafe { *a_packed.add(a_idx) };
+                            let prev_token = prev_block * block + prev_row;
+                            let prev_out_base = ((chunk * num_v_heads + hv) * chunk_size + prev_token) * chunk_size;
+                            for d in 0..chunk_size {
+                                let t_prev: f32 = NumCast::from(unsafe { *t_out.add(prev_out_base + d) }).unwrap();
+                                acc_t[row * chunk_size + d] -= a * t_prev;
+                            }
+                        }
+                    }
+                }
+
+                for row in 0..block {
+                    let local_token = row_base + row;
+                    let out_base = ((chunk * num_v_heads + hv) * chunk_size + local_token) * chunk_size;
+                    for d in 0..chunk_size {
+                        let mut value = 0.0f32;
+                        for source_row in 0..block {
+                            let inv_idx = ((chunk * num_v_heads + hv) * num_blocks + block_idx) * block * block
+                                + row * block
+                                + source_row;
+                            let inv = unsafe { *a_inv.add(inv_idx) };
+                            value += inv * acc_t[source_row * chunk_size + d];
+                        }
+                        unsafe { *t_out.add(out_base + d) = bf16::from_f32(value) };
+                    }
+                }
             }
         }
     }

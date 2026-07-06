@@ -2273,9 +2273,11 @@ fn test_delta_net_chunked_mega_vs_cpu_mirror_vt32() {
     mega_vs_cpu_mirror_impl(130, 32);
 }
 
-// Runs the Mode L precompute chain (Prep, Cumsum, Gram, SolveT) on Metal and
-// reads back the mega kernel inputs, including the precomputed chunk-local
-// prefix g, the dense bf16 inverse T, and beta. State-independent.
+// Runs the Mode L precompute chain (Prep, Cumsum, Gram, Solve, SolveT) on Metal
+// and reads back the mega kernel inputs, including the precomputed chunk-local
+// prefix g, the dense bf16 inverse T, and beta. SolveT emits the dense T via a
+// block forward substitution (identity RHS) over Solve's a_packed/a_inv block
+// inverses. State-independent.
 #[allow(clippy::type_complexity)]
 fn run_mode_l_precompute_metal(
     in_proj: &[bf16],
@@ -2291,6 +2293,9 @@ fn run_mode_l_precompute_metal(
     let key_dim = num_k_heads * head_k_dim;
     let value_dim = num_v_heads * head_v_dim;
     let num_chunks = suffix_len.div_ceil(chunk_size);
+    let block_size = 16usize;
+    let num_blocks = chunk_size.div_ceil(block_size);
+    let num_col_pairs = num_blocks.div_ceil(2);
 
     let context = <Metal as Backend>::Context::new().expect("context");
     let in_proj_array = context.create_array_from(&[in_proj.len()], in_proj);
@@ -2308,6 +2313,15 @@ fn run_mode_l_precompute_metal(
     let mut qk_scaled = context
         .create_array_zeros(&[num_chunks * num_v_heads * chunk_size * chunk_size], DataType::F32)
         .into_allocation();
+    let mut a_packed = context
+        .create_array_zeros(
+            &[num_chunks * num_v_heads * num_blocks * num_col_pairs * block_size * 2 * block_size],
+            DataType::F32,
+        )
+        .into_allocation();
+    let mut a_inv = context
+        .create_array_zeros(&[num_chunks * num_v_heads * num_blocks * block_size * block_size], DataType::F32)
+        .into_allocation();
     let mut t_mat = context
         .create_array_zeros(&[num_chunks * num_v_heads * chunk_size * chunk_size], DataType::BF16)
         .into_allocation();
@@ -2317,7 +2331,10 @@ fn run_mode_l_precompute_metal(
             .unwrap();
     let cumsum_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedCumsumKernel::new(&context).unwrap();
     let gram_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(&context, 128, 64).unwrap();
-    let solve_t_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveTKernel::new(&context, 64).unwrap();
+    let solve_k =
+        <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, false).unwrap();
+    let solve_t_k =
+        <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveTKernel::new(&context, 64, 32).unwrap();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
     prep_k.encode(
@@ -2348,16 +2365,18 @@ fn run_mode_l_precompute_metal(
         suffix_len as u32,
         &mut encoder,
     );
-    solve_t_k.encode(
+    solve_k.encode(
         &kk,
         &beta,
         &g,
-        &mut t_mat,
+        &mut a_packed,
+        &mut a_inv,
         num_v_heads as u32,
         num_k_heads as u32,
         suffix_len as u32,
         &mut encoder,
     );
+    solve_t_k.encode(&a_packed, &a_inv, &mut t_mat, num_v_heads as u32, suffix_len as u32, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     (
@@ -2549,6 +2568,9 @@ fn bench_delta_net_mode_l_vs_fused_prefill() {
         let mut g_m = alloc(DataType::F32, suffix_len * num_v_heads);
         let mut kk_m = alloc(DataType::F32, num_chunks * num_k_heads * chunk_size * chunk_size);
         let mut qk_scaled_m = alloc(DataType::F32, num_chunks * num_v_heads * chunk_size * chunk_size);
+        let mut a_packed_m =
+            alloc(DataType::F32, num_chunks * num_v_heads * num_blocks * num_col_pairs * block_size * 2 * block_size);
+        let mut a_inv_m = alloc(DataType::F32, num_chunks * num_v_heads * num_blocks * block_size * block_size);
         let mut t_mat_f = alloc(DataType::BF16, num_chunks * num_v_heads * chunk_size * chunk_size);
         let mut mode_l_state = alloc(DataType::F32, state_size);
         let mut mode_l_out = alloc(DataType::BF16, suffix_len * value_dim);
@@ -2587,7 +2609,7 @@ fn bench_delta_net_mode_l_vs_fused_prefill() {
         )
         .unwrap();
         let solve_t_k =
-            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveTKernel::new(&context, 64).unwrap();
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveTKernel::new(&context, 64, 32).unwrap();
         let mega_vt32_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
             &context,
             DataType::BF16,
@@ -2783,16 +2805,18 @@ fn bench_delta_net_mode_l_vs_fused_prefill() {
                 suffix_len as u32,
                 &mut encoder,
             );
-            solve_t_k.encode(
+            solve_k.encode(
                 &kk_m,
                 &beta_m,
                 &g_m,
-                &mut t_mat_f,
+                &mut a_packed_m,
+                &mut a_inv_m,
                 num_v_heads as u32,
                 num_k_heads as u32,
                 suffix_len as u32,
                 &mut encoder,
             );
+            solve_t_k.encode(&a_packed_m, &a_inv_m, &mut t_mat_f, num_v_heads as u32, suffix_len as u32, &mut encoder);
             mega_vt32_k.encode(
                 &q_norm_m,
                 &k_norm_m,
@@ -2920,8 +2944,14 @@ fn bench_delta_net_mode_l_breakdown() {
         let mut beta = alloc(DataType::F32, suffix_len * num_v_heads);
         let mut log_decay = alloc(DataType::F32, suffix_len * num_v_heads);
         let mut g = alloc(DataType::F32, suffix_len * num_v_heads);
+        let block_size = 16usize;
+        let num_blocks = chunk_size.div_ceil(block_size);
+        let num_col_pairs = num_blocks.div_ceil(2);
         let mut kk = alloc(DataType::F32, num_chunks * num_k_heads * chunk_size * chunk_size);
         let mut qk_scaled = alloc(DataType::F32, num_chunks * num_v_heads * chunk_size * chunk_size);
+        let mut a_packed =
+            alloc(DataType::F32, num_chunks * num_v_heads * num_blocks * num_col_pairs * block_size * 2 * block_size);
+        let mut a_inv = alloc(DataType::F32, num_chunks * num_v_heads * num_blocks * block_size * block_size);
         let mut t_mat = alloc(DataType::BF16, num_chunks * num_v_heads * chunk_size * chunk_size);
         let mut mega_state = alloc(DataType::F32, state_size);
         let mut mega_out = alloc(DataType::BF16, suffix_len * value_dim);
@@ -2932,8 +2962,10 @@ fn bench_delta_net_mode_l_breakdown() {
         let cumsum_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedCumsumKernel::new(&context).unwrap();
         let gram_k =
             <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(&context, 128, 64).unwrap();
+        let solve_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, false).unwrap();
         let solve_t_k =
-            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveTKernel::new(&context, 64).unwrap();
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveTKernel::new(&context, 64, 32).unwrap();
         let norm_k =
             <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, DataType::BF16).unwrap();
         let mega_vt32_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
@@ -2976,16 +3008,18 @@ fn bench_delta_net_mode_l_breakdown() {
                 suffix_len as u32,
                 &mut encoder,
             );
-            solve_t_k.encode(
+            solve_k.encode(
                 &kk,
                 &beta,
                 &g,
-                &mut t_mat,
+                &mut a_packed,
+                &mut a_inv,
                 num_v_heads as u32,
                 num_k_heads as u32,
                 suffix_len as u32,
                 &mut encoder,
             );
+            solve_t_k.encode(&a_packed, &a_inv, &mut t_mat, num_v_heads as u32, suffix_len as u32, &mut encoder);
             encoder.end_encoding().submit().wait_until_completed().unwrap();
         }
 
@@ -3050,17 +3084,21 @@ fn bench_delta_net_mode_l_breakdown() {
                 &mut encoder,
             );
         });
-        time_kernel!("solve_t", |encoder| {
-            solve_t_k.encode(
+        time_kernel!("solve", |encoder| {
+            solve_k.encode(
                 &kk,
                 &beta,
                 &g,
-                &mut t_mat,
+                &mut a_packed,
+                &mut a_inv,
                 num_v_heads as u32,
                 num_k_heads as u32,
                 suffix_len as u32,
                 &mut encoder,
             );
+        });
+        time_kernel!("solve_t", |encoder| {
+            solve_t_k.encode(&a_packed, &a_inv, &mut t_mat, num_v_heads as u32, suffix_len as u32, &mut encoder);
         });
 
         // The mega apply dispatch (its own stage label).
@@ -3148,16 +3186,18 @@ fn bench_delta_net_mode_l_breakdown() {
                     suffix_len as u32,
                     $encoder,
                 );
-                solve_t_k.encode(
+                solve_k.encode(
                     &kk,
                     &beta,
                     &g,
-                    &mut t_mat,
+                    &mut a_packed,
+                    &mut a_inv,
                     num_v_heads as u32,
                     num_k_heads as u32,
                     suffix_len as u32,
                     $encoder,
                 );
+                solve_t_k.encode(&a_packed, &a_inv, &mut t_mat, num_v_heads as u32, suffix_len as u32, $encoder);
             }};
         }
 
