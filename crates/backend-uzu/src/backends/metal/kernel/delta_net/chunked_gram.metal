@@ -10,14 +10,21 @@ using namespace uzu::matmul;
 #define CHUNK_GRAM_ROW_TILE 16u
 #define CHUNK_GRAM_COL_TILE 32u
 
+// Gram (fused with the former ScaleQk pass): computes the per-k-head kk block
+// (consumed by Solve) and, for each of the k-head's GQA v-heads, the causal-
+// masked, decay-scaled qk block qk_scaled[row,col] = qk * exp(g_row - g_col)
+// (col <= row, else 0). The scale-qk expansion is folded in here so no separate
+// dispatch and no intermediate qk buffer are needed.
 template <uint HEAD_K_DIM, uint CHUNK_SIZE>
 VARIANTS(HEAD_K_DIM, 128)
 VARIANTS(CHUNK_SIZE, 16, 32, 64)
 PUBLIC KERNEL(DeltaNetChunkedGram)(
     device const float* q_norm,
     device const float* k_norm,
+    device const float* g,
     device float* kk_out,
-    device float* qk_out,
+    device float* qk_scaled_out,
+    constant const uint& num_v_heads,
     constant const uint& num_k_heads,
     constant const uint& key_dim,
     constant const uint& suffix_len,
@@ -81,41 +88,30 @@ PUBLIC KERNEL(DeltaNetChunkedGram)(
     fragment_mma(qk_acc, q_left, k_right);
   }
 
-  const uint out_base = (chunk_idx * num_k_heads + hk_idx) * CHUNK_SIZE * CHUNK_SIZE + row_base * CHUNK_SIZE + col_base;
   const short2 tile_dims = short2(tile_cols, tile_rows);
-  kk_acc.store_safe(lane, kk_out + out_base, CHUNK_SIZE, tile_dims);
-  qk_acc.store_safe(lane, qk_out + out_base, CHUNK_SIZE, tile_dims);
-}
+  const uint kk_base = (chunk_idx * num_k_heads + hk_idx) * CHUNK_SIZE * CHUNK_SIZE + row_base * CHUNK_SIZE + col_base;
+  kk_acc.store_safe(lane, kk_out + kk_base, CHUNK_SIZE, tile_dims);
 
-template <uint CHUNK_SIZE>
-VARIANTS(CHUNK_SIZE, 16, 32, 64)
-PUBLIC KERNEL(DeltaNetChunkedScaleQk)(
-    device const float* qk,
-    device const float* g,
-    device float* qk_scaled,
-    constant const uint& num_v_heads,
-    constant const uint& num_k_heads,
-    constant const uint& suffix_len,
-    const uint chunk_idx GROUPS(suffix_len.div_ceil(CHUNK_SIZE)),
-    const uint hv_idx GROUPS(num_v_heads),
-    const uint tid THREADS(256)
-) {
-  const uint token_base = chunk_idx * CHUNK_SIZE;
-  const uint valid_tokens = token_base < suffix_len ? min(uint(CHUNK_SIZE), suffix_len - token_base) : 0u;
+  // Expand qk to each of the k-head's GQA v-heads, applying the causal mask and
+  // the per-v-head decay scale exp(g_row - g_col). The full chunk tile region is
+  // written (masked/out-of-range entries as 0), so qk_scaled needs no pre-zero.
+  const uint valid_tokens = chunk_token_base < suffix_len ? min(uint(CHUNK_SIZE), suffix_len - chunk_token_base) : 0u;
   const uint groups_per_head = num_v_heads / num_k_heads;
-  const uint hk_idx = hv_idx / groups_per_head;
-  const uint src_base = (chunk_idx * num_k_heads + hk_idx) * CHUNK_SIZE * CHUNK_SIZE;
-  const uint dst_base = (chunk_idx * num_v_heads + hv_idx) * CHUNK_SIZE * CHUNK_SIZE;
-
-  for (uint index = tid; index < CHUNK_SIZE * CHUNK_SIZE; index += 256) {
-    const uint row = index / CHUNK_SIZE;
-    const uint col = index - row * CHUNK_SIZE;
-    if (row >= valid_tokens || col >= valid_tokens || col > row) {
-      qk_scaled[dst_base + index] = 0.0f;
-      continue;
-    }
-    const float g_row = g[(token_base + row) * num_v_heads + hv_idx];
-    const float g_col = g[(token_base + col) * num_v_heads + hv_idx];
-    qk_scaled[dst_base + index] = qk[src_base + index] * fast::exp(g_row - g_col);
+  for (uint group = 0; group < groups_per_head; ++group) {
+    const uint hv_idx = hk_idx * groups_per_head + group;
+    AccFragment scaled = qk_acc;
+    scaled.map_coords(lane, [&](short r, short c, float value) {
+      const uint row = row_base + uint(r);
+      const uint col = col_base + uint(c);
+      if (row >= valid_tokens || col >= valid_tokens || col > row) {
+        return 0.0f;
+      }
+      const float g_row = g[(chunk_token_base + row) * num_v_heads + hv_idx];
+      const float g_col = g[(chunk_token_base + col) * num_v_heads + hv_idx];
+      return value * fast::exp(g_row - g_col);
+    });
+    const uint dst_base =
+        (chunk_idx * num_v_heads + hv_idx) * CHUNK_SIZE * CHUNK_SIZE + row_base * CHUNK_SIZE + col_base;
+    scaled.store_safe(lane, qk_scaled_out + dst_base, CHUNK_SIZE, tile_dims);
   }
 }
