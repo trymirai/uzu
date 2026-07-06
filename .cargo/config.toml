@@ -1,5 +1,5 @@
 [alias]
-tools = "run --quiet -p cli-tools --"
+tools = "run --quiet --target-dir target/cargo-tools -p cli-tools --"
 
 [env]
 RUST_TEST_THREADS = "1"
