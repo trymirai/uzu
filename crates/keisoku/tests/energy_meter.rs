@@ -21,6 +21,27 @@ fn energy_meter_measures_a_window() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn meter_survives_moving_between_threads() {
+    let meter = keisoku::EnergyMeter::new();
+    let (meter, window) = std::thread::spawn(move || {
+        let window = meter.start();
+        (meter, window)
+    })
+    .join()
+    .expect("start thread");
+    let reading = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        meter.stop(window)
+    })
+    .join()
+    .expect("stop thread");
+    let reading = reading.expect("energy reading after crossing threads");
+    assert!(reading.energy.total().value() >= 0.0 && reading.energy.total().value().is_finite());
+    assert!(reading.elapsed.value() >= 80);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn reused_windows_skip_the_subscription() {
     let meter = keisoku::EnergyMeter::new();
     for _ in 0..3 {
