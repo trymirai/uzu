@@ -2,6 +2,7 @@
 #include "../common/defines.h"
 #include "../common/dsl.h"
 #include "../matmul/common/fragment.h"
+#include "../matmul/common/mxu_fragment_ops.h"
 #include "../matmul/common/simdgroup_fragment_ops.h"
 
 using namespace metal;
@@ -32,16 +33,25 @@ METAL_FUNC float chunked_g(
 // share the same unit-lower-triangular inverse T (the a_packed strips + a_inv
 // diagonal-block inverses from Solve). Both outputs are HEAD_DIM wide and tiled
 // by the same BV-wide slice, so one dispatch emits both and every a_packed /
-// a_inv fragment load is reused across the two forward substitutions. K stays
-// f32, so this path is simdgroup-only (never MXU); state precision is unaffected
-// (W/U are the bf16 operands, exactly as before).
-template <typename T, typename O, uint HEAD_DIM, uint CHUNK_SIZE, uint BV, bool RECOMPUTE_G>
+// a_inv fragment load is reused across the two forward substitutions.
+//
+// USE_MXU selects the 16x16 MXU fragment path: the A / a_inv operands and the
+// W/U readback operands become bf16, while the RHS diag(scale).K / diag(beta).V
+// tiles and the accumulators stay f32 (the diagonal-inverse matmul mixes the
+// bf16 a_inv operand with the f32 accumulator -- matmul2d supports mixed
+// operands). W/U outputs stay bf16 exactly as before, so state precision is
+// unaffected. MXU needs even output N, hence BV >= 32. NOTE: BuildWU is the
+// Part-1 (fused-7) fallback path -- the Mode L pipeline uses SolveT + MegaApply
+// and never dispatches BuildWU. Config B uses USE_MXU=false.
+template <typename T, typename O, uint HEAD_DIM, uint CHUNK_SIZE, uint BV, bool RECOMPUTE_G, bool USE_MXU>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(O, float, bfloat)
 VARIANTS(HEAD_DIM, 128)
 VARIANTS(CHUNK_SIZE, 16, 32, 64)
 VARIANTS(BV, 16, 32)
 VARIANTS(RECOMPUTE_G, false, true)
+VARIANTS(USE_MXU, false, true)
+CONSTRAINT(!USE_MXU || BV >= 32)
 PUBLIC KERNEL(DeltaNetChunkedBuildWU)(
     device const float* k_norm,
     device const T* in_proj,
@@ -61,15 +71,20 @@ PUBLIC KERNEL(DeltaNetChunkedBuildWU)(
     const uint tile_idx GROUPS(HEAD_DIM.div_ceil(BV)),
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
-  using Ops = SimdgroupFragmentOps;
+  using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
+  using InputType = metal::conditional_t<USE_MXU, bfloat, float>;
   constexpr ushort TOKEN_FRAGMENTS = BUILD_WU_BLOCK / Ops::FRAGMENT_ROWS;
   constexpr ushort VALUE_FRAGMENTS = BV / Ops::FRAGMENT_COLS;
   static_assert(BV % Ops::FRAGMENT_COLS == 0, "BV must align to fragment columns");
   using TileFragment = Fragment<float, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
-  using MatrixFragment = OperandFragment<float, TOKEN_FRAGMENTS, TOKEN_FRAGMENTS, Ops>;
+  // RHS-source tiles (diag(scale).K, diag(beta).V) zip with the f32 accumulator,
+  // so they stay f32. The MMA operands (A strips, a_inv, and the W/U readback)
+  // become bf16 on the MXU path.
   using ValueFragment = OperandFragment<float, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
-  using PairMatrixFragment = OperandFragment<float, TOKEN_FRAGMENTS, 2 * TOKEN_FRAGMENTS, Ops>;
-  using PairValueFragment = OperandFragment<float, 2 * TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
+  using MatrixFragment = OperandFragment<InputType, TOKEN_FRAGMENTS, TOKEN_FRAGMENTS, Ops>;
+  using PairMatrixFragment = OperandFragment<InputType, TOKEN_FRAGMENTS, 2 * TOKEN_FRAGMENTS, Ops>;
+  using PrevFragment = OperandFragment<InputType, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
+  using PairPrevFragment = OperandFragment<InputType, 2 * TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
 
   constexpr uint num_blocks = (CHUNK_SIZE + BUILD_WU_BLOCK - 1) / BUILD_WU_BLOCK;
   constexpr uint num_col_pairs = (num_blocks + 1) / 2;
@@ -141,12 +156,12 @@ PUBLIC KERNEL(DeltaNetChunkedBuildWU)(
       a_frag.load_from(lane, fragment_source(a_pair, 2 * BUILD_WU_BLOCK));
       a_frag.map([](float value) { return -value; });
 
-      PairValueFragment w_prev_frag;
+      PairPrevFragment w_prev_frag;
       const device O* w_prev = w_head + pair_idx * 2 * BUILD_WU_BLOCK * HEAD_DIM;
       w_prev_frag.load_from(lane, fragment_source(w_prev, HEAD_DIM).bounded(2 * BUILD_WU_BLOCK, tile_cols));
       fragment_mma(acc_w, a_frag, w_prev_frag);
 
-      PairValueFragment u_prev_frag;
+      PairPrevFragment u_prev_frag;
       const device O* u_prev = u_head + pair_idx * 2 * BUILD_WU_BLOCK * HEAD_DIM;
       u_prev_frag.load_from(lane, fragment_source(u_prev, HEAD_DIM).bounded(2 * BUILD_WU_BLOCK, tile_cols));
       fragment_mma(acc_u, a_frag, u_prev_frag);
@@ -160,12 +175,12 @@ PUBLIC KERNEL(DeltaNetChunkedBuildWU)(
       a_frag.load_from(lane, fragment_source(a_block, 2 * BUILD_WU_BLOCK));
       a_frag.map([](float value) { return -value; });
 
-      ValueFragment w_prev_frag;
+      PrevFragment w_prev_frag;
       const device O* w_prev = w_head + prev_block_idx * BUILD_WU_BLOCK * HEAD_DIM;
       w_prev_frag.load_from(lane, fragment_source(w_prev, HEAD_DIM).bounded(BUILD_WU_BLOCK, tile_cols));
       fragment_mma(acc_w, a_frag, w_prev_frag);
 
-      ValueFragment u_prev_frag;
+      PrevFragment u_prev_frag;
       const device O* u_prev = u_head + prev_block_idx * BUILD_WU_BLOCK * HEAD_DIM;
       u_prev_frag.load_from(lane, fragment_source(u_prev, HEAD_DIM).bounded(BUILD_WU_BLOCK, tile_cols));
       fragment_mma(acc_u, a_frag, u_prev_frag);

@@ -10,7 +10,8 @@ use proc_macros::kernel;
 #[kernel(DeltaNetChunkedSolveT)]
 #[variants(CHUNK_SIZE, 16, 32, 64)]
 #[variants(BV, 16, 32)]
-pub fn delta_net_chunked_solve_t<const CHUNK_SIZE: u32, const BV: u32>(
+#[variants(USE_MXU, false, true)]
+pub fn delta_net_chunked_solve_t<const CHUNK_SIZE: u32, const BV: u32, const USE_MXU: bool>(
     a_packed: *const f32,
     a_inv: *const f32,
     t_out: *mut bf16,
@@ -18,6 +19,7 @@ pub fn delta_net_chunked_solve_t<const CHUNK_SIZE: u32, const BV: u32>(
     suffix_len: u32,
 ) {
     let _ = BV;
+    let _ = USE_MXU;
     let chunk_size = CHUNK_SIZE as usize;
     let num_v_heads = num_v_heads as usize;
     let suffix_len = suffix_len as usize;

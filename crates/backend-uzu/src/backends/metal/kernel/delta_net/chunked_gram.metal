@@ -2,6 +2,7 @@
 #include "../common/defines.h"
 #include "../common/dsl.h"
 #include "../matmul/common/fragment.h"
+#include "../matmul/common/mxu_fragment_ops.h"
 #include "../matmul/common/simdgroup_fragment_ops.h"
 
 using namespace metal;
@@ -15,9 +16,16 @@ using namespace uzu::matmul;
 // masked, decay-scaled qk block qk_scaled[row,col] = qk * exp(g_row - g_col)
 // (col <= row, else 0). The scale-qk expansion is folded in here so no separate
 // dispatch and no intermediate qk buffer are needed.
-template <uint HEAD_K_DIM, uint CHUNK_SIZE>
+//
+// USE_MXU selects the 16x16 MXU fragment path (bf16 q/k operands, f32
+// accumulation) vs the 8x8 simdgroup path (f32 operands). The kk/qk outputs and
+// the decay-scale expansion stay f32 either way; only the matmul OPERANDS are
+// rounded to bf16 on the MXU path (both output tiles are even-N, so both matmuls
+// are MXU-eligible). Config B (M1-M4 proxy) uses USE_MXU=false.
+template <uint HEAD_K_DIM, uint CHUNK_SIZE, bool USE_MXU>
 VARIANTS(HEAD_K_DIM, 128)
 VARIANTS(CHUNK_SIZE, 16, 32, 64)
+VARIANTS(USE_MXU, false, true)
 PUBLIC KERNEL(DeltaNetChunkedGram)(
     device const float* q_norm,
     device const float* k_norm,
@@ -33,12 +41,13 @@ PUBLIC KERNEL(DeltaNetChunkedGram)(
     const uint tile_idx GROUPS(CHUNK_SIZE.div_ceil(CHUNK_GRAM_ROW_TILE) * CHUNK_SIZE.div_ceil(CHUNK_GRAM_COL_TILE)),
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
-  using Ops = SimdgroupFragmentOps;
+  using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
+  using InputType = metal::conditional_t<USE_MXU, bfloat, float>;
   constexpr ushort ROW_FRAGMENTS = CHUNK_GRAM_ROW_TILE / Ops::FRAGMENT_ROWS;
   constexpr ushort COL_FRAGMENTS = CHUNK_GRAM_COL_TILE / Ops::FRAGMENT_COLS;
   using AccFragment = Fragment<float, ROW_FRAGMENTS, COL_FRAGMENTS, Ops>;
-  using LeftFragment = OperandFragment<float, ROW_FRAGMENTS, 1, Ops>;
-  using RightFragment = OperandFragment<float, 1, COL_FRAGMENTS, Ops, ReadTranspose>;
+  using LeftFragment = OperandFragment<InputType, ROW_FRAGMENTS, 1, Ops>;
+  using RightFragment = OperandFragment<InputType, 1, COL_FRAGMENTS, Ops, ReadTranspose>;
 
   static_assert(HEAD_K_DIM % Ops::FRAGMENT_ROWS == 0, "HEAD_K_DIM must align to fragment K");
 

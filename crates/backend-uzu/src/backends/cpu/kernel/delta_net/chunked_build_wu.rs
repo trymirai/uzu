@@ -31,6 +31,7 @@ fn chunked_g<const RECOMPUTE_G: bool>(
 #[variants(CHUNK_SIZE, 16, 32, 64)]
 #[variants(BV, 16, 32)]
 #[variants(RECOMPUTE_G, false, true)]
+#[variants(USE_MXU, false, true)]
 #[allow(clippy::too_many_arguments)]
 pub fn delta_net_chunked_build_wu<
     T: ArrayElement + Float,
@@ -39,6 +40,7 @@ pub fn delta_net_chunked_build_wu<
     const CHUNK_SIZE: u32,
     const BV: u32,
     const RECOMPUTE_G: bool,
+    const USE_MXU: bool,
 >(
     k_norm: *const f32,
     in_proj: *const T,
@@ -55,6 +57,7 @@ pub fn delta_net_chunked_build_wu<
     suffix_len: u32,
 ) {
     let _ = BV;
+    let _ = USE_MXU;
     let head_dim = HEAD_DIM as usize;
     let chunk_size = CHUNK_SIZE as usize;
     let num_v_heads = num_v_heads as usize;
