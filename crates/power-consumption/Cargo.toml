@@ -22,7 +22,6 @@ backend-uzu.workspace = true
 uzu = { workspace = true, default-features = false }
 keisoku.workspace = true
 shoji.workspace = true
-test-runner.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
 serde.workspace = true

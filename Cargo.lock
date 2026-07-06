@@ -4725,7 +4725,6 @@ dependencies = [
  "serde",
  "serde_json",
  "shoji",
- "test-runner",
  "tokio",
  "uzu",
 ]

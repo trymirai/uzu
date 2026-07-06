@@ -50,9 +50,6 @@ struct Args {
     /// Fraction of total RAM a model may occupy before it is skipped as too large.
     #[arg(long, default_value_t = 0.75)]
     memory_fraction: f64,
-    /// Skip the GPU cooldown wait between runs (useful for quick local runs).
-    #[arg(long)]
-    skip_cooldown: bool,
     /// Benchmark a single on-disk model directory (config.json + model.safetensors)
     /// instead of enumerating and downloading from the registry.
     #[arg(long)]
@@ -232,9 +229,6 @@ fn run_model_files(
             let _ = workload::run(&model, meter, prefill, 1);
 
             for repetition in 0..args.repetitions {
-                if !args.skip_cooldown {
-                    test_runner::metrics::wait_gpu_cooldown();
-                }
                 match workload::run(&model, meter, prefill, generate) {
                     Ok(measurement) => {
                         rows.push(Row::measured(device_info, meta, prefill, generate, repetition, &measurement));
