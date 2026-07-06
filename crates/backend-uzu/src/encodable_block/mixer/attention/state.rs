@@ -69,8 +69,6 @@ impl<B: Backend> AttentionState<B> {
         max_context_length: Option<usize>,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
-        assert!(attention.is_causal, "Non-causal attention cannot have state");
-
         if let Some(max_context_length) = max_context_length {
             assert!(
                 attention.max_rope_length.is_none_or(|max_rope_length| max_context_length <= max_rope_length),
@@ -80,7 +78,9 @@ impl<B: Backend> AttentionState<B> {
 
         let data_type = attention.data_type;
 
-        let max_prefix_elements = if let Some(sliding_window_size) = attention.sliding_window_size {
+        let max_prefix_elements = if attention.is_causal
+            && let Some(sliding_window_size) = attention.sliding_window_size
+        {
             sliding_window_size
         } else if let Some(max_context_length) = max_context_length {
             max_context_length
@@ -90,7 +90,7 @@ impl<B: Backend> AttentionState<B> {
                 .expect("Cannot create full attention state with unlimited length for with no RoPE")
         };
 
-        let state_type = if attention.sliding_window_size.is_some() {
+        let state_type = if attention.is_causal && attention.sliding_window_size.is_some() {
             AttentionStateType::Ring {
                 offset: 0,
                 length: 0,
@@ -108,34 +108,6 @@ impl<B: Backend> AttentionState<B> {
             attention.head_dim,
             max_prefix_elements,
             state_type,
-            context,
-        )
-    }
-
-    // TODO: remove after wiring with DFlash.
-    #[allow(dead_code)]
-    pub(crate) fn create_empty_full(
-        max_context_length: Option<usize>,
-        max_rope_length: usize,
-        data_type: DataType,
-        num_kv_heads: usize,
-        head_dim: usize,
-        context: &B::Context,
-    ) -> Result<Self, B::Error> {
-        if let Some(max_context_length) = max_context_length {
-            assert!(max_context_length <= max_rope_length, "Attention state max_prefix_elements overflows RoPE");
-        }
-
-        let max_prefix_elements = max_context_length.unwrap_or(max_rope_length);
-
-        Self::create_empty_with_type(
-            data_type,
-            num_kv_heads,
-            head_dim,
-            max_prefix_elements,
-            AttentionStateType::Full {
-                length: 0,
-            },
             context,
         )
     }
@@ -180,9 +152,8 @@ impl<B: Backend> AttentionState<B> {
         })
     }
 
-    // TODO: remove after wiring with DFlash.
     #[allow(dead_code)]
-    pub(crate) fn append_full(
+    pub(super) fn append_full(
         &mut self,
         length: usize,
     ) {
