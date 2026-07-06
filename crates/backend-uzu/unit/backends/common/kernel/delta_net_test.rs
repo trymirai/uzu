@@ -10,10 +10,9 @@ use crate::{
             Backend, Context, Encoder, Kernels,
             kernel::{
                 Conv1dPackKernel, DeltaNetChunkedBuildUKernel, DeltaNetChunkedBuildWKernel,
-                DeltaNetChunkedCumsumKernel, DeltaNetChunkedFusedApplyKernel, DeltaNetChunkedGramKernel,
-                DeltaNetChunkedPrepKernel, DeltaNetChunkedSolveKernel, DeltaNetConvScanKernel,
-                DeltaNetConvUpdateKernel, DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel,
-                DeltaNetUpdateKernel,
+                DeltaNetChunkedFusedApplyKernel, DeltaNetChunkedGramKernel, DeltaNetChunkedPrepKernel,
+                DeltaNetChunkedSolveKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel,
+                DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
             },
         },
         cpu::Cpu,
@@ -719,7 +718,7 @@ fn bench_delta_net_prefill() {
 // End-to-end prefill bench comparing the fused persistent chunk-scan kernel
 // (`DeltaNetChunkedFusedApply`, VT=32) against the recurrent path. Both paths
 // are timed at the SAME scope: the full prefill ending in NormGate. For the
-// fused path this is the chunked precompute chain (Prep, Cumsum, Gram, Solve,
+// fused path this is the chunked precompute chain (Prep, Gram, Solve,
 // BuildW, BuildU) + the single fused dispatch + NormGate,
 // matching how the recurrent end-to-end number is measured. Each path is warmed
 // for >=500 ms of wall clock before timing to avoid GPU clock-ramp artifacts,
@@ -784,7 +783,6 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
         let mut k_norm_f = alloc(DataType::F32, suffix_len * key_dim);
         let mut beta_f = alloc(DataType::F32, suffix_len * num_v_heads);
         let mut log_decay_f = alloc(DataType::F32, suffix_len * num_v_heads);
-        let mut g_f = alloc(DataType::F32, suffix_len * num_v_heads);
         let mut kk_f = alloc(DataType::F32, num_chunks * num_k_heads * chunk_size * chunk_size);
         let mut qk_scaled_f = alloc(DataType::F32, num_chunks * num_v_heads * chunk_size * chunk_size);
         let mut a_packed_f =
@@ -807,18 +805,17 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
         let prep_k =
             <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedPrepKernel::new(&context, DataType::BF16, 128)
                 .unwrap();
-        let cumsum_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedCumsumKernel::new(&context).unwrap();
         let gram_k =
             <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(&context, 128, 64).unwrap();
         let solve_k =
-            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, false).unwrap();
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, true).unwrap();
         let build_w_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildWKernel::new(
             &context,
             DataType::BF16,
             128,
             64,
             32,
-            false,
+            true,
         )
         .unwrap();
         let build_u_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildUKernel::new(
@@ -908,18 +905,10 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
                 suffix_len as u32,
                 &mut encoder,
             );
-            cumsum_k.encode(
-                &log_decay_f,
-                &mut g_f,
-                num_v_heads as u32,
-                suffix_len as u32,
-                chunk_size as u32,
-                &mut encoder,
-            );
             gram_k.encode(
                 &q_norm_f,
                 &k_norm_f,
-                &g_f,
+                &log_decay_f,
                 &mut kk_f,
                 &mut qk_scaled_f,
                 num_v_heads as u32,
@@ -931,7 +920,7 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
             solve_k.encode(
                 &kk_f,
                 &beta_f,
-                &g_f,
+                &log_decay_f,
                 &mut a_packed_f,
                 &mut a_inv_f,
                 num_v_heads as u32,
@@ -942,7 +931,7 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
             build_w_k.encode(
                 &k_norm_f,
                 &beta_f,
-                &g_f,
+                &log_decay_f,
                 &a_packed_f,
                 &a_inv_f,
                 &mut w_f,
@@ -971,7 +960,7 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
                 &q_norm_f,
                 &k_norm_f,
                 &qk_scaled_f,
-                &g_f,
+                &log_decay_f,
                 &mut fused_state,
                 &mut fused_out,
                 num_v_heads as u32,
@@ -1044,7 +1033,7 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
 }
 
 // Per-kernel wall-clock breakdown of the FUSED prefill pipeline at T=4096.
-// Times each shared precompute kernel (Prep, Cumsum, Gram, Solve,
+// Times each shared precompute kernel (Prep, Gram, Solve,
 // BuildW, BuildU) individually and the single fused apply dispatch
 // (`DeltaNetChunkedFusedApply`, VT=32), each isolated in its own encoder and
 // warmed for >=500 ms of wall clock before timing. Reports median ms per kernel
@@ -1100,7 +1089,6 @@ fn bench_delta_net_fused_kernel_breakdown() {
         let mut k_norm = alloc(DataType::F32, suffix_len * key_dim);
         let mut beta = alloc(DataType::F32, suffix_len * num_v_heads);
         let mut log_decay = alloc(DataType::F32, suffix_len * num_v_heads);
-        let mut g = alloc(DataType::F32, suffix_len * num_v_heads);
         let mut kk = alloc(DataType::F32, num_chunks * num_k_heads * chunk_size * chunk_size);
         let mut qk_scaled = alloc(DataType::F32, num_chunks * num_v_heads * chunk_size * chunk_size);
         let mut a_packed =
@@ -1114,18 +1102,17 @@ fn bench_delta_net_fused_kernel_breakdown() {
         let prep_k =
             <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedPrepKernel::new(&context, DataType::BF16, 128)
                 .unwrap();
-        let cumsum_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedCumsumKernel::new(&context).unwrap();
         let gram_k =
             <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(&context, 128, 64).unwrap();
         let solve_k =
-            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, false).unwrap();
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, true).unwrap();
         let build_w_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildWKernel::new(
             &context,
             DataType::BF16,
             128,
             64,
             32,
-            false,
+            true,
         )
         .unwrap();
         let build_u_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildUKernel::new(
@@ -1166,11 +1153,10 @@ fn bench_delta_net_fused_kernel_breakdown() {
                 suffix_len as u32,
                 &mut encoder,
             );
-            cumsum_k.encode(&log_decay, &mut g, num_v_heads as u32, suffix_len as u32, chunk_size as u32, &mut encoder);
             gram_k.encode(
                 &q_norm,
                 &k_norm,
-                &g,
+                &log_decay,
                 &mut kk,
                 &mut qk_scaled,
                 num_v_heads as u32,
@@ -1182,7 +1168,7 @@ fn bench_delta_net_fused_kernel_breakdown() {
             solve_k.encode(
                 &kk,
                 &beta,
-                &g,
+                &log_decay,
                 &mut a_packed,
                 &mut a_inv,
                 num_v_heads as u32,
@@ -1193,7 +1179,7 @@ fn bench_delta_net_fused_kernel_breakdown() {
             build_w_k.encode(
                 &k_norm,
                 &beta,
-                &g,
+                &log_decay,
                 &a_packed,
                 &a_inv,
                 &mut w,
@@ -1265,14 +1251,11 @@ fn bench_delta_net_fused_kernel_breakdown() {
                 &mut encoder,
             );
         });
-        time_kernel!("cumsum", |encoder| {
-            cumsum_k.encode(&log_decay, &mut g, num_v_heads as u32, suffix_len as u32, chunk_size as u32, &mut encoder);
-        });
         time_kernel!("gram", |encoder| {
             gram_k.encode(
                 &q_norm,
                 &k_norm,
-                &g,
+                &log_decay,
                 &mut kk,
                 &mut qk_scaled,
                 num_v_heads as u32,
@@ -1286,7 +1269,7 @@ fn bench_delta_net_fused_kernel_breakdown() {
             solve_k.encode(
                 &kk,
                 &beta,
-                &g,
+                &log_decay,
                 &mut a_packed,
                 &mut a_inv,
                 num_v_heads as u32,
@@ -1299,7 +1282,7 @@ fn bench_delta_net_fused_kernel_breakdown() {
             build_w_k.encode(
                 &k_norm,
                 &beta,
-                &g,
+                &log_decay,
                 &a_packed,
                 &a_inv,
                 &mut w,
@@ -1335,7 +1318,7 @@ fn bench_delta_net_fused_kernel_breakdown() {
                     &q_norm,
                     &k_norm,
                     &qk_scaled,
-                    &g,
+                    &log_decay,
                     &mut fused_state,
                     &mut fused_out,
                     num_v_heads as u32,
@@ -1408,11 +1391,10 @@ fn bench_delta_net_fused_kernel_breakdown() {
                     suffix_len as u32,
                     $encoder,
                 );
-                cumsum_k.encode(&log_decay, &mut g, num_v_heads as u32, suffix_len as u32, chunk_size as u32, $encoder);
                 gram_k.encode(
                     &q_norm,
                     &k_norm,
-                    &g,
+                    &log_decay,
                     &mut kk,
                     &mut qk_scaled,
                     num_v_heads as u32,
@@ -1424,7 +1406,7 @@ fn bench_delta_net_fused_kernel_breakdown() {
                 solve_k.encode(
                     &kk,
                     &beta,
-                    &g,
+                    &log_decay,
                     &mut a_packed,
                     &mut a_inv,
                     num_v_heads as u32,
@@ -1435,7 +1417,7 @@ fn bench_delta_net_fused_kernel_breakdown() {
                 build_w_k.encode(
                     &k_norm,
                     &beta,
-                    &g,
+                    &log_decay,
                     &a_packed,
                     &a_inv,
                     &mut w,
@@ -1482,7 +1464,7 @@ fn bench_delta_net_fused_kernel_breakdown() {
                     &q_norm,
                     &k_norm,
                     &qk_scaled,
-                    &g,
+                    &log_decay,
                     &mut fused_state,
                     &mut fused_out,
                     num_v_heads as u32,
@@ -1608,7 +1590,7 @@ fn run_fused_apply<B: Backend>(
     q_norm: &[f32],
     k_norm: &[f32],
     qk_scaled: &[f32],
-    g: &[f32],
+    log_decay: &[f32],
     state: &[f32],
     num_v_heads: usize,
     num_k_heads: usize,
@@ -1624,7 +1606,7 @@ fn run_fused_apply<B: Backend>(
     let q_a = context.create_array_from(&[q_norm.len()], q_norm);
     let k_a = context.create_array_from(&[k_norm.len()], k_norm);
     let qk_a = context.create_array_from(&[qk_scaled.len()], qk_scaled);
-    let g_a = context.create_array_from(&[g.len()], g);
+    let log_decay_a = context.create_array_from(&[log_decay.len()], log_decay);
     let mut state_alloc = context.create_array_from(&[state.len()], state).into_allocation();
     let mut out_alloc = context.create_array_zeros(&[suffix_len * value_dim], DataType::F32).into_allocation();
 
@@ -1639,7 +1621,7 @@ fn run_fused_apply<B: Backend>(
         q_a.allocation(),
         k_a.allocation(),
         qk_a.allocation(),
-        g_a.allocation(),
+        log_decay_a.allocation(),
         &mut state_alloc,
         &mut out_alloc,
         num_v_heads as u32,
@@ -1658,7 +1640,7 @@ fn run_fused_apply<B: Backend>(
 }
 
 // Deterministic pseudo-random inputs for the fused kernel at qwen3.5 shapes.
-// Returns (w, u, q_norm, k_norm, qk_scaled, g, state).
+// Returns (w, u, q_norm, k_norm, qk_scaled, log_decay, state).
 #[allow(clippy::type_complexity)]
 fn make_fused_inputs(
     num_v_heads: usize,
@@ -1698,18 +1680,20 @@ fn make_fused_inputs(
             }
         }
     }
-    // g is a per-token cumulative log-decay (negative, reset per chunk).
-    let mut g = vec![0.0f32; suffix_len * num_v_heads];
+    // log_decay is a per-token (negative) decay; the fused kernel forms the
+    // chunk-local prefix g[i] = sum_{k<=i} log_decay internally. A constant
+    // -step per token reproduces g[i] = -(i+1)*step within each chunk.
+    let _ = chunk_size;
+    let mut log_decay = vec![0.0f32; suffix_len * num_v_heads];
     for token in 0..suffix_len {
-        let local = token % chunk_size;
         for hv in 0..num_v_heads {
             let step = 0.01 + ((hv % 7) as f32) * 0.002;
-            g[token * num_v_heads + hv] = -(local as f32 + 1.0) * step;
+            log_decay[token * num_v_heads + hv] = -step;
         }
     }
     let state: Vec<f32> = (0..state_size).map(|i| (((i * 19 + 4) % 29) as f32) * 0.004 - 0.05).collect();
 
-    (w, u, q_norm, k_norm, qk_scaled, g, state)
+    (w, u, q_norm, k_norm, qk_scaled, log_decay, state)
 }
 
 // Test 1: fused Metal kernel vs its CPU mirror (the kernel's own ground truth),
@@ -1726,7 +1710,7 @@ fn fused_vs_cpu_mirror_impl(
     let key_dim = num_k_heads * head_k_dim;
     let value_dim = num_v_heads * head_v_dim;
 
-    let (w, u, q_norm, k_norm, qk_scaled, g, state) =
+    let (w, u, q_norm, k_norm, qk_scaled, log_decay, state) =
         make_fused_inputs(num_v_heads, num_k_heads, head_k_dim, head_v_dim, chunk_size, suffix_len);
 
     let (metal_out, metal_state) = run_fused_apply::<Metal>(
@@ -1735,7 +1719,7 @@ fn fused_vs_cpu_mirror_impl(
         &q_norm,
         &k_norm,
         &qk_scaled,
-        &g,
+        &log_decay,
         &state,
         num_v_heads,
         num_k_heads,
@@ -1751,7 +1735,7 @@ fn fused_vs_cpu_mirror_impl(
         &q_norm,
         &k_norm,
         &qk_scaled,
-        &g,
+        &log_decay,
         &state,
         num_v_heads,
         num_k_heads,
@@ -1786,10 +1770,12 @@ fn test_delta_net_chunked_fused_vs_cpu_mirror_vt32() {
     fused_vs_cpu_mirror_impl(130, 32);
 }
 
-// Runs the chunked precompute chain (Prep, Cumsum, Gram, Solve,
-// BuildW, BuildU) on Metal and reads back the fused kernel inputs. The fused
-// kernel folds the decay scale exp(g_last - g_t) on the fly, so no decay_scale
-// buffer is produced here. These are all independent of the recurrent state.
+// Runs the chunked precompute chain (Prep, Gram, Solve, BuildW, BuildU) on
+// Metal and reads back the fused kernel inputs. Cumsum is gone: Gram/Solve/
+// BuildW recompute the chunk-local prefix from log_decay (RECOMPUTE_G), and the
+// fused kernel forms it internally, so no g buffer is produced here. The fused
+// kernel also folds the decay scale exp(g_last - g_t) on the fly, so no
+// decay_scale buffer is produced. All independent of the recurrent state.
 #[allow(clippy::type_complexity)]
 fn run_chunked_precompute_metal(
     in_proj: &[bf16],
@@ -1819,7 +1805,6 @@ fn run_chunked_precompute_metal(
     let mut k_norm = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
     let mut beta = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
     let mut log_decay = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
-    let mut g = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
     let mut kk = context
         .create_array_zeros(&[num_chunks * num_k_heads * chunk_size * chunk_size], DataType::F32)
         .into_allocation();
@@ -1845,17 +1830,16 @@ fn run_chunked_precompute_metal(
     let prep_k =
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedPrepKernel::new(&context, DataType::BF16, 128)
             .unwrap();
-    let cumsum_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedCumsumKernel::new(&context).unwrap();
     let gram_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(&context, 128, 64).unwrap();
     let solve_k =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, false).unwrap();
+        <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, true).unwrap();
     let build_w_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildWKernel::new(
         &context,
         DataType::BF16,
         128,
         64,
         32,
-        false,
+        true,
     )
     .unwrap();
     let build_u_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildUKernel::new(
@@ -1884,11 +1868,10 @@ fn run_chunked_precompute_metal(
         suffix_len as u32,
         &mut encoder,
     );
-    cumsum_k.encode(&log_decay, &mut g, num_v_heads as u32, suffix_len as u32, chunk_size as u32, &mut encoder);
     gram_k.encode(
         &q_norm,
         &k_norm,
-        &g,
+        &log_decay,
         &mut kk,
         &mut qk_scaled,
         num_v_heads as u32,
@@ -1900,7 +1883,7 @@ fn run_chunked_precompute_metal(
     solve_k.encode(
         &kk,
         &beta,
-        &g,
+        &log_decay,
         &mut a_packed,
         &mut a_inv,
         num_v_heads as u32,
@@ -1911,7 +1894,7 @@ fn run_chunked_precompute_metal(
     build_w_k.encode(
         &k_norm,
         &beta,
-        &g,
+        &log_decay,
         &a_packed,
         &a_inv,
         &mut w,
@@ -1942,7 +1925,7 @@ fn run_chunked_precompute_metal(
         crate::tests::helpers::allocation_to_vec(&w),
         crate::tests::helpers::allocation_to_vec(&u),
         crate::tests::helpers::allocation_to_vec(&qk_scaled),
-        crate::tests::helpers::allocation_to_vec(&g),
+        crate::tests::helpers::allocation_to_vec(&log_decay),
     )
 }
 
@@ -2051,7 +2034,7 @@ fn fused_pipeline_vs_recurrent_impl(suffix_len: usize) {
     let dt_bias: Vec<f32> = (0..num_v_heads).map(|i| 0.1 + (i as f32) * 0.001).collect();
 
     // Precompute (state-independent) once.
-    let (q_norm, k_norm, w, u, qk_scaled, g) = run_chunked_precompute_metal(
+    let (q_norm, k_norm, w, u, qk_scaled, log_decay) = run_chunked_precompute_metal(
         &in_proj,
         &a_log,
         &dt_bias,
@@ -2089,7 +2072,7 @@ fn fused_pipeline_vs_recurrent_impl(suffix_len: usize) {
                 &q_norm,
                 &k_norm,
                 &qk_scaled,
-                &g,
+                &log_decay,
                 &init_state,
                 num_v_heads,
                 num_k_heads,

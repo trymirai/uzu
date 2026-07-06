@@ -86,29 +86,3 @@ pub fn delta_net_chunked_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
         }
     }
 }
-
-#[kernel(DeltaNetChunkedCumsum)]
-pub fn delta_net_chunked_cumsum(
-    log_decay: *const f32,
-    g_out: *mut f32,
-    num_v_heads: u32,
-    suffix_len: u32,
-    chunk_size: u32,
-) {
-    let num_v_heads = num_v_heads as usize;
-    let suffix_len = suffix_len as usize;
-    let chunk_size = chunk_size as usize;
-
-    for hv in 0..num_v_heads {
-        let mut token = 0usize;
-        while token < suffix_len {
-            let chunk_end = (token + chunk_size).min(suffix_len);
-            let mut acc = 0.0f32;
-            while token < chunk_end {
-                acc += unsafe { *log_decay.add(token * num_v_heads + hv) };
-                unsafe { *g_out.add(token * num_v_heads + hv) = acc };
-                token += 1;
-            }
-        }
-    }
-}

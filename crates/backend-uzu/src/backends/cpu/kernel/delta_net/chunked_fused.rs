@@ -19,7 +19,7 @@ pub fn delta_net_chunked_fused_apply<T: ArrayElement + Float, const VT: u32>(
     q_norm: *const f32,
     k_norm: *const f32,
     qk_scaled: *const f32,
-    g: *const f32,
+    log_decay: *const f32,
     state: *mut f32,
     out: *mut T,
     num_v_heads: u32,
@@ -54,6 +54,16 @@ pub fn delta_net_chunked_fused_apply<T: ArrayElement + Float, const VT: u32>(
             }
             let chunk_head_base = chunk * num_v_heads + hv;
 
+            // Chunk-local prefix g[local_t] = sum_{i<=local_t} log_decay
+            // (replaces the former Cumsum dispatch + g buffer). Only valid tokens
+            // are summed; entries >= valid_tokens are unused.
+            let mut g_local = [0.0f32; CHUNK_SIZE];
+            let mut g_acc = 0.0f32;
+            for (i, slot) in g_local.iter_mut().enumerate().take(valid_tokens) {
+                g_acc += unsafe { *log_decay.add((token_base + i) * num_v_heads + hv) };
+                *slot = g_acc;
+            }
+
             // Phase 1: Vnew = U - W . S^T (S = state before this chunk).
             for local_t in 0..CHUNK_SIZE {
                 let wu_row = (chunk_head_base * CHUNK_SIZE + local_t) * head_v_dim;
@@ -79,7 +89,7 @@ pub fn delta_net_chunked_fused_apply<T: ArrayElement + Float, const VT: u32>(
             // Phase 2: Y = exp(g) (.) (Q . S^T) + A . Vnew -> out.
             for local_t in 0..valid_tokens {
                 let token = token_base + local_t;
-                let g_scale = unsafe { *g.add(token * num_v_heads + hv) }.exp();
+                let g_scale = g_local[local_t].exp();
                 let q_base = token * key_dim + hk * HEAD_K_DIM;
                 let qk_base = chunk_head_base * CHUNK_SIZE * CHUNK_SIZE + local_t * CHUNK_SIZE;
                 for dv in 0..head_v_dim {
@@ -103,7 +113,7 @@ pub fn delta_net_chunked_fused_apply<T: ArrayElement + Float, const VT: u32>(
             // decay_scale[t] = exp(g_last - g_t) is folded in on the fly (this
             // replaces the separate DecayScale dispatch; beta is already baked
             // into Vnew via U/W, so it does not appear here).
-            let g_last = unsafe { *g.add((token_base + valid_tokens - 1) * num_v_heads + hv) };
+            let g_last = g_local[valid_tokens - 1];
             let alpha = g_last.exp();
             for dv in 0..head_v_dim {
                 let state_row = (hv * head_v_dim + dv) * HEAD_K_DIM;
@@ -112,8 +122,7 @@ pub fn delta_net_chunked_fused_apply<T: ArrayElement + Float, const VT: u32>(
                     for local_t in 0..valid_tokens {
                         let token = token_base + local_t;
                         let k = unsafe { *k_norm.add(token * key_dim + hk * HEAD_K_DIM + dk) };
-                        let g_t = unsafe { *g.add(token * num_v_heads + hv) };
-                        let decay = (g_last - g_t).exp();
+                        let decay = (g_last - g_local[local_t]).exp();
                         value += vnew[local_t * head_v_dim + dv] * k * decay;
                     }
                     unsafe { *state.add(state_row + dk) = value };
