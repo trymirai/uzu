@@ -289,6 +289,42 @@ struct Fragment {
     );
   }
 
+  // Single-line load. `bounded` = true when the tile lies fully in the buffer, so
+  // the load takes the fast path with no per-element clamping; false clamps to
+  // (row_bound, col_bound).
+  template <class Ptr>
+  METAL_FUNC void load_maybe_bounded(
+      const ushort simd_lane_id,
+      Ptr base,
+      int row_stride,
+      bool bounded,
+      short row_bound,
+      short col_bound
+  ) thread {
+    FragmentSource<Ptr> src = fragment_source(base, row_stride);
+    if (!bounded) {
+      src = src.bounded(row_bound, col_bound);
+    }
+    load_from(simd_lane_id, src);
+  }
+
+  // Single-line store mirroring `load`: `bounded` = true stores the full tile;
+  // false clamps to `tile_dimensions`.
+  template <class Ptr>
+  METAL_FUNC void store_maybe_bounded(
+      const ushort simd_lane_id,
+      Ptr destination,
+      const int leading_dimension,
+      bool bounded,
+      const short2 tile_dimensions
+  ) thread {
+    if (!bounded) {
+      store_safe(simd_lane_id, destination, leading_dimension, tile_dimensions);
+    } else {
+      store(simd_lane_id, destination, leading_dimension);
+    }
+  }
+
 private:
   METAL_CONST bool LOAD = true;
   METAL_CONST bool STORE = false;

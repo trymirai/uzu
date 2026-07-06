@@ -69,8 +69,6 @@ impl<B: Backend> AttentionState<B> {
         max_context_length: Option<usize>,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
-        assert!(attention.is_causal, "Non-causal attention cannot have state");
-
         if let Some(max_context_length) = max_context_length {
             assert!(
                 attention.max_rope_length.is_none_or(|max_rope_length| max_context_length <= max_rope_length),
@@ -80,7 +78,9 @@ impl<B: Backend> AttentionState<B> {
 
         let data_type = attention.data_type;
 
-        let max_prefix_elements = if let Some(sliding_window_size) = attention.sliding_window_size {
+        let max_prefix_elements = if attention.is_causal
+            && let Some(sliding_window_size) = attention.sliding_window_size
+        {
             sliding_window_size
         } else if let Some(max_context_length) = max_context_length {
             max_context_length
@@ -90,16 +90,11 @@ impl<B: Backend> AttentionState<B> {
                 .expect("Cannot create full attention state with unlimited length for with no RoPE")
         };
 
-        let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
-        let max_elements = max_prefix_elements + suffix_capacity;
-        let element_size = attention.num_kv_heads.unwrap() * attention.head_dim;
-        let kv_buffer_bytes = max_elements * element_size * data_type.size_in_bytes();
-
-        let state_type = if let Some(sliding_window_size) = attention.sliding_window_size {
+        let state_type = if attention.is_causal && attention.sliding_window_size.is_some() {
             AttentionStateType::Ring {
                 offset: 0,
                 length: 0,
-                max_length: sliding_window_size,
+                max_length: max_prefix_elements,
             }
         } else {
             AttentionStateType::Full {
@@ -107,7 +102,12 @@ impl<B: Backend> AttentionState<B> {
             }
         };
 
-        let is_ring = attention.sliding_window_size.is_some();
+        let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
+        let max_elements = max_prefix_elements + suffix_capacity;
+        let element_size = attention.num_kv_heads.unwrap() * attention.head_dim;
+        let kv_buffer_bytes = max_elements * element_size * data_type.size_in_bytes();
+
+        let is_ring = matches!(state_type, AttentionStateType::Ring { .. });
         let is_sparse = !is_ring && context.sparse_buffers_supported();
 
         let (keys, values): (Box<dyn Buffer<Backend = B>>, Box<dyn Buffer<Backend = B>>) = if is_sparse {
@@ -132,6 +132,21 @@ impl<B: Backend> AttentionState<B> {
             values,
             kv_cache_update,
         })
+    }
+
+    #[allow(dead_code)] // TODO: remove when wiring with DFlash.
+    pub(super) fn append_full(
+        &mut self,
+        length: usize,
+    ) {
+        let AttentionStateType::Full {
+            length: state_length,
+        } = &mut self.state_type
+        else {
+            panic!("append_full requires full attention state");
+        };
+        *state_length += length;
+        self.cur_context_length += length;
     }
 }
 

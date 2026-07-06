@@ -50,7 +50,7 @@ pub fn attention_prepare<ElementT: ArrayElement + Float, RopeT: ArrayElement + F
     #[specialize] has_kv: bool,
     #[specialize] has_rope: bool,
 ) {
-    assert!(num_q_heads > 0, "attention prepare requires at least one query head");
+    assert!(num_q_heads > 0 || has_kv, "attention prepare without KV requires at least one query head");
     assert!(head_dim > 0, "attention prepare requires nonzero head_dim");
     assert_eq!(keys.is_some(), has_kv, "attention prepare keys presence mismatch");
     assert_eq!(values.is_some(), has_kv, "attention prepare values presence mismatch");
