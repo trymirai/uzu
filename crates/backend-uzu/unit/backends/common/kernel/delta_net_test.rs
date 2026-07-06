@@ -2462,3 +2462,776 @@ fn test_delta_net_chunked_mode_l_pipeline_vs_recurrent() {
         mode_l_pipeline_vs_recurrent_impl(suffix_len);
     }
 }
+
+// End-to-end prefill sweep comparing three paths at the SAME scope (precompute +
+// apply + NormGate): the recurrent baseline, the Phase-A fused-7 pipeline
+// (prep, cumsum, gram, solve, buildWU, fusedApply, normGate), and the Mode L
+// mega pipeline (prep, cumsum, gram, solveT, megaApply, normGate; 6 dispatches,
+// VT=32). Each path warmed >=500 ms before timing.
+#[uzu_test]
+#[ignore]
+fn bench_delta_net_mode_l_vs_fused_prefill() {
+    use std::time::{Duration, Instant};
+
+    use test_runner::perf::run_perf_with_warmup;
+
+    let num_v_heads = 48usize;
+    let num_k_heads = 16usize;
+    let head_k_dim = 128usize;
+    let head_v_dim = 128usize;
+    let chunk_size = 64usize;
+    let bv = 32usize;
+
+    let key_dim = num_k_heads * head_k_dim;
+    let value_dim = num_v_heads * head_v_dim;
+    let conv_dim = 2 * key_dim + value_dim;
+    let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
+    let state_size = num_v_heads * head_v_dim * head_k_dim;
+    let num_dv_groups = head_v_dim.div_ceil(16);
+    let block_size = 16usize;
+    let num_blocks = chunk_size.div_ceil(block_size);
+    let num_col_pairs = num_blocks.div_ceil(2);
+
+    eprintln!("\n=== DeltaNet Mode L vs Fused-7 vs Recurrent (end-to-end prefill) ===");
+    eprintln!("  C={chunk_size} HV={num_v_heads} HK={num_k_heads} K={head_k_dim} V={head_v_dim} dtype=bf16");
+    eprintln!("  scope: precompute + apply + NormGate for every path");
+    eprintln!("MODELBENCH\tT\tpath\tmedian_ms\tmin_ms\tmax_ms\tstd_ms");
+
+    for suffix_len in [64usize, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768] {
+        let num_chunks = suffix_len.div_ceil(chunk_size);
+
+        let in_proj: Vec<bf16> =
+            (0..suffix_len * total_proj_dim).map(|i| bf16::from_f32(((i % 23) as f32 - 11.0) * 0.002)).collect();
+        let a_log: Vec<f32> = (0..num_v_heads).map(|i| -1.5 + (i as f32) * 0.01).collect();
+        let dt_bias: Vec<f32> = (0..num_v_heads).map(|i| 0.1 + (i as f32) * 0.001).collect();
+        let norm_weight: Vec<f32> = (0..head_v_dim).map(|i| 0.9 + (i as f32) * 0.001).collect();
+
+        let context = <Metal as Backend>::Context::new().expect("context");
+        let in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj);
+        let a_log_array = context.create_array_from(&[a_log.len()], &a_log);
+        let dt_bias_array = context.create_array_from(&[dt_bias.len()], &dt_bias);
+        let norm_weight_array = context.create_array_from(&[norm_weight.len()], &norm_weight);
+
+        let alloc = |data_type, len| context.create_array_zeros(&[len], data_type).into_allocation();
+
+        // Recurrent buffers.
+        let mut recurrent_out = alloc(DataType::BF16, suffix_len * value_dim);
+        let mut recurrent_q_norm = alloc(DataType::F32, suffix_len * key_dim);
+        let mut recurrent_k_norm = alloc(DataType::F32, suffix_len * key_dim);
+        let mut recurrent_beta = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut recurrent_decay = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut recurrent_state = alloc(DataType::F32, state_size);
+
+        // Shared precompute buffers.
+        let mut q_norm_f = alloc(DataType::F32, suffix_len * key_dim);
+        let mut k_norm_f = alloc(DataType::F32, suffix_len * key_dim);
+        let mut beta_f = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut log_decay_f = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut g_f = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut kk_f = alloc(DataType::F32, num_chunks * num_k_heads * chunk_size * chunk_size);
+        let mut qk_scaled_f = alloc(DataType::F32, num_chunks * num_v_heads * chunk_size * chunk_size);
+
+        // Fused-7 only buffers.
+        let mut a_packed_f =
+            alloc(DataType::F32, num_chunks * num_v_heads * num_blocks * num_col_pairs * block_size * 2 * block_size);
+        let mut a_inv_f = alloc(DataType::F32, num_chunks * num_v_heads * num_blocks * block_size * block_size);
+        let mut w_f = alloc(DataType::BF16, num_chunks * num_v_heads * chunk_size * head_k_dim);
+        let mut u_f = alloc(DataType::BF16, num_chunks * num_v_heads * chunk_size * head_v_dim);
+        let mut fused_state = alloc(DataType::F32, state_size);
+        let mut fused_out = alloc(DataType::BF16, suffix_len * value_dim);
+
+        // Mode L only buffers (separate precompute set so its closure does not
+        // share &mut with the fused closure).
+        let mut q_norm_m = alloc(DataType::F32, suffix_len * key_dim);
+        let mut k_norm_m = alloc(DataType::F32, suffix_len * key_dim);
+        let mut beta_m = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut log_decay_m = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut g_m = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut kk_m = alloc(DataType::F32, num_chunks * num_k_heads * chunk_size * chunk_size);
+        let mut qk_scaled_m = alloc(DataType::F32, num_chunks * num_v_heads * chunk_size * chunk_size);
+        let mut t_mat_f = alloc(DataType::BF16, num_chunks * num_v_heads * chunk_size * chunk_size);
+        let mut mode_l_state = alloc(DataType::F32, state_size);
+        let mut mode_l_out = alloc(DataType::BF16, suffix_len * value_dim);
+
+        // Kernels.
+        let recurrent_prep_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(&context, DataType::BF16, 128)
+                .unwrap();
+        let recurrent_prefill_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(&context, DataType::BF16, 128)
+                .unwrap();
+        let norm_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, DataType::BF16).unwrap();
+        let prep_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedPrepKernel::new(&context, DataType::BF16, 128)
+                .unwrap();
+        let cumsum_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedCumsumKernel::new(&context).unwrap();
+        let gram_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(&context, 128, 64).unwrap();
+        let solve_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, false).unwrap();
+        let build_wu_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildWUKernel::new(
+            &context,
+            DataType::BF16,
+            DataType::BF16,
+            128,
+            64,
+            bv as u32,
+            false,
+        )
+        .unwrap();
+        let fused_vt32_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedFusedApplyKernel::new(
+            &context,
+            DataType::BF16,
+            32,
+        )
+        .unwrap();
+        let solve_t_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveTKernel::new(&context, 64).unwrap();
+        let mega_vt32_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
+            &context,
+            DataType::BF16,
+            DataType::BF16,
+            32,
+        )
+        .unwrap();
+
+        let mut run_recurrent = || {
+            let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+            encoder.encode_fill(&mut recurrent_state, 0);
+            recurrent_prep_k.encode(
+                in_proj_array.allocation(),
+                a_log_array.allocation(),
+                dt_bias_array.allocation(),
+                &mut recurrent_q_norm,
+                &mut recurrent_k_norm,
+                &mut recurrent_beta,
+                &mut recurrent_decay,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            recurrent_prefill_k.encode(
+                &recurrent_q_norm,
+                &recurrent_k_norm,
+                &recurrent_beta,
+                &recurrent_decay,
+                in_proj_array.allocation(),
+                &mut recurrent_state,
+                &mut recurrent_out,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                head_v_dim as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                num_dv_groups as u32,
+                &mut encoder,
+            );
+            norm_k.encode(
+                &mut recurrent_out,
+                in_proj_array.allocation(),
+                norm_weight_array.allocation(),
+                num_v_heads as u32,
+                head_v_dim as u32,
+                value_dim as u32,
+                conv_dim as u32,
+                total_proj_dim as u32,
+                1e-6f32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            encoder.end_encoding().submit().wait_until_completed().unwrap();
+        };
+
+        let mut run_fused_vt32 = || {
+            let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+            encoder.encode_fill(&mut fused_state, 0);
+            prep_k.encode(
+                in_proj_array.allocation(),
+                a_log_array.allocation(),
+                dt_bias_array.allocation(),
+                &mut q_norm_f,
+                &mut k_norm_f,
+                &mut beta_f,
+                &mut log_decay_f,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            cumsum_k.encode(
+                &log_decay_f,
+                &mut g_f,
+                num_v_heads as u32,
+                suffix_len as u32,
+                chunk_size as u32,
+                &mut encoder,
+            );
+            gram_k.encode(
+                &q_norm_f,
+                &k_norm_f,
+                &g_f,
+                &mut kk_f,
+                &mut qk_scaled_f,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            solve_k.encode(
+                &kk_f,
+                &beta_f,
+                &g_f,
+                &mut a_packed_f,
+                &mut a_inv_f,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            build_wu_k.encode(
+                &k_norm_f,
+                in_proj_array.allocation(),
+                &beta_f,
+                &g_f,
+                &a_packed_f,
+                &a_inv_f,
+                &mut w_f,
+                &mut u_f,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            fused_vt32_k.encode(
+                &w_f,
+                &u_f,
+                &q_norm_f,
+                &k_norm_f,
+                &qk_scaled_f,
+                &g_f,
+                &mut fused_state,
+                &mut fused_out,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                head_v_dim as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            norm_k.encode(
+                &mut fused_out,
+                in_proj_array.allocation(),
+                norm_weight_array.allocation(),
+                num_v_heads as u32,
+                head_v_dim as u32,
+                value_dim as u32,
+                conv_dim as u32,
+                total_proj_dim as u32,
+                1e-6f32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            encoder.end_encoding().submit().wait_until_completed().unwrap();
+        };
+
+        let mut run_mode_l_vt32 = || {
+            let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+            encoder.encode_fill(&mut mode_l_state, 0);
+            prep_k.encode(
+                in_proj_array.allocation(),
+                a_log_array.allocation(),
+                dt_bias_array.allocation(),
+                &mut q_norm_m,
+                &mut k_norm_m,
+                &mut beta_m,
+                &mut log_decay_m,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            cumsum_k.encode(
+                &log_decay_m,
+                &mut g_m,
+                num_v_heads as u32,
+                suffix_len as u32,
+                chunk_size as u32,
+                &mut encoder,
+            );
+            gram_k.encode(
+                &q_norm_m,
+                &k_norm_m,
+                &g_m,
+                &mut kk_m,
+                &mut qk_scaled_m,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            solve_t_k.encode(
+                &kk_m,
+                &beta_m,
+                &g_m,
+                &mut t_mat_f,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            mega_vt32_k.encode(
+                &q_norm_m,
+                &k_norm_m,
+                in_proj_array.allocation(),
+                &qk_scaled_m,
+                &t_mat_f,
+                &g_m,
+                &beta_m,
+                &mut mode_l_state,
+                &mut mode_l_out,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                head_v_dim as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            norm_k.encode(
+                &mut mode_l_out,
+                in_proj_array.allocation(),
+                norm_weight_array.allocation(),
+                num_v_heads as u32,
+                head_v_dim as u32,
+                value_dim as u32,
+                conv_dim as u32,
+                total_proj_dim as u32,
+                1e-6f32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            encoder.end_encoding().submit().wait_until_completed().unwrap();
+        };
+
+        let warmup = |f: &mut dyn FnMut()| {
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_millis(500) {
+                (f)();
+            }
+        };
+
+        let iterations = if suffix_len >= 1024 {
+            30
+        } else {
+            60
+        };
+
+        let print_row = |path: &str, result: &test_runner::perf::PerfResult| {
+            eprintln!(
+                "MODELBENCH\t{}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
+                suffix_len, path, result.median_ms, result.min_ms, result.max_ms, result.std_dev_ms
+            );
+        };
+
+        eprintln!("\n--- T={suffix_len} (num_chunks={num_chunks}, iterations={iterations}) ---");
+
+        warmup(&mut run_recurrent);
+        let recurrent_result = run_perf_with_warmup("recurrent", 3, iterations, &mut run_recurrent);
+        print_row("recurrent", &recurrent_result);
+
+        warmup(&mut run_fused_vt32);
+        let fused32_result = run_perf_with_warmup("fused_vt32", 3, iterations, &mut run_fused_vt32);
+        print_row("fused_vt32", &fused32_result);
+
+        warmup(&mut run_mode_l_vt32);
+        let mode_l_result = run_perf_with_warmup("mode_l_vt32", 3, iterations, &mut run_mode_l_vt32);
+        print_row("mode_l_vt32", &mode_l_result);
+
+        eprintln!(
+            "MODELVERDICT\tT={}\tmode_l={:.3}\tvs_recurrent={:.3}x\tvs_fused7={:.3}x",
+            suffix_len,
+            mode_l_result.median_ms,
+            recurrent_result.median_ms / mode_l_result.median_ms,
+            fused32_result.median_ms / mode_l_result.median_ms
+        );
+    }
+}
+
+// Per-kernel wall-clock breakdown of the Mode L pipeline at T in {256, 4096}.
+// Times each kernel isolated (>=500 ms warmup) plus grouped precompute and the
+// full pipeline single-encoder, so the in-context apply is precompute-vs-apply
+// attributable exactly like the fused breakdown.
+#[uzu_test]
+#[ignore]
+fn bench_delta_net_mode_l_breakdown() {
+    use std::time::{Duration, Instant};
+
+    use test_runner::perf::run_perf_with_warmup;
+
+    let num_v_heads = 48usize;
+    let num_k_heads = 16usize;
+    let head_k_dim = 128usize;
+    let head_v_dim = 128usize;
+    let chunk_size = 64usize;
+
+    let key_dim = num_k_heads * head_k_dim;
+    let value_dim = num_v_heads * head_v_dim;
+    let conv_dim = 2 * key_dim + value_dim;
+    let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
+    let state_size = num_v_heads * head_v_dim * head_k_dim;
+
+    eprintln!("\n=== DeltaNet Mode L pipeline per-kernel breakdown ===");
+    eprintln!("MODELBRK\tT\tkernel\tstage\tmedian_ms\tmin_ms\tmax_ms\tstd_ms");
+
+    for suffix_len in [256usize, 4096] {
+        let num_chunks = suffix_len.div_ceil(chunk_size);
+        eprintln!("\n--- Mode L per-kernel breakdown T={suffix_len} num_chunks={num_chunks} ---");
+
+        let in_proj: Vec<bf16> =
+            (0..suffix_len * total_proj_dim).map(|i| bf16::from_f32(((i % 23) as f32 - 11.0) * 0.002)).collect();
+        let a_log: Vec<f32> = (0..num_v_heads).map(|i| -1.5 + (i as f32) * 0.01).collect();
+        let dt_bias: Vec<f32> = (0..num_v_heads).map(|i| 0.1 + (i as f32) * 0.001).collect();
+        let norm_weight: Vec<f32> = (0..head_v_dim).map(|i| 0.9 + (i as f32) * 0.001).collect();
+
+        let context = <Metal as Backend>::Context::new().expect("context");
+        let in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj);
+        let a_log_array = context.create_array_from(&[a_log.len()], &a_log);
+        let dt_bias_array = context.create_array_from(&[dt_bias.len()], &dt_bias);
+        let norm_weight_array = context.create_array_from(&[norm_weight.len()], &norm_weight);
+
+        let alloc = |data_type, len| context.create_array_zeros(&[len], data_type).into_allocation();
+
+        let mut q_norm = alloc(DataType::F32, suffix_len * key_dim);
+        let mut k_norm = alloc(DataType::F32, suffix_len * key_dim);
+        let mut beta = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut log_decay = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut g = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut kk = alloc(DataType::F32, num_chunks * num_k_heads * chunk_size * chunk_size);
+        let mut qk_scaled = alloc(DataType::F32, num_chunks * num_v_heads * chunk_size * chunk_size);
+        let mut t_mat = alloc(DataType::BF16, num_chunks * num_v_heads * chunk_size * chunk_size);
+        let mut mega_state = alloc(DataType::F32, state_size);
+        let mut mega_out = alloc(DataType::BF16, suffix_len * value_dim);
+
+        let prep_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedPrepKernel::new(&context, DataType::BF16, 128)
+                .unwrap();
+        let cumsum_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedCumsumKernel::new(&context).unwrap();
+        let gram_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(&context, 128, 64).unwrap();
+        let solve_t_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveTKernel::new(&context, 64).unwrap();
+        let norm_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, DataType::BF16).unwrap();
+        let mega_vt32_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
+            &context,
+            DataType::BF16,
+            DataType::BF16,
+            32,
+        )
+        .unwrap();
+
+        // Prime buffers once.
+        {
+            let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+            encoder.encode_fill(&mut mega_state, 0);
+            prep_k.encode(
+                in_proj_array.allocation(),
+                a_log_array.allocation(),
+                dt_bias_array.allocation(),
+                &mut q_norm,
+                &mut k_norm,
+                &mut beta,
+                &mut log_decay,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            cumsum_k.encode(&log_decay, &mut g, num_v_heads as u32, suffix_len as u32, chunk_size as u32, &mut encoder);
+            gram_k.encode(
+                &q_norm,
+                &k_norm,
+                &g,
+                &mut kk,
+                &mut qk_scaled,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            solve_t_k.encode(
+                &kk,
+                &beta,
+                &g,
+                &mut t_mat,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            encoder.end_encoding().submit().wait_until_completed().unwrap();
+        }
+
+        let iterations = 50usize;
+        let warmup = |f: &mut dyn FnMut()| {
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_millis(500) {
+                f();
+            }
+        };
+
+        let mut results: Vec<(&str, test_runner::perf::PerfResult)> = Vec::new();
+
+        macro_rules! time_kernel {
+            ($name:expr, |$enc:ident| $body:block) => {{
+                let mut run = || {
+                    let mut $enc = Encoder::new(context.as_ref()).expect("encoder");
+                    $body
+                    $enc.end_encoding().submit().wait_until_completed().unwrap();
+                };
+                warmup(&mut run);
+                let result = run_perf_with_warmup($name, 3, iterations, &mut run);
+                eprintln!(
+                    "MODELBRK\t{}\t{}\tprecompute\t{:.4}\t{:.4}\t{:.4}\t{:.4}",
+                    suffix_len, $name, result.median_ms, result.min_ms, result.max_ms, result.std_dev_ms
+                );
+                results.push(($name, result));
+            }};
+        }
+
+        time_kernel!("prep", |encoder| {
+            prep_k.encode(
+                in_proj_array.allocation(),
+                a_log_array.allocation(),
+                dt_bias_array.allocation(),
+                &mut q_norm,
+                &mut k_norm,
+                &mut beta,
+                &mut log_decay,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+        });
+        time_kernel!("cumsum", |encoder| {
+            cumsum_k.encode(&log_decay, &mut g, num_v_heads as u32, suffix_len as u32, chunk_size as u32, &mut encoder);
+        });
+        time_kernel!("gram", |encoder| {
+            gram_k.encode(
+                &q_norm,
+                &k_norm,
+                &g,
+                &mut kk,
+                &mut qk_scaled,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+        });
+        time_kernel!("solve_t", |encoder| {
+            solve_t_k.encode(
+                &kk,
+                &beta,
+                &g,
+                &mut t_mat,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+        });
+
+        // The mega apply dispatch (its own stage label).
+        {
+            let mut run = || {
+                let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+                mega_vt32_k.encode(
+                    &q_norm,
+                    &k_norm,
+                    in_proj_array.allocation(),
+                    &qk_scaled,
+                    &t_mat,
+                    &g,
+                    &beta,
+                    &mut mega_state,
+                    &mut mega_out,
+                    num_v_heads as u32,
+                    num_k_heads as u32,
+                    head_v_dim as u32,
+                    key_dim as u32,
+                    value_dim as u32,
+                    suffix_len as u32,
+                    &mut encoder,
+                );
+                encoder.end_encoding().submit().wait_until_completed().unwrap();
+            };
+            warmup(&mut run);
+            let result = run_perf_with_warmup("mega_apply_vt32", 3, iterations, &mut run);
+            eprintln!(
+                "MODELBRK\t{}\t{}\tapply\t{:.4}\t{:.4}\t{:.4}\t{:.4}",
+                suffix_len, "mega_apply_vt32", result.median_ms, result.min_ms, result.max_ms, result.std_dev_ms
+            );
+            results.push(("mega_apply_vt32", result));
+        }
+
+        let norm_result = {
+            let mut run = || {
+                let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+                norm_k.encode(
+                    &mut mega_out,
+                    in_proj_array.allocation(),
+                    norm_weight_array.allocation(),
+                    num_v_heads as u32,
+                    head_v_dim as u32,
+                    value_dim as u32,
+                    conv_dim as u32,
+                    total_proj_dim as u32,
+                    1e-6f32,
+                    suffix_len as u32,
+                    &mut encoder,
+                );
+                encoder.end_encoding().submit().wait_until_completed().unwrap();
+            };
+            warmup(&mut run);
+            run_perf_with_warmup("norm_gate", 3, iterations, &mut run)
+        };
+
+        macro_rules! encode_precompute {
+            ($encoder:expr) => {{
+                prep_k.encode(
+                    in_proj_array.allocation(),
+                    a_log_array.allocation(),
+                    dt_bias_array.allocation(),
+                    &mut q_norm,
+                    &mut k_norm,
+                    &mut beta,
+                    &mut log_decay,
+                    num_v_heads as u32,
+                    num_k_heads as u32,
+                    key_dim as u32,
+                    value_dim as u32,
+                    suffix_len as u32,
+                    $encoder,
+                );
+                cumsum_k.encode(&log_decay, &mut g, num_v_heads as u32, suffix_len as u32, chunk_size as u32, $encoder);
+                gram_k.encode(
+                    &q_norm,
+                    &k_norm,
+                    &g,
+                    &mut kk,
+                    &mut qk_scaled,
+                    num_v_heads as u32,
+                    num_k_heads as u32,
+                    key_dim as u32,
+                    suffix_len as u32,
+                    $encoder,
+                );
+                solve_t_k.encode(
+                    &kk,
+                    &beta,
+                    &g,
+                    &mut t_mat,
+                    num_v_heads as u32,
+                    num_k_heads as u32,
+                    suffix_len as u32,
+                    $encoder,
+                );
+            }};
+        }
+
+        let precompute_group = {
+            let mut run = || {
+                let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+                encode_precompute!(&mut encoder);
+                encoder.end_encoding().submit().wait_until_completed().unwrap();
+            };
+            warmup(&mut run);
+            run_perf_with_warmup("precompute_chain", 3, iterations, &mut run)
+        };
+
+        let pipeline_group = {
+            let mut run = || {
+                let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+                encoder.encode_fill(&mut mega_state, 0);
+                encode_precompute!(&mut encoder);
+                mega_vt32_k.encode(
+                    &q_norm,
+                    &k_norm,
+                    in_proj_array.allocation(),
+                    &qk_scaled,
+                    &t_mat,
+                    &g,
+                    &beta,
+                    &mut mega_state,
+                    &mut mega_out,
+                    num_v_heads as u32,
+                    num_k_heads as u32,
+                    head_v_dim as u32,
+                    key_dim as u32,
+                    value_dim as u32,
+                    suffix_len as u32,
+                    &mut encoder,
+                );
+                norm_k.encode(
+                    &mut mega_out,
+                    in_proj_array.allocation(),
+                    norm_weight_array.allocation(),
+                    num_v_heads as u32,
+                    head_v_dim as u32,
+                    value_dim as u32,
+                    conv_dim as u32,
+                    total_proj_dim as u32,
+                    1e-6f32,
+                    suffix_len as u32,
+                    &mut encoder,
+                );
+                encoder.end_encoding().submit().wait_until_completed().unwrap();
+            };
+            warmup(&mut run);
+            run_perf_with_warmup("full_pipeline", 3, iterations, &mut run)
+        };
+
+        let apply_ms = results.iter().find(|(n, _)| *n == "mega_apply_vt32").unwrap().1.median_ms;
+        let precompute_ms: f64 =
+            results.iter().filter(|(n, _)| *n != "mega_apply_vt32").map(|(_, r)| r.median_ms).sum();
+        let e2e = pipeline_group.median_ms;
+        let precompute_ctx = precompute_group.median_ms;
+        let apply_ctx = (e2e - precompute_ctx - norm_result.median_ms).max(0.0);
+
+        eprintln!("\n--- Mode L pipeline breakdown (T={suffix_len}) ---");
+        eprintln!("kernel               median_ms");
+        let mut sorted: Vec<&(&str, test_runner::perf::PerfResult)> = results.iter().collect();
+        sorted.sort_by(|a, b| b.1.median_ms.partial_cmp(&a.1.median_ms).unwrap());
+        for (name, r) in sorted {
+            eprintln!("  {:<18} {:8.4}", name, r.median_ms);
+        }
+        eprintln!("  {:<18} {:8.4}", "(norm_gate)", norm_result.median_ms);
+        eprintln!("SUMMARY(isolated)\tprecompute={:.4}ms\tapply={:.4}ms", precompute_ms, apply_ms);
+        eprintln!(
+            "SUMMARY(grouped)\te2e={:.4}ms\tprecompute_chain={:.4}ms\tapply_in_context={:.4}ms\tnorm={:.4}ms",
+            e2e, precompute_ctx, apply_ctx, norm_result.median_ms
+        );
+    }
+}
