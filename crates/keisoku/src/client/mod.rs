@@ -114,7 +114,6 @@ impl SensorReader {
                 category: service.string(obfstr!("Category")),
                 location_id: service.i64_value(obfstr!("LocationID")),
                 registry_id: service.registry_id(),
-                // Power rails change continuously, so refresh them every read (not just cold).
                 hot: is_hot(component) || matches!(kind, SensorKind::Voltage | SensorKind::Current),
                 component,
                 name,

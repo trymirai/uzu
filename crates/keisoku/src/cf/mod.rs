@@ -6,9 +6,6 @@ mod service_iterator;
 
 pub use service_iterator::IoServiceIterator;
 
-/// Convert a borrowed (Get-rule) `CFStringRef` returned by a C accessor into an
-/// owned `String`. Used by the IOReport channel accessors, whose C functions
-/// hand back a borrowed `CFStringRef` as `*const c_void`.
 pub fn cf_string_to_string(value: *const c_void) -> String {
     match NonNull::new(value.cast_mut().cast::<CFString>()) {
         Some(pointer) => unsafe { pointer.as_ref() }.to_string(),
@@ -16,10 +13,6 @@ pub fn cf_string_to_string(value: *const c_void) -> String {
     }
 }
 
-/// Look up `key` in a CF dictionary and downcast its value to the concrete CF
-/// type `V`. The `<K, V>` generics on `CFDictionary` are `PhantomData`, so
-/// viewing the opaque dictionary as `<CFString, CFType>` is a layout-sound
-/// reference cast.
 pub fn dictionary_get<V: ConcreteType>(
     dictionary: &CFDictionary,
     key: &str,
@@ -28,7 +21,6 @@ pub fn dictionary_get<V: ConcreteType>(
     dictionary.get(&CFString::from_str(key)).and_then(|value| value.downcast::<V>().ok())
 }
 
-/// Bytes of a `CFData`-valued key, or `None` if the key is absent or not data.
 pub fn dictionary_data(
     dictionary: &CFDictionary,
     key: &str,

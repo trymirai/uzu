@@ -7,7 +7,6 @@ use shoji::types::session::chat::ChatReplyPowerStats;
 use crate::util::power::PowerRecorder;
 
 pub struct ApplePowerRecorder {
-    // Option so stop() can take ownership through a shared reference.
     meter: Mutex<Option<keisoku::EnergyMeter>>,
 }
 
@@ -32,7 +31,6 @@ impl PowerRecorder for ApplePowerRecorder {
             average_ram_watts: reading.average_power.ram.value() as f64,
             average_total_watts: reading.average_power.total().value() as f64,
             average_package_watts: package_watts,
-            // A two-point window yields the mean, not a sampled peak.
             max_package_watts: package_watts,
             energy_joules: reading.energy.package.value() as f64,
         })

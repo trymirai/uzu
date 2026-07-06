@@ -23,10 +23,8 @@ pub struct Snapshot {
     pub temperatures: Option<Temperatures>,
     pub thermal_pressure: Option<ThermalPressure>,
     pub sensors: Box<[Sensor]>,
-    /// HID voltage rails; on iOS the only un-gated electrical signal, empty elsewhere.
     #[serde(default)]
     pub voltage: Box<[Sensor]>,
-    /// HID current rails, paired with [`Snapshot::voltage`] by rail code.
     #[serde(default)]
     pub current: Box<[Sensor]>,
 }

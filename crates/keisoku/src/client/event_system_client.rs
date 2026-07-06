@@ -21,9 +21,6 @@ impl EventSystemClient {
         })
     }
 
-    /// Match HID services for the given usage page/usage and return them as
-    /// owning [`ServiceClient`]s. `CFArray::to_vec` retains each element, so the
-    /// returned clients no longer depend on the matched array staying alive.
     pub(super) fn services(
         &self,
         page: i32,
@@ -49,8 +46,6 @@ impl EventSystemClient {
 
         let _ = unsafe { (self.io_kit.set_matching)(&self.inner, &matching) };
 
-        // `CFArray`'s generic is `PhantomData`, so typing the matched array as
-        // `CFArray<IOHIDServiceClient>` is a layout-sound pointer cast.
         let services = unsafe { (self.io_kit.copy_services)(&self.inner) };
         let services = NonNull::new(services.cast::<CFArray<IOHIDServiceClient>>())?;
         Some(unsafe { CFRetained::from_raw(services) })

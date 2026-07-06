@@ -9,9 +9,6 @@ use crate::{
     units::{Joules, Milliseconds, Watts},
 };
 
-/// Energy consumed between [`EnergyMeter::start`] and [`EnergyMeter::stop`], read by
-/// deltaing the cumulative SoC energy counters. It keeps only decoded numbers, so it is
-/// `Send` and needs no background thread.
 #[must_use]
 pub struct EnergyMeter {
     #[cfg(target_os = "macos")]

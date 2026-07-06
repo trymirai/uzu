@@ -7,8 +7,6 @@ use crate::{
     units::Watts,
 };
 
-/// Instantaneous telemetry — each field is meaningful from a single read (no window). Sourced from
-/// HID / SMC / sysinfo / IOKit, so reading these never builds an IOReport subscription.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Gauges {
     pub memory: Option<MemoryMetrics>,
@@ -25,11 +23,7 @@ pub struct Gauges {
 }
 
 impl Gauges {
-    /// Sum of charger/battery watts from matched HID voltage×current rails
-    /// (e.g. `Charger VQ0u`×`Charger IQ0u`). An estimate, unlike IOReport per-rail power.
     pub fn rail_power(&self) -> Option<Watts> {
-        // Power magnitude so battery discharge (negative current when unplugged) counts too;
-        // the ceiling rejects mismatched-unit pairs, well above real charge/discharge.
         const MAX_PLAUSIBLE_WATTS: f64 = 1000.0;
         let split_area_code = |name: &str| name.rsplit_once(' ').map(|(area, code)| (area.to_owned(), code.to_owned()));
         let is_battery_rail = |sensor: &&Sensor| matches!(sensor.component, Component::Charger | Component::Battery);

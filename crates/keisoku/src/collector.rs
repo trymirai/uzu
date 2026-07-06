@@ -81,8 +81,6 @@ impl Collector {
         Device::detect(self)
     }
 
-    /// Instantaneous telemetry only (RAM, temps, HID sensors, fans, battery, thermal pressure, SMC
-    /// package watts). No IOReport subscription, so this is cheap — unlike [`Collector::sample`].
     pub fn gauges(&mut self) -> Gauges {
         let sensors = self.temperature_reader.as_mut().map(SensorReader::read).unwrap_or_default();
         let voltage = self.voltage_reader.as_mut().map(SensorReader::read).unwrap_or_default();
