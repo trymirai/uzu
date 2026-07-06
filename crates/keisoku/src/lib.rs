@@ -31,7 +31,7 @@ pub use collector::Collector;
 pub use component::{Component, classify};
 pub use device::Device;
 pub use energy_channel::EnergyModelChannel;
-pub use energy_meter::EnergyMeter;
+pub use energy_meter::{EnergyMeter, EnergyWindow};
 pub use energy_reading::EnergyReading;
 pub use gauges::Gauges;
 pub use metrics::{

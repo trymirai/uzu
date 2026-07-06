@@ -9,29 +9,55 @@ use crate::{
     units::{Joules, Milliseconds, Watts},
 };
 
-#[must_use]
 pub struct EnergyMeter {
     #[cfg(target_os = "macos")]
-    start: Option<Counters>,
+    io_report: Option<IoReport>,
+    #[cfg(target_os = "macos")]
+    smc: Option<Smc>,
+}
+
+#[cfg(target_os = "macos")]
+unsafe impl Send for EnergyMeter {}
+
+impl Default for EnergyMeter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EnergyMeter {
     #[cfg(target_os = "macos")]
-    pub fn start() -> Self {
+    pub fn new() -> Self {
         Self {
-            start: Counters::read(),
+            io_report: IoReport::energy_only(),
+            smc: Smc::new(),
         }
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn start() -> Self {
+    pub fn new() -> Self {
         Self {}
     }
 
     #[cfg(target_os = "macos")]
-    pub fn stop(self) -> Option<EnergyReading> {
-        let start = self.start?;
-        let end = Counters::read()?;
+    pub fn start(&self) -> EnergyWindow {
+        EnergyWindow {
+            start: self.counters(),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn start(&self) -> EnergyWindow {
+        EnergyWindow {}
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn stop(
+        &self,
+        window: EnergyWindow,
+    ) -> Option<EnergyReading> {
+        let start = window.start?;
+        let end = self.counters()?;
         let elapsed = end.at.duration_since(start.at);
         let energy = end.energy.since(&start.energy);
         let mean_package_watts = match (start.package_watts, end.package_watts) {
@@ -52,9 +78,29 @@ impl EnergyMeter {
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn stop(self) -> Option<EnergyReading> {
+    pub fn stop(
+        &self,
+        _window: EnergyWindow,
+    ) -> Option<EnergyReading> {
         None
     }
+
+    #[cfg(target_os = "macos")]
+    fn counters(&self) -> Option<Counters> {
+        let energy = self.io_report.as_ref()?.cumulative_energy()?;
+        let package_watts = self.smc.as_ref().and_then(|smc| smc.package_watts()).map(|watts| watts.value());
+        Some(Counters {
+            energy,
+            package_watts,
+            at: Instant::now(),
+        })
+    }
+}
+
+#[must_use]
+pub struct EnergyWindow {
+    #[cfg(target_os = "macos")]
+    start: Option<Counters>,
 }
 
 #[cfg(target_os = "macos")]
@@ -63,17 +109,4 @@ struct Counters {
     energy: EnergyTotals,
     package_watts: Option<f32>,
     at: Instant,
-}
-
-#[cfg(target_os = "macos")]
-impl Counters {
-    fn read() -> Option<Self> {
-        let energy = IoReport::energy_only()?.cumulative_energy()?;
-        let package_watts = Smc::new().and_then(|smc| smc.package_watts()).map(|watts| watts.value());
-        Some(Self {
-            energy,
-            package_watts,
-            at: Instant::now(),
-        })
-    }
 }

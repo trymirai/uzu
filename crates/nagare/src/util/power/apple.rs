@@ -1,26 +1,33 @@
 #![cfg(target_vendor = "apple")]
 
-use std::sync::Mutex;
+use std::cell::RefCell;
 
 use shoji::types::session::chat::ChatReplyPowerStats;
 
 use crate::util::power::PowerRecorder;
 
 pub struct ApplePowerRecorder {
-    meter: Mutex<Option<keisoku::EnergyMeter>>,
+    meter: keisoku::EnergyMeter,
+    window: RefCell<Option<keisoku::EnergyWindow>>,
 }
 
 impl ApplePowerRecorder {
     pub fn new() -> Self {
         Self {
-            meter: Mutex::new(Some(keisoku::EnergyMeter::start())),
+            meter: keisoku::EnergyMeter::new(),
+            window: RefCell::new(None),
         }
     }
 }
 
 impl PowerRecorder for ApplePowerRecorder {
-    fn stop(&self) -> Option<ChatReplyPowerStats> {
-        let reading = self.meter.lock().ok()?.take()?.stop()?;
+    fn begin(&self) {
+        *self.window.borrow_mut() = Some(self.meter.start());
+    }
+
+    fn finish(&self) -> Option<ChatReplyPowerStats> {
+        let window = self.window.borrow_mut().take()?;
+        let reading = self.meter.stop(window)?;
         let package_watts = reading.average_power.package.value() as f64;
         Some(ChatReplyPowerStats {
             samples_count: 1,

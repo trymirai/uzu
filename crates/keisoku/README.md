@@ -18,12 +18,14 @@ if let Some(memory) = gauges.memory {
 ```
 
 **Energy meter** — energy and average power over a window, measured by differencing the SoC's
-cumulative counters between `start` and `stop`:
+cumulative counters between `start` and `stop`. Build it once and reuse it: `new` pays the IOReport
+subscription cost, while `start`/`stop` are cheap counter reads.
 
 ```rust
-let meter = keisoku::EnergyMeter::start();
+let meter = keisoku::EnergyMeter::new();
+let window = meter.start();
 // ... run the work you want to measure ...
-if let Some(reading) = meter.stop() {
+if let Some(reading) = meter.stop(window) {
     println!("{} over {}", reading.energy.total(), reading.elapsed);        // Joules / ms
     println!("gpu {} / total {}", reading.average_power.gpu, reading.average_power.total()); // Watts
 }
