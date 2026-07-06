@@ -124,8 +124,29 @@ chunk-local prefix from log_decay (64 adds/chunk-head - noise):
 The fused kernel's inputs become: w, u, q_norm, k_norm, qk_scaled, log_decay,
 beta, state, out.
 
-End state Part 1 pipeline (6 dispatches):
-prep -> gramScaled -> solve(RECOMPUTE_G) -> buildWU -> fusedApply -> normGate.
+End state Part 1 pipeline — AS BUILT (7 dispatches, NOT 6):
+prep -> cumsum -> gramScaled -> solve -> buildWU -> fusedApply -> normGate.
+
+**F4 WAS REVERTED (critical lesson for Phase B).** RECOMPUTE_G is O(C^3): the
+chunk-local cumsum recompute (`chunked_g`, O(C)) sits inside solve's O(C^2)
+substitution loops, blowing solve from ~0.33ms to 6.29ms at T=4096. So Cumsum
+stays as its own kernel and ALL consumers (solve, gram, apply, and Phase-B
+megaApply) read the PRECOMPUTED `g` buffer. NEVER dispatch a RECOMPUTE_G=true
+variant in the shipping pipeline, and NEVER do a per-chunk single-thread g
+prefix scan inside the scan kernel — read g from the buffer.
+
+F1/F2/F3 were kept and are net-positive: merged BuildWU (0.77ms < old
+build_w+build_u 1.10ms), merged Gram+ScaleQk (0.65ms < old 0.71ms), DecayScale
+folded into apply (apply rose ~0.47ms but the net 7-dispatch pipeline is faster
+than both recurrent and the old fused-10 everywhere at T>=256; crossover moved
+from ~512 to ~256). Phase-A checkpoint commit: c2b01bd6.
+
+Phase-A measured (M5 Max, median ms, recurrent / fused-7): T=64 0.406/0.488,
+128 0.453/0.476, 256 0.531/0.506, 512 0.768/0.740, 1024 1.337/1.222,
+2048 2.510/2.267, 4096 4.945/4.365, 8192 9.790/8.598, 16384 19.54/16.59,
+32768 42.67/32.11. Breakdown T=4096 in-context: apply 2.65ms, precompute
+1.58ms (solve 0.32, cumsum 0.17, gram 0.52, build_wu 0.77, prep 0.41),
+norm_gate 0.51.
 
 Verification after Part 1: all correctness tests green (update harness for new
 kernel APIs; keep same tolerances); full sweep re-run (T = 64..32768 as in the
@@ -166,8 +187,10 @@ chunk-parallel). Store T as BF16 ([chunks,HV,64,64] ~25MB at T=4096; replaces
 the bf16 W+U buffers, so numerics are no worse than the old path - state stays
 f32). Keep block a_inv/a_packed outputs while BuildWU still exists.
 
-Mode L pipeline (5 dispatches): prep -> gramScaled -> solveT -> megaApply ->
-normGate.
+Mode L pipeline — AS REVISED (6 dispatches, NOT 5): prep -> cumsum ->
+gramScaled -> solveT -> megaApply -> normGate. (Cumsum stays per the F4 lesson
+above; megaApply and gram read the precomputed g buffer. solveT can emit dense
+T alongside gram's qk_scaled, both consuming g.)
 
 Mode L risk (be honest in reports): scan critical path grows (~45% more MMA + 1
 barrier/chunk) but the scan is latency-bound, so much may hide; W/U traffic

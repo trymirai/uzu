@@ -1,8 +1,10 @@
 pub mod chunked_build_wu;
 pub mod chunked_fused;
 pub mod chunked_gram;
+pub mod chunked_mega;
 pub mod chunked_prep;
 pub mod chunked_solve;
+pub mod chunked_solve_t;
 pub mod conv_scan;
 pub mod conv_update;
 pub mod norm_gate;

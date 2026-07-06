@@ -10,9 +10,10 @@ use crate::{
             Backend, Context, Encoder, Kernels,
             kernel::{
                 Conv1dPackKernel, DeltaNetChunkedBuildWUKernel, DeltaNetChunkedCumsumKernel,
-                DeltaNetChunkedFusedApplyKernel, DeltaNetChunkedGramKernel, DeltaNetChunkedPrepKernel,
-                DeltaNetChunkedSolveKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel,
-                DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
+                DeltaNetChunkedFusedApplyKernel, DeltaNetChunkedGramKernel, DeltaNetChunkedMegaApplyKernel,
+                DeltaNetChunkedPrepKernel, DeltaNetChunkedSolveKernel, DeltaNetChunkedSolveTKernel,
+                DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel, DeltaNetPrefillKernel,
+                DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
             },
         },
         cpu::Cpu,
@@ -2050,5 +2051,414 @@ fn fused_pipeline_vs_recurrent_impl(suffix_len: usize) {
 fn test_delta_net_chunked_fused_pipeline_vs_recurrent() {
     for suffix_len in [1usize, 63, 64, 65, 200, 256, 4096] {
         fused_pipeline_vs_recurrent_impl(suffix_len);
+    }
+}
+
+// ===========================================================================
+// DeltaNetChunkedMegaApply (Mode L) correctness tests
+// ===========================================================================
+
+// Run the Mode L mega kernel on backend `B`, uploading all inputs and reading
+// back the final `out` (f32) and mutated `state` (f32). in_proj is bf16 (the V
+// slice source), T and A are bf16 device operands; state is f32.
+#[allow(clippy::too_many_arguments)]
+fn run_mega_apply<B: Backend>(
+    q_norm: &[f32],
+    k_norm: &[f32],
+    in_proj: &[bf16],
+    qk_scaled: &[f32],
+    t_mat: &[bf16],
+    g: &[f32],
+    beta: &[f32],
+    state: &[f32],
+    num_v_heads: usize,
+    num_k_heads: usize,
+    head_v_dim: usize,
+    key_dim: usize,
+    value_dim: usize,
+    suffix_len: usize,
+    vt: u32,
+) -> (Vec<f32>, Vec<f32>) {
+    let context = B::Context::new().expect("context");
+    let q_a = context.create_array_from(&[q_norm.len()], q_norm);
+    let k_a = context.create_array_from(&[k_norm.len()], k_norm);
+    let in_a = context.create_array_from(&[in_proj.len()], in_proj);
+    let qk_a = context.create_array_from(&[qk_scaled.len()], qk_scaled);
+    let t_a = context.create_array_from(&[t_mat.len()], t_mat);
+    let g_a = context.create_array_from(&[g.len()], g);
+    let beta_a = context.create_array_from(&[beta.len()], beta);
+    let mut state_alloc = context.create_array_from(&[state.len()], state).into_allocation();
+    let mut out_alloc = context.create_array_zeros(&[suffix_len * value_dim], DataType::F32).into_allocation();
+
+    let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
+        &context,
+        DataType::BF16,
+        DataType::F32,
+        vt,
+    )
+    .expect("mega kernel");
+
+    let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+    kernel.encode(
+        q_a.allocation(),
+        k_a.allocation(),
+        in_a.allocation(),
+        qk_a.allocation(),
+        t_a.allocation(),
+        g_a.allocation(),
+        beta_a.allocation(),
+        &mut state_alloc,
+        &mut out_alloc,
+        num_v_heads as u32,
+        num_k_heads as u32,
+        head_v_dim as u32,
+        key_dim as u32,
+        value_dim as u32,
+        suffix_len as u32,
+        &mut encoder,
+    );
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+
+    let out = crate::tests::helpers::allocation_to_vec::<B, f32>(&out_alloc);
+    let new_state = crate::tests::helpers::allocation_to_vec::<B, f32>(&state_alloc);
+    (out, new_state)
+}
+
+// Deterministic pseudo-random inputs for the mega kernel at qwen3.5 shapes.
+// Returns (q_norm, k_norm, in_proj, qk_scaled, t_mat, g, beta, state). t_mat is
+// unit lower triangular (diagonal 1, strictly-lower random, upper 0) bf16.
+#[allow(clippy::type_complexity)]
+fn make_mega_inputs(
+    num_v_heads: usize,
+    num_k_heads: usize,
+    head_k_dim: usize,
+    head_v_dim: usize,
+    chunk_size: usize,
+    suffix_len: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<bf16>, Vec<f32>, Vec<bf16>, Vec<f32>, Vec<f32>, Vec<f32>) {
+    let key_dim = num_k_heads * head_k_dim;
+    let value_dim = num_v_heads * head_v_dim;
+    let conv_dim = 2 * key_dim + value_dim;
+    let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
+    let state_size = num_v_heads * head_v_dim * head_k_dim;
+    let num_chunks = suffix_len.div_ceil(chunk_size);
+
+    let q_norm: Vec<f32> = (0..suffix_len * key_dim).map(|i| (((i * 3 + 2) % 41) as f32 - 20.0) * 0.01).collect();
+    let k_norm: Vec<f32> = (0..suffix_len * key_dim).map(|i| (((i * 11 + 7) % 37) as f32 - 18.0) * 0.01).collect();
+    let in_proj: Vec<bf16> =
+        (0..suffix_len * total_proj_dim).map(|i| bf16::from_f32((((i * 5 + 1) % 29) as f32 - 14.0) * 0.01)).collect();
+
+    // qk_scaled is causal-masked in the real pipeline; mask here too.
+    let mut qk_scaled = vec![0.0f32; num_chunks * num_v_heads * chunk_size * chunk_size];
+    for chunk in 0..num_chunks {
+        for hv in 0..num_v_heads {
+            for row in 0..chunk_size {
+                for col in 0..chunk_size {
+                    let idx = ((chunk * num_v_heads + hv) * chunk_size + row) * chunk_size + col;
+                    qk_scaled[idx] = if col <= row {
+                        (((idx * 13 + 5) % 23) as f32 - 11.0) * 0.01
+                    } else {
+                        0.0
+                    };
+                }
+            }
+        }
+    }
+
+    // t_mat unit lower triangular (diagonal 1, strictly-lower small, upper 0).
+    let mut t_mat = vec![bf16::from_f32(0.0); num_chunks * num_v_heads * chunk_size * chunk_size];
+    for chunk in 0..num_chunks {
+        for hv in 0..num_v_heads {
+            for row in 0..chunk_size {
+                for col in 0..chunk_size {
+                    let idx = ((chunk * num_v_heads + hv) * chunk_size + row) * chunk_size + col;
+                    let value = if col == row {
+                        1.0f32
+                    } else if col < row {
+                        (((idx * 17 + 9) % 19) as f32 - 9.0) * 0.01
+                    } else {
+                        0.0
+                    };
+                    t_mat[idx] = bf16::from_f32(value);
+                }
+            }
+        }
+    }
+
+    // g is a per-token cumulative log-decay (negative, reset per chunk).
+    let mut g = vec![0.0f32; suffix_len * num_v_heads];
+    for token in 0..suffix_len {
+        let local = token % chunk_size;
+        for hv in 0..num_v_heads {
+            let step = 0.01 + ((hv % 7) as f32) * 0.002;
+            g[token * num_v_heads + hv] = -(local as f32 + 1.0) * step;
+        }
+    }
+    let beta: Vec<f32> = (0..suffix_len * num_v_heads).map(|i| 0.3 + (((i * 7 + 3) % 11) as f32) * 0.05).collect();
+    let state: Vec<f32> = (0..state_size).map(|i| (((i * 19 + 4) % 29) as f32) * 0.004 - 0.05).collect();
+
+    (q_norm, k_norm, in_proj, qk_scaled, t_mat, g, beta, state)
+}
+
+// Test 1: mega Metal kernel vs its CPU mirror, driven by identical random
+// inputs. Covers VT = 16 and VT = 32.
+fn mega_vs_cpu_mirror_impl(
+    suffix_len: usize,
+    vt: u32,
+) {
+    let num_v_heads = 48usize;
+    let num_k_heads = 16usize;
+    let head_k_dim = 128usize;
+    let head_v_dim = 128usize;
+    let chunk_size = 64usize;
+    let key_dim = num_k_heads * head_k_dim;
+    let value_dim = num_v_heads * head_v_dim;
+
+    let (q_norm, k_norm, in_proj, qk_scaled, t_mat, g, beta, state) =
+        make_mega_inputs(num_v_heads, num_k_heads, head_k_dim, head_v_dim, chunk_size, suffix_len);
+
+    let (metal_out, metal_state) = run_mega_apply::<Metal>(
+        &q_norm,
+        &k_norm,
+        &in_proj,
+        &qk_scaled,
+        &t_mat,
+        &g,
+        &beta,
+        &state,
+        num_v_heads,
+        num_k_heads,
+        head_v_dim,
+        key_dim,
+        value_dim,
+        suffix_len,
+        vt,
+    );
+    let (cpu_out, cpu_state) = run_mega_apply::<Cpu>(
+        &q_norm,
+        &k_norm,
+        &in_proj,
+        &qk_scaled,
+        &t_mat,
+        &g,
+        &beta,
+        &state,
+        num_v_heads,
+        num_k_heads,
+        head_v_dim,
+        key_dim,
+        value_dim,
+        suffix_len,
+        vt,
+    );
+
+    let (out_abs, out_rel) = max_abs_rel_err(&metal_out, &cpu_out);
+    let (state_abs, state_rel) = max_abs_rel_err(&metal_state, &cpu_state);
+    eprintln!(
+        "MEGA_VS_MIRROR T={suffix_len} VT={vt}: out max_abs={out_abs:.3e} max_rel={out_rel:.3e} \
+         state max_abs={state_abs:.3e} max_rel={state_rel:.3e}"
+    );
+
+    assert_close(&cpu_out, &metal_out, 5e-3, 5e-3, &format!("mega vs mirror out (T={suffix_len} VT={vt})"));
+    assert_close(&cpu_state, &metal_state, 5e-3, 5e-3, &format!("mega vs mirror state (T={suffix_len} VT={vt})"));
+}
+
+#[uzu_test]
+fn test_delta_net_chunked_mega_vs_cpu_mirror_vt16() {
+    mega_vs_cpu_mirror_impl(130, 16);
+}
+
+#[uzu_test]
+fn test_delta_net_chunked_mega_vs_cpu_mirror_vt32() {
+    mega_vs_cpu_mirror_impl(130, 32);
+}
+
+// Runs the Mode L precompute chain (Prep, Cumsum, Gram, SolveT) on Metal and
+// reads back the mega kernel inputs, including the precomputed chunk-local
+// prefix g, the dense bf16 inverse T, and beta. State-independent.
+#[allow(clippy::type_complexity)]
+fn run_mode_l_precompute_metal(
+    in_proj: &[bf16],
+    a_log: &[f32],
+    dt_bias: &[f32],
+    num_v_heads: usize,
+    num_k_heads: usize,
+    head_k_dim: usize,
+    head_v_dim: usize,
+    chunk_size: usize,
+    suffix_len: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<bf16>, Vec<f32>, Vec<f32>) {
+    let key_dim = num_k_heads * head_k_dim;
+    let value_dim = num_v_heads * head_v_dim;
+    let num_chunks = suffix_len.div_ceil(chunk_size);
+
+    let context = <Metal as Backend>::Context::new().expect("context");
+    let in_proj_array = context.create_array_from(&[in_proj.len()], in_proj);
+    let a_log_array = context.create_array_from(&[a_log.len()], a_log);
+    let dt_bias_array = context.create_array_from(&[dt_bias.len()], dt_bias);
+
+    let mut q_norm = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
+    let mut k_norm = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
+    let mut beta = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
+    let mut log_decay = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
+    let mut g = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
+    let mut kk = context
+        .create_array_zeros(&[num_chunks * num_k_heads * chunk_size * chunk_size], DataType::F32)
+        .into_allocation();
+    let mut qk_scaled = context
+        .create_array_zeros(&[num_chunks * num_v_heads * chunk_size * chunk_size], DataType::F32)
+        .into_allocation();
+    let mut t_mat = context
+        .create_array_zeros(&[num_chunks * num_v_heads * chunk_size * chunk_size], DataType::BF16)
+        .into_allocation();
+
+    let prep_k =
+        <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedPrepKernel::new(&context, DataType::BF16, 128)
+            .unwrap();
+    let cumsum_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedCumsumKernel::new(&context).unwrap();
+    let gram_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(&context, 128, 64).unwrap();
+    let solve_t_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveTKernel::new(&context, 64).unwrap();
+
+    let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+    prep_k.encode(
+        in_proj_array.allocation(),
+        a_log_array.allocation(),
+        dt_bias_array.allocation(),
+        &mut q_norm,
+        &mut k_norm,
+        &mut beta,
+        &mut log_decay,
+        num_v_heads as u32,
+        num_k_heads as u32,
+        key_dim as u32,
+        value_dim as u32,
+        suffix_len as u32,
+        &mut encoder,
+    );
+    cumsum_k.encode(&log_decay, &mut g, num_v_heads as u32, suffix_len as u32, chunk_size as u32, &mut encoder);
+    gram_k.encode(
+        &q_norm,
+        &k_norm,
+        &g,
+        &mut kk,
+        &mut qk_scaled,
+        num_v_heads as u32,
+        num_k_heads as u32,
+        key_dim as u32,
+        suffix_len as u32,
+        &mut encoder,
+    );
+    solve_t_k.encode(
+        &kk,
+        &beta,
+        &g,
+        &mut t_mat,
+        num_v_heads as u32,
+        num_k_heads as u32,
+        suffix_len as u32,
+        &mut encoder,
+    );
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+
+    (
+        crate::tests::helpers::allocation_to_vec(&q_norm),
+        crate::tests::helpers::allocation_to_vec(&k_norm),
+        crate::tests::helpers::allocation_to_vec(&qk_scaled),
+        crate::tests::helpers::allocation_to_vec(&t_mat),
+        crate::tests::helpers::allocation_to_vec(&g),
+        crate::tests::helpers::allocation_to_vec(&beta),
+    )
+}
+
+// Test 2: full Mode L pipeline (prep, cumsum, gram, solveT + mega apply) vs the
+// recurrent reference DeltaNetPrefill at qwen3.5 shapes. Compares raw output
+// (pre norm-gate) and final state, for both VT variants and zero + nonzero
+// initial state. SAME tolerances as the fused pipeline test.
+fn mode_l_pipeline_vs_recurrent_impl(suffix_len: usize) {
+    let num_v_heads = 48usize;
+    let num_k_heads = 16usize;
+    let head_k_dim = 128usize;
+    let head_v_dim = 128usize;
+    let chunk_size = 64usize;
+    let key_dim = num_k_heads * head_k_dim;
+    let value_dim = num_v_heads * head_v_dim;
+    let conv_dim = 2 * key_dim + value_dim;
+    let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
+    let state_size = num_v_heads * head_v_dim * head_k_dim;
+
+    let in_proj: Vec<bf16> =
+        (0..suffix_len * total_proj_dim).map(|i| bf16::from_f32(((i % 23) as f32 - 11.0) * 0.002)).collect();
+    let a_log: Vec<f32> = (0..num_v_heads).map(|i| -1.5 + (i as f32) * 0.01).collect();
+    let dt_bias: Vec<f32> = (0..num_v_heads).map(|i| 0.1 + (i as f32) * 0.001).collect();
+
+    let (q_norm, k_norm, qk_scaled, t_mat, g, beta) = run_mode_l_precompute_metal(
+        &in_proj,
+        &a_log,
+        &dt_bias,
+        num_v_heads,
+        num_k_heads,
+        head_k_dim,
+        head_v_dim,
+        chunk_size,
+        suffix_len,
+    );
+
+    for nonzero_init in [false, true] {
+        let init_state: Vec<f32> = if nonzero_init {
+            (0..state_size).map(|i| (((i * 13 + 5) % 31) as f32) * 0.003 - 0.045).collect()
+        } else {
+            vec![0.0f32; state_size]
+        };
+
+        let (ref_out, ref_state) = run_recurrent_raw(
+            &in_proj,
+            &a_log,
+            &dt_bias,
+            &init_state,
+            num_v_heads,
+            num_k_heads,
+            head_k_dim,
+            head_v_dim,
+            suffix_len,
+        );
+
+        for vt in [16u32, 32u32] {
+            let (mega_out, mega_state) = run_mega_apply::<Metal>(
+                &q_norm,
+                &k_norm,
+                &in_proj,
+                &qk_scaled,
+                &t_mat,
+                &g,
+                &beta,
+                &init_state,
+                num_v_heads,
+                num_k_heads,
+                head_v_dim,
+                key_dim,
+                value_dim,
+                suffix_len,
+                vt,
+            );
+
+            let (out_abs, out_rel) = max_abs_rel_err(&ref_out, &mega_out);
+            let (state_abs, state_rel) = max_abs_rel_err(&ref_state, &mega_state);
+            eprintln!(
+                "MODE_L_PIPELINE T={suffix_len} VT={vt} nonzero_init={nonzero_init}: \
+                 out max_abs={out_abs:.3e} max_rel={out_rel:.3e} \
+                 state max_abs={state_abs:.3e} max_rel={state_rel:.3e}"
+            );
+
+            let label = format!("mode L pipeline T={suffix_len} VT={vt} nonzero_init={nonzero_init}");
+            assert_close(&ref_out, &mega_out, 2e-3, 5e-2, &format!("{label} out"));
+            assert_close(&ref_state, &mega_state, 1e-3, 5e-2, &format!("{label} state"));
+        }
+    }
+}
+
+#[uzu_test]
+fn test_delta_net_chunked_mode_l_pipeline_vs_recurrent() {
+    for suffix_len in [1usize, 63, 64, 65, 200, 256, 4096] {
+        mode_l_pipeline_vs_recurrent_impl(suffix_len);
     }
 }
