@@ -90,16 +90,11 @@ impl<B: Backend> AttentionState<B> {
                 .expect("Cannot create full attention state with unlimited length for with no RoPE")
         };
 
-        let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
-        let max_elements = max_prefix_elements + suffix_capacity;
-        let element_size = attention.num_kv_heads.unwrap() * attention.head_dim;
-        let kv_buffer_bytes = max_elements * element_size * data_type.size_in_bytes();
-
-        let state_type = if let Some(sliding_window_size) = attention.sliding_window_size {
+        let state_type = if attention.sliding_window_size.is_some() {
             AttentionStateType::Ring {
                 offset: 0,
                 length: 0,
-                max_length: sliding_window_size,
+                max_length: max_prefix_elements,
             }
         } else {
             AttentionStateType::Full {
@@ -107,7 +102,58 @@ impl<B: Backend> AttentionState<B> {
             }
         };
 
-        let is_ring = attention.sliding_window_size.is_some();
+        Self::create_empty_with_type(
+            data_type,
+            attention.num_kv_heads.unwrap(),
+            attention.head_dim,
+            max_prefix_elements,
+            state_type,
+            context,
+        )
+    }
+
+    // TODO: remove after wiring with DFlash.
+    #[allow(dead_code)]
+    pub(crate) fn create_empty_full(
+        max_context_length: Option<usize>,
+        max_rope_length: usize,
+        data_type: DataType,
+        num_kv_heads: usize,
+        head_dim: usize,
+        context: &B::Context,
+    ) -> Result<Self, B::Error> {
+        if let Some(max_context_length) = max_context_length {
+            assert!(max_context_length <= max_rope_length, "Attention state max_prefix_elements overflows RoPE");
+        }
+
+        let max_prefix_elements = max_context_length.unwrap_or(max_rope_length);
+
+        Self::create_empty_with_type(
+            data_type,
+            num_kv_heads,
+            head_dim,
+            max_prefix_elements,
+            AttentionStateType::Full {
+                length: 0,
+            },
+            context,
+        )
+    }
+
+    fn create_empty_with_type(
+        data_type: DataType,
+        num_kv_heads: usize,
+        head_dim: usize,
+        max_prefix_elements: usize,
+        state_type: AttentionStateType,
+        context: &B::Context,
+    ) -> Result<Self, B::Error> {
+        let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
+        let max_elements = max_prefix_elements + suffix_capacity;
+        let element_size = num_kv_heads * head_dim;
+        let kv_buffer_bytes = max_elements * element_size * data_type.size_in_bytes();
+
+        let is_ring = matches!(state_type, AttentionStateType::Ring { .. });
         let is_sparse = !is_ring && context.sparse_buffers_supported();
 
         let (keys, values): (Box<dyn Buffer<Backend = B>>, Box<dyn Buffer<Backend = B>>) = if is_sparse {
@@ -132,6 +178,22 @@ impl<B: Backend> AttentionState<B> {
             values,
             kv_cache_update,
         })
+    }
+
+    // TODO: remove after wiring with DFlash.
+    #[allow(dead_code)]
+    pub(crate) fn append_full(
+        &mut self,
+        length: usize,
+    ) {
+        let AttentionStateType::Full {
+            length: state_length,
+        } = &mut self.state_type
+        else {
+            panic!("append_full requires full attention state");
+        };
+        *state_length += length;
+        self.cur_context_length += length;
     }
 }
 

@@ -26,9 +26,9 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-mod core;
-mod qkv_norm;
-mod state;
+pub(crate) mod core;
+pub(crate) mod qkv_norm;
+pub(crate) mod state;
 
 pub mod rope;
 
