@@ -35,6 +35,13 @@ pub struct Decoder<B: Backend> {
     transformer: Transformer<B>,
 }
 
+pub struct DecoderEncodeOutput<B: Backend> {
+    pub logits: Option<Allocation<B>>,
+    // TODO: remove after DFlash wiring
+    #[allow(dead_code)]
+    pub hidden_features: Box<[Allocation<B>]>,
+}
+
 impl<B: Backend> Decoder<B> {
     pub fn new(
         context: &B::Context,
@@ -106,7 +113,8 @@ impl<B: Backend> Decoder<B> {
         output_range: Option<Range<usize>>,
         state: &mut TransformerState<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<Option<Allocation<B>>, DecoderError<B>> {
+        hidden_feature_layer_indices: &[usize],
+    ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), encoder)?;
 
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
@@ -119,17 +127,28 @@ impl<B: Backend> Decoder<B> {
             None
         };
 
-        let hidden = self
+        let transformer_output = self
             .transformer
-            .encode(embedded, per_layer_inputs.as_ref(), batch_dim, output_range.clone(), Some(state), encoder)
+            .encode(
+                embedded,
+                per_layer_inputs.as_ref(),
+                batch_dim,
+                output_range.clone(),
+                Some(state),
+                encoder,
+                hidden_feature_layer_indices,
+            )
             .map_err(DecoderError::Backend)?;
 
-        let Some(output_range) = output_range else {
-            return Ok(None);
+        let logits = if let Some(output_range) = output_range {
+            Some(self.embedding.encode_readout(output_range.len(), &transformer_output.output.unwrap(), encoder)?)
+        } else {
+            None
         };
 
-        let logits = self.embedding.encode_readout(output_range.len(), &hidden.unwrap(), encoder)?;
-
-        Ok(Some(logits))
+        Ok(DecoderEncodeOutput {
+            logits,
+            hidden_features: transformer_output.hidden_features,
+        })
     }
 }
