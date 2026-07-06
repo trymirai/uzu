@@ -216,7 +216,7 @@ fn run_model_files(
             .map_err(|error| anyhow!("load model: {error}"))?,
     };
 
-    let context_limit = model.recommended_context_length();
+    let context_limit = model.max_context_length();
     let mut rows = Vec::new();
     for &prefill in &args.prefill {
         for &generate in &args.generate {
