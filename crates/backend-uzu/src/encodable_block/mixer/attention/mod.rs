@@ -168,7 +168,7 @@ impl<B: Backend> Attention<B> {
             .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_allocation())
             .transpose()?;
 
-        // TODO: when wiring DFlash split attention, non-causal windowed attention should keep full KV storage and use sliding_window_size only as a mask.
+        // TODO: remove when wiring with DFlash: split non-causal attention needs full KV storage and a window mask.
         let is_kv_cache_ring = sliding_window_size.is_some();
 
         let flat_core = AttentionCores::new(
@@ -270,6 +270,6 @@ impl<B: Backend> Mixer<B> for Attention<B> {
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        self.encode_attend(hidden, precalculated_rope, batch_dim, state, encoder)
+        self.attend(hidden, precalculated_rope, batch_dim, state, encoder)
     }
 }

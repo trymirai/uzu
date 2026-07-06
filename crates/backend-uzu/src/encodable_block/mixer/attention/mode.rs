@@ -28,8 +28,8 @@ pub(super) enum QkvProjection<B: Backend> {
         norm: Option<QKVNorm<B>>,
         prepare: AttentionPrepare<B>,
     },
-    /// Separate Q/KV weights (DFlash draft attention); KV can be appended from external hidden.
-    #[allow(dead_code)] // TODO: drop when DFlash split attention is wired up.
+    /// Separate Q and KV projections.
+    #[allow(dead_code)] // TODO: remove when wiring with DFlash.
     Split {
         q: Box<dyn Linear<B>>,
         kv: Box<dyn Linear<B>>,
@@ -55,7 +55,7 @@ fn project<B: Backend>(
 }
 
 impl<B: Backend> Attention<B> {
-    pub(super) fn encode_attend(
+    pub(super) fn attend(
         &self,
         hidden: Allocation<B>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
@@ -83,7 +83,7 @@ impl<B: Backend> Attention<B> {
                 Some(MaybeMut::Mut(state)),
             ) => {
                 let qkv = project(lin.as_ref(), norm, hidden, batch_dim.size(), encoder)?;
-                let queries = self.encode_prepare(
+                let queries = self.prepare_kv_and_queries(
                     prepare,
                     &qkv,
                     state.keys.as_mut(),
@@ -94,7 +94,7 @@ impl<B: Backend> Attention<B> {
                     batch_dim.size(),
                     encoder,
                 )?;
-                self.encode_core(&queries, batch_dim, &state, encoder)?
+                self.run_core(&queries, batch_dim, state, encoder)?
             },
             (
                 QkvProjection::Packed {
@@ -106,9 +106,8 @@ impl<B: Backend> Attention<B> {
             ) => {
                 // KV sharing: the packed projection produces queries only.
                 let query = project(lin.as_ref(), norm, hidden, batch_dim.size(), encoder)?;
-                let queries =
-                    self.encode_prepare_queries_only(prepare, &query, precalculated_rope, batch_dim.size(), encoder)?;
-                self.encode_core(&queries, batch_dim, state, encoder)?
+                let queries = self.prepare_queries(prepare, &query, precalculated_rope, batch_dim.size(), encoder)?;
+                self.run_core(&queries, batch_dim, state, encoder)?
             },
             (
                 QkvProjection::Packed {
@@ -118,8 +117,58 @@ impl<B: Backend> Attention<B> {
                 },
                 None,
             ) => {
+                let Some(num_kv_heads) = self.num_kv_heads else {
+                    panic!("stateless attention doesn't support query-only projection");
+                };
+                assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
+
                 let qkv = project(lin.as_ref(), norm, hidden, batch_dim.size(), encoder)?;
-                self.encode_stateless(prepare, qkv, precalculated_rope, batch_dim, encoder)?
+                let mut keys = encoder.allocate_scratch(size_for_shape(
+                    &[batch_dim.size(), num_kv_heads, self.head_dim],
+                    self.data_type,
+                ))?;
+                let mut values = encoder.allocate_scratch(size_for_shape(
+                    &[batch_dim.size(), num_kv_heads, self.head_dim],
+                    self.data_type,
+                ))?;
+
+                let queries = self.prepare_kv_and_queries(
+                    prepare,
+                    &qkv,
+                    &mut keys,
+                    &mut values,
+                    0,
+                    self.num_q_heads as u32,
+                    precalculated_rope,
+                    batch_dim.size(),
+                    encoder,
+                )?;
+
+                // HACK: state_type should be Option.
+                let state_type = if self.sliding_window_size.is_some() {
+                    AttentionStateType::Ring {
+                        offset: 0,
+                        length: 0,
+                        max_length: 0,
+                    }
+                } else {
+                    AttentionStateType::Full {
+                        length: 0,
+                    }
+                };
+
+                self.flat_core.encode(
+                    AttentionCoreEncodeArguments {
+                        queries: &queries,
+                        keys: &keys,
+                        values: &values,
+                        suffix_length: batch_dim.size(),
+                        trie: None,
+                        sinks: self.sinks.as_ref(),
+                        state_type: &state_type,
+                    },
+                    encoder,
+                )?
             },
             (
                 QkvProjection::Split {
@@ -127,7 +176,8 @@ impl<B: Backend> Attention<B> {
                     kv,
                     q_norm,
                     kv_norm,
-                    ..
+                    q_prepare,
+                    kv_prepare,
                 },
                 Some(MaybeMut::Mut(state)),
             ) => {
@@ -136,14 +186,21 @@ impl<B: Backend> Attention<B> {
                 encoder.encode_copy(&hidden, .., &mut hidden_for_key_value, ..);
                 let query = project(q.as_ref(), q_norm, hidden, batch_dim.size(), encoder)?;
                 let key_value = project(kv.as_ref(), kv_norm, hidden_for_key_value, batch_dim.size(), encoder)?;
-                self.encode_with_ephemeral_suffix(
-                    query,
-                    key_value,
-                    precalculated_rope.expect("split attention requires RoPE"),
-                    batch_dim,
-                    state,
+                let precalculated_rope = precalculated_rope.expect("split attention requires RoPE");
+                let queries =
+                    self.prepare_queries(q_prepare, &query, Some(precalculated_rope), batch_dim.size(), encoder)?;
+                self.prepare_kv_and_queries(
+                    kv_prepare,
+                    &key_value,
+                    state.keys.as_mut(),
+                    state.values.as_mut(),
+                    state.state_type.physical_prefix_length(),
+                    0,
+                    Some(precalculated_rope),
+                    batch_dim.size(),
                     encoder,
-                )?
+                )?;
+                self.run_core(&queries, batch_dim, state, encoder)?
             },
             _ => panic!("attention projection/state combination is invalid"),
         };
@@ -159,8 +216,8 @@ impl<B: Backend> Attention<B> {
         self.out_projection.encode(attention_output, batch_dim.size(), encoder)
     }
 
-    #[allow(dead_code)] // TODO: drop when DFlash split attention is wired up.
-    pub(super) fn encode_append(
+    #[allow(dead_code)] // TODO: remove when wiring with DFlash.
+    pub(super) fn append_kv(
         &self,
         hidden: Allocation<B>,
         precalculated_rope: &PrecalculatedRoPE<B>,
@@ -178,7 +235,7 @@ impl<B: Backend> Attention<B> {
             panic!("append-only attention requires split Q/KV projection");
         };
         let key_value = project(kv.as_ref(), kv_norm, hidden, batch_dim, encoder)?;
-        self.encode_prepare(
+        self.prepare_kv_and_queries(
             kv_prepare,
             &key_value,
             state.keys.as_mut(),
@@ -193,98 +250,7 @@ impl<B: Backend> Attention<B> {
         Ok(())
     }
 
-    pub(super) fn encode_with_ephemeral_suffix(
-        &self,
-        query: Allocation<B>,
-        key_value: Allocation<B>,
-        precalculated_rope: &PrecalculatedRoPE<B>,
-        batch_dim: &BatchTopology,
-        state: &mut AttentionState<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        let QkvProjection::Split {
-            q_prepare,
-            kv_prepare,
-            ..
-        } = &self.projection
-        else {
-            panic!("ephemeral-suffix attention requires split Q/KV projection");
-        };
-        let queries =
-            self.encode_prepare_queries_only(q_prepare, &query, Some(precalculated_rope), batch_dim.size(), encoder)?;
-        self.encode_prepare(
-            kv_prepare,
-            &key_value,
-            state.keys.as_mut(),
-            state.values.as_mut(),
-            state.state_type.physical_prefix_length(),
-            0,
-            Some(precalculated_rope),
-            batch_dim.size(),
-            encoder,
-        )?;
-        self.encode_core(&queries, batch_dim, state, encoder)
-    }
-
-    fn encode_stateless(
-        &self,
-        prepare: &AttentionPrepare<B>,
-        qkv: Allocation<B>,
-        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: &BatchTopology,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        let Some(num_kv_heads) = self.num_kv_heads else {
-            panic!("stateless attention doesn't support query-only projection");
-        };
-
-        assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
-
-        let mut keys = encoder
-            .allocate_scratch(size_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type))?;
-        let mut values = encoder
-            .allocate_scratch(size_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type))?;
-
-        let queries = self.encode_prepare(
-            prepare,
-            &qkv,
-            &mut keys,
-            &mut values,
-            0,
-            self.num_q_heads as u32,
-            precalculated_rope,
-            batch_dim.size(),
-            encoder,
-        )?;
-
-        // HACK: state_type should be Option.
-        let state_type = if self.sliding_window_size.is_some() {
-            AttentionStateType::Ring {
-                offset: 0,
-                length: 0,
-                max_length: 0,
-            }
-        } else {
-            AttentionStateType::Full {
-                length: 0,
-            }
-        };
-
-        self.flat_core.encode(
-            AttentionCoreEncodeArguments {
-                queries: &queries,
-                keys: &keys,
-                values: &values,
-                suffix_length: batch_dim.size(),
-                trie: None,
-                sinks: self.sinks.as_ref(),
-                state_type: &state_type,
-            },
-            encoder,
-        )
-    }
-
-    fn encode_core(
+    fn run_core(
         &self,
         queries: &Allocation<B>,
         batch_dim: &BatchTopology,
@@ -314,7 +280,7 @@ impl<B: Backend> Attention<B> {
     }
 
     /// With `num_q_heads == 0`, only keys/values are scattered into the cache (KV append).
-    fn encode_prepare<'keys, 'values>(
+    fn prepare_kv_and_queries<'keys, 'values>(
         &self,
         prepare: &AttentionPrepare<B>,
         input: &Allocation<B>,
@@ -349,7 +315,7 @@ impl<B: Backend> Attention<B> {
         Ok(queries)
     }
 
-    fn encode_prepare_queries_only(
+    fn prepare_queries(
         &self,
         prepare: &AttentionPrepare<B>,
         query: &Allocation<B>,

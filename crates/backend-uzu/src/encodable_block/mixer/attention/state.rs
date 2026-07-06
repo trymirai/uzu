@@ -102,27 +102,9 @@ impl<B: Backend> AttentionState<B> {
             }
         };
 
-        Self::create_empty_with_type(
-            data_type,
-            attention.num_kv_heads.unwrap(),
-            attention.head_dim,
-            max_prefix_elements,
-            state_type,
-            context,
-        )
-    }
-
-    fn create_empty_with_type(
-        data_type: DataType,
-        num_kv_heads: usize,
-        head_dim: usize,
-        max_prefix_elements: usize,
-        state_type: AttentionStateType,
-        context: &B::Context,
-    ) -> Result<Self, B::Error> {
         let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
         let max_elements = max_prefix_elements + suffix_capacity;
-        let element_size = num_kv_heads * head_dim;
+        let element_size = attention.num_kv_heads.unwrap() * attention.head_dim;
         let kv_buffer_bytes = max_elements * element_size * data_type.size_in_bytes();
 
         let is_ring = matches!(state_type, AttentionStateType::Ring { .. });
@@ -152,8 +134,7 @@ impl<B: Backend> AttentionState<B> {
         })
     }
 
-    // TODO: remove allow(dead_code) when wiring DFlash split attention.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: remove when wiring with DFlash.
     pub(super) fn append_full(
         &mut self,
         length: usize,
