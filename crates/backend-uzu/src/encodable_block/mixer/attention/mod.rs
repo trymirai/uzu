@@ -14,7 +14,7 @@ use crate::{
             Mixer, MixerState,
             attention::{
                 core::{AttentionCoreNewArguments, AttentionCores},
-                mode::QkvProjection,
+                mode::{LinearProjection, QkvProjection},
                 qkv_norm::{QKVNorm, QKVNormError},
                 rope::PrecalculatedRoPE,
                 state::AttentionState,
@@ -158,8 +158,10 @@ impl<B: Backend> Attention<B> {
         )
         .map_err(AttentionNewError::Backend)?;
         let projection = QkvProjection::Packed {
-            lin: qkv_projection,
-            norm: qkv_norm,
+            qkv: LinearProjection {
+                lin: qkv_projection,
+                norm: qkv_norm,
+            },
             prepare,
         };
 

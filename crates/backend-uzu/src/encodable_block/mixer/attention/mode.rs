@@ -21,37 +21,40 @@ use crate::{
 
 type PrepareKernel<B> = <<B as Backend>::Kernels as Kernels>::AttentionPrepareKernel;
 
+pub(super) struct LinearProjection<B: Backend> {
+    pub(super) lin: Box<dyn Linear<B>>,
+    pub(super) norm: Option<QKVNorm<B>>,
+}
+
+impl<B: Backend> LinearProjection<B> {
+    fn project(
+        &self,
+        hidden: Allocation<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut projected = self.lin.encode(hidden, batch_dim, encoder)?;
+        if let Some(norm) = &self.norm {
+            norm.encode(&mut projected, batch_dim, encoder)?;
+        }
+        Ok(projected)
+    }
+}
+
 pub(super) enum QkvProjection<B: Backend> {
     /// Fused QKV — or Q-only under KV sharing (`num_kv_heads == None`).
     Packed {
-        lin: Box<dyn Linear<B>>,
-        norm: Option<QKVNorm<B>>,
+        qkv: LinearProjection<B>,
         prepare: PrepareKernel<B>,
     },
     /// Separate Q and KV projections.
     #[allow(dead_code)] // TODO: remove when wiring with DFlash.
     Split {
-        q: Box<dyn Linear<B>>,
-        kv: Box<dyn Linear<B>>,
-        q_norm: Option<QKVNorm<B>>,
-        kv_norm: Option<QKVNorm<B>>,
+        q: LinearProjection<B>,
+        kv: LinearProjection<B>,
         q_prepare: PrepareKernel<B>,
         kv_prepare: PrepareKernel<B>,
     },
-}
-
-fn project<B: Backend>(
-    lin: &dyn Linear<B>,
-    norm: &Option<QKVNorm<B>>,
-    hidden: Allocation<B>,
-    batch_dim: usize,
-    encoder: &mut Encoder<B>,
-) -> Result<Allocation<B>, B::Error> {
-    let mut projected = lin.encode(hidden, batch_dim, encoder)?;
-    if let Some(norm) = norm {
-        norm.encode(&mut projected, batch_dim, encoder)?;
-    }
-    Ok(projected)
 }
 
 impl<B: Backend> Attention<B> {
@@ -76,13 +79,12 @@ impl<B: Backend> Attention<B> {
         let mut attention_output = match (&self.projection, state) {
             (
                 QkvProjection::Packed {
-                    lin,
-                    norm,
+                    qkv,
                     prepare,
                 },
                 Some(MaybeMut::Mut(state)),
             ) => {
-                let qkv = project(lin.as_ref(), norm, hidden, batch_dim.size(), encoder)?;
+                let qkv = qkv.project(hidden, batch_dim.size(), encoder)?;
                 let queries = self.prepare_kv_and_queries(
                     prepare,
                     &qkv,
@@ -98,21 +100,19 @@ impl<B: Backend> Attention<B> {
             },
             (
                 QkvProjection::Packed {
-                    lin,
-                    norm,
+                    qkv,
                     prepare,
                 },
                 Some(MaybeMut::Const(state)),
             ) => {
                 // KV sharing: the packed projection produces queries only.
-                let query = project(lin.as_ref(), norm, hidden, batch_dim.size(), encoder)?;
+                let query = qkv.project(hidden, batch_dim.size(), encoder)?;
                 let queries = self.prepare_queries(prepare, &query, precalculated_rope, batch_dim.size(), encoder)?;
                 self.run_core(&queries, batch_dim, state, encoder)?
             },
             (
                 QkvProjection::Packed {
-                    lin,
-                    norm,
+                    qkv,
                     prepare,
                 },
                 None,
@@ -122,7 +122,7 @@ impl<B: Backend> Attention<B> {
                 };
                 assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
 
-                let qkv = project(lin.as_ref(), norm, hidden, batch_dim.size(), encoder)?;
+                let qkv = qkv.project(hidden, batch_dim.size(), encoder)?;
                 let mut keys = encoder.allocate_scratch(size_for_shape(
                     &[batch_dim.size(), num_kv_heads, self.head_dim],
                     self.data_type,
@@ -174,8 +174,6 @@ impl<B: Backend> Attention<B> {
                 QkvProjection::Split {
                     q,
                     kv,
-                    q_norm,
-                    kv_norm,
                     q_prepare,
                     kv_prepare,
                 },
@@ -184,8 +182,8 @@ impl<B: Backend> Attention<B> {
                 // Linear::encode may consume/mutate its input; split Q/KV attention needs the same hidden for both projections.
                 let mut hidden_for_key_value = encoder.allocate_scratch(hidden.size())?;
                 encoder.encode_copy(&hidden, .., &mut hidden_for_key_value, ..);
-                let query = project(q.as_ref(), q_norm, hidden, batch_dim.size(), encoder)?;
-                let key_value = project(kv.as_ref(), kv_norm, hidden_for_key_value, batch_dim.size(), encoder)?;
+                let query = q.project(hidden, batch_dim.size(), encoder)?;
+                let key_value = kv.project(hidden_for_key_value, batch_dim.size(), encoder)?;
                 let precalculated_rope = precalculated_rope.expect("split attention requires RoPE");
                 let queries =
                     self.prepare_queries(q_prepare, &query, Some(precalculated_rope), batch_dim.size(), encoder)?;
@@ -227,14 +225,13 @@ impl<B: Backend> Attention<B> {
     ) -> Result<(), B::Error> {
         let QkvProjection::Split {
             kv,
-            kv_norm,
             kv_prepare,
             ..
         } = &self.projection
         else {
             panic!("append-only attention requires split Q/KV projection");
         };
-        let key_value = project(kv.as_ref(), kv_norm, hidden, batch_dim, encoder)?;
+        let key_value = kv.project(hidden, batch_dim, encoder)?;
         self.prepare_kv_and_queries(
             kv_prepare,
             &key_value,
