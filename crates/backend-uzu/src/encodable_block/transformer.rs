@@ -26,6 +26,11 @@ pub struct TransformerState<B: Backend> {
     context_length: usize,
 }
 
+pub struct TransformerEncodeOutput<B: Backend> {
+    pub output: Option<Allocation<B>>,
+    pub hidden_features: Box<[Allocation<B>]>,
+}
+
 impl<B: Backend> TransformerState<B> {
     pub fn context_length(&self) -> usize {
         self.context_length
@@ -187,10 +192,12 @@ impl<B: Backend> Transformer<B> {
         output_range: Option<Range<usize>>,
         mut state: Option<&mut TransformerState<B>>,
         encoder: &mut Encoder<B>,
-    ) -> Result<Option<Allocation<B>>, B::Error> {
+        hidden_feature_layer_indices: &[usize],
+    ) -> Result<TransformerEncodeOutput<B>, B::Error> {
         let mut hidden = input;
 
         let mut shortcut = encoder.allocate_scratch(hidden.size())?;
+        let mut hidden_features = (0..hidden_feature_layer_indices.len()).map(|_| None).collect::<Vec<_>>();
 
         let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
         let token_positions =
@@ -229,15 +236,39 @@ impl<B: Backend> Transformer<B> {
                 layer_state,
                 encoder,
             )?;
+
+            for (feature_index, &layer_index) in hidden_feature_layer_indices.iter().enumerate() {
+                if layer_index == layer.layer_index {
+                    let mut feature = encoder.allocate_scratch(hidden.size())?;
+                    encoder.encode_copy(&hidden, .., &mut feature, ..);
+                    hidden_features[feature_index] = Some(feature);
+                }
+            }
         }
 
+        let hidden_features: Box<[Allocation<B>]> = hidden_features
+            .into_iter()
+            .enumerate()
+            .map(|(feature_index, feature)| {
+                feature.unwrap_or_else(|| {
+                    panic!("requested hidden feature for missing layer {}", hidden_feature_layer_indices[feature_index])
+                })
+            })
+            .collect();
+
         let Some(output_range) = output_range else {
-            return Ok(None);
+            return Ok(TransformerEncodeOutput {
+                output: None,
+                hidden_features,
+            });
         };
 
         let output_normalized =
             self.output_norm.encode(&hidden, output_range.start, output_range.len(), Some(&mut shortcut), encoder)?;
 
-        Ok(Some(output_normalized))
+        Ok(TransformerEncodeOutput {
+            output: Some(output_normalized),
+            hidden_features,
+        })
     }
 }
