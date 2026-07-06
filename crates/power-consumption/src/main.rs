@@ -90,7 +90,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let uzu_engine = runtime.block_on(async { UzuEngine::new(EngineConfig::default()).await })?;
+    let engine_config = EngineConfig {
+        mirai_api_key: None,
+        ..EngineConfig::default()
+    };
+    let uzu_engine = runtime.block_on(async { UzuEngine::new(engine_config).await })?;
     let mut models = runtime.block_on(uzu_engine.models())?;
     models.retain(|model| model.is_downloadable() && (args.include_non_chat || model.is_chat_capable()));
     if let Some(filter) = &args.models {
