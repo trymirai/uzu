@@ -2634,6 +2634,350 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
     }
 }
 
+// FLEET-SAFE end-to-end prefill bench for OLD-family Apple Silicon (M1, M2,
+// M2-Pro, M3-Max, M4, M4-Max, M4-Pro) which have NO MXU (`mpp::tensor_ops`).
+// Times ONLY the three MXU-free paths at qwen3.5 shapes:
+//   recurrent               : DeltaNetPrefill path (prep -> prefill -> normGate)
+//   mode_l_vt32_simd (NEW)   : Mode-L megaApply VT=32, USE_MXU=false (simdgroup)
+//   mode_l_vt16_simd         : Mode-L megaApply VT=16, USE_MXU=false (simdgroup)
+// CRITICAL: this bench NEVER constructs a USE_MXU=true kernel (never calls
+// `.new()` on the MXU gram / solveT / megaApply variants). On MXU-less hardware
+// creating such a PSO would fail, so nothing here may touch the MXU path. Every
+// kernel below is constructed with the simdgroup / MXU-free variant:
+//   gram USE_MXU=false, solveT USE_MXU=false, megaApply USE_MXU=false (both VTs),
+//   solve RECOMPUTE_G=false (not an MXU flag). Each path warmed >=500 ms.
+#[uzu_test]
+#[ignore]
+fn bench_delta_net_fleet_simd_vs_recurrent() {
+    use std::time::{Duration, Instant};
+
+    use test_runner::perf::run_perf_with_warmup;
+
+    let num_v_heads = 48usize;
+    let num_k_heads = 16usize;
+    let head_k_dim = 128usize;
+    let head_v_dim = 128usize;
+    let chunk_size = 64usize;
+
+    let key_dim = num_k_heads * head_k_dim;
+    let value_dim = num_v_heads * head_v_dim;
+    let conv_dim = 2 * key_dim + value_dim;
+    let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
+    let state_size = num_v_heads * head_v_dim * head_k_dim;
+    let num_dv_groups = head_v_dim.div_ceil(16);
+    let block_size = 16usize;
+    let num_blocks = chunk_size.div_ceil(block_size);
+    let num_col_pairs = num_blocks.div_ceil(2);
+
+    eprintln!("\n=== DeltaNet FLEET simd Mode L vs Recurrent (end-to-end prefill, NO MXU) ===");
+    eprintln!("  C={chunk_size} HV={num_v_heads} HK={num_k_heads} K={head_k_dim} V={head_v_dim} dtype=bf16");
+    eprintln!("  scope: precompute + apply + NormGate for every path; USE_MXU=false everywhere");
+    eprintln!("FLEETBENCH\tT\tpath\tmedian_ms\tmin_ms\tmax_ms\tstd_ms");
+
+    // (T, recurrent_ms, vt32_simd_ms, vt16_simd_ms) collected for the final table.
+    let mut summary: Vec<(usize, f64, f64, f64)> = Vec::new();
+
+    for suffix_len in [256usize, 512, 1024, 4096, 32768] {
+        let num_chunks = suffix_len.div_ceil(chunk_size);
+
+        let in_proj: Vec<bf16> =
+            (0..suffix_len * total_proj_dim).map(|i| bf16::from_f32(((i % 23) as f32 - 11.0) * 0.002)).collect();
+        let a_log: Vec<f32> = (0..num_v_heads).map(|i| -1.5 + (i as f32) * 0.01).collect();
+        let dt_bias: Vec<f32> = (0..num_v_heads).map(|i| 0.1 + (i as f32) * 0.001).collect();
+        let norm_weight: Vec<f32> = (0..head_v_dim).map(|i| 0.9 + (i as f32) * 0.001).collect();
+
+        let context = <Metal as Backend>::Context::new().expect("context");
+        let in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj);
+        let a_log_array = context.create_array_from(&[a_log.len()], &a_log);
+        let dt_bias_array = context.create_array_from(&[dt_bias.len()], &dt_bias);
+        let norm_weight_array = context.create_array_from(&[norm_weight.len()], &norm_weight);
+        let alloc = |data_type, len| context.create_array_zeros(&[len], data_type).into_allocation();
+
+        // Recurrent buffers.
+        let mut rec_out = alloc(DataType::BF16, suffix_len * value_dim);
+        let mut rec_q = alloc(DataType::F32, suffix_len * key_dim);
+        let mut rec_k = alloc(DataType::F32, suffix_len * key_dim);
+        let mut rec_beta = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut rec_decay = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut rec_state = alloc(DataType::F32, state_size);
+
+        // Shared Mode L buffers (one set; the two scan closures live in disjoint
+        // scopes so their &mut borrows never overlap). T=32768 => 512 chunks; the
+        // buffer sizing below is derived from num_chunks so it scales dynamically.
+        let mut q_m = alloc(DataType::F32, suffix_len * key_dim);
+        let mut k_m = alloc(DataType::F32, suffix_len * key_dim);
+        let mut beta_m = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut log_decay_m = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut g_m = alloc(DataType::F32, suffix_len * num_v_heads);
+        let mut kk_m = alloc(DataType::F32, num_chunks * num_k_heads * chunk_size * chunk_size);
+        let mut qk_m = alloc(DataType::F32, num_chunks * num_v_heads * chunk_size * chunk_size);
+        let mut a_packed_m =
+            alloc(DataType::F32, num_chunks * num_v_heads * num_blocks * num_col_pairs * block_size * 2 * block_size);
+        let mut a_inv_m = alloc(DataType::F32, num_chunks * num_v_heads * num_blocks * block_size * block_size);
+        let mut t_mat_m = alloc(DataType::BF16, num_chunks * num_v_heads * chunk_size * chunk_size);
+        let mut mode_l_state = alloc(DataType::F32, state_size);
+        let mut mode_l_out = alloc(DataType::BF16, suffix_len * value_dim);
+
+        // Kernels — ALL MXU-free. There is deliberately no gram_mxu / solve_t_mxu
+        // / mega_vt32 (MXU) construction anywhere in this function.
+        let recurrent_prep_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(&context, DataType::BF16, 128)
+                .unwrap();
+        let recurrent_prefill_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(&context, DataType::BF16, 128)
+                .unwrap();
+        let norm_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, DataType::BF16).unwrap();
+        let prep_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedPrepKernel::new(&context, DataType::BF16, 128)
+                .unwrap();
+        let cumsum_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedCumsumKernel::new(&context).unwrap();
+        // solve: third arg is RECOMPUTE_G (NOT an MXU flag); false = read the
+        // precomputed g buffer (the F4 lesson). MXU-free on all hardware.
+        let solve_k =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, false).unwrap();
+        // gram USE_MXU=false (simdgroup).
+        let gram_simd =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(&context, 128, 64, false).unwrap();
+        // solveT USE_MXU=false (simdgroup).
+        let solve_t_simd =
+            <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveTKernel::new(&context, 64, 32, false)
+                .unwrap();
+        // megaApply VT=16, USE_MXU=false (simdgroup).
+        let mega_vt16 = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
+            &context,
+            DataType::BF16,
+            DataType::BF16,
+            16,
+            false,
+        )
+        .unwrap();
+        // megaApply VT=32, USE_MXU=false (simdgroup) — the NEW M1-M4 candidate.
+        let mega_vt32_simd = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
+            &context,
+            DataType::BF16,
+            DataType::BF16,
+            32,
+            false,
+        )
+        .unwrap();
+
+        macro_rules! encode_mode_l {
+            ($mega:expr) => {{
+                let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+                encoder.encode_fill(&mut mode_l_state, 0);
+                prep_k.encode(
+                    in_proj_array.allocation(),
+                    a_log_array.allocation(),
+                    dt_bias_array.allocation(),
+                    &mut q_m,
+                    &mut k_m,
+                    &mut beta_m,
+                    &mut log_decay_m,
+                    num_v_heads as u32,
+                    num_k_heads as u32,
+                    key_dim as u32,
+                    value_dim as u32,
+                    suffix_len as u32,
+                    &mut encoder,
+                );
+                cumsum_k.encode(
+                    &log_decay_m,
+                    &mut g_m,
+                    num_v_heads as u32,
+                    suffix_len as u32,
+                    chunk_size as u32,
+                    &mut encoder,
+                );
+                gram_simd.encode(
+                    &q_m,
+                    &k_m,
+                    &g_m,
+                    &mut kk_m,
+                    &mut qk_m,
+                    num_v_heads as u32,
+                    num_k_heads as u32,
+                    key_dim as u32,
+                    suffix_len as u32,
+                    &mut encoder,
+                );
+                solve_k.encode(
+                    &kk_m,
+                    &beta_m,
+                    &g_m,
+                    &mut a_packed_m,
+                    &mut a_inv_m,
+                    num_v_heads as u32,
+                    num_k_heads as u32,
+                    suffix_len as u32,
+                    &mut encoder,
+                );
+                solve_t_simd.encode(
+                    &a_packed_m,
+                    &a_inv_m,
+                    &mut t_mat_m,
+                    num_v_heads as u32,
+                    suffix_len as u32,
+                    &mut encoder,
+                );
+                $mega.encode(
+                    &q_m,
+                    &k_m,
+                    in_proj_array.allocation(),
+                    &qk_m,
+                    &t_mat_m,
+                    &g_m,
+                    &beta_m,
+                    &mut mode_l_state,
+                    &mut mode_l_out,
+                    num_v_heads as u32,
+                    num_k_heads as u32,
+                    head_v_dim as u32,
+                    key_dim as u32,
+                    value_dim as u32,
+                    suffix_len as u32,
+                    &mut encoder,
+                );
+                norm_k.encode(
+                    &mut mode_l_out,
+                    in_proj_array.allocation(),
+                    norm_weight_array.allocation(),
+                    num_v_heads as u32,
+                    head_v_dim as u32,
+                    value_dim as u32,
+                    conv_dim as u32,
+                    total_proj_dim as u32,
+                    1e-6f32,
+                    suffix_len as u32,
+                    &mut encoder,
+                );
+                encoder.end_encoding().submit().wait_until_completed().unwrap();
+            }};
+        }
+
+        let warmup = |f: &mut dyn FnMut()| {
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_millis(500) {
+                (f)();
+            }
+        };
+        let iterations = if suffix_len >= 1024 {
+            30
+        } else {
+            60
+        };
+        let print_row = |path: &str, r: &test_runner::perf::PerfResult| {
+            eprintln!(
+                "FLEETBENCH\t{}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
+                suffix_len, path, r.median_ms, r.min_ms, r.max_ms, r.std_dev_ms
+            );
+        };
+
+        eprintln!("\n--- T={suffix_len} (num_chunks={num_chunks}, iterations={iterations}) ---");
+
+        let mut run_recurrent = || {
+            let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+            encoder.encode_fill(&mut rec_state, 0);
+            recurrent_prep_k.encode(
+                in_proj_array.allocation(),
+                a_log_array.allocation(),
+                dt_bias_array.allocation(),
+                &mut rec_q,
+                &mut rec_k,
+                &mut rec_beta,
+                &mut rec_decay,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            recurrent_prefill_k.encode(
+                &rec_q,
+                &rec_k,
+                &rec_beta,
+                &rec_decay,
+                in_proj_array.allocation(),
+                &mut rec_state,
+                &mut rec_out,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                head_v_dim as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                num_dv_groups as u32,
+                &mut encoder,
+            );
+            norm_k.encode(
+                &mut rec_out,
+                in_proj_array.allocation(),
+                norm_weight_array.allocation(),
+                num_v_heads as u32,
+                head_v_dim as u32,
+                value_dim as u32,
+                conv_dim as u32,
+                total_proj_dim as u32,
+                1e-6f32,
+                suffix_len as u32,
+                &mut encoder,
+            );
+            encoder.end_encoding().submit().wait_until_completed().unwrap();
+        };
+        warmup(&mut run_recurrent);
+        let rec_res = run_perf_with_warmup("recurrent", 3, iterations, &mut run_recurrent);
+        print_row("recurrent", &rec_res);
+        drop(run_recurrent);
+
+        let vt32_simd_res = {
+            let mut run_vt32_simd = || encode_mode_l!(mega_vt32_simd);
+            warmup(&mut run_vt32_simd);
+            run_perf_with_warmup("mode_l_vt32_simd", 3, iterations, &mut run_vt32_simd)
+        };
+        print_row("mode_l_vt32_simd", &vt32_simd_res);
+
+        let vt16_simd_res = {
+            let mut run_vt16_simd = || encode_mode_l!(mega_vt16);
+            warmup(&mut run_vt16_simd);
+            run_perf_with_warmup("mode_l_vt16_simd", 3, iterations, &mut run_vt16_simd)
+        };
+        print_row("mode_l_vt16_simd", &vt16_simd_res);
+
+        eprintln!(
+            "FLEETVERDICT\tT={}\trec={:.3}\tvt32_simd={:.3}\tvt16_simd={:.3}\t\
+             vt32s_vs_rec={:.3}x\tvt16s_vs_rec={:.3}x\tvt32s_vs_vt16s={:.3}x",
+            suffix_len,
+            rec_res.median_ms,
+            vt32_simd_res.median_ms,
+            vt16_simd_res.median_ms,
+            rec_res.median_ms / vt32_simd_res.median_ms,
+            rec_res.median_ms / vt16_simd_res.median_ms,
+            vt16_simd_res.median_ms / vt32_simd_res.median_ms,
+        );
+
+        summary.push((suffix_len, rec_res.median_ms, vt32_simd_res.median_ms, vt16_simd_res.median_ms));
+    }
+
+    // Final clean table across all T.
+    eprintln!("\n=== FLEET simd Mode L vs Recurrent summary (median ms; NO MXU) ===");
+    eprintln!(
+        "{:>7}  {:>11}  {:>11}  {:>11}  {:>12}  {:>12}",
+        "T", "recurrent", "vt32-simd", "vt16-simd", "vt32/rec", "vt16/rec"
+    );
+    for (t, rec, vt32, vt16) in &summary {
+        eprintln!(
+            "{:>7}  {:>11.3}  {:>11.3}  {:>11.3}  {:>11.3}x  {:>11.3}x",
+            t,
+            rec,
+            vt32,
+            vt16,
+            rec / vt32,
+            rec / vt16
+        );
+    }
+}
+
 // End-to-end Mode L sweep comparing the recurrent baseline against the three MXU
 // configurations of the mega pipeline (prep, cumsum, gram, solve, solveT,
 // megaApply, normGate):
