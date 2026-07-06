@@ -197,6 +197,18 @@ barrier/chunk) but the scan is latency-bound, so much may hide; W/U traffic
 (~350MB at T=4096) is eliminated. Whether T=4096 nets out better or worse than
 the Part-1 pipeline is THE question - measure, don't argue.
 
+PHASE B RESULT (Mode L): ADOPTED. 7 dispatches (Solve retained; SolveT is a
+separate DeltaNetChunkedSolveT that does block-MMA over Solve's a_packed/a_inv,
+NOT a self-contained solve — the naive self-contained O(C^3) version was a 7x
+perf trap, same lesson as F4). megaApply (chunked_mega.metal, 5 barriers/chunk,
+24KB TG) beats fused-7 at every T (1.03-1.13x), beats recurrent at every T>=128.
+M5 Max medians (recurrent / Mode-L VT32): T=64 0.407/0.473, 128 0.400/0.415,
+256 0.461/0.433, 512 0.792/0.693, 1024 1.351/1.129, 4096 4.949/3.926,
+32768 42.04/28.81. Breakdown T=4096: megaApply in-context 2.31ms, precompute
+1.12ms (solve 0.34 + solveT 0.29 replaces solve+buildWU 1.09). Recurrent still
+wins at T=64 only. For Mode S, the in-TG solve MUST use block 16x16 inversions
+(like chunked_solve), never naive per-column O(C^3) substitution.
+
 Mode S (small T, the T=64 play) - same kernel, template/function-constant
 INLINE_PRECOMPUTE: each TG additionally computes gram + solve + A inline in TG
 memory for each chunk instead of reading qk_scaled/T from device (redundant
