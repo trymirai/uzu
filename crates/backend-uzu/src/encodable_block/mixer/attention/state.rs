@@ -152,6 +152,7 @@ impl<B: Backend> AttentionState<B> {
         })
     }
 
+    // TODO: remove allow(dead_code) when wiring DFlash split attention.
     #[allow(dead_code)]
     pub(super) fn append_full(
         &mut self,

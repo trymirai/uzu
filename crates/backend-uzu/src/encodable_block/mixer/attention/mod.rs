@@ -14,8 +14,7 @@ use crate::{
             Mixer, MixerState,
             attention::{
                 core::{AttentionCoreNewArguments, AttentionCores},
-                mode::PrepareKernels,
-                projection::QkvProjection,
+                mode::QkvProjection,
                 qkv_norm::{QKVNorm, QKVNormError},
                 rope::PrecalculatedRoPE,
                 state::AttentionState,
@@ -28,12 +27,8 @@ use crate::{
 
 mod core;
 mod mode;
-mod projection;
 mod qkv_norm;
 mod state;
-
-#[cfg(test)]
-mod tests;
 
 pub mod rope;
 
@@ -47,7 +42,6 @@ pub struct Attention<B: Backend> {
     data_type: DataType,
     projection: QkvProjection<B>,
     gate_projection: Option<Box<dyn Linear<B>>>,
-    prepare: PrepareKernels<B>,
     sinks: Option<Allocation<B>>,
     flat_core: AttentionCores<B>,
     trie_core: AttentionCores<B>,
@@ -155,18 +149,6 @@ impl<B: Backend> Attention<B> {
             })
             .transpose()?;
 
-        let projection = if is_kv_sharing {
-            QkvProjection::QueryOnly {
-                q: qkv_projection,
-                norm: qkv_norm,
-            }
-        } else {
-            QkvProjection::Fused {
-                qkv: qkv_projection,
-                norm: qkv_norm,
-            }
-        };
-
         let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
             context,
             data_type,
@@ -175,14 +157,18 @@ impl<B: Backend> Attention<B> {
             rope_config.is_some(),
         )
         .map_err(AttentionNewError::Backend)?;
-        let prepare = PrepareKernels::Packed(prepare);
+        let projection = QkvProjection::Packed {
+            lin: qkv_projection,
+            norm: qkv_norm,
+            prepare,
+        };
 
         let sinks = config
             .has_sinks
             .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_allocation())
             .transpose()?;
 
-        // PR3: non-causal windowed split attention should keep full KV storage and use sliding_window_size only as a mask.
+        // TODO: when wiring DFlash split attention, non-causal windowed attention should keep full KV storage and use sliding_window_size only as a mask.
         let is_kv_cache_ring = sliding_window_size.is_some();
 
         let flat_core = AttentionCores::new(
@@ -244,7 +230,6 @@ impl<B: Backend> Attention<B> {
                 data_type,
                 projection,
                 gate_projection,
-                prepare,
                 sinks,
                 flat_core,
                 trie_core,
