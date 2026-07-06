@@ -13,8 +13,8 @@ use crate::{
     Component, Device, Gauges,
     client::SensorReader,
     metrics::{
-        BandwidthMetrics, CpuMetrics, FanMetrics, GpuMetrics, MemoryMetrics, NeuralEngineMetrics, PowerMetrics,
-        Temperatures, read_battery, read_thermal_pressure,
+        BandwidthMetrics, BatteryMetrics, CpuMetrics, FanMetrics, GpuMetrics, MemoryMetrics, NeuralEngineMetrics,
+        PowerMetrics, Temperatures, ThermalPressure,
     },
     sensor::{Sensor, SensorKind},
     snapshot::Snapshot,
@@ -93,9 +93,9 @@ impl Collector {
         Gauges {
             memory: MemoryMetrics::read(),
             fans: self.read_fans(),
-            battery: read_battery(),
+            battery: BatteryMetrics::read(),
             temperatures,
-            thermal_pressure: read_thermal_pressure(),
+            thermal_pressure: ThermalPressure::read(),
             package_watts,
             sensors,
             voltage,

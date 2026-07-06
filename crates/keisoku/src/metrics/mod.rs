@@ -13,7 +13,6 @@ mod thermal_pressure;
 
 pub use bandwidth::BandwidthMetrics;
 pub use battery::BatteryMetrics;
-pub(crate) use battery::read as read_battery;
 pub use cpu::CpuMetrics;
 pub use energy::EnergyMetrics;
 pub use fan::Fan;
@@ -24,4 +23,3 @@ pub use neural_engine::NeuralEngineMetrics;
 pub use power::PowerMetrics;
 pub use temperatures::Temperatures;
 pub use thermal_pressure::ThermalPressure;
-pub(crate) use thermal_pressure::read as read_thermal_pressure;
