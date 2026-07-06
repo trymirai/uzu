@@ -30,7 +30,7 @@ PUBLIC KERNEL(DeltaNetChunkedFusedApply)(
     device const float* q_norm,
     device const float* k_norm,
     device const float* qk_scaled,
-    device const float* log_decay,
+    device const float* g,
     device float* state,
     device T* out,
     constant const uint& num_v_heads,
@@ -41,7 +41,6 @@ PUBLIC KERNEL(DeltaNetChunkedFusedApply)(
     constant const uint& suffix_len,
     threadgroup float st[FUSED_HEAD_K_DIM * VT],
     threadgroup float vnew[FUSED_CHUNK * VT],
-    threadgroup float g_local[FUSED_CHUNK],
     const ThreadContext thread_context,
     const uint hv_idx GROUPS(num_v_heads),
     const uint v_slice GROUPS(head_v_dim.div_ceil(VT)),
@@ -104,19 +103,6 @@ PUBLIC KERNEL(DeltaNetChunkedFusedApply)(
     const uint valid_tokens = token_base < suffix_len ? min(uint(FUSED_CHUNK), suffix_len - token_base) : 0u;
     const uint chunk_head_base = (chunk_idx * num_v_heads + hv_idx);
 
-    // Chunk-local prefix g[local_t] = sum_{i<=local_t} log_decay (replaces the
-    // former Cumsum dispatch + g buffer). Only valid tokens are summed so the
-    // partial last chunk never reads log_decay past the suffix; g_local entries
-    // >= valid_tokens are left unused. Serialised on one thread (<=64 adds), made
-    // visible to the Y/update phases by the post-phase-1 barrier below.
-    if (tid == 0) {
-      float acc = 0.0f;
-      for (uint i = 0; i < valid_tokens; ++i) {
-        acc += log_decay[(token_base + i) * num_v_heads + hv_idx];
-        g_local[i] = acc;
-      }
-    }
-
     // -- Phase 1: Vnew = U - W . S^T  (streamed W bf16, S^T from TG) ----------
     if (sg < NUM_TOKEN_TILES) {
       const uint row_base = sg * TOKEN_TILE;
@@ -164,7 +150,8 @@ PUBLIC KERNEL(DeltaNetChunkedFusedApply)(
         if (uint(row) >= valid_rows) {
           return 0.0f;
         }
-        return value * fast::exp(g_local[row_base + uint(row)]);
+        const uint token = token_base + row_base + uint(row);
+        return value * fast::exp(g[token * num_v_heads + hv_idx]);
       });
 
       const uint qk_base = chunk_head_base * FUSED_CHUNK * FUSED_CHUNK + row_base * FUSED_CHUNK;
@@ -189,7 +176,8 @@ PUBLIC KERNEL(DeltaNetChunkedFusedApply)(
     // Each simdgroup owns one 32-key-column block of the [VT, K] update.
     {
       const uint key_base = sg * FUSED_KEY_TILE;
-      const float g_last = g_local[valid_tokens > 0 ? valid_tokens - 1 : 0u];
+      const uint g_last_token = token_base + (valid_tokens > 0 ? valid_tokens - 1 : 0u);
+      const float g_last = g[g_last_token * num_v_heads + hv_idx];
       const float alpha = fast::exp(g_last);
 
       UpdAccFragment acc;
@@ -205,10 +193,11 @@ PUBLIC KERNEL(DeltaNetChunkedFusedApply)(
           if (uint(row) >= valid_j) {
             return 0.0f;
           }
+          const uint token = token_base + j0 + uint(row);
           // decay_scale[t] = exp(g_last - g_t), folded in on the fly (this
           // replaces the separate DecayScale dispatch; beta is already baked
           // into Vnew via U/W, so it does not appear here).
-          return value * fast::exp(g_last - g_local[j0 + uint(row)]);
+          return value * fast::exp(g_last - g[token * num_v_heads + hv_idx]);
         });
         fragment_mma(acc, v_frag, k_frag);
       }

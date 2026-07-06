@@ -21,7 +21,7 @@ VARIANTS(CHUNK_SIZE, 16, 32, 64)
 PUBLIC KERNEL(DeltaNetChunkedGram)(
     device const float* q_norm,
     device const float* k_norm,
-    device const float* log_decay,
+    device const float* g,
     device float* kk_out,
     device float* qk_scaled_out,
     constant const uint& num_v_heads,
@@ -99,15 +99,6 @@ PUBLIC KERNEL(DeltaNetChunkedGram)(
   const uint groups_per_head = num_v_heads / num_k_heads;
   for (uint group = 0; group < groups_per_head; ++group) {
     const uint hv_idx = hk_idx * groups_per_head + group;
-    // Chunk-local prefix g[t] = sum_{i<=t} log_decay (replaces the former Cumsum
-    // dispatch + g buffer); only valid tokens are summed for the partial last
-    // chunk. Recomputed per v-head since g depends on hv.
-    float gp[CHUNK_SIZE];
-    float g_acc = 0.0f;
-    for (uint i = 0; i < valid_tokens; ++i) {
-      g_acc += log_decay[(chunk_token_base + i) * num_v_heads + hv_idx];
-      gp[i] = g_acc;
-    }
     AccFragment scaled = qk_acc;
     scaled.map_coords(lane, [&](short r, short c, float value) {
       const uint row = row_base + uint(r);
@@ -115,7 +106,9 @@ PUBLIC KERNEL(DeltaNetChunkedGram)(
       if (row >= valid_tokens || col >= valid_tokens || col > row) {
         return 0.0f;
       }
-      return value * fast::exp(gp[row] - gp[col]);
+      const float g_row = g[(chunk_token_base + row) * num_v_heads + hv_idx];
+      const float g_col = g[(chunk_token_base + col) * num_v_heads + hv_idx];
+      return value * fast::exp(g_row - g_col);
     });
     const uint dst_base =
         (chunk_idx * num_v_heads + hv_idx) * CHUNK_SIZE * CHUNK_SIZE + row_base * CHUNK_SIZE + col_base;

@@ -9,7 +9,7 @@ use proc_macros::kernel;
 pub fn delta_net_chunked_gram<const HEAD_K_DIM: u32, const CHUNK_SIZE: u32>(
     q_norm: *const f32,
     k_norm: *const f32,
-    log_decay: *const f32,
+    g: *const f32,
     kk_out: *mut f32,
     qk_scaled_out: *mut f32,
     num_v_heads: u32,
@@ -31,17 +31,6 @@ pub fn delta_net_chunked_gram<const HEAD_K_DIM: u32, const CHUNK_SIZE: u32>(
         let valid_tokens = suffix_len.saturating_sub(chunk_token).min(chunk_size);
         for hk in 0..num_k_heads {
             let kk_base = (chunk * num_k_heads + hk) * chunk_size * chunk_size;
-            // Chunk-local prefix g[t] = sum_{i<=t} log_decay per GQA v-head
-            // (replaces the former Cumsum dispatch + g buffer).
-            let mut g_table = vec![0.0f32; groups_per_head * chunk_size];
-            for group in 0..groups_per_head {
-                let hv = hk * groups_per_head + group;
-                let mut acc = 0.0f32;
-                for i in 0..valid_tokens {
-                    acc += unsafe { *log_decay.add((chunk_token + i) * num_v_heads + hv) };
-                    g_table[group * chunk_size + i] = acc;
-                }
-            }
             for row in 0..chunk_size {
                 let row_token = chunk_token + row;
                 for col in 0..chunk_size {
@@ -67,8 +56,8 @@ pub fn delta_net_chunked_gram<const HEAD_K_DIM: u32, const CHUNK_SIZE: u32>(
                         let scaled = if row >= valid_tokens || col >= valid_tokens || col > row {
                             0.0
                         } else {
-                            let g_row = g_table[group * chunk_size + row];
-                            let g_col = g_table[group * chunk_size + col];
+                            let g_row = unsafe { *g.add((chunk_token + row) * num_v_heads + hv) };
+                            let g_col = unsafe { *g.add((chunk_token + col) * num_v_heads + hv) };
                             qk * (g_row - g_col).exp()
                         };
                         unsafe { *qk_scaled_out.add(dst) = scaled };
