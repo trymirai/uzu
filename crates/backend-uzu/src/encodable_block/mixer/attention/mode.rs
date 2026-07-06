@@ -19,14 +19,14 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-pub(super) type AttentionPrepare<B> = <<B as Backend>::Kernels as Kernels>::AttentionPrepareKernel;
+type PrepareKernel<B> = <<B as Backend>::Kernels as Kernels>::AttentionPrepareKernel;
 
 pub(super) enum QkvProjection<B: Backend> {
     /// Fused QKV — or Q-only under KV sharing (`num_kv_heads == None`).
     Packed {
         lin: Box<dyn Linear<B>>,
         norm: Option<QKVNorm<B>>,
-        prepare: AttentionPrepare<B>,
+        prepare: PrepareKernel<B>,
     },
     /// Separate Q and KV projections.
     #[allow(dead_code)] // TODO: remove when wiring with DFlash.
@@ -35,8 +35,8 @@ pub(super) enum QkvProjection<B: Backend> {
         kv: Box<dyn Linear<B>>,
         q_norm: Option<QKVNorm<B>>,
         kv_norm: Option<QKVNorm<B>>,
-        q_prepare: AttentionPrepare<B>,
-        kv_prepare: AttentionPrepare<B>,
+        q_prepare: PrepareKernel<B>,
+        kv_prepare: PrepareKernel<B>,
     },
 }
 
@@ -282,7 +282,7 @@ impl<B: Backend> Attention<B> {
     /// With `num_q_heads == 0`, only keys/values are scattered into the cache (KV append).
     fn prepare_kv_and_queries<'keys, 'values>(
         &self,
-        prepare: &AttentionPrepare<B>,
+        prepare: &PrepareKernel<B>,
         input: &Allocation<B>,
         keys: impl BufferArgMut<'keys, B>,
         values: impl BufferArgMut<'values, B>,
@@ -317,7 +317,7 @@ impl<B: Backend> Attention<B> {
 
     fn prepare_queries(
         &self,
-        prepare: &AttentionPrepare<B>,
+        prepare: &PrepareKernel<B>,
         query: &Allocation<B>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: usize,
