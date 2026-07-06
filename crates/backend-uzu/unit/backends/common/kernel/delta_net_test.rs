@@ -9,10 +9,10 @@ use crate::{
         common::{
             Backend, Context, Encoder, Kernels,
             kernel::{
-                Conv1dPackKernel, DeltaNetChunkedBuildUKernel, DeltaNetChunkedBuildWKernel,
-                DeltaNetChunkedFusedApplyKernel, DeltaNetChunkedGramKernel, DeltaNetChunkedPrepKernel,
-                DeltaNetChunkedSolveKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel,
-                DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
+                Conv1dPackKernel, DeltaNetChunkedBuildWUKernel, DeltaNetChunkedFusedApplyKernel,
+                DeltaNetChunkedGramKernel, DeltaNetChunkedPrepKernel, DeltaNetChunkedSolveKernel,
+                DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel, DeltaNetPrefillKernel,
+                DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
             },
         },
         cpu::Cpu,
@@ -719,7 +719,7 @@ fn bench_delta_net_prefill() {
 // (`DeltaNetChunkedFusedApply`, VT=32) against the recurrent path. Both paths
 // are timed at the SAME scope: the full prefill ending in NormGate. For the
 // fused path this is the chunked precompute chain (Prep, Gram, Solve,
-// BuildW, BuildU) + the single fused dispatch + NormGate,
+// BuildWU) + the single fused dispatch + NormGate,
 // matching how the recurrent end-to-end number is measured. Each path is warmed
 // for >=500 ms of wall clock before timing to avoid GPU clock-ramp artifacts,
 // then run for a fixed iteration count; medians, min/max and std are reported
@@ -809,19 +809,11 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
             <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(&context, 128, 64).unwrap();
         let solve_k =
             <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, true).unwrap();
-        let build_w_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildWKernel::new(
+        let build_wu_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildWUKernel::new(
             &context,
+            DataType::BF16,
             DataType::BF16,
             128,
-            64,
-            32,
-            true,
-        )
-        .unwrap();
-        let build_u_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildUKernel::new(
-            &context,
-            DataType::BF16,
-            DataType::BF16,
             64,
             bv as u32,
             true,
@@ -928,27 +920,17 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
                 suffix_len as u32,
                 &mut encoder,
             );
-            build_w_k.encode(
+            build_wu_k.encode(
                 &k_norm_f,
+                in_proj_array.allocation(),
                 &beta_f,
                 &log_decay_f,
                 &a_packed_f,
                 &a_inv_f,
                 &mut w_f,
-                num_v_heads as u32,
-                num_k_heads as u32,
-                key_dim as u32,
-                suffix_len as u32,
-                &mut encoder,
-            );
-            build_u_k.encode(
-                in_proj_array.allocation(),
-                &beta_f,
-                &a_packed_f,
-                &a_inv_f,
                 &mut u_f,
                 num_v_heads as u32,
-                head_v_dim as u32,
+                num_k_heads as u32,
                 key_dim as u32,
                 value_dim as u32,
                 suffix_len as u32,
@@ -1034,7 +1016,7 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
 
 // Per-kernel wall-clock breakdown of the FUSED prefill pipeline at T=4096.
 // Times each shared precompute kernel (Prep, Gram, Solve,
-// BuildW, BuildU) individually and the single fused apply dispatch
+// BuildWU) individually and the single fused apply dispatch
 // (`DeltaNetChunkedFusedApply`, VT=32), each isolated in its own encoder and
 // warmed for >=500 ms of wall clock before timing. Reports median ms per kernel
 // and its share of the summed pipeline total, so we can see whether the fused
@@ -1106,19 +1088,11 @@ fn bench_delta_net_fused_kernel_breakdown() {
             <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(&context, 128, 64).unwrap();
         let solve_k =
             <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, true).unwrap();
-        let build_w_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildWKernel::new(
+        let build_wu_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildWUKernel::new(
             &context,
+            DataType::BF16,
             DataType::BF16,
             128,
-            64,
-            32,
-            true,
-        )
-        .unwrap();
-        let build_u_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildUKernel::new(
-            &context,
-            DataType::BF16,
-            DataType::BF16,
             64,
             bv as u32,
             true,
@@ -1176,27 +1150,17 @@ fn bench_delta_net_fused_kernel_breakdown() {
                 suffix_len as u32,
                 &mut encoder,
             );
-            build_w_k.encode(
+            build_wu_k.encode(
                 &k_norm,
+                in_proj_array.allocation(),
                 &beta,
                 &log_decay,
                 &a_packed,
                 &a_inv,
                 &mut w,
-                num_v_heads as u32,
-                num_k_heads as u32,
-                key_dim as u32,
-                suffix_len as u32,
-                &mut encoder,
-            );
-            build_u_k.encode(
-                in_proj_array.allocation(),
-                &beta,
-                &a_packed,
-                &a_inv,
                 &mut u,
                 num_v_heads as u32,
-                head_v_dim as u32,
+                num_k_heads as u32,
                 key_dim as u32,
                 value_dim as u32,
                 suffix_len as u32,
@@ -1278,30 +1242,18 @@ fn bench_delta_net_fused_kernel_breakdown() {
                 &mut encoder,
             );
         });
-        time_kernel!("build_w", |encoder| {
-            build_w_k.encode(
+        time_kernel!("build_wu", |encoder| {
+            build_wu_k.encode(
                 &k_norm,
+                in_proj_array.allocation(),
                 &beta,
                 &log_decay,
                 &a_packed,
                 &a_inv,
                 &mut w,
-                num_v_heads as u32,
-                num_k_heads as u32,
-                key_dim as u32,
-                suffix_len as u32,
-                &mut encoder,
-            );
-        });
-        time_kernel!("build_u", |encoder| {
-            build_u_k.encode(
-                in_proj_array.allocation(),
-                &beta,
-                &a_packed,
-                &a_inv,
                 &mut u,
                 num_v_heads as u32,
-                head_v_dim as u32,
+                num_k_heads as u32,
                 key_dim as u32,
                 value_dim as u32,
                 suffix_len as u32,
@@ -1414,27 +1366,17 @@ fn bench_delta_net_fused_kernel_breakdown() {
                     suffix_len as u32,
                     $encoder,
                 );
-                build_w_k.encode(
+                build_wu_k.encode(
                     &k_norm,
+                    in_proj_array.allocation(),
                     &beta,
                     &log_decay,
                     &a_packed,
                     &a_inv,
                     &mut w,
-                    num_v_heads as u32,
-                    num_k_heads as u32,
-                    key_dim as u32,
-                    suffix_len as u32,
-                    $encoder,
-                );
-                build_u_k.encode(
-                    in_proj_array.allocation(),
-                    &beta,
-                    &a_packed,
-                    &a_inv,
                     &mut u,
                     num_v_heads as u32,
-                    head_v_dim as u32,
+                    num_k_heads as u32,
                     key_dim as u32,
                     value_dim as u32,
                     suffix_len as u32,
@@ -1770,9 +1712,9 @@ fn test_delta_net_chunked_fused_vs_cpu_mirror_vt32() {
     fused_vs_cpu_mirror_impl(130, 32);
 }
 
-// Runs the chunked precompute chain (Prep, Gram, Solve, BuildW, BuildU) on
+// Runs the chunked precompute chain (Prep, Gram, Solve, BuildWU) on
 // Metal and reads back the fused kernel inputs. Cumsum is gone: Gram/Solve/
-// BuildW recompute the chunk-local prefix from log_decay (RECOMPUTE_G), and the
+// BuildWU recompute the chunk-local prefix from log_decay (RECOMPUTE_G), and the
 // fused kernel forms it internally, so no g buffer is produced here. The fused
 // kernel also folds the decay scale exp(g_last - g_t) on the fly, so no
 // decay_scale buffer is produced. All independent of the recurrent state.
@@ -1833,19 +1775,11 @@ fn run_chunked_precompute_metal(
     let gram_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(&context, 128, 64).unwrap();
     let solve_k =
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(&context, 64, true).unwrap();
-    let build_w_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildWKernel::new(
+    let build_wu_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildWUKernel::new(
         &context,
+        DataType::BF16,
         DataType::BF16,
         128,
-        64,
-        32,
-        true,
-    )
-    .unwrap();
-    let build_u_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedBuildUKernel::new(
-        &context,
-        DataType::BF16,
-        DataType::BF16,
         64,
         bv as u32,
         true,
@@ -1891,27 +1825,17 @@ fn run_chunked_precompute_metal(
         suffix_len as u32,
         &mut encoder,
     );
-    build_w_k.encode(
+    build_wu_k.encode(
         &k_norm,
+        in_proj_array.allocation(),
         &beta,
         &log_decay,
         &a_packed,
         &a_inv,
         &mut w,
-        num_v_heads as u32,
-        num_k_heads as u32,
-        key_dim as u32,
-        suffix_len as u32,
-        &mut encoder,
-    );
-    build_u_k.encode(
-        in_proj_array.allocation(),
-        &beta,
-        &a_packed,
-        &a_inv,
         &mut u,
         num_v_heads as u32,
-        head_v_dim as u32,
+        num_k_heads as u32,
         key_dim as u32,
         value_dim as u32,
         suffix_len as u32,
