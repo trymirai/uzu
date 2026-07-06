@@ -30,10 +30,19 @@ using namespace uzu::matmul;
 #define MEGA_CHUNK 64
 #define MEGA_KEY_TILE (MEGA_HEAD_K_DIM / MEGA_NUM_SIMDGROUPS)
 
-template <typename T, typename O, uint VT>
+// USE_MXU selects the matmul backend independently of the value-tile width VT:
+//   USE_MXU=true  -> MxuFragmentOps (16x16 fragments), the shipping M5 path.
+//   USE_MXU=false -> SimdgroupFragmentOps (8x8 fragments), the M1-M4 path with
+//                    no MXU. VT=32 + simdgroup is the strong-tile-width variant.
+// All four {VT=16,32} x {simd, MXU} combinations are expressible. Operand
+// fragments are f32 in every combination (as they were before decoupling), so
+// USE_MXU does not change operand precision; state is f32 end-to-end and T / A
+// remain bf16 device operands regardless of backend.
+template <typename T, typename O, uint VT, bool USE_MXU>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(O, float, bfloat)
 VARIANTS(VT, 16, 32)
+VARIANTS(USE_MXU, false, true)
 PUBLIC KERNEL(DeltaNetChunkedMegaApply)(
     device const float* q_norm,
     device const float* k_norm,
@@ -57,9 +66,10 @@ PUBLIC KERNEL(DeltaNetChunkedMegaApply)(
     const uint v_slice GROUPS(head_v_dim.div_ceil(VT)),
     const uint tid THREADS(MEGA_THREADS)
 ) {
-  // Same MXU-vs-simdgroup split as the fused kernel: VT==32 uses the MXU (16x16
-  // fragments), VT==16 uses the 8x8 simdgroup path.
-  using Ops = metal::conditional_t<(VT >= 32), MxuFragmentOps<>, SimdgroupFragmentOps>;
+  // Matmul backend is chosen by USE_MXU, independent of VT. VT only controls the
+  // value-tile width (and, via TOKEN_TILE below, the token split across the 4
+  // simdgroups); it no longer implies the backend.
+  using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
   constexpr ushort FR = Ops::FRAGMENT_ROWS;
   constexpr ushort FC = Ops::FRAGMENT_COLS;
   static_assert(FR == FC, "mega kernel assumes square fragments");

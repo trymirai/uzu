@@ -1772,6 +1772,7 @@ fn run_mega_apply<B: Backend>(
     value_dim: usize,
     suffix_len: usize,
     vt: u32,
+    use_mxu: bool,
 ) -> (Vec<f32>, Vec<f32>) {
     let context = B::Context::new().expect("context");
     let q_a = context.create_array_from(&[q_norm.len()], q_norm);
@@ -1789,6 +1790,7 @@ fn run_mega_apply<B: Backend>(
         DataType::BF16,
         DataType::F32,
         vt,
+        use_mxu,
     )
     .expect("mega kernel");
 
@@ -1899,6 +1901,7 @@ fn make_mega_inputs(
 fn mega_vs_cpu_mirror_impl(
     suffix_len: usize,
     vt: u32,
+    use_mxu: bool,
 ) {
     let num_v_heads = 48usize;
     let num_k_heads = 16usize;
@@ -1927,6 +1930,7 @@ fn mega_vs_cpu_mirror_impl(
         value_dim,
         suffix_len,
         vt,
+        use_mxu,
     );
     let (cpu_out, cpu_state) = run_mega_apply::<Cpu>(
         &q_norm,
@@ -1944,6 +1948,7 @@ fn mega_vs_cpu_mirror_impl(
         value_dim,
         suffix_len,
         vt,
+        use_mxu,
     );
 
     let (out_abs, out_rel) = max_abs_rel_err(&metal_out, &cpu_out);
@@ -1959,12 +1964,20 @@ fn mega_vs_cpu_mirror_impl(
 
 #[uzu_test]
 fn test_delta_net_chunked_mega_vs_cpu_mirror_vt16() {
-    mega_vs_cpu_mirror_impl(130, 16);
+    // VT=16 ships on the simdgroup backend.
+    mega_vs_cpu_mirror_impl(130, 16, false);
 }
 
 #[uzu_test]
 fn test_delta_net_chunked_mega_vs_cpu_mirror_vt32() {
-    mega_vs_cpu_mirror_impl(130, 32);
+    // VT=32 shipping config: MXU backend (unchanged default).
+    mega_vs_cpu_mirror_impl(130, 32, true);
+}
+
+#[uzu_test]
+fn test_delta_net_chunked_mega_vs_cpu_mirror_vt32_simd() {
+    // NEW: VT=32 on the simdgroup backend (M1-M4 candidate, no MXU).
+    mega_vs_cpu_mirror_impl(130, 32, false);
 }
 
 // Runs the Mode L precompute chain (Prep, Cumsum, Gram, Solve, SolveT) on Metal
@@ -2145,19 +2158,22 @@ fn mode_l_pipeline_vs_recurrent_impl(suffix_len: usize) {
             suffix_len,
         );
 
-        // (config label, precompute tuple, mega VT). Config B = simd+VT16;
-        // Config A = mxu+VT32. Crosses included for coverage. Measured: rounding
-        // gram/solveT operands to bf16 (config A) leaves out/state abs error at
-        // ~1e-5 -- far under the shipped tolerance -- so ALL configs assert at the
-        // same shipped tolerance (out atol 2e-3, state atol 1e-3, rtol 5e-2).
-        let configs: [(&str, &(Vec<f32>, Vec<f32>, Vec<f32>, Vec<bf16>, Vec<f32>, Vec<f32>), u32); 4] = [
-            ("B_simd", &precompute_simd, 16),
-            ("simd_vt32", &precompute_simd, 32),
-            ("mxu_vt16", &precompute_mxu, 16),
-            ("A_mxu", &precompute_mxu, 32),
+        // (config label, precompute tuple, mega VT, mega USE_MXU). Config B =
+        // simd precompute + megaApply VT16 simd; Config A = mxu precompute +
+        // megaApply VT32 MXU (shipping M5 default). "simd_vt32" is the NEW
+        // decoupled variant: VT32 on the simdgroup backend (the M1-M4 candidate).
+        // Crosses included for coverage. Measured: rounding gram/solveT operands
+        // to bf16 (config A) leaves out/state abs error at ~1e-5 -- far under the
+        // shipped tolerance -- so ALL configs assert at the same shipped tolerance
+        // (out atol 2e-3, state atol 1e-3, rtol 5e-2).
+        let configs: [(&str, &(Vec<f32>, Vec<f32>, Vec<f32>, Vec<bf16>, Vec<f32>, Vec<f32>), u32, bool); 4] = [
+            ("B_simd", &precompute_simd, 16, false),
+            ("simd_vt32", &precompute_simd, 32, false),
+            ("mxu_vt16", &precompute_mxu, 16, false),
+            ("A_mxu", &precompute_mxu, 32, true),
         ];
 
-        for (cfg, pre, vt) in configs {
+        for (cfg, pre, vt, mega_use_mxu) in configs {
             let (q_norm, k_norm, qk_scaled, t_mat, g, beta) = pre;
             let (mega_out, mega_state) = run_mega_apply::<Metal>(
                 q_norm,
@@ -2175,6 +2191,7 @@ fn mode_l_pipeline_vs_recurrent_impl(suffix_len: usize) {
                 value_dim,
                 suffix_len,
                 vt,
+                mega_use_mxu,
             );
 
             let (out_abs, out_rel) = max_abs_rel_err(&ref_out, &mega_out);
@@ -2336,6 +2353,7 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
             DataType::BF16,
             DataType::BF16,
             32,
+            true,
         )
         .unwrap();
 
@@ -2621,7 +2639,10 @@ fn bench_delta_net_fused_vs_recurrent_prefill() {
 // megaApply, normGate):
 //   (A) all-MXU:       gram(MXU) + solveT(MXU) + megaApply VT=32 (MXU)
 //   (B) all-simdgroup: gram(simd) + solveT(simd) + megaApply VT=16 (simd)  [M1-M4 proxy]
+//   (vt32_simd)        gram(simd) + solveT(simd) + megaApply VT=32 (simd)  [NEW M1-M4 candidate]
 //   (mixed)            gram(simd) + solveT(simd) + megaApply VT=32 (MXU)   [current reference]
+// The SCAN4WAY line isolates the scan variant (matched simd precompute):
+// recurrent / VT16-simd (B) / VT32-simd (NEW) / VT32-MXU (mixed).
 // Each path warmed >=500 ms before timing. At T=4096 also emits a per-kernel
 // isolated median for gram / solveT / buildWU / megaApply, config A vs B, to
 // attribute how much each precompute kernel gained from MXU.
@@ -2725,6 +2746,16 @@ fn bench_delta_net_mode_l_mxu_configs() {
             DataType::BF16,
             DataType::BF16,
             16,
+            false,
+        )
+        .unwrap();
+        // NEW decoupled variant: VT=32 on the simdgroup backend (M1-M4 candidate).
+        let mega_vt32_simd = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
+            &context,
+            DataType::BF16,
+            DataType::BF16,
+            32,
+            false,
         )
         .unwrap();
         let mega_vt32 = <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
@@ -2732,6 +2763,7 @@ fn bench_delta_net_mode_l_mxu_configs() {
             DataType::BF16,
             DataType::BF16,
             32,
+            true,
         )
         .unwrap();
 
@@ -2910,6 +2942,16 @@ fn bench_delta_net_mode_l_mxu_configs() {
         };
         print_row("B_all_simd", &b_res);
 
+        // NEW: VT=32 simdgroup scan on the same simd precompute as B/mixed, so
+        // the recurrent / VT16-simd / VT32-simd / VT32-MXU(mixed) rows isolate the
+        // scan variant. This is the M1-M4 candidate row.
+        let vt32_simd_res = {
+            let mut run_vt32_simd = || encode_mode_l!(gram_simd, solve_t_simd, mega_vt32_simd);
+            warmup(&mut run_vt32_simd);
+            run_perf_with_warmup("vt32_simd", 3, iterations, &mut run_vt32_simd)
+        };
+        print_row("vt32_simd", &vt32_simd_res);
+
         let a_res = {
             let mut run_a = || encode_mode_l!(gram_mxu, solve_t_mxu, mega_vt32);
             warmup(&mut run_a);
@@ -2924,6 +2966,21 @@ fn bench_delta_net_mode_l_mxu_configs() {
         };
         print_row("mixed_ref", &mixed_res);
 
+        // Four-way scan comparison (matched simd precompute): recurrent /
+        // VT16-simd (B) / VT32-simd (NEW) / VT32-MXU (mixed), with speedups vs
+        // recurrent for each scan variant.
+        eprintln!(
+            "SCAN4WAY\tT={}\trec={:.3}\tvt16_simd={:.3}\tvt32_simd={:.3}\tvt32_mxu={:.3}\t\
+             vt16s_vs_rec={:.3}x\tvt32s_vs_rec={:.3}x\tvt32m_vs_rec={:.3}x",
+            suffix_len,
+            rec_res.median_ms,
+            b_res.median_ms,
+            vt32_simd_res.median_ms,
+            mixed_res.median_ms,
+            rec_res.median_ms / b_res.median_ms,
+            rec_res.median_ms / vt32_simd_res.median_ms,
+            rec_res.median_ms / mixed_res.median_ms
+        );
         eprintln!(
             "MXUVERDICT\tT={}\tA={:.3}\tB={:.3}\tmixed={:.3}\trec={:.3}\tA_vs_rec={:.3}x\tA_vs_B={:.3}x\tA_vs_mixed={:.3}x",
             suffix_len,
@@ -3189,6 +3246,7 @@ fn bench_delta_net_mode_l_breakdown() {
             DataType::BF16,
             DataType::BF16,
             32,
+            true,
         )
         .unwrap();
 

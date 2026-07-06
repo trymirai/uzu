@@ -13,8 +13,14 @@ use crate::array::ArrayElement;
 #[variants(T, f32, f16, bf16)]
 #[variants(O, f32, bf16)]
 #[variants(VT, 16, 32)]
+#[variants(USE_MXU, false, true)]
 #[allow(clippy::too_many_arguments)]
-pub fn delta_net_chunked_mega_apply<T: ArrayElement + Float, O: ArrayElement + NumCast, const VT: u32>(
+pub fn delta_net_chunked_mega_apply<
+    T: ArrayElement + Float,
+    O: ArrayElement + NumCast,
+    const VT: u32,
+    const USE_MXU: bool,
+>(
     q_norm: *const f32,
     k_norm: *const f32,
     in_proj: *const T,
@@ -32,6 +38,7 @@ pub fn delta_net_chunked_mega_apply<T: ArrayElement + Float, O: ArrayElement + N
     suffix_len: u32,
 ) {
     let _ = VT;
+    let _ = USE_MXU;
     const HEAD_K_DIM: usize = 128;
     const CHUNK_SIZE: usize = 64;
 
