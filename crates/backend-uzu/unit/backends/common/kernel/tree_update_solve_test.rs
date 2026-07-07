@@ -1,6 +1,10 @@
+#[cfg(metal_backend)]
+use half::bf16;
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
+#[cfg(metal_backend)]
+use crate::backends::metal::Metal;
 use crate::{
     array::ArrayElement,
     backends::{
@@ -18,15 +22,15 @@ const BT: u32 = 16;
 const BVS: &[u32] = &[16, 32];
 
 #[derive(Clone, Copy)]
-pub(super) struct SolveCase {
-    pub(super) name: &'static str,
-    pub(super) batch_size: u32,
-    pub(super) tree_size: u32,
-    pub(super) num_v_heads: u32,
-    pub(super) head_v_dim: u32,
+struct SolveCase {
+    name: &'static str,
+    batch_size: u32,
+    tree_size: u32,
+    num_v_heads: u32,
+    head_v_dim: u32,
 }
 
-pub(super) const CASES: &[SolveCase] = &[
+const CASES: &[SolveCase] = &[
     SolveCase {
         name: "single_full_block",
         batch_size: 1,
@@ -81,7 +85,7 @@ pub(super) const CASES: &[SolveCase] = &[
     },
 ];
 
-pub(super) fn run_case<B: Backend, T: ArrayElement + Copy>(
+fn run_case<B: Backend, T: ArrayElement + Copy>(
     case: SolveCase,
     bv: u32,
     use_mxu: bool,
@@ -192,6 +196,30 @@ fn test_tree_update_solve_cases() {
                     let output = run_case::<B, f32>(case, bv, false, use_h0, DataType::F32, |x| x);
                     assert_eq_float(&expected, &output, 1e-4, &format!("{} BV{bv} h0={use_h0}", case.name));
                 });
+            }
+        }
+    }
+
+    #[cfg(metal_backend)]
+    {
+        let supports_mxu = <Metal as Backend>::Context::new().expect("context").supports_mxu();
+        let paths: &[(&str, bool)] = if supports_mxu {
+            &[("Simdgroup", false), ("MXU", true)]
+        } else {
+            &[("Simdgroup", false)]
+        };
+
+        // MXU needs an even number of column fragments or MPP row pairing; BV16
+        // (a single 16x16 fragment) is not supported.
+        for &bv in &[32] {
+            for &use_h0 in &[true, false] {
+                for &case in CASES {
+                    let expected = run_case::<Cpu, bf16>(case, bv, false, use_h0, DataType::BF16, bf16::from_f32);
+                    for &(path, use_mxu) in paths {
+                        let output = run_case::<Metal, bf16>(case, bv, use_mxu, use_h0, DataType::BF16, bf16::from_f32);
+                        assert_eq_float(&expected, &output, 1e-2, &format!("{} {path} BV{bv} h0={use_h0}", case.name));
+                    }
+                }
             }
         }
     }

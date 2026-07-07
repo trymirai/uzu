@@ -1,6 +1,8 @@
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
+#[cfg(metal_backend)]
+use crate::backends::metal::Metal;
 use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
@@ -13,24 +15,24 @@ use crate::{
     },
 };
 
-pub(super) const BATCH_SIZE: usize = 2;
-pub(super) const K_HEADS: usize = 2;
-pub(super) const VALUE_HEADS: usize = 6;
-pub(super) const HEAD_K_DIM: usize = 128;
+const BATCH_SIZE: usize = 2;
+const K_HEADS: usize = 2;
+const VALUE_HEADS: usize = 6;
+const HEAD_K_DIM: usize = 128;
 // 80 = two full 32-wide kh0 dv chunks plus a ragged 16-wide one.
-pub(super) const HEAD_V_DIM: usize = 80;
+const HEAD_V_DIM: usize = 80;
 
-pub(super) struct Inputs {
-    pub trie: Vec<u32>,
-    pub q: Vec<f32>,
-    pub k: Vec<f32>,
-    pub prefix: Vec<f32>,
-    pub beta: Vec<f32>,
-    pub h0: Vec<f32>,
-    pub h0_idx: Vec<i32>,
+struct Inputs {
+    trie: Vec<u32>,
+    q: Vec<f32>,
+    k: Vec<f32>,
+    prefix: Vec<f32>,
+    beta: Vec<f32>,
+    h0: Vec<f32>,
+    h0_idx: Vec<i32>,
 }
 
-pub(super) fn make_inputs(tree_size: usize) -> Inputs {
+fn make_inputs(tree_size: usize) -> Inputs {
     let q_len = BATCH_SIZE * tree_size * K_HEADS * HEAD_K_DIM;
     let scalar_len = BATCH_SIZE * tree_size * VALUE_HEADS;
     let h0_len = BATCH_SIZE * VALUE_HEADS * HEAD_V_DIM * HEAD_K_DIM;
@@ -48,7 +50,7 @@ pub(super) fn make_inputs(tree_size: usize) -> Inputs {
     }
 }
 
-pub(super) fn get_output<B: Backend>(
+fn get_output<B: Backend>(
     q: &[f32],
     k: &[f32],
     trie: &[u32],
@@ -112,7 +114,7 @@ pub(super) fn get_output<B: Backend>(
     (allocation_to_vec(&a_packed), allocation_to_vec(&qkd), allocation_to_vec(&a_inv), allocation_to_vec(&kh0))
 }
 
-pub(super) fn build_trie(tree_size: usize) -> Vec<u32> {
+fn build_trie(tree_size: usize) -> Vec<u32> {
     let last = tree_size as u32 - 1;
     let mut trie = Vec::with_capacity(BATCH_SIZE * tree_size * 3);
     for i in 0..tree_size as u32 {
@@ -143,5 +145,16 @@ fn test_build_tree_gram_matches_cpu() {
             assert_eq_float::<f32>(&expected.2, &actual.2, 1e-2, &format!("a_inv {msg}"));
             assert_eq_float::<f32>(&expected.3, &actual.3, 5e-3, &format!("kh0 {msg}"));
         });
+
+        #[cfg(metal_backend)]
+        if <Metal as Backend>::Context::new().expect("Failed to create Context").supports_mxu() {
+            let actual =
+                get_output::<Metal>(&i.q, &i.k, &i.trie, &i.prefix, &i.beta, &i.h0, &i.h0_idx, tree_size, scale, true);
+            let msg = format!("backend {} path MXU tree_size {tree_size}", std::any::type_name::<Metal>());
+            assert_eq_float::<f32>(&expected.0, &actual.0, 5e-3, &format!("a_packed {msg}"));
+            assert_eq_float::<f32>(&expected.1, &actual.1, 5e-3, &format!("qkd {msg}"));
+            assert_eq_float::<f32>(&expected.2, &actual.2, 1e-2, &format!("a_inv {msg}"));
+            assert_eq_float::<f32>(&expected.3, &actual.3, 5e-3, &format!("kh0 {msg}"));
+        }
     }
 }

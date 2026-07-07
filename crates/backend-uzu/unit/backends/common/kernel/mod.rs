@@ -9,8 +9,6 @@ mod logit_soft_cap_test;
 mod matmul;
 mod moe;
 mod out_bench;
-#[cfg(metal_backend)]
-mod out_dispatch_paths_test;
 mod out_test;
 mod pooling;
 mod prefix_beta_bench;
@@ -24,10 +22,6 @@ mod tensor_add_swap_test;
 mod tensor_copy_test;
 mod token_copy_test;
 mod tree_gram_bench;
-#[cfg(metal_backend)]
-mod tree_gram_dispatch_paths_test;
 mod tree_gram_test;
 mod tree_update_solve_bench;
-#[cfg(metal_backend)]
-mod tree_update_solve_dispatch_paths_test;
 mod tree_update_solve_test;
