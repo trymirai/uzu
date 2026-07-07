@@ -1,11 +1,10 @@
 #include <metal_stdlib>
-#include "../common/defines.h"
-#include "../common/dsl.h"
-#include "../common/thread_context.h"
-#include "../generated/trie.h"
-#include "../matmul/common/fragment.h"
-#include "../matmul/common/mxu_fragment_ops.h"
-#include "../matmul/common/simdgroup_fragment_ops.h"
+#include "../../common/defines.h"
+#include "../../common/dsl.h"
+#include "../../common/thread_context.h"
+#include "../../generated/trie.h"
+#include "../common/gram.h"
+#include "../common/heads.h"
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -77,8 +76,7 @@ PUBLIC KERNEL(BuildTreeGram)(
   using LeftFragment = OperandFragment<InputType, ROW_FRAGMENTS, 1, Ops>;
   using RightFragment = OperandFragment<InputType, 1, COL_FRAGMENTS, Ops, ReadTranspose>;
 
-  const uint value_heads_per_key_head = value_heads / k_heads;
-  const uint key_head_idx = value_head_idx / value_heads_per_key_head;
+  const uint key_head_idx = gdn_key_head_for_value_head(value_head_idx, value_heads, k_heads);
   const uint qk_stride = k_heads * head_k_dim;
   const uint qk_base = (batch_idx * tree_size * k_heads + key_head_idx) * head_k_dim;
   const uint prefix_base = batch_idx * tree_size * value_heads + value_head_idx;
@@ -121,10 +119,6 @@ PUBLIC KERNEL(BuildTreeGram)(
     const uint k_tile_size = Ops::FRAGMENT_ROWS;
     const uint valid_k_cols = min(k_remaining, k_tile_size);
 
-    LeftFragment k_left;
-    LeftFragment q_left;
-    RightFragment k_right;
-
     const uint qk_row_base = qk_base + row_base * qk_stride + k_block_start;
     const uint qk_col_base = qk_base + col_base * qk_stride + k_block_start;
     const device T* k_rows = k + qk_row_base;
@@ -132,21 +126,20 @@ PUBLIC KERNEL(BuildTreeGram)(
     const device T* k_cols = k + qk_col_base;
 
     const bool full_k_tile = valid_k_cols == k_tile_size;
-    if (full_k_tile && row_base + TREE_GRAM_ROW_TILE <= tree_size) {
-      k_left.load_from(lane, fragment_source(k_rows, qk_stride));
-      q_left.load_from(lane, fragment_source(q_rows, qk_stride));
-    } else {
-      k_left.load_from(lane, fragment_source(k_rows, qk_stride).bounded(tile_rows, valid_k_cols));
-      q_left.load_from(lane, fragment_source(q_rows, qk_stride).bounded(tile_rows, valid_k_cols));
-    }
-    if (full_k_tile && col_base + TREE_GRAM_COL_TILE <= tree_size) {
-      k_right.load_from(lane, fragment_source(k_cols, qk_stride));
-    } else {
-      k_right.load_from(lane, fragment_source(k_cols, qk_stride).bounded(tile_cols, valid_k_cols));
-    }
-
-    fragment_mma(kk_acc, k_left, k_right);
-    fragment_mma(qk_acc, q_left, k_right);
+    gdn_accumulate_dual_gram_tile<AccFragment, LeftFragment, RightFragment>(
+        kk_acc,
+        qk_acc,
+        k_rows,
+        q_rows,
+        k_cols,
+        int(qk_stride),
+        ushort(tile_rows),
+        ushort(tile_cols),
+        ushort(valid_k_cols),
+        full_k_tile && row_base + TREE_GRAM_ROW_TILE <= tree_size,
+        full_k_tile && col_base + TREE_GRAM_COL_TILE <= tree_size,
+        lane
+    );
   }
 
   const bool has_diag = col_base <= row_base && row_base < col_base + TREE_GRAM_COL_TILE;

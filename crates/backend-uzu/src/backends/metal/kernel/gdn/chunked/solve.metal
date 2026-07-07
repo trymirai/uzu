@@ -1,6 +1,8 @@
 #include <metal_stdlib>
-#include "../common/defines.h"
-#include "../common/dsl.h"
+#include "../../common/defines.h"
+#include "../../common/dsl.h"
+#include "../common/heads.h"
+#include "../common/math.h"
 
 using namespace metal;
 
@@ -44,8 +46,7 @@ PUBLIC KERNEL(DeltaNetChunkedSolve)(
 ) {
   constexpr uint num_blocks = (CHUNK_SIZE + CHUNK_SOLVE_BLOCK - 1) / CHUNK_SOLVE_BLOCK;
   constexpr uint num_col_pairs = (num_blocks + 1) / 2;
-  const uint groups_per_head = num_v_heads / num_k_heads;
-  const uint hk_idx = hv_idx / groups_per_head;
+  const uint hk_idx = gdn_key_head_for_value_head(hv_idx, num_v_heads, num_k_heads);
   const uint token_base = chunk_idx * CHUNK_SIZE;
   const uint row_base = block_idx * CHUNK_SOLVE_BLOCK;
   const uint kk_base = (chunk_idx * num_k_heads + hk_idx) * CHUNK_SIZE * CHUNK_SIZE;
@@ -64,7 +65,7 @@ PUBLIC KERNEL(DeltaNetChunkedSolve)(
       const float beta_row = beta[row_token * num_v_heads + hv_idx];
       const float g_row = chunked_g<RECOMPUTE_G>(g_or_log_decay, token_base, row, num_v_heads, hv_idx);
       const float g_col = chunked_g<RECOMPUTE_G>(g_or_log_decay, token_base, col, num_v_heads, hv_idx);
-      value = beta_row * fast::exp(g_row - g_col) * kk[kk_base + row * CHUNK_SIZE + col];
+      value = beta_row * gdn_prefix_decay(g_row, g_col) * kk[kk_base + row * CHUNK_SIZE + col];
     }
 
     const uint out_idx = (((chunk_idx * num_v_heads + hv_idx) * num_blocks + block_idx) * num_col_pairs + pair_idx) *
@@ -93,7 +94,7 @@ PUBLIC KERNEL(DeltaNetChunkedSolve)(
           const float beta_row = beta[(token_base + row) * num_v_heads + hv_idx];
           const float g_row = chunked_g<RECOMPUTE_G>(g_or_log_decay, token_base, row, num_v_heads, hv_idx);
           const float g_col = chunked_g<RECOMPUTE_G>(g_or_log_decay, token_base, col, num_v_heads, hv_idx);
-          const float a = beta_row * fast::exp(g_row - g_col) * kk[kk_base + row * CHUNK_SIZE + col];
+          const float a = beta_row * gdn_prefix_decay(g_row, g_col) * kk[kk_base + row * CHUNK_SIZE + col];
           acc += a * inverse_col[prev];
         }
       }

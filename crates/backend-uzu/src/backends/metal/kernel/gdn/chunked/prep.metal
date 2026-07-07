@@ -1,7 +1,8 @@
 #include <metal_stdlib>
-#include "../activation/activations.h"
-#include "../common/defines.h"
-#include "../common/dsl.h"
+#include "../../common/defines.h"
+#include "../../common/dsl.h"
+#include "../common/heads.h"
+#include "../common/math.h"
 
 using namespace metal;
 
@@ -30,7 +31,7 @@ PUBLIC KERNEL(DeltaNetChunkedPrep)(
 
   const uint conv_dim = 2 * key_dim + value_dim;
   const uint total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
-  const uint groups_per_head = num_v_heads / num_k_heads;
+  const uint groups_per_head = gdn_groups_per_key_head(num_v_heads, num_k_heads);
 
   const uint tok_offset = token_idx * total_proj_dim;
   const uint q_base = tok_offset + hk_idx * HEAD_K_DIM;
@@ -64,11 +65,10 @@ PUBLIC KERNEL(DeltaNetChunkedPrep)(
     const uint hv = hk_idx * groups_per_head + group;
 
     const float beta_raw = float(in_proj[tok_offset + conv_dim + value_dim + hv]);
-    const float beta = 1.0f / (1.0f + fast::exp(-beta_raw));
+    const float beta = gdn_sigmoid(beta_raw);
 
     const float a_raw = float(in_proj[tok_offset + conv_dim + value_dim + num_v_heads + hv]);
-    const float sp = activate_softplus(a_raw + dt_bias[hv]);
-    const float log_decay = -fast::exp(a_log[hv]) * sp;
+    const float log_decay = gdn_log_decay(a_raw, a_log[hv], dt_bias[hv]);
 
     beta_out[token_idx * num_v_heads + hv] = beta;
     log_decay_out[token_idx * num_v_heads + hv] = log_decay;
