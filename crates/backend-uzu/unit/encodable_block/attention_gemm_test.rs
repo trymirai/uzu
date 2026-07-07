@@ -5,7 +5,7 @@ use num_traits::Float;
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
-use super::AttentionCore;
+use super::AttentionGemmCore;
 use crate::{
     array::ArrayElement,
     backends::{
@@ -84,8 +84,8 @@ fn get_test_data<T: ArrayElement + Float>(
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let core = AttentionCore::<B>::new(
-        AttentionCoreNewArguments {
+    let core = AttentionGemmCore::<B>::new(
+        &AttentionCoreNewArguments {
             head_dim: input.head_dim,
             num_groups: input.num_kv_heads,
             num_q_heads: input.num_heads,
@@ -97,9 +97,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
             scale: Some(input.scale),
             data_type: T::data_type(),
         },
+        false,
         context.as_ref(),
     )
-    .expect("Failed to create AttentionCore");
+    .expect("Failed to create AttentionGemmCore");
 
     let queries_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.queries);
     let keys_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.keys);

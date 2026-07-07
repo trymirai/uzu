@@ -184,7 +184,7 @@ impl AttentionGemmDispatch for AttentionGemmCpuDispatch {
     }
 
     fn encode<'q, 'k, 'v, 'o, 'trie, 'sinks, 'encoder>(
-        &self,
+        &mut self,
         q: impl BufferArg<'q, Cpu>,
         k: impl BufferArg<'k, Cpu>,
         v: impl BufferArg<'v, Cpu>,
@@ -197,7 +197,7 @@ impl AttentionGemmDispatch for AttentionGemmCpuDispatch {
         num_heads: u32,
         suffix_length: u32,
         encoder: &'encoder mut Encoder<Cpu>,
-    ) {
+    ) -> Result<(), CpuError> {
         self.tiles[tile_variant_index(params.q_rem == 0, params.k_rem == 0)].encode(
             q,
             k,
@@ -212,5 +212,6 @@ impl AttentionGemmDispatch for AttentionGemmCpuDispatch {
             suffix_length,
             encoder,
         );
+        Ok(())
     }
 }

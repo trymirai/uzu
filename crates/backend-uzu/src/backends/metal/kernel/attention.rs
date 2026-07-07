@@ -1,3 +1,5 @@
+use std::collections::{HashMap, hash_map::Entry};
+
 use super::AttentionGemmMetalKernel;
 use crate::{
     backends::{
@@ -6,7 +8,7 @@ use crate::{
             gpu_types::{attention::AttnParams, ring::RingParams},
             kernel::{
                 AttentionGemmKernel, BufferArg, BufferArgMut,
-                attention_gemm::{AttentionGemmDispatch, retile_params, tile_variant_index},
+                attention_gemm::{AttentionGemmDispatch, retile_params},
             },
         },
         metal::{DeviceExt, Metal, context::MetalContext, error::MetalError},
@@ -15,44 +17,51 @@ use crate::{
 };
 
 pub struct AttentionGemmMetalDispatch {
-    simd_tiles: Vec<AttentionGemmMetalKernel>,
-    mxu_tiles: Option<Vec<AttentionGemmMetalKernel>>,
-    simd_key_tile: u32,
+    kernels: HashMap<AttentionGemmKey, AttentionGemmMetalKernel>,
+    data_type: DataType,
+    bd: u32,
+    simd_bk: u32,
+    is_kv_cache_ring: bool,
+    is_causal: bool,
+    is_trie: bool,
+    is_sliding_window: bool,
+    has_sinks: bool,
+}
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+struct AttentionGemmKey {
+    use_mxu: bool,
+    align_q: bool,
+    align_k: bool,
 }
 
 impl AttentionGemmMetalDispatch {
-    fn build_tiles(
+    fn get_or_create(
+        &mut self,
         context: &MetalContext,
-        data_type: DataType,
+        key: AttentionGemmKey,
         bk: u32,
-        bd: u32,
-        use_mxu: bool,
-        is_kv_cache_ring: bool,
-        is_causal: bool,
-        is_trie: bool,
-        is_sliding_window: bool,
-        has_sinks: bool,
-    ) -> Result<Vec<AttentionGemmMetalKernel>, MetalError> {
-        let mut tiles = Vec::with_capacity(4);
-        for align_q in [false, true] {
-            for align_k in [false, true] {
-                tiles.push(AttentionGemmMetalKernel::new(
+    ) -> Result<&AttentionGemmMetalKernel, MetalError> {
+        match self.kernels.entry(key) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let kernel = AttentionGemmMetalKernel::new(
                     context,
-                    data_type,
+                    self.data_type,
                     bk,
-                    bd,
-                    use_mxu,
-                    align_q,
-                    align_k,
-                    is_kv_cache_ring,
-                    is_causal,
-                    is_trie,
-                    is_sliding_window,
-                    has_sinks,
-                )?);
-            }
+                    self.bd,
+                    key.use_mxu,
+                    key.align_q,
+                    key.align_k,
+                    self.is_kv_cache_ring,
+                    self.is_causal,
+                    self.is_trie,
+                    self.is_sliding_window,
+                    self.has_sinks,
+                )?;
+                Ok(entry.insert(kernel))
+            },
         }
-        Ok(tiles)
     }
 }
 
@@ -60,7 +69,7 @@ impl AttentionGemmDispatch for AttentionGemmMetalDispatch {
     type Backend = Metal;
 
     fn new(
-        context: &MetalContext,
+        _context: &MetalContext,
         data_type: DataType,
         bk: u32,
         bd: u32,
@@ -70,48 +79,21 @@ impl AttentionGemmDispatch for AttentionGemmMetalDispatch {
         is_sliding_window: bool,
         has_sinks: bool,
     ) -> Result<Self, MetalError> {
-        let simd_tiles = Self::build_tiles(
-            context,
+        Ok(Self {
+            kernels: HashMap::new(),
             data_type,
-            bk,
             bd,
-            false,
+            simd_bk: bk,
             is_kv_cache_ring,
             is_causal,
             is_trie,
             is_sliding_window,
             has_sinks,
-        )?;
-
-        let mxu_tiles = if context.device.supports_mxu()
-            && matches!(data_type, DataType::BF16 | DataType::F16)
-            && matches!(bd, 64 | 128)
-        {
-            Some(Self::build_tiles(
-                context,
-                data_type,
-                32,
-                bd,
-                true,
-                is_kv_cache_ring,
-                is_causal,
-                is_trie,
-                is_sliding_window,
-                has_sinks,
-            )?)
-        } else {
-            None
-        };
-
-        Ok(Self {
-            simd_tiles,
-            mxu_tiles,
-            simd_key_tile: bk,
         })
     }
 
     fn encode<'q, 'k, 'v, 'o, 'trie, 'sinks, 'encoder>(
-        &self,
+        &mut self,
         q: impl BufferArg<'q, Metal>,
         k: impl BufferArg<'k, Metal>,
         v: impl BufferArg<'v, Metal>,
@@ -124,40 +106,42 @@ impl AttentionGemmDispatch for AttentionGemmMetalDispatch {
         num_heads: u32,
         suffix_length: u32,
         encoder: &'encoder mut Encoder<Metal>,
-    ) {
-        let use_mxu = suffix_length >= 64;
-        if use_mxu && let Some(mxu_tiles) = &self.mxu_tiles {
-            let mxu_params = retile_params(params, 64, 32);
-            mxu_tiles[tile_variant_index(mxu_params.q_rem == 0, mxu_params.k_rem == 0)].encode(
-                q,
-                k,
-                v,
-                o,
-                mxu_params,
-                ring_params,
-                trie,
-                sliding_window_size,
-                sinks,
-                num_heads,
-                suffix_length,
-                encoder,
-            );
+    ) -> Result<(), MetalError> {
+        let use_mxu = suffix_length >= 64
+            && encoder.context().device.supports_mxu()
+            && matches!(self.data_type, DataType::BF16 | DataType::F16)
+            && matches!(self.bd, 64 | 128);
+        let params = if use_mxu {
+            retile_params(params, 64, 32)
         } else {
-            let simd_params = retile_params(params, 32, self.simd_key_tile);
-            self.simd_tiles[tile_variant_index(simd_params.q_rem == 0, simd_params.k_rem == 0)].encode(
-                q,
-                k,
-                v,
-                o,
-                simd_params,
-                ring_params,
-                trie,
-                sliding_window_size,
-                sinks,
-                num_heads,
-                suffix_length,
-                encoder,
-            );
-        }
+            retile_params(params, 32, self.simd_bk)
+        };
+        let key = AttentionGemmKey {
+            use_mxu,
+            align_q: params.q_rem == 0,
+            align_k: params.k_rem == 0,
+        };
+        let bk = if use_mxu {
+            32
+        } else {
+            self.simd_bk
+        };
+        let kernel = self.get_or_create(encoder.context(), key, bk)?;
+
+        kernel.encode(
+            q,
+            k,
+            v,
+            o,
+            params,
+            ring_params,
+            trie,
+            sliding_window_size,
+            sinks,
+            num_heads,
+            suffix_length,
+            encoder,
+        );
+        Ok(())
     }
 }

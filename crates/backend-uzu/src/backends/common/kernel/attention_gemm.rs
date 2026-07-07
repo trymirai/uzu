@@ -45,7 +45,7 @@ pub trait AttentionGemmDispatch: Sized {
 
     #[allow(clippy::too_many_arguments)]
     fn encode<'q, 'k, 'v, 'o, 'trie, 'sinks, 'encoder>(
-        &self,
+        &mut self,
         q: impl BufferArg<'q, Self::Backend>,
         k: impl BufferArg<'k, Self::Backend>,
         v: impl BufferArg<'v, Self::Backend>,
@@ -58,5 +58,5 @@ pub trait AttentionGemmDispatch: Sized {
         num_heads: u32,
         suffix_length: u32,
         encoder: &'encoder mut Encoder<Self::Backend>,
-    );
+    ) -> Result<(), <Self::Backend as Backend>::Error>;
 }
