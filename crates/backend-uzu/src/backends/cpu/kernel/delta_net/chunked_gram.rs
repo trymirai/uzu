@@ -6,8 +6,7 @@ use proc_macros::kernel;
 #[kernel(DeltaNetChunkedGram)]
 #[variants(HEAD_K_DIM, 128)]
 #[variants(CHUNK_SIZE, 16, 32, 64)]
-#[variants(USE_MXU, false, true)]
-pub fn delta_net_chunked_gram<const HEAD_K_DIM: u32, const CHUNK_SIZE: u32, const USE_MXU: bool>(
+pub fn delta_net_chunked_gram<const HEAD_K_DIM: u32, const CHUNK_SIZE: u32>(
     q_norm: *const f32,
     k_norm: *const f32,
     g: *const f32,
@@ -18,7 +17,6 @@ pub fn delta_net_chunked_gram<const HEAD_K_DIM: u32, const CHUNK_SIZE: u32, cons
     key_dim: u32,
     suffix_len: u32,
 ) {
-    let _ = USE_MXU;
     let head_k_dim = HEAD_K_DIM as usize;
     let chunk_size = CHUNK_SIZE as usize;
     let num_v_heads = num_v_heads as usize;

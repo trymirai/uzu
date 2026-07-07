@@ -30,18 +30,18 @@ using namespace uzu::matmul;
 #define MEGA_CHUNK 64
 #define MEGA_KEY_TILE (MEGA_HEAD_K_DIM / MEGA_NUM_SIMDGROUPS)
 
-// USE_MXU selects the matmul backend independently of the value-tile width VT:
+// VT is fixed at 32 (the strong-tile-width variant; VT=16 was dominated on every
+// chip and removed). USE_MXU selects the matmul backend:
 //   USE_MXU=true  -> MxuFragmentOps (16x16 fragments), the shipping M5 path.
 //   USE_MXU=false -> SimdgroupFragmentOps (8x8 fragments), the M1-M4 path with
-//                    no MXU. VT=32 + simdgroup is the strong-tile-width variant.
-// All four {VT=16,32} x {simd, MXU} combinations are expressible. Operand
-// fragments are f32 in every combination (as they were before decoupling), so
-// USE_MXU does not change operand precision; state is f32 end-to-end and T / A
-// remain bf16 device operands regardless of backend.
+//                    no MXU.
+// Operand fragments are f32 in both backends, so USE_MXU does not change operand
+// precision; state is f32 end-to-end and T / A remain bf16 device operands
+// regardless of backend.
 template <typename T, typename O, uint VT, bool USE_MXU>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(O, float, bfloat)
-VARIANTS(VT, 16, 32)
+VARIANTS(VT, 32)
 VARIANTS(USE_MXU, false, true)
 PUBLIC KERNEL(DeltaNetChunkedMegaApply)(
     device const float* q_norm,

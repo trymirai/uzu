@@ -17,15 +17,12 @@ using namespace uzu::matmul;
 // (col <= row, else 0). The scale-qk expansion is folded in here so no separate
 // dispatch and no intermediate qk buffer are needed.
 //
-// USE_MXU selects the 16x16 MXU fragment path (bf16 q/k operands, f32
-// accumulation) vs the 8x8 simdgroup path (f32 operands). The kk/qk outputs and
-// the decay-scale expansion stay f32 either way; only the matmul OPERANDS are
-// rounded to bf16 on the MXU path (both output tiles are even-N, so both matmuls
-// are MXU-eligible). Config B (M1-M4 proxy) uses USE_MXU=false.
-template <uint HEAD_K_DIM, uint CHUNK_SIZE, bool USE_MXU>
+// The matmuls use the 8x8 simdgroup fragment path with f32 operands. (An MXU
+// bf16-operand variant was benchmarked and found perf-neutral on precompute, so
+// it was removed to avoid the bf16-operand complexity.)
+template <uint HEAD_K_DIM, uint CHUNK_SIZE>
 VARIANTS(HEAD_K_DIM, 128)
 VARIANTS(CHUNK_SIZE, 16, 32, 64)
-VARIANTS(USE_MXU, false, true)
 PUBLIC KERNEL(DeltaNetChunkedGram)(
     device const float* q_norm,
     device const float* k_norm,
@@ -41,8 +38,8 @@ PUBLIC KERNEL(DeltaNetChunkedGram)(
     const uint tile_idx GROUPS(CHUNK_SIZE.div_ceil(CHUNK_GRAM_ROW_TILE) * CHUNK_SIZE.div_ceil(CHUNK_GRAM_COL_TILE)),
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
-  using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
-  using InputType = metal::conditional_t<USE_MXU, bfloat, float>;
+  using Ops = SimdgroupFragmentOps;
+  using InputType = float;
   constexpr ushort ROW_FRAGMENTS = CHUNK_GRAM_ROW_TILE / Ops::FRAGMENT_ROWS;
   constexpr ushort COL_FRAGMENTS = CHUNK_GRAM_COL_TILE / Ops::FRAGMENT_COLS;
   using AccFragment = Fragment<float, ROW_FRAGMENTS, COL_FRAGMENTS, Ops>;

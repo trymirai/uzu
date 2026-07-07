@@ -12,7 +12,7 @@ use crate::array::ArrayElement;
 #[kernel(DeltaNetChunkedMegaApply)]
 #[variants(T, f32, f16, bf16)]
 #[variants(O, f32, bf16)]
-#[variants(VT, 16, 32)]
+#[variants(VT, 32)]
 #[variants(USE_MXU, false, true)]
 #[allow(clippy::too_many_arguments)]
 pub fn delta_net_chunked_mega_apply<

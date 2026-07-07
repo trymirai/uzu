@@ -18,18 +18,12 @@ using namespace uzu::matmul;
 // yields T directly. W/U (and their traffic) disappear. T is bf16 -- exactly
 // the precision the old W/U operands carried, so numerics are no worse (state
 // stays f32). Output T is [chunks, HV, C, C], one BV-wide column slice per tile.
-// USE_MXU selects the 16x16 MXU fragment path (bf16 A / a_inv / T-readback
-// operands, f32 accumulation) vs the 8x8 simdgroup path (f32 operands). The
-// diagonal-inverse matmul mixes the bf16 a_inv operand with the f32 substituted
-// RHS accumulator (matmul2d supports mixed operand types); T stays bf16 and the
-// accumulation stays f32 either way. MXU needs even output N, so it requires
-// BV >= 32 (BV=16 gives a 1x1 tile that is not MXU-pairable). Config B uses
-// USE_MXU=false.
-template <uint CHUNK_SIZE, uint BV, bool USE_MXU>
+// The matmuls use the 8x8 simdgroup fragment path with f32 operands. (An MXU
+// bf16-operand variant was benchmarked and found perf-neutral on precompute, so
+// it was removed to avoid the bf16-operand complexity.)
+template <uint CHUNK_SIZE, uint BV>
 VARIANTS(CHUNK_SIZE, 16, 32, 64)
 VARIANTS(BV, 16, 32)
-VARIANTS(USE_MXU, false, true)
-CONSTRAINT(!USE_MXU || BV >= 32)
 PUBLIC KERNEL(DeltaNetChunkedSolveT)(
     device const float* a_packed,
     device const float* a_inv,
@@ -41,8 +35,8 @@ PUBLIC KERNEL(DeltaNetChunkedSolveT)(
     const uint tile_idx GROUPS(CHUNK_SIZE.div_ceil(BV)),
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
-  using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
-  using InputType = metal::conditional_t<USE_MXU, bfloat, float>;
+  using Ops = SimdgroupFragmentOps;
+  using InputType = float;
   constexpr ushort TOKEN_FRAGMENTS = SOLVE_T_BLOCK / Ops::FRAGMENT_ROWS;
   constexpr ushort VALUE_FRAGMENTS = BV / Ops::FRAGMENT_COLS;
   static_assert(BV % Ops::FRAGMENT_COLS == 0, "BV must align to fragment columns");
