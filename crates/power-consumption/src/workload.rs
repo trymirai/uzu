@@ -25,7 +25,7 @@ pub fn run(
 ) -> Result<Measurement> {
     let input: Vec<u64> = (0..prefill).map(|index| (index % 7) as u64).collect();
     let mut state = model
-        .create_empty_state(Some(prefill + generate + 1))
+        .create_empty_state(model.recommended_context_length())
         .map_err(|error| anyhow!("create_empty_state: {error}"))?;
     let options = LanguageModelStreamOptions {
         sampling_method: SamplingMethod::Greedy,
