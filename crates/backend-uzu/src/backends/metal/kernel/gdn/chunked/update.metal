@@ -1,10 +1,9 @@
 #include <metal_stdlib>
+#include "../../activation/activations.h"
 #include "../../common/defines.h"
 #include "../../common/dsl.h"
 #include "../../common/thread_context.h"
 #include "../../common/threadgroup_reduce.h"
-#include "../common/heads.h"
-#include "../common/math.h"
 
 using namespace metal;
 
@@ -44,7 +43,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   const uint sg = tid / METAL_SIMD_SIZE;
 
   const uint conv_dim = 2 * key_dim + value_dim;
-  const uint hk = gdn_key_head_for_value_head(hv_idx, num_v_heads, num_k_heads);
+  const uint hk = hv_idx / (num_v_heads / num_k_heads);
 
   // Load + normalize q/k; each simd group recomputes the norm to skip a
   // barrier.
@@ -72,9 +71,10 @@ PUBLIC KERNEL(DeltaNetUpdate)(
 
   // beta / decay (scalar per head)
   const float beta_raw = float(in_proj[conv_dim + value_dim + hv_idx]);
-  const float beta = gdn_sigmoid(beta_raw);
+  const float beta = 1.0f / (1.0f + fast::exp(-beta_raw));
   const float a_raw = float(in_proj[conv_dim + value_dim + num_v_heads + hv_idx]);
-  const float decay = gdn_decay(a_raw, float(a_log[hv_idx]), float(dt_bias[hv_idx]));
+  const float sp = activate_softplus(a_raw + float(dt_bias[hv_idx]));
+  const float decay = fast::exp(-fast::exp(float(a_log[hv_idx])) * sp);
 
   // Delta rule over the dv owned by this simd group. State is [Hv, Dv, Dk].
   for (uint dv = sg; dv < head_v_dim; dv += NUM_SG) {

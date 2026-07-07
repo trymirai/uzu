@@ -5,7 +5,6 @@
 #include "../../matmul/common/fragment.h"
 #include "../../matmul/common/mxu_fragment_ops.h"
 #include "../../matmul/common/simdgroup_fragment_ops.h"
-#include "../common/heads.h"
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -98,7 +97,7 @@ PUBLIC KERNEL(DeltaNetChunkedMegaApply)(
   if (value_base >= head_v_dim) {
     return;
   }
-  const uint hk_idx = gdn_key_head_for_value_head(hv_idx, num_v_heads, num_k_heads);
+  const uint hk_idx = hv_idx / (num_v_heads / num_k_heads);
   const uint num_chunks = (suffix_len + MEGA_CHUNK - 1) / MEGA_CHUNK;
   const uint conv_dim = 2 * key_dim + value_dim;
   const uint total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;

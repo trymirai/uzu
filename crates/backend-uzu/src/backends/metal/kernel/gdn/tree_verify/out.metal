@@ -5,7 +5,6 @@
 #include "../../matmul/common/fragment.h"
 #include "../../matmul/common/mxu_fragment_ops.h"
 #include "../../matmul/common/simdgroup_fragment_ops.h"
-#include "../common/heads.h"
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -76,7 +75,7 @@ PUBLIC KERNEL(BuildTreeOut)(
 
   const uint batch_idx = batch_value_head_idx / value_heads;
   const uint value_head_idx = batch_value_head_idx - batch_idx * value_heads;
-  const uint qk_head_idx = gdn_key_head_for_value_head(value_head_idx, value_heads, qk_heads);
+  const uint qk_head_idx = value_head_idx / (value_heads / qk_heads);
   const uint row_base = (row_tile_group_idx * SIMDGROUPS_PER_TG + thread_context.simdgroup_index) * ROWS;
   const uint value_base = v_tile_idx * MATMUL_COLS;
 

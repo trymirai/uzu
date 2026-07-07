@@ -2,8 +2,6 @@
 #include "../../common/defines.h"
 #include "../../common/dsl.h"
 #include "../common/gram.h"
-#include "../common/heads.h"
-#include "../common/math.h"
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -97,7 +95,7 @@ PUBLIC KERNEL(DeltaNetChunkedGram)(
   // the per-v-head decay scale exp(g_row - g_col). The full chunk tile region is
   // written (masked/out-of-range entries as 0), so qk_scaled needs no pre-zero.
   const uint valid_tokens = chunk_token_base < suffix_len ? min(uint(CHUNK_SIZE), suffix_len - chunk_token_base) : 0u;
-  const uint groups_per_head = gdn_groups_per_key_head(num_v_heads, num_k_heads);
+  const uint groups_per_head = num_v_heads / num_k_heads;
   for (uint group = 0; group < groups_per_head; ++group) {
     const uint hv_idx = hk_idx * groups_per_head + group;
     AccFragment scaled = qk_acc;
@@ -109,7 +107,7 @@ PUBLIC KERNEL(DeltaNetChunkedGram)(
       }
       const float g_row = g[(chunk_token_base + row) * num_v_heads + hv_idx];
       const float g_col = g[(chunk_token_base + col) * num_v_heads + hv_idx];
-      return value * gdn_prefix_decay(g_row, g_col);
+      return value * fast::exp(g_row - g_col);
     });
     const uint dst_base =
         (chunk_idx * num_v_heads + hv_idx) * CHUNK_SIZE * CHUNK_SIZE + row_base * CHUNK_SIZE + col_base;

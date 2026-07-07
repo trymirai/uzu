@@ -1,8 +1,7 @@
 #pragma once
 
+#include "../../activation/activations.h"
 #include "../../common/defines.h"
-#include "heads.h"
-#include "math.h"
 #include <metal_stdlib>
 
 using namespace metal;
@@ -29,7 +28,7 @@ METAL_FUNC void gdn_prepare_qk_beta_decay(
 
   const uint conv_dim = 2 * key_dim + value_dim;
   const uint total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
-  const uint groups_per_head = gdn_groups_per_key_head(num_v_heads, num_k_heads);
+  const uint groups_per_head = num_v_heads / num_k_heads;
 
   const uint tok_offset = token_idx * total_proj_dim;
   const uint q_base = tok_offset + hk_idx * HEAD_K_DIM;
@@ -63,9 +62,9 @@ METAL_FUNC void gdn_prepare_qk_beta_decay(
     const uint hv = hk_idx * groups_per_head + group;
     const float beta_raw = float(in_proj[tok_offset + conv_dim + value_dim + hv]);
     const float a_raw = float(in_proj[tok_offset + conv_dim + value_dim + num_v_heads + hv]);
-    const float log_decay = gdn_log_decay(a_raw, a_log[hv], dt_bias[hv]);
+    const float log_decay = -fast::exp(a_log[hv]) * activate_softplus(a_raw + dt_bias[hv]);
 
-    beta_out[token_idx * num_v_heads + hv] = gdn_sigmoid(beta_raw);
+    beta_out[token_idx * num_v_heads + hv] = 1.0f / (1.0f + fast::exp(-beta_raw));
     if constexpr (WRITE_LOG_DECAY) {
       decay_out[token_idx * num_v_heads + hv] = log_decay;
     } else {

@@ -7,7 +7,6 @@
 #include "../../matmul/common/mxu_fragment_ops.h"
 #include "../../matmul/common/simdgroup_fragment_ops.h"
 #include "../common/gram.h"
-#include "../common/heads.h"
 #include "../common/solve.h"
 
 using namespace metal;
@@ -135,7 +134,7 @@ PUBLIC KERNEL(BuildTreeGram)(
   using RightFragment = OperandFragment<InputType, 1, COL_FRAGMENTS, Ops, ReadTranspose>;
   static_assert(COL_TILE == METAL_SIMD_SIZE, "COL_TILE must match the SIMD width");
 
-  const uint key_head_idx = gdn_key_head_for_value_head(value_head_idx, value_heads, k_heads);
+  const uint key_head_idx = value_head_idx / (value_heads / k_heads);
   const uint qk_stride = k_heads * head_k_dim;
   const uint qk_base = (batch_idx * tree_size * k_heads + key_head_idx) * head_k_dim;
   const uint prefix_base = batch_idx * tree_size * value_heads + value_head_idx;

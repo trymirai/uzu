@@ -1,7 +1,6 @@
 #include <metal_stdlib>
 #include "../../common/defines.h"
 #include "../../common/dsl.h"
-#include "../common/heads.h"
 
 using namespace metal;
 
@@ -45,7 +44,7 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   const uint dv_local = tid / METAL_SIMD_SIZE;
   const uint dv_idx = (dv_group * NUM_SG + dv_local) * DV_PER_SIMDGROUP;
 
-  const uint hk = gdn_key_head_for_value_head(hv_idx, num_v_heads, num_k_heads);
+  const uint hk = hv_idx / (num_v_heads / num_k_heads);
   const uint conv_dim = 2 * key_dim + value_dim;
   const uint total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
   const uint dk_base = lane * ELEMS;
