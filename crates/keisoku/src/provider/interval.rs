@@ -1,63 +1,13 @@
 use core::marker::PhantomData;
 use std::time::Instant as Clock;
 
+use super::session::Session;
 #[cfg(target_os = "macos")]
-use crate::ioreport::{IoReport, RawEnergySample};
+use crate::ioreport::IoReport;
 use crate::{
-    metric::{IoReportGroups, Measured, Reading},
+    metric::{IoReportGroups, Measured},
     sources::Sources,
 };
-
-pub struct Static<M: Reading> {
-    value: M::Value,
-}
-
-impl<M: Reading> Static<M> {
-    pub fn new() -> Self {
-        let mut sources = Sources::new();
-        Self {
-            value: M::read(&mut sources),
-        }
-    }
-
-    pub fn get(&self) -> &M::Value {
-        &self.value
-    }
-
-    pub fn into_inner(self) -> M::Value {
-        self.value
-    }
-}
-
-impl<M: Reading> Default for Static<M> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub struct Instant<M: Reading> {
-    sources: Sources,
-    marker: PhantomData<M>,
-}
-
-impl<M: Reading> Instant<M> {
-    pub fn new() -> Self {
-        Self {
-            sources: Sources::new(),
-            marker: PhantomData,
-        }
-    }
-
-    pub fn read(&mut self) -> M::Value {
-        M::read(&mut self.sources)
-    }
-}
-
-impl<M: Reading> Default for Instant<M> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 pub struct Interval<M: Measured> {
     sources: Sources,
@@ -68,18 +18,6 @@ pub struct Interval<M: Measured> {
 
 #[cfg(target_os = "macos")]
 unsafe impl<M: Measured> Send for Interval<M> {}
-
-#[must_use]
-pub struct Session<M: Measured> {
-    #[cfg(target_os = "macos")]
-    begin: Option<RawEnergySample>,
-    begin_package_watts: Option<f32>,
-    started: Clock,
-    marker: PhantomData<M>,
-}
-
-#[cfg(target_os = "macos")]
-unsafe impl<M: Measured> Send for Session<M> {}
 
 impl<M: Measured> Interval<M> {
     pub fn new() -> Self {

@@ -1,14 +1,12 @@
-use objc2_core_foundation::{CFDictionary, CFRetained};
-
-use super::{IoReportFunctions, channel::for_each_channel, subscription::Subscription};
+use super::{
+    IoReportFunctions, channel::for_each_channel, raw_energy_sample::RawEnergySample, subscription::Subscription,
+};
 use crate::{decode::RawChannel, metric::IoReportGroups};
 
-pub struct IoReport {
+pub(crate) struct IoReport {
     functions: &'static IoReportFunctions,
     subscription: Subscription,
 }
-
-pub(crate) struct RawEnergySample(CFRetained<CFDictionary>);
 
 impl IoReport {
     pub fn for_groups(groups: IoReportGroups) -> Option<Self> {

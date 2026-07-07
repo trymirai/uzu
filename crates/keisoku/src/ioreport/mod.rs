@@ -3,10 +3,13 @@ use core::{ffi::c_void, ptr::NonNull};
 use objc2_core_foundation::{CFDictionary, CFMutableDictionary, CFRetained, CFString, CFType, Type};
 
 mod channel;
-mod report;
+mod channels;
+mod io_report;
+mod raw_energy_sample;
 mod subscription;
 
-pub(crate) use report::{IoReport, RawEnergySample};
+pub(crate) use io_report::IoReport;
+pub(crate) use raw_energy_sample::RawEnergySample;
 
 kanka::ffi_table! {
     struct IoReportFunctions from "/usr/lib/libIOReport.dylib" {

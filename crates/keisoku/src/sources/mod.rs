@@ -1,29 +1,13 @@
+mod deferred;
+
+use deferred::Deferred;
+
 use crate::{
     client::SensorReader,
     sensor::{Sensor, SensorKind},
 };
 #[cfg(target_os = "macos")]
 use crate::{decode::FrequencyTables, smc::Smc, soc::SocInfo};
-
-/// Lazily built once via `&mut` (used by the single-read `Reading` markers).
-struct Deferred<T> {
-    slot: Option<T>,
-    init: fn() -> T,
-}
-
-impl<T> Deferred<T> {
-    const fn new(init: fn() -> T) -> Self {
-        Self {
-            slot: None,
-            init,
-        }
-    }
-
-    fn get(&mut self) -> &mut T {
-        let init = self.init;
-        self.slot.get_or_insert_with(init)
-    }
-}
 
 pub struct Sources {
     system: Deferred<sysinfo::System>,
