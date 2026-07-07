@@ -4,6 +4,8 @@ use std::{
     rc::Rc,
 };
 
+use shoji::traits::backend::chat_token::TokenStreamMetrics;
+
 use crate::{
     backends::common::{
         Allocation, AllocationPool, AllocationType, Backend, Context, Encoder, Pending,
@@ -16,7 +18,7 @@ use crate::{
         LanguageModel,
         grammar::Grammar,
         state::LanguageModelState,
-        stream::{LanguageModelStreamError, LanguageModelStreamMetrics, LanguageModelStreamOptions},
+        stream::{LanguageModelStreamError, LanguageModelStreamOptions},
     },
     trie::TrieNode,
 };
@@ -80,7 +82,7 @@ pub struct LanguageModelStream<'a, B: Backend> {
     allocation_pool: Rc<AllocationPool<B>>,
     context_ring: Option<Allocation<B>>,
     decoding_state: DecodingState<B>,
-    metrics: LanguageModelStreamMetrics,
+    metrics: TokenStreamMetrics,
 }
 
 impl<'a, B: Backend> LanguageModelStream<'a, B> {
@@ -134,7 +136,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 None
             };
 
-        let mut metrics = LanguageModelStreamMetrics::default();
+        let mut metrics = TokenStreamMetrics::default();
 
         let decoding_state = if !input.is_empty() {
             model_state.last_output_token.take();
@@ -546,7 +548,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         Ok(Some(prev_output.resolve(&mut self.model_state.tokens, self.options.grammar.as_deref_mut())?))
     }
 
-    pub fn metrics(&self) -> &LanguageModelStreamMetrics {
+    pub fn metrics(&self) -> &TokenStreamMetrics {
         &self.metrics
     }
 }

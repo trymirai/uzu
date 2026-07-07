@@ -192,6 +192,11 @@ fn chat_reply_stats_component(
         .prefill_tokens_per_second
         .map(|tokens_per_second| format!("{tokens_per_second:.2} t/s"))
         .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let tokens_per_forward_pass = stats
+        .speculator_stats
+        .as_ref()
+        .map(|speculator_stats| format!("{:.2} t/f", speculator_stats.tokens_per_forward_pass))
+        .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let memory_used = stats.memory_used_bytes.map(format_memory_used).unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let power = stats
         .power_stats
@@ -220,6 +225,10 @@ fn chat_reply_stats_component(
             )
             Text(
                 content: format!("generation speed: {generation_speed}"),
+                color: subtitle_color,
+            )
+            Text(
+                content: format!("tokens per forward pass: {tokens_per_forward_pass}"),
                 color: subtitle_color,
             )
             Text(

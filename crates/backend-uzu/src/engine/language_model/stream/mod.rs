@@ -29,16 +29,6 @@ pub struct LanguageModelStreamOptions<'a> {
     pub speculator: Option<LanguageModelStreamSpeculatorOptions<'a>>,
 }
 
-// TODO: add more fields and replace nagare loop wrapper counters
-#[derive(Debug, Clone, Default)]
-pub struct LanguageModelStreamMetrics {
-    pub num_forward_passes: usize,
-    pub num_tokens_prefilled: usize,
-    pub num_tokens_proposed: usize,
-    pub num_tokens_accepted: usize,
-    pub num_tokens_returned: usize,
-}
-
 #[derive(Debug, Error)]
 pub enum LanguageModelStreamError<B: Backend> {
     #[error("Backend error: {0}")]
