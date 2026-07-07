@@ -7,11 +7,13 @@ use crate::{
         LanguageModel,
         grammar::{Grammar, GrammarError},
         state::LanguageModelState,
-        stream::stream::LanguageModelStream,
     },
     speculators::speculator::Speculator,
 };
-pub use crate::{encodable_block::sampling::SamplingMethod, trie::TrieCreationConfig};
+pub use crate::{
+    encodable_block::sampling::SamplingMethod, engine::language_model::stream::stream::LanguageModelStream,
+    trie::TrieCreationConfig,
+};
 
 mod stream;
 
@@ -25,6 +27,16 @@ pub struct LanguageModelStreamOptions<'a> {
     pub sampling_method: SamplingMethod,
     pub grammar: Option<Box<dyn Grammar>>,
     pub speculator: Option<LanguageModelStreamSpeculatorOptions<'a>>,
+}
+
+// TODO: add more fields and replace nagare loop wrapper counters
+#[derive(Debug, Clone, Default)]
+pub struct LanguageModelStreamMetrics {
+    pub num_forward_passes: usize,
+    pub num_tokens_prefilled: usize,
+    pub num_tokens_proposed: usize,
+    pub num_tokens_accepted: usize,
+    pub num_tokens_returned: usize,
 }
 
 #[derive(Debug, Error)]
@@ -57,8 +69,7 @@ impl<B: Backend> LanguageModel<B> {
         input: &[u64],
         state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions<'a>,
-    ) -> Result<impl Iterator<Item = Result<u64, LanguageModelStreamError<B>>> + Send + 'a, LanguageModelStreamError<B>>
-    {
+    ) -> Result<LanguageModelStream<'a, B>, LanguageModelStreamError<B>> {
         LanguageModelStream::new(self, input, state, options)
     }
 }

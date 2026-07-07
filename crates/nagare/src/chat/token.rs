@@ -343,6 +343,7 @@ impl StreamingState<'_> {
             tokens_count_input: Some(self.total_tokens_input as u32),
             tokens_count_output: Some(self.total_tokens_output as u32),
             memory_used_bytes: last_stat.then(|| self.memory_usage.map(|bytes| bytes as i64)).flatten(),
+            speculator_stats: None, // TODO
             power_stats,
         }
     }
