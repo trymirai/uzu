@@ -85,6 +85,21 @@ fn weights_url(model: &Model) -> Option<String> {
     None
 }
 
+pub fn weights_size(model: &Model) -> Option<i64> {
+    if let ModelAccessibility::Local {
+        reference,
+        ..
+    } = &model.accessibility
+        && let ModelReference::Mirai {
+            files,
+            ..
+        } = reference
+    {
+        return files.iter().find(|file| file.name == "model.safetensors").map(|file| file.size);
+    }
+    None
+}
+
 async fn download_header(
     url: &str,
     dest: &Path,

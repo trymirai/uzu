@@ -178,7 +178,7 @@ fn run_registry_model(
 ) -> Result<Vec<Row>> {
     let meta = ModelMeta::from_model(model);
 
-    if let Some(size) = meta.size_bytes
+    if let Some(size) = download::weights_size(model).or(meta.size_bytes)
         && size as f64 > device_info.ram_total_bytes as f64 * args.memory_fraction
     {
         return Ok(vec![Row::status(device_info, &meta, "skipped_too_large", "")]);
