@@ -27,7 +27,7 @@ pub use decoder::{Decoder, DecoderArguments, DecoderDecodeInput};
 // test); it is an internal detail otherwise, so only re-export it in test builds
 // to keep non-test builds free of unused-import warnings.
 #[cfg(test)]
-pub use delta_net_mixer::{CHUNKED_MXU_MIN_T, CHUNKED_SIMD_MIN_T, GdnPrefillPath, select_gdn_prefill_path};
+pub use delta_net_mixer::{CHUNKED_MXU_MIN_T, GdnPrefillPath, select_gdn_prefill_path};
 pub use delta_net_mixer::{DeltaNetArguments, DeltaNetMixer, DeltaNetMixerError};
 pub use embedding::Embedding;
 pub use kv_cache_update::{KVCacheUpdate, KVLayerData};

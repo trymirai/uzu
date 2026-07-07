@@ -53,13 +53,4 @@ pub trait Context: Sized {
     fn supports_mxu(&self) -> bool {
         false
     }
-
-    /// Whether the GPU is Apple family 9 or newer (M3/A17 and up), which brings
-    /// dynamic GPU-core caching. Used to gate the chunked GDN prefill path
-    /// (family-9 GPUs run it profitably at large T even without an MXU).
-    /// Defaults to `false` so CPU and pre-family-9 devices stay on the
-    /// recurrent path.
-    fn supports_dynamic_caching(&self) -> bool {
-        false
-    }
 }

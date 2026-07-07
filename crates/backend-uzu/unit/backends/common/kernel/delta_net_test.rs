@@ -1273,24 +1273,16 @@ fn test_delta_net_chunked_mode_l_pipeline_vs_recurrent() {
 }
 
 // Live-device routing: drives the production router `select_gdn_prefill_path`
-// with the real Metal `Context` predicates (`supports_mxu` /
-// `supports_dynamic_caching`) and checks it picks the path the dispatch table
-// prescribes for this machine's tier — including that the recurrent path is
-// selected below every chunked threshold. This is the integration seam between
-// the capability predicate, the router, and the sequence length; the chunked
-// chain the router dispatches to is validated for out+state correctness (both
-// MXU and simd megaApply backends) by test_delta_net_chunked_mode_l_pipeline_vs_recurrent.
+// with the real Metal `Context` predicate (`supports_mxu`) and checks it picks
+// the path the dispatch table prescribes for this machine's tier. The simd
+// route is intentionally left to the separate dynamic-caching capability PR.
 #[uzu_test]
 fn test_gdn_prefill_router_live_context() {
-    use crate::encodable_block::{CHUNKED_MXU_MIN_T, CHUNKED_SIMD_MIN_T, GdnPrefillPath, select_gdn_prefill_path};
+    use crate::encodable_block::{CHUNKED_MXU_MIN_T, GdnPrefillPath, select_gdn_prefill_path};
 
     let context = <Metal as Backend>::Context::new().expect("context");
     let mxu = context.supports_mxu();
-    let dyn_cache = context.supports_dynamic_caching();
-    eprintln!("ROUTER_LIVE supports_mxu={mxu} supports_dynamic_caching={dyn_cache}");
-
-    // MXU (Gen18+) implies Apple family 9+, so the predicates must be coherent.
-    assert!(!mxu || dyn_cache, "supports_mxu implies supports_dynamic_caching");
+    eprintln!("ROUTER_LIVE supports_mxu={mxu}");
 
     let route = |t: usize| select_gdn_prefill_path(context.as_ref(), t);
 
@@ -1300,18 +1292,12 @@ fn test_gdn_prefill_router_live_context() {
 
     let expected_at = |t: usize| {
         if mxu && t >= CHUNKED_MXU_MIN_T {
-            GdnPrefillPath::ChunkedModeL {
-                use_mxu: true,
-            }
-        } else if dyn_cache && t >= CHUNKED_SIMD_MIN_T {
-            GdnPrefillPath::ChunkedModeL {
-                use_mxu: false,
-            }
+            GdnPrefillPath::ChunkedModeL
         } else {
             GdnPrefillPath::Recurrent
         }
     };
-    for &t in &[CHUNKED_MXU_MIN_T, 512usize, CHUNKED_SIMD_MIN_T, 4096] {
+    for &t in &[CHUNKED_MXU_MIN_T, 512usize, 1024, 4096] {
         assert_eq!(route(t), expected_at(t), "T={t}");
     }
 }

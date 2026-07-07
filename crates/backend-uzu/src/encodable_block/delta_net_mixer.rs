@@ -33,9 +33,6 @@ pub enum DeltaNetMixerError<B: Backend> {
 /// Minimum prefill length (tokens) for chunked Mode-L with the MXU backend.
 pub const CHUNKED_MXU_MIN_T: usize = 256;
 
-/// Minimum prefill length for chunked Mode-L with the simdgroup backend.
-pub const CHUNKED_SIMD_MIN_T: usize = 1024;
-
 /// Chunk length of the Mode-L pipeline (tokens per chunk).
 const CHUNKED_CHUNK_SIZE: usize = 64;
 /// Block size of the triangular block-inverse solve inside Mode-L.
@@ -49,12 +46,8 @@ pub enum GdnPrefillPath {
     /// Recurrent scan (the always-available default). Used on M1/M2/CPU and for
     /// short sequences everywhere.
     Recurrent,
-    /// Chunked Mode-L pipeline. `use_mxu` selects the MegaApply backend and MUST
-    /// match the kernel that was actually constructed for the device
-    /// (`ctx.supports_mxu()`).
-    ChunkedModeL {
-        use_mxu: bool,
-    },
+    /// Chunked Mode-L pipeline using the MXU MegaApply backend.
+    ChunkedModeL,
 }
 
 /// Device-tier + sequence-length router for GDN prefill. Generic over the
@@ -62,15 +55,13 @@ pub enum GdnPrefillPath {
 ///
 /// - M5-class (MXU available): chunked Mode-L (`use_mxu=true`) for
 ///   `suffix_len >= CHUNKED_MXU_MIN_T`, else recurrent.
-/// - Apple family 9 (M3/M4, dynamic caching, no MXU): chunked Mode-L
-///   (`use_mxu=false`) for `suffix_len >= CHUNKED_SIMD_MIN_T`, else recurrent.
-/// - Apple family <= 8 (M1/M2) and CPU: recurrent always (both predicates are
-///   `false`).
+/// - Non-MXU devices: recurrent. The Apple family-9 simd route depends on the
+///   dynamic-caching capability split into a separate PR.
 pub fn select_gdn_prefill_path<C: Context>(
     context: &C,
     suffix_len: usize,
 ) -> GdnPrefillPath {
-    route_gdn_prefill(context.supports_mxu(), context.supports_dynamic_caching(), suffix_len)
+    route_gdn_prefill(context.supports_mxu(), suffix_len)
 }
 
 /// Pure decision core of [`select_gdn_prefill_path`], factored out so the full
@@ -78,17 +69,10 @@ pub fn select_gdn_prefill_path<C: Context>(
 /// `device_tier::device_tier_for`).
 fn route_gdn_prefill(
     supports_mxu: bool,
-    supports_dynamic_caching: bool,
     suffix_len: usize,
 ) -> GdnPrefillPath {
-    if supports_dynamic_caching && supports_mxu && suffix_len >= CHUNKED_MXU_MIN_T {
-        GdnPrefillPath::ChunkedModeL {
-            use_mxu: true,
-        }
-    } else if supports_dynamic_caching && suffix_len >= CHUNKED_SIMD_MIN_T {
-        GdnPrefillPath::ChunkedModeL {
-            use_mxu: false,
-        }
+    if supports_mxu && suffix_len >= CHUNKED_MXU_MIN_T {
+        GdnPrefillPath::ChunkedModeL
     } else {
         GdnPrefillPath::Recurrent
     }
@@ -238,16 +222,11 @@ impl<B: Backend> DeltaNetMixer<B> {
         let norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, outer_data_type)
             .map_err(DeltaNetMixerError::BackendError)?;
 
-        // Chunked Mode-L kernels. Construct ONLY on chunked-eligible devices
-        // (Apple family 9+). Crucially, MegaApply's USE_MXU flag mirrors the
-        // device capability, so the MXU-specialized PSO is only ever built on a
-        // device that actually has an MXU (M5+) — building it on M1-M4 would
-        // fail PSO creation. On M1/M2/CPU everything below stays `None` and the
-        // router falls back to the recurrent path.
-        let chunked_eligible = context.supports_dynamic_caching();
+        // Chunked Mode-L kernels. Construct only on MXU-capable devices so the
+        // MXU-specialized MegaApply PSO is never built on M1-M4.
+        let chunked_eligible = context.supports_mxu();
         let (chunked_prep, chunked_cumsum, chunked_gram, chunked_solve, chunked_solve_t, chunked_mega) =
             if chunked_eligible {
-                let use_mxu = context.supports_mxu();
                 let prep = <B::Kernels as Kernels>::DeltaNetChunkedPrepKernel::new(
                     context,
                     outer_data_type,
@@ -276,7 +255,7 @@ impl<B: Backend> DeltaNetMixer<B> {
                     outer_data_type,
                     outer_data_type,
                     CHUNKED_VT as u32,
-                    use_mxu,
+                    true,
                 )
                 .map_err(DeltaNetMixerError::BackendError)?;
                 (Some(prep), Some(cumsum), Some(gram), Some(solve), Some(solve_t), Some(mega))
@@ -638,9 +617,7 @@ impl<B: Backend> DeltaNetMixer<B> {
         } else {
             self.run_conv_scan(layer, &mut in_proj, encoder, active_row_count)?;
             match select_gdn_prefill_path(encoder.context(), active_row_count) {
-                GdnPrefillPath::ChunkedModeL {
-                    ..
-                } => {
+                GdnPrefillPath::ChunkedModeL => {
                     // Router only returns ChunkedModeL on chunked-eligible
                     // devices, where `chunked_mega` (and the rest) are `Some`.
                     let mega = self
@@ -661,59 +638,29 @@ impl<B: Backend> DeltaNetMixer<B> {
 mod router_tests {
     use proc_macros::uzu_test;
 
-    use super::{CHUNKED_MXU_MIN_T, CHUNKED_SIMD_MIN_T, GdnPrefillPath, route_gdn_prefill};
+    use super::{CHUNKED_MXU_MIN_T, GdnPrefillPath, route_gdn_prefill};
 
-    const MXU: GdnPrefillPath = GdnPrefillPath::ChunkedModeL {
-        use_mxu: true,
-    };
-    const SIMD: GdnPrefillPath = GdnPrefillPath::ChunkedModeL {
-        use_mxu: false,
-    };
+    const MXU: GdnPrefillPath = GdnPrefillPath::ChunkedModeL;
     const REC: GdnPrefillPath = GdnPrefillPath::Recurrent;
 
-    // M5-class: MXU available (implies dynamic caching). Chunked+MXU at
-    // T >= CHUNKED_MXU_MIN_T, recurrent below.
+    // M5-class: MXU available. Chunked+MXU at T >= CHUNKED_MXU_MIN_T,
+    // recurrent below.
     #[uzu_test]
     fn m5_class_routes_mxu_above_threshold() {
         let mxu = true;
-        let dyn_cache = true;
-        assert_eq!(route_gdn_prefill(mxu, dyn_cache, 1), REC);
-        assert_eq!(route_gdn_prefill(mxu, dyn_cache, CHUNKED_MXU_MIN_T - 1), REC);
-        assert_eq!(route_gdn_prefill(mxu, dyn_cache, CHUNKED_MXU_MIN_T), MXU);
-        assert_eq!(route_gdn_prefill(mxu, dyn_cache, CHUNKED_SIMD_MIN_T), MXU);
-        assert_eq!(route_gdn_prefill(mxu, dyn_cache, 32768), MXU);
+        assert_eq!(route_gdn_prefill(mxu, 1), REC);
+        assert_eq!(route_gdn_prefill(mxu, CHUNKED_MXU_MIN_T - 1), REC);
+        assert_eq!(route_gdn_prefill(mxu, CHUNKED_MXU_MIN_T), MXU);
+        assert_eq!(route_gdn_prefill(mxu, 32768), MXU);
     }
 
-    // Apple family 9 (M3/M4): dynamic caching, no MXU. Chunked+simd at
-    // T >= CHUNKED_SIMD_MIN_T, recurrent below (incl. the whole MXU window).
+    // Non-MXU devices stay recurrent in this PR. The simd route depends on the
+    // dynamic-caching capability split into a separate PR.
     #[uzu_test]
-    fn family9_routes_simd_above_larger_threshold() {
+    fn non_mxu_always_recurrent() {
         let mxu = false;
-        let dyn_cache = true;
-        assert_eq!(route_gdn_prefill(mxu, dyn_cache, 1), REC);
-        assert_eq!(route_gdn_prefill(mxu, dyn_cache, CHUNKED_MXU_MIN_T), REC);
-        assert_eq!(route_gdn_prefill(mxu, dyn_cache, CHUNKED_SIMD_MIN_T - 1), REC);
-        assert_eq!(route_gdn_prefill(mxu, dyn_cache, CHUNKED_SIMD_MIN_T), SIMD);
-        assert_eq!(route_gdn_prefill(mxu, dyn_cache, 32768), SIMD);
-    }
-
-    // Apple family <= 8 (M1/M2) and CPU: neither predicate holds -> recurrent
-    // ALWAYS. This is the no-op guarantee for pre-family-9 devices.
-    #[uzu_test]
-    fn pre_family9_and_cpu_always_recurrent() {
-        let mxu = false;
-        let dyn_cache = false;
         for &t in &[1usize, 63, 256, 512, 1024, 4096, 32768, usize::MAX] {
-            assert_eq!(route_gdn_prefill(mxu, dyn_cache, t), REC, "T={t}");
-        }
-    }
-
-    #[uzu_test]
-    fn incoherent_mxu_without_dynamic_caching_stays_recurrent() {
-        let mxu = true;
-        let dyn_cache = false;
-        for &t in &[CHUNKED_MXU_MIN_T, CHUNKED_SIMD_MIN_T, 32768] {
-            assert_eq!(route_gdn_prefill(mxu, dyn_cache, t), REC, "T={t}");
+            assert_eq!(route_gdn_prefill(mxu, t), REC, "T={t}");
         }
     }
 }
