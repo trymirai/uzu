@@ -8,18 +8,25 @@ use backend_uzu::{
         stream::{LanguageModelStreamOptions, SamplingMethod},
     },
 };
-use keisoku::{EnergyMeter, EnergyReading};
+use keisoku::{Energy, EnergyMetrics, Interval, Power, PowerMetrics};
+
+pub type Meter = Interval<(Energy, Power)>;
+
+pub struct Reading {
+    pub energy: EnergyMetrics,
+    pub average_power: PowerMetrics,
+}
 
 pub struct Measurement {
     pub prefill_ms: f64,
     pub decode_ms: f64,
     pub decode_tokens: usize,
-    pub reading: Option<EnergyReading>,
+    pub reading: Option<Reading>,
 }
 
 pub fn run(
     model: &LanguageModel<Metal>,
-    meter: &EnergyMeter,
+    meter: &mut Meter,
     prefill: usize,
     generate: usize,
 ) -> Result<Measurement> {
@@ -33,7 +40,7 @@ pub fn run(
         speculator: None,
     };
 
-    let window = meter.start();
+    let session = meter.begin();
     let start = Instant::now();
 
     let mut stream = model.stream(&input, &mut state, options).map_err(|error| anyhow!("stream: {error}"))?;
@@ -56,12 +63,15 @@ pub fn run(
     let end = Instant::now();
     drop(stream);
 
-    let reading = meter.stop(window);
+    let (energy, average_power) = meter.end(session);
 
     Ok(Measurement {
         prefill_ms: (after_prefill - start).as_secs_f64() * 1000.0,
         decode_ms: (end - after_prefill).as_secs_f64() * 1000.0,
         decode_tokens,
-        reading,
+        reading: Some(Reading {
+            energy,
+            average_power,
+        }),
     })
 }
