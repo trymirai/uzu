@@ -12,6 +12,7 @@ pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
 pub use backend::Backend;
 pub use buffer::{
     Buffer, BufferGpuAddressRangeExt,
+    arg::{BufferArg, BufferArgMut},
     dense::DenseBuffer,
     range::{AsBufferRangeMut, AsBufferRangeRef, BufferRangeMut, BufferRangeRef},
     sparse::{SparseBuffer, SparseBufferExt},

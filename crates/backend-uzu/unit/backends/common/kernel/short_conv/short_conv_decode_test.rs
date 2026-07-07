@@ -6,13 +6,16 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::ShortConvDecodeKernel},
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -43,12 +46,12 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     )
     .expect("Failed to create ShortConvDecodeKernel");
 
-    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
-    let w_array = context.create_array_from(&[input.w.len()], &input.w);
-    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b));
+    let in_proj = alloc_allocation_with_data::<B, T>(&context, &input.in_proj);
+    let w = alloc_allocation_with_data::<B, f32>(&context, &input.w);
+    let b = input.b.as_ref().map(|b| alloc_allocation_with_data::<B, f32>(&context, b));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
-    let mut out = context.create_array_uninitialized(&[out_size], T::data_type()).into_allocation();
+    let mut out = alloc_allocation::<B, T>(&context, out_size);
 
     let state_size = input.model_dim as usize * input.state_stride as usize;
     let state_allocation_size = state_size.max(1);
@@ -56,19 +59,19 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         input.state.iter().copied().chain(std::iter::repeat(T::zero())).take(state_allocation_size).collect();
 
     let mut next_state = if state_in_place {
-        context.create_array_from(&[state_allocation_size], &state_data).into_allocation()
+        alloc_allocation_with_data::<B, T>(&context, &state_data)
     } else {
-        context.create_array_uninitialized(&[state_allocation_size], T::data_type()).into_allocation()
+        alloc_allocation::<B, T>(&context, state_allocation_size)
     };
 
-    let state_array = (!state_in_place).then(|| context.create_array_from(&[state_allocation_size], &state_data));
+    let state = (!state_in_place).then(|| alloc_allocation_with_data::<B, T>(&context, &state_data));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        in_proj_array.allocation(),
-        w_array.allocation(),
-        b_array.as_ref().map(|bias| bias.allocation()),
-        state_array.as_ref().map(|state| state.allocation()),
+        &in_proj,
+        &w,
+        b.as_ref(),
+        state.as_ref(),
         &mut out,
         &mut next_state,
         input.suffix_len,
@@ -80,7 +83,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (crate::tests::helpers::allocation_to_vec(&out), crate::tests::helpers::allocation_to_vec(&next_state))
+    (allocation_to_vec(&out), allocation_to_vec(&next_state))
 }
 
 fn get_test_data_basic<T: ArrayElement + Float>(

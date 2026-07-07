@@ -1,48 +1,16 @@
-mod attention;
-mod classifier_layer;
-mod decoder;
-mod delta_net_mixer;
-mod embedding;
-mod kv_cache_update;
-mod layer;
-mod layer_norm;
-mod linear;
-mod mamba_mixer;
-mod mlp;
-mod normalization;
-mod per_layer_embedding;
-mod pooling;
-mod prediction_head;
-mod qk_unpack;
-mod qkv_norm;
-mod rms_norm;
-mod rope;
-mod sampling;
-mod short_conv_mixer;
+pub mod batch_topology;
+pub mod classifier;
+pub mod decoder;
+pub mod embedding;
+pub mod linear;
+pub mod mixer;
+pub mod mlp;
+pub mod normalization;
+pub mod per_layer_embedding;
+pub mod prediction_head;
+pub mod sampling;
+pub mod transformer;
+pub mod transformer_layer;
 
-pub use attention::{Attention, AttentionError};
-pub use classifier_layer::ClassifierLayer;
-pub use decoder::{Decoder, DecoderArguments, DecoderDecodeInput};
-// Router surface is used by the integration tests (the live-context routing
-// test); it is an internal detail otherwise, so only re-export it in test builds
-// to keep non-test builds free of unused-import warnings.
 #[cfg(test)]
-pub use delta_net_mixer::{CHUNKED_MXU_MIN_T, GdnPrefillPath, select_gdn_prefill_path};
-pub use delta_net_mixer::{DeltaNetArguments, DeltaNetMixer, DeltaNetMixerError};
-pub use embedding::Embedding;
-pub use kv_cache_update::{KVCacheUpdate, KVLayerData};
-pub use layer::{LayerArguments, LayerExecutables, LayerRopeKind};
-pub use layer_norm::{LayerNorm, LayerNormError};
-pub use linear::Linear;
-pub use mamba_mixer::{MambaArguments, MambaMixer, MambaMixerError};
-pub use mlp::{Mlp, MlpBlockError};
-pub use normalization::{Normalization, NormalizationError};
-pub use per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingProjection};
-pub use pooling::Pooling;
-pub use prediction_head::ClassifierPredictionHead;
-pub use qk_unpack::QkUnpack;
-pub use qkv_norm::QKVNorm;
-pub use rms_norm::{PostLayerScalar, RMSNorm, RMSNormError};
-pub use rope::{PrecalculatedRope, Rope};
-pub use sampling::Sampling;
-pub use short_conv_mixer::{ShortConvArguments, ShortConvMixer, ShortConvMixerError};
+pub use mixer::delta_net::{CHUNKED_MXU_MIN_T, GdnPrefillPath, select_gdn_prefill_path};

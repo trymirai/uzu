@@ -1,14 +1,14 @@
 use crate::{
     backends::common::{
-        Allocation, AsBufferRangeRef, Backend,
+        Allocation, Backend, BufferArg,
         gpu_types::{QuantizationMode, gemm::GemmBPrologueKind},
     },
     data_type::DataType,
 };
 
-pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
+pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
     FullPrecision {
-        b: &'a TB,
+        b: TB,
     },
     ScaleBiasDequant {
         b: &'a Allocation<B>,
@@ -32,7 +32,7 @@ pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
     },
 }
 
-impl<B: Backend, TB: AsBufferRangeRef> MatmulB<'_, B, TB> {
+impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
     pub fn b_prologue(&self) -> GemmBPrologueKind {
         match self {
             Self::FullPrecision {

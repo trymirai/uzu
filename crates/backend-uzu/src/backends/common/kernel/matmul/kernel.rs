@@ -1,7 +1,5 @@
 use crate::{
-    backends::common::{
-        AsBufferRangeRef, Backend, Buffer, Encoder, Kernels, kernel::matmul::arguments::MatmulArguments,
-    },
+    backends::common::{Backend, BufferArg, Encoder, Kernels, kernel::matmul::arguments::MatmulArguments},
     data_type::DataType,
 };
 
@@ -15,9 +13,9 @@ pub trait MatmulKernel: Sized {
         output_data_type: DataType,
     ) -> Result<Self, <Self::Backend as Backend>::Error>;
 
-    fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Self::Backend>>>(
+    fn encode<'a, 'b, 'd, TB: BufferArg<'b, Self::Backend>>(
         &mut self,
-        arguments: MatmulArguments<Self::Backend, TB>,
+        arguments: MatmulArguments<'a, 'b, 'd, Self::Backend, TB>,
         encoder: &mut Encoder<Self::Backend>,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 }

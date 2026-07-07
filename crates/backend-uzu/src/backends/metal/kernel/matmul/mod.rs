@@ -6,7 +6,7 @@ use self::gemv::{GemvDispatch, GemvSpecialization};
 use crate::{
     backends::{
         common::{
-            AsBufferRangeRef, Buffer, Encoder,
+            BufferArg, Encoder,
             kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
         },
         metal::{Metal, context::MetalContext, error::MetalError, metal_extensions::DeviceExt},
@@ -49,9 +49,9 @@ impl MatmulKernel for MatmulMetalKernel {
         })
     }
 
-    fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         &mut self,
-        arguments: MatmulArguments<Metal, TB>,
+        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let skip_gemv = encoder.context().device.supports_mxu() && self.gemm.should_skip_gemv_for_mxu(&arguments);

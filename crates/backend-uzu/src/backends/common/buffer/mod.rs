@@ -1,10 +1,12 @@
 use std::{any::Any, fmt::Debug, ops::Range};
 
-use crate::backends::common::Backend;
+use crate::backends::common::{AsBufferRangeMut, AsBufferRangeRef, Backend, BufferRangeMut, BufferRangeRef};
 
 pub mod dense;
-pub mod range;
 pub mod sparse;
+
+pub mod arg;
+pub mod range;
 
 pub trait Buffer: Any + Debug {
     type Backend: Backend;
@@ -14,11 +16,21 @@ pub trait Buffer: Any + Debug {
     fn size(&self) -> usize;
 }
 
-pub trait BufferGpuAddressRangeExt: Buffer {
-    fn gpu_address_range(&self) -> Range<usize> {
-        self.gpu_ptr()..(self.gpu_ptr() + self.size())
-    }
+impl<B: Buffer> AsBufferRangeRef for B {
+    type Buffer = B;
 
+    fn as_buffer_range_ref(&self) -> BufferRangeRef<'_, B> {
+        BufferRangeRef::new(self, 0..self.size())
+    }
+}
+
+impl<B: Buffer> AsBufferRangeMut for B {
+    fn as_buffer_range_mut(&mut self) -> BufferRangeMut<'_, B> {
+        BufferRangeMut::new_exclusive(self, 0..self.size())
+    }
+}
+
+pub trait BufferGpuAddressRangeExt: Buffer {
     fn gpu_address_subrange(
         &self,
         subrange: Range<usize>,
@@ -29,4 +41,4 @@ pub trait BufferGpuAddressRangeExt: Buffer {
     }
 }
 
-impl<B: Buffer> BufferGpuAddressRangeExt for B {}
+impl<B: Buffer + ?Sized> BufferGpuAddressRangeExt for B {}

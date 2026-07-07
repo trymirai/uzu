@@ -4,10 +4,10 @@ use half::bf16;
 use proc_macros::uzu_test;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            Allocation, Backend, Context, Encoder, Kernels,
             kernel::{
                 Conv1dPackKernel, DeltaNetChunkedCumsumKernel, DeltaNetChunkedGramKernel,
                 DeltaNetChunkedMegaApplyKernel, DeltaNetChunkedPrepKernel, DeltaNetChunkedSolveKernel,
@@ -19,7 +19,16 @@ use crate::{
         metal::Metal,
     },
     data_type::DataType,
+    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec},
 };
+
+fn alloc_dtype<B: Backend>(
+    context: &B::Context,
+    elements_count: usize,
+    data_type: DataType,
+) -> Allocation<B> {
+    alloc_allocation::<B, u8>(context, elements_count * data_type.size_in_bytes())
+}
 
 fn run_conv_update<B: Backend>(
     in_proj: &[f32],
@@ -32,18 +41,18 @@ fn run_conv_update<B: Backend>(
 ) -> (Vec<f32>, Vec<f32>) {
     let context = B::Context::new().expect("Failed to create context");
 
-    let w_array = context.create_array_from(&[w.len()], w);
-    let b_array = context.create_array_from(&[b.len()], b);
-    let mut in_out = context.create_array_from(&[in_proj.len()], in_proj).into_allocation();
-    let mut state_allocation = context.create_array_from(&[state.len()], state).into_allocation();
+    let w_array = alloc_allocation_with_data::<B, f32>(&context, w);
+    let b_array = alloc_allocation_with_data::<B, f32>(&context, b);
+    let mut in_out = alloc_allocation_with_data::<B, f32>(&context, in_proj);
+    let mut state_allocation = alloc_allocation_with_data::<B, f32>(&context, state);
 
     let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(&context, DataType::F32, true)
         .expect("Failed to create kernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        w_array.allocation(),
-        Some(b_array.allocation()),
+        &w_array,
+        Some(&b_array),
         &mut in_out,
         &mut state_allocation,
         kernel_size,
@@ -53,8 +62,8 @@ fn run_conv_update<B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let out = crate::tests::helpers::allocation_prefix_to_vec::<B, f32>(&in_out, conv_dim as usize);
-    let new_state = crate::tests::helpers::allocation_to_vec::<B, f32>(&state_allocation);
+    let out = allocation_prefix_to_vec::<B, f32>(&in_out, conv_dim as usize);
+    let new_state = allocation_to_vec::<B, f32>(&state_allocation);
     (out, new_state)
 }
 
@@ -73,22 +82,22 @@ fn run_delta_net_update<B: Backend>(
 ) -> (Vec<f32>, Vec<f32>) {
     let context = B::Context::new().expect("Failed to create context");
 
-    let in_proj_array = context.create_array_from(&[in_proj.len()], in_proj);
-    let a_log_array = context.create_array_from(&[a_log.len()], a_log);
-    let dt_bias_array = context.create_array_from(&[dt_bias.len()], dt_bias);
-    let norm_weight_array = context.create_array_from(&[norm_weight.len()], norm_weight);
-    let mut state_allocation = context.create_array_from(&[state.len()], state).into_allocation();
-    let mut out = context.create_array_zeros(&[value_dim as usize], DataType::F32).into_allocation();
+    let in_proj_array = alloc_allocation_with_data::<B, f32>(&context, in_proj);
+    let a_log_array = alloc_allocation_with_data::<B, f32>(&context, a_log);
+    let dt_bias_array = alloc_allocation_with_data::<B, f32>(&context, dt_bias);
+    let norm_weight_array = alloc_allocation_with_data::<B, f32>(&context, norm_weight);
+    let mut state_allocation = alloc_allocation_with_data::<B, f32>(&context, state);
+    let mut out = alloc_allocation::<B, f32>(&context, value_dim as usize);
 
     let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetUpdateKernel::new(&context, DataType::F32, head_k_dim)
         .expect("Failed to create kernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        in_proj_array.allocation(),
-        a_log_array.allocation(),
-        dt_bias_array.allocation(),
-        norm_weight_array.allocation(),
+        &in_proj_array,
+        &a_log_array,
+        &dt_bias_array,
+        &norm_weight_array,
         &mut state_allocation,
         &mut out,
         num_v_heads,
@@ -101,8 +110,8 @@ fn run_delta_net_update<B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let out = crate::tests::helpers::allocation_to_vec::<B, f32>(&out);
-    let new_state = crate::tests::helpers::allocation_to_vec::<B, f32>(&state_allocation);
+    let out = allocation_to_vec::<B, f32>(&out);
+    let new_state = allocation_to_vec::<B, f32>(&state_allocation);
     (out, new_state)
 }
 
@@ -181,14 +190,14 @@ fn test_delta_net_conv_scan() {
 
     // Test: Conv1dPack + DeltaNetConvScan on Metal
     let context = <Metal as Backend>::Context::new().expect("context");
-    let state_array = context.create_array_from(&[init_state.len()], &init_state);
-    let mut in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj).into_allocation();
-    let w_array = context.create_array_from(&[w.len()], &w);
-    let b_array = context.create_array_from(&[b.len()], &b);
+    let state_array = alloc_allocation_with_data::<Metal, f32>(&context, &init_state);
+    let mut in_proj_array = alloc_allocation_with_data::<Metal, bf16>(&context, &in_proj);
+    let w_array = alloc_allocation_with_data::<Metal, f32>(&context, &w);
+    let b_array = alloc_allocation_with_data::<Metal, f32>(&context, &b);
 
     let padded_len = (tap_count + suffix_len) * total_proj_dim;
-    let mut padded_array = context.create_array_zeros(&[padded_len], DataType::F32).into_allocation();
-    let mut state_out_array = context.create_array_zeros(&[conv_dim * tap_count], DataType::F32).into_allocation();
+    let mut padded_array = alloc_allocation::<Metal, f32>(&context, padded_len);
+    let mut state_out_array = alloc_allocation::<Metal, f32>(&context, conv_dim * tap_count);
 
     let pack_kernel =
         <<Metal as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, DataType::F32, DataType::BF16)
@@ -199,7 +208,7 @@ fn test_delta_net_conv_scan() {
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     pack_kernel.encode(
-        state_array.allocation(),
+        &state_array,
         &in_proj_array,
         &mut padded_array,
         tap_count as u32,
@@ -210,8 +219,8 @@ fn test_delta_net_conv_scan() {
     );
     scan_kernel.encode(
         &padded_array,
-        w_array.allocation(),
-        Some(b_array.allocation()),
+        &w_array,
+        Some(&b_array),
         &mut in_proj_array,
         &mut state_out_array,
         suffix_len as u32,
@@ -224,14 +233,14 @@ fn test_delta_net_conv_scan() {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let in_proj_result: Vec<bf16> = crate::tests::helpers::allocation_to_vec(&in_proj_array);
+    let in_proj_result: Vec<bf16> = allocation_to_vec(&in_proj_array);
     let in_proj_result: Vec<f32> = in_proj_result.into_iter().map(f32::from).collect();
     let mut scan_outputs = vec![0.0f32; suffix_len * conv_dim];
     for t in 0..suffix_len {
         scan_outputs[t * conv_dim..(t + 1) * conv_dim]
             .copy_from_slice(&in_proj_result[t * total_proj_dim..t * total_proj_dim + conv_dim]);
     }
-    let scan_state: Vec<f32> = crate::tests::helpers::allocation_to_vec(&state_out_array);
+    let scan_state: Vec<f32> = allocation_to_vec(&state_out_array);
 
     assert_close(&ref_outputs, &scan_outputs, 1e-4, 1e-3, "ConvScan output");
     assert_close(&ref_state, &scan_state, 1e-5, 1e-4, "ConvScan state");
@@ -315,17 +324,17 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
     let num_dv_groups = head_v_dim.div_ceil(16) as u32;
 
     let context = <Metal as Backend>::Context::new().expect("context");
-    let in_proj_array = context.create_array_from(&[in_proj.len()], in_proj);
-    let a_log_array = context.create_array_from(&[a_log.len()], a_log);
-    let dt_bias_array = context.create_array_from(&[dt_bias.len()], dt_bias);
-    let norm_weight_array = context.create_array_from(&[norm_weight.len()], norm_weight);
-    let mut state_array = context.create_array_from(&[state.len()], state).into_allocation();
-    let mut out_array = context.create_array_zeros(&[suffix_len * value_dim], T::data_type()).into_allocation();
-    let mut q_norm_array = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
-    let mut k_norm_array = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
+    let in_proj_array = alloc_allocation_with_data::<Metal, T>(&context, in_proj);
+    let a_log_array = alloc_allocation_with_data::<Metal, f32>(&context, a_log);
+    let dt_bias_array = alloc_allocation_with_data::<Metal, f32>(&context, dt_bias);
+    let norm_weight_array = alloc_allocation_with_data::<Metal, f32>(&context, norm_weight);
+    let mut state_array = alloc_allocation_with_data::<Metal, f32>(&context, state);
+    let mut out_array = alloc_allocation::<Metal, T>(&context, suffix_len * value_dim);
+    let mut q_norm_array = alloc_allocation::<Metal, f32>(&context, suffix_len * key_dim);
+    let mut k_norm_array = alloc_allocation::<Metal, f32>(&context, suffix_len * key_dim);
 
-    let mut beta_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
-    let mut decay_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
+    let mut beta_array = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
+    let mut decay_array = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
 
     let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &context,
@@ -344,9 +353,9 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     prep_k.encode(
-        in_proj_array.allocation(),
-        a_log_array.allocation(),
-        dt_bias_array.allocation(),
+        &in_proj_array,
+        &a_log_array,
+        &dt_bias_array,
         &mut q_norm_array,
         &mut k_norm_array,
         &mut beta_array,
@@ -363,7 +372,7 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
         &k_norm_array,
         &beta_array,
         &decay_array,
-        in_proj_array.allocation(),
+        &in_proj_array,
         &mut state_array,
         &mut out_array,
         num_v_heads as u32,
@@ -377,8 +386,8 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
     );
     norm_k.encode(
         &mut out_array,
-        in_proj_array.allocation(),
-        norm_weight_array.allocation(),
+        &in_proj_array,
+        &norm_weight_array,
         num_v_heads as u32,
         head_v_dim as u32,
         value_dim as u32,
@@ -390,9 +399,9 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let out: Vec<T> = crate::tests::helpers::allocation_to_vec(&out_array);
+    let out: Vec<T> = allocation_to_vec(&out_array);
     let out = out.into_iter().map(|value| value.to_f32().expect("output to f32")).collect();
-    let state = crate::tests::helpers::allocation_to_vec(&state_array);
+    let state = allocation_to_vec(&state_array);
     (out, state)
 }
 
@@ -497,13 +506,13 @@ fn test_delta_net_prefill_prep() {
 
     // CPU reference via Kernels trait
     let cpu_ctx = <Cpu as Backend>::Context::new().expect("cpu context");
-    let cpu_in_proj = cpu_ctx.create_array_from(&[in_proj.len()], &in_proj);
-    let cpu_a_log = cpu_ctx.create_array_from(&[a_log.len()], &a_log);
-    let cpu_dt_bias = cpu_ctx.create_array_from(&[dt_bias.len()], &dt_bias);
-    let mut cpu_q = cpu_ctx.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
-    let mut cpu_k = cpu_ctx.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
-    let mut cpu_beta = cpu_ctx.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
-    let mut cpu_decay = cpu_ctx.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
+    let cpu_in_proj = alloc_allocation_with_data::<Cpu, f32>(&cpu_ctx, &in_proj);
+    let cpu_a_log = alloc_allocation_with_data::<Cpu, f32>(&cpu_ctx, &a_log);
+    let cpu_dt_bias = alloc_allocation_with_data::<Cpu, f32>(&cpu_ctx, &dt_bias);
+    let mut cpu_q = alloc_allocation::<Cpu, f32>(&cpu_ctx, suffix_len * key_dim);
+    let mut cpu_k = alloc_allocation::<Cpu, f32>(&cpu_ctx, suffix_len * key_dim);
+    let mut cpu_beta = alloc_allocation::<Cpu, f32>(&cpu_ctx, suffix_len * num_v_heads);
+    let mut cpu_decay = alloc_allocation::<Cpu, f32>(&cpu_ctx, suffix_len * num_v_heads);
 
     let cpu_prep = <<Cpu as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &cpu_ctx,
@@ -513,9 +522,9 @@ fn test_delta_net_prefill_prep() {
     .unwrap();
     let mut cpu_enc = Encoder::new(cpu_ctx.as_ref()).expect("encoder");
     cpu_prep.encode(
-        cpu_in_proj.allocation(),
-        cpu_a_log.allocation(),
-        cpu_dt_bias.allocation(),
+        &cpu_in_proj,
+        &cpu_a_log,
+        &cpu_dt_bias,
         &mut cpu_q,
         &mut cpu_k,
         &mut cpu_beta,
@@ -529,21 +538,21 @@ fn test_delta_net_prefill_prep() {
     );
     cpu_enc.end_encoding().submit().wait_until_completed().unwrap();
 
-    let ref_q: Vec<f32> = crate::tests::helpers::allocation_to_vec(&cpu_q);
-    let ref_k: Vec<f32> = crate::tests::helpers::allocation_to_vec(&cpu_k);
-    let ref_beta: Vec<f32> = crate::tests::helpers::allocation_to_vec(&cpu_beta);
-    let ref_decay: Vec<f32> = crate::tests::helpers::allocation_to_vec(&cpu_decay);
+    let ref_q: Vec<f32> = allocation_to_vec(&cpu_q);
+    let ref_k: Vec<f32> = allocation_to_vec(&cpu_k);
+    let ref_beta: Vec<f32> = allocation_to_vec(&cpu_beta);
+    let ref_decay: Vec<f32> = allocation_to_vec(&cpu_decay);
 
     // Metal
     let context = <Metal as Backend>::Context::new().expect("context");
-    let in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj);
-    let a_log_array = context.create_array_from(&[a_log.len()], &a_log);
-    let dt_bias_array = context.create_array_from(&[dt_bias.len()], &dt_bias);
-    let mut q_norm_array = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
-    let mut k_norm_array = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
+    let in_proj_array = alloc_allocation_with_data::<Metal, f32>(&context, &in_proj);
+    let a_log_array = alloc_allocation_with_data::<Metal, f32>(&context, &a_log);
+    let dt_bias_array = alloc_allocation_with_data::<Metal, f32>(&context, &dt_bias);
+    let mut q_norm_array = alloc_allocation::<Metal, f32>(&context, suffix_len * key_dim);
+    let mut k_norm_array = alloc_allocation::<Metal, f32>(&context, suffix_len * key_dim);
 
-    let mut beta_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
-    let mut decay_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
+    let mut beta_array = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
+    let mut decay_array = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
 
     let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &context,
@@ -554,9 +563,9 @@ fn test_delta_net_prefill_prep() {
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
     prep_k.encode(
-        in_proj_array.allocation(),
-        a_log_array.allocation(),
-        dt_bias_array.allocation(),
+        &in_proj_array,
+        &a_log_array,
+        &dt_bias_array,
         &mut q_norm_array,
         &mut k_norm_array,
         &mut beta_array,
@@ -570,10 +579,10 @@ fn test_delta_net_prefill_prep() {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let gpu_q: Vec<f32> = crate::tests::helpers::allocation_to_vec(&q_norm_array);
-    let gpu_k: Vec<f32> = crate::tests::helpers::allocation_to_vec(&k_norm_array);
-    let gpu_beta: Vec<f32> = crate::tests::helpers::allocation_to_vec(&beta_array);
-    let gpu_decay: Vec<f32> = crate::tests::helpers::allocation_to_vec(&decay_array);
+    let gpu_q: Vec<f32> = allocation_to_vec(&q_norm_array);
+    let gpu_k: Vec<f32> = allocation_to_vec(&k_norm_array);
+    let gpu_beta: Vec<f32> = allocation_to_vec(&beta_array);
+    let gpu_decay: Vec<f32> = allocation_to_vec(&decay_array);
 
     assert_close(&gpu_q, &ref_q, 1e-4, 1e-3, "prep q_norm");
     assert_close(&gpu_k, &ref_k, 1e-4, 1e-3, "prep k_norm");
@@ -604,16 +613,16 @@ fn bench_delta_net_prefill() {
     let norm_weight: Vec<f32> = (0..head_v_dim).map(|i| 0.9 + (i as f32) * 0.001).collect();
 
     let context = <Metal as Backend>::Context::new().expect("context");
-    let in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj);
-    let a_log_array = context.create_array_from(&[a_log.len()], &a_log);
-    let dt_bias_array = context.create_array_from(&[dt_bias.len()], &dt_bias);
-    let norm_weight_array = context.create_array_from(&[norm_weight.len()], &norm_weight);
-    let mut out_array = context.create_array_zeros(&[suffix_len * value_dim], DataType::F32).into_allocation();
-    let mut q_norm_array = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
-    let mut k_norm_array = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
+    let in_proj_array = alloc_allocation_with_data::<Metal, f32>(&context, &in_proj);
+    let a_log_array = alloc_allocation_with_data::<Metal, f32>(&context, &a_log);
+    let dt_bias_array = alloc_allocation_with_data::<Metal, f32>(&context, &dt_bias);
+    let norm_weight_array = alloc_allocation_with_data::<Metal, f32>(&context, &norm_weight);
+    let mut out_array = alloc_allocation::<Metal, f32>(&context, suffix_len * value_dim);
+    let mut q_norm_array = alloc_allocation::<Metal, f32>(&context, suffix_len * key_dim);
+    let mut k_norm_array = alloc_allocation::<Metal, f32>(&context, suffix_len * key_dim);
 
-    let mut beta_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
-    let mut decay_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
+    let mut beta_array = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
+    let mut decay_array = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
 
     let num_dv_groups = head_v_dim.div_ceil(16) as u32;
 
@@ -641,9 +650,9 @@ fn bench_delta_net_prefill() {
     let prep_result = run_perf_with_warmup("prep_only", 5, 50, || {
         let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
         prep_k.encode(
-            in_proj_array.allocation(),
-            a_log_array.allocation(),
-            dt_bias_array.allocation(),
+            &in_proj_array,
+            &a_log_array,
+            &dt_bias_array,
             &mut q_norm_array,
             &mut k_norm_array,
             &mut beta_array,
@@ -660,15 +669,15 @@ fn bench_delta_net_prefill() {
     prep_result.print();
 
     // Benchmark prep + prefill + norm_gate (production path)
-    let mut state_array = context.create_array_zeros(&[state_size], DataType::F32).into_allocation();
+    let mut state_array = alloc_allocation::<Metal, f32>(&context, state_size);
 
     let prefill_result = run_perf_with_warmup("prep+prefill+norm_gate", 5, 50, || {
         let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
         encoder.encode_fill(&mut state_array, 0);
         prep_k.encode(
-            in_proj_array.allocation(),
-            a_log_array.allocation(),
-            dt_bias_array.allocation(),
+            &in_proj_array,
+            &a_log_array,
+            &dt_bias_array,
             &mut q_norm_array,
             &mut k_norm_array,
             &mut beta_array,
@@ -685,7 +694,7 @@ fn bench_delta_net_prefill() {
             &k_norm_array,
             &beta_array,
             &decay_array,
-            in_proj_array.allocation(),
+            &in_proj_array,
             &mut state_array,
             &mut out_array,
             num_v_heads as u32,
@@ -699,8 +708,8 @@ fn bench_delta_net_prefill() {
         );
         norm_k.encode(
             &mut out_array,
-            in_proj_array.allocation(),
-            norm_weight_array.allocation(),
+            &in_proj_array,
+            &norm_weight_array,
             num_v_heads as u32,
             head_v_dim as u32,
             value_dim as u32,
@@ -757,17 +766,17 @@ fn run_recurrent_raw(
     let num_dv_groups = head_v_dim.div_ceil(16) as u32;
 
     let context = <Metal as Backend>::Context::new().expect("context");
-    let in_proj_array = context.create_array_from(&[in_proj.len()], in_proj);
-    let a_log_array = context.create_array_from(&[a_log.len()], a_log);
-    let dt_bias_array = context.create_array_from(&[dt_bias.len()], dt_bias);
-    let mut state_array = context.create_array_from(&[init_state.len()], init_state).into_allocation();
+    let in_proj_array = alloc_allocation_with_data::<Metal, _>(&context, in_proj);
+    let a_log_array = alloc_allocation_with_data::<Metal, _>(&context, a_log);
+    let dt_bias_array = alloc_allocation_with_data::<Metal, _>(&context, dt_bias);
+    let mut state_array = alloc_allocation_with_data::<Metal, _>(&context, init_state);
     // The prefill/prep dtype must match the (bf16) in_proj activation dtype;
     // out is therefore bf16 (same as the existing chunked-vs-recurrent bench).
-    let mut out_array = context.create_array_zeros(&[suffix_len * value_dim], DataType::BF16).into_allocation();
-    let mut q_norm = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
-    let mut k_norm = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
-    let mut beta = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
-    let mut decay = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
+    let mut out_array = alloc_allocation::<Metal, bf16>(&context, suffix_len * value_dim);
+    let mut q_norm = alloc_allocation::<Metal, f32>(&context, suffix_len * key_dim);
+    let mut k_norm = alloc_allocation::<Metal, f32>(&context, suffix_len * key_dim);
+    let mut beta = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
+    let mut decay = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
 
     let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &context,
@@ -784,9 +793,9 @@ fn run_recurrent_raw(
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
     prep_k.encode(
-        in_proj_array.allocation(),
-        a_log_array.allocation(),
-        dt_bias_array.allocation(),
+        &in_proj_array,
+        &a_log_array,
+        &dt_bias_array,
         &mut q_norm,
         &mut k_norm,
         &mut beta,
@@ -803,7 +812,7 @@ fn run_recurrent_raw(
         &k_norm,
         &beta,
         &decay,
-        in_proj_array.allocation(),
+        &in_proj_array,
         &mut state_array,
         &mut out_array,
         num_v_heads as u32,
@@ -849,15 +858,15 @@ fn run_mega_apply<B: Backend>(
     use_mxu: bool,
 ) -> (Vec<f32>, Vec<f32>) {
     let context = B::Context::new().expect("context");
-    let q_a = context.create_array_from(&[q_norm.len()], q_norm);
-    let k_a = context.create_array_from(&[k_norm.len()], k_norm);
-    let in_a = context.create_array_from(&[in_proj.len()], in_proj);
-    let qk_a = context.create_array_from(&[qk_scaled.len()], qk_scaled);
-    let t_a = context.create_array_from(&[t_mat.len()], t_mat);
-    let g_a = context.create_array_from(&[g.len()], g);
-    let beta_a = context.create_array_from(&[beta.len()], beta);
-    let mut state_alloc = context.create_array_from(&[state.len()], state).into_allocation();
-    let mut out_alloc = context.create_array_zeros(&[suffix_len * value_dim], DataType::F32).into_allocation();
+    let q_a = alloc_allocation_with_data::<B, _>(&context, q_norm);
+    let k_a = alloc_allocation_with_data::<B, _>(&context, k_norm);
+    let in_a = alloc_allocation_with_data::<B, _>(&context, in_proj);
+    let qk_a = alloc_allocation_with_data::<B, _>(&context, qk_scaled);
+    let t_a = alloc_allocation_with_data::<B, _>(&context, t_mat);
+    let g_a = alloc_allocation_with_data::<B, _>(&context, g);
+    let beta_a = alloc_allocation_with_data::<B, _>(&context, beta);
+    let mut state_alloc = alloc_allocation_with_data::<B, _>(&context, state);
+    let mut out_alloc = alloc_allocation::<B, f32>(&context, suffix_len * value_dim);
 
     let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
         &context,
@@ -870,13 +879,13 @@ fn run_mega_apply<B: Backend>(
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
     kernel.encode(
-        q_a.allocation(),
-        k_a.allocation(),
-        in_a.allocation(),
-        qk_a.allocation(),
-        t_a.allocation(),
-        g_a.allocation(),
-        beta_a.allocation(),
+        &q_a,
+        &k_a,
+        &in_a,
+        &qk_a,
+        &t_a,
+        &g_a,
+        &beta_a,
         &mut state_alloc,
         &mut out_alloc,
         num_v_heads as u32,
@@ -1073,33 +1082,24 @@ fn run_mode_l_precompute_metal(
     let num_col_pairs = num_blocks.div_ceil(2);
 
     let context = <Metal as Backend>::Context::new().expect("context");
-    let in_proj_array = context.create_array_from(&[in_proj.len()], in_proj);
-    let a_log_array = context.create_array_from(&[a_log.len()], a_log);
-    let dt_bias_array = context.create_array_from(&[dt_bias.len()], dt_bias);
+    let in_proj_array = alloc_allocation_with_data::<Metal, _>(&context, in_proj);
+    let a_log_array = alloc_allocation_with_data::<Metal, _>(&context, a_log);
+    let dt_bias_array = alloc_allocation_with_data::<Metal, _>(&context, dt_bias);
 
-    let mut q_norm = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
-    let mut k_norm = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
-    let mut beta = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
-    let mut log_decay = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
-    let mut g = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
-    let mut kk = context
-        .create_array_zeros(&[num_chunks * num_k_heads * chunk_size * chunk_size], DataType::F32)
-        .into_allocation();
-    let mut qk_scaled = context
-        .create_array_zeros(&[num_chunks * num_v_heads * chunk_size * chunk_size], DataType::F32)
-        .into_allocation();
-    let mut a_packed = context
-        .create_array_zeros(
-            &[num_chunks * num_v_heads * num_blocks * num_col_pairs * block_size * 2 * block_size],
-            DataType::F32,
-        )
-        .into_allocation();
-    let mut a_inv = context
-        .create_array_zeros(&[num_chunks * num_v_heads * num_blocks * block_size * block_size], DataType::F32)
-        .into_allocation();
-    let mut t_mat = context
-        .create_array_zeros(&[num_chunks * num_v_heads * chunk_size * chunk_size], DataType::BF16)
-        .into_allocation();
+    let mut q_norm = alloc_allocation::<Metal, f32>(&context, suffix_len * key_dim);
+    let mut k_norm = alloc_allocation::<Metal, f32>(&context, suffix_len * key_dim);
+    let mut beta = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
+    let mut log_decay = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
+    let mut g = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
+    let mut kk = alloc_allocation::<Metal, f32>(&context, num_chunks * num_k_heads * chunk_size * chunk_size);
+    let mut qk_scaled = alloc_allocation::<Metal, f32>(&context, num_chunks * num_v_heads * chunk_size * chunk_size);
+    let mut a_packed = alloc_allocation::<Metal, f32>(
+        &context,
+        num_chunks * num_v_heads * num_blocks * num_col_pairs * block_size * 2 * block_size,
+    );
+    let mut a_inv =
+        alloc_allocation::<Metal, f32>(&context, num_chunks * num_v_heads * num_blocks * block_size * block_size);
+    let mut t_mat = alloc_allocation::<Metal, bf16>(&context, num_chunks * num_v_heads * chunk_size * chunk_size);
 
     let prep_k =
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedPrepKernel::new(&context, DataType::BF16, 128)
@@ -1113,9 +1113,9 @@ fn run_mode_l_precompute_metal(
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
     prep_k.encode(
-        in_proj_array.allocation(),
-        a_log_array.allocation(),
-        dt_bias_array.allocation(),
+        &in_proj_array,
+        &a_log_array,
+        &dt_bias_array,
         &mut q_norm,
         &mut k_norm,
         &mut beta,
@@ -1347,11 +1347,11 @@ fn bench_delta_net_fleet_simd_vs_recurrent() {
         let norm_weight: Vec<f32> = (0..head_v_dim).map(|i| 0.9 + (i as f32) * 0.001).collect();
 
         let context = <Metal as Backend>::Context::new().expect("context");
-        let in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj);
-        let a_log_array = context.create_array_from(&[a_log.len()], &a_log);
-        let dt_bias_array = context.create_array_from(&[dt_bias.len()], &dt_bias);
-        let norm_weight_array = context.create_array_from(&[norm_weight.len()], &norm_weight);
-        let alloc = |data_type, len| context.create_array_zeros(&[len], data_type).into_allocation();
+        let in_proj_array = alloc_allocation_with_data::<Metal, _>(&context, &in_proj);
+        let a_log_array = alloc_allocation_with_data::<Metal, _>(&context, &a_log);
+        let dt_bias_array = alloc_allocation_with_data::<Metal, _>(&context, &dt_bias);
+        let norm_weight_array = alloc_allocation_with_data::<Metal, _>(&context, &norm_weight);
+        let alloc = |data_type, len| alloc_dtype::<Metal>(&context, len, data_type);
 
         // Recurrent buffers.
         let mut rec_out = alloc(DataType::BF16, suffix_len * value_dim);
@@ -1434,9 +1434,9 @@ fn bench_delta_net_fleet_simd_vs_recurrent() {
                 let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
                 encoder.encode_fill(&mut mode_l_state, 0);
                 prep_k.encode(
-                    in_proj_array.allocation(),
-                    a_log_array.allocation(),
-                    dt_bias_array.allocation(),
+                    &in_proj_array,
+                    &a_log_array,
+                    &dt_bias_array,
                     &mut q_m,
                     &mut k_m,
                     &mut beta_m,
@@ -1490,7 +1490,7 @@ fn bench_delta_net_fleet_simd_vs_recurrent() {
                 $mega.encode(
                     &q_m,
                     &k_m,
-                    in_proj_array.allocation(),
+                    &in_proj_array,
                     &qk_m,
                     &t_mat_m,
                     &g_m,
@@ -1507,8 +1507,8 @@ fn bench_delta_net_fleet_simd_vs_recurrent() {
                 );
                 norm_k.encode(
                     &mut mode_l_out,
-                    in_proj_array.allocation(),
-                    norm_weight_array.allocation(),
+                    &in_proj_array,
+                    &norm_weight_array,
                     num_v_heads as u32,
                     head_v_dim as u32,
                     value_dim as u32,
@@ -1546,9 +1546,9 @@ fn bench_delta_net_fleet_simd_vs_recurrent() {
             let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
             encoder.encode_fill(&mut rec_state, 0);
             recurrent_prep_k.encode(
-                in_proj_array.allocation(),
-                a_log_array.allocation(),
-                dt_bias_array.allocation(),
+                &in_proj_array,
+                &a_log_array,
+                &dt_bias_array,
                 &mut rec_q,
                 &mut rec_k,
                 &mut rec_beta,
@@ -1565,7 +1565,7 @@ fn bench_delta_net_fleet_simd_vs_recurrent() {
                 &rec_k,
                 &rec_beta,
                 &rec_decay,
-                in_proj_array.allocation(),
+                &in_proj_array,
                 &mut rec_state,
                 &mut rec_out,
                 num_v_heads as u32,
@@ -1579,8 +1579,8 @@ fn bench_delta_net_fleet_simd_vs_recurrent() {
             );
             norm_k.encode(
                 &mut rec_out,
-                in_proj_array.allocation(),
-                norm_weight_array.allocation(),
+                &in_proj_array,
+                &norm_weight_array,
                 num_v_heads as u32,
                 head_v_dim as u32,
                 value_dim as u32,
@@ -1688,12 +1688,12 @@ fn bench_delta_net_mode_l_breakdown() {
         let norm_weight: Vec<f32> = (0..head_v_dim).map(|i| 0.9 + (i as f32) * 0.001).collect();
 
         let context = <Metal as Backend>::Context::new().expect("context");
-        let in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj);
-        let a_log_array = context.create_array_from(&[a_log.len()], &a_log);
-        let dt_bias_array = context.create_array_from(&[dt_bias.len()], &dt_bias);
-        let norm_weight_array = context.create_array_from(&[norm_weight.len()], &norm_weight);
+        let in_proj_array = alloc_allocation_with_data::<Metal, _>(&context, &in_proj);
+        let a_log_array = alloc_allocation_with_data::<Metal, _>(&context, &a_log);
+        let dt_bias_array = alloc_allocation_with_data::<Metal, _>(&context, &dt_bias);
+        let norm_weight_array = alloc_allocation_with_data::<Metal, _>(&context, &norm_weight);
 
-        let alloc = |data_type, len| context.create_array_zeros(&[len], data_type).into_allocation();
+        let alloc = |data_type, len| alloc_dtype::<Metal>(&context, len, data_type);
 
         let mut q_norm = alloc(DataType::F32, suffix_len * key_dim);
         let mut k_norm = alloc(DataType::F32, suffix_len * key_dim);
@@ -1738,9 +1738,9 @@ fn bench_delta_net_mode_l_breakdown() {
             let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
             encoder.encode_fill(&mut mega_state, 0);
             prep_k.encode(
-                in_proj_array.allocation(),
-                a_log_array.allocation(),
-                dt_bias_array.allocation(),
+                &in_proj_array,
+                &a_log_array,
+                &dt_bias_array,
                 &mut q_norm,
                 &mut k_norm,
                 &mut beta,
@@ -1809,9 +1809,9 @@ fn bench_delta_net_mode_l_breakdown() {
 
         time_kernel!("prep", |encoder| {
             prep_k.encode(
-                in_proj_array.allocation(),
-                a_log_array.allocation(),
-                dt_bias_array.allocation(),
+                &in_proj_array,
+                &a_log_array,
+                &dt_bias_array,
                 &mut q_norm,
                 &mut k_norm,
                 &mut beta,
@@ -1865,7 +1865,7 @@ fn bench_delta_net_mode_l_breakdown() {
                 mega_vt32_k.encode(
                     &q_norm,
                     &k_norm,
-                    in_proj_array.allocation(),
+                    &in_proj_array,
                     &qk_scaled,
                     &t_mat,
                     &g,
@@ -1896,8 +1896,8 @@ fn bench_delta_net_mode_l_breakdown() {
                 let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
                 norm_k.encode(
                     &mut mega_out,
-                    in_proj_array.allocation(),
-                    norm_weight_array.allocation(),
+                    &in_proj_array,
+                    &norm_weight_array,
                     num_v_heads as u32,
                     head_v_dim as u32,
                     value_dim as u32,
@@ -1916,9 +1916,9 @@ fn bench_delta_net_mode_l_breakdown() {
         macro_rules! encode_precompute {
             ($encoder:expr) => {{
                 prep_k.encode(
-                    in_proj_array.allocation(),
-                    a_log_array.allocation(),
-                    dt_bias_array.allocation(),
+                    &in_proj_array,
+                    &a_log_array,
+                    &dt_bias_array,
                     &mut q_norm,
                     &mut k_norm,
                     &mut beta,
@@ -1976,7 +1976,7 @@ fn bench_delta_net_mode_l_breakdown() {
                 mega_vt32_k.encode(
                     &q_norm,
                     &k_norm,
-                    in_proj_array.allocation(),
+                    &in_proj_array,
                     &qk_scaled,
                     &t_mat,
                     &g,
@@ -1993,8 +1993,8 @@ fn bench_delta_net_mode_l_breakdown() {
                 );
                 norm_k.encode(
                     &mut mega_out,
-                    in_proj_array.allocation(),
-                    norm_weight_array.allocation(),
+                    &in_proj_array,
+                    &norm_weight_array,
                     num_v_heads as u32,
                     head_v_dim as u32,
                     value_dim as u32,

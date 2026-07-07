@@ -4,6 +4,7 @@ use crate::chat::{
     SynchronizationError,
     hanashi::{messages::Error as MessageError, ordering::Error as OrderingError, renderer::Error as RendererError},
 };
+
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {

@@ -7,7 +7,7 @@ use super::policy::{self, DEFAULT_RESULTS_PER_SIMDGROUP, FP_K_BLOCK};
 use crate::{
     backends::{
         common::{
-            Allocation, AsBufferRangeRef, Buffer, Encoder,
+            Allocation, BufferArg, Encoder,
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
@@ -38,14 +38,14 @@ pub(crate) struct GemvSpecialization {
 }
 
 impl GemvSpecialization {
-    pub(crate) fn select<TB: AsBufferRangeRef>(
-        args: &MatmulArguments<Metal, TB>,
+    pub(crate) fn select<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+        args: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
         device_tier: DeviceTier,
     ) -> Option<GemvSpecialization> {
-        if !args.b_transpose || args.b_offset != 0 {
+        if !args.b_transpose {
             return None;
         }
         let is_quant = !matches!(args.b, MatmulB::FullPrecision { .. });
@@ -165,9 +165,9 @@ impl GemvDispatch {
         }
     }
 
-    pub(crate) fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    pub(crate) fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         &mut self,
-        arguments: MatmulArguments<'a, Metal, TB>,
+        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         specialization: GemvSpecialization,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {

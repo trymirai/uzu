@@ -6,11 +6,12 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::SigmoidGateKernel},
         cpu::Cpu,
     },
+    tests::helpers::{alloc_allocation_with_data, allocation_to_vec},
 };
 
 struct Config {
@@ -24,20 +25,19 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     output_data: &[T],
     config: &Config,
 ) -> Vec<T> {
-    let size = gate_data.len();
     let context = B::Context::new().expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::SigmoidGateKernel::new(&context, T::data_type())
         .expect("Failed to create SigmoidGateKernel");
 
-    let gate_array = context.create_array_from(&[size], &gate_data.to_vec().into_boxed_slice());
-    let mut output = context.create_array_from(&[size], &output_data.to_vec().into_boxed_slice()).into_allocation();
+    let gate_allocation = alloc_allocation_with_data::<B, T>(&context, gate_data);
+    let mut output = alloc_allocation_with_data::<B, T>(&context, output_data);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     let total_elements = config.suffix_length * config.num_heads * config.head_dim;
-    kernel.encode(gate_array.allocation(), &mut output, total_elements, &mut encoder);
+    kernel.encode(&gate_allocation, &mut output, total_elements, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::tests::helpers::allocation_to_vec(&output)
+    allocation_to_vec(&output)
 }
 
 fn run_test<T: ArrayElement + Float + Debug>(config: &Config) {

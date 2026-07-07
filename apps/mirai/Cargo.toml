@@ -1,0 +1,31 @@
+# Standalone workspace for the Mirai GPUI app (lives under `apps/`, alongside
+# the Swift `apps/playground`).
+#
+# Intentionally NOT a member of the uzu workspace at the repo root. GPUI resolves
+# dozens of `*.workspace = true` deps against Zed's workspace and relies on a
+# `[patch.crates-io]` override that only applies from the workspace root cargo is
+# invoked from. A dedicated workspace here keeps those Zed-specific patches out of
+# the published uzu engine's workspace.
+[workspace]
+members = ["mirai-app", "ui-kit"]
+resolver = "3"
+
+# GPUI + platform entry point + Tokio bridge + HTTP client, pinned to an upstream
+# Zed commit via git so the build needs no local Zed checkout.
+[workspace.dependencies]
+gpui = { git = "https://github.com/zed-industries/zed.git", rev = "d655580d9b9beb34949e1902c1d6ebeba740e972" }
+gpui_platform = { git = "https://github.com/zed-industries/zed.git", rev = "d655580d9b9beb34949e1902c1d6ebeba740e972" }
+gpui_tokio = { git = "https://github.com/zed-industries/zed.git", rev = "d655580d9b9beb34949e1902c1d6ebeba740e972" }
+reqwest_client = { git = "https://github.com/zed-industries/zed.git", rev = "d655580d9b9beb34949e1902c1d6ebeba740e972" }
+
+# Replicated from Zed's [patch.crates-io] at that rev. GPUI's executor depends on
+# these specific revisions of async-task/async-process. Other entries in Zed's
+# table (livekit, calloop, notify, windows-capture) are for crates we don't pull.
+[patch.crates-io]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+
+# Build scripts (uzu's Metal kernel compiler, gpui's shader/bindgen scripts) and
+# proc-macros are painfully slow at opt-level 0.
+[profile.dev.build-override]
+opt-level = 3

@@ -4,7 +4,7 @@ use super::specialization::GemmSpecialization;
 use crate::{
     backends::{
         common::{
-            Allocation, AsBufferRangeRef, Backend, Buffer, Encoder,
+            Allocation, Backend, BufferArg, Encoder,
             gpu_types::{
                 GemmParams, HadamardTransformOrder,
                 gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
@@ -107,9 +107,9 @@ impl GemmKernel {
         }
     }
 
-    pub(crate) fn should_skip_gemv_for_mxu<TB: AsBufferRangeRef>(
+    pub(crate) fn should_skip_gemv_for_mxu<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         &self,
-        arguments: &MatmulArguments<'_, Metal, TB>,
+        arguments: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
     ) -> bool {
         match (
             arguments.m,
@@ -138,9 +138,9 @@ impl GemmKernel {
         )
     }
 
-    fn select_mxu_tiling<TB: AsBufferRangeRef>(
+    fn select_mxu_tiling<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         &self,
-        arguments: &MatmulArguments<'_, Metal, TB>,
+        arguments: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
     ) -> Option<GemmTiling> {
         if ![self.weights_data_type, self.input_data_type, self.output_data_type]
             .into_iter()
@@ -166,7 +166,7 @@ impl GemmKernel {
             | MatmulB::ScaleSymmetricDequant {
                 ..
             } => {
-                if !arguments.b_transpose || arguments.b_leading_dimension.is_some() || arguments.b_offset != 0 {
+                if !arguments.b_transpose || arguments.b_leading_dimension.is_some() {
                     return None;
                 }
                 let tiling = select_mxu_quant_tiling(arguments.m, arguments.n, arguments.b.group_size().unwrap_or(0));
@@ -175,9 +175,9 @@ impl GemmKernel {
         }
     }
 
-    pub fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    pub fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         &mut self,
-        arguments: MatmulArguments<'a, Metal, TB>,
+        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let path = if encoder.context().device.supports_mxu() && self.select_mxu_tiling(&arguments).is_some() {
@@ -188,9 +188,9 @@ impl GemmKernel {
         self.encode_dispatch_path(arguments, path, encoder)
     }
 
-    pub fn encode_dispatch_path<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    pub fn encode_dispatch_path<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         &mut self,
-        arguments: MatmulArguments<'a, Metal, TB>,
+        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         path: GemmDispatchPath,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
@@ -224,7 +224,7 @@ impl GemmKernel {
                 !d_mask.contains(GemmDTransform::BIAS | GemmDTransform::RHT),
                 "QuantGemm with both output bias and output RHT is not supported: bias must be applied after RHT",
             );
-            if !arguments.b_transpose || arguments.b_leading_dimension.is_some() || arguments.b_offset != 0 {
+            if !arguments.b_transpose || arguments.b_leading_dimension.is_some() {
                 return Err(MatmulError::UnsupportedLayout {
                     path: "QuantGemm",
                 }
@@ -245,7 +245,6 @@ impl GemmKernel {
             a,
             a_offset,
             b,
-            b_offset,
             b_leading_dimension,
             b_transpose,
             d,
@@ -293,7 +292,7 @@ impl GemmKernel {
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
 
-                if b_transpose && b_leading_dimension.is_none() && b_offset == 0 {
+                if b_transpose && b_leading_dimension.is_none() {
                     let split_k = select_split_k(m, n, k, tiling, use_mxu, 0, true, false);
                     if split_k > 1
                         && split_k_output_supported(output_transform, n, self.weights_data_type, self.output_data_type)
@@ -302,7 +301,6 @@ impl GemmKernel {
                             a,
                             a_offset,
                             weights,
-                            b_offset,
                             None,
                             None,
                             None,
@@ -359,7 +357,7 @@ impl GemmKernel {
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
                     (a, a_offset),
-                    (weights, b_offset),
+                    weights,
                     &mut *d,
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
@@ -423,7 +421,6 @@ impl GemmKernel {
                         a,
                         a_offset,
                         weights,
-                        b_offset,
                         scales,
                         biases,
                         zero_points,
@@ -460,7 +457,7 @@ impl GemmKernel {
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
                     (a, a_offset),
-                    (weights, b_offset),
+                    weights,
                     &mut *d,
                     scales,
                     biases,
@@ -480,15 +477,11 @@ impl GemmKernel {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn encode_split_k<
-        TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>,
-        WB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>,
-    >(
+    fn encode_split_k<'a, WB: BufferArg<'a, Metal>>(
         &mut self,
-        a: &TB,
+        a: &Allocation<Metal>,
         a_offset: usize,
-        weights: &WB,
-        b_offset: usize,
+        weights: WB,
         scales: Option<&Allocation<Metal>>,
         biases: Option<&Allocation<Metal>>,
         zero_points: Option<&Allocation<Metal>>,
@@ -548,7 +541,7 @@ impl GemmKernel {
         let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
         part_kernel.encode(
             (a, a_offset),
-            (weights, b_offset),
+            weights,
             &mut temp,
             scales,
             biases,

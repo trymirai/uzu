@@ -23,9 +23,7 @@ inline void moe_scatter_buckets_impl(
     uint T,
     uint E,
     uint K,
-    uint num_blocks,
     uint num_tiles,
-    uint3 tid3,
     uint lid,
     uint3 tgpig,
     threadgroup _atomic<uint>* sg_counts,
@@ -166,53 +164,6 @@ PUBLIC KERNEL(MoeBlockBasesFromPartials)(
   }
 }
 
-template <typename T>
-VARIANTS(T, float, half, bfloat)
-PUBLIC KERNEL(MoeScatterBuckets)(
-    device const int* topk_ids,
-    device const T* topk_probs,
-    device const uint* offsets,
-    device const uint* block_bases,
-    device const uint* block_alloc,
-    device int* out_ids,
-    device T* out_probs,
-    constant uint& t,
-    constant uint& e,
-    constant uint& k,
-    constant uint& num_blocks,
-    constant uint& num_tiles,
-    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E],
-    threadgroup uint sg_base[NUM_SG * TILE_E],
-    const ThreadContext thread_context,
-    const uint tgpig_x GROUPS(num_blocks),
-    const uint lid THREADS(256)
-) {
-  const uint3 tgpig = {tgpig_x, 0, 0};
-  const uint tid_x = tgpig.x * BLOCK_SIZE + lid;
-  const uint3 tid3 = {tid_x, 0, 0};
-  moe_scatter_buckets_impl<T>(
-      topk_ids,
-      topk_probs,
-      offsets,
-      block_bases,
-      block_alloc,
-      out_ids,
-      out_probs,
-      (device int*)nullptr,
-      t,
-      e,
-      k,
-      num_blocks,
-      num_tiles,
-      tid3,
-      lid,
-      tgpig,
-      sg_counts,
-      sg_base,
-      thread_context
-  );
-}
-
 // Map variants
 template <typename T>
 VARIANTS(T, float, half, bfloat)
@@ -237,8 +188,6 @@ PUBLIC KERNEL(MoeScatterBucketsMap)(
     const uint lid THREADS(256)
 ) {
   const uint3 tgpig = {tgpig_x, 0, 0};
-  const uint tid_x = tgpig.x * BLOCK_SIZE + lid;
-  const uint3 tid3 = {tid_x, 0, 0};
   moe_scatter_buckets_impl<T>(
       topk_ids,
       topk_probs,
@@ -251,9 +200,7 @@ PUBLIC KERNEL(MoeScatterBucketsMap)(
       t,
       e,
       k,
-      num_blocks,
       num_tiles,
-      tid3,
       lid,
       tgpig,
       sg_counts,

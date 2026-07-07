@@ -9,8 +9,7 @@ enum class ActivationType : uint32_t {
   SILU = 0,
   GELUApprox = 1,
   GELUExact = 2,
-  TANH = 3,
-  IDENTITY = 4,
-  SOFTPLUS = 5,
+  IDENTITY = 3,
+  SOFTPLUS = 4,
 };
 } // namespace uzu::activation_type

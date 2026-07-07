@@ -13,7 +13,10 @@ use crate::{
         per_layer_embedding::{PLELayerConfig, PLEModelConfig},
     },
     data_type::DataType,
-    encodable_block::{Linear, PostLayerScalar, RMSNorm, RMSNormError, linear::LinearBlockError},
+    encodable_block::{
+        linear::{Linear, LinearBlockError},
+        normalization::{Normalization, NormalizationNewError, PostLayerScalar},
+    },
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -23,8 +26,8 @@ pub enum PerLayerEmbeddingError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
-    #[error("RMSNorm error: {0}")]
-    RMSNormError(#[from] RMSNormError<B>),
+    #[error("Normalization error: {0}")]
+    Normalization(#[from] NormalizationNewError<B>),
     #[error("Linear error: {0}")]
     LinearError(#[from] LinearBlockError<B>),
 }
@@ -33,7 +36,7 @@ pub struct PerLayerEmbedding<B: Backend> {
     token_embedding: Allocation<B>,
     token_embedding_lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
     model_projection: Box<dyn Linear<B>>,
-    projection_norm: RMSNorm<B>,
+    projection_norm: Normalization<B>,
     add_scale: <B::Kernels as Kernels>::TensorAddScaleKernel,
     ple_dim: usize,
     num_layers: usize,
@@ -77,16 +80,16 @@ impl<B: Backend> PerLayerEmbedding<B> {
             adjusted.epsilon /= scale_squared;
             adjusted
         };
-        let projection_norm = RMSNorm::new(
-            context,
-            data_type,
+        let projection_norm = Normalization::new(
             config.ple_dim,
-            projection_norm_config,
-            &parameter_tree.subtree("projection_norm")?,
             None,
             false,
             false,
             PostLayerScalar::ScaleOutput(config.input_scale),
+            data_type,
+            &projection_norm_config,
+            &parameter_tree.subtree("projection_norm")?,
+            context,
         )?;
 
         let add_scale = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, false)
@@ -156,7 +159,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
 pub struct PerLayerEmbeddingProjection<B: Backend> {
     gate: Box<dyn Linear<B>>,
     projection: Box<dyn Linear<B>>,
-    norm: RMSNorm<B>,
+    norm: Normalization<B>,
     gate_act_mul: <B::Kernels as Kernels>::GatedActMulKernel,
     residual_finalize: <B::Kernels as Kernels>::TensorAddBiasKernel,
     residual_combine: <B::Kernels as Kernels>::TensorAddScaleKernel,
@@ -194,16 +197,16 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             data_type,
             &parameter_tree.subtree("projection")?,
         )?;
-        let norm = RMSNorm::new(
-            context,
-            data_type,
+        let norm = Normalization::new(
             model_dim,
-            config.norm_config.clone(),
-            &parameter_tree.subtree("norm")?,
             None,
             false,
             false,
             PostLayerScalar::None,
+            data_type,
+            &config.norm_config,
+            &parameter_tree.subtree("norm")?,
+            context,
         )?;
 
         let gate_act_mul = <B::Kernels as Kernels>::GatedActMulKernel::new(context, data_type, false, false)
