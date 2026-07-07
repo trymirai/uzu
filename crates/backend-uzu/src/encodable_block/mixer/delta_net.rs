@@ -345,7 +345,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.total_proj_dim as u32,
                 encoder,
             );
-            if let Some(chunked) = self.chunked.as_ref().filter(|_| chunked_prefill::should_use(batch_dim.size())) {
+            if let Some(chunked) = self.chunked.as_ref().filter(|chunked| chunked.should_use(batch_dim.size())) {
                 chunked.encode(self, &in_projected, state, &mut delta_output, batch_dim.size(), encoder)?;
             } else {
                 let mut prep_q_norm =

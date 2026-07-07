@@ -10,17 +10,8 @@ using namespace uzu::matmul;
 
 #define SOLVE_T_BLOCK 16u
 
-// Emits the DENSE unit-lower-triangular inverse T = (I + A)^{-1} per
-// (chunk, v-head) as BF16, for Mode L's mega kernel (Vnew = T . R). It is
-// structurally BuildWU with the RHS replaced by the identity: T = T . I, so one
-// block forward substitution over the SAME block inverses (a_packed strips +
-// a_inv diagonal-block inverses) that `DeltaNetChunkedSolve` already produced
-// yields T directly. W/U (and their traffic) disappear. T is bf16 -- exactly
-// the precision the old W/U operands carried, so numerics are no worse (state
-// stays f32). Output T is [chunks, HV, C, C], one BV-wide column slice per tile.
-// The matmuls use the 8x8 simdgroup fragment path with f32 operands. (An MXU
-// bf16-operand variant was benchmarked and found perf-neutral on precompute, so
-// it was removed to avoid the bf16-operand complexity.)
+// Builds dense T = (I + A)^-1 as bf16 for mega apply. This is block forward
+// substitution over a_packed plus the per-block inverses from Solve.
 template <uint CHUNK_SIZE, uint BV>
 VARIANTS(CHUNK_SIZE, 16, 32, 64)
 VARIANTS(BV, 16, 32)

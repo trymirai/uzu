@@ -15,16 +15,14 @@ use crate::{
 #[cfg(metal_backend)]
 use crate::backends::metal::MetalContext;
 
-const MIN_T: usize = 256;
+const MXU_MIN_T: usize = 256;
+const SIMD_MIN_T: usize = 1024;
 const CHUNK_SIZE: usize = 64;
 const BLOCK_SIZE: usize = 16;
 const VT: usize = 32;
 
-pub(super) fn should_use(suffix_len: usize) -> bool {
-    suffix_len >= MIN_T
-}
-
 pub(super) struct ChunkedPrefill<B: Backend> {
+    min_t: usize,
     prep: <B::Kernels as Kernels>::DeltaNetChunkedPrepKernel,
     cumsum: <B::Kernels as Kernels>::DeltaNetChunkedCumsumKernel,
     gram: <B::Kernels as Kernels>::DeltaNetChunkedGramKernel,
@@ -42,11 +40,12 @@ impl<B: Backend> ChunkedPrefill<B> {
     where
         B::Context: Any,
     {
-        if !supports_chunked_prefill(context) {
+        let Some((use_mxu, min_t)) = chunked_prefill_config(context) else {
             return Ok(None);
-        }
+        };
 
         Ok(Some(Self {
+            min_t,
             prep: <B::Kernels as Kernels>::DeltaNetChunkedPrepKernel::new(context, outer_data_type, head_dim)?,
             cumsum: <B::Kernels as Kernels>::DeltaNetChunkedCumsumKernel::new(context)?,
             gram: <B::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(context, head_dim, CHUNK_SIZE as u32)?,
@@ -57,9 +56,16 @@ impl<B: Backend> ChunkedPrefill<B> {
                 outer_data_type,
                 outer_data_type,
                 VT as u32,
-                true,
+                use_mxu,
             )?,
         }))
+    }
+
+    pub(super) fn should_use(
+        &self,
+        suffix_len: usize,
+    ) -> bool {
+        suffix_len >= self.min_t
     }
 
     pub(super) fn encode(
@@ -171,14 +177,21 @@ impl<B: Backend> ChunkedPrefill<B> {
     }
 }
 
-fn supports_chunked_prefill<C: Any>(context: &C) -> bool {
+fn chunked_prefill_config<C: Any>(context: &C) -> Option<(bool, usize)> {
     #[cfg(metal_backend)]
     if let Some(context) = (context as &dyn Any).downcast_ref::<MetalContext>() {
-        return context.supports_mxu() && context.supports_dynamic_caching();
+        let use_mxu = context.supports_mxu();
+        return if use_mxu {
+            Some((true, MXU_MIN_T))
+        } else if context.supports_dynamic_caching() {
+            Some((false, SIMD_MIN_T))
+        } else {
+            None
+        };
     }
 
     #[cfg(not(metal_backend))]
     let _ = context;
 
-    false
+    None
 }

@@ -9,35 +9,16 @@
 using namespace metal;
 using namespace uzu::matmul;
 
-// Mode L mega kernel: the persistent chunk-scan of `DeltaNetChunkedFusedApply`
-// with W/U (and BuildWU) eliminated via the identity
-//   Vnew = T . R,   R = diag(beta) . (V - e^g (.) (K . S0^T)),
-// where T is the dense unit-lower-triangular chunk inverse emitted by
-// `DeltaNetChunkedSolveT`. The scan computes R itself from the state slice it
-// already holds (K . S0^T is the same shape/cost as the old W . S0^T), then
-// applies T as one dense [C,C] x [C,VT] MMA. State is f32 end-to-end; T / A are
-// bf16 device operands (exactly the precision the old W/U carried).
-//
-// Per chunk (5 threadgroup barriers):
-//   R phase:    R = beta*(V - e^g (.) (K . S^T))  -> scratch     [barrier]
-//   Vnew phase: Vnew = T . R into registers      [barrier] store over scratch [barrier]
-//   Y phase:    Y = e^g (.) (Q . S^T) + A . Vnew -> out          [barrier]
-//   Update:     S^T <- alpha . S^T + (decay (.) K)^T . Vnew      [barrier]
-// TG budget: S^T [K,VT] f32 (16KB) + one reused scratch [C,VT] f32 (8KB) = 24KB.
+// Chunked Mode-L scan. T is the dense chunk inverse from SolveT; scratch holds
+// R and then Vnew. State stays f32, while T and A are bf16 device operands.
 #define MEGA_THREADS 128
 #define MEGA_NUM_SIMDGROUPS (MEGA_THREADS / METAL_SIMD_SIZE)
 #define MEGA_HEAD_K_DIM 128
 #define MEGA_CHUNK 64
 #define MEGA_KEY_TILE (MEGA_HEAD_K_DIM / MEGA_NUM_SIMDGROUPS)
 
-// VT is fixed at 32 (the strong-tile-width variant; VT=16 was dominated on every
-// chip and removed). USE_MXU selects the matmul backend:
-//   USE_MXU=true  -> MxuFragmentOps (16x16 fragments), the shipping M5 path.
-//   USE_MXU=false -> SimdgroupFragmentOps (8x8 fragments), the M1-M4 path with
-//                    no MXU.
-// Operand fragments are f32 in both backends, so USE_MXU does not change operand
-// precision; state is f32 end-to-end and T / A remain bf16 device operands
-// regardless of backend.
+// USE_MXU selects the fragment backend. Both paths accumulate in f32; only the
+// hardware fragment shape changes.
 template <typename T, typename O, uint VT, bool USE_MXU>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(O, float, bfloat)
@@ -66,9 +47,7 @@ PUBLIC KERNEL(DeltaNetChunkedMegaApply)(
     const uint v_slice GROUPS(head_v_dim.div_ceil(VT)),
     const uint tid THREADS(MEGA_THREADS)
 ) {
-  // Matmul backend is chosen by USE_MXU, independent of VT. VT only controls the
-  // value-tile width (and, via TOKEN_TILE below, the token split across the 4
-  // simdgroups); it no longer implies the backend.
+  // VT controls the value tile; USE_MXU controls only the fragment backend.
   using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
   constexpr ushort FR = Ops::FRAGMENT_ROWS;
   constexpr ushort FC = Ops::FRAGMENT_COLS;
