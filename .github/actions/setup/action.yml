@@ -51,6 +51,7 @@ runs:
 
     - uses: dtolnay/rust-toolchain@nightly
       with:
+        targets: ${{ inputs.target }}
         components: ${{ inputs.linters == 'true' && 'rustfmt,clippy' || '' }}
 
     - if: inputs.linux == 'true'
