@@ -5,6 +5,7 @@ use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
         cpu::Cpu,
+        metal::Metal,
     },
     data_type::DataType,
     tests::{
@@ -119,29 +120,25 @@ fn test_build_tree_gram_matches_cpu() {
         let expected = get_output::<Cpu>(&q, &k, &trie, &prefix, &beta, &h0, &h0_idx, tree_size, scale, false);
 
         for_each_non_cpu_backend!(|B| {
-            let context = <<B as Backend>::Context as Context>::new().expect("Failed to create Context");
-            let paths: &[bool] = if context.supports_mxu() {
-                &[false, true]
-            } else {
-                &[false]
-            };
+            let actual = get_output::<B>(&q, &k, &trie, &prefix, &beta, &h0, &h0_idx, tree_size, scale, false);
+            let msg = format!("backend {} simdgroup tree_size {tree_size}", std::any::type_name::<B>());
+            assert_eq_float::<f32>(&expected.0, &actual.0, 5e-3, &format!("a_packed {msg}"));
+            assert_eq_float::<f32>(&expected.1, &actual.1, 5e-3, &format!("qkd {msg}"));
 
-            for &use_mxu in paths {
-                let actual = get_output::<B>(&q, &k, &trie, &prefix, &beta, &h0, &h0_idx, tree_size, scale, use_mxu);
-                let path = if use_mxu {
-                    "mxu"
-                } else {
-                    "simdgroup"
-                };
-                let msg = format!("backend {} {path} tree_size {tree_size}", std::any::type_name::<B>());
-                assert_eq_float::<f32>(&expected.0, &actual.0, 5e-3, &format!("a_packed {msg}"));
-                assert_eq_float::<f32>(&expected.1, &actual.1, 5e-3, &format!("qkd {msg}"));
-
-                // Ainv is compact [B * HV, ceil(T/16), 16, 16]; both CPU and GPU
-                // pad ragged blocks with identity, so compare the whole buffer.
-                assert_eq_float::<f32>(&expected.2, &actual.2, 1e-2, &format!("a_inv {msg}"));
-                assert_eq_float::<f32>(&expected.3, &actual.3, 5e-3, &format!("kh0 {msg}"));
-            }
+            // Ainv is compact [B * HV, ceil(T/16), 16, 16]; both CPU and GPU
+            // pad ragged blocks with identity, so compare the whole buffer.
+            assert_eq_float::<f32>(&expected.2, &actual.2, 1e-2, &format!("a_inv {msg}"));
+            assert_eq_float::<f32>(&expected.3, &actual.3, 5e-3, &format!("kh0 {msg}"));
         });
+
+        let context = <<Metal as Backend>::Context as Context>::new().expect("Failed to create Context");
+        if context.supports_mxu() {
+            let actual = get_output::<Metal>(&q, &k, &trie, &prefix, &beta, &h0, &h0_idx, tree_size, scale, true);
+            let msg = format!("backend {} mxu tree_size {tree_size}", std::any::type_name::<Metal>());
+            assert_eq_float::<f32>(&expected.0, &actual.0, 5e-3, &format!("a_packed {msg}"));
+            assert_eq_float::<f32>(&expected.1, &actual.1, 5e-3, &format!("qkd {msg}"));
+            assert_eq_float::<f32>(&expected.2, &actual.2, 1e-2, &format!("a_inv {msg}"));
+            assert_eq_float::<f32>(&expected.3, &actual.3, 5e-3, &format!("kh0 {msg}"));
+        }
     }
 }

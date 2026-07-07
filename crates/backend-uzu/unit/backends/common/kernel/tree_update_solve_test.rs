@@ -7,6 +7,7 @@ use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::TreeUpdateSolveKernel},
         cpu::Cpu,
+        metal::Metal,
     },
     data_type::DataType,
     tests::{
@@ -203,16 +204,16 @@ fn test_tree_update_solve_cases() {
 
 #[uzu_test]
 fn test_tree_update_solve_mxu_cases() {
+    let context = <Metal as Backend>::Context::new().expect("context");
+    if !context.supports_mxu() {
+        return;
+    }
     for &bv in MXU_BVS {
         for &use_h0 in &[true, false] {
             for &case in CASES {
                 let expected = run_case::<Cpu, bf16>(case, bv, false, use_h0, DataType::BF16, bf16::from_f32);
-                for_each_non_cpu_backend!(|B| {
-                    if <B as Backend>::Context::new().expect("context").supports_mxu() {
-                        let output = run_case::<B, bf16>(case, bv, true, use_h0, DataType::BF16, bf16::from_f32);
-                        assert_eq_float(&expected, &output, 1e-2, &format!("{} MXU BV{bv} h0={use_h0}", case.name));
-                    }
-                });
+                let output = run_case::<Metal, bf16>(case, bv, true, use_h0, DataType::BF16, bf16::from_f32);
+                assert_eq_float(&expected, &output, 1e-2, &format!("{} MXU BV{bv} h0={use_h0}", case.name));
             }
         }
     }
