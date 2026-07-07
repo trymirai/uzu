@@ -1,9 +1,9 @@
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, Backend, BufferArgMut, Encoder, Kernels,
         gpu_types::trie::TrieNode,
-        kernel::{AttentionPrepareKernel, BufferArgMut, SigmoidGateKernel},
+        kernel::{AttentionPrepareKernel, SigmoidGateKernel},
     },
     encodable_block::{
         batch_topology::BatchTopology,

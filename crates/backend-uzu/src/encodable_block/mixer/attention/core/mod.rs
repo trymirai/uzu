@@ -1,5 +1,5 @@
 use crate::{
-    backends::common::{Allocation, Backend, Context, Encoder, kernel::BufferArg},
+    backends::common::{Allocation, Backend, BufferArg, Context, Encoder},
     data_type::DataType,
     encodable_block::mixer::attention::{
         core::{

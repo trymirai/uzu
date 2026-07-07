@@ -41,9 +41,11 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
                     (
                         Some(quote! { #buffer_lifetime }),
                         match access {
-                            KernelBufferAccess::Read => quote! { impl BufferArg<#buffer_lifetime, Self::Backend> },
+                            KernelBufferAccess::Read => {
+                                quote! { impl crate::backends::common::BufferArg<#buffer_lifetime, Self::Backend> }
+                            },
                             KernelBufferAccess::ReadWrite => {
-                                quote! { impl BufferArgMut<#buffer_lifetime, Self::Backend> }
+                                quote! { impl crate::backends::common::BufferArgMut<#buffer_lifetime, Self::Backend> }
                             },
                         },
                     )
