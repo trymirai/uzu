@@ -1,5 +1,6 @@
 use crate::backends::common::{AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer};
 
+pub mod attention_gemm;
 pub mod matmul;
 
 // TODO: This whole thing is horrible and should be unified with AsBufferRangeRef
@@ -59,6 +60,7 @@ pub trait Kernels: Sized {
     type Backend: Backend<Kernels = Self>;
 
     autogen_kernels!();
+    type AttentionGemmDispatch: attention_gemm::AttentionGemmDispatch<Backend = Self::Backend>;
     type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;
 }
 

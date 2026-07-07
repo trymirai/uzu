@@ -30,5 +30,6 @@ impl Kernels for CpuKernels {
     type Backend = Cpu;
 
     autogen_kernels!();
+    type AttentionGemmDispatch = attention::attention_gemm::AttentionGemmCpuDispatch;
     type MatmulKernel = matmul::MatmulCpuKernel;
 }

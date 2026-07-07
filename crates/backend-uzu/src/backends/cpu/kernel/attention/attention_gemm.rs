@@ -4,7 +4,17 @@ use proc_macros::kernel;
 
 use crate::{
     array::ArrayElement,
-    backends::{common::gpu_types::trie::TrieNode, cpu::kernel::attention::mask::should_use_key},
+    backends::{
+        common::{
+            Encoder,
+            gpu_types::{attention::AttnParams, ring::RingParams, trie::TrieNode},
+            kernel::{
+                AttentionGemmKernel, BufferArg, BufferArgMut,
+                attention_gemm::{AttentionGemmDispatch, tile_variant_index},
+            },
+        },
+        cpu::{Cpu, context::CpuContext, error::CpuError, kernel::attention::mask::should_use_key},
+    },
 };
 
 #[kernel(AttentionGemm)]
@@ -128,5 +138,79 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32, con
                 }
             }
         }
+    }
+}
+
+pub struct AttentionGemmCpuDispatch {
+    tiles: Vec<AttentionGemmCpuKernel>,
+}
+
+impl AttentionGemmDispatch for AttentionGemmCpuDispatch {
+    type Backend = Cpu;
+
+    fn new(
+        context: &CpuContext,
+        data_type: crate::data_type::DataType,
+        bk: u32,
+        bd: u32,
+        is_kv_cache_ring: bool,
+        is_causal: bool,
+        is_trie: bool,
+        is_sliding_window: bool,
+        has_sinks: bool,
+    ) -> Result<Self, CpuError> {
+        let mut tiles = Vec::with_capacity(4);
+        for align_q in [false, true] {
+            for align_k in [false, true] {
+                tiles.push(AttentionGemmCpuKernel::new(
+                    context,
+                    data_type,
+                    bk,
+                    bd,
+                    false,
+                    align_q,
+                    align_k,
+                    is_kv_cache_ring,
+                    is_causal,
+                    is_trie,
+                    is_sliding_window,
+                    has_sinks,
+                )?);
+            }
+        }
+        Ok(Self {
+            tiles,
+        })
+    }
+
+    fn encode<'q, 'k, 'v, 'o, 'trie, 'sinks, 'encoder>(
+        &self,
+        q: impl BufferArg<'q, Cpu>,
+        k: impl BufferArg<'k, Cpu>,
+        v: impl BufferArg<'v, Cpu>,
+        o: impl BufferArgMut<'o, Cpu>,
+        params: AttnParams,
+        ring_params: Option<RingParams>,
+        trie: Option<impl BufferArg<'trie, Cpu>>,
+        sliding_window_size: Option<u32>,
+        sinks: Option<impl BufferArg<'sinks, Cpu>>,
+        num_heads: u32,
+        suffix_length: u32,
+        encoder: &'encoder mut Encoder<Cpu>,
+    ) {
+        self.tiles[tile_variant_index(params.q_rem == 0, params.k_rem == 0)].encode(
+            q,
+            k,
+            v,
+            o,
+            params,
+            ring_params,
+            trie,
+            sliding_window_size,
+            sinks,
+            num_heads,
+            suffix_length,
+            encoder,
+        );
     }
 }

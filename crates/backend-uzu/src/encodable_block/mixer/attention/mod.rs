@@ -13,7 +13,7 @@ use crate::{
         mixer::{
             Mixer, MixerState,
             attention::{
-                core::{AttentionCoreNewArguments, AttentionCores},
+                core::{AttentionCore, AttentionCoreNewArguments},
                 mode::{LinearProjection, QkvProjection},
                 qkv_norm::{QKVNorm, QKVNormError},
                 rope::PrecalculatedRoPE,
@@ -43,8 +43,8 @@ pub struct Attention<B: Backend> {
     projection: QkvProjection<B>,
     gate_projection: Option<Box<dyn Linear<B>>>,
     sinks: Option<Allocation<B>>,
-    flat_core: AttentionCores<B>,
-    trie_core: AttentionCores<B>,
+    flat_core: AttentionCore<B>,
+    trie_core: AttentionCore<B>,
     gate_kernel: Option<<B::Kernels as Kernels>::SigmoidGateKernel>,
     out_projection: Box<dyn Linear<B>>,
 }
@@ -173,7 +173,7 @@ impl<B: Backend> Attention<B> {
         // TODO: remove when wiring with DFlash: split non-causal attention needs full KV storage and a window mask.
         let is_kv_cache_ring = sliding_window_size.is_some();
 
-        let flat_core = AttentionCores::new(
+        let flat_core = AttentionCore::new(
             AttentionCoreNewArguments {
                 head_dim,
                 num_groups,
@@ -190,7 +190,7 @@ impl<B: Backend> Attention<B> {
         )
         .map_err(AttentionNewError::Backend)?;
 
-        let trie_core = AttentionCores::new(
+        let trie_core = AttentionCore::new(
             AttentionCoreNewArguments {
                 head_dim,
                 num_groups,

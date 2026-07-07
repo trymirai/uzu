@@ -4,7 +4,7 @@ use ndarray::{Array4, s};
 use proc_macros::uzu_test;
 use test_tag::tag;
 
-use super::{AttentionCoreEncodeArguments, AttentionCoreNewArguments, gemm::AttentionGemmCore};
+use super::{AttentionCore, AttentionCoreEncodeArguments, AttentionCoreNewArguments};
 use crate::{
     backends::{
         common::{
@@ -313,8 +313,8 @@ fn run_gemm_attention(
     let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
     let (_batch_size, num_kv_heads, _seq_len, _head_dim) = keys.dim();
 
-    let core = AttentionGemmCore::<Metal>::new(
-        &AttentionCoreNewArguments {
+    let core = AttentionCore::<Metal>::new(
+        AttentionCoreNewArguments {
             head_dim,
             num_groups: num_kv_heads,
             num_q_heads: num_heads,
@@ -326,7 +326,6 @@ fn run_gemm_attention(
             scale: Some(scale),
             data_type: DataType::F32,
         },
-        false,
         context,
     )?;
 
