@@ -97,7 +97,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
             scale: Some(input.scale),
             data_type: T::data_type(),
         },
-        false,
         context.as_ref(),
     )
     .expect("Failed to create AttentionGemmCore");

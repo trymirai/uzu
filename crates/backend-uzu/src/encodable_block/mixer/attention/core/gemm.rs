@@ -24,7 +24,6 @@ pub struct AttentionGemmCore<B: Backend> {
 impl<B: Backend> AttentionGemmCore<B> {
     pub fn new(
         arguments: &AttentionCoreNewArguments,
-        _use_mxu: bool,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
         let bk = if arguments.head_dim < 128 {

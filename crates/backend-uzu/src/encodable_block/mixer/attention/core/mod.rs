@@ -39,7 +39,7 @@ pub struct AttentionCoreEncodeArguments<'a, B: Backend, KT: BufferArg<'a, B>, VT
 }
 
 pub struct AttentionCores<B: Backend> {
-    gemm_simd: Option<AttentionGemmCore<B>>,
+    gemm: Option<AttentionGemmCore<B>>,
     fallback: Option<AttentionFallbackCore<B>>,
     two_pass: AttentionTwoPassCore<B>,
     single_pass: AttentionSinglePassCore<B>,
@@ -50,8 +50,8 @@ impl<B: Backend> AttentionCores<B> {
         arguments: AttentionCoreNewArguments,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
-        let gemm_simd = if matches!(arguments.head_dim, 64 | 128 | 256) {
-            Some(AttentionGemmCore::new(&arguments, false, context)?)
+        let gemm = if matches!(arguments.head_dim, 64 | 128 | 256) {
+            Some(AttentionGemmCore::new(&arguments, context)?)
         } else {
             None
         };
@@ -64,7 +64,7 @@ impl<B: Backend> AttentionCores<B> {
         let single_pass = AttentionSinglePassCore::new(&arguments, context)?;
 
         Ok(Self {
-            gemm_simd,
+            gemm,
             fallback,
             two_pass,
             single_pass,
@@ -76,9 +76,9 @@ impl<B: Backend> AttentionCores<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, <B as Backend>::Error> {
         if arguments.suffix_length > 8
-            && let Some(gemm_simd) = &self.gemm_simd
+            && let Some(gemm) = &self.gemm
         {
-            gemm_simd.encode(arguments, encoder)
+            gemm.encode(arguments, encoder)
         } else if arguments.suffix_length > 8
             && let Some(fallback) = &self.fallback
         {

@@ -1,4 +1,3 @@
-use half::bf16;
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
@@ -7,7 +6,6 @@ use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::TreeUpdateSolveKernel},
         cpu::Cpu,
-        metal::Metal,
     },
     data_type::DataType,
     tests::{
@@ -18,40 +16,17 @@ use crate::{
 
 const BT: u32 = 16;
 const BVS: &[u32] = &[16, 32];
-// MXU needs an even number of column fragments or MPP row pairing; BV16 (a single
-// 16x16 fragment) is not supported.
-const MXU_BVS: &[u32] = &[32];
 
 #[derive(Clone, Copy)]
-struct KernelPath {
-    name: &'static str,
-    use_mxu: bool,
+pub(super) struct SolveCase {
+    pub(super) name: &'static str,
+    pub(super) batch_size: u32,
+    pub(super) tree_size: u32,
+    pub(super) num_v_heads: u32,
+    pub(super) head_v_dim: u32,
 }
 
-fn bf16_kernel_paths(context: &<Metal as Backend>::Context) -> Vec<KernelPath> {
-    let mut paths = vec![KernelPath {
-        name: "Simdgroup",
-        use_mxu: false,
-    }];
-    if context.supports_mxu() {
-        paths.push(KernelPath {
-            name: "MXU",
-            use_mxu: true,
-        });
-    }
-    paths
-}
-
-#[derive(Clone, Copy)]
-struct SolveCase {
-    name: &'static str,
-    batch_size: u32,
-    tree_size: u32,
-    num_v_heads: u32,
-    head_v_dim: u32,
-}
-
-const CASES: &[SolveCase] = &[
+pub(super) const CASES: &[SolveCase] = &[
     SolveCase {
         name: "single_full_block",
         batch_size: 1,
@@ -106,7 +81,7 @@ const CASES: &[SolveCase] = &[
     },
 ];
 
-fn run_case<B: Backend, T: ArrayElement + Copy>(
+pub(super) fn run_case<B: Backend, T: ArrayElement + Copy>(
     case: SolveCase,
     bv: u32,
     use_mxu: bool,
@@ -217,29 +192,6 @@ fn test_tree_update_solve_cases() {
                     let output = run_case::<B, f32>(case, bv, false, use_h0, DataType::F32, |x| x);
                     assert_eq_float(&expected, &output, 1e-4, &format!("{} BV{bv} h0={use_h0}", case.name));
                 });
-            }
-        }
-    }
-}
-
-#[uzu_test]
-fn test_tree_update_solve_bf16_paths() {
-    let context = <Metal as Backend>::Context::new().expect("context");
-    let paths = bf16_kernel_paths(&context);
-    for &bv in MXU_BVS {
-        for &use_h0 in &[true, false] {
-            for &case in CASES {
-                let expected = run_case::<Cpu, bf16>(case, bv, false, use_h0, DataType::BF16, bf16::from_f32);
-                for path in &paths {
-                    let output =
-                        run_case::<Metal, bf16>(case, bv, path.use_mxu, use_h0, DataType::BF16, bf16::from_f32);
-                    assert_eq_float(
-                        &expected,
-                        &output,
-                        1e-2,
-                        &format!("{} {} BV{bv} h0={use_h0}", case.name, path.name),
-                    );
-                }
             }
         }
     }

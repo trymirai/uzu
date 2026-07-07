@@ -326,7 +326,6 @@ fn run_gemm_attention(
             scale: Some(scale),
             data_type: DataType::F32,
         },
-        false,
         context,
     )?;
 
