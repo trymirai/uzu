@@ -1,4 +1,3 @@
-use keisoku::Device;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -12,7 +11,7 @@ use crate::{
     format::{battery_status, format_uptime, human_bytes},
     info::render_info,
     state::{accent, background, interval_ms, show_info, theme},
-    telemetry::Telemetry,
+    telemetry::{DeviceFacts, Telemetry},
     widgets::{panel, split_horizontal, split_vertical},
 };
 
@@ -158,7 +157,7 @@ fn render_power(
             "CPU:",
             power.cpu.value(),
             "GPU:",
-            power.gpu.value() + power.gpu_sram.value(),
+            power.gpu.value(),
         )));
         lines.push(Line::from(format!(
             "{:<6}{:>6.2} W | {:<5}{:>6.2} W",
@@ -291,7 +290,7 @@ fn render_processes(
     frame.render_widget(List::new(items).style(Style::default().fg(accent())).block(panel("Process List")), area);
 }
 
-fn header_title(device: Option<&Device>) -> String {
+fn header_title(device: Option<&DeviceFacts>) -> String {
     match device {
         Some(device) => format!(
             " kanshi  •  {}  •  {}C ({}E+{}P)  •  {} GPU  •  {:.0} GB ",

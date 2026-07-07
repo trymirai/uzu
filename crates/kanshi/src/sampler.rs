@@ -7,7 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use keisoku::Collector;
+use keisoku::{
+    Bandwidth, Battery, Chip, CpuUsage, EfficiencyCores, Fans, GpuCores, GpuUsage, Instant as Gauges, Interval, Memory,
+    NeuralEngine, PerformanceCores, Power, RamTotal, Static, Temps, Thermal,
+};
 use sysinfo::{Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System};
 
 use crate::{
@@ -16,7 +19,7 @@ use crate::{
     net_interface::NetInterface,
     process_row::ProcessRow,
     state::{bump_data_version, interval},
-    telemetry::Telemetry,
+    telemetry::{DeviceFacts, Sample, Telemetry},
 };
 
 const HISTORY: usize = 256;
@@ -28,8 +31,15 @@ pub(crate) fn sample_loop(
     telemetry: &Arc<Mutex<Telemetry>>,
     stop: &Arc<AtomicBool>,
 ) {
-    let mut collector = Collector::new();
-    let device = collector.device();
+    let (chip, efficiency_cores, performance_cores, gpu_cores, ram_total) =
+        Static::<(Chip, EfficiencyCores, PerformanceCores, GpuCores, RamTotal)>::new().into_inner();
+    let device = DeviceFacts {
+        chip,
+        efficiency_cores,
+        performance_cores,
+        gpu_cores,
+        ram_total,
+    };
     let host = HostInfo {
         user: std::env::var("USER").unwrap_or_else(|_| "user".into()),
         hostname: System::host_name().unwrap_or_default(),
@@ -58,8 +68,14 @@ pub(crate) fn sample_loop(
     networks.refresh(true);
     let mut last_refresh = Instant::now();
 
+    let mut soc = Interval::<(CpuUsage, GpuUsage, NeuralEngine, Power, Bandwidth)>::new();
+    let mut gauges = Gauges::<(Memory, Fans, Battery, Temps, Thermal)>::new();
+
     while !stop.load(Ordering::Relaxed) {
-        let snapshot = collector.sample(interval());
+        let session = soc.begin();
+        std::thread::sleep(interval());
+        let (cpu, gpu, neural_engine, power, bandwidth) = soc.end(session);
+        let (memory, fans, battery, temperatures, thermal_pressure) = gauges.read();
 
         system.refresh_processes_specifics(ProcessesToUpdate::All, true, process_kind);
         networks.refresh(true);
@@ -124,26 +140,37 @@ pub(crate) fn sample_loop(
         processes.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap_or(std::cmp::Ordering::Equal));
         processes.truncate(PROCESS_ROWS);
 
-        let cpu = snapshot.cpu.as_ref().map(|c| c.usage.value() as f64).unwrap_or(0.0);
-        let gpu = snapshot.gpu.as_ref().map(|g| g.usage.value() as f64).unwrap_or(0.0);
-        let ane = snapshot.neural_engine.as_ref().map(|a| a.active.value() as f64).unwrap_or(0.0);
-        let memory = snapshot
-            .memory
+        let cpu_usage = cpu.usage.value() as f64;
+        let gpu_usage = gpu.usage.value() as f64;
+        let ane_usage = neural_engine.active.value() as f64;
+        let memory_usage = memory
             .as_ref()
             .filter(|m| m.ram_total.value() > 0)
             .map(|m| m.ram_usage.value() as f64 / m.ram_total.value() as f64 * 100.0)
             .unwrap_or(0.0);
+        let power_watts = power.package.value() as f64;
 
-        let power = snapshot.power.as_ref().map(|p| p.package.value() as f64).unwrap_or(0.0);
+        let sample = Sample {
+            cpu: Some(cpu),
+            gpu: Some(gpu),
+            neural_engine: Some(neural_engine),
+            power: Some(power),
+            bandwidth: Some(bandwidth),
+            memory,
+            fans,
+            battery,
+            temperatures,
+            thermal_pressure,
+        };
 
         if let Ok(mut state) = telemetry.lock() {
-            push_history(&mut state.cpu_history, cpu);
-            push_history(&mut state.gpu_history, gpu);
-            push_history(&mut state.ane_history, ane);
-            push_history(&mut state.memory_history, memory);
-            push_history(&mut state.power_history, power);
-            state.max_power = state.max_power.max(power);
-            state.snapshot = Some(snapshot);
+            push_history(&mut state.cpu_history, cpu_usage);
+            push_history(&mut state.gpu_history, gpu_usage);
+            push_history(&mut state.ane_history, ane_usage);
+            push_history(&mut state.memory_history, memory_usage);
+            push_history(&mut state.power_history, power_watts);
+            state.max_power = state.max_power.max(power_watts);
+            state.snapshot = Some(sample);
             state.uptime_seconds = System::uptime();
             state.network_down = received as f64 / elapsed;
             state.network_up = transmitted as f64 / elapsed;

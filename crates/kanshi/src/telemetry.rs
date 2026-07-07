@@ -1,14 +1,40 @@
 use std::collections::VecDeque;
 
-use keisoku::{Device, Snapshot};
+use keisoku::{
+    BandwidthMetrics, BatteryMetrics, Bytes, CpuMetrics, FanMetrics, GpuMetrics, MemoryMetrics, NeuralEngineMetrics,
+    PowerMetrics, Temperatures, ThermalPressure,
+};
 
 use crate::{disk_row::DiskRow, host_info::HostInfo, net_interface::NetInterface, process_row::ProcessRow};
 
 #[derive(Default)]
+pub(crate) struct DeviceFacts {
+    pub(crate) chip: String,
+    pub(crate) efficiency_cores: u8,
+    pub(crate) performance_cores: u8,
+    pub(crate) gpu_cores: u8,
+    pub(crate) ram_total: Bytes,
+}
+
+#[derive(Default)]
+pub(crate) struct Sample {
+    pub(crate) cpu: Option<CpuMetrics>,
+    pub(crate) gpu: Option<GpuMetrics>,
+    pub(crate) neural_engine: Option<NeuralEngineMetrics>,
+    pub(crate) power: Option<PowerMetrics>,
+    pub(crate) bandwidth: Option<BandwidthMetrics>,
+    pub(crate) memory: Option<MemoryMetrics>,
+    pub(crate) fans: Option<FanMetrics>,
+    pub(crate) battery: Option<BatteryMetrics>,
+    pub(crate) temperatures: Option<Temperatures>,
+    pub(crate) thermal_pressure: Option<ThermalPressure>,
+}
+
+#[derive(Default)]
 pub(crate) struct Telemetry {
-    pub(crate) device: Option<Device>,
+    pub(crate) device: Option<DeviceFacts>,
     pub(crate) host: Option<HostInfo>,
-    pub(crate) snapshot: Option<Snapshot>,
+    pub(crate) snapshot: Option<Sample>,
     pub(crate) cpu_history: VecDeque<f64>,
     pub(crate) gpu_history: VecDeque<f64>,
     pub(crate) ane_history: VecDeque<f64>,
