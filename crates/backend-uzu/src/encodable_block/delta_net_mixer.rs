@@ -30,14 +30,10 @@ pub enum DeltaNetMixerError<B: Backend> {
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
 }
 
-/// Minimum prefill length (tokens) at which the chunked Mode-L path with the
-/// MXU backend beats the recurrent path on M5-class GPUs. Tunable.
+/// Minimum prefill length (tokens) for chunked Mode-L with the MXU backend.
 pub const CHUNKED_MXU_MIN_T: usize = 256;
 
-/// Minimum prefill length at which the chunked Mode-L path with the simdgroup
-/// backend (no MXU) beats the recurrent path on Apple family-9 GPUs (M3/M4).
-/// Tunable: 512 is roughly a tie on family-9, 1024 is the safe clear-win
-/// threshold.
+/// Minimum prefill length for chunked Mode-L with the simdgroup backend.
 pub const CHUNKED_SIMD_MIN_T: usize = 1024;
 
 /// Chunk length of the Mode-L pipeline (tokens per chunk).
@@ -85,7 +81,7 @@ fn route_gdn_prefill(
     supports_dynamic_caching: bool,
     suffix_len: usize,
 ) -> GdnPrefillPath {
-    if supports_mxu && suffix_len >= CHUNKED_MXU_MIN_T {
+    if supports_dynamic_caching && supports_mxu && suffix_len >= CHUNKED_MXU_MIN_T {
         GdnPrefillPath::ChunkedModeL {
             use_mxu: true,
         }
@@ -708,6 +704,15 @@ mod router_tests {
         let mxu = false;
         let dyn_cache = false;
         for &t in &[1usize, 63, 256, 512, 1024, 4096, 32768, usize::MAX] {
+            assert_eq!(route_gdn_prefill(mxu, dyn_cache, t), REC, "T={t}");
+        }
+    }
+
+    #[uzu_test]
+    fn incoherent_mxu_without_dynamic_caching_stays_recurrent() {
+        let mxu = true;
+        let dyn_cache = false;
+        for &t in &[CHUNKED_MXU_MIN_T, CHUNKED_SIMD_MIN_T, 32768] {
             assert_eq!(route_gdn_prefill(mxu, dyn_cache, t), REC, "T={t}");
         }
     }

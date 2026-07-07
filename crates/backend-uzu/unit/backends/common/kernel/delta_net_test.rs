@@ -1316,17 +1316,10 @@ fn test_gdn_prefill_router_live_context() {
     }
 }
 
-// End-to-end prefill sweep comparing two MXU-free paths at the SAME scope
-// (precompute + apply + NormGate): the recurrent baseline and the Mode L mega
-// pipeline (prep, cumsum, gram, solveT, megaApply, normGate; VT=32) — the
-// headline chunked path. Each path warmed >=500 ms before timing.
-//   recurrent          : DeltaNetPrefill path (prep -> prefill -> normGate)
-//   mode_l_vt32_simd   : Mode-L megaApply VT=32, USE_MXU=false (simdgroup)
-// CRITICAL: this bench NEVER constructs a USE_MXU=true kernel. On MXU-less
-// hardware creating such a PSO would fail, so nothing here may touch the MXU
-// path. Every kernel below is the simdgroup / MXU-free variant: gram (simd),
-// solveT (simd), megaApply USE_MXU=false, solve RECOMPUTE_G=false (not an MXU
-// flag).
+// End-to-end prefill sweep at the SAME scope (precompute + apply + NormGate):
+// recurrent, Mode-L VT32 simdgroup, and Mode-L VT32 MXU when the device supports
+// it. Each path warms >=500 ms before timing. The MXU PSO is constructed only
+// behind `context.supports_mxu()`, so this still runs on MXU-less machines.
 #[uzu_test]
 #[ignore]
 fn bench_delta_net_fleet_simd_vs_recurrent() {
@@ -1350,13 +1343,13 @@ fn bench_delta_net_fleet_simd_vs_recurrent() {
     let num_blocks = chunk_size.div_ceil(block_size);
     let num_col_pairs = num_blocks.div_ceil(2);
 
-    eprintln!("\n=== DeltaNet FLEET simd Mode L vs Recurrent (end-to-end prefill, NO MXU) ===");
+    eprintln!("\n=== DeltaNet FLEET Mode L vs Recurrent (end-to-end prefill) ===");
     eprintln!("  C={chunk_size} HV={num_v_heads} HK={num_k_heads} K={head_k_dim} V={head_v_dim} dtype=bf16");
-    eprintln!("  scope: precompute + apply + NormGate for every path; USE_MXU=false everywhere");
+    eprintln!("  scope: precompute + apply + NormGate for every path");
     eprintln!("FLEETBENCH\tT\tpath\tmedian_ms\tmin_ms\tmax_ms\tstd_ms");
 
-    // (T, recurrent_ms, vt32_simd_ms) collected for the final table.
-    let mut summary: Vec<(usize, f64, f64)> = Vec::new();
+    // (T, recurrent_ms, vt32_simd_ms, vt32_mxu_ms) collected for the final table.
+    let mut summary: Vec<(usize, f64, f64, Option<f64>)> = Vec::new();
 
     for suffix_len in [256usize, 512, 1024, 4096, 32768] {
         let num_chunks = suffix_len.div_ceil(chunk_size);
@@ -1399,8 +1392,11 @@ fn bench_delta_net_fleet_simd_vs_recurrent() {
         let mut mode_l_state = alloc(DataType::F32, state_size);
         let mut mode_l_out = alloc(DataType::BF16, suffix_len * value_dim);
 
-        // Kernels — ALL MXU-free. There is deliberately no gram_mxu / solve_t_mxu
-        // / mega_vt32 (MXU) construction anywhere in this function.
+        let supports_mxu = context.supports_mxu();
+
+        // Kernels. Gram/SolveT use the single f32 simdgroup precompute path;
+        // MegaApply is timed with USE_MXU=false everywhere, and with USE_MXU=true
+        // only on devices that support it.
         let recurrent_prep_k =
             <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(&context, DataType::BF16, 128)
                 .unwrap();
@@ -1432,6 +1428,20 @@ fn bench_delta_net_fleet_simd_vs_recurrent() {
             false,
         )
         .unwrap();
+        let mega_vt32_mxu = if supports_mxu {
+            Some(
+                <<Metal as Backend>::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
+                    &context,
+                    DataType::BF16,
+                    DataType::BF16,
+                    32,
+                    true,
+                )
+                .unwrap(),
+            )
+        } else {
+            None
+        };
 
         macro_rules! encode_mode_l {
             ($mega:expr) => {{
@@ -1608,22 +1618,50 @@ fn bench_delta_net_fleet_simd_vs_recurrent() {
         };
         print_row("mode_l_vt32_simd", &vt32_simd_res);
 
+        let vt32_mxu_res = if let Some(mega_vt32_mxu) = mega_vt32_mxu.as_ref() {
+            let mut run_vt32_mxu = || encode_mode_l!(mega_vt32_mxu);
+            warmup(&mut run_vt32_mxu);
+            let result = run_perf_with_warmup("mode_l_vt32_mxu", 3, iterations, &mut run_vt32_mxu);
+            print_row("mode_l_vt32_mxu", &result);
+            Some(result)
+        } else {
+            eprintln!("FLEETBENCH\t{}\tmode_l_vt32_mxu\tn/a\tn/a\tn/a\tn/a", suffix_len);
+            None
+        };
+
         eprintln!(
-            "FLEETVERDICT\tT={}\trec={:.3}\tvt32_simd={:.3}\tvt32s_vs_rec={:.3}x",
+            "FLEETVERDICT\tT={}\trec={:.3}\tvt32_simd={:.3}\tvt32s_vs_rec={:.3}x\tvt32_mxu={}",
             suffix_len,
             rec_res.median_ms,
             vt32_simd_res.median_ms,
             rec_res.median_ms / vt32_simd_res.median_ms,
+            vt32_mxu_res
+                .as_ref()
+                .map(|r| format!("{:.3} ({:.3}x)", r.median_ms, rec_res.median_ms / r.median_ms))
+                .unwrap_or_else(|| "n/a".to_string()),
         );
 
-        summary.push((suffix_len, rec_res.median_ms, vt32_simd_res.median_ms));
+        summary.push((suffix_len, rec_res.median_ms, vt32_simd_res.median_ms, vt32_mxu_res.map(|r| r.median_ms)));
     }
 
     // Final clean table across all T.
-    eprintln!("\n=== FLEET simd Mode L vs Recurrent summary (median ms; NO MXU) ===");
-    eprintln!("{:>7}  {:>11}  {:>11}  {:>12}", "T", "recurrent", "vt32-simd", "vt32/rec");
-    for (t, rec, vt32) in &summary {
-        eprintln!("{:>7}  {:>11.3}  {:>11.3}  {:>11.3}x", t, rec, vt32, rec / vt32);
+    eprintln!("\n=== FLEET Mode L vs Recurrent summary (median ms) ===");
+    eprintln!(
+        "{:>7}  {:>11}  {:>11}  {:>12}  {:>11}  {:>12}",
+        "T", "recurrent", "vt32-simd", "simd/rec", "vt32-mxu", "mxu/rec"
+    );
+    for (t, rec, vt32, mxu) in &summary {
+        let mxu_ms = mxu.map(|value| format!("{value:.3}")).unwrap_or_else(|| "n/a".to_string());
+        let mxu_speedup = mxu.map(|value| format!("{:.3}x", rec / value)).unwrap_or_else(|| "n/a".to_string());
+        eprintln!(
+            "{:>7}  {:>11.3}  {:>11.3}  {:>11.3}x  {:>11}  {:>12}",
+            t,
+            rec,
+            vt32,
+            rec / vt32,
+            mxu_ms,
+            mxu_speedup
+        );
     }
 }
 
