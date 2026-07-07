@@ -11,7 +11,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{Allocation, Backend, Context, Kernels, kernel::BuildTreeOutKernel},
-        metal::{DeviceExt, Metal},
+        metal::Metal,
     },
     tests::{
         helpers::{alloc_allocation, alloc_allocation_with_data},
@@ -88,7 +88,7 @@ fn bench_build_tree_out_type<T: ArrayElement + Float>(
     data_type_name: &str,
 ) {
     for &(path, use_mxu, transposed_h0, tile_rows) in BUILD_TREE_OUT_PATHS {
-        if use_mxu && !context.device.supports_mxu() {
+        if use_mxu && !context.supports_mxu() {
             continue;
         }
         let tile_name = format!("Rows{tile_rows}_VCols{TREE_OUT_VALUE_COLS}_SG{TREE_OUT_SIMDGROUPS_PER_TG}");

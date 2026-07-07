@@ -20,11 +20,18 @@ pub(crate) fn retile_params(
     params
 }
 
-pub(crate) fn tile_variant_index(
-    align_q: bool,
-    align_k: bool,
-) -> usize {
-    (usize::from(align_q) << 1) | usize::from(align_k)
+pub struct AttentionGemmArgs<Q, K, V, O, T, S> {
+    pub q: Q,
+    pub k: K,
+    pub v: V,
+    pub o: O,
+    pub params: AttnParams,
+    pub ring_params: Option<RingParams>,
+    pub trie: Option<T>,
+    pub sliding_window_size: Option<u32>,
+    pub sinks: Option<S>,
+    pub num_heads: u32,
+    pub suffix_length: u32,
 }
 
 pub trait AttentionGemmDispatch: Sized {
@@ -43,20 +50,16 @@ pub trait AttentionGemmDispatch: Sized {
         has_sinks: bool,
     ) -> Result<Self, <Self::Backend as Backend>::Error>;
 
-    #[allow(clippy::too_many_arguments)]
-    fn encode<'q, 'k, 'v, 'o, 'trie, 'sinks, 'encoder>(
+    fn encode<'q, 'k, 'v, 'o, 'trie, 'sinks>(
         &mut self,
-        q: impl BufferArg<'q, Self::Backend>,
-        k: impl BufferArg<'k, Self::Backend>,
-        v: impl BufferArg<'v, Self::Backend>,
-        o: impl BufferArgMut<'o, Self::Backend>,
-        params: AttnParams,
-        ring_params: Option<RingParams>,
-        trie: Option<impl BufferArg<'trie, Self::Backend>>,
-        sliding_window_size: Option<u32>,
-        sinks: Option<impl BufferArg<'sinks, Self::Backend>>,
-        num_heads: u32,
-        suffix_length: u32,
-        encoder: &'encoder mut Encoder<Self::Backend>,
+        args: AttentionGemmArgs<
+            impl BufferArg<'q, Self::Backend>,
+            impl BufferArg<'k, Self::Backend>,
+            impl BufferArg<'v, Self::Backend>,
+            impl BufferArgMut<'o, Self::Backend>,
+            impl BufferArg<'trie, Self::Backend>,
+            impl BufferArg<'sinks, Self::Backend>,
+        >,
+        encoder: &mut Encoder<Self::Backend>,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 }

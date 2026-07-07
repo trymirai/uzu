@@ -7,14 +7,15 @@ use crate::{
     backends::{
         common::{
             Encoder,
-            gpu_types::{attention::AttnParams, ring::RingParams, trie::TrieNode},
+            gpu_types::trie::TrieNode,
             kernel::{
                 AttentionGemmKernel, BufferArg, BufferArgMut,
-                attention_gemm::{AttentionGemmDispatch, tile_variant_index},
+                attention_gemm::{AttentionGemmArgs, AttentionGemmDispatch, retile_params},
             },
         },
         cpu::{Cpu, context::CpuContext, error::CpuError, kernel::attention::mask::should_use_key},
     },
+    data_type::DataType,
 };
 
 #[kernel(AttentionGemm)]
@@ -142,15 +143,51 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32, con
 }
 
 pub struct AttentionGemmCpuDispatch {
-    tiles: Vec<AttentionGemmCpuKernel>,
+    tiles: [Option<AttentionGemmCpuKernel>; 4],
+    data_type: DataType,
+    bk: u32,
+    bd: u32,
+    is_kv_cache_ring: bool,
+    is_causal: bool,
+    is_trie: bool,
+    is_sliding_window: bool,
+    has_sinks: bool,
+}
+
+impl AttentionGemmCpuDispatch {
+    fn get_or_create(
+        &mut self,
+        context: &CpuContext,
+        align_q: bool,
+        align_k: bool,
+    ) -> Result<&AttentionGemmCpuKernel, CpuError> {
+        let index = (usize::from(align_q) << 1) | usize::from(align_k);
+        if self.tiles[index].is_none() {
+            self.tiles[index] = Some(AttentionGemmCpuKernel::new(
+                context,
+                self.data_type,
+                self.bk,
+                self.bd,
+                false,
+                align_q,
+                align_k,
+                self.is_kv_cache_ring,
+                self.is_causal,
+                self.is_trie,
+                self.is_sliding_window,
+                self.has_sinks,
+            )?);
+        }
+        Ok(self.tiles[index].as_ref().expect("tile was just initialized"))
+    }
 }
 
 impl AttentionGemmDispatch for AttentionGemmCpuDispatch {
     type Backend = Cpu;
 
     fn new(
-        context: &CpuContext,
-        data_type: crate::data_type::DataType,
+        _context: &CpuContext,
+        data_type: DataType,
         bk: u32,
         bd: u32,
         is_kv_cache_ring: bool,
@@ -159,57 +196,45 @@ impl AttentionGemmDispatch for AttentionGemmCpuDispatch {
         is_sliding_window: bool,
         has_sinks: bool,
     ) -> Result<Self, CpuError> {
-        let mut tiles = Vec::with_capacity(4);
-        for align_q in [false, true] {
-            for align_k in [false, true] {
-                tiles.push(AttentionGemmCpuKernel::new(
-                    context,
-                    data_type,
-                    bk,
-                    bd,
-                    false,
-                    align_q,
-                    align_k,
-                    is_kv_cache_ring,
-                    is_causal,
-                    is_trie,
-                    is_sliding_window,
-                    has_sinks,
-                )?);
-            }
-        }
         Ok(Self {
-            tiles,
+            tiles: std::array::from_fn(|_| None),
+            data_type,
+            bk,
+            bd,
+            is_kv_cache_ring,
+            is_causal,
+            is_trie,
+            is_sliding_window,
+            has_sinks,
         })
     }
 
-    fn encode<'q, 'k, 'v, 'o, 'trie, 'sinks, 'encoder>(
+    fn encode<'q, 'k, 'v, 'o, 'trie, 'sinks>(
         &mut self,
-        q: impl BufferArg<'q, Cpu>,
-        k: impl BufferArg<'k, Cpu>,
-        v: impl BufferArg<'v, Cpu>,
-        o: impl BufferArgMut<'o, Cpu>,
-        params: AttnParams,
-        ring_params: Option<RingParams>,
-        trie: Option<impl BufferArg<'trie, Cpu>>,
-        sliding_window_size: Option<u32>,
-        sinks: Option<impl BufferArg<'sinks, Cpu>>,
-        num_heads: u32,
-        suffix_length: u32,
-        encoder: &'encoder mut Encoder<Cpu>,
+        args: AttentionGemmArgs<
+            impl BufferArg<'q, Cpu>,
+            impl BufferArg<'k, Cpu>,
+            impl BufferArg<'v, Cpu>,
+            impl BufferArgMut<'o, Cpu>,
+            impl BufferArg<'trie, Cpu>,
+            impl BufferArg<'sinks, Cpu>,
+        >,
+        encoder: &mut Encoder<Cpu>,
     ) -> Result<(), CpuError> {
-        self.tiles[tile_variant_index(params.q_rem == 0, params.k_rem == 0)].encode(
-            q,
-            k,
-            v,
-            o,
+        let params = retile_params(args.params, 32, self.bk);
+        let kernel = self.get_or_create(encoder.context(), params.q_rem == 0, params.k_rem == 0)?;
+        kernel.encode(
+            args.q,
+            args.k,
+            args.v,
+            args.o,
             params,
-            ring_params,
-            trie,
-            sliding_window_size,
-            sinks,
-            num_heads,
-            suffix_length,
+            args.ring_params,
+            args.trie,
+            args.sliding_window_size,
+            args.sinks,
+            args.num_heads,
+            args.suffix_length,
             encoder,
         );
         Ok(())

@@ -51,7 +51,7 @@ impl<B: Backend> AttentionCores<B> {
         context: &B::Context,
     ) -> Result<Self, B::Error> {
         let gemm_simd = if matches!(arguments.head_dim, 64 | 128 | 256) {
-            Some(AttentionGemmCore::new(&arguments, false, context)?)
+            Some(AttentionGemmCore::new(&arguments, context)?)
         } else {
             None
         };

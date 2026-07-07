@@ -15,10 +15,11 @@ use crate::{
             },
         },
         metal::{
-            DeviceExt, Metal,
+            Metal,
             context::MetalContext,
             error::MetalError,
             kernel::{GemmMetalKernel, GemmSplitKReduceMetalKernel, TensorAddBiasMetalKernel},
+            metal_extensions::DeviceExt,
         },
     },
     data_type::DataType,

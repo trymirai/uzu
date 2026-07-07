@@ -14,7 +14,7 @@ use crate::{
             Backend, Context,
             kernel::{Kernels, matmul::MatmulKernel},
         },
-        metal::{DeviceExt, GemmDispatchPath, Metal, MetalContext},
+        metal::{GemmDispatchPath, Metal, MetalContext},
     },
     tests::{
         assert::assert_eq_float,
@@ -24,7 +24,7 @@ use crate::{
 
 fn gemm_paths_for_hw(context: &MetalContext) -> Vec<GemmDispatchPath> {
     let mut paths = vec![GemmDispatchPath::Simdgroup];
-    if context.device.supports_mxu() {
+    if context.supports_mxu() {
         paths.push(GemmDispatchPath::Mxu);
     }
     paths
@@ -179,12 +179,9 @@ fn gemv_fp_output_transforms_bf16() {
 }
 
 #[uzu_test]
-fn small_m_mxu_tiles_parity() {
+fn small_m_tiles_parity() {
     use crate::tests::matmul::Shape;
     let context = MetalContext::new().expect("Metal context");
-    if !context.device.supports_mxu() {
-        return;
-    }
     let mut bf16_kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -200,8 +197,10 @@ fn small_m_mxu_tiles_parity() {
     )
     .expect("MatmulKernel");
 
-    for shape in [Shape::new(8, 256, 256), Shape::new(8, 512, 256)] {
-        check_case::<bf16>(&context, &mut bf16_kernel, Some(GemmDispatchPath::Mxu), Case::new(shape), 1.0);
-        check_case::<f32>(&context, &mut f32_kernel, Some(GemmDispatchPath::Mxu), Case::new(shape), 0.01);
+    for path in gemm_paths_for_hw(&context) {
+        for shape in [Shape::new(8, 256, 256), Shape::new(8, 512, 256)] {
+            check_case::<bf16>(&context, &mut bf16_kernel, Some(path), Case::new(shape), 1.0);
+            check_case::<f32>(&context, &mut f32_kernel, Some(path), Case::new(shape), 0.01);
+        }
     }
 }

@@ -1,14 +1,13 @@
 use half::bf16;
 use num_traits::Float;
 use proc_macros::uzu_test;
-use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeOutKernel},
         cpu::Cpu,
-        metal::{DeviceExt, Metal},
+        metal::{Metal, MetalContext},
     },
     tests::{
         assert::assert_eq_float,
@@ -40,6 +39,10 @@ const BUILD_TREE_OUT_PATHS: &[(&str, bool, bool)] = &[
     ("Simdgroup/H0Transposed/Rows8_VCols32_SG4", false, true),
     ("MXU/H0Direct/Rows16_VCols32_SG4", true, false),
 ];
+
+fn build_tree_out_paths(context: &MetalContext) -> impl Iterator<Item = (&'static str, bool, bool)> + '_ {
+    BUILD_TREE_OUT_PATHS.iter().copied().filter(|&(_, use_mxu, _)| !use_mxu || context.supports_mxu())
+}
 
 fn make_inputs<T: ArrayElement + Float>(shape: Shape) -> Inputs<T> {
     let q_len = shape.batch_size * shape.tree_size * shape.qk_heads * shape.head_k_dim;
@@ -124,51 +127,23 @@ fn check_shape<T: ArrayElement + Float + std::fmt::Display>(
 
     for use_h0 in [false, true] {
         let expected = run_build_tree_out::<Cpu, T>(shape, &inputs, use_h0, false, false);
-        for_each_non_cpu_backend!(|B| {
-            for &(path, use_mxu, transposed_h0) in BUILD_TREE_OUT_PATHS {
-                if use_mxu {
-                    continue;
-                }
-                if transposed_h0 && !use_h0 {
-                    continue;
-                }
-                let actual = run_build_tree_out::<B, T>(shape, &inputs, use_h0, use_mxu, transposed_h0);
-                let msg = format!(
-                    "backend {} path {path} use_h0 {use_h0} B{}_T{}_QK{}_HV{}_K{}_V{}",
-                    std::any::type_name::<B>(),
-                    shape.batch_size,
-                    shape.tree_size,
-                    shape.qk_heads,
-                    shape.value_heads,
-                    shape.head_k_dim,
-                    shape.head_v_dim
-                );
-                assert_eq_float::<T>(&expected, &actual, eps, &msg);
+        let context = MetalContext::new().expect("Failed to create Context");
+        for (path, use_mxu, transposed_h0) in build_tree_out_paths(&context) {
+            if transposed_h0 && !use_h0 {
+                continue;
             }
-        });
-
-        let context = <Metal as Backend>::Context::new().expect("Failed to create Context");
-        if context.device.supports_mxu() {
-            for &(path, use_mxu, transposed_h0) in BUILD_TREE_OUT_PATHS {
-                if !use_mxu {
-                    continue;
-                }
-                if transposed_h0 && !use_h0 {
-                    continue;
-                }
-                let actual = run_build_tree_out::<Metal, T>(shape, &inputs, use_h0, use_mxu, transposed_h0);
-                let msg = format!(
-                    "backend {} path {path} use_h0 {use_h0} B{}_T{}_QK{}_HV{}_K{}_V{}",
-                    std::any::type_name::<Metal>(),
-                    shape.batch_size,
-                    shape.tree_size,
-                    shape.qk_heads,
-                    shape.value_heads,
-                    shape.head_k_dim,
-                    shape.head_v_dim
-                );
-                assert_eq_float::<T>(&expected, &actual, eps, &msg);
-            }
+            let actual = run_build_tree_out::<Metal, T>(shape, &inputs, use_h0, use_mxu, transposed_h0);
+            let msg = format!(
+                "backend {} path {path} use_h0 {use_h0} B{}_T{}_QK{}_HV{}_K{}_V{}",
+                std::any::type_name::<Metal>(),
+                shape.batch_size,
+                shape.tree_size,
+                shape.qk_heads,
+                shape.value_heads,
+                shape.head_k_dim,
+                shape.head_v_dim
+            );
+            assert_eq_float::<T>(&expected, &actual, eps, &msg);
         }
     }
 }

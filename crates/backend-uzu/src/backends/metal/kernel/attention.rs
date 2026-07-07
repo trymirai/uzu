@@ -5,13 +5,12 @@ use crate::{
     backends::{
         common::{
             Encoder,
-            gpu_types::{attention::AttnParams, ring::RingParams},
             kernel::{
                 AttentionGemmKernel, BufferArg, BufferArgMut,
-                attention_gemm::{AttentionGemmDispatch, retile_params},
+                attention_gemm::{AttentionGemmArgs, AttentionGemmDispatch, retile_params},
             },
         },
-        metal::{DeviceExt, Metal, context::MetalContext, error::MetalError},
+        metal::{Metal, context::MetalContext, error::MetalError},
     },
     data_type::DataType,
 };
@@ -92,29 +91,26 @@ impl AttentionGemmDispatch for AttentionGemmMetalDispatch {
         })
     }
 
-    fn encode<'q, 'k, 'v, 'o, 'trie, 'sinks, 'encoder>(
+    fn encode<'q, 'k, 'v, 'o, 'trie, 'sinks>(
         &mut self,
-        q: impl BufferArg<'q, Metal>,
-        k: impl BufferArg<'k, Metal>,
-        v: impl BufferArg<'v, Metal>,
-        o: impl BufferArgMut<'o, Metal>,
-        params: AttnParams,
-        ring_params: Option<RingParams>,
-        trie: Option<impl BufferArg<'trie, Metal>>,
-        sliding_window_size: Option<u32>,
-        sinks: Option<impl BufferArg<'sinks, Metal>>,
-        num_heads: u32,
-        suffix_length: u32,
-        encoder: &'encoder mut Encoder<Metal>,
+        args: AttentionGemmArgs<
+            impl BufferArg<'q, Metal>,
+            impl BufferArg<'k, Metal>,
+            impl BufferArg<'v, Metal>,
+            impl BufferArgMut<'o, Metal>,
+            impl BufferArg<'trie, Metal>,
+            impl BufferArg<'sinks, Metal>,
+        >,
+        encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        let use_mxu = suffix_length >= 64
-            && encoder.context().device.supports_mxu()
+        let use_mxu = args.suffix_length >= 64
+            && encoder.context().supports_mxu()
             && matches!(self.data_type, DataType::BF16 | DataType::F16)
             && matches!(self.bd, 64 | 128);
         let params = if use_mxu {
-            retile_params(params, 64, 32)
+            retile_params(args.params, 64, 32)
         } else {
-            retile_params(params, 32, self.simd_bk)
+            retile_params(args.params, 32, self.simd_bk)
         };
         let key = AttentionGemmKey {
             use_mxu,
@@ -129,17 +125,17 @@ impl AttentionGemmDispatch for AttentionGemmMetalDispatch {
         let kernel = self.get_or_create(encoder.context(), key, bk)?;
 
         kernel.encode(
-            q,
-            k,
-            v,
-            o,
+            args.q,
+            args.k,
+            args.v,
+            args.o,
             params,
-            ring_params,
-            trie,
-            sliding_window_size,
-            sinks,
-            num_heads,
-            suffix_length,
+            args.ring_params,
+            args.trie,
+            args.sliding_window_size,
+            args.sinks,
+            args.num_heads,
+            args.suffix_length,
             encoder,
         );
         Ok(())

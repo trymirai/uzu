@@ -66,6 +66,13 @@ impl<B: Backend> Attention<B> {
         state: Option<MaybeMut<AttentionState<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        if let Some(state) = &state {
+            debug_assert_eq!(
+                matches!(state, MaybeMut::Mut(_)),
+                self.num_kv_heads.is_some(),
+                "attention state mutability must match KV ownership (Const state ⇔ KV sharing)"
+            );
+        }
         // If we have gate we must duplicate input (linear does hadamard in-place). TODO: fix this properly by adding support for not in place input hadamard
         let (hidden, gate) = if let Some(gate_projection) = &self.gate_projection {
             let mut hidden_copy = encoder.allocate_scratch(hidden.size())?;

@@ -7,7 +7,7 @@ use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::TreeUpdateSolveKernel},
         cpu::Cpu,
-        metal::{DeviceExt, Metal},
+        metal::Metal,
     },
     data_type::DataType,
     tests::{
@@ -21,6 +21,26 @@ const BVS: &[u32] = &[16, 32];
 // MXU needs an even number of column fragments or MPP row pairing; BV16 (a single
 // 16x16 fragment) is not supported.
 const MXU_BVS: &[u32] = &[32];
+
+#[derive(Clone, Copy)]
+struct KernelPath {
+    name: &'static str,
+    use_mxu: bool,
+}
+
+fn bf16_kernel_paths(context: &<Metal as Backend>::Context) -> Vec<KernelPath> {
+    let mut paths = vec![KernelPath {
+        name: "Simdgroup",
+        use_mxu: false,
+    }];
+    if context.supports_mxu() {
+        paths.push(KernelPath {
+            name: "MXU",
+            use_mxu: true,
+        });
+    }
+    paths
+}
 
 #[derive(Clone, Copy)]
 struct SolveCase {
@@ -203,17 +223,23 @@ fn test_tree_update_solve_cases() {
 }
 
 #[uzu_test]
-fn test_tree_update_solve_mxu_cases() {
+fn test_tree_update_solve_bf16_paths() {
     let context = <Metal as Backend>::Context::new().expect("context");
-    if !context.device.supports_mxu() {
-        return;
-    }
+    let paths = bf16_kernel_paths(&context);
     for &bv in MXU_BVS {
         for &use_h0 in &[true, false] {
             for &case in CASES {
                 let expected = run_case::<Cpu, bf16>(case, bv, false, use_h0, DataType::BF16, bf16::from_f32);
-                let output = run_case::<Metal, bf16>(case, bv, true, use_h0, DataType::BF16, bf16::from_f32);
-                assert_eq_float(&expected, &output, 1e-2, &format!("{} MXU BV{bv} h0={use_h0}", case.name));
+                for path in &paths {
+                    let output =
+                        run_case::<Metal, bf16>(case, bv, path.use_mxu, use_h0, DataType::BF16, bf16::from_f32);
+                    assert_eq_float(
+                        &expected,
+                        &output,
+                        1e-2,
+                        &format!("{} {} BV{bv} h0={use_h0}", case.name, path.name),
+                    );
+                }
             }
         }
     }

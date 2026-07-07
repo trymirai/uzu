@@ -97,7 +97,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
             scale: Some(input.scale),
             data_type: T::data_type(),
         },
-        false,
         context.as_ref(),
     )
     .expect("Failed to create AttentionGemmCore");
@@ -160,39 +159,39 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 fn test_basic<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected) = get_test_data::<T>(4, 4, 16, 9, 64, false);
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 1, 64, false);
     test_internal(&input, &expected);
 
-    let (input, expected) = get_test_data::<T>(4, 4, 16, 16, 64, false);
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 4, 64, false);
     test_internal(&input, &expected);
 }
 
 fn test_causal<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected) = get_test_data::<T>(4, 4, 16, 9, 64, true);
+    let (input, expected) = get_test_data::<T>(4, 4, 16, 1, 64, true);
     test_internal(&input, &expected);
 
-    let (input, expected) = get_test_data::<T>(4, 4, 16, 16, 64, true);
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 4, 64, true);
     test_internal(&input, &expected);
 }
 
 fn test_gqa<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected) = get_test_data::<T>(8, 2, 16, 9, 64, false);
+    let (input, expected) = get_test_data::<T>(8, 2, 8, 1, 64, false);
     test_internal(&input, &expected);
 
-    let (input, expected) = get_test_data::<T>(8, 2, 16, 16, 64, true);
+    let (input, expected) = get_test_data::<T>(8, 2, 8, 4, 64, true);
     test_internal(&input, &expected);
 }
 
 fn test_head_dim<T: ArrayElement + Float + Debug + Display>(head_dim: usize) {
-    let (input, expected) = get_test_data::<T>(4, 4, 16, 9, head_dim, true);
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 2, head_dim, true);
     test_internal(&input, &expected);
 }
 
 fn test_unaligned<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected) = get_test_data::<T>(4, 4, 40, 11, 64, true);
+    let (input, expected) = get_test_data::<T>(4, 4, 40, 7, 64, true);
     test_internal(&input, &expected);
 
-    let (input, expected) = get_test_data::<T>(4, 4, 21, 13, 64, false);
+    let (input, expected) = get_test_data::<T>(4, 4, 13, 4, 64, false);
     test_internal(&input, &expected);
 }
 

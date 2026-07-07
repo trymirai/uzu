@@ -12,7 +12,7 @@ use crate::{
                 matmul::{MatmulArguments, MatmulError, MatmulKernel},
             },
         },
-        metal::{DeviceExt, Metal, context::MetalContext, error::MetalError},
+        metal::{Metal, context::MetalContext, error::MetalError, metal_extensions::DeviceExt},
     },
     data_type::DataType,
 };
