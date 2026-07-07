@@ -1,6 +1,11 @@
 pub mod conv_scan;
 pub mod conv_update;
+pub mod gram;
+pub mod mega_apply;
 pub mod norm_gate;
 pub mod prefill;
 pub mod prefill_prep;
+pub mod prep;
+pub mod solve;
+pub mod solve_t;
 pub mod update;

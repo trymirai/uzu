@@ -20,6 +20,10 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
+mod chunked_prefill;
+
+use chunked_prefill::ChunkedPrefill;
+
 pub struct DeltaNetState<B: Backend> {
     conv_state: Allocation<B>,
     ssm_state: Allocation<B>,
@@ -71,6 +75,7 @@ pub struct DeltaNet<B: Backend> {
     delta_net_prefill_prep: <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel,
     delta_net_prefill: <B::Kernels as Kernels>::DeltaNetPrefillKernel,
     delta_net_norm_gate: <B::Kernels as Kernels>::DeltaNetNormGateKernel,
+    chunked: Option<ChunkedPrefill<B>>,
     out_projection: Box<dyn Linear<B>>,
 }
 
@@ -93,7 +98,10 @@ impl<B: Backend> DeltaNet<B> {
         config: &DeltaNetConfig,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
-    ) -> Result<(Self, Option<Allocation<B>>), DeltaNetNewError<B>> {
+    ) -> Result<(Self, Option<Allocation<B>>), DeltaNetNewError<B>>
+    where
+        B::Context: std::any::Any,
+    {
         if config.kernel_size < 2 {
             return Err(DeltaNetNewError::UnsupportedConfiguration(format!(
                 "kernel_size must be >= 2, got {}",
@@ -171,6 +179,9 @@ impl<B: Backend> DeltaNet<B> {
         let delta_net_norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, outer_data_type)
             .map_err(DeltaNetNewError::Backend)?;
 
+        let chunked =
+            ChunkedPrefill::new(context, outer_data_type, config.head_dim as u32).map_err(DeltaNetNewError::Backend)?;
+
         let out_projection = <dyn Linear<B>>::new_mixed_precision(
             value_dim,
             [hidden_dim],
@@ -208,6 +219,7 @@ impl<B: Backend> DeltaNet<B> {
                 delta_net_prefill_prep,
                 delta_net_prefill,
                 delta_net_norm_gate,
+                chunked,
                 out_projection,
             },
             in_projection_input_hadamard_factors,
@@ -333,47 +345,50 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.total_proj_dim as u32,
                 encoder,
             );
-
-            let mut prep_q_norm =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.key_dim], DataType::F32))?;
-            let mut prep_k_norm =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.key_dim], DataType::F32))?;
-            let mut prep_beta =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.num_heads], DataType::F32))?;
-            let mut prep_decay =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.num_heads], DataType::F32))?;
-            self.delta_net_prefill_prep.encode(
-                &in_projected,
-                &self.a_log,
-                &self.dt_bias,
-                &mut prep_q_norm,
-                &mut prep_k_norm,
-                &mut prep_beta,
-                &mut prep_decay,
-                self.num_heads as u32,
-                self.num_groups as u32,
-                self.key_dim as u32,
-                self.value_dim as u32,
-                batch_dim.size() as u32,
-                encoder,
-            );
-            self.delta_net_prefill.encode(
-                &prep_q_norm,
-                &prep_k_norm,
-                &prep_beta,
-                &prep_decay,
-                &in_projected,
-                &mut state.ssm_state,
-                &mut delta_output,
-                self.num_heads as u32,
-                self.num_groups as u32,
-                self.value_head_dim as u32,
-                self.key_dim as u32,
-                self.value_dim as u32,
-                batch_dim.size() as u32,
-                self.value_head_dim.div_ceil(16) as u32,
-                encoder,
-            );
+            if let Some(chunked) = self.chunked.as_ref().filter(|_| chunked_prefill::should_use(batch_dim.size())) {
+                chunked.encode(self, &in_projected, state, &mut delta_output, batch_dim.size(), encoder)?;
+            } else {
+                let mut prep_q_norm =
+                    encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.key_dim], DataType::F32))?;
+                let mut prep_k_norm =
+                    encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.key_dim], DataType::F32))?;
+                let mut prep_beta =
+                    encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.num_heads], DataType::F32))?;
+                let mut prep_decay =
+                    encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.num_heads], DataType::F32))?;
+                self.delta_net_prefill_prep.encode(
+                    &in_projected,
+                    &self.a_log,
+                    &self.dt_bias,
+                    &mut prep_q_norm,
+                    &mut prep_k_norm,
+                    &mut prep_beta,
+                    &mut prep_decay,
+                    self.num_heads as u32,
+                    self.num_groups as u32,
+                    self.key_dim as u32,
+                    self.value_dim as u32,
+                    batch_dim.size() as u32,
+                    encoder,
+                );
+                self.delta_net_prefill.encode(
+                    &prep_q_norm,
+                    &prep_k_norm,
+                    &prep_beta,
+                    &prep_decay,
+                    &in_projected,
+                    &mut state.ssm_state,
+                    &mut delta_output,
+                    self.num_heads as u32,
+                    self.num_groups as u32,
+                    self.value_head_dim as u32,
+                    self.key_dim as u32,
+                    self.value_dim as u32,
+                    batch_dim.size() as u32,
+                    self.value_head_dim.div_ceil(16) as u32,
+                    encoder,
+                );
+            }
             self.delta_net_norm_gate.encode(
                 &mut delta_output,
                 &in_projected,

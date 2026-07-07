@@ -1,9 +1,10 @@
 #include <metal_stdlib>
-#include "../activation/activations.h"
-#include "../common/defines.h"
-#include "../common/dsl.h"
-#include "../common/thread_context.h"
-#include "../generated/trie.h"
+#include "../../activation/activations.h"
+#include "../../common/defines.h"
+#include "../../common/dsl.h"
+#include "../../common/thread_context.h"
+#include "../../generated/trie.h"
+#include "../common/math.h"
 
 #define ROWS_PER_THREADGROUP 4u
 
@@ -59,7 +60,7 @@ PUBLIC KERNEL(BuildPrefixBeta)(
   const float sum = simd_sum(partial);
   if (lane_id == 0) {
     const float b_val = float(b[out_idx]);
-    beta[out_idx] = 1.0f / (1.0f + exp(-b_val));
+    beta[out_idx] = gdn_sigmoid(b_val);
     prefix[out_idx] = sum;
   }
 }

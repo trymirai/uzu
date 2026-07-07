@@ -4,10 +4,9 @@ use crate::backends::{common::Kernels, cpu::Cpu};
 
 mod activation;
 mod attention;
-mod delta_net;
 mod embedding;
 mod gated_act_mul;
-mod gdn_tree_verify;
+mod gdn;
 mod hadamard_transform;
 mod logit_soft_cap;
 mod matmul;
