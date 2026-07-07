@@ -1,8 +1,7 @@
 #include <metal_stdlib>
 #include "../../common/defines.h"
 #include "../../common/dsl.h"
-#include "../common/heads.h"
-#include "../common/math.h"
+#include "../common/prep.h"
 
 using namespace metal;
 
@@ -26,53 +25,22 @@ PUBLIC KERNEL(DeltaNetChunkedPrep)(
     const uint hk_idx GROUPS(num_k_heads),
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
-  static_assert(HEAD_K_DIM % METAL_SIMD_SIZE == 0, "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE");
-  constexpr uint elems_per_thread = HEAD_K_DIM / METAL_SIMD_SIZE;
-
-  const uint conv_dim = 2 * key_dim + value_dim;
-  const uint total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
-  const uint groups_per_head = gdn_groups_per_key_head(num_v_heads, num_k_heads);
-
-  const uint tok_offset = token_idx * total_proj_dim;
-  const uint q_base = tok_offset + hk_idx * HEAD_K_DIM;
-  const uint k_base = tok_offset + key_dim + hk_idx * HEAD_K_DIM;
-
-  float q_vals[elems_per_thread];
-  float k_vals[elems_per_thread];
-  float q_sq = 0.0f;
-  float k_sq = 0.0f;
-
-  for (uint i = 0; i < elems_per_thread; ++i) {
-    const uint idx = lane + i * METAL_SIMD_SIZE;
-    q_vals[i] = float(in_proj[q_base + idx]);
-    k_vals[i] = float(in_proj[k_base + idx]);
-    q_sq += q_vals[i] * q_vals[i];
-    k_sq += k_vals[i] * k_vals[i];
-  }
-
-  const float q_inv_norm = rsqrt(simd_sum(q_sq) + 1e-6f);
-  const float k_inv_norm = rsqrt(simd_sum(k_sq) + 1e-6f);
-  const float q_scale = rsqrt(float(HEAD_K_DIM));
-
-  const uint out_base = token_idx * key_dim + hk_idx * HEAD_K_DIM;
-  for (uint i = 0; i < elems_per_thread; ++i) {
-    const uint idx = lane + i * METAL_SIMD_SIZE;
-    q_norm_out[out_base + idx] = q_vals[i] * q_inv_norm * q_scale;
-    k_norm_out[out_base + idx] = k_vals[i] * k_inv_norm;
-  }
-
-  for (uint group = lane; group < groups_per_head; group += METAL_SIMD_SIZE) {
-    const uint hv = hk_idx * groups_per_head + group;
-
-    const float beta_raw = float(in_proj[tok_offset + conv_dim + value_dim + hv]);
-    const float beta = gdn_sigmoid(beta_raw);
-
-    const float a_raw = float(in_proj[tok_offset + conv_dim + value_dim + num_v_heads + hv]);
-    const float log_decay = gdn_log_decay(a_raw, a_log[hv], dt_bias[hv]);
-
-    beta_out[token_idx * num_v_heads + hv] = beta;
-    log_decay_out[token_idx * num_v_heads + hv] = log_decay;
-  }
+  gdn_prepare_qk_beta_decay<T, HEAD_K_DIM, true>(
+      in_proj,
+      a_log,
+      dt_bias,
+      q_norm_out,
+      k_norm_out,
+      beta_out,
+      log_decay_out,
+      num_v_heads,
+      num_k_heads,
+      key_dim,
+      value_dim,
+      token_idx,
+      hk_idx,
+      lane
+  );
 }
 
 PUBLIC KERNEL(DeltaNetChunkedCumsum)(

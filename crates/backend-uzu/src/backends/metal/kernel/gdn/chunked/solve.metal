@@ -3,6 +3,7 @@
 #include "../../common/dsl.h"
 #include "../common/heads.h"
 #include "../common/math.h"
+#include "../common/solve.h"
 
 using namespace metal;
 
@@ -39,6 +40,7 @@ PUBLIC KERNEL(DeltaNetChunkedSolve)(
     constant const uint& num_v_heads,
     constant const uint& num_k_heads,
     constant const uint& suffix_len,
+    threadgroup float diag_a_tile[CHUNK_SOLVE_BLOCK * CHUNK_SOLVE_BLOCK],
     const uint chunk_idx GROUPS(suffix_len.div_ceil(CHUNK_SIZE)),
     const uint hv_idx GROUPS(num_v_heads),
     const uint block_idx GROUPS(CHUNK_SIZE.div_ceil(CHUNK_SOLVE_BLOCK)),
@@ -50,6 +52,8 @@ PUBLIC KERNEL(DeltaNetChunkedSolve)(
   const uint token_base = chunk_idx * CHUNK_SIZE;
   const uint row_base = block_idx * CHUNK_SOLVE_BLOCK;
   const uint kk_base = (chunk_idx * num_k_heads + hk_idx) * CHUNK_SIZE * CHUNK_SIZE;
+  const uint diag_pair = block_idx / 2;
+  const uint diag_col_offset = (block_idx % 2) * CHUNK_SOLVE_BLOCK;
 
   for (uint idx = lane; idx < num_col_pairs * CHUNK_SOLVE_BLOCK * 2 * CHUNK_SOLVE_BLOCK; idx += METAL_SIMD_SIZE) {
     const uint local_col = idx % (2 * CHUNK_SOLVE_BLOCK);
@@ -72,41 +76,15 @@ PUBLIC KERNEL(DeltaNetChunkedSolve)(
                              (CHUNK_SOLVE_BLOCK * 2 * CHUNK_SOLVE_BLOCK) +
                          local_row * (2 * CHUNK_SOLVE_BLOCK) + local_col;
     a_packed[out_idx] = value;
-  }
-
-  if (lane >= CHUNK_SOLVE_BLOCK) {
-    return;
-  }
-
-  const uint inv_col = lane;
-  float inverse_col[CHUNK_SOLVE_BLOCK] = {};
-  inverse_col[inv_col] = 1.0f;
-
-  METAL_PRAGMA_UNROLL
-  for (uint inv_row = 0; inv_row < CHUNK_SOLVE_BLOCK; ++inv_row) {
-    const uint row = row_base + inv_row;
-    if (inv_row > inv_col && row < CHUNK_SIZE && token_base + row < suffix_len) {
-      float acc = 0.0f;
-      METAL_PRAGMA_UNROLL
-      for (uint prev = 0; prev < CHUNK_SOLVE_BLOCK; ++prev) {
-        if (prev < inv_row) {
-          const uint col = row_base + prev;
-          const float beta_row = beta[(token_base + row) * num_v_heads + hv_idx];
-          const float g_row = chunked_g<RECOMPUTE_G>(g_or_log_decay, token_base, row, num_v_heads, hv_idx);
-          const float g_col = chunked_g<RECOMPUTE_G>(g_or_log_decay, token_base, col, num_v_heads, hv_idx);
-          const float a = beta_row * gdn_prefix_decay(g_row, g_col) * kk[kk_base + row * CHUNK_SIZE + col];
-          acc += a * inverse_col[prev];
-        }
-      }
-      inverse_col[inv_row] = -acc;
+    if (pair_idx == diag_pair && local_col >= diag_col_offset && local_col < diag_col_offset + CHUNK_SOLVE_BLOCK) {
+      diag_a_tile[local_row * CHUNK_SOLVE_BLOCK + local_col - diag_col_offset] = value;
     }
   }
 
-  METAL_PRAGMA_UNROLL
-  for (uint inv_row = 0; inv_row < CHUNK_SOLVE_BLOCK; ++inv_row) {
-    const uint out_idx =
-        ((chunk_idx * num_v_heads + hv_idx) * num_blocks + block_idx) * CHUNK_SOLVE_BLOCK * CHUNK_SOLVE_BLOCK +
-        inv_row * CHUNK_SOLVE_BLOCK + inv_col;
-    a_inv[out_idx] = inverse_col[inv_row];
-  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  device float* a_inv_block =
+      a_inv + ((chunk_idx * num_v_heads + hv_idx) * num_blocks + block_idx) * (CHUNK_SOLVE_BLOCK * CHUNK_SOLVE_BLOCK);
+  const uint block_tokens =
+      token_base + row_base < suffix_len ? min(uint(CHUNK_SOLVE_BLOCK), suffix_len - token_base - row_base) : 0u;
+  gdn_invert_lower_triangular_block<CHUNK_SOLVE_BLOCK>(a_inv_block, diag_a_tile, block_tokens, lane);
 }

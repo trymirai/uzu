@@ -6,8 +6,11 @@ use self::gemv::{GemvDispatch, GemvSpecialization};
 use crate::{
     backends::{
         common::{
-            BufferArg, Encoder,
-            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
+            Encoder,
+            kernel::{
+                BufferArg,
+                matmul::{MatmulArguments, MatmulError, MatmulKernel},
+            },
         },
         metal::{Metal, context::MetalContext, error::MetalError, metal_extensions::DeviceExt},
     },

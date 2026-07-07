@@ -5,7 +5,6 @@ use crate::backends::common::{AsBufferRangeMut, AsBufferRangeRef, Backend, Buffe
 pub mod dense;
 pub mod sparse;
 
-pub mod arg;
 pub mod range;
 
 pub trait Buffer: Any + Debug {

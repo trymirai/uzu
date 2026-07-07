@@ -1,5 +1,8 @@
 use crate::{
-    backends::common::{Backend, BufferArg, Encoder, Kernels, kernel::matmul::arguments::MatmulArguments},
+    backends::common::{
+        Backend, Encoder, Kernels,
+        kernel::{BufferArg, matmul::arguments::MatmulArguments},
+    },
     data_type::DataType,
 };
 

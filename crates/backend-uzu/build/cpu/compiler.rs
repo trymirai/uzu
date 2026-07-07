@@ -373,10 +373,10 @@ impl CpuCompiler {
                             Some(quote! { #buffer_lifetime }),
                             match access {
                                 KernelBufferAccess::Read => {
-                                    quote! { impl crate::backends::common::BufferArg<#buffer_lifetime, crate::backends::cpu::Cpu> }
+                                    quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, crate::backends::cpu::Cpu> }
                                 },
                                 KernelBufferAccess::ReadWrite => {
-                                    quote! { impl crate::backends::common::BufferArgMut<#buffer_lifetime, crate::backends::cpu::Cpu> }
+                                    quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, crate::backends::cpu::Cpu> }
                                 },
                             },
                         )

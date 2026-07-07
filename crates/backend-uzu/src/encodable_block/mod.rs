@@ -11,6 +11,3 @@ pub mod prediction_head;
 pub mod sampling;
 pub mod transformer;
 pub mod transformer_layer;
-
-#[cfg(test)]
-pub use mixer::delta_net::{CHUNKED_MXU_MIN_T, GdnPrefillPath, select_gdn_prefill_path};

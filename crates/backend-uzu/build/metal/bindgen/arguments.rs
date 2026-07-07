@@ -219,7 +219,7 @@ impl ArgumentEmission {
             ArgumentEmission::Constant(constant) => Some(emit_constant_argument_definition(constant)),
             ArgumentEmission::Shared(_) => None,
             ArgumentEmission::IndirectDispatch(_) => Some(quote! {
-                __dsl_indirect_dispatch_buffer: impl crate::backends::common::BufferArg<
+                __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<
                     '__dsl_indirect_dispatch_buffer, crate::backends::metal::Metal
                 >
             }),
@@ -292,8 +292,8 @@ fn emit_buffer_argument_definition(buffer: &BufferArgument) -> TokenStream {
     let name = &buffer.name;
     let lifetime = &buffer.lifetime;
     let trait_path = match buffer.access {
-        MetalBufferAccess::Read => quote! { crate::backends::common::BufferArg },
-        MetalBufferAccess::ReadWrite => quote! { crate::backends::common::BufferArgMut },
+        MetalBufferAccess::Read => quote! { crate::backends::common::kernel::BufferArg },
+        MetalBufferAccess::ReadWrite => quote! { crate::backends::common::kernel::BufferArgMut },
     };
     let buffer_argument_type = quote! { impl #trait_path<#lifetime, crate::backends::metal::Metal> };
     if buffer.condition.is_some() {

@@ -8,6 +8,7 @@
 #include "../../matmul/common/simdgroup_fragment_ops.h"
 #include "../common/gram.h"
 #include "../common/heads.h"
+#include "../common/solve.h"
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -17,42 +18,6 @@ using namespace uzu::trie;
 #define COL_TILE 32u
 #define NUM_SIMDGROUPS 2u
 #define INVALID_ROW 0xffffffffu
-
-// Ragged blocks are padded with identity columns so the 16x16 output is fully
-// initialized.
-METAL_FUNC void invert_tree_gram_diagonal_block(
-    device float* a_inv_block,
-    threadgroup const float* diag_a_tile,
-    const uint block_size,
-    const uint lane
-) {
-  if (lane >= ROW_TILE) {
-    return;
-  }
-
-  const uint col = lane;
-  float inverse_col[ROW_TILE] = {};
-  inverse_col[col] = 1.0f;
-
-  METAL_PRAGMA_UNROLL
-  for (uint row = 0; row < ROW_TILE; row++) {
-    if (row > col && row < block_size) {
-      float acc = 0.0f;
-      METAL_PRAGMA_UNROLL
-      for (uint prev_row = 0; prev_row < ROW_TILE; prev_row++) {
-        if (prev_row < row) {
-          acc += diag_a_tile[row * ROW_TILE + prev_row] * inverse_col[prev_row];
-        }
-      }
-      inverse_col[row] = -acc;
-    }
-  }
-
-  METAL_PRAGMA_UNROLL
-  for (uint row = 0; row < ROW_TILE; row++) {
-    a_inv_block[row * ROW_TILE + col] = inverse_col[row];
-  }
-}
 
 // kh0 = k @ h0[h0_idx[batch]]^T for one row-tile, walking head_v_dim in COL_TILE
 // chunks from dv_start by dv_stride. No-op for a zero initial state.
@@ -294,7 +259,7 @@ PUBLIC KERNEL(BuildTreeGram)(
       simdgroup_barrier(mem_flags::mem_threadgroup);
       device float* a_inv_block =
           a_inv + ((batch_idx * value_heads + value_head_idx) * num_blocks + row_tile_idx) * (ROW_TILE * ROW_TILE);
-      invert_tree_gram_diagonal_block(a_inv_block, diag_a_tile, tile_rows, lane);
+      gdn_invert_lower_triangular_block<ROW_TILE>(a_inv_block, diag_a_tile, tile_rows, lane);
     }
   } else if (col_tile_idx < col_tiles) {
     // Above-diagonal zero fill; COL_TILE == METAL_SIMD_SIZE, so each

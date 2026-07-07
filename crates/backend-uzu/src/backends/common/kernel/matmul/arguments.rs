@@ -1,5 +1,5 @@
 use super::{d_ops::MatmulDOps, matmul_b::MatmulB};
-use crate::backends::common::{Allocation, Backend, BufferArg};
+use crate::backends::common::{Allocation, Backend, kernel::BufferArg};
 
 pub struct MatmulArguments<'a, 'b, 'd, B: Backend, TB: BufferArg<'b, B> = &'b Allocation<B>> {
     pub a: &'a Allocation<B>,

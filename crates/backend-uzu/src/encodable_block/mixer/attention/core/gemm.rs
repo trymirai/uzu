@@ -5,7 +5,9 @@ use bitflags::bitflags;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, BufferArg, Encoder, Kernels, gpu_types::AttnParams, kernel::AttentionGemmKernel,
+        Allocation, Backend, Encoder, Kernels,
+        gpu_types::AttnParams,
+        kernel::{AttentionGemmKernel, BufferArg},
     },
     data_type::DataType,
     encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},

@@ -3,9 +3,9 @@ use std::cell::RefCell;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, BufferArg, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         kernel::{
-            AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, SoftmaxKernel,
+            AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, BufferArg, SoftmaxKernel,
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },

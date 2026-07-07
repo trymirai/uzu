@@ -1,6 +1,9 @@
 use crate::{
     array::size_for_shape,
-    backends::common::{Allocation, Backend, BufferArg, Encoder, Kernels, kernel::AttentionSinglePassKernel},
+    backends::common::{
+        Allocation, Backend, Encoder, Kernels,
+        kernel::{AttentionSinglePassKernel, BufferArg},
+    },
     data_type::DataType,
     encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
 };

@@ -7,9 +7,12 @@ use super::policy::{self, DEFAULT_RESULTS_PER_SIMDGROUP, FP_K_BLOCK};
 use crate::{
     backends::{
         common::{
-            Allocation, BufferArg, Encoder,
+            Allocation, Encoder,
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-            kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
+            kernel::{
+                BufferArg,
+                matmul::{MatmulArguments, MatmulB, MatmulError},
+            },
         },
         metal::{Metal, context::MetalContext, device_tier::DeviceTier, kernel::GemvMetalKernel},
     },

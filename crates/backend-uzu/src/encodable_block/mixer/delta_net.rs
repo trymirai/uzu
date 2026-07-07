@@ -5,10 +5,8 @@ use crate::{
     backends::common::{
         Allocation, AllocationType, Backend, Context, Encoder, Kernels,
         kernel::{
-            Conv1dPackKernel, DeltaNetChunkedCumsumKernel, DeltaNetChunkedGramKernel, DeltaNetChunkedMegaApplyKernel,
-            DeltaNetChunkedPrepKernel, DeltaNetChunkedSolveKernel, DeltaNetChunkedSolveTKernel, DeltaNetConvScanKernel,
-            DeltaNetConvUpdateKernel, DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel,
-            DeltaNetUpdateKernel,
+            Conv1dPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel,
+            DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
         },
     },
     config::token_mixer::delta_net::DeltaNetConfig,
@@ -22,36 +20,9 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-/// Minimum prefill length (tokens) for chunked Mode-L with the MXU backend.
-pub const CHUNKED_MXU_MIN_T: usize = 256;
+mod chunked_prefill;
 
-const CHUNKED_CHUNK_SIZE: usize = 64;
-const CHUNKED_BLOCK_SIZE: usize = 16;
-const CHUNKED_VT: usize = 32;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GdnPrefillPath {
-    Recurrent,
-    ChunkedModeL,
-}
-
-pub fn select_gdn_prefill_path<C: Context>(
-    context: &C,
-    suffix_len: usize,
-) -> GdnPrefillPath {
-    route_gdn_prefill(context.supports_mxu(), suffix_len)
-}
-
-fn route_gdn_prefill(
-    supports_mxu: bool,
-    suffix_len: usize,
-) -> GdnPrefillPath {
-    if supports_mxu && suffix_len >= CHUNKED_MXU_MIN_T {
-        GdnPrefillPath::ChunkedModeL
-    } else {
-        GdnPrefillPath::Recurrent
-    }
-}
+use chunked_prefill::ChunkedPrefill;
 
 pub struct DeltaNetState<B: Backend> {
     conv_state: Allocation<B>,
@@ -104,12 +75,7 @@ pub struct DeltaNet<B: Backend> {
     delta_net_prefill_prep: <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel,
     delta_net_prefill: <B::Kernels as Kernels>::DeltaNetPrefillKernel,
     delta_net_norm_gate: <B::Kernels as Kernels>::DeltaNetNormGateKernel,
-    chunked_prep: Option<<B::Kernels as Kernels>::DeltaNetChunkedPrepKernel>,
-    chunked_cumsum: Option<<B::Kernels as Kernels>::DeltaNetChunkedCumsumKernel>,
-    chunked_gram: Option<<B::Kernels as Kernels>::DeltaNetChunkedGramKernel>,
-    chunked_solve: Option<<B::Kernels as Kernels>::DeltaNetChunkedSolveKernel>,
-    chunked_solve_t: Option<<B::Kernels as Kernels>::DeltaNetChunkedSolveTKernel>,
-    chunked_mega: Option<<B::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel>,
+    chunked: Option<ChunkedPrefill<B>>,
     out_projection: Box<dyn Linear<B>>,
 }
 
@@ -210,43 +176,8 @@ impl<B: Backend> DeltaNet<B> {
         let delta_net_norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, outer_data_type)
             .map_err(DeltaNetNewError::Backend)?;
 
-        let (chunked_prep, chunked_cumsum, chunked_gram, chunked_solve, chunked_solve_t, chunked_mega) =
-            if context.supports_mxu() {
-                let prep = <B::Kernels as Kernels>::DeltaNetChunkedPrepKernel::new(
-                    context,
-                    outer_data_type,
-                    config.head_dim as u32,
-                )
-                .map_err(DeltaNetNewError::Backend)?;
-                let cumsum = <B::Kernels as Kernels>::DeltaNetChunkedCumsumKernel::new(context)
-                    .map_err(DeltaNetNewError::Backend)?;
-                let gram = <B::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(
-                    context,
-                    config.head_dim as u32,
-                    CHUNKED_CHUNK_SIZE as u32,
-                )
-                .map_err(DeltaNetNewError::Backend)?;
-                let solve =
-                    <B::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(context, CHUNKED_CHUNK_SIZE as u32, false)
-                        .map_err(DeltaNetNewError::Backend)?;
-                let solve_t = <B::Kernels as Kernels>::DeltaNetChunkedSolveTKernel::new(
-                    context,
-                    CHUNKED_CHUNK_SIZE as u32,
-                    CHUNKED_VT as u32,
-                )
-                .map_err(DeltaNetNewError::Backend)?;
-                let mega = <B::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
-                    context,
-                    outer_data_type,
-                    outer_data_type,
-                    CHUNKED_VT as u32,
-                    true,
-                )
-                .map_err(DeltaNetNewError::Backend)?;
-                (Some(prep), Some(cumsum), Some(gram), Some(solve), Some(solve_t), Some(mega))
-            } else {
-                (None, None, None, None, None, None)
-            };
+        let chunked =
+            ChunkedPrefill::new(context, outer_data_type, config.head_dim as u32).map_err(DeltaNetNewError::Backend)?;
 
         let out_projection = <dyn Linear<B>>::new_mixed_precision(
             value_dim,
@@ -285,199 +216,11 @@ impl<B: Backend> DeltaNet<B> {
                 delta_net_prefill_prep,
                 delta_net_prefill,
                 delta_net_norm_gate,
-                chunked_prep,
-                chunked_cumsum,
-                chunked_gram,
-                chunked_solve,
-                chunked_solve_t,
-                chunked_mega,
+                chunked,
                 out_projection,
             },
             in_projection_input_hadamard_factors,
         ))
-    }
-
-    fn encode_recurrent_prefill(
-        &self,
-        in_projected: &Allocation<B>,
-        state: &mut DeltaNetState<B>,
-        suffix_len: usize,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        let mut delta_output =
-            encoder.allocate_scratch(size_for_shape(&[suffix_len, self.value_dim], self.outer_data_type))?;
-        let mut prep_q_norm = encoder.allocate_scratch(size_for_shape(&[suffix_len, self.key_dim], DataType::F32))?;
-        let mut prep_k_norm = encoder.allocate_scratch(size_for_shape(&[suffix_len, self.key_dim], DataType::F32))?;
-        let mut prep_beta = encoder.allocate_scratch(size_for_shape(&[suffix_len, self.num_heads], DataType::F32))?;
-        let mut prep_decay = encoder.allocate_scratch(size_for_shape(&[suffix_len, self.num_heads], DataType::F32))?;
-        self.delta_net_prefill_prep.encode(
-            in_projected,
-            &self.a_log,
-            &self.dt_bias,
-            &mut prep_q_norm,
-            &mut prep_k_norm,
-            &mut prep_beta,
-            &mut prep_decay,
-            self.num_heads as u32,
-            self.num_groups as u32,
-            self.key_dim as u32,
-            self.value_dim as u32,
-            suffix_len as u32,
-            encoder,
-        );
-        self.delta_net_prefill.encode(
-            &prep_q_norm,
-            &prep_k_norm,
-            &prep_beta,
-            &prep_decay,
-            in_projected,
-            &mut state.ssm_state,
-            &mut delta_output,
-            self.num_heads as u32,
-            self.num_groups as u32,
-            self.value_head_dim as u32,
-            self.key_dim as u32,
-            self.value_dim as u32,
-            suffix_len as u32,
-            self.value_head_dim.div_ceil(16) as u32,
-            encoder,
-        );
-        self.delta_net_norm_gate.encode(
-            &mut delta_output,
-            in_projected,
-            &self.norm_weight,
-            self.num_heads as u32,
-            self.value_head_dim as u32,
-            self.value_dim as u32,
-            self.conv_dim as u32,
-            self.total_proj_dim as u32,
-            self.norm_epsilon,
-            suffix_len as u32,
-            encoder,
-        );
-        Ok(delta_output)
-    }
-
-    pub(crate) fn encode_chunked_prefill(
-        &self,
-        in_projected: &Allocation<B>,
-        state: &mut DeltaNetState<B>,
-        suffix_len: usize,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        let prep = self.chunked_prep.as_ref().expect("chunked prep kernel present when routed to chunked path");
-        let cumsum = self.chunked_cumsum.as_ref().expect("chunked cumsum kernel present when routed to chunked path");
-        let gram = self.chunked_gram.as_ref().expect("chunked gram kernel present when routed to chunked path");
-        let solve = self.chunked_solve.as_ref().expect("chunked solve kernel present when routed to chunked path");
-        let solve_t = self.chunked_solve_t.as_ref().expect("chunked solveT kernel present when routed to chunked path");
-        let mega = self.chunked_mega.as_ref().expect("chunked mega kernel present when routed to chunked path");
-
-        let chunk_size = CHUNKED_CHUNK_SIZE;
-        let block_size = CHUNKED_BLOCK_SIZE;
-        let num_chunks = suffix_len.div_ceil(chunk_size);
-        let num_blocks = chunk_size.div_ceil(block_size);
-        let num_col_pairs = num_blocks.div_ceil(2);
-
-        let mut q_norm = encoder.allocate_scratch(size_for_shape(&[suffix_len * self.key_dim], DataType::F32))?;
-        let mut k_norm = encoder.allocate_scratch(size_for_shape(&[suffix_len * self.key_dim], DataType::F32))?;
-        let mut beta = encoder.allocate_scratch(size_for_shape(&[suffix_len * self.num_heads], DataType::F32))?;
-        let mut log_decay = encoder.allocate_scratch(size_for_shape(&[suffix_len * self.num_heads], DataType::F32))?;
-        let mut g = encoder.allocate_scratch(size_for_shape(&[suffix_len * self.num_heads], DataType::F32))?;
-        let mut kk = encoder.allocate_scratch(size_for_shape(
-            &[num_chunks * self.num_groups * chunk_size * chunk_size],
-            DataType::F32,
-        ))?;
-        let mut qk = encoder.allocate_scratch(size_for_shape(
-            &[num_chunks * self.num_heads * chunk_size * chunk_size],
-            DataType::F32,
-        ))?;
-        let mut a_packed = encoder.allocate_scratch(size_for_shape(
-            &[num_chunks * self.num_heads * num_blocks * num_col_pairs * block_size * 2 * block_size],
-            DataType::F32,
-        ))?;
-        let mut a_inv = encoder.allocate_scratch(size_for_shape(
-            &[num_chunks * self.num_heads * num_blocks * block_size * block_size],
-            DataType::F32,
-        ))?;
-        let mut t_mat = encoder.allocate_scratch(size_for_shape(
-            &[num_chunks * self.num_heads * chunk_size * chunk_size],
-            DataType::BF16,
-        ))?;
-        let mut delta_output =
-            encoder.allocate_scratch(size_for_shape(&[suffix_len, self.value_dim], self.outer_data_type))?;
-
-        prep.encode(
-            in_projected,
-            &self.a_log,
-            &self.dt_bias,
-            &mut q_norm,
-            &mut k_norm,
-            &mut beta,
-            &mut log_decay,
-            self.num_heads as u32,
-            self.num_groups as u32,
-            self.key_dim as u32,
-            self.value_dim as u32,
-            suffix_len as u32,
-            encoder,
-        );
-        cumsum.encode(&log_decay, &mut g, self.num_heads as u32, suffix_len as u32, chunk_size as u32, encoder);
-        gram.encode(
-            &q_norm,
-            &k_norm,
-            &g,
-            &mut kk,
-            &mut qk,
-            self.num_heads as u32,
-            self.num_groups as u32,
-            self.key_dim as u32,
-            suffix_len as u32,
-            encoder,
-        );
-        solve.encode(
-            &kk,
-            &beta,
-            &g,
-            &mut a_packed,
-            &mut a_inv,
-            self.num_heads as u32,
-            self.num_groups as u32,
-            suffix_len as u32,
-            encoder,
-        );
-        solve_t.encode(&a_packed, &a_inv, &mut t_mat, self.num_heads as u32, suffix_len as u32, encoder);
-        mega.encode(
-            &q_norm,
-            &k_norm,
-            in_projected,
-            &qk,
-            &t_mat,
-            &g,
-            &beta,
-            &mut state.ssm_state,
-            &mut delta_output,
-            self.num_heads as u32,
-            self.num_groups as u32,
-            self.value_head_dim as u32,
-            self.key_dim as u32,
-            self.value_dim as u32,
-            suffix_len as u32,
-            encoder,
-        );
-        self.delta_net_norm_gate.encode(
-            &mut delta_output,
-            in_projected,
-            &self.norm_weight,
-            self.num_heads as u32,
-            self.value_head_dim as u32,
-            self.value_dim as u32,
-            self.conv_dim as u32,
-            self.total_proj_dim as u32,
-            self.norm_epsilon,
-            suffix_len as u32,
-            encoder,
-        );
-        Ok(delta_output)
     }
 }
 
@@ -541,9 +284,9 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
 
         let mut in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
 
-        let delta_output = if batch_dim.size() == 1 {
-            let mut delta_output =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.value_dim], self.outer_data_type))?;
+        let mut delta_output =
+            encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.value_dim], self.outer_data_type))?;
+        if batch_dim.size() == 1 {
             self.conv_update.encode(
                 &self.conv_weight,
                 self.conv_bias.as_ref(),
@@ -570,7 +313,6 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.norm_epsilon,
                 encoder,
             );
-            delta_output
         } else {
             let mut padded = encoder.allocate_scratch(size_for_shape(
                 &[batch_dim.size() + self.kernel_size - 1, self.total_proj_dim],
@@ -600,38 +342,67 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.total_proj_dim as u32,
                 encoder,
             );
-            match select_gdn_prefill_path(encoder.context(), batch_dim.size()) {
-                GdnPrefillPath::ChunkedModeL => {
-                    self.encode_chunked_prefill(&in_projected, state, batch_dim.size(), encoder)?
-                },
-                GdnPrefillPath::Recurrent => {
-                    self.encode_recurrent_prefill(&in_projected, state, batch_dim.size(), encoder)?
-                },
+            if let Some(chunked) = self.chunked.as_ref().filter(|_| chunked_prefill::should_use(batch_dim.size())) {
+                chunked.encode(self, &in_projected, state, &mut delta_output, batch_dim.size(), encoder)?;
+            } else {
+                let mut prep_q_norm =
+                    encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.key_dim], DataType::F32))?;
+                let mut prep_k_norm =
+                    encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.key_dim], DataType::F32))?;
+                let mut prep_beta =
+                    encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.num_heads], DataType::F32))?;
+                let mut prep_decay =
+                    encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.num_heads], DataType::F32))?;
+                self.delta_net_prefill_prep.encode(
+                    &in_projected,
+                    &self.a_log,
+                    &self.dt_bias,
+                    &mut prep_q_norm,
+                    &mut prep_k_norm,
+                    &mut prep_beta,
+                    &mut prep_decay,
+                    self.num_heads as u32,
+                    self.num_groups as u32,
+                    self.key_dim as u32,
+                    self.value_dim as u32,
+                    batch_dim.size() as u32,
+                    encoder,
+                );
+                self.delta_net_prefill.encode(
+                    &prep_q_norm,
+                    &prep_k_norm,
+                    &prep_beta,
+                    &prep_decay,
+                    &in_projected,
+                    &mut state.ssm_state,
+                    &mut delta_output,
+                    self.num_heads as u32,
+                    self.num_groups as u32,
+                    self.value_head_dim as u32,
+                    self.key_dim as u32,
+                    self.value_dim as u32,
+                    batch_dim.size() as u32,
+                    self.value_head_dim.div_ceil(16) as u32,
+                    encoder,
+                );
             }
-        };
+            self.delta_net_norm_gate.encode(
+                &mut delta_output,
+                &in_projected,
+                &self.norm_weight,
+                self.num_heads as u32,
+                self.value_head_dim as u32,
+                self.value_dim as u32,
+                self.conv_dim as u32,
+                self.total_proj_dim as u32,
+                self.norm_epsilon,
+                batch_dim.size() as u32,
+                encoder,
+            );
+        }
 
         state.suffix_length = Some(batch_dim.size());
 
         self.out_projection.encode(delta_output, batch_dim.size(), encoder)
-    }
-}
-
-#[cfg(test)]
-mod router_tests {
-    use proc_macros::uzu_test;
-
-    use super::{CHUNKED_MXU_MIN_T, GdnPrefillPath, route_gdn_prefill};
-
-    #[uzu_test]
-    fn mxu_routes_chunked_above_threshold() {
-        assert_eq!(route_gdn_prefill(true, CHUNKED_MXU_MIN_T - 1), GdnPrefillPath::Recurrent);
-        assert_eq!(route_gdn_prefill(true, CHUNKED_MXU_MIN_T), GdnPrefillPath::ChunkedModeL);
-    }
-
-    #[uzu_test]
-    fn non_mxu_always_recurrent() {
-        for suffix_len in [1, CHUNKED_MXU_MIN_T, 1024, usize::MAX] {
-            assert_eq!(route_gdn_prefill(false, suffix_len), GdnPrefillPath::Recurrent);
-        }
     }
 }

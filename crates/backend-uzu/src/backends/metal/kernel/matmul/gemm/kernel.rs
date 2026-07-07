@@ -4,13 +4,13 @@ use super::specialization::GemmSpecialization;
 use crate::{
     backends::{
         common::{
-            Allocation, Backend, BufferArg, Encoder,
+            Allocation, Backend, Encoder,
             gpu_types::{
                 GemmParams, HadamardTransformOrder,
                 gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
             },
             kernel::{
-                HadamardTransformKernel, Kernels, TensorAddBiasKernel,
+                BufferArg, HadamardTransformKernel, Kernels, TensorAddBiasKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulError},
             },
         },

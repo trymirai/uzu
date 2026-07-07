@@ -2,7 +2,11 @@ use half::{bf16, f16};
 
 use crate::{
     backends::{
-        common::{AsBufferRangeRef, BufferArg, gpu_types::QuantizationMode, kernel::matmul::MatmulB},
+        common::{
+            AsBufferRangeRef,
+            gpu_types::QuantizationMode,
+            kernel::{BufferArg, matmul::MatmulB},
+        },
         cpu::Cpu,
     },
     data_type::DataType,

@@ -1,8 +1,10 @@
 use thiserror::Error;
 
 use crate::{
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
+        gpu_types::trie::TrieNode,
         kernel::{AttentionPrepareKernel, SigmoidGateKernel},
     },
     config::{rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
@@ -13,11 +15,10 @@ use crate::{
         mixer::{
             Mixer, MixerState,
             attention::{
-                core::{AttentionCoreNewArguments, AttentionCores},
-                mode::{LinearProjection, QkvProjection},
+                core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments, AttentionCores},
                 qkv_norm::{QKVNorm, QKVNormError},
                 rope::PrecalculatedRoPE,
-                state::AttentionState,
+                state::{AttentionState, AttentionStateType},
             },
         },
     },
@@ -26,7 +27,6 @@ use crate::{
 };
 
 mod core;
-mod mode;
 mod qkv_norm;
 mod state;
 
@@ -39,9 +39,12 @@ pub struct Attention<B: Backend> {
     is_causal: bool,
     sliding_window_size: Option<usize>,
     max_rope_length: Option<usize>,
+    is_kv_sharing: bool,
     data_type: DataType,
-    projection: QkvProjection<B>,
+    qkv_projection: Box<dyn Linear<B>>,
     gate_projection: Option<Box<dyn Linear<B>>>,
+    qkv_norm: Option<QKVNorm<B>>,
+    prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     sinks: Option<Allocation<B>>,
     flat_core: AttentionCores<B>,
     trie_core: AttentionCores<B>,
@@ -157,21 +160,11 @@ impl<B: Backend> Attention<B> {
             rope_config.is_some(),
         )
         .map_err(AttentionNewError::Backend)?;
-        let projection = QkvProjection::Packed {
-            qkv: LinearProjection {
-                lin: qkv_projection,
-                norm: qkv_norm,
-            },
-            prepare,
-        };
 
         let sinks = config
             .has_sinks
             .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_allocation())
             .transpose()?;
-
-        // TODO: remove when wiring with DFlash: split non-causal attention needs full KV storage and a window mask.
-        let is_kv_cache_ring = sliding_window_size.is_some();
 
         let flat_core = AttentionCores::new(
             AttentionCoreNewArguments {
@@ -179,7 +172,7 @@ impl<B: Backend> Attention<B> {
                 num_groups,
                 num_q_heads,
                 has_sinks: sinks.is_some(),
-                is_kv_cache_ring,
+                is_kv_cache_ring: sliding_window_size.is_some(),
                 is_causal,
                 is_trie: false,
                 sliding_window_size,
@@ -196,7 +189,7 @@ impl<B: Backend> Attention<B> {
                 num_groups,
                 num_q_heads,
                 has_sinks: sinks.is_some(),
-                is_kv_cache_ring,
+                is_kv_cache_ring: sliding_window_size.is_some(),
                 is_causal,
                 is_trie: true,
                 sliding_window_size,
@@ -229,9 +222,12 @@ impl<B: Backend> Attention<B> {
                 is_causal,
                 sliding_window_size,
                 max_rope_length,
+                is_kv_sharing,
                 data_type,
-                projection,
+                qkv_projection,
                 gate_projection,
+                qkv_norm,
+                prepare,
                 sinks,
                 flat_core,
                 trie_core,
@@ -272,6 +268,137 @@ impl<B: Backend> Mixer<B> for Attention<B> {
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        self.attend(hidden, precalculated_rope, batch_dim, state, encoder)
+
+        // If we have gate we must duplicate input (linear does hadamard in-place). TODO: fix this properly by adding support for not in place input hadamard
+        let (hidden, gate) = if let Some(gate_projection) = &self.gate_projection {
+            let mut hidden_copy = encoder.allocate_scratch(hidden.size())?;
+            encoder.encode_copy(&hidden, .., &mut hidden_copy, ..);
+            let gate = gate_projection.encode(hidden, batch_dim.size(), encoder)?;
+            (hidden_copy, Some(gate))
+        } else {
+            (hidden, None)
+        };
+
+        let mut qkv = self.qkv_projection.encode(hidden, batch_dim.size(), encoder)?;
+
+        if let Some(qkv_norm) = &self.qkv_norm {
+            qkv_norm.encode(&mut qkv, batch_dim.size(), encoder)?;
+        }
+
+        let mut queries = encoder
+            .allocate_scratch(size_for_shape(&[self.num_q_heads, batch_dim.size(), self.head_dim], self.data_type))?;
+
+        let mut attention_output = if let Some(mut state) = state {
+            assert!(matches!(state, MaybeMut::Mut(_)) == !self.is_kv_sharing);
+
+            let (prepare_keys, prepare_values, kv_token_offset) = match &mut state {
+                MaybeMut::Const(_) => (None, None, None),
+                MaybeMut::Mut(state) => (
+                    Some(state.keys.as_mut()),
+                    Some(state.values.as_mut()),
+                    Some(state.state_type.physical_prefix_length()),
+                ),
+            };
+
+            self.prepare.encode(
+                &qkv,
+                &mut queries,
+                prepare_keys,
+                prepare_values,
+                precalculated_rope.map(|precalculated_rope| &precalculated_rope.cosines),
+                precalculated_rope.map(|precalculated_rope| &precalculated_rope.sines),
+                self.num_q_heads as u32,
+                self.num_kv_heads.map(|num_kv_heads| num_kv_heads as u32),
+                self.head_dim as u32,
+                precalculated_rope.map(|precalculated_rope| precalculated_rope.dim as u32),
+                kv_token_offset.map(|kv_token_offset| kv_token_offset as u32),
+                batch_dim.size() as u32,
+                encoder,
+            );
+
+            let (core, trie) = if batch_dim.is_flat() {
+                (&self.flat_core, None)
+            } else {
+                let mut trie = encoder.allocate_constant(batch_dim.size() * size_of::<TrieNode>())?;
+                trie.copyin(batch_dim.nodes());
+                (&self.trie_core, Some(trie))
+            };
+
+            core.encode(
+                AttentionCoreEncodeArguments {
+                    queries: &queries,
+                    keys: state.keys.as_ref(),
+                    values: state.values.as_ref(),
+                    suffix_length: batch_dim.size(),
+                    trie: trie.as_ref(),
+                    sinks: self.sinks.as_ref(),
+                    state_type: &state.state_type,
+                },
+                encoder,
+            )?
+        } else {
+            let Some(num_kv_heads) = self.num_kv_heads else {
+                panic!("stateless attention doesn't support kv sharing");
+            };
+
+            assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
+
+            let mut keys = encoder
+                .allocate_scratch(size_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type))?;
+            let mut values = encoder
+                .allocate_scratch(size_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type))?;
+
+            self.prepare.encode(
+                &qkv,
+                &mut queries,
+                Some(&mut keys),
+                Some(&mut values),
+                precalculated_rope.map(|precalculated_rope| &precalculated_rope.cosines),
+                precalculated_rope.map(|precalculated_rope| &precalculated_rope.sines),
+                self.num_q_heads as u32,
+                self.num_kv_heads.map(|num_kv_heads| num_kv_heads as u32),
+                self.head_dim as u32,
+                precalculated_rope.map(|precalculated_rope| precalculated_rope.dim as u32),
+                Some(0),
+                batch_dim.size() as u32,
+                encoder,
+            );
+
+            // HACK: state_type should be Option.
+            let state_type = if self.sliding_window_size.is_some() {
+                AttentionStateType::Ring {
+                    offset: 0,
+                    length: 0,
+                    max_length: 0,
+                }
+            } else {
+                AttentionStateType::Full {
+                    length: 0,
+                }
+            };
+
+            self.flat_core.encode(
+                AttentionCoreEncodeArguments {
+                    queries: &queries,
+                    keys: &keys,
+                    values: &values,
+                    suffix_length: batch_dim.size(),
+                    trie: None,
+                    sinks: self.sinks.as_ref(),
+                    state_type: &state_type,
+                },
+                encoder,
+            )?
+        };
+
+        if let Some(gate_kernel) = &self.gate_kernel {
+            gate_kernel.encode(
+                &gate.unwrap(),
+                &mut attention_output,
+                (batch_dim.size() * self.num_q_heads * self.head_dim) as u32,
+                encoder,
+            );
+        }
+        self.out_projection.encode(attention_output, batch_dim.size(), encoder)
     }
 }

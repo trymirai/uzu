@@ -168,17 +168,13 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
                 let batch_dim = BatchTopology::new(&input_flat_trie_nodes, true);
 
-                let logits = model
-                    .decoder
-                    .encode(
-                        &token_ids,
-                        &batch_dim,
-                        last_batch.then(|| (input_chunk.len() - 1)..input_chunk.len()),
-                        &mut model_state.transformer_state,
-                        &mut encoder,
-                        &[],
-                    )?
-                    .logits;
+                let logits = model.decoder.encode(
+                    &token_ids,
+                    &batch_dim,
+                    last_batch.then(|| (input_chunk.len() - 1)..input_chunk.len()),
+                    &mut model_state.transformer_state,
+                    &mut encoder,
+                )?;
 
                 if last_batch {
                     let logits = logits.unwrap();
@@ -422,9 +418,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 Some(0..batch_dim.size()),
                 &mut self.model_state.transformer_state,
                 &mut encoder,
-                &[],
             )?
-            .logits
             .unwrap();
 
         let (bitmask, mut encoder) = if let Some(grammar) = self.options.grammar.as_deref_mut() {
