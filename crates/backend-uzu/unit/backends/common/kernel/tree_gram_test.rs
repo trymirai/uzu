@@ -1,12 +1,13 @@
+#![cfg(metal_backend)]
+
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
-#[cfg(metal_backend)]
-use crate::backends::metal::Metal;
 use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
         cpu::Cpu,
+        metal::Metal,
     },
     data_type::DataType,
     tests::{
@@ -146,7 +147,6 @@ fn test_build_tree_gram_matches_cpu() {
             assert_eq_float::<f32>(&expected.3, &actual.3, 5e-3, &format!("kh0 {msg}"));
         });
 
-        #[cfg(metal_backend)]
         if <Metal as Backend>::Context::new().expect("Failed to create Context").supports_mxu() {
             let actual =
                 get_output::<Metal>(&i.q, &i.k, &i.trie, &i.prefix, &i.beta, &i.h0, &i.h0_idx, tree_size, scale, true);

@@ -1,15 +1,15 @@
-#[cfg(metal_backend)]
+#![cfg(metal_backend)]
+
 use half::bf16;
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
-#[cfg(metal_backend)]
-use crate::backends::metal::Metal;
 use crate::{
     array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::TreeUpdateSolveKernel},
         cpu::Cpu,
+        metal::Metal,
     },
     data_type::DataType,
     tests::{
@@ -200,7 +200,6 @@ fn test_tree_update_solve_cases() {
         }
     }
 
-    #[cfg(metal_backend)]
     {
         let supports_mxu = <Metal as Backend>::Context::new().expect("context").supports_mxu();
         let paths: &[(&str, bool)] = if supports_mxu {
