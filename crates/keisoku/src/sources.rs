@@ -3,14 +3,15 @@ use crate::{
     sensor::{Sensor, SensorKind},
 };
 #[cfg(target_os = "macos")]
-use crate::{smc::Smc, soc::SocInfo};
+use crate::{decode::FrequencyTables, smc::Smc, soc::SocInfo};
 
-struct Lazy<T> {
+/// Lazily built once via `&mut` (used by the single-read `Reading` markers).
+struct Deferred<T> {
     slot: Option<T>,
     init: fn() -> T,
 }
 
-impl<T> Lazy<T> {
+impl<T> Deferred<T> {
     const fn new(init: fn() -> T) -> Self {
         Self {
             slot: None,
@@ -25,27 +26,29 @@ impl<T> Lazy<T> {
 }
 
 pub struct Sources {
-    system: Lazy<sysinfo::System>,
-    temperature: Lazy<Option<SensorReader>>,
-    voltage: Lazy<Option<SensorReader>>,
-    current: Lazy<Option<SensorReader>>,
+    system: Deferred<sysinfo::System>,
+    temperature: Deferred<Option<SensorReader>>,
+    voltage: Deferred<Option<SensorReader>>,
+    current: Deferred<Option<SensorReader>>,
+    // Built through a shared `&` (OnceCell) so several interval-metric contexts
+    // can borrow the SoC tables at once without a `&mut` conflict.
     #[cfg(target_os = "macos")]
-    soc: Lazy<Option<SocInfo>>,
+    soc: std::cell::OnceCell<Option<SocInfo>>,
     #[cfg(target_os = "macos")]
-    smc: Lazy<Option<Smc>>,
+    smc: std::cell::OnceCell<Option<Smc>>,
 }
 
 impl Sources {
     pub fn new() -> Self {
         Self {
-            system: Lazy::new(build_system),
-            temperature: Lazy::new(|| SensorReader::new(SensorKind::Temperature)),
-            voltage: Lazy::new(|| SensorReader::new(SensorKind::Voltage)),
-            current: Lazy::new(|| SensorReader::new(SensorKind::Current)),
+            system: Deferred::new(build_system),
+            temperature: Deferred::new(|| SensorReader::new(SensorKind::Temperature)),
+            voltage: Deferred::new(|| SensorReader::new(SensorKind::Voltage)),
+            current: Deferred::new(|| SensorReader::new(SensorKind::Current)),
             #[cfg(target_os = "macos")]
-            soc: Lazy::new(SocInfo::new),
+            soc: std::cell::OnceCell::new(),
             #[cfg(target_os = "macos")]
-            smc: Lazy::new(Smc::new),
+            smc: std::cell::OnceCell::new(),
         }
     }
 
@@ -66,13 +69,27 @@ impl Sources {
     }
 
     #[cfg(target_os = "macos")]
-    pub(crate) fn soc(&mut self) -> Option<&SocInfo> {
-        self.soc.get().as_ref()
+    pub(crate) fn soc(&self) -> Option<&SocInfo> {
+        self.soc.get_or_init(SocInfo::new).as_ref()
     }
 
     #[cfg(target_os = "macos")]
-    pub(crate) fn smc(&mut self) -> Option<&Smc> {
-        self.smc.get().as_ref()
+    pub(crate) fn smc(&self) -> Option<&Smc> {
+        self.smc.get_or_init(Smc::new).as_ref()
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn frequencies(&self) -> FrequencyTables<'_> {
+        match self.soc() {
+            Some(soc) => FrequencyTables {
+                ecpu: &soc.ecpu_frequencies,
+                pcpu: &soc.pcpu_frequencies,
+                gpu: &soc.gpu_frequencies,
+                ecpu_cores: soc.ecpu_cores,
+                pcpu_cores: soc.pcpu_cores,
+            },
+            None => FrequencyTables::default(),
+        }
     }
 }
 

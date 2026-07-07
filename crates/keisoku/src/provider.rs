@@ -1,29 +1,12 @@
 use core::marker::PhantomData;
-use std::time::{Duration, Instant as Clock};
+use std::time::Instant as Clock;
 
 #[cfg(target_os = "macos")]
 use crate::ioreport::{IoReport, RawEnergySample};
 use crate::{
-    decode::ChannelSample,
     metric::{IoReportGroups, Measured, Reading},
     sources::Sources,
 };
-
-pub struct Window<'a> {
-    pub(crate) channels: &'a [ChannelSample],
-    pub(crate) frequencies: Frequencies<'a>,
-    pub(crate) elapsed: Duration,
-    pub(crate) package_watts_mean: Option<f32>,
-}
-
-#[derive(Default, Clone, Copy)]
-pub(crate) struct Frequencies<'a> {
-    pub(crate) ecpu: &'a [u32],
-    pub(crate) pcpu: &'a [u32],
-    pub(crate) gpu: &'a [u32],
-    pub(crate) ecpu_cores: u8,
-    pub(crate) pcpu_cores: u8,
-}
 
 pub struct Static<M: Reading> {
     value: M::Value,
@@ -125,32 +108,41 @@ impl<M: Measured> Interval<M> {
         session: Session<M>,
     ) -> M::Value {
         let elapsed = session.started.elapsed();
-        let package_watts_mean = self.package_mean(session.begin_package_watts);
+        let package = self.package_mean(&session);
+        let ctx = M::context(&self.sources, package);
         #[cfg(target_os = "macos")]
-        let channels = self.decode_channels(&session);
+        let acc = self.accumulate(&session, &ctx);
         #[cfg(not(target_os = "macos"))]
-        let channels: Box<[ChannelSample]> = Box::default();
-        let frequencies = self.frequencies();
-        let window = Window {
-            channels: &channels,
-            frequencies,
-            elapsed,
-            package_watts_mean,
-        };
-        M::extract(&window)
+        let acc = M::Acc::default();
+        M::finish(acc, elapsed, &ctx)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn accumulate(
+        &self,
+        session: &Session<M>,
+        ctx: &M::Ctx<'_>,
+    ) -> M::Acc {
+        let mut acc = M::Acc::default();
+        if let (Some(ioreport), Some(begin)) = (self.ioreport.as_ref(), session.begin.as_ref())
+            && let Some(end) = ioreport.snapshot()
+        {
+            ioreport.for_each_channel(begin, &end, |channel| M::consume(&mut acc, channel, ctx));
+        }
+        acc
     }
 
     fn package_mean(
-        &mut self,
-        begin: Option<f32>,
+        &self,
+        session: &Session<M>,
     ) -> Option<f32> {
-        match (begin, self.package_watts()) {
+        match (session.begin_package_watts, self.package_watts()) {
             (Some(first), Some(last)) => Some((first + last) / 2.0),
             _ => None,
         }
     }
 
-    fn package_watts(&mut self) -> Option<f32> {
+    fn package_watts(&self) -> Option<f32> {
         if !M::GROUPS.contains(IoReportGroups::ENERGY_MODEL) {
             return None;
         }
@@ -162,45 +154,6 @@ impl<M: Measured> Interval<M> {
         {
             None
         }
-    }
-
-    #[cfg(target_os = "macos")]
-    fn decode_channels(
-        &self,
-        session: &Session<M>,
-    ) -> Box<[ChannelSample]> {
-        let Some(begin) = session.begin.as_ref() else {
-            return Box::default();
-        };
-        let Some(ioreport) = self.ioreport.as_ref() else {
-            return Box::default();
-        };
-        let Some(end) = ioreport.snapshot() else {
-            return Box::default();
-        };
-        ioreport.decode(begin, &end)
-    }
-
-    #[cfg(target_os = "macos")]
-    fn frequencies(&mut self) -> Frequencies<'_> {
-        if !M::GROUPS.intersects(IoReportGroups::CPU_STATS | IoReportGroups::GPU_STATS) {
-            return Frequencies::default();
-        }
-        match self.sources.soc() {
-            Some(soc) => Frequencies {
-                ecpu: &soc.ecpu_frequencies,
-                pcpu: &soc.pcpu_frequencies,
-                gpu: &soc.gpu_frequencies,
-                ecpu_cores: soc.ecpu_cores,
-                pcpu_cores: soc.pcpu_cores,
-            },
-            None => Frequencies::default(),
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    fn frequencies(&mut self) -> Frequencies<'_> {
-        Frequencies::default()
     }
 }
 

@@ -1,7 +1,7 @@
 use objc2_core_foundation::{CFDictionary, CFRetained};
 
-use super::{IoReportFunctions, channel::decode_channels, subscription::Subscription};
-use crate::{decode::ChannelSample, metric::IoReportGroups};
+use super::{IoReportFunctions, channel::for_each_channel, subscription::Subscription};
+use crate::{decode::RawChannel, metric::IoReportGroups};
 
 pub struct IoReport {
     functions: &'static IoReportFunctions,
@@ -24,14 +24,17 @@ impl IoReport {
         self.subscription.snapshot(self.functions).map(RawEnergySample)
     }
 
-    pub(crate) fn decode(
+    /// Diff the begin/end snapshots and hand each decoded channel to `visit` in a
+    /// single pass — no intermediate collection.
+    pub(crate) fn for_each_channel(
         &self,
         begin: &RawEnergySample,
         end: &RawEnergySample,
-    ) -> Box<[ChannelSample]> {
-        match self.functions.create_samples_delta(&begin.0, &end.0) {
-            Some(delta) => decode_channels(self.functions, &delta),
-            None => Box::default(),
-        }
+        mut visit: impl FnMut(&RawChannel),
+    ) {
+        let Some(delta) = self.functions.create_samples_delta(&begin.0, &end.0) else {
+            return;
+        };
+        for_each_channel(self.functions, &delta, &mut visit);
     }
 }

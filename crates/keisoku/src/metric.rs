@@ -1,27 +1,52 @@
+use std::time::Duration;
+
 use bitflags::bitflags;
+use obfstr::obfstr;
 
 use crate::{
     component::Component,
-    decode,
+    decode::{self, EnergyTotals, FrequencyTables, GroupId, RawChannel},
     metrics::{
         BandwidthMetrics, BatteryMetrics, CpuMetrics, EnergyMetrics, FanMetrics, GpuMetrics, MemoryMetrics,
         NeuralEngineMetrics, PowerMetrics, Temperatures, ThermalPressure,
     },
-    provider::Window,
     sensor::Sensor,
     sources::Sources,
     units::{Bytes, Celsius, GigabytesPerSecond, Joules, Megahertz, Percent, Watts},
 };
 
+/// Static + Instant metrics: every value meaningful from a single read.
 pub trait Reading {
     type Value;
     fn read(sources: &mut Sources) -> Self::Value;
 }
 
+/// Interval metrics. Each declares exactly the IOReport channels it subscribes
+/// to (`GROUPS`), the non-channel inputs it needs (`Ctx`), and how it folds the
+/// window's channels into its value (`Acc` + `consume`/`finish`). Nothing shared
+/// or unused is passed in — an energy-only interval never sees frequency tables.
 pub trait Measured {
     type Value;
+    /// Exactly this metric's non-channel inputs (frequency tables, package watts, …).
+    type Ctx<'a>;
+    /// Per-metric fold state, seeded before the single channel pass.
+    type Acc: Default;
     const GROUPS: IoReportGroups;
-    fn extract(window: &Window) -> Self::Value;
+
+    fn context(
+        sources: &Sources,
+        package_watts_mean: Option<f32>,
+    ) -> Self::Ctx<'_>;
+    fn consume(
+        acc: &mut Self::Acc,
+        channel: &RawChannel,
+        ctx: &Self::Ctx<'_>,
+    );
+    fn finish(
+        acc: Self::Acc,
+        elapsed: Duration,
+        ctx: &Self::Ctx<'_>,
+    ) -> Self::Value;
 }
 
 bitflags! {
@@ -250,15 +275,57 @@ impl Reading for RailPower {
 
 pub struct CpuUsage;
 
+#[derive(Default)]
+pub struct CpuResidency {
+    ecpu: Vec<(u32, f32)>,
+    pcpu: Vec<(u32, f32)>,
+}
+
 impl Measured for CpuUsage {
     type Value = CpuMetrics;
+    type Ctx<'a> = FrequencyTables<'a>;
+    type Acc = CpuResidency;
     const GROUPS: IoReportGroups = IoReportGroups::CPU_STATS;
 
-    fn extract(window: &Window) -> CpuMetrics {
-        let frequencies = window.frequencies;
-        let (ecpu, pcpu) = decode::cpu_clusters(window.channels, frequencies.ecpu, frequencies.pcpu);
-        let efficiency_cores = frequencies.ecpu_cores as f32;
-        let performance_cores = frequencies.pcpu_cores as f32;
+    fn context(
+        sources: &Sources,
+        _package_watts_mean: Option<f32>,
+    ) -> FrequencyTables<'_> {
+        #[cfg(target_os = "macos")]
+        {
+            sources.frequencies()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = sources;
+            FrequencyTables::default()
+        }
+    }
+
+    fn consume(
+        acc: &mut CpuResidency,
+        channel: &RawChannel,
+        ctx: &FrequencyTables<'_>,
+    ) {
+        if channel.group == GroupId::CpuStats && channel.subgroup == obfstr!("CPU Core Performance States") {
+            if channel.name.starts_with(obfstr!("PCPU")) {
+                acc.pcpu.push(decode::calculate_frequency(&channel.states, ctx.pcpu));
+            } else if channel.name.starts_with(obfstr!("ECPU")) || channel.name.starts_with(obfstr!("MCPU")) {
+                acc.ecpu.push(decode::calculate_frequency(&channel.states, ctx.ecpu));
+            }
+        }
+    }
+
+    fn finish(
+        acc: CpuResidency,
+        _elapsed: Duration,
+        ctx: &FrequencyTables<'_>,
+    ) -> CpuMetrics {
+        let ecpu_readings: Vec<(u32, f32)> = acc.ecpu.iter().copied().filter(|&(_, percent)| percent > 0.0).collect();
+        let ecpu = decode::average_cluster_frequency(&ecpu_readings, ctx.ecpu);
+        let pcpu = decode::average_cluster_frequency(&acc.pcpu, ctx.pcpu);
+        let efficiency_cores = ctx.ecpu_cores as f32;
+        let performance_cores = ctx.pcpu_cores as f32;
         let usage = decode::divide_or_zero(
             ecpu.1 * efficiency_cores + pcpu.1 * performance_cores,
             efficiency_cores + performance_cores,
@@ -275,13 +342,47 @@ pub struct GpuUsage;
 
 impl Measured for GpuUsage {
     type Value = GpuMetrics;
+    type Ctx<'a> = FrequencyTables<'a>;
+    type Acc = (u32, f32);
     const GROUPS: IoReportGroups = IoReportGroups::GPU_STATS;
 
-    fn extract(window: &Window) -> GpuMetrics {
-        let (frequency, usage) = decode::gpu_frequency(window.channels, window.frequencies.gpu);
+    fn context(
+        sources: &Sources,
+        _package_watts_mean: Option<f32>,
+    ) -> FrequencyTables<'_> {
+        #[cfg(target_os = "macos")]
+        {
+            sources.frequencies()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = sources;
+            FrequencyTables::default()
+        }
+    }
+
+    fn consume(
+        acc: &mut (u32, f32),
+        channel: &RawChannel,
+        ctx: &FrequencyTables<'_>,
+    ) {
+        if channel.group == GroupId::GpuStats
+            && channel.subgroup == obfstr!("GPU Performance States")
+            && channel.name == obfstr!("GPUPH")
+            && ctx.gpu.len() > 1
+        {
+            *acc = decode::calculate_frequency(&channel.states, &ctx.gpu[1..]);
+        }
+    }
+
+    fn finish(
+        acc: (u32, f32),
+        _elapsed: Duration,
+        _ctx: &FrequencyTables<'_>,
+    ) -> GpuMetrics {
         GpuMetrics {
-            frequency: Megahertz(frequency),
-            usage: Percent(usage * 100.0),
+            frequency: Megahertz(acc.0),
+            usage: Percent(acc.1 * 100.0),
         }
     }
 }
@@ -290,11 +391,36 @@ pub struct NeuralEngine;
 
 impl Measured for NeuralEngine {
     type Value = NeuralEngineMetrics;
+    type Ctx<'a> = ();
+    type Acc = f32;
     const GROUPS: IoReportGroups = IoReportGroups::PMP;
 
-    fn extract(window: &Window) -> NeuralEngineMetrics {
+    fn context(
+        _sources: &Sources,
+        _package_watts_mean: Option<f32>,
+    ) {
+    }
+
+    fn consume(
+        acc: &mut f32,
+        channel: &RawChannel,
+        _ctx: &(),
+    ) {
+        if channel.group == GroupId::Pmp
+            && channel.subgroup.contains(obfstr!("Floor"))
+            && (channel.name == obfstr!("ANE-AF-BW") || channel.name == obfstr!("ANE-DCS-BW"))
+        {
+            *acc = acc.max(decode::residency_active_percent(&channel.states));
+        }
+    }
+
+    fn finish(
+        acc: f32,
+        _elapsed: Duration,
+        _ctx: &(),
+    ) -> NeuralEngineMetrics {
         NeuralEngineMetrics {
-            active: Percent(decode::ane_active_percent(window.channels)),
+            active: Percent(acc),
         }
     }
 }
@@ -303,17 +429,39 @@ pub struct Power;
 
 impl Measured for Power {
     type Value = PowerMetrics;
+    type Ctx<'a> = Option<f32>;
+    type Acc = EnergyTotals;
     const GROUPS: IoReportGroups = IoReportGroups::ENERGY_MODEL;
 
-    fn extract(window: &Window) -> PowerMetrics {
-        let energy = decode::energy_totals(window.channels);
-        let seconds = window.elapsed.as_secs_f64().max(0.001);
-        let package = window.package_watts_mean.map(Watts).unwrap_or_else(|| Watts((energy.total() / seconds) as f32));
+    fn context(
+        _sources: &Sources,
+        package_watts_mean: Option<f32>,
+    ) -> Option<f32> {
+        package_watts_mean
+    }
+
+    fn consume(
+        acc: &mut EnergyTotals,
+        channel: &RawChannel,
+        _ctx: &Option<f32>,
+    ) {
+        if channel.group == GroupId::EnergyModel {
+            acc.accumulate(&channel.name, channel.integer_value, &channel.unit);
+        }
+    }
+
+    fn finish(
+        acc: EnergyTotals,
+        elapsed: Duration,
+        ctx: &Option<f32>,
+    ) -> PowerMetrics {
+        let seconds = elapsed.as_secs_f64().max(0.001);
+        let package = ctx.map(Watts).unwrap_or_else(|| Watts((acc.total() / seconds) as f32));
         PowerMetrics {
-            cpu: Watts((energy.cpu / seconds) as f32),
-            gpu: Watts((energy.gpu / seconds) as f32),
-            ane: Watts((energy.ane / seconds) as f32),
-            ram: Watts((energy.ram / seconds) as f32),
+            cpu: Watts((acc.cpu / seconds) as f32),
+            gpu: Watts((acc.gpu / seconds) as f32),
+            ane: Watts((acc.ane / seconds) as f32),
+            ram: Watts((acc.ram / seconds) as f32),
             package,
         }
     }
@@ -323,18 +471,39 @@ pub struct Energy;
 
 impl Measured for Energy {
     type Value = EnergyMetrics;
+    type Ctx<'a> = Option<f32>;
+    type Acc = EnergyTotals;
     const GROUPS: IoReportGroups = IoReportGroups::ENERGY_MODEL;
 
-    fn extract(window: &Window) -> EnergyMetrics {
-        let energy = decode::energy_totals(window.channels);
-        let seconds = window.elapsed.as_secs_f32().max(0.001);
-        let package =
-            window.package_watts_mean.map(|watts| Joules(watts * seconds)).unwrap_or(Joules(energy.total() as f32));
+    fn context(
+        _sources: &Sources,
+        package_watts_mean: Option<f32>,
+    ) -> Option<f32> {
+        package_watts_mean
+    }
+
+    fn consume(
+        acc: &mut EnergyTotals,
+        channel: &RawChannel,
+        _ctx: &Option<f32>,
+    ) {
+        if channel.group == GroupId::EnergyModel {
+            acc.accumulate(&channel.name, channel.integer_value, &channel.unit);
+        }
+    }
+
+    fn finish(
+        acc: EnergyTotals,
+        elapsed: Duration,
+        ctx: &Option<f32>,
+    ) -> EnergyMetrics {
+        let seconds = elapsed.as_secs_f32().max(0.001);
+        let package = ctx.map(|watts| Joules(watts * seconds)).unwrap_or(Joules(acc.total() as f32));
         EnergyMetrics {
-            cpu: Joules(energy.cpu as f32),
-            gpu: Joules(energy.gpu as f32),
-            ane: Joules(energy.ane as f32),
-            ram: Joules(energy.ram as f32),
+            cpu: Joules(acc.cpu as f32),
+            gpu: Joules(acc.gpu as f32),
+            ane: Joules(acc.ane as f32),
+            ram: Joules(acc.ram as f32),
             package,
         }
     }
@@ -342,13 +511,68 @@ impl Measured for Energy {
 
 pub struct Bandwidth;
 
+#[derive(Default)]
+pub struct DramBandwidth {
+    read_bytes: f64,
+    write_bytes: f64,
+    read_histogram: f32,
+    write_histogram: f32,
+}
+
 impl Measured for Bandwidth {
     type Value = BandwidthMetrics;
+    type Ctx<'a> = ();
+    type Acc = DramBandwidth;
     const GROUPS: IoReportGroups = IoReportGroups::AMC_STATS.union(IoReportGroups::PMP);
 
-    fn extract(window: &Window) -> BandwidthMetrics {
-        let window_milliseconds = window.elapsed.as_millis().max(1) as u64;
-        let (read, write) = decode::dram_bandwidth(window.channels, window_milliseconds);
+    fn context(
+        _sources: &Sources,
+        _package_watts_mean: Option<f32>,
+    ) {
+    }
+
+    fn consume(
+        acc: &mut DramBandwidth,
+        channel: &RawChannel,
+        _ctx: &(),
+    ) {
+        if channel.group == GroupId::AmcStats {
+            let bytes = channel.integer_value as f64;
+            if bytes > 0.0 {
+                let aggregate = decode::strip_die_prefix(&channel.name);
+                if aggregate == obfstr!("DCS RD") {
+                    acc.read_bytes += bytes;
+                } else if aggregate == obfstr!("DCS WR") {
+                    acc.write_bytes += bytes;
+                }
+            }
+        } else if channel.group == GroupId::Pmp && channel.subgroup == obfstr!("DRAM BW") {
+            let gbps = decode::residency_weighted_gbps(&channel.states);
+            match decode::dram_flow(&channel.name) {
+                Some(true) => acc.read_histogram = acc.read_histogram.max(gbps),
+                Some(false) => acc.write_histogram = acc.write_histogram.max(gbps),
+                None => {},
+            }
+        }
+    }
+
+    fn finish(
+        acc: DramBandwidth,
+        elapsed: Duration,
+        _ctx: &(),
+    ) -> BandwidthMetrics {
+        let seconds = elapsed.as_secs_f64().max(0.001);
+        let to_gbps = |bytes: f64| (bytes / seconds / 1e9) as f32;
+        let read = if acc.read_bytes > 0.0 {
+            to_gbps(acc.read_bytes)
+        } else {
+            acc.read_histogram
+        };
+        let write = if acc.write_bytes > 0.0 {
+            to_gbps(acc.write_bytes)
+        } else {
+            acc.write_histogram
+        };
         BandwidthMetrics {
             dram_read: GigabytesPerSecond(read),
             dram_write: GigabytesPerSecond(write),
@@ -357,7 +581,7 @@ impl Measured for Bandwidth {
 }
 
 macro_rules! tuple_impls {
-    ($($member:ident),+) => {
+    ($($member:ident $index:tt),+) => {
         impl<$($member: Reading),+> Reading for ($($member,)+) {
             type Value = ($($member::Value,)+);
 
@@ -368,27 +592,37 @@ macro_rules! tuple_impls {
 
         impl<$($member: Measured),+> Measured for ($($member,)+) {
             type Value = ($($member::Value,)+);
+            type Ctx<'a> = ($($member::Ctx<'a>,)+);
+            type Acc = ($($member::Acc,)+);
             const GROUPS: IoReportGroups = IoReportGroups::empty()$(.union($member::GROUPS))+;
 
-            fn extract(window: &Window) -> Self::Value {
-                ($($member::extract(window),)+)
+            fn context(sources: &Sources, package_watts_mean: Option<f32>) -> Self::Ctx<'_> {
+                ($($member::context(sources, package_watts_mean),)+)
+            }
+
+            fn consume(acc: &mut Self::Acc, channel: &RawChannel, ctx: &Self::Ctx<'_>) {
+                $($member::consume(&mut acc.$index, channel, &ctx.$index);)+
+            }
+
+            fn finish(acc: Self::Acc, elapsed: Duration, ctx: &Self::Ctx<'_>) -> Self::Value {
+                ($($member::finish(acc.$index, elapsed, &ctx.$index),)+)
             }
         }
     };
 }
 
-tuple_impls!(A);
-tuple_impls!(A, B);
-tuple_impls!(A, B, C);
-tuple_impls!(A, B, C, D);
-tuple_impls!(A, B, C, D, E);
-tuple_impls!(A, B, C, D, E, F);
-tuple_impls!(A, B, C, D, E, F, G);
-tuple_impls!(A, B, C, D, E, F, G, H);
-tuple_impls!(A, B, C, D, E, F, G, H, I);
-tuple_impls!(A, B, C, D, E, F, G, H, I, J);
-tuple_impls!(A, B, C, D, E, F, G, H, I, J, K);
-tuple_impls!(A, B, C, D, E, F, G, H, I, J, K, L);
+tuple_impls!(A 0);
+tuple_impls!(A 0, B 1);
+tuple_impls!(A 0, B 1, C 2);
+tuple_impls!(A 0, B 1, C 2, D 3);
+tuple_impls!(A 0, B 1, C 2, D 3, E 4);
+tuple_impls!(A 0, B 1, C 2, D 3, E 4, F 5);
+tuple_impls!(A 0, B 1, C 2, D 3, E 4, F 5, G 6);
+tuple_impls!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7);
+tuple_impls!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8);
+tuple_impls!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9);
+tuple_impls!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10);
+tuple_impls!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10, L 11);
 
 impl Reading for () {
     type Value = ();
@@ -398,9 +632,29 @@ impl Reading for () {
 
 impl Measured for () {
     type Value = ();
+    type Ctx<'a> = ();
+    type Acc = ();
     const GROUPS: IoReportGroups = IoReportGroups::empty();
 
-    fn extract(_window: &Window) {}
+    fn context(
+        _sources: &Sources,
+        _package_watts_mean: Option<f32>,
+    ) {
+    }
+
+    fn consume(
+        _acc: &mut (),
+        _channel: &RawChannel,
+        _ctx: &(),
+    ) {
+    }
+
+    fn finish(
+        _acc: (),
+        _elapsed: Duration,
+        _ctx: &(),
+    ) {
+    }
 }
 
 fn temperatures_from(sensors: &[Sensor]) -> Temperatures {
