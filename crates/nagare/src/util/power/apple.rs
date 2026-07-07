@@ -2,44 +2,47 @@
 
 use std::cell::RefCell;
 
+use keisoku::{Energy, Interval, Power, Session};
 use shoji::types::session::chat::ChatReplyPowerStats;
 
 use crate::util::power::PowerRecorder;
 
+type Meter = Interval<(Energy, Power)>;
+
 pub struct ApplePowerRecorder {
-    meter: keisoku::EnergyMeter,
-    window: RefCell<Option<keisoku::EnergyWindow>>,
+    meter: RefCell<Meter>,
+    session: RefCell<Option<Session<(Energy, Power)>>>,
 }
 
 impl ApplePowerRecorder {
     pub fn new() -> Self {
         Self {
-            meter: keisoku::EnergyMeter::new(),
-            window: RefCell::new(None),
+            meter: RefCell::new(Meter::new()),
+            session: RefCell::new(None),
         }
     }
 }
 
 impl PowerRecorder for ApplePowerRecorder {
     fn begin(&self) {
-        *self.window.borrow_mut() = Some(self.meter.start());
+        let session = self.meter.borrow_mut().begin();
+        *self.session.borrow_mut() = Some(session);
     }
 
     fn finish(&self) -> Option<ChatReplyPowerStats> {
-        let window = self.window.borrow_mut().take()?;
-        let reading = self.meter.stop(window)?;
-        let package_watts = reading.average_power.package.value() as f64;
+        let session = self.session.borrow_mut().take()?;
+        let (energy, average_power) = self.meter.borrow_mut().end(session);
+        let package_watts = average_power.package.value() as f64;
         Some(ChatReplyPowerStats {
             samples_count: 1,
-            average_cpu_watts: reading.average_power.cpu.value() as f64,
-            average_gpu_watts: reading.average_power.gpu.value() as f64,
-            average_gpu_sram_watts: reading.average_power.gpu_sram.value() as f64,
-            average_ane_watts: reading.average_power.ane.value() as f64,
-            average_ram_watts: reading.average_power.ram.value() as f64,
-            average_total_watts: reading.average_power.total().value() as f64,
+            average_cpu_watts: average_power.cpu.value() as f64,
+            average_gpu_watts: average_power.gpu.value() as f64,
+            average_ane_watts: average_power.ane.value() as f64,
+            average_ram_watts: average_power.ram.value() as f64,
+            average_total_watts: average_power.total().value() as f64,
             average_package_watts: package_watts,
             max_package_watts: package_watts,
-            energy_joules: reading.energy.package.value() as f64,
+            energy_joules: energy.package.value() as f64,
         })
     }
 }
