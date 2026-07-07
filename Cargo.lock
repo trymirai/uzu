@@ -3322,6 +3322,7 @@ dependencies = [
 name = "keisoku"
 version = "0.5.12"
 dependencies = [
+ "bitflags 2.13.0",
  "kanka",
  "libc",
  "obfstr",

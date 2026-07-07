@@ -6,10 +6,8 @@ use crate::units::Watts;
 pub struct PowerMetrics {
     pub cpu: Watts,
     pub gpu: Watts,
-    pub gpu_sram: Watts,
     pub ane: Watts,
     pub ram: Watts,
-
     pub package: Watts,
 }
 

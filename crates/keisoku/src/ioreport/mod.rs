@@ -2,18 +2,11 @@ use core::{ffi::c_void, ptr::NonNull};
 
 use objc2_core_foundation::{CFDictionary, CFMutableDictionary, CFRetained, CFString, CFType, Type};
 
-mod bandwidth;
 mod channel;
-mod energy_totals;
-mod frequency;
 mod report;
-mod residency;
-mod sample;
 mod subscription;
 
-pub use report::IoReport;
-pub(crate) use energy_totals::EnergyTotals;
-pub use sample::SocSample;
+pub(crate) use report::{IoReport, RawEnergySample};
 
 kanka::ffi_table! {
     struct IoReportFunctions from "/usr/lib/libIOReport.dylib" {

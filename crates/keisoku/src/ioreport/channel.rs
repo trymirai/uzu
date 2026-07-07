@@ -3,17 +3,11 @@ use core::ffi::c_void;
 use obfstr::obfstr;
 use objc2_core_foundation::{CFArray, CFDictionary, CFRetained, CFType};
 
-use super::{IoReportFunctions, residency::ResidencyState};
-use crate::cf::{cf_string_to_string, dictionary_get};
-
-pub(super) struct ChannelSample {
-    pub group: String,
-    pub subgroup: String,
-    pub name: String,
-    pub unit: String,
-    pub integer_value: i64,
-    pub states: Vec<ResidencyState>,
-}
+use super::IoReportFunctions;
+use crate::{
+    cf::{cf_string_to_string, dictionary_get},
+    decode::{ChannelSample, ResidencyState},
+};
 
 pub(super) fn decode_channels(
     functions: &IoReportFunctions,

@@ -6,10 +6,8 @@ use crate::units::Joules;
 pub struct EnergyMetrics {
     pub cpu: Joules,
     pub gpu: Joules,
-    pub gpu_sram: Joules,
     pub ane: Joules,
     pub ram: Joules,
-
     pub package: Joules,
 }
 

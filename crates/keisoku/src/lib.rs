@@ -1,16 +1,13 @@
 #[cfg(not(target_vendor = "apple"))]
 compile_error!("keisoku supports Apple platforms only (macOS and iOS)");
 
-mod collector;
 mod component;
-mod device;
-mod energy_channel;
-mod energy_meter;
-mod energy_reading;
-mod gauges;
+mod decode;
+mod metric;
 mod metrics;
+mod provider;
 mod sensor;
-mod snapshot;
+mod sources;
 mod units;
 
 mod client;
@@ -19,27 +16,25 @@ mod sys;
 #[cfg(target_os = "macos")]
 mod cf;
 #[cfg(target_os = "macos")]
-mod cpu_load;
-#[cfg(target_os = "macos")]
 mod ioreport;
 #[cfg(target_os = "macos")]
 mod smc;
 #[cfg(target_os = "macos")]
 mod soc;
 
-pub use collector::Collector;
 pub use component::{Component, classify};
-pub use device::Device;
-pub use energy_channel::EnergyModelChannel;
-pub use energy_meter::{EnergyMeter, EnergyWindow};
-pub use energy_reading::EnergyReading;
-pub use gauges::Gauges;
+pub use metric::{
+    Bandwidth, Battery, Chip, CpuUsage, CurrentSensors, EfficiencyCores, Energy, Fans, GpuCores, GpuUsage,
+    IoReportGroups, Measured, Memory, NeuralEngine, Os, PackageWatts, PerformanceCores, Power, RailPower, RamTotal,
+    Reading, TemperatureSensors, Temps, Thermal, VoltageSensors,
+};
 pub use metrics::{
     BandwidthMetrics, BatteryMetrics, CpuMetrics, EnergyMetrics, Fan, FanMetrics, GpuMetrics, MemoryMetrics,
     NeuralEngineMetrics, PowerMetrics, Temperatures, ThermalPressure,
 };
+pub use provider::{Instant, Interval, Session, Static, Window};
 pub use sensor::{Sensor, SensorKind, current_sensors, thermal_sensors, voltage_sensors};
-pub use snapshot::Snapshot;
+pub use sources::Sources;
 pub use units::{Bytes, Celsius, GigabytesPerSecond, Joules, Megahertz, Milliseconds, Percent, Rpm, Watts};
 
 pub fn sensors(kind: SensorKind) -> Box<[Sensor]> {

@@ -2,32 +2,33 @@ use obfstr::obfstr;
 use objc2_core_foundation::{CFDictionary, CFMutableDictionary, CFRetained, CFString, CFType};
 
 use super::IoReportFunctions;
+use crate::metric::IoReportGroups;
 
 pub(super) struct Channels(CFRetained<CFMutableDictionary>);
 
 impl Channels {
-    fn all(functions: &IoReportFunctions) -> Option<Self> {
-        let mut groups: Vec<CFRetained<CFMutableDictionary>> = Vec::with_capacity(5);
-        for (group, subgroup) in [
-            (obfstr!("Energy Model"), None::<&str>),
-            (obfstr!("CPU Stats"), Some(obfstr!("CPU Core Performance States"))),
-            (obfstr!("GPU Stats"), Some(obfstr!("GPU Performance States"))),
-            (obfstr!("AMC Stats"), None),
-            (obfstr!("PMP"), None),
+    fn from_groups(
+        groups: IoReportGroups,
+        functions: &IoReportFunctions,
+    ) -> Option<Self> {
+        let mut collected: Vec<CFRetained<CFMutableDictionary>> = Vec::with_capacity(5);
+        for (flag, group, subgroup) in [
+            (IoReportGroups::ENERGY_MODEL, obfstr!("Energy Model"), None::<&str>),
+            (IoReportGroups::CPU_STATS, obfstr!("CPU Stats"), Some(obfstr!("CPU Core Performance States"))),
+            (IoReportGroups::GPU_STATS, obfstr!("GPU Stats"), Some(obfstr!("GPU Performance States"))),
+            (IoReportGroups::AMC_STATS, obfstr!("AMC Stats"), None),
+            (IoReportGroups::PMP, obfstr!("PMP"), None),
         ] {
+            if !groups.contains(flag) {
+                continue;
+            }
             let group_name = CFString::from_str(group);
             let subgroup_name = subgroup.map(CFString::from_str);
             if let Some(group_channels) = functions.copy_channels_in_group(&group_name, subgroup_name.as_deref()) {
-                groups.push(group_channels);
+                collected.push(group_channels);
             }
         }
-        Self::merged(&groups, functions)
-    }
-
-    fn energy_model(functions: &IoReportFunctions) -> Option<Self> {
-        let group_name = CFString::from_str(obfstr!("Energy Model"));
-        let group_channels = functions.copy_channels_in_group(&group_name, None)?;
-        Self::merged(&[group_channels], functions)
+        Self::merged(&collected, functions)
     }
 
     fn merged(
@@ -49,12 +50,11 @@ pub(super) struct Subscription {
 }
 
 impl Subscription {
-    pub(super) fn new(functions: &IoReportFunctions) -> Option<Self> {
-        Self::over(Channels::all(functions)?, functions)
-    }
-
-    pub(super) fn energy_model(functions: &IoReportFunctions) -> Option<Self> {
-        Self::over(Channels::energy_model(functions)?, functions)
+    pub(super) fn for_groups(
+        groups: IoReportGroups,
+        functions: &IoReportFunctions,
+    ) -> Option<Self> {
+        Self::over(Channels::from_groups(groups, functions)?, functions)
     }
 
     fn over(
