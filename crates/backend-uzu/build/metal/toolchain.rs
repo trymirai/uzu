@@ -102,10 +102,7 @@ impl MetalToolchain {
         let sdk = MetalSdk::from_env().context("cannot get sdk")?;
         let std = MetalStd::Metal4_0;
 
-        println!("cargo::rerun-if-env-changed=UZU_METAL_DEBUG_SOURCE");
-        let metal_debug_source = env::var("UZU_METAL_DEBUG_SOURCE").is_ok();
-        let opt_level = env::var("OPT_LEVEL").context("missing OPT_LEVEL")?;
-        let mut opt_flags: Box<[OsString]> = match opt_level.as_str() {
+        let opt_flags = match env::var("OPT_LEVEL").context("missing OPT_LEVEL")?.as_str() {
             "0" => {
                 [
                     OsString::from("-O1"), // matmul kernels compiled with -O0 are broken and require a reboot to unfreeze the os
@@ -117,13 +114,6 @@ impl MetalToolchain {
             "1" => [OsString::from("-O1")].into(),
             _ => [OsString::from("-O2")].into(), // treat levels 2,3,s,z as O2 for metal
         };
-        if metal_debug_source && opt_level != "0" {
-            opt_flags = opt_flags
-                .into_vec()
-                .into_iter()
-                .chain([OsString::from("-gline-tables-only"), OsString::from("-frecord-sources")])
-                .collect();
-        }
 
         let extra_options = Box::new([
             OsString::from(format!("-m{}-version-min={}", sdk.os(), std.min_os())),
