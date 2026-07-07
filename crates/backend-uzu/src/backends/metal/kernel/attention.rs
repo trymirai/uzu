@@ -107,20 +107,16 @@ impl AttentionGemmDispatch for AttentionGemmMetalDispatch {
             && encoder.context().supports_mxu()
             && matches!(self.data_type, DataType::BF16 | DataType::F16)
             && matches!(self.bd, 64 | 128);
-        let params = if use_mxu {
-            retile_params(args.params, 64, 32)
+        let (bq, bk) = if use_mxu {
+            (64, 32)
         } else {
-            retile_params(args.params, 32, self.simd_bk)
+            (32, self.simd_bk)
         };
+        let params = retile_params(args.params, bq, bk);
         let key = AttentionGemmKey {
             use_mxu,
             align_q: params.q_rem == 0,
             align_k: params.k_rem == 0,
-        };
-        let bk = if use_mxu {
-            32
-        } else {
-            self.simd_bk
         };
         let kernel = self.get_or_create(encoder.context(), key, bk)?;
 
