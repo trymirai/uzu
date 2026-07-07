@@ -1,5 +1,5 @@
 use crate::{
-    backends::common::{Allocation, Backend, BufferArg, Context, Encoder},
+    backends::common::{Allocation, Backend, BufferArg, Encoder},
     data_type::DataType,
     encodable_block::mixer::attention::{
         core::{
@@ -39,7 +39,6 @@ pub struct AttentionCoreEncodeArguments<'a, B: Backend, KT: BufferArg<'a, B>, VT
 }
 
 pub struct AttentionCores<B: Backend> {
-    gemm_mxu: Option<AttentionGemmCore<B>>,
     gemm_simd: Option<AttentionGemmCore<B>>,
     fallback: Option<AttentionFallbackCore<B>>,
     two_pass: AttentionTwoPassCore<B>,
@@ -51,14 +50,6 @@ impl<B: Backend> AttentionCores<B> {
         arguments: AttentionCoreNewArguments,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
-        let gemm_mxu = if matches!(arguments.head_dim, 64 | 128)
-            && matches!(arguments.data_type, DataType::BF16 | DataType::F16)
-            && context.supports_mxu()
-        {
-            Some(AttentionGemmCore::new(&arguments, true, context)?)
-        } else {
-            None
-        };
         let gemm_simd = if matches!(arguments.head_dim, 64 | 128 | 256) {
             Some(AttentionGemmCore::new(&arguments, false, context)?)
         } else {
@@ -73,7 +64,6 @@ impl<B: Backend> AttentionCores<B> {
         let single_pass = AttentionSinglePassCore::new(&arguments, context)?;
 
         Ok(Self {
-            gemm_mxu,
             gemm_simd,
             fallback,
             two_pass,
@@ -85,11 +75,7 @@ impl<B: Backend> AttentionCores<B> {
         arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, <B as Backend>::Error> {
-        if arguments.suffix_length >= 64
-            && let Some(gemm_mxu) = &self.gemm_mxu
-        {
-            gemm_mxu.encode(arguments, encoder)
-        } else if arguments.suffix_length > 8
+        if arguments.suffix_length > 8
             && let Some(gemm_simd) = &self.gemm_simd
         {
             gemm_simd.encode(arguments, encoder)
