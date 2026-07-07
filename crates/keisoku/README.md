@@ -3,51 +3,61 @@
 System telemetry for Apple platforms — CPU/GPU/ANE power and energy, memory, bandwidth,
 frequencies, temperatures and sensors. Power is read from the SoC's IOReport/SMC counters.
 
-## Three ways to read it
+## Three providers
 
-**Gauges** — instantaneous values, each meaningful from a single read (RAM, temperatures,
-voltage/current, fans, battery, thermal pressure, SMC package watts). No IOReport subscription,
-so this is cheap:
+Each provider is parameterized by a compile-time tuple of metric marker types. You request
+exactly the metrics you need; a single marker returns its value, a tuple returns a tuple of
+values. The IOReport subscription an `Interval` builds is derived from exactly the metrics in
+its template, so unused hardware groups are never subscribed.
+
+**`Static<M>`** — device facts read once at construction (never touches IOReport):
 
 ```rust
-let mut collector = keisoku::Collector::new();
-let gauges = collector.gauges();
-if let Some(memory) = gauges.memory {
+use keisoku::{Chip, GpuCores, RamTotal, Static};
+
+let (chip, ram_total, gpu_cores) = Static::<(Chip, RamTotal, GpuCores)>::new().into_inner();
+println!("{chip}  {gpu_cores} GPU cores  {ram_total}");
+```
+
+**`Instant<M>`** — instantaneous gauges, each meaningful from a single read (RAM, temperatures,
+voltage/current, fans, battery, thermal pressure, SMC package watts, rail power). No IOReport
+subscription, so this is cheap:
+
+```rust
+use keisoku::{Instant, Memory, PackageWatts};
+
+let mut gauges = Instant::<(Memory, PackageWatts)>::new();
+let (memory, package) = gauges.read();
+if let Some(memory) = memory {
     println!("ram {} / {}", memory.ram_usage, memory.ram_total);
 }
 ```
 
-**Energy meter** — energy and average power over a window, measured by differencing the SoC's
-cumulative counters between `start` and `stop`. Build it once and reuse it: `new` pays the IOReport
-subscription cost, while `start`/`stop` are cheap counter reads.
+**`Interval<M>`** — values measured over a window: `begin()` a session, run (or wait out) the
+work, then `end()` it. The caller owns the window, so nothing in the library blocks. Build it
+once and reuse it: `new` pays the IOReport subscription cost, while `begin`/`end` are cheap
+counter reads. Metrics: `CpuUsage`, `GpuUsage`, `NeuralEngine`, `Power`, `Energy`, `Bandwidth`.
 
 ```rust
-let meter = keisoku::EnergyMeter::new();
-let window = meter.start();
+use keisoku::{Energy, Interval, Power};
+
+let mut meter = Interval::<(Energy, Power)>::new();
+let session = meter.begin();
 // ... run the work you want to measure ...
-if let Some(reading) = meter.stop(window) {
-    println!("{} over {}", reading.energy.total(), reading.elapsed);        // Joules / ms
-    println!("gpu {} / total {}", reading.average_power.gpu, reading.average_power.total()); // Watts
-}
-```
-
-**Live snapshot** — everything at once, averaged over a window (gauges plus the windowed rates):
-
-```rust
-let mut collector = keisoku::Collector::new();
-let snapshot = collector.sample(std::time::Duration::from_millis(100));
-if let Some(power) = snapshot.power {
-    println!("gpu {} / total {}", power.gpu, power.total()); // Watts
-}
+let (energy, average_power) = meter.end(session);
+println!("{} total", energy.total());                       // Joules
+println!("gpu {} / total {}", average_power.gpu, average_power.total()); // Watts
 ```
 
 ## What you get back
 
-- `Gauges { memory, fans, battery, temperatures, thermal_pressure, package_watts, sensors, voltage, current }`.
-- `EnergyReading { energy, average_power, elapsed, package_from_smc }`.
-- `Snapshot { elapsed, cpu, gpu, neural_engine, power, memory, bandwidth, temperatures, .. }`.
-- `PowerMetrics { cpu, gpu, gpu_sram, ane, ram, package }` — all `Watts`; `total()` sums the disjoint rails.
-- `Device { chip, gpu_cores, performance_cores, efficiency_cores, ram_total, os }`.
+- Marker values reuse the metric structs: `MemoryMetrics`, `PowerMetrics { cpu, gpu, ane, ram, package }`
+  (`total()` sums the disjoint rails), `EnergyMetrics`, `CpuMetrics`, `GpuMetrics`,
+  `NeuralEngineMetrics`, `BandwidthMetrics`, `FanMetrics`, `BatteryMetrics`, `Temperatures`,
+  `ThermalPressure`, plus unit newtypes (`Watts`, `Joules`, `Bytes`, `Percent`, …) and `Sensor`.
+- Which IOReport groups a metric decodes is declared once via `Measured::GROUPS`; a tuple's
+  `GROUPS` is the compile-time union of its members, and that is exactly what the subscription
+  covers.
 
 ## Platform
 

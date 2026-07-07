@@ -1,6 +1,11 @@
+#![cfg(target_os = "macos")]
+
 use std::time::Duration;
 
-use keisoku::Collector;
+use keisoku::{
+    Chip, CpuUsage, GpuUsage, Instant, Interval, Memory, NeuralEngine, Power, RamTotal, Static, TemperatureSensors,
+    Temps,
+};
 use ratatui::{
     Terminal,
     backend::TestBackend,
@@ -11,52 +16,46 @@ use ratatui::{
 
 #[test]
 fn render_table() {
-    let mut collector = Collector::new();
-    let device = collector.device();
-    let snapshot = collector.sample(Duration::from_millis(300));
+    let (chip, ram_total) = Static::<(Chip, RamTotal)>::new().into_inner();
+
+    let mut soc = Interval::<(CpuUsage, GpuUsage, NeuralEngine, Power)>::new();
+    let session = soc.begin();
+    std::thread::sleep(Duration::from_millis(300));
+    let (cpu, gpu, neural_engine, power) = soc.end(session);
+
+    let mut gauges = Instant::<(Memory, Temps, TemperatureSensors)>::new();
+    let (memory, temperatures, sensors) = gauges.read();
 
     let na = "—";
     let mut lines: Vec<[String; 3]> = vec![
-        ["CPU".into(), snapshot.cpu.as_ref().map_or(na.into(), |c| format!("{:.1} %", c.usage.value())), String::new()],
-        ["GPU".into(), snapshot.gpu.as_ref().map_or(na.into(), |g| format!("{:.0} %", g.usage.value())), String::new()],
-        [
-            "ANE".into(),
-            snapshot.neural_engine.as_ref().map_or(na.into(), |a| format!("{:.0} %", a.active.value())),
-            String::new(),
-        ],
-        [
-            "Power".into(),
-            snapshot.power.as_ref().map_or(na.into(), |p| format!("{:.2} W", p.package.value())),
-            String::new(),
-        ],
+        ["CPU".into(), format!("{:.1} %", cpu.usage.value()), String::new()],
+        ["GPU".into(), format!("{:.0} %", gpu.usage.value()), String::new()],
+        ["ANE".into(), format!("{:.0} %", neural_engine.active.value()), String::new()],
+        ["Power".into(), format!("{:.2} W", power.package.value()), String::new()],
         [
             "Memory".into(),
-            snapshot.memory.as_ref().map_or(na.into(), |m| {
-                format!("{:.1} / {:.1} GB", m.ram_usage.value() as f64 / 1e9, m.ram_total.value() as f64 / 1e9)
+            memory.as_ref().map_or(na.into(), |memory| {
+                format!(
+                    "{:.1} / {:.1} GB",
+                    memory.ram_usage.value() as f64 / 1e9,
+                    memory.ram_total.value() as f64 / 1e9
+                )
             }),
             String::new(),
         ],
         [
             "CPU temp".into(),
-            snapshot
-                .temperatures
-                .as_ref()
-                .and_then(|t| t.cpu_average)
-                .map_or(na.into(), |c| format!("{:.1} °C", c.value())),
+            temperatures.as_ref().and_then(|t| t.cpu_average).map_or(na.into(), |c| format!("{:.1} °C", c.value())),
             String::new(),
         ],
         [
             "GPU temp".into(),
-            snapshot
-                .temperatures
-                .as_ref()
-                .and_then(|t| t.gpu_average)
-                .map_or(na.into(), |g| format!("{:.1} °C", g.value())),
+            temperatures.as_ref().and_then(|t| t.gpu_average).map_or(na.into(), |g| format!("{:.1} °C", g.value())),
             String::new(),
         ],
         ["────────".into(), "──────".into(), "──────────".into()],
     ];
-    for sensor in snapshot.sensors.iter() {
+    for sensor in sensors.iter() {
         lines.push([sensor.name.clone(), format!("{:.1}", sensor.value), sensor.component.to_string()]);
     }
 
@@ -68,8 +67,8 @@ fn render_table() {
         .header(header)
         .block(Block::default().borders(Borders::ALL).border_style(accent).title(format!(
             " kanshi · {} · {:.0} GB ",
-            device.chip,
-            device.ram_total.value() as f64 / 1e9
+            chip,
+            ram_total.value() as f64 / 1e9
         )));
 
     let mut terminal = Terminal::new(TestBackend::new(66, height)).unwrap();
