@@ -52,6 +52,12 @@ impl MetalContext {
         self.device.supports_mxu()
     }
 
+    // TODO: remove allow once a dynamic-caching dispatcher uses this probe.
+    #[allow(dead_code)]
+    pub fn supports_dynamic_caching(&self) -> bool {
+        self.device.supports_family(metal::MTLGPUFamily::Apple9)
+    }
+
     pub(crate) fn device_tier(&self) -> DeviceTier {
         self.device_tier
     }

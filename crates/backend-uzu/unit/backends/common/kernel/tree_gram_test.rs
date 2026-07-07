@@ -1,10 +1,10 @@
 use proc_macros::uzu_test;
-use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
         cpu::Cpu,
+        metal::{Metal, MetalContext},
     },
     data_type::DataType,
     tests::{
@@ -19,6 +19,14 @@ const VALUE_HEADS: usize = 6;
 const HEAD_K_DIM: usize = 128;
 // 80 = two full 32-wide kh0 dv chunks plus a ragged 16-wide one.
 const HEAD_V_DIM: usize = 80;
+
+fn build_tree_gram_paths(context: &MetalContext) -> Vec<(&'static str, bool)> {
+    let mut paths = vec![("Simdgroup", false)];
+    if context.supports_mxu() {
+        paths.push(("MXU", true));
+    }
+    paths
+}
 
 fn get_output<B: Backend>(
     q: &[f32],
@@ -118,30 +126,14 @@ fn test_build_tree_gram_matches_cpu() {
 
         let expected = get_output::<Cpu>(&q, &k, &trie, &prefix, &beta, &h0, &h0_idx, tree_size, scale, false);
 
-        for_each_non_cpu_backend!(|B| {
-            let context = <<B as Backend>::Context as Context>::new().expect("Failed to create Context");
-            let paths: &[bool] = if context.supports_mxu() {
-                &[false, true]
-            } else {
-                &[false]
-            };
-
-            for &use_mxu in paths {
-                let actual = get_output::<B>(&q, &k, &trie, &prefix, &beta, &h0, &h0_idx, tree_size, scale, use_mxu);
-                let path = if use_mxu {
-                    "mxu"
-                } else {
-                    "simdgroup"
-                };
-                let msg = format!("backend {} {path} tree_size {tree_size}", std::any::type_name::<B>());
-                assert_eq_float::<f32>(&expected.0, &actual.0, 5e-3, &format!("a_packed {msg}"));
-                assert_eq_float::<f32>(&expected.1, &actual.1, 5e-3, &format!("qkd {msg}"));
-
-                // Ainv is compact [B * HV, ceil(T/16), 16, 16]; both CPU and GPU
-                // pad ragged blocks with identity, so compare the whole buffer.
-                assert_eq_float::<f32>(&expected.2, &actual.2, 1e-2, &format!("a_inv {msg}"));
-                assert_eq_float::<f32>(&expected.3, &actual.3, 5e-3, &format!("kh0 {msg}"));
-            }
-        });
+        let context = MetalContext::new().expect("Failed to create Context");
+        for (path, use_mxu) in build_tree_gram_paths(&context) {
+            let actual = get_output::<Metal>(&q, &k, &trie, &prefix, &beta, &h0, &h0_idx, tree_size, scale, use_mxu);
+            let msg = format!("backend {} path {path} tree_size {tree_size}", std::any::type_name::<Metal>());
+            assert_eq_float::<f32>(&expected.0, &actual.0, 5e-3, &format!("a_packed {msg}"));
+            assert_eq_float::<f32>(&expected.1, &actual.1, 5e-3, &format!("qkd {msg}"));
+            assert_eq_float::<f32>(&expected.2, &actual.2, 1e-2, &format!("a_inv {msg}"));
+            assert_eq_float::<f32>(&expected.3, &actual.3, 5e-3, &format!("kh0 {msg}"));
+        }
     }
 }
