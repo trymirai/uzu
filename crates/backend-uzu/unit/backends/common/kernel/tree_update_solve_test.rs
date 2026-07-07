@@ -7,7 +7,7 @@ use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::TreeUpdateSolveKernel},
         cpu::Cpu,
-        metal::Metal,
+        metal::{DeviceExt, Metal},
     },
     data_type::DataType,
     tests::{
@@ -205,7 +205,7 @@ fn test_tree_update_solve_cases() {
 #[uzu_test]
 fn test_tree_update_solve_mxu_cases() {
     let context = <Metal as Backend>::Context::new().expect("context");
-    if !context.supports_mxu() {
+    if !context.device.supports_mxu() {
         return;
     }
     for &bv in MXU_BVS {

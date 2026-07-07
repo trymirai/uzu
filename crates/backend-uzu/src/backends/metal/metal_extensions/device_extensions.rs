@@ -66,6 +66,12 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
         optional_selector_value(self, obfstr!("supportsMXU"), false)
     }
 
+    // TODO: remove allow once a dynamic-caching dispatcher uses this probe.
+    #[allow(dead_code)]
+    fn supports_dynamic_caching(&self) -> bool {
+        optional_selector_value(self, obfstr!("supportsDynamicCaching"), false)
+    }
+
     /// Whether the GPU supports placement sparse resources.
     fn supports_placement_sparse_resources(&self) -> bool {
         optional_selector_value(self, obfstr!("supportsPlacementSparse"), false)

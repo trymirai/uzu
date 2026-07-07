@@ -9,7 +9,7 @@ use crate::{
                 attention_gemm::{AttentionGemmDispatch, retile_params, tile_variant_index},
             },
         },
-        metal::{Metal, context::MetalContext, error::MetalError},
+        metal::{DeviceExt, Metal, context::MetalContext, error::MetalError},
     },
     data_type::DataType,
 };
@@ -83,7 +83,7 @@ impl AttentionGemmDispatch for AttentionGemmMetalDispatch {
             has_sinks,
         )?;
 
-        let mxu_tiles = if context.supports_mxu()
+        let mxu_tiles = if context.device.supports_mxu()
             && matches!(data_type, DataType::BF16 | DataType::F16)
             && matches!(bd, 64 | 128)
         {

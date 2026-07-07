@@ -9,7 +9,7 @@ use proc_macros::uzu_bench;
 use crate::{
     backends::{
         common::{Allocation, Backend, Context, Encoder, Kernels, kernel::TreeUpdateSolveKernel},
-        metal::Metal,
+        metal::{DeviceExt, Metal},
     },
     data_type::DataType,
     tests::{
@@ -172,7 +172,7 @@ fn buffers_bytes(
 #[uzu_bench]
 fn bench_tree_update_solve(c: &mut Criterion) {
     let context = <Metal as Backend>::Context::new().expect("metal context");
-    let kernel_paths = if context.supports_mxu() {
+    let kernel_paths = if context.device.supports_mxu() {
         &[("Simdgroup", false, BVS), ("MXU", true, MXU_BVS)][..]
     } else {
         &[("Simdgroup", false, BVS)][..]

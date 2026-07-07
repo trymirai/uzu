@@ -5,7 +5,7 @@ use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
         cpu::Cpu,
-        metal::Metal,
+        metal::{DeviceExt, Metal},
     },
     data_type::DataType,
     tests::{
@@ -132,7 +132,7 @@ fn test_build_tree_gram_matches_cpu() {
         });
 
         let context = <<Metal as Backend>::Context as Context>::new().expect("Failed to create Context");
-        if context.supports_mxu() {
+        if context.device.supports_mxu() {
             let actual = get_output::<Metal>(&q, &k, &trie, &prefix, &beta, &h0, &h0_idx, tree_size, scale, true);
             let msg = format!("backend {} mxu tree_size {tree_size}", std::any::type_name::<Metal>());
             assert_eq_float::<f32>(&expected.0, &actual.0, 5e-3, &format!("a_packed {msg}"));

@@ -8,7 +8,7 @@ use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeOutKernel},
         cpu::Cpu,
-        metal::Metal,
+        metal::{DeviceExt, Metal},
     },
     tests::{
         assert::assert_eq_float,
@@ -148,7 +148,7 @@ fn check_shape<T: ArrayElement + Float + std::fmt::Display>(
         });
 
         let context = <Metal as Backend>::Context::new().expect("Failed to create Context");
-        if context.supports_mxu() {
+        if context.device.supports_mxu() {
             for &(path, use_mxu, transposed_h0) in BUILD_TREE_OUT_PATHS {
                 if !use_mxu {
                     continue;
