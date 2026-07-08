@@ -5,8 +5,7 @@ fn available_telemetry() {
 
     use keisoku::{
         Bandwidth, Battery, Chip, CpuUsage, CurrentSensors, EfficiencyCores, Fans, GpuCores, GpuUsage, Instant,
-        Interval, Memory, NeuralEngine, PerformanceCores, Power, RailPower, RamTotal, Select, TemperatureSensors,
-        VoltageSensors,
+        Interval, Memory, NeuralEngine, PerformanceCores, Power, RailPower, Select, TemperatureSensors, VoltageSensors,
     };
 
     let instant_values = Instant::<
@@ -15,7 +14,6 @@ fn available_telemetry() {
             EfficiencyCores,
             PerformanceCores,
             GpuCores,
-            RamTotal,
             Memory,
             Fans,
             Battery,
@@ -30,7 +28,6 @@ fn available_telemetry() {
     let efficiency_cores = instant_values.get::<EfficiencyCores>();
     let performance_cores = instant_values.get::<PerformanceCores>();
     let gpu_cores = instant_values.get::<GpuCores>();
-    let ram_total = instant_values.get::<RamTotal>();
     let memory = instant_values.get::<Memory>();
     let fans = instant_values.get::<Fans>();
     let battery = instant_values.get::<Battery>();
@@ -50,14 +47,7 @@ fn available_telemetry() {
     let bandwidth = interval_values.get::<Bandwidth>();
 
     println!("--- keisoku available telemetry ---");
-    println!(
-        "device     {}  {}E+{}P  {} GPU  {:.1} GB",
-        chip,
-        efficiency_cores,
-        performance_cores,
-        gpu_cores,
-        ram_total.value() as f64 / 1e9,
-    );
+    println!("device     {}  {}E+{}P  {} GPU", chip, efficiency_cores, performance_cores, gpu_cores);
     println!(
         "cpu        {:.2}% @ E{}/P{} MHz",
         cpu.usage.value(),

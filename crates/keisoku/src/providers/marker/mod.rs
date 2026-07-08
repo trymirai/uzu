@@ -7,7 +7,6 @@ mod chip;
 mod efficiency_cores;
 mod gpu_cores;
 mod performance_cores;
-mod ram_total;
 
 mod battery;
 mod current_sensors;
@@ -15,7 +14,6 @@ mod fans;
 mod memory;
 mod rail_power;
 mod temperature_sensors;
-mod temps;
 mod thermal;
 mod voltage_sensors;
 
@@ -43,10 +41,8 @@ pub use neural_engine::NeuralEngine;
 pub use performance_cores::PerformanceCores;
 pub use power::Power;
 pub use rail_power::RailPower;
-pub use ram_total::RamTotal;
 pub use sample::Sample;
 pub use temperature_sensors::TemperatureSensors;
-pub use temps::Temps;
 pub use thermal::Thermal;
 pub use typelist::{Cons, Metric, MetricSet, Nil, ValueList, Values};
 pub use voltage_sensors::VoltageSensors;

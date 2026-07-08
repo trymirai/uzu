@@ -8,7 +8,6 @@ mod gpu;
 mod memory;
 mod neural_engine;
 mod power;
-mod temperatures;
 mod thermal_pressure;
 
 pub use bandwidth::BandwidthMetrics;
@@ -21,5 +20,4 @@ pub use gpu::GpuMetrics;
 pub use memory::MemoryMetrics;
 pub use neural_engine::NeuralEngineMetrics;
 pub use power::PowerMetrics;
-pub use temperatures::Temperatures;
 pub use thermal_pressure::ThermalPressure;
