@@ -44,7 +44,7 @@ VARIANTS(USE_MXU, false, true)
 CONSTRAINT(!USE_MXU || BK == 32)
 CONSTRAINT(!USE_MXU || T != "float")
 CONSTRAINT(!USE_MXU || BD != 256)
-PUBLIC KERNEL(AttentionGemm)(
+KERNEL(AttentionGemm)(
     const device T* q,
     const device T* k,
     const device T* v,
