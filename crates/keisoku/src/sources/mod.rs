@@ -123,7 +123,3 @@ impl Default for Sources {
         Self::new()
     }
 }
-
-pub(crate) fn collect_sensors(kind: SensorKind) -> Box<[Sensor]> {
-    sensors::collect(kind)
-}

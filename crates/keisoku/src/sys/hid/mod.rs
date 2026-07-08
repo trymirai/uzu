@@ -42,34 +42,6 @@ kanka::ffi_table! {
 mod event_system_client;
 mod service_client;
 
-pub(crate) fn collect(kind: SensorKind) -> Box<[Sensor]> {
-    let Some(client) = EventSystemClient::new() else {
-        return Box::default();
-    };
-    let (page, usage) = kind.matching();
-    let event_type = kind.event_type();
-    let event_field = sys::event_field_base(event_type);
-
-    let mut readings = Vec::new();
-    for service in client.services(page, usage) {
-        let Some(value) = service.f64_value(event_type, event_field) else {
-            continue;
-        };
-        let name = service.string(obfstr!("Product")).unwrap_or_default();
-        readings.push(Sensor {
-            component: classify(&name),
-            manufacturer: service.string(obfstr!("Manufacturer")),
-            category: service.string(obfstr!("Category")),
-            location_id: service.i64_value(obfstr!("LocationID")),
-            registry_id: service.registry_id(),
-            name,
-            value,
-            kind,
-        });
-    }
-    readings.into_boxed_slice()
-}
-
 struct CachedSensor {
     service: ServiceClient,
     name: String,

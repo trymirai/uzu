@@ -4,12 +4,8 @@ mod reading;
 pub use kind::SensorKind;
 pub use reading::Sensor;
 
-use crate::sources::collect_sensors;
+use crate::sys::hid::SensorReader;
 
 pub fn thermal_sensors() -> Box<[Sensor]> {
-    sensors(SensorKind::Temperature)
-}
-
-fn sensors(kind: SensorKind) -> Box<[Sensor]> {
-    collect_sensors(kind)
+    SensorReader::new(SensorKind::Temperature).map(|mut reader| reader.read()).unwrap_or_default()
 }
