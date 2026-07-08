@@ -23,6 +23,6 @@ impl Kernels for MetalKernels {
     type Backend = Metal;
 
     autogen_kernels!();
-    type AttentionGemmDispatch = attention::AttentionGemmMetalDispatch;
+    type AttentionGemmCore = attention::AttentionGemmMetalCore;
     type MatmulKernel = matmul::MatmulMetalKernel;
 }

@@ -9,7 +9,7 @@ pub trait Kernels: Sized {
     type Backend: Backend<Kernels = Self>;
 
     autogen_kernels!();
-    type AttentionGemmDispatch: attention_gemm::AttentionGemmDispatch<Backend = Self::Backend>;
+    type AttentionGemmCore: attention_gemm::AttentionGemmCore<Self::Backend>;
     type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;
 }
 

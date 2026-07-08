@@ -5,16 +5,15 @@ use num_traits::Float;
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
-use super::AttentionGemmCore;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder},
+        common::{Backend, Context, Encoder, Kernels, kernel::attention_gemm::AttentionGemmCore},
         cpu::Cpu,
     },
     data_type::DataType,
     encodable_block::mixer::attention::{
-        core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
+        core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments, AttentionCores},
         state::AttentionStateType,
     },
     tests::{
@@ -84,22 +83,18 @@ fn get_test_data<T: ArrayElement + Float>(
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let core = AttentionGemmCore::<B>::new(
-        &AttentionCoreNewArguments {
-            head_dim: input.head_dim,
-            num_groups: input.num_kv_heads,
-            num_q_heads: input.num_heads,
-            has_sinks: false,
-            is_kv_cache_ring: false,
-            is_causal: input.do_causal,
-            is_trie: false,
-            sliding_window_size: None,
-            scale: Some(input.scale),
-            data_type: T::data_type(),
-        },
-        context.as_ref(),
-    )
-    .expect("Failed to create AttentionGemmCore");
+    let new_arguments = AttentionCoreNewArguments {
+        head_dim: input.head_dim,
+        num_groups: input.num_kv_heads,
+        num_q_heads: input.num_heads,
+        has_sinks: false,
+        is_kv_cache_ring: false,
+        is_causal: input.do_causal,
+        is_trie: false,
+        sliding_window_size: None,
+        scale: Some(input.scale),
+        data_type: T::data_type(),
+    };
 
     let queries_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.queries);
     let keys_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.keys);
@@ -121,7 +116,18 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    let pooled_output = core.encode(args, &mut encoder).expect("Failed to encode AttentionGemm");
+    let pooled_output =
+        if <<B as Backend>::Kernels as Kernels>::AttentionGemmCore::is_supported(&new_arguments, context.as_ref())
+            .expect("Failed to query AttentionGemm support")
+        {
+            let core = <<B as Backend>::Kernels as Kernels>::AttentionGemmCore::new(context.as_ref(), &new_arguments)
+                .expect("Failed to create AttentionGemmCore");
+            core.encode(args, &mut encoder).expect("Failed to encode AttentionGemm")
+        } else {
+            let core =
+                AttentionCores::<B>::new(new_arguments, context.as_ref()).expect("Failed to create AttentionCore");
+            core.encode(args, &mut encoder).expect("Failed to encode AttentionCore")
+        };
     let mut output_allocation =
         alloc_allocation::<B, T>(context.as_ref(), input.suffix_length * input.num_heads * input.head_dim);
     encoder.encode_copy(&pooled_output, .., &mut output_allocation, ..);

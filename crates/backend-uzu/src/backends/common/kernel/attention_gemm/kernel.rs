@@ -1,37 +1,49 @@
 use crate::{
-    backends::common::{
-        Backend, BufferArg, BufferArgMut, Encoder,
-        kernel::{Kernels, attention_gemm::AttentionGemmArgs},
-    },
-    data_type::DataType,
+    backends::common::{Allocation, Backend, BufferArg, Encoder, kernel::Kernels},
+    encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
 };
 
-pub trait AttentionGemmDispatch: Sized {
-    type Backend: Backend<Kernels: Kernels<AttentionGemmDispatch = Self>>;
+pub trait AttentionGemmCore<B: Backend<Kernels: Kernels<AttentionGemmCore = Self>>>: Sized {
+    fn is_supported(
+        arguments: &AttentionCoreNewArguments,
+        context: &B::Context,
+    ) -> Result<bool, B::Error>;
 
-    #[allow(clippy::too_many_arguments)]
     fn new(
-        context: &<Self::Backend as Backend>::Context,
-        data_type: DataType,
-        bk: u32,
-        bd: u32,
-        is_kv_cache_ring: bool,
-        is_causal: bool,
-        is_trie: bool,
-        is_sliding_window: bool,
-        has_sinks: bool,
-    ) -> Result<Self, <Self::Backend as Backend>::Error>;
+        context: &B::Context,
+        arguments: &AttentionCoreNewArguments,
+    ) -> Result<Self, B::Error>;
 
-    fn encode<'q, 'k, 'v, 'o, 'trie, 'sinks>(
-        &mut self,
-        args: AttentionGemmArgs<
-            impl BufferArg<'q, Self::Backend>,
-            impl BufferArg<'k, Self::Backend>,
-            impl BufferArg<'v, Self::Backend>,
-            impl BufferArgMut<'o, Self::Backend>,
-            impl BufferArg<'trie, Self::Backend>,
-            impl BufferArg<'sinks, Self::Backend>,
-        >,
-        encoder: &mut Encoder<Self::Backend>,
-    ) -> Result<(), <Self::Backend as Backend>::Error>;
+    fn encode<'a, KT: BufferArg<'a, B>, VT: BufferArg<'a, B>>(
+        &self,
+        arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error>;
+}
+
+impl<B> AttentionGemmCore<B> for ()
+where
+    B: Backend<Kernels: Kernels<AttentionGemmCore = ()>>,
+{
+    fn is_supported(
+        _arguments: &AttentionCoreNewArguments,
+        _context: &B::Context,
+    ) -> Result<bool, B::Error> {
+        Ok(false)
+    }
+
+    fn new(
+        _context: &B::Context,
+        _arguments: &AttentionCoreNewArguments,
+    ) -> Result<Self, B::Error> {
+        unreachable!("unsupported attention gemm core should not be constructed")
+    }
+
+    fn encode<'a, KT: BufferArg<'a, B>, VT: BufferArg<'a, B>>(
+        &self,
+        _arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
+        _encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        unreachable!("unsupported attention gemm core should not encode")
+    }
 }
