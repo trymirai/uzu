@@ -9,12 +9,12 @@ fn available_telemetry() {
         Temps, VoltageSensors,
     };
 
-    let constants = Instant::<Select![Chip, EfficiencyCores, PerformanceCores, GpuCores, RamTotal]>::new().read();
-    let chip = constants.get::<Chip>();
-    let efficiency_cores = constants.get::<EfficiencyCores>();
-    let performance_cores = constants.get::<PerformanceCores>();
-    let gpu_cores = constants.get::<GpuCores>();
-    let ram_total = constants.get::<RamTotal>();
+    let facts = Instant::<Select![Chip, EfficiencyCores, PerformanceCores, GpuCores, RamTotal]>::new().read();
+    let chip = facts.get::<Chip>();
+    let efficiency_cores = facts.get::<EfficiencyCores>();
+    let performance_cores = facts.get::<PerformanceCores>();
+    let gpu_cores = facts.get::<GpuCores>();
+    let ram_total = facts.get::<RamTotal>();
 
     let mut soc = Interval::<Select![CpuUsage, GpuUsage, NeuralEngine, Power, Bandwidth]>::new();
     let session = soc.start();
