@@ -63,7 +63,7 @@ indexmap.workspace = true
 reqwest.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }

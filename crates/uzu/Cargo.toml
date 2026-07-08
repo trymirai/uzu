@@ -88,7 +88,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 futures.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 tokio-stream.workspace = true
 dirs.workspace = true
 sysinfo.workspace = true

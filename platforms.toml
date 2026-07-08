@@ -66,9 +66,15 @@ aliases = ["windows"]
 capabilities_supported = ["grammar", "cli"]
 capabilities_default = ["grammar", "cli"]
 
-[targets."wasm32-wasip1-threads"]
+[targets."wasm32-unknown-unknown"]
 backend = "cpu"
 aliases = ["wasm"]
+capabilities_supported = []
+capabilities_default = []
+
+[targets."wasm32-wasip1-threads"]
+backend = "cpu"
+aliases = ["wasi"]
 capabilities_supported = []
 capabilities_default = []
 
@@ -78,6 +84,7 @@ targets = [
     "x86_64-apple-darwin",
     "aarch64-apple-ios",
     "aarch64-apple-ios-sim",
+    "wasm32-unknown-unknown",
     "wasm32-wasip1-threads",
 ]
 tools = ["ziglang", "zigbuild", "xwin"]
