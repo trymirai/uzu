@@ -28,10 +28,13 @@ impl File {
 
     pub async fn read(&self) -> Result<Vec<u8>> {
         let buffer = JsFuture::from(self.0.array_buffer()).await?;
-        Ok(bytes_from_array_buffer(&buffer, self.size()))
+        Ok(bytes_from_array_buffer(
+            &buffer,
+            usize::try_from(self.size()).map_err(|_| JsValue::from_str("file is too large to read into memory"))?,
+        ))
     }
 
-    pub async fn read_range<R: RangeBounds<usize>>(
+    pub async fn read_range<R: RangeBounds<u64>>(
         &self,
         range: R,
     ) -> Result<Vec<u8>> {
@@ -54,11 +57,15 @@ impl File {
 
         let blob: Blob = self.0.slice_with_f64_and_f64(start as f64, end as f64)?;
         let buffer = JsFuture::from(blob.array_buffer()).await?;
-        Ok(bytes_from_array_buffer(&buffer, end - start))
+        Ok(bytes_from_array_buffer(
+            &buffer,
+            usize::try_from(end - start)
+                .map_err(|_| JsValue::from_str("file range is too large to read into memory"))?,
+        ))
     }
 
-    pub fn size(&self) -> usize {
-        self.0.size() as usize
+    pub fn size(&self) -> u64 {
+        self.0.size() as u64
     }
 
     pub async fn text(&self) -> Result<String> {

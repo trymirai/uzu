@@ -55,14 +55,14 @@ impl FileHandle {
         self.get_file().await?.read().await
     }
 
-    pub async fn read_range<R: RangeBounds<usize>>(
+    pub async fn read_range<R: RangeBounds<u64>>(
         &self,
         range: R,
     ) -> Result<Vec<u8>> {
         self.get_file().await?.read_range(range).await
     }
 
-    pub async fn size(&self) -> Result<usize> {
+    pub async fn size(&self) -> Result<u64> {
         Ok(self.get_file().await?.size())
     }
 }

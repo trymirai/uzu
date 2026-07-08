@@ -6,6 +6,18 @@ pub mod process;
 pub mod rt;
 pub mod time;
 
+#[cfg(target_family = "wasm")]
+#[doc(hidden)]
+pub mod __console {
+    pub fn log(message: &str) {
+        web_sys::console::log_1(&message.into());
+    }
+
+    pub fn error(message: &str) {
+        web_sys::console::error_1(&message.into());
+    }
+}
+
 #[macro_export]
 macro_rules! printf {
     ($($arg:tt)*) => {
@@ -15,7 +27,7 @@ macro_rules! printf {
         #[cfg(target_family = "wasm")]
 		{
 			let string = format!($($arg)*);
-			web_sys::console::log_1(&string.into());
+			$crate::__console::log(&string);
 		}
     };
 }
@@ -29,7 +41,7 @@ macro_rules! eprintf {
         #[cfg(target_family = "wasm")]
 		{
 			let string = format!($($arg)*);
-			web_sys::console::error_1(&string.into());
+			$crate::__console::error(&string);
 		}
     };
 }

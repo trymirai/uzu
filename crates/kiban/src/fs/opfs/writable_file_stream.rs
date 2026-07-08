@@ -1,5 +1,5 @@
 use wasm_bindgen::JsValue;
-use wasm_bindgen_futures::JsFuture;
+use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{
     Blob, FileSystemWritableFileStream,
     js_sys::{Array, Uint8Array},
@@ -27,9 +27,9 @@ pub struct WriteParams {
     /// Used by [`WriteCommandType::Write`].
     pub data: Option<Vec<u8>>,
     /// Used by [`WriteCommandType::Write`] and [`WriteCommandType::Seek`].
-    pub position: Option<usize>,
+    pub position: Option<u64>,
     /// Used by [`WriteCommandType::Truncate`].
-    pub size: Option<usize>,
+    pub size: Option<u64>,
 }
 
 /// Mirrors [`FileSystemWritableFileStream`](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemWritableFileStream).
@@ -77,23 +77,30 @@ impl WritableFileStream {
 
     pub async fn seek(
         &self,
-        offset: usize,
+        offset: u64,
     ) -> Result<()> {
-        JsFuture::from(self.0.seek_with_u32(offset as u32)?).await?;
+        JsFuture::from(self.0.seek_with_f64(offset as f64)?).await?;
         Ok(())
     }
 
     pub async fn truncate(
         &self,
-        size: usize,
+        size: u64,
     ) -> Result<()> {
-        JsFuture::from(self.0.truncate_with_u32(size as u32)?).await?;
+        JsFuture::from(self.0.truncate_with_f64(size as f64)?).await?;
         Ok(())
     }
 
     pub async fn close(&self) -> Result<()> {
         JsFuture::from(self.0.close()).await?;
         Ok(())
+    }
+
+    pub fn close_in_background(self) {
+        let close = self.0.close();
+        spawn_local(async move {
+            let _ = JsFuture::from(close).await;
+        });
     }
 }
 

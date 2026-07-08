@@ -1,32 +1,42 @@
-use std::{io, io::ErrorKind};
+use std::{
+    io,
+    io::ErrorKind,
+    path::{Component, Path},
+    sync::OnceLock,
+};
 
-use web_sys::wasm_bindgen::JsValue;
+use tokio::sync::Mutex;
+use web_sys::{js_sys::Reflect, wasm_bindgen::JsValue};
 
 use super::opfs::{self, WriteCommandType, WriteParams};
 use crate::time::SystemTime;
 
 pub(crate) async fn dir_create_all(path: &str) -> Result<(), io::Error> {
     let mut root = get_root_dir().await?;
-    let segments = path.split('/').filter(|s| !s.is_empty());
-    for segment in segments {
-        root = get_dir_handle(&root, segment, true).await?;
+    for segment in normalized_segments(path)? {
+        root = get_dir_handle(&root, &segment, true).await?;
     }
     Ok(())
 }
 
 pub(crate) async fn exists(path: &str) -> Result<bool, io::Error> {
-    let root = match get_root_dir().await {
-        Ok(root) => root,
-        Err(_) => return Ok(false),
-    };
-    let (parent, name) = match resolve_parent(&root, path, false).await {
+    let root = get_root_dir().await?;
+    let (parent, name) = match resolve_parent(&root, path).await {
         Ok(path) => path,
-        Err(_) => return Ok(false),
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err),
     };
-    if get_file_handle(parent.clone(), &name, false).await.is_ok() {
-        return Ok(true);
+
+    let file_err = match get_file_handle(parent.clone(), &name, false).await {
+        Ok(_) => return Ok(true),
+        Err(err) => err,
+    };
+    match get_dir_handle(&parent, &name, false).await {
+        Ok(_) => Ok(true),
+        Err(dir_err) if file_err.kind() == ErrorKind::NotFound && dir_err.kind() == ErrorKind::NotFound => Ok(false),
+        Err(dir_err) if dir_err.kind() == ErrorKind::NotFound => Err(file_err),
+        Err(dir_err) => Err(dir_err),
     }
-    Ok(get_dir_handle(&parent, &name, false).await.is_ok())
 }
 
 pub(crate) async fn file_copy(
@@ -47,7 +57,7 @@ pub(crate) async fn file_copy(
     let writer = dst_file.create_writable(false).await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
 
     let chunk_size = 16 * 1024;
-    let mut offset = 0usize;
+    let mut offset = 0u64;
     while offset < total {
         let end = (offset + chunk_size).min(total);
         let chunk =
@@ -70,7 +80,7 @@ pub(crate) async fn file_copy(
                 return Err(js_value_to_io_error(&err, ErrorKind::Other));
             },
         }
-        offset += chunk_length;
+        offset += chunk_length as u64;
     }
 
     writer.close().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
@@ -78,10 +88,21 @@ pub(crate) async fn file_copy(
     Ok(())
 }
 
+pub(crate) async fn file_copy_if_absent(
+    src_path: &str,
+    dst_path: &str,
+) -> Result<(), io::Error> {
+    let _guard = create_if_absent_lock().lock().await;
+    if exists(dst_path).await? {
+        return Err(io::Error::new(ErrorKind::AlreadyExists, "file already exists"));
+    }
+    file_copy(src_path, dst_path).await
+}
+
 pub(crate) async fn file_length(path: &str) -> Result<u64, io::Error> {
     let file = get_file_handle_root(path, false).await?;
     let size = file.size().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
-    Ok(size as u64)
+    Ok(size)
 }
 
 pub(crate) async fn file_modified(path: &str) -> Result<SystemTime, io::Error> {
@@ -98,9 +119,23 @@ pub(crate) async fn file_read(path: &str) -> Result<Vec<u8>, io::Error> {
 
 pub(crate) async fn file_remove(path: &str) -> Result<(), io::Error> {
     let root = get_root_dir().await?;
-    let (parent, name) = resolve_parent(&root, path, false).await?;
+    let (parent, name) = resolve_parent(&root, path).await?;
+    let _ = get_file_handle(parent.clone(), &name, false).await?;
     parent.remove_entry(&name).await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
     Ok(())
+}
+
+pub(crate) async fn file_rename(
+    src_path: &str,
+    dst_path: &str,
+) -> Result<(), io::Error> {
+    if same_opfs_entry(src_path, dst_path)? {
+        let _ = get_file_handle_root(src_path, false).await?;
+        return Ok(());
+    }
+
+    file_copy(src_path, dst_path).await?;
+    file_remove(src_path).await
 }
 
 pub(crate) async fn file_write(
@@ -112,6 +147,17 @@ pub(crate) async fn file_write(
     writer.write(contents).await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
     writer.close().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
     Ok(())
+}
+
+pub(crate) async fn file_write_if_absent(
+    path: &str,
+    contents: &[u8],
+) -> Result<(), io::Error> {
+    let _guard = create_if_absent_lock().lock().await;
+    if exists(path).await? {
+        return Err(io::Error::new(ErrorKind::AlreadyExists, "file already exists"));
+    }
+    file_write(path, contents).await
 }
 
 pub(crate) async fn is_file(path: &str) -> bool {
@@ -139,7 +185,7 @@ pub(crate) async fn get_file_handle_root(
     create: bool,
 ) -> Result<opfs::FileHandle, io::Error> {
     let root = get_root_dir().await?;
-    let (parent, name) = resolve_parent(&root, path, create).await?;
+    let (parent, name) = resolve_parent(&root, path).await?;
     get_file_handle(parent, &name, create).await
 }
 
@@ -150,20 +196,75 @@ pub(crate) async fn get_root_dir() -> Result<opfs::DirectoryHandle, io::Error> {
 pub(crate) async fn resolve_parent(
     root: &opfs::DirectoryHandle,
     path: &str,
-    create: bool,
 ) -> Result<(opfs::DirectoryHandle, String), io::Error> {
-    let mut parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    let name = parts.pop().ok_or(io::Error::new(ErrorKind::InvalidInput, "empty path"))?.to_string();
+    let mut parts = normalized_segments(path)?;
+    let name = parts.pop().ok_or(io::Error::new(ErrorKind::InvalidInput, "empty path"))?;
     let mut dir = root.clone();
     for segment in parts {
-        dir = get_dir_handle(&dir, segment, create).await?;
+        dir = get_dir_handle(&dir, &segment, false).await?;
     }
     Ok((dir, name))
+}
+
+fn normalized_segments(path: &str) -> Result<Vec<String>, io::Error> {
+    let mut segments = Vec::new();
+    let mut rooted = false;
+
+    for component in Path::new(path).components() {
+        match component {
+            Component::Prefix(_) => {
+                return Err(io::Error::new(ErrorKind::InvalidInput, "OPFS paths do not support prefixes"));
+            },
+            Component::RootDir => {
+                rooted = true;
+                segments.clear();
+            },
+            Component::CurDir => {},
+            Component::ParentDir => {
+                if segments.pop().is_none() && !rooted {
+                    return Err(io::Error::new(ErrorKind::InvalidInput, "OPFS path escapes storage root"));
+                }
+            },
+            Component::Normal(segment) => {
+                let segment = segment
+                    .to_str()
+                    .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "OPFS path is not valid UTF-8"))?;
+                segments.push(segment.to_string());
+            },
+        }
+    }
+
+    Ok(segments)
+}
+
+fn same_opfs_entry(
+    src_path: &str,
+    dst_path: &str,
+) -> Result<bool, io::Error> {
+    Ok(normalized_segments(src_path)? == normalized_segments(dst_path)?)
+}
+
+fn create_if_absent_lock() -> &'static Mutex<()> {
+    static CREATE_IF_ABSENT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    CREATE_IF_ABSENT_LOCK.get_or_init(|| Mutex::new(()))
 }
 
 pub(crate) fn js_value_to_io_error(
     value: &JsValue,
     kind: ErrorKind,
 ) -> io::Error {
-    io::Error::new(kind, format!("{:?}", value))
+    io::Error::new(js_value_to_io_error_kind(value, kind), format!("{:?}", value))
+}
+
+fn js_value_to_io_error_kind(
+    value: &JsValue,
+    fallback: ErrorKind,
+) -> ErrorKind {
+    let name = Reflect::get(value, &JsValue::from_str("name")).ok().and_then(|name| name.as_string());
+    match name.as_deref() {
+        Some("NotFoundError") => ErrorKind::NotFound,
+        Some("NotAllowedError") => ErrorKind::PermissionDenied,
+        Some("TypeMismatchError") => ErrorKind::NotADirectory,
+        _ => fallback,
+    }
 }

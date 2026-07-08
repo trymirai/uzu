@@ -37,13 +37,9 @@ pub async fn hard_link(
     // OPFS doesn't support linking, that's why just copy
     #[cfg(target_family = "wasm")]
     {
-        let link = link.as_ref().to_str().unwrap();
-        if try_exists(link).await? {
-            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "file already exists"));
-        }
-
         let original = original.as_ref().to_str().unwrap();
-        return super::asyn_opfs::file_copy(original, link).await;
+        let link = link.as_ref().to_str().unwrap();
+        super::asyn_opfs::file_copy_if_absent(original, link).await
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -94,9 +90,7 @@ pub async fn rename(
     {
         let src_file_name = src_file.as_ref().to_str().unwrap();
         let dst_file_name = dst_file.as_ref().to_str().unwrap();
-        super::asyn_opfs::file_copy(src_file_name, dst_file_name).await?;
-        super::asyn_opfs::file_remove(src_file_name).await?;
-        Ok(())
+        super::asyn_opfs::file_rename(src_file_name, dst_file_name).await
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -128,10 +122,8 @@ pub async fn write_with_sync_all(
 ) -> Result<(), io::Error> {
     #[cfg(target_family = "wasm")]
     {
-        if try_exists(path.as_ref()).await? {
-            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "file already exists"));
-        }
-        return write(path, contents).await;
+        let path = path.as_ref().to_str().unwrap();
+        super::asyn_opfs::file_write_if_absent(path, contents.as_ref()).await
     }
 
     #[cfg(not(target_family = "wasm"))]
