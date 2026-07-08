@@ -1,5 +1,5 @@
 use super::{instant_set::InstantMetric, typelist::Metric};
-use crate::{providers::metrics::MemoryMetrics, sources::Sources};
+use crate::{providers::data::MemoryMetrics, sources::Sources};
 
 pub struct Memory;
 

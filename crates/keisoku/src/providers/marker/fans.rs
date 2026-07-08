@@ -1,5 +1,5 @@
 use super::{instant_set::InstantMetric, typelist::Metric};
-use crate::{providers::metrics::FanMetrics, sources::Sources};
+use crate::{providers::data::FanMetrics, sources::Sources};
 
 pub struct Fans;
 

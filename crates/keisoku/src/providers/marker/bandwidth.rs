@@ -1,6 +1,6 @@
 use super::{dram_bandwidth::DramBandwidth, interval_set::IntervalMetric, typelist::Metric};
 use crate::{
-    providers::metrics::BandwidthMetrics,
+    providers::data::BandwidthMetrics,
     sources::interval::{IntervalFrame, IntervalInputs},
     units::GigabytesPerSecond,
 };

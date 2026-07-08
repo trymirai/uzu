@@ -1,5 +1,5 @@
 use super::{instant_set::InstantMetric, typelist::Metric};
-use crate::{providers::metrics::BatteryMetrics, sources::Sources};
+use crate::{providers::data::BatteryMetrics, sources::Sources};
 
 pub struct Battery;
 

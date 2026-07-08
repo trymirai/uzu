@@ -1,6 +1,6 @@
 use super::{cpu_residency::CpuResidency, interval_set::IntervalMetric, typelist::Metric};
 use crate::{
-    providers::metrics::CpuMetrics,
+    providers::data::CpuMetrics,
     sources::interval::{IntervalFrame, IntervalInputs},
     sys::ioreport::decode,
     units::{Megahertz, Percent},

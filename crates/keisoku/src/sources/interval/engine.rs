@@ -4,7 +4,7 @@ use obfstr::obfstr;
 
 use super::{frame::IntervalFrame, inputs::IntervalInputs};
 use crate::{
-    providers::metric::{CpuResidency, DramBandwidth, IoReportGroups},
+    providers::marker::{CpuResidency, DramBandwidth, IoReportGroups},
     sources::Sources,
     sys::ioreport::{
         IoReport, RawEnergySample,

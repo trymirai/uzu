@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use crate::{providers::metric::IntervalSet, sources::interval::IntervalSession};
+use crate::{providers::marker::IntervalSet, sources::interval::IntervalSession};
 
 #[must_use]
 pub struct Session<M: IntervalSet> {

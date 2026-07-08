@@ -1,5 +1,5 @@
 use super::{instant_set::InstantMetric, typelist::Metric};
-use crate::{component::Component, providers::metrics::Temperatures, sensor::Sensor, sources::Sources, units::Celsius};
+use crate::{component::Component, providers::data::Temperatures, sensor::Sensor, sources::Sources, units::Celsius};
 
 pub struct Temps;
 

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::{
-    providers::metric::{CpuResidency, DramBandwidth},
+    providers::marker::{CpuResidency, DramBandwidth},
     sys::ioreport::decode::{EnergyTotals, FrequencyTables},
 };
 

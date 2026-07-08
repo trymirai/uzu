@@ -1,4 +1,4 @@
-use crate::providers::metrics::ThermalPressure;
+use crate::providers::data::ThermalPressure;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn read_thermal() -> Option<ThermalPressure> {

@@ -15,7 +15,7 @@ use deferred::Deferred;
 #[cfg(target_os = "macos")]
 use crate::sys::{ioreport::decode::FrequencyTables, smc::Smc, soc::SocInfo};
 use crate::{
-    providers::metrics::{Fan, FanMetrics},
+    providers::data::{Fan, FanMetrics},
     sensor::{Sensor, SensorKind},
     sys::hid::SensorReader,
     units::Watts,
@@ -66,15 +66,15 @@ impl Sources {
         self.current.get().as_mut().map(sensors::read_reader).unwrap_or_default()
     }
 
-    pub(crate) fn memory(&mut self) -> Option<crate::providers::metrics::MemoryMetrics> {
+    pub(crate) fn memory(&mut self) -> Option<crate::providers::data::MemoryMetrics> {
         memory::read_memory()
     }
 
-    pub(crate) fn battery(&mut self) -> Option<crate::providers::metrics::BatteryMetrics> {
+    pub(crate) fn battery(&mut self) -> Option<crate::providers::data::BatteryMetrics> {
         battery::read_battery()
     }
 
-    pub(crate) fn thermal(&mut self) -> Option<crate::providers::metrics::ThermalPressure> {
+    pub(crate) fn thermal(&mut self) -> Option<crate::providers::data::ThermalPressure> {
         thermal::read_thermal()
     }
 

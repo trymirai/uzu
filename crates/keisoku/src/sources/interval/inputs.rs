@@ -14,8 +14,8 @@ bitflags! {
 }
 
 impl IntervalInputs {
-    pub(crate) fn ioreport_groups(self) -> crate::providers::metric::IoReportGroups {
-        use crate::providers::metric::IoReportGroups;
+    pub(crate) fn ioreport_groups(self) -> crate::providers::marker::IoReportGroups {
+        use crate::providers::marker::IoReportGroups;
 
         let mut groups = IoReportGroups::empty();
         if self.contains(Self::ENERGY_RAILS) {

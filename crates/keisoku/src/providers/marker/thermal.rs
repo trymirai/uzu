@@ -1,5 +1,5 @@
 use super::{instant_set::InstantMetric, typelist::Metric};
-use crate::{providers::metrics::ThermalPressure, sources::Sources};
+use crate::{providers::data::ThermalPressure, sources::Sources};
 
 pub struct Thermal;
 

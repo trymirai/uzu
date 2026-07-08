@@ -1,6 +1,6 @@
 use crate::{
     Select,
-    providers::metric::{
+    providers::marker::{
         Bandwidth, Battery, CpuUsage, CurrentSensors, Energy, Fans, GpuUsage, InstantSet, IntervalMetric, IntervalSet,
         Memory, Power, RailPower, TemperatureSensors, Temps, Thermal, VoltageSensors,
     },

@@ -1,6 +1,6 @@
 use super::{interval_set::IntervalMetric, typelist::Metric};
 use crate::{
-    providers::metrics::PowerMetrics,
+    providers::data::PowerMetrics,
     sources::interval::{IntervalFrame, IntervalInputs},
     units::Watts,
 };

@@ -1,4 +1,4 @@
-use crate::providers::metrics::MemoryMetrics;
+use crate::providers::data::MemoryMetrics;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn read_memory() -> Option<MemoryMetrics> {

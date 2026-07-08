@@ -1,6 +1,6 @@
 use super::{interval_set::IntervalMetric, typelist::Metric};
 use crate::{
-    providers::metrics::GpuMetrics,
+    providers::data::GpuMetrics,
     sources::interval::{IntervalFrame, IntervalInputs},
     units::{Megahertz, Percent},
 };

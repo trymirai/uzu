@@ -1,6 +1,6 @@
 use super::{interval_set::IntervalMetric, typelist::Metric};
 use crate::{
-    providers::metrics::NeuralEngineMetrics,
+    providers::data::NeuralEngineMetrics,
     sources::interval::{IntervalFrame, IntervalInputs},
     units::Percent,
 };

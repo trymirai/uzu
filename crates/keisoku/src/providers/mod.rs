@@ -3,8 +3,8 @@ mod instant;
 mod interval;
 mod session;
 
-pub mod metric;
-pub mod metrics;
+pub mod marker;
+pub mod data;
 
 pub use constant::Constant;
 pub use instant::Instant;

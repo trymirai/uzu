@@ -1,5 +1,5 @@
 use crate::{
-    providers::metric::{ConstantSet, Sample},
+    providers::marker::{ConstantSet, Sample},
     sources::Sources,
 };
 

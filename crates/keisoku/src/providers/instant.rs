@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use crate::{
-    providers::metric::{InstantSet, Sample},
+    providers::marker::{InstantSet, Sample},
     sources::Sources,
 };
 

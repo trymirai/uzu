@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use super::session::Session;
 use crate::{
-    providers::metric::{IntervalSet, Sample},
+    providers::marker::{IntervalSet, Sample},
     sources::{Sources, interval::IntervalEngine},
 };
 
