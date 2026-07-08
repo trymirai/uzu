@@ -29,10 +29,10 @@ RAM total and usage, temperatures, voltage/current, fans, battery, thermal press
 power. No IOReport subscription:
 
 ```rust
-use keisoku::{Chip, GpuCores, Instant, Memory, RamTotal, Select};
+use keisoku::{Chip, GpuCores, Instant, Memory, Select};
 
-let sample = Instant::<Select![Chip, RamTotal, GpuCores, Memory]>::new().read();
-println!("{}  {} GPU cores  {}", sample.get::<Chip>(), sample.get::<GpuCores>(), sample.get::<RamTotal>());
+let sample = Instant::<Select![Chip, GpuCores, Memory]>::new().read();
+println!("{}  {} GPU cores", sample.get::<Chip>(), sample.get::<GpuCores>());
 if let Some(memory) = sample.get::<Memory>() {
     println!("ram {} / {}", memory.ram_usage, memory.ram_total);
 }
@@ -59,8 +59,8 @@ let power = sample.get::<Power>();
 
 - Marker values reuse the metric structs: `MemoryMetrics`, `PowerMetrics { cpu, gpu, ane, ram }`
   (`total()` sums the disjoint rails), `EnergyMetrics`, `CpuMetrics`, `GpuMetrics`,
-  `NeuralEngineMetrics`, `BandwidthMetrics`, `FanMetrics`, `BatteryMetrics`, `Temperatures`,
-  `ThermalPressure`, plus unit newtypes (`Watts`, `Joules`, `Bytes`, `Percent`, …) and `Sensor`.
+  `NeuralEngineMetrics`, `BandwidthMetrics`, `FanMetrics`, `BatteryMetrics`, `ThermalPressure`,
+  plus unit newtypes (`Watts`, `Joules`, `Bytes`, `Percent`, …) and `Sensor`.
 - Interval metrics declare normalized inputs (`ENERGY_RAILS`, `CPU_RESIDENCY`, …). `sources/interval`
   maps those inputs to the minimal IOReport subscription and builds one shared frame per window.
 
