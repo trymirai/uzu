@@ -6,10 +6,12 @@ mod sources;
 mod sys;
 
 mod component;
+mod power_meter;
 mod sensor;
 mod units;
 
 pub use component::{Component, classify};
+pub use power_meter::{PowerMeter, PowerReading};
 pub use providers::{
     Instant,
     data::{
