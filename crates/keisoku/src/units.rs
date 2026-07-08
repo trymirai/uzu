@@ -39,5 +39,4 @@ unit!(Celsius(f32) = "°C");
 unit!(Megahertz(u32) = "MHz");
 unit!(GigabytesPerSecond(f32) = "GB/s");
 unit!(Bytes(u64) = "B");
-unit!(Milliseconds(u64) = "ms");
 unit!(Rpm(f32) = "rpm");

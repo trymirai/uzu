@@ -15,14 +15,6 @@ impl<M: MetricSet> Sample<M> {
         }
     }
 
-    pub fn values(&self) -> &M::Value {
-        &self.values
-    }
-
-    pub fn into_inner(self) -> M::Value {
-        self.values
-    }
-
     pub fn get<T: Metric>(&self) -> &T::Value {
         self.try_get::<T>().expect("metric not in sample")
     }

@@ -10,16 +10,6 @@ pub enum SensorKind {
 }
 
 impl SensorKind {
-    pub fn unit(self) -> &'static str {
-        match self {
-            SensorKind::Temperature => "°C",
-            SensorKind::Voltage => "V",
-            SensorKind::Current => "A",
-        }
-    }
-}
-
-impl SensorKind {
     pub(crate) fn matching(self) -> (i32, i32) {
         match self {
             SensorKind::Temperature => (sys::HID_PAGE_APPLE_VENDOR, sys::HID_USAGE_TEMPERATURE_SENSOR),
