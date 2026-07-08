@@ -71,11 +71,6 @@ where
     }
 }
 
-/// Builds a recursive metric selector list.
-///
-/// Repeating the same metric marker in a provider selector is rejected at
-/// compile time:
-///
 /// ```compile_fail
 /// use keisoku::{Instant, Memory, Select};
 ///

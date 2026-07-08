@@ -25,10 +25,6 @@ pub(super) fn for_each_channel(
     }
 }
 
-/// Classify a channel from its header, then decode only the payload the classified
-/// channel needs. The residency states (the expensive part) are read only after
-/// `classify` recognizes the channel; unrecognized channels are dropped here, and
-/// which recognized channels are consumed is decided by the active accumulators.
 fn decode_channel(
     functions: &IoReportFunctions,
     channel: &CFType,

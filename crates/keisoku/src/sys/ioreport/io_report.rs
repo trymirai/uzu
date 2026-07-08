@@ -25,8 +25,6 @@ impl IoReport {
         self.subscription.snapshot(self.functions).map(RawEnergySample)
     }
 
-    /// Diff the begin/end snapshots and hand each recognized channel to `visit` in
-    /// a single pass — no intermediate collection.
     pub(crate) fn for_each_channel(
         &self,
         begin: &RawEnergySample,
@@ -45,8 +43,6 @@ mod tests {
     use super::IoReport;
     use crate::sys::ioreport::{IoReportGroups, decode::Channel};
 
-    /// On real hardware, confirm the reversed unit layout: every classified energy
-    /// rail reports the Energy quantity byte and a decimal SI exponent in range.
     #[test]
     fn energy_channels_use_energy_quantity_units() {
         let Some(report) = IoReport::for_groups(IoReportGroups::ENERGY_MODEL) else {

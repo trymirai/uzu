@@ -1,4 +1,3 @@
-/// Lazily built once via `&mut` (used by the single-read `Reading` markers).
 pub(super) struct Deferred<T> {
     slot: Option<T>,
     init: fn() -> T,
