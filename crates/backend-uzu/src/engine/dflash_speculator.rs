@@ -45,7 +45,7 @@ impl<B: Backend> Engine<B> {
         let weights_file = File::open(model_path.join("model.safetensors"))?;
         let weight_loader = ParameterLoader::new(&weights_file, context)?;
         let draft_tree = weight_loader.tree().subtree("draft_model")?;
-        let draft_model = DFlashDraft::new(context, &config.draft_config, &draft_tree, data_type)?;
+        let draft_model = DFlashDraft::new(&*self.context, &config.draft_config, &draft_tree, data_type)?;
 
         weight_loader.tree().assert_all_tensors_validated()?;
 
