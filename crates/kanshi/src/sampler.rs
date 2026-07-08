@@ -9,7 +9,7 @@ use std::{
 
 use keisoku::{
     Bandwidth, Battery, Chip, CpuUsage, EfficiencyCores, Fans, GpuCores, GpuUsage, Instant as Gauges, Interval, Memory,
-    NeuralEngine, PerformanceCores, Power, RamTotal, Static, Temps, Thermal,
+    NeuralEngine, PerformanceCores, Power, RamTotal, Select, Static, Temps, Thermal,
 };
 use sysinfo::{Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System};
 
@@ -31,14 +31,13 @@ pub(crate) fn sample_loop(
     telemetry: &Arc<Mutex<Telemetry>>,
     stop: &Arc<AtomicBool>,
 ) {
-    let (chip, efficiency_cores, performance_cores, gpu_cores, ram_total) =
-        Static::<(Chip, EfficiencyCores, PerformanceCores, GpuCores, RamTotal)>::new().into_inner();
+    let constants = Static::<Select![Chip, EfficiencyCores, PerformanceCores, GpuCores, RamTotal]>::new().into_sample();
     let device = DeviceFacts {
-        chip,
-        efficiency_cores,
-        performance_cores,
-        gpu_cores,
-        ram_total,
+        chip: constants.get::<Chip>().clone(),
+        efficiency_cores: *constants.get::<EfficiencyCores>(),
+        performance_cores: *constants.get::<PerformanceCores>(),
+        gpu_cores: *constants.get::<GpuCores>(),
+        ram_total: *constants.get::<RamTotal>(),
     };
     let host = HostInfo {
         user: std::env::var("USER").unwrap_or_else(|_| "user".into()),
@@ -68,14 +67,24 @@ pub(crate) fn sample_loop(
     networks.refresh(true);
     let mut last_refresh = Instant::now();
 
-    let mut soc = Interval::<(CpuUsage, GpuUsage, NeuralEngine, Power, Bandwidth)>::new();
-    let mut gauges = Gauges::<(Memory, Fans, Battery, Temps, Thermal)>::new();
+    let mut soc = Interval::<Select![CpuUsage, GpuUsage, NeuralEngine, Power, Bandwidth]>::new();
+    let mut gauges = Gauges::<Select![Memory, Fans, Battery, Temps, Thermal]>::new();
 
     while !stop.load(Ordering::Relaxed) {
-        let session = soc.begin();
+        let session = soc.start();
         std::thread::sleep(interval());
-        let (cpu, gpu, neural_engine, power, bandwidth) = soc.end(session);
-        let (memory, fans, battery, temperatures, thermal_pressure) = gauges.read();
+        let soc_sample = soc.stop(session);
+        let cpu = soc_sample.get::<CpuUsage>().clone();
+        let gpu = soc_sample.get::<GpuUsage>().clone();
+        let neural_engine = soc_sample.get::<NeuralEngine>().clone();
+        let power = soc_sample.get::<Power>().clone();
+        let bandwidth = soc_sample.get::<Bandwidth>().clone();
+        let gauge_sample = gauges.read();
+        let memory = gauge_sample.get::<Memory>().clone();
+        let fans = gauge_sample.get::<Fans>().clone();
+        let battery = gauge_sample.get::<Battery>().clone();
+        let temperatures = gauge_sample.get::<Temps>().clone();
+        let thermal_pressure = gauge_sample.get::<Thermal>().clone();
 
         system.refresh_processes_specifics(ProcessesToUpdate::All, true, process_kind);
         networks.refresh(true);

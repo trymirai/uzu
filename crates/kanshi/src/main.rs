@@ -27,7 +27,7 @@ use std::{
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use keisoku::{
     Bandwidth, Battery, Chip, CpuUsage, EfficiencyCores, Fans, GpuCores, GpuUsage, Instant as Gauges, Interval, Memory,
-    NeuralEngine, PerformanceCores, Power, RamTotal, SensorKind, Static, Temps,
+    NeuralEngine, PerformanceCores, Power, RamTotal, Select, SensorKind, Static, Temps,
 };
 use ratatui::DefaultTerminal;
 
@@ -62,16 +62,28 @@ fn main() -> io::Result<()> {
 }
 
 fn print_once() -> io::Result<()> {
-    let (chip, efficiency_cores, performance_cores, gpu_cores, ram_total) =
-        Static::<(Chip, EfficiencyCores, PerformanceCores, GpuCores, RamTotal)>::new().into_inner();
+    let constants = Static::<Select![Chip, EfficiencyCores, PerformanceCores, GpuCores, RamTotal]>::new().into_sample();
+    let chip = constants.get::<Chip>();
+    let efficiency_cores = constants.get::<EfficiencyCores>();
+    let performance_cores = constants.get::<PerformanceCores>();
+    let gpu_cores = constants.get::<GpuCores>();
+    let ram_total = constants.get::<RamTotal>();
 
-    let mut soc = Interval::<(CpuUsage, GpuUsage, NeuralEngine, Power, Bandwidth)>::new();
-    let session = soc.begin();
+    let mut soc = Interval::<Select![CpuUsage, GpuUsage, NeuralEngine, Power, Bandwidth]>::new();
+    let session = soc.start();
     std::thread::sleep(Duration::from_millis(300));
-    let (cpu, gpu, neural_engine, power, bandwidth) = soc.end(session);
+    let soc_sample = soc.stop(session);
+    let cpu = soc_sample.get::<CpuUsage>();
+    let gpu = soc_sample.get::<GpuUsage>();
+    let neural_engine = soc_sample.get::<NeuralEngine>();
+    let power = soc_sample.get::<Power>();
+    let bandwidth = soc_sample.get::<Bandwidth>();
 
-    let mut gauges = Gauges::<(Memory, Fans, Battery, Temps)>::new();
-    let (memory, fans, battery, temperatures) = gauges.read();
+    let gauge_sample = Gauges::<Select![Memory, Fans, Battery, Temps]>::new().read();
+    let memory = gauge_sample.get::<Memory>();
+    let fans = gauge_sample.get::<Fans>();
+    let battery = gauge_sample.get::<Battery>();
+    let temperatures = gauge_sample.get::<Temps>();
 
     let sensors = keisoku::sensors(SensorKind::Temperature);
 
@@ -94,10 +106,10 @@ fn print_once() -> io::Result<()> {
     println!("neural     {:.2}%", neural_engine.active.value());
     println!("power      {:.2} W package", power.package.value());
     println!("bandwidth  R {:.1} / W {:.1} GB/s", bandwidth.dram_read.value(), bandwidth.dram_write.value());
-    println!("fans       {}", fans.map(|fans| fans.fans.len()).unwrap_or(0));
+    println!("fans       {}", fans.as_ref().map(|fans| fans.fans.len()).unwrap_or(0));
     println!(
         "battery    {}",
-        battery.map(|battery| format!("{:.0}%", battery.percent.value())).unwrap_or_else(|| "--".to_string()),
+        battery.as_ref().map(|battery| format!("{:.0}%", battery.percent.value())).unwrap_or_else(|| "--".to_string()),
     );
     println!("sensors    {}", sensors.len());
 
