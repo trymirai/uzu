@@ -15,7 +15,7 @@ pub use providers::{
     marker::{
         Bandwidth, Battery, Chip, Cons, ConstantMetric, ConstantSet, CpuUsage, CurrentSensors, EfficiencyCores,
         Energy, Fans, GpuCores, GpuUsage, InstantMetric, InstantSet, IntervalFrame, IntervalInputs, IntervalMetric,
-        IntervalSet, Memory, Metric, MetricSet, NeuralEngine, Nil, Os, PerformanceCores, Power, RailPower, RamTotal,
+        IntervalSet, Memory, Metric, MetricSet, NeuralEngine, Nil, PerformanceCores, Power, RailPower, RamTotal,
         Sample, TemperatureSensors, Temps, Thermal, ValueList, Values, VoltageSensors,
     },
     data::{

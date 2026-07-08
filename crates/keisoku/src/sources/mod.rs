@@ -50,10 +50,6 @@ impl Sources {
         self.system.get()
     }
 
-    pub(crate) fn os_version(&mut self) -> String {
-        system::os_version(self.system())
-    }
-
     pub(crate) fn temperature_sensors(&mut self) -> Box<[Sensor]> {
         self.temperature.get().as_mut().map(sensors::read_reader).unwrap_or_default()
     }

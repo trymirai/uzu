@@ -10,7 +10,6 @@ mod wants_tests;
 mod chip;
 mod efficiency_cores;
 mod gpu_cores;
-mod os;
 mod performance_cores;
 mod ram_total;
 
@@ -46,7 +45,6 @@ pub use instant_set::{InstantMetric, InstantSet};
 pub use interval_set::{IntervalMetric, IntervalSet};
 pub use memory::Memory;
 pub use neural_engine::NeuralEngine;
-pub use os::Os;
 pub use performance_cores::PerformanceCores;
 pub use power::Power;
 pub use rail_power::RailPower;
