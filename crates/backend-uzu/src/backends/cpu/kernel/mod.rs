@@ -1,3 +1,5 @@
+use std::convert::Infallible;
+
 use crate::backends::{common::Kernels, cpu::Cpu};
 
 mod activation;
@@ -30,6 +32,6 @@ impl Kernels for CpuKernels {
     type Backend = Cpu;
 
     autogen_kernels!();
-    type AttentionGemmCore = ();
+    type AttentionGemmCore = Infallible;
     type MatmulKernel = matmul::MatmulCpuKernel;
 }

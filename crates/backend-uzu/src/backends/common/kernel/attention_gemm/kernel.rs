@@ -1,3 +1,5 @@
+use std::convert::Infallible;
+
 use crate::{
     backends::common::{Allocation, Backend, BufferArg, Encoder, kernel::Kernels},
     encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
@@ -21,10 +23,7 @@ pub trait AttentionGemmCore<B: Backend<Kernels: Kernels<AttentionGemmCore = Self
     ) -> Result<Allocation<B>, B::Error>;
 }
 
-impl<B> AttentionGemmCore<B> for ()
-where
-    B: Backend<Kernels: Kernels<AttentionGemmCore = ()>>,
-{
+impl<B: Backend<Kernels: Kernels<AttentionGemmCore = Infallible>>> AttentionGemmCore<B> for Infallible {
     fn is_supported(
         _arguments: &AttentionCoreNewArguments,
         _context: &B::Context,
@@ -36,7 +35,7 @@ where
         _context: &B::Context,
         _arguments: &AttentionCoreNewArguments,
     ) -> Result<Self, B::Error> {
-        unreachable!("unsupported attention gemm core should not be constructed")
+        unreachable!("unsupported attention core should not be constructed")
     }
 
     fn encode<'a, KT: BufferArg<'a, B>, VT: BufferArg<'a, B>>(
@@ -44,6 +43,6 @@ where
         _arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
         _encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        unreachable!("unsupported attention gemm core should not encode")
+        match *self {}
     }
 }

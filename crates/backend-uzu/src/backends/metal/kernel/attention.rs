@@ -6,11 +6,7 @@ use std::{
 use crate::{
     array::size_for_shape,
     backends::{
-        common::{
-            Allocation, BufferArg, Encoder,
-            gpu_types::AttnParams,
-            kernel::{AttentionGemmKernel, attention_gemm::AttentionGemmCore},
-        },
+        common::{Allocation, BufferArg, Encoder, gpu_types::AttnParams, kernel::attention_gemm::AttentionGemmCore},
         metal::{Metal, context::MetalContext, error::MetalError, kernel::AttentionGemmMetalKernel},
     },
     data_type::DataType,
