@@ -21,7 +21,7 @@ using namespace uzu::matmul;
 template <uint HEAD_K_DIM, uint CHUNK_SIZE>
 VARIANTS(HEAD_K_DIM, 128)
 VARIANTS(CHUNK_SIZE, 16, 32, 64)
-PUBLIC KERNEL(DeltaNetChunkedGram)(
+KERNEL(DeltaNetChunkedGram)(
     device const float* q_norm,
     device const float* k_norm,
     device const float* g,

@@ -20,9 +20,9 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-mod chunked_prefill;
+pub mod chunked_prefill;
 
-use chunked_prefill::ChunkedPrefill;
+use chunked_prefill::DeltaNetChunkedPrefill;
 
 pub struct DeltaNetState<B: Backend> {
     conv_state: Allocation<B>,
@@ -75,7 +75,7 @@ pub struct DeltaNet<B: Backend> {
     delta_net_prefill_prep: <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel,
     delta_net_prefill: <B::Kernels as Kernels>::DeltaNetPrefillKernel,
     delta_net_norm_gate: <B::Kernels as Kernels>::DeltaNetNormGateKernel,
-    chunked: Option<ChunkedPrefill<B>>,
+    chunked: Option<<B::Kernels as Kernels>::DeltaNetChunkedPrefill>,
     out_projection: Box<dyn Linear<B>>,
 }
 
@@ -98,10 +98,7 @@ impl<B: Backend> DeltaNet<B> {
         config: &DeltaNetConfig,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
-    ) -> Result<(Self, Option<Allocation<B>>), DeltaNetNewError<B>>
-    where
-        B::Context: std::any::Any,
-    {
+    ) -> Result<(Self, Option<Allocation<B>>), DeltaNetNewError<B>> {
         if config.kernel_size < 2 {
             return Err(DeltaNetNewError::UnsupportedConfiguration(format!(
                 "kernel_size must be >= 2, got {}",
@@ -180,7 +177,8 @@ impl<B: Backend> DeltaNet<B> {
             .map_err(DeltaNetNewError::Backend)?;
 
         let chunked =
-            ChunkedPrefill::new(context, outer_data_type, config.head_dim as u32).map_err(DeltaNetNewError::Backend)?;
+            <B::Kernels as Kernels>::DeltaNetChunkedPrefill::new(context, outer_data_type, config.head_dim as u32)
+                .map_err(DeltaNetNewError::Backend)?;
 
         let out_projection = <dyn Linear<B>>::new_mixed_precision(
             value_dim,

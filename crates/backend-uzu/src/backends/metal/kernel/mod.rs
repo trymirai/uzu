@@ -24,5 +24,7 @@ impl Kernels for MetalKernels {
 
     autogen_kernels!();
     type AttentionGemmCore = attention::AttentionGemmMetalCore;
+    type DeltaNetChunkedPrefill =
+        crate::encodable_block::mixer::delta_net::chunked_prefill::MetalDeltaNetChunkedPrefill;
     type MatmulKernel = matmul::MatmulMetalKernel;
 }

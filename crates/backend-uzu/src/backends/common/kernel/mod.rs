@@ -10,6 +10,7 @@ pub trait Kernels: Sized {
 
     autogen_kernels!();
     type AttentionGemmCore: attention_gemm::AttentionGemmCore<Self::Backend>;
+    type DeltaNetChunkedPrefill: crate::encodable_block::mixer::delta_net::chunked_prefill::DeltaNetChunkedPrefill<Self::Backend>;
     type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;
 }
 

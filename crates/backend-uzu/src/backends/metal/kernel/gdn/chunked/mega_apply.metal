@@ -24,7 +24,7 @@ VARIANTS(T, float, half, bfloat)
 VARIANTS(O, float, bfloat)
 VARIANTS(VT, 32)
 VARIANTS(USE_MXU, false, true)
-PUBLIC KERNEL(DeltaNetChunkedMegaApply)(
+KERNEL(DeltaNetChunkedMegaApply)(
     device const float* q_norm,
     device const float* k_norm,
     device const T* in_proj,

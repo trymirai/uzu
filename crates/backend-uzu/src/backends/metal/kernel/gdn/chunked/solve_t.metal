@@ -15,7 +15,7 @@ using namespace uzu::matmul;
 template <uint CHUNK_SIZE, uint BV>
 VARIANTS(CHUNK_SIZE, 16, 32, 64)
 VARIANTS(BV, 16, 32)
-PUBLIC KERNEL(DeltaNetChunkedSolveT)(
+KERNEL(DeltaNetChunkedSolveT)(
     device const float* a_packed,
     device const float* a_inv,
     device bfloat* t_out,

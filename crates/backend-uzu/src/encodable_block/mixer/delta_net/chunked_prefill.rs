@@ -1,19 +1,16 @@
-use std::any::Any;
+use std::convert::Infallible;
 
 use super::{DeltaNet, DeltaNetState};
+#[cfg(metal_backend)]
+use crate::backends::metal::{
+    DeltaNetChunkedCumsumMetalKernel, DeltaNetChunkedGramMetalKernel, DeltaNetChunkedMegaApplyMetalKernel,
+    DeltaNetChunkedPrepMetalKernel, DeltaNetChunkedSolveMetalKernel, DeltaNetChunkedSolveTMetalKernel, Metal,
+};
 use crate::{
     array::size_for_shape,
-    backends::common::{
-        Allocation, Backend, Context, Encoder, Kernels,
-        kernel::{
-            DeltaNetChunkedCumsumKernel, DeltaNetChunkedGramKernel, DeltaNetChunkedMegaApplyKernel,
-            DeltaNetChunkedPrepKernel, DeltaNetChunkedSolveKernel, DeltaNetChunkedSolveTKernel,
-        },
-    },
+    backends::common::{Allocation, Backend, Encoder, Kernels},
     data_type::DataType,
 };
-#[cfg(metal_backend)]
-use crate::backends::metal::MetalContext;
 
 const MXU_MIN_T: usize = 256;
 const SIMD_MIN_T: usize = 1024;
@@ -21,37 +18,93 @@ const CHUNK_SIZE: usize = 64;
 const BLOCK_SIZE: usize = 16;
 const VT: usize = 32;
 
-pub(super) struct ChunkedPrefill<B: Backend> {
-    min_t: usize,
-    prep: <B::Kernels as Kernels>::DeltaNetChunkedPrepKernel,
-    cumsum: <B::Kernels as Kernels>::DeltaNetChunkedCumsumKernel,
-    gram: <B::Kernels as Kernels>::DeltaNetChunkedGramKernel,
-    solve: <B::Kernels as Kernels>::DeltaNetChunkedSolveKernel,
-    solve_t: <B::Kernels as Kernels>::DeltaNetChunkedSolveTKernel,
-    mega: <B::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel,
-}
-
-impl<B: Backend> ChunkedPrefill<B> {
-    pub(super) fn new(
+pub trait DeltaNetChunkedPrefill<B: Backend<Kernels: Kernels<DeltaNetChunkedPrefill = Self>>>: Sized {
+    fn new(
         context: &B::Context,
         outer_data_type: DataType,
         head_dim: u32,
-    ) -> Result<Option<Self>, B::Error>
-    where
-        B::Context: Any,
-    {
-        let Some((use_mxu, min_t)) = chunked_prefill_config(context) else {
+    ) -> Result<Option<Self>, B::Error>;
+
+    fn should_use(
+        &self,
+        suffix_len: usize,
+    ) -> bool;
+
+    fn encode(
+        &self,
+        delta_net: &DeltaNet<B>,
+        in_projected: &Allocation<B>,
+        state: &mut DeltaNetState<B>,
+        delta_output: &mut Allocation<B>,
+        suffix_len: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error>;
+}
+
+impl<B: Backend<Kernels: Kernels<DeltaNetChunkedPrefill = Infallible>>> DeltaNetChunkedPrefill<B> for Infallible {
+    fn new(
+        _context: &B::Context,
+        _outer_data_type: DataType,
+        _head_dim: u32,
+    ) -> Result<Option<Self>, B::Error> {
+        Ok(None)
+    }
+
+    fn should_use(
+        &self,
+        _suffix_len: usize,
+    ) -> bool {
+        match *self {}
+    }
+
+    fn encode(
+        &self,
+        _delta_net: &DeltaNet<B>,
+        _in_projected: &Allocation<B>,
+        _state: &mut DeltaNetState<B>,
+        _delta_output: &mut Allocation<B>,
+        _suffix_len: usize,
+        _encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        match *self {}
+    }
+}
+
+#[cfg(metal_backend)]
+pub struct MetalDeltaNetChunkedPrefill {
+    min_t: usize,
+    prep: DeltaNetChunkedPrepMetalKernel,
+    cumsum: DeltaNetChunkedCumsumMetalKernel,
+    gram: DeltaNetChunkedGramMetalKernel,
+    solve: DeltaNetChunkedSolveMetalKernel,
+    solve_t: DeltaNetChunkedSolveTMetalKernel,
+    mega: DeltaNetChunkedMegaApplyMetalKernel,
+}
+
+#[cfg(metal_backend)]
+impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
+    fn new(
+        context: &<Metal as Backend>::Context,
+        outer_data_type: DataType,
+        head_dim: u32,
+    ) -> Result<Option<Self>, <Metal as Backend>::Error> {
+        let use_mxu = context.supports_mxu();
+        let min_t = if use_mxu {
+            MXU_MIN_T
+        } else if context.supports_dynamic_caching() {
+            SIMD_MIN_T
+        } else {
             return Ok(None);
         };
 
-        Ok(Some(Self {
+        Ok(Some(MetalDeltaNetChunkedPrefill {
             min_t,
-            prep: <B::Kernels as Kernels>::DeltaNetChunkedPrepKernel::new(context, outer_data_type, head_dim)?,
-            cumsum: <B::Kernels as Kernels>::DeltaNetChunkedCumsumKernel::new(context)?,
-            gram: <B::Kernels as Kernels>::DeltaNetChunkedGramKernel::new(context, head_dim, CHUNK_SIZE as u32)?,
-            solve: <B::Kernels as Kernels>::DeltaNetChunkedSolveKernel::new(context, CHUNK_SIZE as u32, false)?,
-            solve_t: <B::Kernels as Kernels>::DeltaNetChunkedSolveTKernel::new(context, CHUNK_SIZE as u32, VT as u32)?,
-            mega: <B::Kernels as Kernels>::DeltaNetChunkedMegaApplyKernel::new(
+            prep: DeltaNetChunkedPrepMetalKernel::new(context, outer_data_type, head_dim)?,
+            cumsum: DeltaNetChunkedCumsumMetalKernel::new(context)?,
+            gram: DeltaNetChunkedGramMetalKernel::new(context, head_dim, CHUNK_SIZE as u32)?,
+            solve: DeltaNetChunkedSolveMetalKernel::new(context, CHUNK_SIZE as u32, false)?,
+            solve_t: DeltaNetChunkedSolveTMetalKernel::new(context, CHUNK_SIZE as u32, VT as u32)?,
+            mega: DeltaNetChunkedMegaApplyMetalKernel::new(
                 context,
                 outer_data_type,
                 outer_data_type,
@@ -61,22 +114,22 @@ impl<B: Backend> ChunkedPrefill<B> {
         }))
     }
 
-    pub(super) fn should_use(
+    fn should_use(
         &self,
         suffix_len: usize,
     ) -> bool {
         suffix_len >= self.min_t
     }
 
-    pub(super) fn encode(
+    fn encode(
         &self,
-        delta_net: &DeltaNet<B>,
-        in_projected: &Allocation<B>,
-        state: &mut DeltaNetState<B>,
-        delta_output: &mut Allocation<B>,
+        delta_net: &DeltaNet<Metal>,
+        in_projected: &Allocation<Metal>,
+        state: &mut DeltaNetState<Metal>,
+        delta_output: &mut Allocation<Metal>,
         suffix_len: usize,
-        encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), <Metal as Backend>::Error> {
         let num_chunks = suffix_len.div_ceil(CHUNK_SIZE);
         let num_blocks = CHUNK_SIZE.div_ceil(BLOCK_SIZE);
         let num_col_pairs = num_blocks.div_ceil(2);
@@ -175,23 +228,4 @@ impl<B: Backend> ChunkedPrefill<B> {
         );
         Ok(())
     }
-}
-
-fn chunked_prefill_config<C: Any>(context: &C) -> Option<(bool, usize)> {
-    #[cfg(metal_backend)]
-    if let Some(context) = (context as &dyn Any).downcast_ref::<MetalContext>() {
-        let use_mxu = context.supports_mxu();
-        return if use_mxu {
-            Some((true, MXU_MIN_T))
-        } else if context.supports_dynamic_caching() {
-            Some((false, SIMD_MIN_T))
-        } else {
-            None
-        };
-    }
-
-    #[cfg(not(metal_backend))]
-    let _ = context;
-
-    None
 }

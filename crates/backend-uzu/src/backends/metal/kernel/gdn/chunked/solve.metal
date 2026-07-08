@@ -29,7 +29,7 @@ METAL_FUNC float chunked_g(
 template <uint CHUNK_SIZE, bool RECOMPUTE_G>
 VARIANTS(CHUNK_SIZE, 16, 32, 64)
 VARIANTS(RECOMPUTE_G, false, true)
-PUBLIC KERNEL(DeltaNetChunkedSolve)(
+KERNEL(DeltaNetChunkedSolve)(
     device const float* kk,
     device const float* beta,
     device const float* g_or_log_decay,

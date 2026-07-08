@@ -8,7 +8,7 @@ using namespace metal;
 template <typename T, uint HEAD_K_DIM>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
-PUBLIC KERNEL(DeltaNetChunkedPrep)(
+KERNEL(DeltaNetChunkedPrep)(
     device const T* in_proj,
     device const float* a_log,
     device const float* dt_bias,
@@ -43,7 +43,7 @@ PUBLIC KERNEL(DeltaNetChunkedPrep)(
   );
 }
 
-PUBLIC KERNEL(DeltaNetChunkedCumsum)(
+KERNEL(DeltaNetChunkedCumsum)(
     device const float* log_decay,
     device float* g_out,
     constant const uint& num_v_heads,
