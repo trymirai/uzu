@@ -12,13 +12,13 @@ pub trait PowerRecorder: Send {
 
 impl dyn PowerRecorder {
     pub fn create() -> Box<dyn PowerRecorder> {
-        #[cfg(target_vendor = "apple")]
+        #[cfg(target_os = "macos")]
         {
             use crate::util::power::apple::ApplePowerRecorder;
             Box::new(ApplePowerRecorder::new()) as Box<dyn PowerRecorder>
         }
 
-        #[cfg(not(target_vendor = "apple"))]
+        #[cfg(not(target_os = "macos"))]
         {
             use crate::util::power::stub::StubPowerRecorder;
             Box::new(StubPowerRecorder::new()) as Box<dyn PowerRecorder>
