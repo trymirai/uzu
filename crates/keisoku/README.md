@@ -81,5 +81,4 @@ Apple platforms only — the crate does not build elsewhere. Full SoC power and 
 IOReport on macOS; on iOS keisoku reports the subset exposed there, including HID charger "wall"
 power.
 
-Used by [`kanshi`](../kanshi) (live monitor); reaches Apple's private counters via
-[`kanka`](../kanka).
+Reaches Apple's private counters via [`kanka`](../kanka).

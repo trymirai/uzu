@@ -19,7 +19,6 @@ members = [
     "crates/power-consumption",
     "crates/test-runner",
     "crates/keisoku",
-    "crates/kanshi",
     "crates/kanka",
 ]
 resolver = "3"
