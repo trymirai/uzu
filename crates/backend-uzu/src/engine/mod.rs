@@ -5,10 +5,11 @@ use thiserror::Error;
 use crate::backends::common::{Backend, Context};
 
 pub mod classifier_model;
+pub mod dflash_speculator;
 pub mod language_model;
 
 pub struct Engine<B: Backend> {
-    pub(crate) context: Rc<B::Context>,
+    context: Rc<B::Context>,
 }
 
 #[derive(Debug, Error)]
