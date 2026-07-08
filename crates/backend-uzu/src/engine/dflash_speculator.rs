@@ -35,15 +35,13 @@ impl<B: Backend> Engine<B> {
         &self,
         model_path: &Path,
     ) -> Result<DFlashSpeculator<B>, EngineLoadDFlashSpeculatorError<B>> {
-        let context = self.context.as_ref();
-
         let config: DFlashSpeculatorConfig =
             serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
 
         let data_type = DataType::BF16;
 
         let weights_file = File::open(model_path.join("model.safetensors"))?;
-        let weight_loader = ParameterLoader::new(&weights_file, context)?;
+        let weight_loader = ParameterLoader::new(&weights_file, &*self.context)?;
         let draft_tree = weight_loader.tree().subtree("draft_model")?;
         let draft_model = DFlashDraft::new(&*self.context, &config.draft_config, &draft_tree, data_type)?;
 

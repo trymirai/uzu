@@ -65,7 +65,7 @@ fn plain_norm<B: Backend>(
     parameter_tree: &ParameterTree<B>,
     data_type: DataType,
 ) -> Result<Normalization<B>, NormalizationNewError<B>> {
-    Normalization::new(dim, None, false, false, PostLayerScalar::None, data_type, config, parameter_tree, context)
+    Normalization::new(model_dim, None, false, false, PostLayerScalar::None, data_type, config, parameter_tree, context)
 }
 
 impl<B: Backend> DFlashDraft<B> {
