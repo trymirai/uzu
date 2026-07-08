@@ -1,55 +1,43 @@
-#![cfg(target_os = "macos")]
+#![cfg(target_vendor = "apple")]
 
 use std::cell::RefCell;
 
-use keisoku::{Energy, Interval, Power, Select, Session};
+use keisoku::{PowerMeter, PowerReading, Watts};
 use shoji::types::session::chat::ChatReplyPowerStats;
 
 use crate::util::power::PowerRecorder;
 
-type Meter = Interval<Select![Energy, Power]>;
-
 pub struct ApplePowerRecorder {
-    meter: RefCell<Meter>,
-    session: RefCell<Option<Session<Select![Energy, Power]>>>,
+    meter: RefCell<PowerMeter>,
 }
 
 impl ApplePowerRecorder {
     pub fn new() -> Self {
         Self {
-            meter: RefCell::new(Meter::new()),
-            session: RefCell::new(None),
+            meter: RefCell::new(PowerMeter::new()),
         }
     }
 }
 
 impl PowerRecorder for ApplePowerRecorder {
     fn begin(&self) {
-        if !self.meter.borrow().is_available() {
-            *self.session.borrow_mut() = None;
-            return;
-        }
-        let session = self.meter.borrow_mut().start();
-        *self.session.borrow_mut() = Some(session);
+        self.meter.borrow_mut().start();
     }
 
     fn finish(&self) -> Option<ChatReplyPowerStats> {
-        if !self.meter.borrow().is_available() {
-            return None;
-        }
-        let session = self.session.borrow_mut().take()?;
-        let sample = self.meter.borrow_mut().stop(session);
-        let energy = sample.get::<Energy>();
-        let average_power = sample.get::<Power>();
-        let total_watts = average_power.total().value() as f64;
-        Some(ChatReplyPowerStats {
-            samples_count: 1,
-            average_cpu_watts: average_power.cpu.value() as f64,
-            average_gpu_watts: average_power.gpu.value() as f64,
-            average_ane_watts: average_power.ane.value() as f64,
-            average_ram_watts: average_power.ram.value() as f64,
-            average_total_watts: total_watts,
-            energy_joules: energy.total().value() as f64,
-        })
+        self.meter.borrow_mut().stop().map(stats)
+    }
+}
+
+fn stats(reading: PowerReading) -> ChatReplyPowerStats {
+    let watts = |value: Option<Watts>| value.map_or(0.0, |watts| watts.value() as f64);
+    ChatReplyPowerStats {
+        samples_count: reading.samples as i64,
+        average_cpu_watts: watts(reading.cpu),
+        average_gpu_watts: watts(reading.gpu),
+        average_ane_watts: watts(reading.ane),
+        average_ram_watts: watts(reading.ram),
+        average_total_watts: reading.total.value() as f64,
+        energy_joules: reading.energy.value() as f64,
     }
 }
