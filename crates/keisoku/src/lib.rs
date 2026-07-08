@@ -11,16 +11,23 @@ mod units;
 
 pub use component::{Component, classify};
 pub use providers::{
-    Instant, Interval, Session,
+    Instant,
     data::{
         BandwidthMetrics, BatteryMetrics, CpuMetrics, EnergyMetrics, Fan, FanMetrics, GpuMetrics, MemoryMetrics,
         NeuralEngineMetrics, PowerMetrics, ThermalPressure,
     },
     marker::{
-        Bandwidth, Battery, Chip, Cons, CpuUsage, CurrentSensors, EfficiencyCores, Energy, Fans, GpuCores, GpuUsage,
-        InstantMetric, InstantSet, IntervalFrame, IntervalInputs, IntervalMetric, IntervalSet, Memory, Metric,
-        MetricSet, NeuralEngine, Nil, PerformanceCores, Power, RailPower, Sample, TemperatureSensors, Thermal,
-        ValueList, Values, VoltageSensors,
+        Battery, Chip, Cons, CurrentSensors, EfficiencyCores, Fans, GpuCores, InstantMetric, InstantSet, Memory,
+        Metric, MetricSet, Nil, PerformanceCores, RailPower, Sample, TemperatureSensors, Thermal, ValueList, Values,
+        VoltageSensors,
+    },
+};
+#[cfg(target_os = "macos")]
+pub use providers::{
+    Interval, Session,
+    marker::{
+        Bandwidth, CpuUsage, Energy, GpuUsage, IntervalFrame, IntervalInputs, IntervalMetric, IntervalSet,
+        NeuralEngine, Power,
     },
 };
 pub use sensor::{Sensor, SensorKind, thermal_sensors};

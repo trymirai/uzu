@@ -1,9 +1,11 @@
 mod battery;
 mod deferred;
+#[cfg(target_os = "macos")]
 pub(crate) mod interval;
 mod memory;
 mod rail_power;
 mod sensors;
+#[cfg(target_os = "macos")]
 mod smc;
 #[cfg(target_os = "macos")]
 mod soc;
@@ -12,9 +14,11 @@ mod thermal;
 use deferred::Deferred;
 
 #[cfg(target_os = "macos")]
+use crate::providers::data::Fan;
+#[cfg(target_os = "macos")]
 use crate::sys::{ioreport::decode::FrequencyTables, smc::Smc, soc::SocInfo};
 use crate::{
-    providers::data::{Fan, FanMetrics},
+    providers::data::FanMetrics,
     sensor::{Sensor, SensorKind},
     sys::hid::SensorReader,
     units::Watts,
