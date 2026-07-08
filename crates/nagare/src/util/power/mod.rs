@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod apple;
+mod rail;
 mod stub;
 
 use shoji::types::session::chat::ChatReplyPowerStats;
@@ -18,7 +19,13 @@ impl dyn PowerRecorder {
             Box::new(ApplePowerRecorder::new()) as Box<dyn PowerRecorder>
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(target_vendor = "apple", not(target_os = "macos")))]
+        {
+            use crate::util::power::rail::RailPowerRecorder;
+            Box::new(RailPowerRecorder::new()) as Box<dyn PowerRecorder>
+        }
+
+        #[cfg(not(target_vendor = "apple"))]
         {
             use crate::util::power::stub::StubPowerRecorder;
             Box::new(StubPowerRecorder::new()) as Box<dyn PowerRecorder>
