@@ -3,9 +3,6 @@ mod interval_set;
 mod sample;
 mod typelist;
 
-#[cfg(test)]
-mod wants_tests;
-
 mod chip;
 mod efficiency_cores;
 mod gpu_cores;

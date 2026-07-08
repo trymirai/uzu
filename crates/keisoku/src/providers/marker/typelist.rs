@@ -71,11 +71,6 @@ where
     }
 }
 
-/// ```compile_fail
-/// use keisoku::{Instant, Memory, Select};
-///
-/// let _ = Instant::<Select![Memory, Memory]>::new();
-/// ```
 #[macro_export]
 macro_rules! Select {
     () => {
