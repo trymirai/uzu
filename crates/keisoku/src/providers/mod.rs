@@ -2,8 +2,8 @@ mod instant;
 mod interval;
 mod session;
 
-pub mod marker;
 pub mod data;
+pub mod marker;
 
 pub use instant::Instant;
 pub use interval::Interval;

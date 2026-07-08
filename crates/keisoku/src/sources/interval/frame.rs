@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use crate::sys::ioreport::decode::{AneActivity, CpuResidency, DramBandwidth, EnergyTotals, FrequencyTables, GpuResidency};
+use crate::sys::ioreport::decode::{
+    AneActivity, CpuResidency, DramBandwidth, EnergyTotals, FrequencyTables, GpuResidency,
+};
 
 pub struct IntervalFrame<'a> {
     pub(crate) elapsed: Duration,

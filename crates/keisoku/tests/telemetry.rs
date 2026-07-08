@@ -9,8 +9,7 @@ fn available_telemetry() {
         Temps, VoltageSensors,
     };
 
-    let constants =
-        Instant::<Select![Chip, EfficiencyCores, PerformanceCores, GpuCores, RamTotal]>::new().read();
+    let constants = Instant::<Select![Chip, EfficiencyCores, PerformanceCores, GpuCores, RamTotal]>::new().read();
     let chip = constants.get::<Chip>();
     let efficiency_cores = constants.get::<EfficiencyCores>();
     let performance_cores = constants.get::<PerformanceCores>();

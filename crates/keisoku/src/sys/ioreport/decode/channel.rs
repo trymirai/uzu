@@ -38,9 +38,7 @@ impl Channel {
                 && channel.name == obfstr!("GPUPH"))
             .then_some(Channel::GpuState),
             GroupId::Pmp => match Subgroup::classify(&channel.subgroup) {
-                Subgroup::Floor
-                    if channel.name == obfstr!("ANE-AF-BW") || channel.name == obfstr!("ANE-DCS-BW") =>
-                {
+                Subgroup::Floor if channel.name == obfstr!("ANE-AF-BW") || channel.name == obfstr!("ANE-DCS-BW") => {
                     Some(Channel::AneBandwidth)
                 },
                 Subgroup::DramBandwidth => dram_flow(&channel.name).map(Channel::DramHistogram),
