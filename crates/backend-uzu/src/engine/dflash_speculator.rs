@@ -35,7 +35,7 @@ impl<B: Backend> Engine<B> {
         &self,
         model_path: &Path,
     ) -> Result<DFlashSpeculator<B>, EngineLoadDFlashSpeculatorError<B>> {
-        let context = self.context.clone();
+        let context = self.context.as_ref();
 
         let config: DFlashSpeculatorConfig =
             serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
@@ -43,12 +43,12 @@ impl<B: Backend> Engine<B> {
         let data_type = DataType::BF16;
 
         let weights_file = File::open(model_path.join("model.safetensors"))?;
-        let weight_loader = ParameterLoader::new(&weights_file, context.as_ref())?;
+        let weight_loader = ParameterLoader::new(&weights_file, context)?;
         let draft_tree = weight_loader.tree().subtree("draft_model")?;
-        let draft = DFlashDraft::new(context.as_ref(), &config.draft_config, &draft_tree, data_type)?;
+        let draft_model = DFlashDraft::new(context, &config.draft_config, &draft_tree, data_type)?;
 
         weight_loader.tree().assert_all_tensors_validated()?;
 
-        Ok(DFlashSpeculator::new(draft, config))
+        Ok(DFlashSpeculator::new(draft_model, config))
     }
 }
