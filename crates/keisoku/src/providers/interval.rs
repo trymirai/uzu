@@ -37,7 +37,7 @@ impl<M: IntervalSet> Interval<M> {
     pub fn start(&mut self) -> Session<M> {
         self.engine.prepare(&self.sources);
         Session {
-            source: self.engine.begin(&self.sources),
+            source: self.engine.begin(),
             marker: PhantomData,
         }
     }
@@ -46,7 +46,7 @@ impl<M: IntervalSet> Interval<M> {
         &mut self,
         session: Session<M>,
     ) -> Sample<M> {
-        let reading = self.engine.end(&self.sources, session.source);
+        let reading = self.engine.end(session.source);
         let frame = self.engine.frame(&self.sources, &reading);
         Sample::new(M::finish(&frame))
     }

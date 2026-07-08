@@ -12,7 +12,7 @@ fn interval_measures_a_window() {
     let energy = sample.get::<Energy>();
     let average_power = sample.get::<Power>();
 
-    println!("energy {:.4} J  package {:.2} W", energy.total().value(), average_power.package.value(),);
+    println!("energy {:.4} J  power {:.2} W", energy.total().value(), average_power.total().value());
 
     assert!(energy.total().value() >= 0.0 && energy.total().value().is_finite());
     assert!(average_power.total().value() >= 0.0);

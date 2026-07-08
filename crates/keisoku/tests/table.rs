@@ -39,7 +39,7 @@ fn render_table() {
         ["CPU".into(), format!("{:.1} %", cpu.usage.value()), String::new()],
         ["GPU".into(), format!("{:.0} %", gpu.usage.value()), String::new()],
         ["ANE".into(), format!("{:.0} %", neural_engine.active.value()), String::new()],
-        ["Power".into(), format!("{:.2} W", power.package.value()), String::new()],
+        ["Power".into(), format!("{:.2} W", power.total().value()), String::new()],
         [
             "Memory".into(),
             memory.as_ref().map_or(na.into(), |memory| {

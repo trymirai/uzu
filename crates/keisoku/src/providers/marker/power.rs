@@ -13,18 +13,16 @@ impl Metric for Power {
 }
 
 impl IntervalMetric for Power {
-    const INPUTS: IntervalInputs = IntervalInputs::ENERGY_RAILS.union(IntervalInputs::PACKAGE_WATTS);
+    const INPUTS: IntervalInputs = IntervalInputs::ENERGY_RAILS;
 
     fn finish(frame: &IntervalFrame<'_>) -> PowerMetrics {
         let acc = frame.energy.as_ref().cloned().unwrap_or_default();
         let seconds = frame.elapsed.as_secs_f64().max(0.001);
-        let package = frame.package_watts_mean.map(Watts).unwrap_or_else(|| Watts((acc.total() / seconds) as f32));
         PowerMetrics {
             cpu: Watts((acc.cpu / seconds) as f32),
             gpu: Watts((acc.gpu / seconds) as f32),
             ane: Watts((acc.ane / seconds) as f32),
             ram: Watts((acc.ram / seconds) as f32),
-            package,
         }
     }
 }

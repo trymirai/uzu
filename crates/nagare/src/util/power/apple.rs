@@ -41,17 +41,17 @@ impl PowerRecorder for ApplePowerRecorder {
         let sample = self.meter.borrow_mut().stop(session);
         let energy = sample.get::<Energy>();
         let average_power = sample.get::<Power>();
-        let package_watts = average_power.package.value() as f64;
+        let total_watts = average_power.total().value() as f64;
         Some(ChatReplyPowerStats {
             samples_count: 1,
             average_cpu_watts: average_power.cpu.value() as f64,
             average_gpu_watts: average_power.gpu.value() as f64,
             average_ane_watts: average_power.ane.value() as f64,
             average_ram_watts: average_power.ram.value() as f64,
-            average_total_watts: average_power.total().value() as f64,
-            average_package_watts: package_watts,
-            max_package_watts: package_watts,
-            energy_joules: energy.package.value() as f64,
+            average_total_watts: total_watts,
+            average_package_watts: total_watts,
+            max_package_watts: total_watts,
+            energy_joules: energy.total().value() as f64,
         })
     }
 }

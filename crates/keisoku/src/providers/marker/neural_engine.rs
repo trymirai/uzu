@@ -17,7 +17,7 @@ impl IntervalMetric for NeuralEngine {
 
     fn finish(frame: &IntervalFrame<'_>) -> NeuralEngineMetrics {
         NeuralEngineMetrics {
-            active: Percent(frame.ane.unwrap_or(0.0)),
+            active: Percent(frame.ane.unwrap_or_default().active_percent),
         }
     }
 }

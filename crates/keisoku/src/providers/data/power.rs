@@ -8,7 +8,6 @@ pub struct PowerMetrics {
     pub gpu: Watts,
     pub ane: Watts,
     pub ram: Watts,
-    pub package: Watts,
 }
 
 impl PowerMetrics {

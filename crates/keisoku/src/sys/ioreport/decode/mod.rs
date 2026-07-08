@@ -1,15 +1,25 @@
+mod ane_activity;
+mod channel_fold;
+mod cpu_residency;
+mod dram_bandwidth;
 mod energy_totals;
 mod frequency;
 mod frequency_tables;
+mod gpu_residency;
 mod group_id;
 mod naming;
 mod raw_channel;
 mod residency;
 mod residency_state;
 
+pub(crate) use ane_activity::AneActivity;
+pub(crate) use channel_fold::ChannelFold;
+pub(crate) use cpu_residency::CpuResidency;
+pub(crate) use dram_bandwidth::DramBandwidth;
 pub use energy_totals::EnergyTotals;
 pub(crate) use frequency::{average_cluster_frequency, calculate_frequency, divide_or_zero};
 pub use frequency_tables::FrequencyTables;
+pub(crate) use gpu_residency::GpuResidency;
 pub(crate) use group_id::GroupId;
 pub(crate) use naming::{dram_flow, strip_die_prefix};
 pub use raw_channel::RawChannel;

@@ -7,11 +7,6 @@ pub(crate) fn new_smc() -> Option<Smc> {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn package_watts(smc: &Smc) -> Option<crate::units::Watts> {
-    smc.package_watts()
-}
-
-#[cfg(target_os = "macos")]
 pub(crate) fn fans(smc: &Smc) -> FansSnapshot {
     smc.fans()
 }
@@ -21,11 +16,6 @@ pub(crate) struct Smc;
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn new_smc() -> Option<Smc> {
-    None
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn package_watts(_smc: &Smc) -> Option<crate::units::Watts> {
     None
 }
 

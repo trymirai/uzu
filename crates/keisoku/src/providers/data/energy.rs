@@ -8,7 +8,6 @@ pub struct EnergyMetrics {
     pub gpu: Joules,
     pub ane: Joules,
     pub ram: Joules,
-    pub package: Joules,
 }
 
 impl EnergyMetrics {

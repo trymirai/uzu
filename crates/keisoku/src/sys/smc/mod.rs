@@ -14,7 +14,7 @@ use self::{
     fourcc::fourcc,
     key_data::{SmcKeyData, SmcKeyInfo},
 };
-use crate::units::{Rpm, Watts};
+use crate::units::Rpm;
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct FanSnapshot {
@@ -58,10 +58,6 @@ impl Smc {
         (result == 0).then_some(Self {
             connection,
         })
-    }
-
-    pub fn package_watts(&self) -> Option<Watts> {
-        self.read_f32(obfstr!("PSTR")).map(Watts)
     }
 
     pub fn fans(&self) -> FansSnapshot {

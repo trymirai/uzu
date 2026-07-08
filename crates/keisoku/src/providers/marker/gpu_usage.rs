@@ -16,10 +16,10 @@ impl IntervalMetric for GpuUsage {
     const INPUTS: IntervalInputs = IntervalInputs::GPU_RESIDENCY.union(IntervalInputs::SOC_FREQUENCIES);
 
     fn finish(frame: &IntervalFrame<'_>) -> GpuMetrics {
-        let acc = frame.gpu.unwrap_or((0, 0.0));
+        let acc = frame.gpu.unwrap_or_default();
         GpuMetrics {
-            frequency: Megahertz(acc.0),
-            usage: Percent(acc.1 * 100.0),
+            frequency: Megahertz(acc.frequency),
+            usage: Percent(acc.usage * 100.0),
         }
     }
 }

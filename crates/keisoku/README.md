@@ -67,13 +67,12 @@ let power = sample.get::<Power>();
 
 ## What you get back
 
-- Marker values reuse the metric structs: `MemoryMetrics`, `PowerMetrics { cpu, gpu, ane, ram, package }`
+- Marker values reuse the metric structs: `MemoryMetrics`, `PowerMetrics { cpu, gpu, ane, ram }`
   (`total()` sums the disjoint rails), `EnergyMetrics`, `CpuMetrics`, `GpuMetrics`,
   `NeuralEngineMetrics`, `BandwidthMetrics`, `FanMetrics`, `BatteryMetrics`, `Temperatures`,
   `ThermalPressure`, plus unit newtypes (`Watts`, `Joules`, `Bytes`, `Percent`, …) and `Sensor`.
 - Interval metrics declare normalized inputs (`ENERGY_RAILS`, `CPU_RESIDENCY`, …). `sources/interval`
   maps those inputs to the minimal IOReport subscription and builds one shared frame per window.
-- SMC package watts remain an internal support input for `Power`/`Energy`; it is not a public marker.
 
 ## Platform
 

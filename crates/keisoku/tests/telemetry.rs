@@ -56,7 +56,7 @@ fn available_telemetry() {
     );
     println!("gpu        {:.0}% @ {} MHz", gpu.usage.value(), gpu.frequency.value());
     println!("neural     {:.2}%", neural_engine.active.value());
-    println!("power      {:.2} W package  {:.2} W total", power.package.value(), power.total().value());
+    println!("power      {:.2} W total", power.total().value());
     println!("bandwidth  R {:.1} / W {:.1} GB/s", bandwidth.dram_read.value(), bandwidth.dram_write.value());
     println!("fans       {}", fans.as_ref().map(|fans| fans.fans.len()).unwrap_or(0));
     println!(

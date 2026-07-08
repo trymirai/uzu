@@ -84,17 +84,6 @@ impl Sources {
         rail_power::rail_power(&voltage, &current)
     }
 
-    pub(crate) fn package_watts(&self) -> Option<Watts> {
-        #[cfg(target_os = "macos")]
-        {
-            self.smc().and_then(smc::package_watts)
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            None
-        }
-    }
-
     pub(crate) fn fans(&self) -> Option<FanMetrics> {
         #[cfg(target_os = "macos")]
         {

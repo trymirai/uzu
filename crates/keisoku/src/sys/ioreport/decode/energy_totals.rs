@@ -1,5 +1,8 @@
 use obfstr::obfstr;
 
+use super::{ChannelFold, FrequencyTables, GroupId, RawChannel};
+use crate::sys::ioreport::IoReportGroups;
+
 #[derive(Default, Clone, Copy)]
 pub struct EnergyTotals {
     pub(crate) cpu: f64,
@@ -29,9 +32,21 @@ impl EnergyTotals {
             self.ram += joules;
         }
     }
+}
 
-    pub(crate) fn total(&self) -> f64 {
-        self.cpu + self.gpu + self.ane + self.ram
+impl ChannelFold for EnergyTotals {
+    const GROUPS: IoReportGroups = IoReportGroups::ENERGY_MODEL;
+
+    fn wants(channel: &RawChannel) -> bool {
+        channel.group == GroupId::EnergyModel
+    }
+
+    fn fold(
+        &mut self,
+        channel: &RawChannel,
+        _frequencies: Option<&FrequencyTables<'_>>,
+    ) {
+        self.accumulate(&channel.name, channel.integer_value, &channel.unit);
     }
 }
 

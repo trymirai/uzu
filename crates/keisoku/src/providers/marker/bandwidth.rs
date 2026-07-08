@@ -1,7 +1,8 @@
-use super::{dram_bandwidth::DramBandwidth, interval_set::IntervalMetric, typelist::Metric};
+use super::{interval_set::IntervalMetric, typelist::Metric};
 use crate::{
     providers::data::BandwidthMetrics,
     sources::interval::{IntervalFrame, IntervalInputs},
+    sys::ioreport::decode::DramBandwidth,
     units::GigabytesPerSecond,
 };
 
