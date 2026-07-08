@@ -10,7 +10,7 @@ use std::{
 use anyhow::{Result, anyhow};
 use backend_uzu::{backends::metal::Metal, engine::Engine};
 use clap::Parser;
-use keisoku::{Chip, GpuCores, Os, RamTotal, Static};
+use keisoku::{Chip, GpuCores, Os, RamTotal, Select, Static};
 use shoji::types::model::Model;
 use tokio::runtime::Handle as TokioHandle;
 use uzu::{
@@ -53,12 +53,12 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let tokio_handle = TokioHandle::current();
 
-    let (os, chip, ram_total, gpu_cores) = Static::<(Os, Chip, RamTotal, GpuCores)>::new().into_inner();
+    let constants = Static::<Select![Os, Chip, RamTotal, GpuCores]>::new().into_sample();
     let device_info = DeviceInfo {
-        os,
-        chip,
-        ram_total_bytes: ram_total.value(),
-        gpu_cores,
+        os: constants.get::<Os>().clone(),
+        chip: constants.get::<Chip>().clone(),
+        ram_total_bytes: constants.get::<RamTotal>().value(),
+        gpu_cores: *constants.get::<GpuCores>(),
     };
 
     let mut meter = workload::Meter::new();
