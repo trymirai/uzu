@@ -26,11 +26,3 @@ pub use providers::{
 pub use sensor::{Sensor, SensorKind, thermal_sensors};
 pub use sources::Sources;
 pub use units::{Bytes, GigabytesPerSecond, Joules, Megahertz, Percent, Rpm, Watts};
-
-pub fn sensors(kind: SensorKind) -> Box<[Sensor]> {
-    sources::collect_sensors(kind)
-}
-
-pub fn sensors_available() -> bool {
-    sources::sensors_available()
-}

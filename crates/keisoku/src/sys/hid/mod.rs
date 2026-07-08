@@ -42,10 +42,6 @@ kanka::ffi_table! {
 mod event_system_client;
 mod service_client;
 
-pub(crate) fn is_available() -> bool {
-    IOKit::get().is_some()
-}
-
 pub(crate) fn collect(kind: SensorKind) -> Box<[Sensor]> {
     let Some(client) = EventSystemClient::new() else {
         return Box::default();

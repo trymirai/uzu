@@ -127,7 +127,3 @@ impl Default for Sources {
 pub(crate) fn collect_sensors(kind: SensorKind) -> Box<[Sensor]> {
     sensors::collect(kind)
 }
-
-pub(crate) fn sensors_available() -> bool {
-    sensors::is_available()
-}
