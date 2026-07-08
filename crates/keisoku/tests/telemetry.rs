@@ -9,35 +9,47 @@ fn available_telemetry() {
         Temps, VoltageSensors,
     };
 
-    let facts = Instant::<Select![Chip, EfficiencyCores, PerformanceCores, GpuCores, RamTotal]>::new().read();
-    let chip = facts.get::<Chip>();
-    let efficiency_cores = facts.get::<EfficiencyCores>();
-    let performance_cores = facts.get::<PerformanceCores>();
-    let gpu_cores = facts.get::<GpuCores>();
-    let ram_total = facts.get::<RamTotal>();
-
-    let mut soc = Interval::<Select![CpuUsage, GpuUsage, NeuralEngine, Power, Bandwidth]>::new();
-    let session = soc.start();
-    std::thread::sleep(Duration::from_millis(300));
-    let soc_sample = soc.stop(session);
-    let cpu = soc_sample.get::<CpuUsage>();
-    let gpu = soc_sample.get::<GpuUsage>();
-    let neural_engine = soc_sample.get::<NeuralEngine>();
-    let power = soc_sample.get::<Power>();
-    let bandwidth = soc_sample.get::<Bandwidth>();
-
-    let gauge_sample = Instant::<
-        Select![Memory, Fans, Battery, Temps, TemperatureSensors, VoltageSensors, CurrentSensors, RailPower],
+    let instant_values = Instant::<
+        Select![
+            Chip,
+            EfficiencyCores,
+            PerformanceCores,
+            GpuCores,
+            RamTotal,
+            Memory,
+            Fans,
+            Battery,
+            Temps,
+            TemperatureSensors,
+            VoltageSensors,
+            CurrentSensors,
+            RailPower
+        ],
     >::new()
     .read();
-    let memory = gauge_sample.get::<Memory>();
-    let fans = gauge_sample.get::<Fans>();
-    let battery = gauge_sample.get::<Battery>();
-    let temperatures = gauge_sample.get::<Temps>();
-    let sensors = gauge_sample.get::<TemperatureSensors>();
-    let voltage = gauge_sample.get::<VoltageSensors>();
-    let current = gauge_sample.get::<CurrentSensors>();
-    let rail_power = gauge_sample.get::<RailPower>();
+    let chip = instant_values.get::<Chip>();
+    let efficiency_cores = instant_values.get::<EfficiencyCores>();
+    let performance_cores = instant_values.get::<PerformanceCores>();
+    let gpu_cores = instant_values.get::<GpuCores>();
+    let ram_total = instant_values.get::<RamTotal>();
+    let memory = instant_values.get::<Memory>();
+    let fans = instant_values.get::<Fans>();
+    let battery = instant_values.get::<Battery>();
+    let temperatures = instant_values.get::<Temps>();
+    let sensors = instant_values.get::<TemperatureSensors>();
+    let voltage = instant_values.get::<VoltageSensors>();
+    let current = instant_values.get::<CurrentSensors>();
+    let rail_power = instant_values.get::<RailPower>();
+
+    let mut interval = Interval::<Select![CpuUsage, GpuUsage, NeuralEngine, Power, Bandwidth]>::new();
+    let session = interval.start();
+    std::thread::sleep(Duration::from_millis(300));
+    let interval_values = interval.stop(session);
+    let cpu = interval_values.get::<CpuUsage>();
+    let gpu = interval_values.get::<GpuUsage>();
+    let neural_engine = interval_values.get::<NeuralEngine>();
+    let power = interval_values.get::<Power>();
+    let bandwidth = interval_values.get::<Bandwidth>();
 
     println!("--- keisoku available telemetry ---");
     println!(
