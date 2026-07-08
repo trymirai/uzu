@@ -1,6 +1,7 @@
 use super::super::{
-    DeltaNetChunkedCumsumMetalKernel, DeltaNetChunkedGramMetalKernel, DeltaNetChunkedMegaApplyMetalKernel,
-    DeltaNetChunkedSolveMetalKernel, DeltaNetChunkedSolveTMetalKernel, DeltaNetPrefillPrepMetalKernel,
+    DeltaNetChunkedCumsumMetalKernel, DeltaNetChunkedDenseCausalInverseMetalKernel, DeltaNetChunkedGramMetalKernel,
+    DeltaNetChunkedOutputAndStateMetalKernel, DeltaNetChunkedPackedAAndDiaInvMetalKernel,
+    DeltaNetPrefillPrepMetalKernel,
 };
 use crate::{
     array::size_for_shape,
@@ -23,9 +24,9 @@ pub struct MetalDeltaNetChunkedPrefill {
     prep: DeltaNetPrefillPrepMetalKernel,
     cumsum: DeltaNetChunkedCumsumMetalKernel,
     gram: DeltaNetChunkedGramMetalKernel,
-    solve: DeltaNetChunkedSolveMetalKernel,
-    solve_t: DeltaNetChunkedSolveTMetalKernel,
-    mega: DeltaNetChunkedMegaApplyMetalKernel,
+    packed_a_and_dia_inv: DeltaNetChunkedPackedAAndDiaInvMetalKernel,
+    dense_causal_inverse: DeltaNetChunkedDenseCausalInverseMetalKernel,
+    output_and_state: DeltaNetChunkedOutputAndStateMetalKernel,
 }
 
 impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
@@ -52,9 +53,13 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
             prep: DeltaNetPrefillPrepMetalKernel::new(context, outer_data_type, head_dim, true)?,
             cumsum: DeltaNetChunkedCumsumMetalKernel::new(context)?,
             gram: DeltaNetChunkedGramMetalKernel::new(context, head_dim, CHUNK_SIZE as u32)?,
-            solve: DeltaNetChunkedSolveMetalKernel::new(context, CHUNK_SIZE as u32)?,
-            solve_t: DeltaNetChunkedSolveTMetalKernel::new(context, CHUNK_SIZE as u32, VT as u32)?,
-            mega: DeltaNetChunkedMegaApplyMetalKernel::new(
+            packed_a_and_dia_inv: DeltaNetChunkedPackedAAndDiaInvMetalKernel::new(context, CHUNK_SIZE as u32)?,
+            dense_causal_inverse: DeltaNetChunkedDenseCausalInverseMetalKernel::new(
+                context,
+                CHUNK_SIZE as u32,
+                VT as u32,
+            )?,
+            output_and_state: DeltaNetChunkedOutputAndStateMetalKernel::new(
                 context,
                 outer_data_type,
                 outer_data_type,
@@ -139,7 +144,7 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
             suffix_len as u32,
             encoder,
         );
-        self.solve.encode(
+        self.packed_a_and_dia_inv.encode(
             &kk,
             &beta,
             &g,
@@ -150,8 +155,8 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
             suffix_len as u32,
             encoder,
         );
-        self.solve_t.encode(&a_packed, &a_inv, &mut t_mat, args.num_heads, suffix_len as u32, encoder);
-        self.mega.encode(
+        self.dense_causal_inverse.encode(&a_packed, &a_inv, &mut t_mat, args.num_heads, suffix_len as u32, encoder);
+        self.output_and_state.encode(
             &q_norm,
             &k_norm,
             args.in_projected,

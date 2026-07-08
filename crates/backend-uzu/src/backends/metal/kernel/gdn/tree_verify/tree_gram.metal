@@ -7,7 +7,7 @@
 #include "../../matmul/common/mxu_fragment_ops.h"
 #include "../../matmul/common/simdgroup_fragment_ops.h"
 #include "../common/gram.h"
-#include "../common/solve.h"
+#include "../common/tri_inv.h"
 
 using namespace metal;
 using namespace uzu::matmul;

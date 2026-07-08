@@ -10,10 +10,11 @@ using namespace uzu::matmul;
 #define CHUNK_GRAM_COL_TILE 32u
 
 // Gram (fused with the former ScaleQk pass): computes the per-k-head kk block
-// (consumed by Solve) and, for each of the k-head's GQA v-heads, the causal-
-// masked, decay-scaled qk block qk_scaled[row,col] = qk * exp(g_row - g_col)
-// (col <= row, else 0). The scale-qk expansion is folded in here so no separate
-// dispatch and no intermediate qk buffer are needed.
+// consumed by PackedAAndDiaInv and, for each of the k-head's
+// GQA v-heads, the causal-masked, decay-scaled qk block
+// qk_scaled[row,col] = qk * exp(g_row - g_col) (col <= row, else 0). The
+// scale-qk expansion is folded in here so no separate dispatch and no
+// intermediate qk buffer are needed.
 //
 // The matmuls use the 8x8 simdgroup fragment path with f32 operands. (An MXU
 // bf16-operand variant was benchmarked and found perf-neutral on precompute, so
