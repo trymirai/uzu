@@ -1,6 +1,5 @@
 [alias]
 tools = "run --quiet -p cli-tools --"
-bench-power-consumption = "run --quiet --release -p power-consumption --"
 
 [env]
 RUST_TEST_THREADS = "1"
