@@ -4,7 +4,6 @@ use std::{
     fs::File,
 };
 
-use half::{bf16, f16};
 use thiserror::Error;
 
 use super::safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata};
@@ -55,19 +54,12 @@ pub enum ParameterLoaderError<B: Backend> {
     },
 }
 
-enum ParameterBytes<'a> {
-    File(&'a File),
-    Random {
-        base_seed: u64,
-    },
-}
-
 pub struct ParameterLoader<'a, B: Backend> {
     context: &'a B::Context,
     index: HashMap<String, ParameterMetadata>,
     metadata: HashMap<String, String>,
     validated_tensors: RefCell<HashSet<String>>,
-    bytes: ParameterBytes<'a>,
+    file: &'a File,
 }
 
 impl<'a, B: Backend> ParameterLoader<'a, B> {
@@ -75,29 +67,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
         file: &'a File,
         context: &'a B::Context,
     ) -> Result<Self, HeaderLoadingError> {
-        Self::from_header(file, context, ParameterBytes::File(file))
-    }
-
-    pub fn new_random(
-        header_file: &File,
-        context: &'a B::Context,
-        seed: u64,
-    ) -> Result<Self, HeaderLoadingError> {
-        Self::from_header(
-            header_file,
-            context,
-            ParameterBytes::Random {
-                base_seed: seed,
-            },
-        )
-    }
-
-    fn from_header(
-        header_file: &File,
-        context: &'a B::Context,
-        bytes: ParameterBytes<'a>,
-    ) -> Result<Self, HeaderLoadingError> {
-        let (global_offset, st_metadata) = read_st_metadata(header_file)?;
+        let (global_offset, st_metadata) = read_st_metadata(file)?;
         let index = st_metadata
             .tensors
             .into_iter()
@@ -130,7 +100,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
             index,
             metadata,
             validated_tensors: RefCell::new(HashSet::new()),
-            bytes,
+            file,
         })
     }
 
@@ -186,15 +156,7 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
     pub fn read_slice<T: ArrayElement>(&self) -> Result<Box<[T]>, ParameterLoaderError<B>> {
         let element_count = self.metadata.size / std::mem::size_of::<T>();
         let mut data = vec![T::zeroed(); element_count];
-        let destination = bytemuck::cast_slice_mut(&mut data);
-        match &self.loader.bytes {
-            ParameterBytes::File(file) => {
-                file_read_exact_at(file, destination, self.metadata.offset as u64)?;
-            },
-            ParameterBytes::Random {
-                base_seed,
-            } => fill_random(destination, self.metadata.data_type, *base_seed),
-        }
+        file_read_exact_at(self.loader.file, bytemuck::cast_slice_mut(&mut data), self.metadata.offset as u64)?;
         Ok(data.into_boxed_slice())
     }
 
@@ -206,87 +168,17 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
             .map_err(ParameterLoaderError::BackendError)?;
         let buffer_range = allocation.as_buffer_range_ref();
         let range = buffer_range.range();
-        let destination = unsafe {
-            std::slice::from_raw_parts_mut(
-                (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start),
-                range.len(),
-            )
-        };
-        match &self.loader.bytes {
-            ParameterBytes::File(file) => {
-                file_read_exact_at(file, destination, self.metadata.offset as u64)?;
+        file_read_exact_at(
+            self.loader.file,
+            unsafe {
+                std::slice::from_raw_parts_mut(
+                    (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start),
+                    range.len(),
+                )
             },
-            ParameterBytes::Random {
-                base_seed,
-            } => fill_random(destination, self.metadata.data_type, *base_seed),
-        }
+            self.metadata.offset as u64,
+        )?;
         Ok(allocation)
-    }
-}
-
-struct SplitMix64 {
-    state: u64,
-}
-
-impl SplitMix64 {
-    fn new(seed: u64) -> Self {
-        Self {
-            state: seed,
-        }
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-
-    fn next_bounded_f32(&mut self) -> f32 {
-        let unit = (self.next_u64() >> 40) as f32 / (1u32 << 24) as f32;
-        (unit - 0.5) * 0.2
-    }
-}
-
-fn fill_random(
-    destination: &mut [u8],
-    data_type: DataType,
-    seed: u64,
-) {
-    let mut rng = SplitMix64::new(seed);
-    let block_size = destination.len().clamp(1, 65536);
-    let mut block = vec![0u8; block_size];
-    match data_type {
-        DataType::BF16 => {
-            for chunk in block.as_chunks_mut::<2>().0 {
-                *chunk = bf16::from_f32(rng.next_bounded_f32()).to_le_bytes();
-            }
-        },
-        DataType::F16 => {
-            for chunk in block.as_chunks_mut::<2>().0 {
-                *chunk = f16::from_f32(rng.next_bounded_f32()).to_le_bytes();
-            }
-        },
-        DataType::F32 => {
-            for chunk in block.as_chunks_mut::<4>().0 {
-                *chunk = rng.next_bounded_f32().to_le_bytes();
-            }
-        },
-        DataType::F64 => {
-            for chunk in block.as_chunks_mut::<8>().0 {
-                *chunk = f64::from(rng.next_bounded_f32()).to_le_bytes();
-            }
-        },
-        _ => {
-            for chunk in block.chunks_mut(8) {
-                let bytes = rng.next_u64().to_le_bytes();
-                chunk.copy_from_slice(&bytes[..chunk.len()]);
-            }
-        },
-    }
-    for target in destination.chunks_mut(block.len()) {
-        target.copy_from_slice(&block[..target.len()]);
     }
 }
 
