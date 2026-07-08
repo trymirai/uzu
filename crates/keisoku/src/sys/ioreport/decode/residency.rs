@@ -12,20 +12,6 @@ pub(crate) fn residency_active_percent(states: &[ResidencyState]) -> f32 {
     (active / total * 100.0) as f32
 }
 
-pub(crate) fn residency_weighted_gbps(states: &[ResidencyState]) -> f32 {
-    let mut weighted = 0f64;
-    let mut total = 0f64;
-    for state in states {
-        weighted += parse_leading_number(&state.name) * (state.residency as f64);
-        total += state.residency as f64;
-    }
-    if total <= 0.0 {
-        0.0
-    } else {
-        (weighted / total) as f32
-    }
-}
-
 pub(crate) fn is_idle_state(name: &str) -> bool {
     name == obfstr!("OFF")
         || name == obfstr!("IDLE")
@@ -34,10 +20,4 @@ pub(crate) fn is_idle_state(name: &str) -> bool {
         || name == obfstr!("VMIN")
         || name == obfstr!("F1")
         || name == obfstr!("0%")
-}
-
-fn parse_leading_number(name: &str) -> f64 {
-    let digits: String =
-        name.trim().chars().take_while(|character| character.is_ascii_digit() || *character == '.').collect();
-    digits.parse().unwrap_or(0.0)
 }

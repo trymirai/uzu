@@ -54,7 +54,7 @@ fn decode_channel(
         Channel::DramBytes(_) => {
             decoded.integer_value = unsafe { (functions.simple_get_integer_value)(item, 0) };
         },
-        Channel::CpuCluster(_) | Channel::GpuState | Channel::AneBandwidth | Channel::DramHistogram(_) => {
+        Channel::CpuCluster(_) | Channel::GpuState | Channel::AneBandwidth => {
             decoded.states = decode_states(functions, item);
         },
     }

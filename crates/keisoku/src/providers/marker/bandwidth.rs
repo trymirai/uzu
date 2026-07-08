@@ -27,19 +27,9 @@ fn project_bandwidth(
     elapsed: std::time::Duration,
 ) -> BandwidthMetrics {
     let seconds = elapsed.as_secs_f64().max(0.001);
-    let to_gbps = |bytes: f64| (bytes / seconds / 1e9) as f32;
-    let read = if acc.read_bytes > 0.0 {
-        to_gbps(acc.read_bytes)
-    } else {
-        acc.read_histogram
-    };
-    let write = if acc.write_bytes > 0.0 {
-        to_gbps(acc.write_bytes)
-    } else {
-        acc.write_histogram
-    };
+    let to_gbps = |bytes: f64| GigabytesPerSecond((bytes / seconds / 1e9) as f32);
     BandwidthMetrics {
-        dram_read: GigabytesPerSecond(read),
-        dram_write: GigabytesPerSecond(write),
+        dram_read: to_gbps(acc.read_bytes),
+        dram_write: to_gbps(acc.write_bytes),
     }
 }

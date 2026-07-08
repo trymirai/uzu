@@ -25,9 +25,9 @@ pub(crate) use frequency::{average_cluster_frequency, calculate_frequency, divid
 pub use frequency_tables::FrequencyTables;
 pub(crate) use gpu_residency::GpuResidency;
 pub(crate) use group_id::GroupId;
-pub(crate) use naming::{DramFlow, dcs_flow, dram_flow, strip_die_prefix};
+pub(crate) use naming::{DramFlow, dcs_flow, strip_die_prefix};
 pub use raw_channel::RawChannel;
-pub(crate) use residency::{residency_active_percent, residency_weighted_gbps};
+pub(crate) use residency::residency_active_percent;
 pub(crate) use residency_state::ResidencyState;
 pub(crate) use subgroup::Subgroup;
 pub(crate) use unit::energy_joules;
