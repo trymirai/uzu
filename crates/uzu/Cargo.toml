@@ -63,7 +63,6 @@ bindings.workspace = true
 backend-uzu.workspace = true
 shoji.workspace = true
 anyhow.workspace = true
-bitflags.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
 rodio.workspace = true
