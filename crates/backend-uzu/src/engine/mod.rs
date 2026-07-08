@@ -8,7 +8,7 @@ pub mod classifier_model;
 pub mod language_model;
 
 pub struct Engine<B: Backend> {
-    context: Rc<B::Context>,
+    pub(crate) context: Rc<B::Context>,
 }
 
 #[derive(Debug, Error)]
