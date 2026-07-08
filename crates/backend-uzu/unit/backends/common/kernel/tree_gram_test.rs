@@ -1,3 +1,5 @@
+#![cfg(metal_backend)]
+
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
@@ -5,6 +7,7 @@ use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
         cpu::Cpu,
+        metal::Metal,
     },
     data_type::DataType,
     tests::{
@@ -19,6 +22,34 @@ const VALUE_HEADS: usize = 6;
 const HEAD_K_DIM: usize = 128;
 // 80 = two full 32-wide kh0 dv chunks plus a ragged 16-wide one.
 const HEAD_V_DIM: usize = 80;
+
+struct Inputs {
+    trie: Vec<u32>,
+    q: Vec<f32>,
+    k: Vec<f32>,
+    prefix: Vec<f32>,
+    beta: Vec<f32>,
+    h0: Vec<f32>,
+    h0_idx: Vec<i32>,
+}
+
+fn make_inputs(tree_size: usize) -> Inputs {
+    let q_len = BATCH_SIZE * tree_size * K_HEADS * HEAD_K_DIM;
+    let scalar_len = BATCH_SIZE * tree_size * VALUE_HEADS;
+    let h0_len = BATCH_SIZE * VALUE_HEADS * HEAD_V_DIM * HEAD_K_DIM;
+    Inputs {
+        trie: build_trie(tree_size),
+        q: (0..q_len).map(|i| ((i as f32 * 0.017).sin() * 0.2) + 0.01).collect(),
+        k: (0..q_len).map(|i| ((i as f32 * 0.019).cos() * 0.18) - 0.02).collect(),
+        prefix: (0..scalar_len)
+            .map(|i| -((i % tree_size) as f32) * 0.01 - ((i % VALUE_HEADS) as f32) * 0.003)
+            .collect(),
+        beta: (0..scalar_len).map(|i| 0.25 + ((i as f32 * 0.013).sin() + 1.0) * 0.2).collect(),
+        h0: (0..h0_len).map(|i| ((i as f32 * 0.007).sin() * 0.05) - 0.01).collect(),
+        // Batch 1 has no initial state: covers the kh0-skip path.
+        h0_idx: vec![0, -1],
+    }
+}
 
 fn get_output<B: Backend>(
     q: &[f32],
@@ -102,46 +133,28 @@ fn test_build_tree_gram_matches_cpu() {
     let scale = (HEAD_K_DIM as f32).sqrt().recip();
 
     for tree_size in [17, 64, 128] {
-        let q_len = BATCH_SIZE * tree_size * K_HEADS * HEAD_K_DIM;
-        let scalar_len = BATCH_SIZE * tree_size * VALUE_HEADS;
-        let trie = build_trie(tree_size);
-        let q = (0..q_len).map(|i| ((i as f32 * 0.017).sin() * 0.2) + 0.01).collect::<Vec<_>>();
-        let k = (0..q_len).map(|i| ((i as f32 * 0.019).cos() * 0.18) - 0.02).collect::<Vec<_>>();
-        let prefix = (0..scalar_len)
-            .map(|i| -((i % tree_size) as f32) * 0.01 - ((i % VALUE_HEADS) as f32) * 0.003)
-            .collect::<Vec<_>>();
-        let beta = (0..scalar_len).map(|i| 0.25 + ((i as f32 * 0.013).sin() + 1.0) * 0.2).collect::<Vec<_>>();
-        let h0_len = BATCH_SIZE * VALUE_HEADS * HEAD_V_DIM * HEAD_K_DIM;
-        let h0 = (0..h0_len).map(|i| ((i as f32 * 0.007).sin() * 0.05) - 0.01).collect::<Vec<_>>();
-        // Batch 1 has no initial state: covers the kh0-skip path.
-        let h0_idx: Vec<i32> = vec![0, -1];
-
-        let expected = get_output::<Cpu>(&q, &k, &trie, &prefix, &beta, &h0, &h0_idx, tree_size, scale, false);
+        let i = make_inputs(tree_size);
+        let expected =
+            get_output::<Cpu>(&i.q, &i.k, &i.trie, &i.prefix, &i.beta, &i.h0, &i.h0_idx, tree_size, scale, false);
 
         for_each_non_cpu_backend!(|B| {
-            let context = <<B as Backend>::Context as Context>::new().expect("Failed to create Context");
-            let paths: &[bool] = if context.supports_mxu() {
-                &[false, true]
-            } else {
-                &[false]
-            };
-
-            for &use_mxu in paths {
-                let actual = get_output::<B>(&q, &k, &trie, &prefix, &beta, &h0, &h0_idx, tree_size, scale, use_mxu);
-                let path = if use_mxu {
-                    "mxu"
-                } else {
-                    "simdgroup"
-                };
-                let msg = format!("backend {} {path} tree_size {tree_size}", std::any::type_name::<B>());
-                assert_eq_float::<f32>(&expected.0, &actual.0, 5e-3, &format!("a_packed {msg}"));
-                assert_eq_float::<f32>(&expected.1, &actual.1, 5e-3, &format!("qkd {msg}"));
-
-                // Ainv is compact [B * HV, ceil(T/16), 16, 16]; both CPU and GPU
-                // pad ragged blocks with identity, so compare the whole buffer.
-                assert_eq_float::<f32>(&expected.2, &actual.2, 1e-2, &format!("a_inv {msg}"));
-                assert_eq_float::<f32>(&expected.3, &actual.3, 5e-3, &format!("kh0 {msg}"));
-            }
+            let actual =
+                get_output::<B>(&i.q, &i.k, &i.trie, &i.prefix, &i.beta, &i.h0, &i.h0_idx, tree_size, scale, false);
+            let msg = format!("backend {} simdgroup tree_size {tree_size}", std::any::type_name::<B>());
+            assert_eq_float::<f32>(&expected.0, &actual.0, 5e-3, &format!("a_packed {msg}"));
+            assert_eq_float::<f32>(&expected.1, &actual.1, 5e-3, &format!("qkd {msg}"));
+            assert_eq_float::<f32>(&expected.2, &actual.2, 1e-2, &format!("a_inv {msg}"));
+            assert_eq_float::<f32>(&expected.3, &actual.3, 5e-3, &format!("kh0 {msg}"));
         });
+
+        if <Metal as Backend>::Context::new().expect("Failed to create Context").supports_mxu() {
+            let actual =
+                get_output::<Metal>(&i.q, &i.k, &i.trie, &i.prefix, &i.beta, &i.h0, &i.h0_idx, tree_size, scale, true);
+            let msg = format!("backend {} path MXU tree_size {tree_size}", std::any::type_name::<Metal>());
+            assert_eq_float::<f32>(&expected.0, &actual.0, 5e-3, &format!("a_packed {msg}"));
+            assert_eq_float::<f32>(&expected.1, &actual.1, 5e-3, &format!("qkd {msg}"));
+            assert_eq_float::<f32>(&expected.2, &actual.2, 1e-2, &format!("a_inv {msg}"));
+            assert_eq_float::<f32>(&expected.3, &actual.3, 5e-3, &format!("kh0 {msg}"));
+        }
     }
 }

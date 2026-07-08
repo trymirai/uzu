@@ -25,7 +25,7 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-mod core;
+pub(crate) mod core;
 mod mode;
 mod qkv_norm;
 mod state;

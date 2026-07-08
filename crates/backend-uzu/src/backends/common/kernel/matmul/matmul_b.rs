@@ -1,8 +1,7 @@
 use crate::{
     backends::common::{
-        Allocation, Backend,
+        Allocation, Backend, BufferArg,
         gpu_types::{QuantizationMode, gemm::GemmBPrologueKind},
-        kernel::BufferArg,
     },
     data_type::DataType,
 };

@@ -1,17 +1,16 @@
 use crate::{
-    backends::common::{Allocation, Backend, Context, Encoder, kernel::BufferArg},
+    backends::common::{
+        Allocation, Backend, BufferArg, Encoder, Kernels,
+        kernel::attention_gemm::AttentionGemmCore as AttentionGemmCoreTrait,
+    },
     data_type::DataType,
     encodable_block::mixer::attention::{
-        core::{
-            fallback::AttentionFallbackCore, gemm::AttentionGemmCore, single_pass::AttentionSinglePassCore,
-            two_pass::AttentionTwoPassCore,
-        },
+        core::{fallback::AttentionFallbackCore, single_pass::AttentionSinglePassCore, two_pass::AttentionTwoPassCore},
         state::AttentionStateType,
     },
 };
 
 mod fallback;
-mod gemm;
 mod single_pass;
 mod two_pass;
 
@@ -39,8 +38,7 @@ pub struct AttentionCoreEncodeArguments<'a, B: Backend, KT: BufferArg<'a, B>, VT
 }
 
 pub struct AttentionCores<B: Backend> {
-    gemm_mxu: Option<AttentionGemmCore<B>>,
-    gemm_simd: Option<AttentionGemmCore<B>>,
+    gemm: Option<<B::Kernels as Kernels>::AttentionGemmCore>,
     fallback: Option<AttentionFallbackCore<B>>,
     two_pass: AttentionTwoPassCore<B>,
     single_pass: AttentionSinglePassCore<B>,
@@ -51,16 +49,10 @@ impl<B: Backend> AttentionCores<B> {
         arguments: AttentionCoreNewArguments,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
-        let gemm_mxu = if matches!(arguments.head_dim, 64 | 128)
-            && matches!(arguments.data_type, DataType::BF16 | DataType::F16)
-            && context.supports_mxu()
-        {
-            Some(AttentionGemmCore::new(&arguments, true, context)?)
-        } else {
-            None
-        };
-        let gemm_simd = if matches!(arguments.head_dim, 64 | 128 | 256) {
-            Some(AttentionGemmCore::new(&arguments, false, context)?)
+        let gemm = if <<B::Kernels as Kernels>::AttentionGemmCore as AttentionGemmCoreTrait<B>>::is_supported(
+            &arguments, context,
+        )? {
+            Some(<<B::Kernels as Kernels>::AttentionGemmCore as AttentionGemmCoreTrait<B>>::new(context, &arguments)?)
         } else {
             None
         };
@@ -73,8 +65,7 @@ impl<B: Backend> AttentionCores<B> {
         let single_pass = AttentionSinglePassCore::new(&arguments, context)?;
 
         Ok(Self {
-            gemm_mxu,
-            gemm_simd,
+            gemm,
             fallback,
             two_pass,
             single_pass,
@@ -85,14 +76,10 @@ impl<B: Backend> AttentionCores<B> {
         arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, <B as Backend>::Error> {
-        if arguments.suffix_length >= 64
-            && let Some(gemm_mxu) = &self.gemm_mxu
+        if arguments.suffix_length > 8
+            && let Some(gemm) = &self.gemm
         {
-            gemm_mxu.encode(arguments, encoder)
-        } else if arguments.suffix_length > 8
-            && let Some(gemm_simd) = &self.gemm_simd
-        {
-            gemm_simd.encode(arguments, encoder)
+            gemm.encode(arguments, encoder)
         } else if arguments.suffix_length > 8
             && let Some(fallback) = &self.fallback
         {
@@ -108,3 +95,7 @@ impl<B: Backend> AttentionCores<B> {
 #[cfg(test)]
 #[path = "../../../../../unit/encodable_block/attention_test.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../../../unit/encodable_block/attention_gemm_test.rs"]
+mod gemm_tests;

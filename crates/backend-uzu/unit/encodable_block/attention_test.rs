@@ -4,17 +4,22 @@ use ndarray::{Array4, s};
 use proc_macros::uzu_test;
 use test_tag::tag;
 
-use super::{AttentionCoreEncodeArguments, AttentionCoreNewArguments, gemm::AttentionGemmCore};
 use crate::{
     backends::{
         common::{
             Allocation, Backend, Context, Encoder, Kernels,
-            kernel::{AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel},
+            kernel::{
+                AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
+                attention_gemm::AttentionGemmCore,
+            },
         },
         metal::Metal,
     },
     data_type::DataType,
-    encodable_block::mixer::attention::state::AttentionStateType,
+    encodable_block::mixer::attention::{
+        core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
+        state::AttentionStateType,
+    },
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder},
 };
 
@@ -313,7 +318,8 @@ fn run_gemm_attention(
     let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
     let (_batch_size, num_kv_heads, _seq_len, _head_dim) = keys.dim();
 
-    let core = AttentionGemmCore::<Metal>::new(
+    let core = <<Metal as Backend>::Kernels as Kernels>::AttentionGemmCore::new(
+        context,
         &AttentionCoreNewArguments {
             head_dim,
             num_groups: num_kv_heads,
@@ -326,8 +332,6 @@ fn run_gemm_attention(
             scale: Some(scale),
             data_type: DataType::F32,
         },
-        false,
-        context,
     )?;
 
     let query_allocation = create_query_allocation(queries, context);

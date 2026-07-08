@@ -6,6 +6,7 @@ use crate::backends::{
     metal::Metal,
 };
 
+pub mod attention;
 #[path = "gdn_tree_verify/build_tree_out_dispatch_helper.rs"]
 mod build_tree_out_dispatch_helper;
 pub mod matmul;
@@ -22,5 +23,6 @@ impl Kernels for MetalKernels {
     type Backend = Metal;
 
     autogen_kernels!();
+    type AttentionGemmCore = attention::AttentionGemmMetalCore;
     type MatmulKernel = matmul::MatmulMetalKernel;
 }

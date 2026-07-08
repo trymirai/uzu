@@ -2,10 +2,10 @@ use super::reference::{WeightData, read_f32, write_f32};
 use crate::{
     backends::{
         common::{
-            AsBufferRangeMut, AsBufferRangeRef, Backend, Encoder, Kernels,
+            AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
             gpu_types::HadamardTransformOrder,
             kernel::{
-                BufferArg, HadamardTransformKernel,
+                HadamardTransformKernel,
                 matmul::{MatmulArguments, MatmulError, MatmulKernel},
             },
         },

@@ -1,3 +1,5 @@
+#![cfg(metal_backend)]
+
 use half::bf16;
 use num_traits::Float;
 use proc_macros::uzu_test;
@@ -8,6 +10,7 @@ use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeOutKernel},
         cpu::Cpu,
+        metal::Metal,
     },
     tests::{
         assert::assert_eq_float,
@@ -124,12 +127,8 @@ fn check_shape<T: ArrayElement + Float + std::fmt::Display>(
     for use_h0 in [false, true] {
         let expected = run_build_tree_out::<Cpu, T>(shape, &inputs, use_h0, false, false);
         for_each_non_cpu_backend!(|B| {
-            let context = <B as Backend>::Context::new().expect("Failed to create Context");
             for &(path, use_mxu, transposed_h0) in BUILD_TREE_OUT_PATHS {
-                if use_mxu && !context.supports_mxu() {
-                    continue;
-                }
-                if transposed_h0 && !use_h0 {
+                if use_mxu || transposed_h0 && !use_h0 {
                     continue;
                 }
                 let actual = run_build_tree_out::<B, T>(shape, &inputs, use_h0, use_mxu, transposed_h0);
@@ -146,12 +145,32 @@ fn check_shape<T: ArrayElement + Float + std::fmt::Display>(
                 assert_eq_float::<T>(&expected, &actual, eps, &msg);
             }
         });
+
+        if <Metal as Backend>::Context::new().expect("Failed to create Context").supports_mxu() {
+            for &(path, use_mxu, transposed_h0) in BUILD_TREE_OUT_PATHS {
+                if !use_mxu || transposed_h0 && !use_h0 {
+                    continue;
+                }
+                let actual = run_build_tree_out::<Metal, T>(shape, &inputs, use_h0, use_mxu, transposed_h0);
+                let msg = format!(
+                    "backend {} path {path} use_h0 {use_h0} B{}_T{}_QK{}_HV{}_K{}_V{}",
+                    std::any::type_name::<Metal>(),
+                    shape.batch_size,
+                    shape.tree_size,
+                    shape.qk_heads,
+                    shape.value_heads,
+                    shape.head_k_dim,
+                    shape.head_v_dim
+                );
+                assert_eq_float::<T>(&expected, &actual, eps, &msg);
+            }
+        }
     }
 }
 
 #[uzu_test]
-fn test_build_tree_out_small() {
-    let shape = Shape {
+fn test_build_tree_out_paths() {
+    let small = Shape {
         batch_size: 2,
         tree_size: 17,
         qk_heads: 2,
@@ -159,13 +178,7 @@ fn test_build_tree_out_small() {
         head_k_dim: 32,
         head_v_dim: 32,
     };
-    check_shape::<bf16>(shape, 0.08);
-    check_shape::<f32>(shape, 5e-3);
-}
-
-#[uzu_test]
-fn test_build_tree_out_gdn_shape() {
-    let shape = Shape {
+    let gdn = Shape {
         batch_size: 1,
         tree_size: 49,
         qk_heads: 16,
@@ -173,6 +186,8 @@ fn test_build_tree_out_gdn_shape() {
         head_k_dim: 128,
         head_v_dim: 128,
     };
-    check_shape::<bf16>(shape, 0.08);
-    check_shape::<f32>(shape, 5e-3);
+    for shape in [small, gdn] {
+        check_shape::<bf16>(shape, 0.08);
+        check_shape::<f32>(shape, 5e-3);
+    }
 }
