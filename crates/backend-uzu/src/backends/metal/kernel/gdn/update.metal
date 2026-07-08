@@ -1,9 +1,9 @@
 #include <metal_stdlib>
-#include "../../activation/activations.h"
-#include "../../common/defines.h"
-#include "../../common/dsl.h"
-#include "../../common/thread_context.h"
-#include "../../common/threadgroup_reduce.h"
+#include "../activation/activations.h"
+#include "../common/defines.h"
+#include "../common/dsl.h"
+#include "../common/thread_context.h"
+#include "../common/threadgroup_reduce.h"
 
 using namespace metal;
 

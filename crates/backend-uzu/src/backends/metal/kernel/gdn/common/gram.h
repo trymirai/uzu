@@ -10,7 +10,7 @@ using namespace metal;
 using namespace uzu::matmul;
 
 template <typename AccFragment, typename LeftFragment, typename RightFragment, typename T>
-METAL_FUNC void gdn_accumulate_dual_gram_tile(
+METAL_FUNC void accumulate_dual_gram_tile(
     thread AccFragment& kk_acc,
     thread AccFragment& qk_acc,
     const device T* k_rows,

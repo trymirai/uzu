@@ -6,8 +6,8 @@
 
 using namespace metal;
 
-template <typename T, uint HEAD_K_DIM, bool WRITE_LOG_DECAY>
-METAL_FUNC void gdn_prepare_qk_beta_decay(
+template <typename T, uint HEAD_K_DIM>
+METAL_FUNC void prepare_qk_beta_decay(
     device const T* in_proj,
     device const float* a_log,
     device const float* dt_bias,
@@ -21,6 +21,7 @@ METAL_FUNC void gdn_prepare_qk_beta_decay(
     const uint value_dim,
     const uint token_idx,
     const uint hk_idx,
+    const bool write_log_decay,
     const uint lane
 ) {
   static_assert(HEAD_K_DIM % METAL_SIMD_SIZE == 0, "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE");
@@ -65,7 +66,7 @@ METAL_FUNC void gdn_prepare_qk_beta_decay(
     const float log_decay = -fast::exp(a_log[hv]) * activate_softplus(a_raw + dt_bias[hv]);
 
     beta_out[token_idx * num_v_heads + hv] = 1.0f / (1.0f + fast::exp(-beta_raw));
-    if constexpr (WRITE_LOG_DECAY) {
+    if (write_log_decay) {
       decay_out[token_idx * num_v_heads + hv] = log_decay;
     } else {
       decay_out[token_idx * num_v_heads + hv] = fast::exp(log_decay);

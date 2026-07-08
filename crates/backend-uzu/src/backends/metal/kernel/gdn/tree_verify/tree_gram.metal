@@ -204,7 +204,7 @@ PUBLIC KERNEL(BuildTreeGram)(
     kk_acc.clear();
     qk_acc.clear();
     for (uint kb = 0; kb < head_k_dim; kb += Ops::FRAGMENT_ROWS) {
-      gdn_accumulate_dual_gram_tile<AccFragment, LeftFragment, RightFragment>(
+      accumulate_dual_gram_tile<AccFragment, LeftFragment, RightFragment>(
           kk_acc,
           qk_acc,
           k_rows + kb,
@@ -258,7 +258,7 @@ PUBLIC KERNEL(BuildTreeGram)(
       simdgroup_barrier(mem_flags::mem_threadgroup);
       device float* a_inv_block =
           a_inv + ((batch_idx * value_heads + value_head_idx) * num_blocks + row_tile_idx) * (ROW_TILE * ROW_TILE);
-      gdn_invert_lower_triangular_block<ROW_TILE>(a_inv_block, diag_a_tile, tile_rows, lane);
+      invert_lower_triangular_block<ROW_TILE>(a_inv_block, diag_a_tile, tile_rows, lane);
     }
   } else if (col_tile_idx < col_tiles) {
     // Above-diagonal zero fill; COL_TILE == METAL_SIMD_SIZE, so each

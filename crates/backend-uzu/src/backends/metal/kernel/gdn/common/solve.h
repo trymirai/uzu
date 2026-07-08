@@ -6,7 +6,7 @@
 using namespace metal;
 
 template <uint BLOCK>
-METAL_FUNC void gdn_invert_lower_triangular_block(
+METAL_FUNC void invert_lower_triangular_block(
     device float* a_inv_block,
     threadgroup const float* a_tile,
     const uint block_size,

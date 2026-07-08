@@ -1,11 +1,11 @@
 use super::super::{
     DeltaNetChunkedCumsumMetalKernel, DeltaNetChunkedGramMetalKernel, DeltaNetChunkedMegaApplyMetalKernel,
-    DeltaNetChunkedPrepMetalKernel, DeltaNetChunkedSolveMetalKernel, DeltaNetChunkedSolveTMetalKernel,
+    DeltaNetChunkedSolveMetalKernel, DeltaNetChunkedSolveTMetalKernel, DeltaNetPrefillPrepMetalKernel,
 };
 use crate::{
     array::size_for_shape,
     backends::{
-        common::{Backend, Encoder},
+        common::{Backend, Encoder, kernel::DeltaNetPrefillPrepKernel},
         metal::{Metal, MetalContext},
     },
     data_type::DataType,
@@ -20,7 +20,7 @@ const VT: usize = 32;
 
 pub struct MetalDeltaNetChunkedPrefill {
     min_t: usize,
-    prep: DeltaNetChunkedPrepMetalKernel,
+    prep: DeltaNetPrefillPrepMetalKernel,
     cumsum: DeltaNetChunkedCumsumMetalKernel,
     gram: DeltaNetChunkedGramMetalKernel,
     solve: DeltaNetChunkedSolveMetalKernel,
@@ -49,7 +49,7 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
 
         Ok(Some(Self {
             min_t,
-            prep: DeltaNetChunkedPrepMetalKernel::new(context, outer_data_type, head_dim)?,
+            prep: DeltaNetPrefillPrepMetalKernel::new(context, outer_data_type, head_dim, true)?,
             cumsum: DeltaNetChunkedCumsumMetalKernel::new(context)?,
             gram: DeltaNetChunkedGramMetalKernel::new(context, head_dim, CHUNK_SIZE as u32)?,
             solve: DeltaNetChunkedSolveMetalKernel::new(context, CHUNK_SIZE as u32)?,

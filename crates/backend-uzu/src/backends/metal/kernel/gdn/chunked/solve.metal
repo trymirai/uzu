@@ -64,5 +64,5 @@ KERNEL(DeltaNetChunkedSolve)(
       a_inv + ((chunk_idx * num_v_heads + hv_idx) * num_blocks + block_idx) * (CHUNK_SOLVE_BLOCK * CHUNK_SOLVE_BLOCK);
   const uint block_tokens =
       token_base + row_base < suffix_len ? min(uint(CHUNK_SOLVE_BLOCK), suffix_len - token_base - row_base) : 0u;
-  gdn_invert_lower_triangular_block<CHUNK_SOLVE_BLOCK>(a_inv_block, diag_a_tile, block_tokens, lane);
+  invert_lower_triangular_block<CHUNK_SOLVE_BLOCK>(a_inv_block, diag_a_tile, block_tokens, lane);
 }

@@ -167,9 +167,13 @@ impl<B: Backend> DeltaNet<B> {
         let delta_net_update =
             <B::Kernels as Kernels>::DeltaNetUpdateKernel::new(context, outer_data_type, config.head_dim as u32)
                 .map_err(DeltaNetNewError::Backend)?;
-        let delta_net_prefill_prep =
-            <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(context, outer_data_type, config.head_dim as u32)
-                .map_err(DeltaNetNewError::Backend)?;
+        let delta_net_prefill_prep = <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
+            context,
+            outer_data_type,
+            config.head_dim as u32,
+            false,
+        )
+        .map_err(DeltaNetNewError::Backend)?;
         let delta_net_prefill =
             <B::Kernels as Kernels>::DeltaNetPrefillKernel::new(context, outer_data_type, config.head_dim as u32)
                 .map_err(DeltaNetNewError::Backend)?;

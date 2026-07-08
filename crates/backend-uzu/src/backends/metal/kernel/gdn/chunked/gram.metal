@@ -71,7 +71,7 @@ KERNEL(DeltaNetChunkedGram)(
     const device float* q_rows = q_norm + row_token_base * key_dim + hk_idx * HEAD_K_DIM + k_block_start;
     const device float* k_cols = k_norm + col_token_base * key_dim + hk_idx * HEAD_K_DIM + k_block_start;
 
-    gdn_accumulate_dual_gram_tile<AccFragment, LeftFragment, RightFragment>(
+    accumulate_dual_gram_tile<AccFragment, LeftFragment, RightFragment>(
         kk_acc,
         qk_acc,
         k_rows,

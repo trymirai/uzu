@@ -1,6 +1,6 @@
 #include <metal_stdlib>
-#include "../../activation/activations.h"
-#include "../../common/dsl.h"
+#include "../activation/activations.h"
+#include "../common/dsl.h"
 
 using namespace metal;
 

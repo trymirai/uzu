@@ -1,6 +1,6 @@
 #include <metal_stdlib>
-#include "../../common/defines.h"
-#include "../../common/dsl.h"
+#include "../common/defines.h"
+#include "../common/dsl.h"
 
 using namespace metal;
 

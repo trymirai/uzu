@@ -1,7 +1,7 @@
 #include <metal_stdlib>
-#include "../../common/defines.h"
-#include "../../common/dsl.h"
-#include "../common/prep.h"
+#include "../common/defines.h"
+#include "../common/dsl.h"
+#include "common/prep.h"
 
 using namespace metal;
 
@@ -23,9 +23,10 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
     constant const uint& suffix_len,
     const uint token_idx GROUPS(suffix_len),
     const uint hk_idx GROUPS(num_k_heads),
+    const bool write_log_decay SPECIALIZE,
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
-  gdn_prepare_qk_beta_decay<T, HEAD_K_DIM, false>(
+  prepare_qk_beta_decay<T, HEAD_K_DIM>(
       in_proj,
       a_log,
       dt_bias,
@@ -39,6 +40,7 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
       value_dim,
       token_idx,
       hk_idx,
+      write_log_decay,
       lane
   );
 }
