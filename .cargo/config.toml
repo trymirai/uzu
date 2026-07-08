@@ -4,6 +4,12 @@ tools = "run --quiet -p cli-tools --"
 [env]
 RUST_TEST_THREADS = "1"
 
+[target.wasm32-unknown-unknown]
+# getrandom 0.3 has no default backend for wasm32-unknown-unknown; select the JS-based backend.
+# Must be paired with the getrandom `wasm_js` feature (enabled in backend-uzu for this target) —
+# the cfg alone is insufficient.
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+
 [target.wasm32-wasip1-threads]
 # threads=y         — wasmtime need this flag to use threads
 # shared-memory=y   — wasmtime need this flag to use shared memory

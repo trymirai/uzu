@@ -48,12 +48,7 @@ async fn validate_crc_with_cache(
         return (CheckedFileState::Valid, Vec::new());
     }
 
-    let destination = observation.destination_path.clone();
-    let expected = expected_crc.to_string();
-    let crc_check = tokio::task::spawn_blocking(move || calculate_and_verify_crc(&destination, &expected))
-        .await
-        .ok()
-        .and_then(|inner| inner.ok());
+    let crc_check = calculate_and_verify_crc(&observation.destination_path, expected_crc).await.ok();
 
     match crc_check {
         Some(true) => (

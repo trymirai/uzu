@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use kiban::fs;
 use objc2::rc::Retained;
 use objc2_foundation::NSURLSessionDownloadTask;
 use tokio::sync::oneshot::channel as tokio_oneshot_channel;
@@ -83,7 +84,7 @@ impl ActiveTask for AppleActiveTask {
         }
         let resume_data_bytes =
             resume_data_receiver.await.map_err(|error| AppleBackendError::ResumeData(error.to_string()))?;
-        tokio::fs::write(&resume_artifact_path, resume_data_bytes)
+        fs::asyn::write(&resume_artifact_path, resume_data_bytes)
             .await
             .map_err(|error| AppleBackendError::Io(error.to_string()))?;
         Ok(resume_artifact_path)

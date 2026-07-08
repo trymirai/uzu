@@ -1,6 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
-use tokio::io::AsyncWriteExt;
+use kiban::{
+    fs,
+    process::{is_process_alive, proc_supported},
+    time::SystemTime,
+};
 use uuid::Uuid;
 
 use crate::{LockFileInfo, LockFileState};
@@ -51,27 +58,31 @@ pub async fn check_lock_file(
     our_instance_id: Uuid,
     our_process_id: u32,
 ) -> LockFileState {
-    let bytes = match std::fs::read(lock_path) {
+    let bytes = match fs::asyn::read(lock_path).await {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return LockFileState::Missing,
-        Err(_) => return classify_unparseable_lock(lock_path, Vec::new()),
+        Err(_) => return classify_unparseable_lock(lock_path, Vec::new()).await,
     };
 
     let lock_info = match serde_json::from_slice::<LockFileInfo>(&bytes) {
         Ok(lock_info) => lock_info,
-        Err(_) => return classify_unparseable_lock(lock_path, bytes),
+        Err(_) => return classify_unparseable_lock(lock_path, bytes).await,
     };
 
     if lock_info.manager_id == our_manager_id {
-        if lock_info.process_id == our_process_id {
-            if lock_info.instance_id == our_instance_id {
-                return LockFileState::OwnedByUs(lock_info);
+        if proc_supported() {
+            if lock_info.process_id == our_process_id {
+                if lock_info.instance_id == our_instance_id {
+                    return LockFileState::OwnedByUs(lock_info);
+                }
+                return LockFileState::OwnedByOtherApp(lock_info);
             }
-            return LockFileState::OwnedByOtherApp(lock_info);
-        }
 
-        if is_process_alive(lock_info.process_id).await {
-            return LockFileState::OwnedByOtherApp(lock_info);
+            if is_process_alive(lock_info.process_id).await {
+                return LockFileState::OwnedByOtherApp(lock_info);
+            }
+        } else {
+            return classify_same_manager_lock_without_process(lock_info, our_instance_id);
         }
 
         return LockFileState::OwnedBySameAppOldProcess(lock_info);
@@ -93,17 +104,17 @@ pub async fn acquire_lock(
     manager_id: &str,
     instance_id: Uuid,
 ) -> Result<(), std::io::Error> {
-    let lock_info = LockFileInfo::new(manager_id.to_string(), instance_id, std::process::id());
+    let lock_info = LockFileInfo::new(manager_id.to_string(), instance_id, kiban::process::id());
     let lock_contents = serde_json::to_string_pretty(&lock_info).map_err(std::io::Error::other)?;
 
     if let Some(parent) = lock_path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
+        fs::asyn::create_dir_all(parent).await?;
     }
 
     match write_new_lock_file(lock_path, lock_contents.as_bytes()).await {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            match check_lock_file(lock_path, manager_id, instance_id, std::process::id()).await {
+            match check_lock_file(lock_path, manager_id, instance_id, kiban::process::id()).await {
                 LockFileState::OwnedByUs(_) => Ok(()),
                 LockFileState::OwnedBySameAppOldProcess(observed) | LockFileState::Stale(observed) => {
                     match reclaim_stale_lock(lock_path, ReclaimExpectation::Matching(observed)).await? {
@@ -142,30 +153,29 @@ async fn write_new_lock_file(
     lock_path: &Path,
     lock_contents: &[u8],
 ) -> Result<(), std::io::Error> {
-    let temporary_lock_path = lock_path.with_extension(format!("lock-tmp-{}", Uuid::new_v4()));
-    let temporary_result = async {
-        let mut file = tokio::fs::OpenOptions::new().write(true).create_new(true).open(&temporary_lock_path).await?;
-        file.write_all(lock_contents).await?;
-        file.sync_all().await
+    if !proc_supported() {
+        return write_new_lock_file_direct(lock_path, lock_contents).await;
     }
-    .await;
+
+    let temporary_lock_path = lock_path.with_extension(format!("lock-tmp-{}", Uuid::new_v4()));
+    let temporary_result = fs::asyn::write_with_sync_all(&temporary_lock_path, &lock_contents).await;
     if let Err(error) = temporary_result {
-        let _ = tokio::fs::remove_file(&temporary_lock_path).await;
+        let _ = fs::asyn::remove_file(&temporary_lock_path).await;
         return Err(error);
     }
 
-    match tokio::fs::hard_link(&temporary_lock_path, lock_path).await {
+    match fs::asyn::hard_link(&temporary_lock_path, lock_path).await {
         Ok(()) => {
-            let _ = tokio::fs::remove_file(&temporary_lock_path).await;
+            let _ = fs::asyn::remove_file(&temporary_lock_path).await;
             Ok(())
         },
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let _ = tokio::fs::remove_file(&temporary_lock_path).await;
+            let _ = fs::asyn::remove_file(&temporary_lock_path).await;
             Err(error)
         },
         Err(_) => {
             let result = write_new_lock_file_direct(lock_path, lock_contents).await;
-            let _ = tokio::fs::remove_file(&temporary_lock_path).await;
+            let _ = fs::asyn::remove_file(&temporary_lock_path).await;
             result
         },
     }
@@ -175,14 +185,11 @@ async fn write_new_lock_file_direct(
     lock_path: &Path,
     lock_contents: &[u8],
 ) -> Result<(), std::io::Error> {
-    let mut file = tokio::fs::OpenOptions::new().write(true).create_new(true).open(lock_path).await?;
-    if let Err(error) = file.write_all(lock_contents).await {
-        let _ = tokio::fs::remove_file(lock_path).await;
-        return Err(error);
-    }
-    if let Err(error) = file.sync_all().await {
-        let _ = tokio::fs::remove_file(lock_path).await;
-        return Err(error);
+    if let Err(err) = fs::asyn::write_with_sync_all(&lock_path, &lock_contents).await {
+        if err.kind() != std::io::ErrorKind::AlreadyExists {
+            let _ = fs::asyn::remove_file(&lock_path).await;
+        }
+        return Err(err);
     }
     Ok(())
 }
@@ -211,21 +218,21 @@ pub(crate) async fn reclaim_stale_lock(
     expectation: ReclaimExpectation,
 ) -> Result<ReclaimOutcome, std::io::Error> {
     let quarantine_path = lock_path.with_extension(format!("reclaim-{}", Uuid::new_v4()));
-    match tokio::fs::rename(lock_path, &quarantine_path).await {
+    match fs::asyn::rename(lock_path, &quarantine_path).await {
         Ok(()) => {},
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(ReclaimOutcome::Missing),
         Err(error) => return Err(error),
     }
     let confirmed = match &expectation {
         ReclaimExpectation::Matching(observed) => {
-            matches!(read_lock_file(&quarantine_path).ok(), Some(actual) if &actual == observed)
+            matches!(read_lock_file(&quarantine_path).await.ok(), Some(actual) if &actual == observed)
         },
         ReclaimExpectation::UnparseableSnapshot(snapshot) => {
-            matches!(tokio::fs::read(&quarantine_path).await.ok(), Some(bytes) if &bytes == snapshot)
+            matches!(fs::asyn::read(&quarantine_path).await.ok(), Some(bytes) if &bytes == snapshot)
         },
     };
     if confirmed {
-        let _ = tokio::fs::remove_file(&quarantine_path).await;
+        let _ = fs::asyn::remove_file(&quarantine_path).await;
         return Ok(ReclaimOutcome::Reclaimed);
     }
     let _ = try_restore_quarantine(&quarantine_path, lock_path).await?;
@@ -237,20 +244,20 @@ pub async fn release_lock_if_owned(
     manager_id: &str,
     instance_id: Uuid,
 ) -> Result<bool, std::io::Error> {
-    let observed = match check_lock_file(lock_path, manager_id, instance_id, std::process::id()).await {
+    let observed = match check_lock_file(lock_path, manager_id, instance_id, kiban::process::id()).await {
         LockFileState::OwnedByUs(info) => info,
         _ => return Ok(false),
     };
     let quarantine_path = lock_path.with_extension(format!("release-{}", Uuid::new_v4()));
-    match tokio::fs::rename(lock_path, &quarantine_path).await {
+    match fs::asyn::rename(lock_path, &quarantine_path).await {
         Ok(()) => {},
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error),
     }
-    let parsed = read_lock_file(&quarantine_path).ok();
+    let parsed = read_lock_file(&quarantine_path).await.ok();
     let confirmed = matches!(parsed.as_ref(), Some(actual) if actual == &observed);
     if confirmed {
-        let _ = tokio::fs::remove_file(&quarantine_path).await;
+        let _ = fs::asyn::remove_file(&quarantine_path).await;
         return Ok(true);
     }
     let _ = try_restore_quarantine(&quarantine_path, lock_path).await?;
@@ -263,47 +270,39 @@ pub(crate) async fn try_restore_quarantine(
 ) -> Result<RestoreOutcome, std::io::Error> {
     // Use atomic create-or-fail (hard_link, then create_new fallback) so a fresh lock
     // installed by another owner during our quarantine isn't clobbered by `rename`.
-    match tokio::fs::hard_link(quarantine_path, lock_path).await {
+    match fs::asyn::hard_link(quarantine_path, lock_path).await {
         Ok(()) => {
-            let _ = tokio::fs::remove_file(quarantine_path).await;
+            let _ = fs::asyn::remove_file(quarantine_path).await;
             return Ok(RestoreOutcome::Restored);
         },
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let _ = tokio::fs::remove_file(quarantine_path).await;
+            let _ = fs::asyn::remove_file(quarantine_path).await;
             return Ok(RestoreOutcome::DestinationAlreadyExists);
         },
         Err(_) => {},
     }
 
-    let bytes = match tokio::fs::read(quarantine_path).await {
+    let bytes = match fs::asyn::read(quarantine_path).await {
         Ok(bytes) => bytes,
         Err(error) => {
-            let _ = tokio::fs::remove_file(quarantine_path).await;
+            let _ = fs::asyn::remove_file(quarantine_path).await;
             return Err(error);
         },
     };
-    let mut file = match tokio::fs::OpenOptions::new().write(true).create_new(true).open(lock_path).await {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let _ = tokio::fs::remove_file(quarantine_path).await;
-            return Ok(RestoreOutcome::DestinationAlreadyExists);
-        },
-        Err(error) => {
-            let _ = tokio::fs::remove_file(quarantine_path).await;
-            return Err(error);
-        },
-    };
-    if let Err(error) = file.write_all(&bytes).await {
-        let _ = tokio::fs::remove_file(lock_path).await;
-        let _ = tokio::fs::remove_file(quarantine_path).await;
-        return Err(error);
+
+    let lock_file_exists = matches!(fs::asyn::try_exists(lock_path).await, Ok(true));
+    if lock_file_exists {
+        let _ = fs::asyn::remove_file(quarantine_path).await;
+        return Ok(RestoreOutcome::DestinationAlreadyExists);
     }
-    if let Err(error) = file.sync_all().await {
-        let _ = tokio::fs::remove_file(lock_path).await;
-        let _ = tokio::fs::remove_file(quarantine_path).await;
-        return Err(error);
+
+    if let Err(err) = fs::asyn::write_with_sync_all(&lock_path, &bytes).await {
+        let _ = fs::asyn::remove_file(lock_path).await;
+        let _ = fs::asyn::remove_file(quarantine_path).await;
+        return Err(err);
     }
-    let _ = tokio::fs::remove_file(quarantine_path).await;
+    let _ = fs::asyn::remove_file(quarantine_path).await;
+
     Ok(RestoreOutcome::Restored)
 }
 
@@ -312,7 +311,7 @@ pub async fn try_acquire_lock(
     manager_id: &str,
     instance_id: Uuid,
 ) -> Result<bool, std::io::Error> {
-    if check_lock_file(lock_path, manager_id, instance_id, std::process::id()).await.is_conflict() {
+    if check_lock_file(lock_path, manager_id, instance_id, kiban::process::id()).await.is_conflict() {
         return Ok(false);
     }
 
@@ -320,16 +319,36 @@ pub async fn try_acquire_lock(
     Ok(true)
 }
 
-fn read_lock_file(lock_path: &Path) -> Result<LockFileInfo, Box<dyn std::error::Error>> {
-    Ok(serde_json::from_str(&std::fs::read_to_string(lock_path)?)?)
+async fn read_lock_file(lock_path: &Path) -> Result<LockFileInfo, Box<dyn std::error::Error>> {
+    let file_content = fs::asyn::read_to_string(&lock_path).await?;
+    Ok(serde_json::from_str(&file_content)?)
 }
 
-fn classify_unparseable_lock(
+pub(crate) fn classify_same_manager_lock_without_process(
+    lock_info: LockFileInfo,
+    our_instance_id: Uuid,
+) -> LockFileState {
+    if lock_info.instance_id == our_instance_id {
+        return LockFileState::OwnedByUs(lock_info);
+    }
+
+    if is_lock_stale(&lock_info) {
+        LockFileState::Stale(lock_info)
+    } else {
+        LockFileState::OwnedByOtherApp(lock_info)
+    }
+}
+
+async fn classify_unparseable_lock(
     lock_path: &Path,
     snapshot: Vec<u8>,
 ) -> LockFileState {
-    let stale_duration = std::time::Duration::from_secs((LOCK_TIMEOUT_MINUTES * 60) as u64);
-    let mtime = match std::fs::metadata(lock_path).and_then(|metadata| metadata.modified()) {
+    if !proc_supported() {
+        return LockFileState::StaleUnparseable(snapshot);
+    }
+
+    let stale_duration = Duration::from_secs((LOCK_TIMEOUT_MINUTES * 60) as u64);
+    let mtime = match fs::asyn::file_modified(lock_path).await {
         Ok(mtime) => mtime,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return LockFileState::Missing,
         Err(_) => {
@@ -341,7 +360,7 @@ fn classify_unparseable_lock(
             });
         },
     };
-    let age = std::time::SystemTime::now().duration_since(mtime).ok();
+    let age = SystemTime::now().duration_since(mtime).ok();
     if matches!(age, Some(age) if age >= stale_duration) {
         LockFileState::StaleUnparseable(snapshot)
     } else {
@@ -356,29 +375,4 @@ fn classify_unparseable_lock(
 
 fn is_lock_stale(lock_info: &LockFileInfo) -> bool {
     chrono::Utc::now() - lock_info.acquired_at > chrono::Duration::minutes(LOCK_TIMEOUT_MINUTES)
-}
-
-#[cfg(unix)]
-async fn is_process_alive(process_id: u32) -> bool {
-    // SAFETY: `kill(pid, 0)` is a probe with no signal delivery. Direct syscall is required
-    // because sandboxed macOS apps can't exec `/bin/kill`.
-    let result = unsafe { libc::kill(process_id as libc::pid_t, 0) };
-    if result == 0 {
-        return true;
-    }
-    // EPERM = exists but we can't signal it; ESRCH = gone.
-    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
-#[cfg(windows)]
-async fn is_process_alive(process_id: u32) -> bool {
-    tokio::task::spawn_blocking(move || {
-        std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {process_id}")])
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).contains(&process_id.to_string()))
-            .unwrap_or(false)
-    })
-    .await
-    .unwrap_or(false)
 }

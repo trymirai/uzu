@@ -1,5 +1,6 @@
-use std::{path::Path, sync::Arc};
+use std::{future::Future, path::Path, sync::Arc};
 
+use kiban::{maybe::MaybeSend, rt::RuntimeHandle};
 use objc2_foundation::NSURLSessionTaskState;
 
 use crate::{
@@ -22,8 +23,8 @@ impl DownloadBackend for AppleBackend {
     type ActiveTask = AppleActiveTask;
     type Error = AppleBackendError;
 
-    fn read_resume_progress(part_path: &Path) -> Option<u64> {
-        resume_data_parser::read_resume_progress(part_path)
+    fn read_resume_progress(part_path: &Path) -> impl Future<Output = Option<u64>> + MaybeSend {
+        async move { resume_data_parser::read_resume_progress(part_path) }
     }
 }
 
@@ -36,8 +37,8 @@ impl common::Backend for AppleBackend {
         "apple"
     }
 
-    fn create_context(tokio_handle: tokio::runtime::Handle) -> Result<Self::Context, DownloadError> {
-        Ok(AppleBackendContext::new(tokio_handle))
+    fn create_context(runtime_handle: RuntimeHandle) -> Result<Self::Context, DownloadError> {
+        Ok(AppleBackendContext::new(runtime_handle))
     }
 
     async fn initial_task_attachment(

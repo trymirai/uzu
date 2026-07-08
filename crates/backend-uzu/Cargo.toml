@@ -80,7 +80,7 @@ tempfile.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["unbounded_depth"] }
 futures.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "io-std", "io-util", "macros", "process", "rt"] }
 blake3.workspace = true
 quote.workspace = true
 proc-macro2.workspace = true

@@ -4,12 +4,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use kiban::{fs, rt::RuntimeHandle};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{
     NSBundle, NSData, NSString, NSURL, NSURLSession, NSURLSessionConfiguration, NSURLSessionDelegate,
     NSURLSessionDownloadTask, NSURLSessionTaskState,
 };
-use tokio::{runtime::Handle as TokioHandle, sync::oneshot::channel as tokio_oneshot_channel};
+use tokio::sync::oneshot::channel as tokio_oneshot_channel;
 
 use crate::{
     DownloadInfo, FileCheck,
@@ -26,7 +27,7 @@ pub struct AppleBackendContext {
     _delegate: Retained<AppleSessionDelegate>,
     _delegate_protocol_object: Retained<ProtocolObject<dyn NSURLSessionDelegate>>,
     event_registry: AppleEventRegistry,
-    tokio_handle: TokioHandle,
+    runtime_handle: RuntimeHandle,
 }
 
 impl std::fmt::Debug for AppleBackendContext {
@@ -39,7 +40,7 @@ impl std::fmt::Debug for AppleBackendContext {
 }
 
 impl AppleBackendContext {
-    pub fn new(tokio_handle: TokioHandle) -> Self {
+    pub fn new(runtime_handle: RuntimeHandle) -> Self {
         let event_registry = Arc::new(Mutex::new(HashMap::new()));
         let delegate = AppleSessionDelegate::new(Arc::clone(&event_registry));
         let delegate_protocol_object = AppleSessionDelegate::protocol_object(delegate.clone());
@@ -56,7 +57,7 @@ impl AppleBackendContext {
             _delegate: delegate,
             _delegate_protocol_object: delegate_protocol_object,
             event_registry,
-            tokio_handle,
+            runtime_handle,
         }
     }
 
@@ -232,7 +233,7 @@ impl BackendContext for AppleBackendContext {
         _destination_lease: &DestinationLockLease,
     ) -> Result<AppleActiveTask, AppleBackendError> {
         let resume_data =
-            tokio::fs::read(resume_artifact_path).await.map_err(|error| AppleBackendError::Io(error.to_string()))?;
+            fs::asyn::read(resume_artifact_path).await.map_err(|error| AppleBackendError::Io(error.to_string()))?;
         let task = if resume_data.is_empty() {
             let ns_url =
                 NSURL::URLWithString(&NSString::from_str(&config.source_url)).ok_or(AppleBackendError::BadUrl)?;
@@ -273,7 +274,7 @@ impl AppleBackendContext {
                     generation,
                     destination: config.destination.clone(),
                     backend_event_sender,
-                    tokio_handle: self.tokio_handle.clone(),
+                    runtime_handle: self.runtime_handle.clone(),
                 },
             );
         }

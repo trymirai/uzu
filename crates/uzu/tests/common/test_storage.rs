@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use download_manager::FileDownloadManagerType;
+use kiban::rt::RuntimeHandle;
 use shoji::types::model::Model;
-use tokio::runtime::Handle as TokioHandle;
 use uzu::{
     device::Device,
     registry::FixedRegistry,
@@ -21,14 +21,14 @@ pub struct TestStorage {
 
 impl TestStorage {
     pub async fn with_models(
-        tokio_handle: TokioHandle,
+        tokio_handle: RuntimeHandle,
         models: Vec<Model>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Self::with_models_and_manager(tokio_handle, models, FileDownloadManagerType::default()).await
     }
 
     pub async fn with_models_and_manager(
-        tokio_handle: TokioHandle,
+        tokio_handle: RuntimeHandle,
         models: Vec<Model>,
         download_manager_type: FileDownloadManagerType,
     ) -> Result<Self, Box<dyn std::error::Error>> {

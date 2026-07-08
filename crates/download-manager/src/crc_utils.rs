@@ -1,6 +1,6 @@
 use std::{
-    fs::{self, File},
-    io::{Error as IoError, Read},
+    fs,
+    io::Error as IoError,
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -8,7 +8,6 @@ use std::{
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
-const CHUNK_SIZE: usize = 8 * 1024 * 1024;
 const CRC_CACHE_VERSION: u8 = 1;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -20,7 +19,7 @@ struct CrcCacheReceipt {
     modified_nanos: u32,
 }
 
-pub fn calculate_and_verify_crc(
+pub async fn calculate_and_verify_crc(
     file_path: &Path,
     expected_crc32c_base64: &str,
 ) -> Result<bool, IoError> {
@@ -28,19 +27,8 @@ pub fn calculate_and_verify_crc(
         return Ok(false);
     };
 
-    let mut file = File::open(file_path)?;
-    let mut buffer = vec![0_u8; CHUNK_SIZE];
-    let mut crc = 0_u32;
-
-    loop {
-        let bytes_read = file.read(&mut buffer)?;
-        if bytes_read == 0 {
-            break;
-        }
-        crc = crc32c::crc32c_append(crc, &buffer[..bytes_read]);
-    }
-
-    Ok(crc == expected_crc)
+    let bytes = kiban::fs::asyn::read(file_path).await?;
+    Ok(crc32c::crc32c(&bytes) == expected_crc)
 }
 
 pub fn crc_cache_matches(
@@ -64,7 +52,7 @@ pub fn crc_cache_matches(
     cached_receipt == current_receipt
 }
 
-pub fn save_crc_file(
+pub async fn save_crc_file(
     file_path: &Path,
     crc_value: &str,
 ) -> Result<(), IoError> {
@@ -72,7 +60,7 @@ pub fn save_crc_file(
         return Ok(());
     };
     let receipt_json = serde_json::to_vec(&receipt).map_err(IoError::other)?;
-    std::fs::write(crc_path_for_file(file_path), receipt_json)
+    kiban::fs::asyn::write(crc_path_for_file(file_path), receipt_json).await
 }
 
 pub fn crc_path_for_file(file_path: &Path) -> PathBuf {

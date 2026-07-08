@@ -22,7 +22,7 @@ capability-cli = ["uzu/capability-cli"]
 [dependencies]
 backend-uzu.workspace = true
 uzu = { workspace = true, default-features = false }
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 anyhow.workspace = true
 clap.workspace = true
 comfy-table.workspace = true

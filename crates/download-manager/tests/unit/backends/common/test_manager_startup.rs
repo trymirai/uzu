@@ -1,7 +1,7 @@
 use chrono::Utc;
 use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
+use kiban::rt::RuntimeHandle;
 use tempfile::tempdir;
-use tokio::runtime::Handle as TokioHandle;
 
 use crate::common::MockRegistry;
 
@@ -17,7 +17,13 @@ async fn test_manager_startup_valid_existing_file_is_downloaded() -> Result<(), 
     tokio::fs::write(&destination, served_file.bytes.as_ref()).await?;
     tokio::fs::write(&resume_artifact, b"partial").await?;
 
-    let task = manager_task(&served_file.file.url, &destination, FileCheck::CRC(expected_crc.clone()), Some(served_file.file.size as u64)).await?;
+    let task = manager_task(
+        &served_file.file.url,
+        &destination,
+        FileCheck::CRC(expected_crc.clone()),
+        Some(served_file.file.size as u64),
+    )
+    .await?;
 
     assert_eq!(task.state().await.phase, FileDownloadPhase::Downloaded);
     assert!(!resume_artifact.exists());
@@ -79,7 +85,13 @@ async fn test_manager_startup_revalidates_stale_metadata_crc_cache() -> Result<(
     )
     .await?;
 
-    let task = manager_task(&served_file.file.url, &destination, FileCheck::CRC(expected_crc), Some(served_file.file.size as u64)).await?;
+    let task = manager_task(
+        &served_file.file.url,
+        &destination,
+        FileCheck::CRC(expected_crc),
+        Some(served_file.file.size as u64),
+    )
+    .await?;
 
     assert_eq!(task.state().await.phase, FileDownloadPhase::NotDownloaded);
     assert!(!destination.exists());
@@ -143,6 +155,6 @@ async fn manager_task(
     file_check: FileCheck,
     expected_bytes: Option<u64>,
 ) -> Result<std::sync::Arc<dyn download_manager::FileDownloadTask>, download_manager::DownloadError> {
-    let manager = <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, TokioHandle::current()).await?;
+    let manager = <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, RuntimeHandle::current()).await?;
     manager.file_download_task(source_url, destination, file_check, expected_bytes).await
 }

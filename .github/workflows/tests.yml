@@ -116,6 +116,14 @@ jobs:
       - name: Build crates
         run: cargo +stable build --no-default-features $FEATURE_FLAGS ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu' || '' }} ${{ matrix.host == 'linux' && '-p cli --features backend-cpu,capability-cli' || '' }}
 
+      # Temporary step to check crates that migrated to wasm.
+      # New value to matrix was not added intentionally because the whole project is not wasm supported.
+      - name: Build wasm supported crates
+        if: ${{ matrix.target == 'wasm32-wasip1-threads' }}
+        run: |
+          rustup +stable target add wasm32-unknown-unknown
+          cargo +stable build -p download-manager --target wasm32-unknown-unknown
+
       - name: Build benches
         if: ${{ matrix.backend != 'cpu' }}
         run: cargo +nightly bench --no-run --no-default-features $FEATURE_FLAGS
