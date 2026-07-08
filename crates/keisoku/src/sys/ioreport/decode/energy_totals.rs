@@ -1,4 +1,4 @@
-use super::{Channel, ChannelFold, FrequencyTables, Rail, RawChannel};
+use super::{Channel, ChannelFold, FrequencyTables, Rail, RawChannel, energy_joules};
 
 #[derive(Default, Clone, Copy)]
 pub struct EnergyTotals {
@@ -18,7 +18,7 @@ impl ChannelFold for EnergyTotals {
         let Channel::EnergyRail(rail) = channel else {
             return;
         };
-        let joules = joules(raw.integer_value, &raw.unit);
+        let joules = energy_joules(raw.integer_value, raw.unit);
         match rail {
             Rail::Cpu => self.cpu += joules,
             Rail::Gpu => self.gpu += joules,
@@ -26,24 +26,4 @@ impl ChannelFold for EnergyTotals {
             Rail::Ram => self.ram += joules,
         }
     }
-}
-
-fn joules(
-    energy: i64,
-    unit: &str,
-) -> f64 {
-    let energy = energy as f64;
-    let Some(prefix) = unit.trim().strip_suffix('J') else {
-        return 0.0;
-    };
-    let scale = match prefix {
-        "k" => 1e3,
-        "" => 1.0,
-        "m" => 1e-3,
-        "u" | "µ" => 1e-6,
-        "n" => 1e-9,
-        "p" => 1e-12,
-        _ => return 0.0,
-    };
-    energy * scale
 }

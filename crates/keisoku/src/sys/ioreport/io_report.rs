@@ -40,3 +40,45 @@ impl IoReport {
         for_each_channel(self.functions, &delta, wants, &mut visit);
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::IoReport;
+    use crate::sys::ioreport::{IoReportGroups, decode::Channel};
+
+    /// On real hardware, confirm the reversed unit layout: every classified energy
+    /// rail reports the Energy quantity byte and a decimal SI exponent in range.
+    #[test]
+    fn energy_channels_use_energy_quantity_units() {
+        let Some(report) = IoReport::for_groups(IoReportGroups::ENERGY_MODEL) else {
+            return;
+        };
+        let Some(begin) = report.snapshot() else {
+            return;
+        };
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let Some(end) = report.snapshot() else {
+            return;
+        };
+
+        let mut energy_channels = 0u32;
+        report.for_each_channel(
+            &begin,
+            &end,
+            |_channel| true,
+            |channel, raw| {
+                if let Channel::EnergyRail(_) = channel {
+                    energy_channels += 1;
+                    let quantity = (raw.unit >> 56) & 0xff;
+                    assert_eq!(quantity, 3, "energy channel unit quantity should be Energy(3), got {quantity:#x}");
+                    let exponent = ((raw.unit >> 32) & 0xff) as i32 - 127;
+                    assert!(
+                        (-12..=0).contains(&exponent),
+                        "energy channel SI exponent {exponent} outside the expected pico..whole-joule range",
+                    );
+                }
+            },
+        );
+        assert!(energy_channels > 0, "expected at least one Energy Model rail channel on macOS");
+    }
+}

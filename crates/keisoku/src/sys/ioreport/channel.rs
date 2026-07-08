@@ -56,7 +56,7 @@ fn decode_channel(
 
     match classified {
         Channel::EnergyRail(_) => {
-            decoded.unit = cf_string_to_string(unsafe { (functions.channel_get_unit_label)(item) });
+            decoded.unit = unsafe { (functions.channel_get_unit)(item) };
             decoded.integer_value = unsafe { (functions.simple_get_integer_value)(item, 0) };
         },
         Channel::DramBytes(_) => {

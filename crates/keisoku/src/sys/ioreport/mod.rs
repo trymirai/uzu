@@ -33,8 +33,8 @@ kanka::ffi_table! {
             unsafe extern "C" fn(*const c_void) -> *const c_void,
         channel_get_channel_name = "IOReportChannelGetChannelName":
             unsafe extern "C" fn(*const c_void) -> *const c_void,
-        channel_get_unit_label = "IOReportChannelGetUnitLabel":
-            unsafe extern "C" fn(*const c_void) -> *const c_void,
+        channel_get_unit = "IOReportChannelGetUnit":
+            unsafe extern "C" fn(*const c_void) -> u64,
         simple_get_integer_value = "IOReportSimpleGetIntegerValue":
             unsafe extern "C" fn(*const c_void, i32) -> i64,
         state_get_count = "IOReportStateGetCount":
