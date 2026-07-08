@@ -1,5 +1,4 @@
 mod battery;
-mod deferred;
 pub(crate) mod interval;
 mod memory;
 mod rail_power;
@@ -10,7 +9,7 @@ mod soc;
 mod system;
 mod thermal;
 
-use deferred::Deferred;
+use std::cell::OnceCell;
 
 #[cfg(target_os = "macos")]
 use crate::sys::{ioreport::decode::FrequencyTables, smc::Smc, soc::SocInfo};
@@ -22,44 +21,47 @@ use crate::{
 };
 
 pub struct Sources {
-    system: Deferred<sysinfo::System>,
-    temperature: Deferred<Option<SensorReader>>,
-    voltage: Deferred<Option<SensorReader>>,
-    current: Deferred<Option<SensorReader>>,
+    system: OnceCell<sysinfo::System>,
+    temperature: OnceCell<Option<SensorReader>>,
+    voltage: OnceCell<Option<SensorReader>>,
+    current: OnceCell<Option<SensorReader>>,
     #[cfg(target_os = "macos")]
-    soc: std::cell::OnceCell<Option<SocInfo>>,
+    soc: OnceCell<Option<SocInfo>>,
     #[cfg(target_os = "macos")]
-    smc: std::cell::OnceCell<Option<Smc>>,
+    smc: OnceCell<Option<Smc>>,
 }
 
 impl Sources {
     pub fn new() -> Self {
         Self {
-            system: Deferred::new(system::build_system),
-            temperature: Deferred::new(|| sensors::new_reader(SensorKind::Temperature)),
-            voltage: Deferred::new(|| sensors::new_reader(SensorKind::Voltage)),
-            current: Deferred::new(|| sensors::new_reader(SensorKind::Current)),
+            system: OnceCell::new(),
+            temperature: OnceCell::new(),
+            voltage: OnceCell::new(),
+            current: OnceCell::new(),
             #[cfg(target_os = "macos")]
-            soc: std::cell::OnceCell::new(),
+            soc: OnceCell::new(),
             #[cfg(target_os = "macos")]
-            smc: std::cell::OnceCell::new(),
+            smc: OnceCell::new(),
         }
     }
 
-    pub(crate) fn system(&mut self) -> &sysinfo::System {
-        self.system.get()
+    pub(crate) fn system(&self) -> &sysinfo::System {
+        self.system.get_or_init(system::build_system)
     }
 
     pub(crate) fn temperature_sensors(&mut self) -> Box<[Sensor]> {
-        self.temperature.get().as_mut().map(sensors::read_reader).unwrap_or_default()
+        self.temperature.get_or_init(|| sensors::new_reader(SensorKind::Temperature));
+        self.temperature.get_mut().and_then(Option::as_mut).map(sensors::read_reader).unwrap_or_default()
     }
 
     pub(crate) fn voltage_sensors(&mut self) -> Box<[Sensor]> {
-        self.voltage.get().as_mut().map(sensors::read_reader).unwrap_or_default()
+        self.voltage.get_or_init(|| sensors::new_reader(SensorKind::Voltage));
+        self.voltage.get_mut().and_then(Option::as_mut).map(sensors::read_reader).unwrap_or_default()
     }
 
     pub(crate) fn current_sensors(&mut self) -> Box<[Sensor]> {
-        self.current.get().as_mut().map(sensors::read_reader).unwrap_or_default()
+        self.current.get_or_init(|| sensors::new_reader(SensorKind::Current));
+        self.current.get_mut().and_then(Option::as_mut).map(sensors::read_reader).unwrap_or_default()
     }
 
     pub(crate) fn memory(&mut self) -> Option<crate::providers::data::MemoryMetrics> {
