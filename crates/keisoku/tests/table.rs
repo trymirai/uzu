@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use keisoku::{
-    Chip, CpuUsage, GpuUsage, Instant, Interval, Memory, NeuralEngine, Power, RamTotal, Select, Static,
-    TemperatureSensors, Temps,
+    Chip, CpuUsage, GpuUsage, Instant, Interval, Memory, NeuralEngine, Power, RamTotal, Select, TemperatureSensors,
+    Temps,
 };
 use ratatui::{
     Terminal,
@@ -16,7 +16,7 @@ use ratatui::{
 
 #[test]
 fn render_table() {
-    let constants = Static::<Select![Chip, RamTotal]>::new().into_sample();
+    let constants = Instant::<Select![Chip, RamTotal]>::new().read();
     let chip = constants.get::<Chip>();
     let ram_total = constants.get::<RamTotal>();
 

@@ -1,4 +1,3 @@
-mod constant;
 mod instant_set;
 mod interval_set;
 mod sample;
@@ -33,7 +32,6 @@ mod power;
 pub use bandwidth::Bandwidth;
 pub use battery::Battery;
 pub use chip::Chip;
-pub use constant::{ConstantMetric, ConstantSet};
 pub use cpu_usage::CpuUsage;
 pub use current_sensors::CurrentSensors;
 pub use efficiency_cores::EfficiencyCores;

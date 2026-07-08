@@ -5,11 +5,12 @@ fn available_telemetry() {
 
     use keisoku::{
         Bandwidth, Battery, Chip, CpuUsage, CurrentSensors, EfficiencyCores, Fans, GpuCores, GpuUsage, Instant,
-        Interval, Memory, NeuralEngine, PerformanceCores, Power, RailPower, RamTotal, Select, Static,
-        TemperatureSensors, Temps, VoltageSensors,
+        Interval, Memory, NeuralEngine, PerformanceCores, Power, RailPower, RamTotal, Select, TemperatureSensors,
+        Temps, VoltageSensors,
     };
 
-    let constants = Static::<Select![Chip, EfficiencyCores, PerformanceCores, GpuCores, RamTotal]>::new().into_sample();
+    let constants =
+        Instant::<Select![Chip, EfficiencyCores, PerformanceCores, GpuCores, RamTotal]>::new().read();
     let chip = constants.get::<Chip>();
     let efficiency_cores = constants.get::<EfficiencyCores>();
     let performance_cores = constants.get::<PerformanceCores>();

@@ -1,4 +1,4 @@
-use super::{constant::ConstantMetric, typelist::Metric};
+use super::{instant_set::InstantMetric, typelist::Metric};
 use crate::sources::Sources;
 #[cfg(not(target_os = "macos"))]
 use crate::sys::perflevel_cores;
@@ -10,7 +10,7 @@ impl Metric for EfficiencyCores {
     const TYPE_BIT: u128 = 1 << 3;
 }
 
-impl ConstantMetric for EfficiencyCores {
+impl InstantMetric for EfficiencyCores {
     fn read(sources: &mut Sources) -> u8 {
         #[cfg(target_os = "macos")]
         {

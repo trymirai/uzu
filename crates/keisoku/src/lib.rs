@@ -11,12 +11,12 @@ mod units;
 
 pub use component::{Component, classify};
 pub use providers::{
-    Constant, Instant, Interval, Session, Static,
+    Instant, Interval, Session,
     marker::{
-        Bandwidth, Battery, Chip, Cons, ConstantMetric, ConstantSet, CpuUsage, CurrentSensors, EfficiencyCores,
-        Energy, Fans, GpuCores, GpuUsage, InstantMetric, InstantSet, IntervalFrame, IntervalInputs, IntervalMetric,
-        IntervalSet, Memory, Metric, MetricSet, NeuralEngine, Nil, PerformanceCores, Power, RailPower, RamTotal,
-        Sample, TemperatureSensors, Temps, Thermal, ValueList, Values, VoltageSensors,
+        Bandwidth, Battery, Chip, Cons, CpuUsage, CurrentSensors, EfficiencyCores, Energy, Fans, GpuCores, GpuUsage,
+        InstantMetric, InstantSet, IntervalFrame, IntervalInputs, IntervalMetric, IntervalSet, Memory, Metric,
+        MetricSet, NeuralEngine, Nil, PerformanceCores, Power, RailPower, RamTotal, Sample, TemperatureSensors, Temps,
+        Thermal, ValueList, Values, VoltageSensors,
     },
     data::{
         BandwidthMetrics, BatteryMetrics, CpuMetrics, EnergyMetrics, Fan, FanMetrics, GpuMetrics, MemoryMetrics,

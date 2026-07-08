@@ -1,4 +1,4 @@
-use super::{constant::ConstantMetric, typelist::Metric};
+use super::{instant_set::InstantMetric, typelist::Metric};
 use crate::sources::Sources;
 
 pub struct Chip;
@@ -8,7 +8,7 @@ impl Metric for Chip {
     const TYPE_BIT: u128 = 1 << 1;
 }
 
-impl ConstantMetric for Chip {
+impl InstantMetric for Chip {
     fn read(sources: &mut Sources) -> String {
         #[cfg(target_os = "macos")]
         if let Some(soc) = sources.soc()
