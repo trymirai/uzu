@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, Kernels},
+    backends::common::{Allocation, Backend, Encoder},
     data_type::DataType,
 };
 
@@ -19,7 +19,7 @@ pub struct DeltaNetChunkedPrefillArgs<'a, B: Backend> {
     pub suffix_len: usize,
 }
 
-pub trait DeltaNetChunkedPrefill<B: Backend<Kernels: Kernels<DeltaNetChunkedPrefill = Self>>>: Sized {
+pub trait DeltaNetChunkedPrefill<B: Backend>: Sized {
     fn new(
         context: &B::Context,
         outer_data_type: DataType,
@@ -38,7 +38,7 @@ pub trait DeltaNetChunkedPrefill<B: Backend<Kernels: Kernels<DeltaNetChunkedPref
     ) -> Result<(), B::Error>;
 }
 
-impl<B: Backend<Kernels: Kernels<DeltaNetChunkedPrefill = Infallible>>> DeltaNetChunkedPrefill<B> for Infallible {
+impl<B: Backend> DeltaNetChunkedPrefill<B> for Infallible {
     fn new(
         _context: &B::Context,
         _outer_data_type: DataType,

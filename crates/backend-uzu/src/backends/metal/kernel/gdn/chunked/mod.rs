@@ -1,4 +1,4 @@
-use super::{
+use super::super::{
     DeltaNetChunkedCumsumMetalKernel, DeltaNetChunkedGramMetalKernel, DeltaNetChunkedMegaApplyMetalKernel,
     DeltaNetChunkedPrepMetalKernel, DeltaNetChunkedSolveMetalKernel, DeltaNetChunkedSolveTMetalKernel,
 };
@@ -34,6 +34,10 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
         outer_data_type: DataType,
         head_dim: u32,
     ) -> Result<Option<Self>, <Metal as Backend>::Error> {
+        if outer_data_type == DataType::F16 {
+            return Ok(None);
+        }
+
         let use_mxu = context.supports_mxu();
         let min_t = if use_mxu {
             MXU_MIN_T
