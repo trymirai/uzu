@@ -1,15 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 macro_rules! unit {
-    ($(#[$doc:meta])* $name:ident($inner:ty) = $suffix:literal) => {
-        $(#[$doc])*
-        #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Serialize, Deserialize)]
-        #[serde(transparent)]
-        #[repr(transparent)]
-        pub struct $name(pub $inner);
-
+    (@shared $name:ident($inner:ty) = $suffix:literal) => {
         impl $name {
-
             pub const fn value(self) -> $inner {
                 self.0
             }
@@ -29,14 +22,82 @@ macro_rules! unit {
                 Self(value)
             }
         }
+
+        impl core::ops::Add for $name {
+            type Output = Self;
+
+            fn add(
+                self,
+                other: Self,
+            ) -> Self {
+                Self(self.0 + other.0)
+            }
+        }
+
+        impl core::ops::Sub for $name {
+            type Output = Self;
+
+            fn sub(
+                self,
+                other: Self,
+            ) -> Self {
+                Self(self.0 - other.0)
+            }
+        }
+
+        impl core::iter::Sum for $name {
+            fn sum<I: Iterator<Item = Self>>(iterator: I) -> Self {
+                Self(iterator.map(|unit| unit.0).sum())
+            }
+        }
+    };
+
+    (float $name:ident($inner:ty) = $suffix:literal) => {
+        #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Serialize, Deserialize)]
+        #[serde(transparent)]
+        #[repr(transparent)]
+        pub struct $name(pub $inner);
+
+        unit!(@shared $name($inner) = $suffix);
+
+        impl core::ops::Mul<$inner> for $name {
+            type Output = Self;
+
+            fn mul(
+                self,
+                factor: $inner,
+            ) -> Self {
+                Self(self.0 * factor)
+            }
+        }
+
+        impl core::ops::Div<$inner> for $name {
+            type Output = Self;
+
+            fn div(
+                self,
+                divisor: $inner,
+            ) -> Self {
+                Self(self.0 / divisor)
+            }
+        }
+    };
+
+    (int $name:ident($inner:ty) = $suffix:literal) => {
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+        #[serde(transparent)]
+        #[repr(transparent)]
+        pub struct $name(pub $inner);
+
+        unit!(@shared $name($inner) = $suffix);
     };
 }
 
-unit!(Watts(f32) = "W");
-unit!(Joules(f32) = "J");
-unit!(Percent(f32) = "%");
-unit!(Celsius(f32) = "°C");
-unit!(Megahertz(u32) = "MHz");
-unit!(GigabytesPerSecond(f32) = "GB/s");
-unit!(Bytes(u64) = "B");
-unit!(Rpm(f32) = "rpm");
+unit!(float Watts(f32) = "W");
+unit!(float Joules(f32) = "J");
+unit!(float Percent(f32) = "%");
+unit!(float Celsius(f32) = "°C");
+unit!(int Megahertz(u32) = "MHz");
+unit!(float GigabytesPerSecond(f32) = "GB/s");
+unit!(int Bytes(u64) = "B");
+unit!(float Rpm(f32) = "rpm");
