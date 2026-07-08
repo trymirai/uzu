@@ -1,6 +1,6 @@
 use obfstr::obfstr;
 
-use super::{ChannelFold, FrequencyTables, GroupId, RawChannel, residency_active_percent};
+use super::{ChannelFold, FrequencyTables, GroupId, RawChannel, Subgroup, residency_active_percent};
 use crate::sys::ioreport::IoReportGroups;
 
 #[derive(Default, Clone, Copy)]
@@ -13,7 +13,7 @@ impl ChannelFold for AneActivity {
 
     fn wants(channel: &RawChannel) -> bool {
         channel.group == GroupId::Pmp
-            && channel.subgroup.contains(obfstr!("Floor"))
+            && Subgroup::classify(&channel.subgroup) == Subgroup::Floor
             && (channel.name == obfstr!("ANE-AF-BW") || channel.name == obfstr!("ANE-DCS-BW"))
     }
 

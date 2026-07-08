@@ -1,6 +1,9 @@
 use obfstr::obfstr;
 
-use super::{ChannelFold, FrequencyTables, GroupId, RawChannel, dram_flow, residency_weighted_gbps, strip_die_prefix};
+use super::{
+    ChannelFold, DramFlow, FrequencyTables, GroupId, RawChannel, Subgroup, dram_flow, residency_weighted_gbps,
+    strip_die_prefix,
+};
 use crate::sys::ioreport::IoReportGroups;
 
 #[derive(Default, Clone)]
@@ -20,7 +23,7 @@ impl ChannelFold for DramBandwidth {
                 let aggregate = strip_die_prefix(&channel.name);
                 aggregate == obfstr!("DCS RD") || aggregate == obfstr!("DCS WR")
             },
-            GroupId::Pmp => channel.subgroup == obfstr!("DRAM BW"),
+            GroupId::Pmp => Subgroup::classify(&channel.subgroup) == Subgroup::DramBandwidth,
             _ => false,
         }
     }
@@ -45,9 +48,9 @@ impl ChannelFold for DramBandwidth {
             GroupId::Pmp => {
                 let gbps = residency_weighted_gbps(&channel.states);
                 match dram_flow(&channel.name) {
-                    Some(true) => self.read_histogram = self.read_histogram.max(gbps),
-                    Some(false) => self.write_histogram = self.write_histogram.max(gbps),
-                    None => {},
+                    Some(DramFlow::Read) => self.read_histogram = self.read_histogram.max(gbps),
+                    Some(DramFlow::Write) => self.write_histogram = self.write_histogram.max(gbps),
+                    Some(DramFlow::Combined) | None => {},
                 }
             },
             _ => {},

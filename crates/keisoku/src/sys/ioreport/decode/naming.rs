@@ -1,5 +1,12 @@
 use obfstr::obfstr;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DramFlow {
+    Read,
+    Write,
+    Combined,
+}
+
 pub(crate) fn strip_die_prefix(channel: &str) -> &str {
     let Some(rest) = channel.strip_prefix(obfstr!("DIE")) else {
         return channel;
@@ -8,13 +15,13 @@ pub(crate) fn strip_die_prefix(channel: &str) -> &str {
     rest.strip_prefix(' ').unwrap_or(channel)
 }
 
-pub(crate) fn dram_flow(channel: &str) -> Option<bool> {
+pub(crate) fn dram_flow(channel: &str) -> Option<DramFlow> {
     if channel.contains(obfstr!("RD+WR")) || channel.ends_with(obfstr!("RW")) {
-        None
+        Some(DramFlow::Combined)
     } else if channel.contains(obfstr!("WR")) {
-        Some(false)
+        Some(DramFlow::Write)
     } else if channel.contains(obfstr!("RD")) {
-        Some(true)
+        Some(DramFlow::Read)
     } else {
         None
     }

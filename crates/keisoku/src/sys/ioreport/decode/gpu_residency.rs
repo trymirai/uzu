@@ -1,6 +1,6 @@
 use obfstr::obfstr;
 
-use super::{ChannelFold, FrequencyTables, GroupId, RawChannel, calculate_frequency};
+use super::{ChannelFold, FrequencyTables, GroupId, RawChannel, Subgroup, calculate_frequency};
 use crate::sys::ioreport::IoReportGroups;
 
 #[derive(Default, Clone, Copy)]
@@ -14,7 +14,7 @@ impl ChannelFold for GpuResidency {
 
     fn wants(channel: &RawChannel) -> bool {
         channel.group == GroupId::GpuStats
-            && channel.subgroup == obfstr!("GPU Performance States")
+            && Subgroup::classify(&channel.subgroup) == Subgroup::GpuPerformanceStates
             && channel.name == obfstr!("GPUPH")
     }
 

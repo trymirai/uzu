@@ -1,6 +1,6 @@
 use obfstr::obfstr;
 
-use super::{ChannelFold, FrequencyTables, GroupId, RawChannel, calculate_frequency};
+use super::{ChannelFold, FrequencyTables, GroupId, RawChannel, Subgroup, calculate_frequency};
 use crate::sys::ioreport::IoReportGroups;
 
 #[derive(Default, Clone)]
@@ -14,7 +14,7 @@ impl ChannelFold for CpuResidency {
 
     fn wants(channel: &RawChannel) -> bool {
         channel.group == GroupId::CpuStats
-            && channel.subgroup == obfstr!("CPU Core Performance States")
+            && Subgroup::classify(&channel.subgroup) == Subgroup::CpuCorePerformanceStates
             && (channel.name.starts_with(obfstr!("PCPU"))
                 || channel.name.starts_with(obfstr!("ECPU"))
                 || channel.name.starts_with(obfstr!("MCPU")))
