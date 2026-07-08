@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use keisoku::{
-    Chip, CpuUsage, GpuUsage, Instant, Interval, Memory, NeuralEngine, Power, RamTotal, Static, TemperatureSensors,
-    Temps,
+    Chip, CpuUsage, GpuUsage, Instant, Interval, Memory, NeuralEngine, Power, RamTotal, Select, Static,
+    TemperatureSensors, Temps,
 };
 use ratatui::{
     Terminal,
@@ -16,15 +16,23 @@ use ratatui::{
 
 #[test]
 fn render_table() {
-    let (chip, ram_total) = Static::<(Chip, RamTotal)>::new().into_inner();
+    let constants = Static::<Select![Chip, RamTotal]>::new().into_sample();
+    let chip = constants.get::<Chip>();
+    let ram_total = constants.get::<RamTotal>();
 
-    let mut soc = Interval::<(CpuUsage, GpuUsage, NeuralEngine, Power)>::new();
-    let session = soc.begin();
+    let mut soc = Interval::<Select![CpuUsage, GpuUsage, NeuralEngine, Power]>::new();
+    let session = soc.start();
     std::thread::sleep(Duration::from_millis(300));
-    let (cpu, gpu, neural_engine, power) = soc.end(session);
+    let soc_sample = soc.stop(session);
+    let cpu = soc_sample.get::<CpuUsage>();
+    let gpu = soc_sample.get::<GpuUsage>();
+    let neural_engine = soc_sample.get::<NeuralEngine>();
+    let power = soc_sample.get::<Power>();
 
-    let mut gauges = Instant::<(Memory, Temps, TemperatureSensors)>::new();
-    let (memory, temperatures, sensors) = gauges.read();
+    let gauge_sample = Instant::<Select![Memory, Temps, TemperatureSensors]>::new().read();
+    let memory = gauge_sample.get::<Memory>();
+    let temperatures = gauge_sample.get::<Temps>();
+    let sensors = gauge_sample.get::<TemperatureSensors>();
 
     let na = "—";
     let mut lines: Vec<[String; 3]> = vec![

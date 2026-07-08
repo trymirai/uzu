@@ -14,16 +14,18 @@ fn sensor_queries_do_not_panic() {
 #[cfg(target_os = "macos")]
 #[test]
 fn one_snapshot_is_well_formed() {
-    use keisoku::{Instant, Interval, Memory, Power};
+    use keisoku::{Instant, Interval, Memory, Power, Select};
 
-    let mut soc = Interval::<Power>::new();
-    let session = soc.begin();
+    let mut soc = Interval::<Select![Power]>::new();
+    let session = soc.start();
     std::thread::sleep(std::time::Duration::from_millis(120));
-    let power = soc.end(session);
+    let sample = soc.stop(session);
+    let power = sample.get::<Power>();
     assert!(power.total().value().is_finite() && power.total().value() >= 0.0);
 
-    let mut gauges = Instant::<Memory>::new();
-    if let Some(memory) = gauges.read() {
+    let mut gauges = Instant::<Select![Memory]>::new();
+    let sample = gauges.read();
+    if let Some(memory) = sample.get::<Memory>() {
         assert!(memory.ram_total >= memory.ram_usage);
     }
 }

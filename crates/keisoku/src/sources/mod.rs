@@ -1,21 +1,31 @@
+mod battery;
 mod deferred;
+pub(crate) mod interval;
+mod memory;
+mod rail_power;
+mod sensors;
+mod smc;
+#[cfg(target_os = "macos")]
+mod soc;
+mod system;
+mod thermal;
 
 use deferred::Deferred;
 
-use crate::{
-    client::SensorReader,
-    sensor::{Sensor, SensorKind},
-};
 #[cfg(target_os = "macos")]
-use crate::{decode::FrequencyTables, smc::Smc, soc::SocInfo};
+use crate::sys::{ioreport::decode::FrequencyTables, smc::Smc, soc::SocInfo};
+use crate::{
+    providers::metrics::{Fan, FanMetrics},
+    sensor::{Sensor, SensorKind},
+    sys::hid::SensorReader,
+    units::Watts,
+};
 
 pub struct Sources {
     system: Deferred<sysinfo::System>,
     temperature: Deferred<Option<SensorReader>>,
     voltage: Deferred<Option<SensorReader>>,
     current: Deferred<Option<SensorReader>>,
-    // Built through a shared `&` (OnceCell) so several interval-metric contexts
-    // can borrow the SoC tables at once without a `&mut` conflict.
     #[cfg(target_os = "macos")]
     soc: std::cell::OnceCell<Option<SocInfo>>,
     #[cfg(target_os = "macos")]
@@ -25,10 +35,10 @@ pub struct Sources {
 impl Sources {
     pub fn new() -> Self {
         Self {
-            system: Deferred::new(build_system),
-            temperature: Deferred::new(|| SensorReader::new(SensorKind::Temperature)),
-            voltage: Deferred::new(|| SensorReader::new(SensorKind::Voltage)),
-            current: Deferred::new(|| SensorReader::new(SensorKind::Current)),
+            system: Deferred::new(system::build_system),
+            temperature: Deferred::new(|| sensors::new_reader(SensorKind::Temperature)),
+            voltage: Deferred::new(|| sensors::new_reader(SensorKind::Voltage)),
+            current: Deferred::new(|| sensors::new_reader(SensorKind::Current)),
             #[cfg(target_os = "macos")]
             soc: std::cell::OnceCell::new(),
             #[cfg(target_os = "macos")]
@@ -40,38 +50,91 @@ impl Sources {
         self.system.get()
     }
 
+    pub(crate) fn os_version(&mut self) -> String {
+        system::os_version(self.system())
+    }
+
     pub(crate) fn temperature_sensors(&mut self) -> Box<[Sensor]> {
-        self.temperature.get().as_mut().map(SensorReader::read).unwrap_or_default()
+        self.temperature.get().as_mut().map(sensors::read_reader).unwrap_or_default()
     }
 
     pub(crate) fn voltage_sensors(&mut self) -> Box<[Sensor]> {
-        self.voltage.get().as_mut().map(SensorReader::read).unwrap_or_default()
+        self.voltage.get().as_mut().map(sensors::read_reader).unwrap_or_default()
     }
 
     pub(crate) fn current_sensors(&mut self) -> Box<[Sensor]> {
-        self.current.get().as_mut().map(SensorReader::read).unwrap_or_default()
+        self.current.get().as_mut().map(sensors::read_reader).unwrap_or_default()
+    }
+
+    pub(crate) fn memory(&mut self) -> Option<crate::providers::metrics::MemoryMetrics> {
+        memory::read_memory()
+    }
+
+    pub(crate) fn battery(&mut self) -> Option<crate::providers::metrics::BatteryMetrics> {
+        battery::read_battery()
+    }
+
+    pub(crate) fn thermal(&mut self) -> Option<crate::providers::metrics::ThermalPressure> {
+        thermal::read_thermal()
+    }
+
+    pub(crate) fn rail_power(&mut self) -> Option<Watts> {
+        let voltage = self.voltage_sensors();
+        let current = self.current_sensors();
+        rail_power::rail_power(&voltage, &current)
+    }
+
+    pub(crate) fn package_watts(&self) -> Option<Watts> {
+        #[cfg(target_os = "macos")]
+        {
+            self.smc().and_then(smc::package_watts)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            None
+        }
+    }
+
+    pub(crate) fn fans(&self) -> Option<FanMetrics> {
+        #[cfg(target_os = "macos")]
+        {
+            self.smc().map(|smc| {
+                let snapshot = smc::fans(smc);
+                let fans = snapshot
+                    .fans
+                    .into_iter()
+                    .map(|fan| Fan {
+                        actual: fan.actual,
+                        minimum: fan.minimum,
+                        maximum: fan.maximum,
+                        target: fan.target,
+                    })
+                    .collect();
+                FanMetrics {
+                    fans,
+                }
+            })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            None
+        }
     }
 
     #[cfg(target_os = "macos")]
     pub(crate) fn soc(&self) -> Option<&SocInfo> {
-        self.soc.get_or_init(SocInfo::new).as_ref()
+        self.soc.get_or_init(soc::new_soc).as_ref()
     }
 
     #[cfg(target_os = "macos")]
     pub(crate) fn smc(&self) -> Option<&Smc> {
-        self.smc.get_or_init(Smc::new).as_ref()
+        self.smc.get_or_init(smc::new_smc).as_ref()
     }
 
     #[cfg(target_os = "macos")]
     pub(crate) fn frequencies(&self) -> FrequencyTables<'_> {
         match self.soc() {
-            Some(soc) => FrequencyTables {
-                ecpu: &soc.ecpu_frequencies,
-                pcpu: &soc.pcpu_frequencies,
-                gpu: &soc.gpu_frequencies,
-                ecpu_cores: soc.ecpu_cores,
-                pcpu_cores: soc.pcpu_cores,
-            },
+            Some(soc) => soc::frequencies(soc),
             None => FrequencyTables::default(),
         }
     }
@@ -83,8 +146,10 @@ impl Default for Sources {
     }
 }
 
-fn build_system() -> sysinfo::System {
-    let mut system = sysinfo::System::new_all();
-    system.refresh_all();
-    system
+pub(crate) fn collect_sensors(kind: SensorKind) -> Box<[Sensor]> {
+    sensors::collect(kind)
+}
+
+pub(crate) fn sensors_available() -> bool {
+    sensors::is_available()
 }
