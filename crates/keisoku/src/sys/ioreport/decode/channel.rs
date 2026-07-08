@@ -1,6 +1,6 @@
 use obfstr::obfstr;
 
-use super::{DramFlow, GroupId, RawChannel, Subgroup, dcs_flow, strip_die_prefix};
+use super::{DramFlow, GroupId, RawChannel, Subgroup, dcs_flow, read_write_flow, strip_die_prefix};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Channel {
@@ -9,6 +9,7 @@ pub(crate) enum Channel {
     GpuState,
     AneBandwidth,
     DramBytes(DramFlow),
+    DramHistogram(DramFlow),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -39,6 +40,10 @@ impl Channel {
             GroupId::Pmp => match Subgroup::classify(&channel.subgroup) {
                 Subgroup::Floor if channel.name == obfstr!("ANE-AF-BW") || channel.name == obfstr!("ANE-DCS-BW") => {
                     Some(Channel::AneBandwidth)
+                },
+                Subgroup::DramBandwidth => read_write_flow(&channel.name).map(Channel::DramBytes),
+                Subgroup::DcsBandwidth if channel.name.starts_with(obfstr!("AMCC")) => {
+                    read_write_flow(&channel.name).map(Channel::DramHistogram)
                 },
                 _ => None,
             },

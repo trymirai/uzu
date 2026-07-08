@@ -30,7 +30,7 @@ impl IntervalInputs {
             groups |= IoReportGroups::PMP;
         }
         if self.contains(Self::DRAM_BANDWIDTH) {
-            groups |= IoReportGroups::AMC_STATS;
+            groups |= IoReportGroups::AMC_STATS | IoReportGroups::PMP;
         }
         groups
     }

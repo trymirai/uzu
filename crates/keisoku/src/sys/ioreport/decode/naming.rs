@@ -23,3 +23,13 @@ pub(crate) fn dcs_flow(aggregate: &str) -> Option<DramFlow> {
         None
     }
 }
+
+pub(crate) fn read_write_flow(name: &str) -> Option<DramFlow> {
+    if name.ends_with(obfstr!(" RD")) {
+        Some(DramFlow::Read)
+    } else if name.ends_with(obfstr!(" WR")) {
+        Some(DramFlow::Write)
+    } else {
+        None
+    }
+}
