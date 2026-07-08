@@ -52,7 +52,7 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
             prep: DeltaNetChunkedPrepMetalKernel::new(context, outer_data_type, head_dim)?,
             cumsum: DeltaNetChunkedCumsumMetalKernel::new(context)?,
             gram: DeltaNetChunkedGramMetalKernel::new(context, head_dim, CHUNK_SIZE as u32)?,
-            solve: DeltaNetChunkedSolveMetalKernel::new(context, CHUNK_SIZE as u32, false)?,
+            solve: DeltaNetChunkedSolveMetalKernel::new(context, CHUNK_SIZE as u32)?,
             solve_t: DeltaNetChunkedSolveTMetalKernel::new(context, CHUNK_SIZE as u32, VT as u32)?,
             mega: DeltaNetChunkedMegaApplyMetalKernel::new(
                 context,

@@ -6,7 +6,7 @@
 using namespace metal;
 
 template <typename T, uint HEAD_K_DIM>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 KERNEL(DeltaNetChunkedPrep)(
     device const T* in_proj,

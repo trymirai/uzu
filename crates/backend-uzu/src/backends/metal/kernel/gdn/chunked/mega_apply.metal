@@ -20,7 +20,7 @@ using namespace uzu::matmul;
 // USE_MXU selects the fragment backend. Both paths accumulate in f32; only the
 // hardware fragment shape changes.
 template <typename T, typename O, uint VT, bool USE_MXU>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 VARIANTS(O, float, bfloat)
 VARIANTS(VT, 32)
 VARIANTS(USE_MXU, false, true)
@@ -47,7 +47,6 @@ KERNEL(DeltaNetChunkedMegaApply)(
     const uint v_slice GROUPS(head_v_dim.div_ceil(VT)),
     const uint tid THREADS(MEGA_THREADS)
 ) {
-  // VT controls the value tile; USE_MXU controls only the fragment backend.
   using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
   constexpr ushort FR = Ops::FRAGMENT_ROWS;
   constexpr ushort FC = Ops::FRAGMENT_COLS;

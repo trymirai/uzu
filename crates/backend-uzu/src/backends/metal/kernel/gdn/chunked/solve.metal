@@ -7,28 +7,8 @@ using namespace metal;
 
 #define CHUNK_SOLVE_BLOCK 16u
 
-template <bool RECOMPUTE_G>
-METAL_FUNC float chunked_g(
-    device const float* g_or_log_decay,
-    uint token_base,
-    uint local_t,
-    uint num_v_heads,
-    uint hv_idx
-) {
-  if constexpr (RECOMPUTE_G) {
-    float acc = 0.0f;
-    for (uint i = 0; i <= local_t; ++i) {
-      acc += g_or_log_decay[(token_base + i) * num_v_heads + hv_idx];
-    }
-    return acc;
-  } else {
-    return g_or_log_decay[(token_base + local_t) * num_v_heads + hv_idx];
-  }
-}
-
-template <uint CHUNK_SIZE, bool RECOMPUTE_G>
+template <uint CHUNK_SIZE>
 VARIANTS(CHUNK_SIZE, 16, 32, 64)
-VARIANTS(RECOMPUTE_G, false, true)
 KERNEL(DeltaNetChunkedSolve)(
     device const float* kk,
     device const float* beta,
@@ -65,8 +45,8 @@ KERNEL(DeltaNetChunkedSolve)(
     float value = 0.0f;
     if (row < CHUNK_SIZE && col < CHUNK_SIZE && row_token < suffix_len && col_token < suffix_len && col < row) {
       const float beta_row = beta[row_token * num_v_heads + hv_idx];
-      const float g_row = chunked_g<RECOMPUTE_G>(g_or_log_decay, token_base, row, num_v_heads, hv_idx);
-      const float g_col = chunked_g<RECOMPUTE_G>(g_or_log_decay, token_base, col, num_v_heads, hv_idx);
+      const float g_row = g_or_log_decay[row_token * num_v_heads + hv_idx];
+      const float g_col = g_or_log_decay[col_token * num_v_heads + hv_idx];
       value = beta_row * fast::exp(g_row - g_col) * kk[kk_base + row * CHUNK_SIZE + col];
     }
 
