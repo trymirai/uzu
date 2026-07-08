@@ -16,6 +16,18 @@ fn is_hot(component: Component) -> bool {
     matches!(component, Component::Cpu | Component::Gpu | Component::Soc | Component::NeuralEngine)
 }
 
+fn is_plausible(
+    kind: SensorKind,
+    value: f64,
+) -> bool {
+    value.is_finite()
+        && match kind {
+            SensorKind::Temperature => true,
+            SensorKind::Voltage => value.abs() <= 100.0,
+            SensorKind::Current => value.abs() <= 1000.0,
+        }
+}
+
 kanka::opaque_cf_type!(IOHIDEventSystemClient);
 kanka::opaque_cf_type!(IOHIDServiceClient);
 kanka::opaque_cf_type!(IOHIDEvent);
@@ -125,6 +137,7 @@ impl SensorReader {
                     kind,
                 }
             })
+            .filter(|sensor| is_plausible(kind, sensor.value))
             .collect()
     }
 }
