@@ -7,7 +7,6 @@ mod sensors;
 mod smc;
 #[cfg(target_os = "macos")]
 mod soc;
-mod system;
 mod thermal;
 
 use deferred::Deferred;
@@ -22,7 +21,6 @@ use crate::{
 };
 
 pub struct Sources {
-    system: Deferred<sysinfo::System>,
     temperature: Deferred<Option<SensorReader>>,
     voltage: Deferred<Option<SensorReader>>,
     current: Deferred<Option<SensorReader>>,
@@ -35,7 +33,6 @@ pub struct Sources {
 impl Sources {
     pub fn new() -> Self {
         Self {
-            system: Deferred::new(system::build_system),
             temperature: Deferred::new(|| sensors::new_reader(SensorKind::Temperature)),
             voltage: Deferred::new(|| sensors::new_reader(SensorKind::Voltage)),
             current: Deferred::new(|| sensors::new_reader(SensorKind::Current)),
@@ -44,10 +41,6 @@ impl Sources {
             #[cfg(target_os = "macos")]
             smc: std::cell::OnceCell::new(),
         }
-    }
-
-    pub(crate) fn system(&mut self) -> &sysinfo::System {
-        self.system.get()
     }
 
     pub(crate) fn temperature_sensors(&mut self) -> Box<[Sensor]> {

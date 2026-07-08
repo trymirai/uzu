@@ -11,15 +11,13 @@ impl Metric for Chip {
 impl InstantMetric for Chip {
     fn read(sources: &mut Sources) -> String {
         #[cfg(target_os = "macos")]
-        if let Some(soc) = sources.soc()
-            && !soc.chip_name.is_empty()
         {
-            return soc.chip_name.clone();
+            sources.soc().map(|soc| soc.chip_name.clone()).unwrap_or_default()
         }
         #[cfg(not(target_os = "macos"))]
-        if let Some(model) = crate::sys::sysctl_string("hw.machine").filter(|model| !model.is_empty()) {
-            return model;
+        {
+            let _ = sources;
+            crate::sys::sysctl_string("hw.machine").unwrap_or_default()
         }
-        sources.system().cpus().first().map(|cpu| cpu.brand().trim().to_string()).unwrap_or_default()
     }
 }
