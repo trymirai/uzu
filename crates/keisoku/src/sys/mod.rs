@@ -5,7 +5,6 @@ mod constants;
 mod memory;
 #[cfg(not(target_os = "macos"))]
 mod sysctl;
-#[cfg(target_os = "macos")]
 mod thermal;
 
 #[cfg(target_os = "macos")]
@@ -29,5 +28,4 @@ pub(crate) use constants::{
 pub(crate) use memory::read_memory;
 #[cfg(not(target_os = "macos"))]
 pub(crate) use sysctl::{perflevel_cores, sysctl_string};
-#[cfg(target_os = "macos")]
 pub(crate) use thermal::{ThermalPressureLevel, read_thermal_pressure};
