@@ -1,7 +1,4 @@
-use obfstr::obfstr;
-
-use super::{ChannelFold, FrequencyTables, GroupId, RawChannel, Subgroup, calculate_frequency};
-use crate::sys::ioreport::IoReportGroups;
+use super::{Channel, ChannelFold, FrequencyTables, RawChannel, calculate_frequency};
 
 #[derive(Default, Clone, Copy)]
 pub(crate) struct GpuResidency {
@@ -10,24 +7,19 @@ pub(crate) struct GpuResidency {
 }
 
 impl ChannelFold for GpuResidency {
-    const GROUPS: IoReportGroups = IoReportGroups::GPU_STATS;
-
-    fn wants(channel: &RawChannel) -> bool {
-        channel.group == GroupId::GpuStats
-            && Subgroup::classify(&channel.subgroup) == Subgroup::GpuPerformanceStates
-            && channel.name == obfstr!("GPUPH")
-    }
-
     fn fold(
         &mut self,
-        channel: &RawChannel,
+        channel: Channel,
+        raw: &RawChannel,
         frequencies: Option<&FrequencyTables<'_>>,
     ) {
-        let Some(freq) = frequencies else { return };
+        let (Channel::GpuState, Some(freq)) = (channel, frequencies) else {
+            return;
+        };
         if freq.gpu.len() <= 1 {
             return;
         }
-        let (frequency, usage) = calculate_frequency(&channel.states, &freq.gpu[1..]);
+        let (frequency, usage) = calculate_frequency(&raw.states, &freq.gpu[1..]);
         self.frequency = frequency;
         self.usage = usage;
     }

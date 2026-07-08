@@ -1,7 +1,4 @@
-use obfstr::obfstr;
-
-use super::{ChannelFold, FrequencyTables, GroupId, RawChannel};
-use crate::sys::ioreport::IoReportGroups;
+use super::{Channel, ChannelFold, FrequencyTables, Rail, RawChannel};
 
 #[derive(Default, Clone, Copy)]
 pub struct EnergyTotals {
@@ -11,42 +8,23 @@ pub struct EnergyTotals {
     pub(crate) ram: f64,
 }
 
-impl EnergyTotals {
-    pub(crate) fn accumulate(
-        &mut self,
-        name: &str,
-        value: i64,
-        unit: &str,
-    ) {
-        let joules = joules(value, unit);
-        if name == obfstr!("GPU Energy") {
-            self.gpu += joules;
-        } else if name.ends_with(obfstr!("CPU Energy")) {
-            self.cpu += joules;
-        } else if name.starts_with(obfstr!("ANE")) {
-            self.ane += joules;
-        } else if name.starts_with(obfstr!("DRAM"))
-            || name.starts_with(obfstr!("DCS"))
-            || name.starts_with(obfstr!("AMCC"))
-        {
-            self.ram += joules;
-        }
-    }
-}
-
 impl ChannelFold for EnergyTotals {
-    const GROUPS: IoReportGroups = IoReportGroups::ENERGY_MODEL;
-
-    fn wants(channel: &RawChannel) -> bool {
-        channel.group == GroupId::EnergyModel
-    }
-
     fn fold(
         &mut self,
-        channel: &RawChannel,
+        channel: Channel,
+        raw: &RawChannel,
         _frequencies: Option<&FrequencyTables<'_>>,
     ) {
-        self.accumulate(&channel.name, channel.integer_value, &channel.unit);
+        let Channel::EnergyRail(rail) = channel else {
+            return;
+        };
+        let joules = joules(raw.integer_value, &raw.unit);
+        match rail {
+            Rail::Cpu => self.cpu += joules,
+            Rail::Gpu => self.gpu += joules,
+            Rail::Ane => self.ane += joules,
+            Rail::Ram => self.ram += joules,
+        }
     }
 }
 

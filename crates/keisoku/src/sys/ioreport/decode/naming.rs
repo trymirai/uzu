@@ -26,3 +26,13 @@ pub(crate) fn dram_flow(channel: &str) -> Option<DramFlow> {
         None
     }
 }
+
+pub(crate) fn dcs_flow(aggregate: &str) -> Option<DramFlow> {
+    if aggregate == obfstr!("DCS RD") {
+        Some(DramFlow::Read)
+    } else if aggregate == obfstr!("DCS WR") {
+        Some(DramFlow::Write)
+    } else {
+        None
+    }
+}

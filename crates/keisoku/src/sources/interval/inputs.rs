@@ -1,9 +1,6 @@
 use bitflags::bitflags;
 
-use crate::sys::ioreport::{
-    IoReportGroups,
-    decode::{AneActivity, ChannelFold, CpuResidency, DramBandwidth, EnergyTotals, GpuResidency},
-};
+use crate::sys::ioreport::{IoReportGroups, decode::Channel};
 
 bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -21,21 +18,35 @@ impl IntervalInputs {
     pub(crate) fn ioreport_groups(self) -> IoReportGroups {
         let mut groups = IoReportGroups::empty();
         if self.contains(Self::ENERGY_RAILS) {
-            groups |= EnergyTotals::GROUPS;
+            groups |= IoReportGroups::ENERGY_MODEL;
         }
         if self.contains(Self::CPU_RESIDENCY) {
-            groups |= CpuResidency::GROUPS;
+            groups |= IoReportGroups::CPU_STATS;
         }
         if self.contains(Self::GPU_RESIDENCY) {
-            groups |= GpuResidency::GROUPS;
+            groups |= IoReportGroups::GPU_STATS;
         }
         if self.contains(Self::ANE_ACTIVITY) {
-            groups |= AneActivity::GROUPS;
+            groups |= IoReportGroups::PMP;
         }
         if self.contains(Self::DRAM_BANDWIDTH) {
-            groups |= DramBandwidth::GROUPS;
+            groups |= IoReportGroups::AMC_STATS | IoReportGroups::PMP;
         }
         groups
+    }
+
+    pub(crate) fn wants(
+        self,
+        channel: Channel,
+    ) -> bool {
+        let flag = match channel {
+            Channel::EnergyRail(_) => Self::ENERGY_RAILS,
+            Channel::CpuCluster(_) => Self::CPU_RESIDENCY,
+            Channel::GpuState => Self::GPU_RESIDENCY,
+            Channel::AneBandwidth => Self::ANE_ACTIVITY,
+            Channel::DramBytes(_) | Channel::DramHistogram(_) => Self::DRAM_BANDWIDTH,
+        };
+        self.contains(flag)
     }
 
     pub(crate) fn needs_frequencies(self) -> bool {

@@ -1,7 +1,4 @@
-use obfstr::obfstr;
-
-use super::{ChannelFold, FrequencyTables, GroupId, RawChannel, Subgroup, calculate_frequency};
-use crate::sys::ioreport::IoReportGroups;
+use super::{Channel, ChannelFold, Cluster, FrequencyTables, RawChannel, calculate_frequency};
 
 #[derive(Default, Clone)]
 pub(crate) struct CpuResidency {
@@ -10,26 +7,18 @@ pub(crate) struct CpuResidency {
 }
 
 impl ChannelFold for CpuResidency {
-    const GROUPS: IoReportGroups = IoReportGroups::CPU_STATS;
-
-    fn wants(channel: &RawChannel) -> bool {
-        channel.group == GroupId::CpuStats
-            && Subgroup::classify(&channel.subgroup) == Subgroup::CpuCorePerformanceStates
-            && (channel.name.starts_with(obfstr!("PCPU"))
-                || channel.name.starts_with(obfstr!("ECPU"))
-                || channel.name.starts_with(obfstr!("MCPU")))
-    }
-
     fn fold(
         &mut self,
-        channel: &RawChannel,
+        channel: Channel,
+        raw: &RawChannel,
         frequencies: Option<&FrequencyTables<'_>>,
     ) {
-        let Some(freq) = frequencies else { return };
-        if channel.name.starts_with(obfstr!("PCPU")) {
-            self.pcpu.push(calculate_frequency(&channel.states, freq.pcpu));
-        } else if channel.name.starts_with(obfstr!("ECPU")) || channel.name.starts_with(obfstr!("MCPU")) {
-            self.ecpu.push(calculate_frequency(&channel.states, freq.ecpu));
+        let (Channel::CpuCluster(cluster), Some(freq)) = (channel, frequencies) else {
+            return;
+        };
+        match cluster {
+            Cluster::Performance => self.pcpu.push(calculate_frequency(&raw.states, freq.pcpu)),
+            Cluster::Efficiency => self.ecpu.push(calculate_frequency(&raw.states, freq.ecpu)),
         }
     }
 }

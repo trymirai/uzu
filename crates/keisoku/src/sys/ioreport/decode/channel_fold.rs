@@ -1,14 +1,10 @@
-use super::{FrequencyTables, RawChannel};
-use crate::sys::ioreport::IoReportGroups;
+use super::{Channel, FrequencyTables, RawChannel};
 
 pub(crate) trait ChannelFold {
-    const GROUPS: IoReportGroups;
-
-    fn wants(channel: &RawChannel) -> bool;
-
     fn fold(
         &mut self,
-        channel: &RawChannel,
+        channel: Channel,
+        raw: &RawChannel,
         frequencies: Option<&FrequencyTables<'_>>,
     );
 }

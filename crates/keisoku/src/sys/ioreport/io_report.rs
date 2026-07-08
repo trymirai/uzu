@@ -1,7 +1,10 @@
 use super::{
     IoReportFunctions, channel::for_each_channel, raw_energy_sample::RawEnergySample, subscription::Subscription,
 };
-use crate::sys::ioreport::{IoReportGroups, decode::RawChannel};
+use crate::sys::ioreport::{
+    IoReportGroups,
+    decode::{Channel, RawChannel},
+};
 
 pub(crate) struct IoReport {
     functions: &'static IoReportFunctions,
@@ -28,8 +31,8 @@ impl IoReport {
         &self,
         begin: &RawEnergySample,
         end: &RawEnergySample,
-        wants: impl Fn(&RawChannel) -> bool,
-        mut visit: impl FnMut(&RawChannel),
+        wants: impl Fn(Channel) -> bool,
+        mut visit: impl FnMut(Channel, &RawChannel),
     ) {
         let Some(delta) = self.functions.create_samples_delta(&begin.0, &end.0) else {
             return;

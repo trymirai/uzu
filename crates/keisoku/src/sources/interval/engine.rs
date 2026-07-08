@@ -6,8 +6,8 @@ use crate::{
     sys::ioreport::{
         IoReport, IoReportGroups, RawEnergySample,
         decode::{
-            AneActivity, ChannelFold, CpuResidency, DramBandwidth, EnergyTotals, FrequencyTables, GpuResidency,
-            RawChannel,
+            AneActivity, Channel, ChannelFold, CpuResidency, DramBandwidth, EnergyTotals, FrequencyTables,
+            GpuResidency, RawChannel,
         },
     },
 };
@@ -99,19 +99,13 @@ impl IntervalEngine {
             ioreport.for_each_channel(
                 begin,
                 end,
-                |channel| {
-                    (self.inputs.contains(IntervalInputs::ENERGY_RAILS) && EnergyTotals::wants(channel))
-                        || (self.inputs.contains(IntervalInputs::CPU_RESIDENCY) && CpuResidency::wants(channel))
-                        || (self.inputs.contains(IntervalInputs::GPU_RESIDENCY) && GpuResidency::wants(channel))
-                        || (self.inputs.contains(IntervalInputs::ANE_ACTIVITY) && AneActivity::wants(channel))
-                        || (self.inputs.contains(IntervalInputs::DRAM_BANDWIDTH) && DramBandwidth::wants(channel))
-                },
-                |channel| {
-                    fold(&mut energy, channel, frequencies.as_ref());
-                    fold(&mut cpu, channel, frequencies.as_ref());
-                    fold(&mut gpu, channel, frequencies.as_ref());
-                    fold(&mut ane, channel, frequencies.as_ref());
-                    fold(&mut bandwidth, channel, frequencies.as_ref());
+                |channel| self.inputs.wants(channel),
+                |channel, raw| {
+                    fold(&mut energy, channel, raw, frequencies.as_ref());
+                    fold(&mut cpu, channel, raw, frequencies.as_ref());
+                    fold(&mut gpu, channel, raw, frequencies.as_ref());
+                    fold(&mut ane, channel, raw, frequencies.as_ref());
+                    fold(&mut bandwidth, channel, raw, frequencies.as_ref());
                 },
             );
         }
@@ -130,13 +124,12 @@ impl IntervalEngine {
 
 fn fold<T: ChannelFold>(
     accumulator: &mut Option<T>,
-    channel: &RawChannel,
+    channel: Channel,
+    raw: &RawChannel,
     frequencies: Option<&FrequencyTables<'_>>,
 ) {
-    if let Some(accumulator) = accumulator
-        && T::wants(channel)
-    {
-        accumulator.fold(channel, frequencies);
+    if let Some(accumulator) = accumulator {
+        accumulator.fold(channel, raw, frequencies);
     }
 }
 
