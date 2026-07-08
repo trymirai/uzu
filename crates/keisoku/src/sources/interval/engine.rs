@@ -96,18 +96,13 @@ impl IntervalEngine {
         if let (Some(ioreport), Some(begin), Some(end)) =
             (self.ioreport.as_ref(), reading.begin.as_ref(), reading.end.as_ref())
         {
-            ioreport.for_each_channel(
-                begin,
-                end,
-                |channel| self.inputs.wants(channel),
-                |channel, raw| {
-                    fold(&mut energy, channel, raw, frequencies.as_ref());
-                    fold(&mut cpu, channel, raw, frequencies.as_ref());
-                    fold(&mut gpu, channel, raw, frequencies.as_ref());
-                    fold(&mut ane, channel, raw, frequencies.as_ref());
-                    fold(&mut bandwidth, channel, raw, frequencies.as_ref());
-                },
-            );
+            ioreport.for_each_channel(begin, end, |channel, raw| {
+                fold(&mut energy, channel, raw, frequencies.as_ref());
+                fold(&mut cpu, channel, raw, frequencies.as_ref());
+                fold(&mut gpu, channel, raw, frequencies.as_ref());
+                fold(&mut ane, channel, raw, frequencies.as_ref());
+                fold(&mut bandwidth, channel, raw, frequencies.as_ref());
+            });
         }
 
         IntervalFrame {

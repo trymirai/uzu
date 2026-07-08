@@ -12,7 +12,6 @@ use crate::sys::{
 pub(super) fn for_each_channel(
     functions: &IoReportFunctions,
     delta: &CFDictionary,
-    wants: impl Fn(Channel) -> bool,
     visit: &mut impl FnMut(Channel, &RawChannel),
 ) {
     let Some(channels) = dictionary_get::<CFArray>(delta, obfstr!("IOReportChannels")) else {
@@ -20,7 +19,7 @@ pub(super) fn for_each_channel(
     };
     let channels: CFRetained<CFArray<CFType>> = unsafe { CFRetained::from_raw(CFRetained::into_raw(channels).cast()) };
     for channel in channels.iter() {
-        if let Some((classified, decoded)) = decode_channel(functions, &channel, &wants) {
+        if let Some((classified, decoded)) = decode_channel(functions, &channel) {
             visit(classified, &decoded);
         }
     }
@@ -28,11 +27,11 @@ pub(super) fn for_each_channel(
 
 /// Classify a channel from its header, then decode only the payload the classified
 /// channel needs. The residency states (the expensive part) are read only after
-/// `classify` succeeds and `wants` accepts the channel.
+/// `classify` recognizes the channel; unrecognized channels are dropped here, and
+/// which recognized channels are consumed is decided by the active accumulators.
 fn decode_channel(
     functions: &IoReportFunctions,
     channel: &CFType,
-    wants: &impl Fn(Channel) -> bool,
 ) -> Option<(Channel, RawChannel)> {
     let item: *const c_void = core::ptr::from_ref(channel).cast();
     let group = GroupId::classify(&cf_string_to_string(unsafe { (functions.channel_get_group)(item) }));
@@ -50,9 +49,6 @@ fn decode_channel(
     }
 
     let classified = Channel::classify(&decoded)?;
-    if !wants(classified) {
-        return None;
-    }
 
     match classified {
         Channel::EnergyRail(_) => {

@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 
-use crate::sys::ioreport::{IoReportGroups, decode::Channel};
+use crate::sys::ioreport::IoReportGroups;
 
 bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -33,20 +33,6 @@ impl IntervalInputs {
             groups |= IoReportGroups::AMC_STATS | IoReportGroups::PMP;
         }
         groups
-    }
-
-    pub(crate) fn wants(
-        self,
-        channel: Channel,
-    ) -> bool {
-        let flag = match channel {
-            Channel::EnergyRail(_) => Self::ENERGY_RAILS,
-            Channel::CpuCluster(_) => Self::CPU_RESIDENCY,
-            Channel::GpuState => Self::GPU_RESIDENCY,
-            Channel::AneBandwidth => Self::ANE_ACTIVITY,
-            Channel::DramBytes(_) | Channel::DramHistogram(_) => Self::DRAM_BANDWIDTH,
-        };
-        self.contains(flag)
     }
 
     pub(crate) fn needs_frequencies(self) -> bool {

@@ -25,19 +25,18 @@ impl IoReport {
         self.subscription.snapshot(self.functions).map(RawEnergySample)
     }
 
-    /// Diff the begin/end snapshots and hand each decoded channel to `visit` in a
-    /// single pass — no intermediate collection.
+    /// Diff the begin/end snapshots and hand each recognized channel to `visit` in
+    /// a single pass — no intermediate collection.
     pub(crate) fn for_each_channel(
         &self,
         begin: &RawEnergySample,
         end: &RawEnergySample,
-        wants: impl Fn(Channel) -> bool,
         mut visit: impl FnMut(Channel, &RawChannel),
     ) {
         let Some(delta) = self.functions.create_samples_delta(&begin.0, &end.0) else {
             return;
         };
-        for_each_channel(self.functions, &delta, wants, &mut visit);
+        for_each_channel(self.functions, &delta, &mut visit);
     }
 }
 
@@ -65,7 +64,6 @@ mod tests {
         report.for_each_channel(
             &begin,
             &end,
-            |_channel| true,
             |channel, raw| {
                 if let Channel::EnergyRail(_) = channel {
                     energy_channels += 1;
