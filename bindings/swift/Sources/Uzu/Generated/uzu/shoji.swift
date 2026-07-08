@@ -1173,7 +1173,6 @@ public struct ChatReplyPowerStats: Equatable, Hashable, Codable {
     public var samplesCount: Int64
     public var averageCpuWatts: Double
     public var averageGpuWatts: Double
-    public var averageGpuSramWatts: Double
     public var averageAneWatts: Double
     public var averageRamWatts: Double
     public var averageTotalWatts: Double
@@ -1183,11 +1182,10 @@ public struct ChatReplyPowerStats: Equatable, Hashable, Codable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(samplesCount: Int64, averageCpuWatts: Double, averageGpuWatts: Double, averageGpuSramWatts: Double, averageAneWatts: Double, averageRamWatts: Double, averageTotalWatts: Double, averagePackageWatts: Double, maxPackageWatts: Double, energyJoules: Double) {
+    public init(samplesCount: Int64, averageCpuWatts: Double, averageGpuWatts: Double, averageAneWatts: Double, averageRamWatts: Double, averageTotalWatts: Double, averagePackageWatts: Double, maxPackageWatts: Double, energyJoules: Double) {
         self.samplesCount = samplesCount
         self.averageCpuWatts = averageCpuWatts
         self.averageGpuWatts = averageGpuWatts
-        self.averageGpuSramWatts = averageGpuSramWatts
         self.averageAneWatts = averageAneWatts
         self.averageRamWatts = averageRamWatts
         self.averageTotalWatts = averageTotalWatts
@@ -1215,7 +1213,6 @@ public struct FfiConverterTypeChatReplyPowerStats: FfiConverterRustBuffer {
                 samplesCount: FfiConverterInt64.read(from: &buf), 
                 averageCpuWatts: FfiConverterDouble.read(from: &buf), 
                 averageGpuWatts: FfiConverterDouble.read(from: &buf), 
-                averageGpuSramWatts: FfiConverterDouble.read(from: &buf), 
                 averageAneWatts: FfiConverterDouble.read(from: &buf), 
                 averageRamWatts: FfiConverterDouble.read(from: &buf), 
                 averageTotalWatts: FfiConverterDouble.read(from: &buf), 
@@ -1229,7 +1226,6 @@ public struct FfiConverterTypeChatReplyPowerStats: FfiConverterRustBuffer {
         FfiConverterInt64.write(value.samplesCount, into: &buf)
         FfiConverterDouble.write(value.averageCpuWatts, into: &buf)
         FfiConverterDouble.write(value.averageGpuWatts, into: &buf)
-        FfiConverterDouble.write(value.averageGpuSramWatts, into: &buf)
         FfiConverterDouble.write(value.averageAneWatts, into: &buf)
         FfiConverterDouble.write(value.averageRamWatts, into: &buf)
         FfiConverterDouble.write(value.averageTotalWatts, into: &buf)

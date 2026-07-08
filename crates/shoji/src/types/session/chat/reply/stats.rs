@@ -6,7 +6,6 @@ pub struct ChatReplyPowerStats {
     pub samples_count: i64,
     pub average_cpu_watts: f64,
     pub average_gpu_watts: f64,
-    pub average_gpu_sram_watts: f64,
     pub average_ane_watts: f64,
     pub average_ram_watts: f64,
     pub average_total_watts: f64,
