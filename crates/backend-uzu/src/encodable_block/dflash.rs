@@ -60,7 +60,7 @@ pub enum DFlashDraftNewError<B: Backend> {
 
 fn plain_norm<B: Backend>(
     context: &B::Context,
-    dim: usize,
+    model_dim: usize,
     config: &NormalizationConfig,
     parameter_tree: &ParameterTree<B>,
     data_type: DataType,
