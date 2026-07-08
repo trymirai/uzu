@@ -6,7 +6,7 @@ fn available_telemetry() {
     use keisoku::{
         Bandwidth, Battery, Chip, CpuUsage, CurrentSensors, EfficiencyCores, Fans, GpuCores, GpuUsage, Instant,
         Interval, Memory, NeuralEngine, PerformanceCores, Power, RailPower, RamTotal, Select, TemperatureSensors,
-        Temps, VoltageSensors,
+        VoltageSensors,
     };
 
     let instant_values = Instant::<
@@ -19,7 +19,6 @@ fn available_telemetry() {
             Memory,
             Fans,
             Battery,
-            Temps,
             TemperatureSensors,
             VoltageSensors,
             CurrentSensors,
@@ -35,7 +34,6 @@ fn available_telemetry() {
     let memory = instant_values.get::<Memory>();
     let fans = instant_values.get::<Fans>();
     let battery = instant_values.get::<Battery>();
-    let temperatures = instant_values.get::<Temps>();
     let sensors = instant_values.get::<TemperatureSensors>();
     let voltage = instant_values.get::<VoltageSensors>();
     let current = instant_values.get::<CurrentSensors>();
@@ -86,14 +84,6 @@ fn available_telemetry() {
             memory.ram_usage.value() as f64 / 1e9,
             memory.ram_total.value() as f64 / 1e9,
         );
-    }
-    if let Some(temperatures) = &temperatures {
-        if let Some(cpu) = temperatures.cpu_average {
-            println!("  cpu temp {:.1} C", cpu.value());
-        }
-        if let Some(gpu) = temperatures.gpu_average {
-            println!("  gpu temp {:.1} C", gpu.value());
-        }
     }
     for sensor in sensors.iter().take(24) {
         println!("  {:<26} {:>8.2}  [{}]", sensor.name, sensor.value, sensor.component);
