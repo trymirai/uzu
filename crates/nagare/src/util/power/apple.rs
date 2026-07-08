@@ -49,8 +49,6 @@ impl PowerRecorder for ApplePowerRecorder {
             average_ane_watts: average_power.ane.value() as f64,
             average_ram_watts: average_power.ram.value() as f64,
             average_total_watts: total_watts,
-            average_package_watts: total_watts,
-            max_package_watts: total_watts,
             energy_joules: energy.total().value() as f64,
         })
     }

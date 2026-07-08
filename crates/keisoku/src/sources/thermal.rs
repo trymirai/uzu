@@ -1,6 +1,5 @@
 use crate::providers::data::ThermalPressure;
 
-#[cfg(target_os = "macos")]
 pub(crate) fn read_thermal() -> Option<ThermalPressure> {
     let level = crate::sys::read_thermal_pressure()?;
     Some(match level {
@@ -10,9 +9,4 @@ pub(crate) fn read_thermal() -> Option<ThermalPressure> {
         crate::sys::ThermalPressureLevel::Trapping => ThermalPressure::Trapping,
         crate::sys::ThermalPressureLevel::Sleeping => ThermalPressure::Sleeping,
     })
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn read_thermal() -> Option<ThermalPressure> {
-    None
 }

@@ -1176,21 +1176,17 @@ public struct ChatReplyPowerStats: Equatable, Hashable, Codable {
     public var averageAneWatts: Double
     public var averageRamWatts: Double
     public var averageTotalWatts: Double
-    public var averagePackageWatts: Double
-    public var maxPackageWatts: Double
     public var energyJoules: Double
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(samplesCount: Int64, averageCpuWatts: Double, averageGpuWatts: Double, averageAneWatts: Double, averageRamWatts: Double, averageTotalWatts: Double, averagePackageWatts: Double, maxPackageWatts: Double, energyJoules: Double) {
+    public init(samplesCount: Int64, averageCpuWatts: Double, averageGpuWatts: Double, averageAneWatts: Double, averageRamWatts: Double, averageTotalWatts: Double, energyJoules: Double) {
         self.samplesCount = samplesCount
         self.averageCpuWatts = averageCpuWatts
         self.averageGpuWatts = averageGpuWatts
         self.averageAneWatts = averageAneWatts
         self.averageRamWatts = averageRamWatts
         self.averageTotalWatts = averageTotalWatts
-        self.averagePackageWatts = averagePackageWatts
-        self.maxPackageWatts = maxPackageWatts
         self.energyJoules = energyJoules
     }
 
@@ -1216,8 +1212,6 @@ public struct FfiConverterTypeChatReplyPowerStats: FfiConverterRustBuffer {
                 averageAneWatts: FfiConverterDouble.read(from: &buf), 
                 averageRamWatts: FfiConverterDouble.read(from: &buf), 
                 averageTotalWatts: FfiConverterDouble.read(from: &buf), 
-                averagePackageWatts: FfiConverterDouble.read(from: &buf), 
-                maxPackageWatts: FfiConverterDouble.read(from: &buf), 
                 energyJoules: FfiConverterDouble.read(from: &buf)
         )
     }
@@ -1229,8 +1223,6 @@ public struct FfiConverterTypeChatReplyPowerStats: FfiConverterRustBuffer {
         FfiConverterDouble.write(value.averageAneWatts, into: &buf)
         FfiConverterDouble.write(value.averageRamWatts, into: &buf)
         FfiConverterDouble.write(value.averageTotalWatts, into: &buf)
-        FfiConverterDouble.write(value.averagePackageWatts, into: &buf)
-        FfiConverterDouble.write(value.maxPackageWatts, into: &buf)
         FfiConverterDouble.write(value.energyJoules, into: &buf)
     }
 }

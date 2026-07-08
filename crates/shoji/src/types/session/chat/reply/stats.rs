@@ -9,8 +9,6 @@ pub struct ChatReplyPowerStats {
     pub average_ane_watts: f64,
     pub average_ram_watts: f64,
     pub average_total_watts: f64,
-    pub average_package_watts: f64,
-    pub max_package_watts: f64,
     pub energy_joules: f64,
 }
 

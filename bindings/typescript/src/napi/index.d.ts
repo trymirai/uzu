@@ -273,10 +273,8 @@ export declare class ChatReplyPowerStats {
   averageAneWatts: number
   averageRamWatts: number
   averageTotalWatts: number
-  averagePackageWatts: number
-  maxPackageWatts: number
   energyJoules: number
-  constructor(samplesCount: number, averageCpuWatts: number, averageGpuWatts: number, averageAneWatts: number, averageRamWatts: number, averageTotalWatts: number, averagePackageWatts: number, maxPackageWatts: number, energyJoules: number)
+  constructor(samplesCount: number, averageCpuWatts: number, averageGpuWatts: number, averageAneWatts: number, averageRamWatts: number, averageTotalWatts: number, energyJoules: number)
 }
 
 export declare class ChatReplyStats {
