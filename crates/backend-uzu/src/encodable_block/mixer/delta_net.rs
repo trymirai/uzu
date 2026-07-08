@@ -22,7 +22,7 @@ use crate::{
 
 pub mod chunked_prefill;
 
-use chunked_prefill::DeltaNetChunkedPrefill;
+use chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs};
 
 pub struct DeltaNetState<B: Backend> {
     conv_state: Allocation<B>,
@@ -344,7 +344,22 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 encoder,
             );
             if let Some(chunked) = self.chunked.as_ref().filter(|chunked| chunked.should_use(batch_dim.size())) {
-                chunked.encode(self, &in_projected, state, &mut delta_output, batch_dim.size(), encoder)?;
+                chunked.encode(
+                    DeltaNetChunkedPrefillArgs {
+                        in_projected: &in_projected,
+                        a_log: &self.a_log,
+                        dt_bias: &self.dt_bias,
+                        ssm_state: &mut state.ssm_state,
+                        delta_output: &mut delta_output,
+                        num_heads: self.num_heads as u32,
+                        num_groups: self.num_groups as u32,
+                        value_head_dim: self.value_head_dim as u32,
+                        key_dim: self.key_dim as u32,
+                        value_dim: self.value_dim as u32,
+                        suffix_len: batch_dim.size(),
+                    },
+                    encoder,
+                )?;
             } else {
                 let mut prep_q_norm =
                     encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.key_dim], DataType::F32))?;

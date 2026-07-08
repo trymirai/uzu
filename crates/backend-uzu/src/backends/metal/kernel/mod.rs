@@ -9,6 +9,7 @@ use crate::backends::{
 pub mod attention;
 #[path = "gdn/tree_verify/build_tree_out_dispatch_helper.rs"]
 mod build_tree_out_dispatch_helper;
+pub mod delta_net;
 pub mod matmul;
 #[path = "gdn/tree_verify/tree_update_solve_dispatch_helper.rs"]
 mod tree_update_solve_dispatch_helper;
@@ -24,7 +25,6 @@ impl Kernels for MetalKernels {
 
     autogen_kernels!();
     type AttentionGemmCore = attention::AttentionGemmMetalCore;
-    type DeltaNetChunkedPrefill =
-        crate::encodable_block::mixer::delta_net::chunked_prefill::MetalDeltaNetChunkedPrefill;
+    type DeltaNetChunkedPrefill = delta_net::MetalDeltaNetChunkedPrefill;
     type MatmulKernel = matmul::MatmulMetalKernel;
 }
