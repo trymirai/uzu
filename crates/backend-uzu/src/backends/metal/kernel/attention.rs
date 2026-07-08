@@ -1,6 +1,6 @@
 use std::{
     cell::{RefCell, RefMut},
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
 };
 
 use crate::{
@@ -60,7 +60,7 @@ impl AttentionGemmMetalCore {
         key: AttentionGemmKey,
     ) -> Result<RefMut<'_, AttentionGemmMetalKernel>, MetalError> {
         let mut kernels = self.kernels.borrow_mut();
-        if !kernels.contains_key(&key) {
+        if let Entry::Vacant(entry) = kernels.entry(key) {
             let bk = if key.use_mxu {
                 32
             } else {
@@ -80,7 +80,7 @@ impl AttentionGemmMetalCore {
                 self.is_sliding_window,
                 self.has_sinks,
             )?;
-            kernels.insert(key, kernel);
+            entry.insert(kernel);
         }
         Ok(RefMut::map(kernels, |kernels| kernels.get_mut(&key).expect("kernel was just initialized")))
     }
