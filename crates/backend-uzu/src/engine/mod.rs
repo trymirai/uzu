@@ -7,6 +7,7 @@ use crate::backends::common::{Backend, Context};
 pub mod classifier_model;
 pub mod dflash_speculator;
 pub mod language_model;
+pub mod weaver_speculator;
 
 pub struct Engine<B: Backend> {
     context: Rc<B::Context>,

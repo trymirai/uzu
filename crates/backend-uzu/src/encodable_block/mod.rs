@@ -12,3 +12,4 @@ pub mod prediction_head;
 pub mod sampling;
 pub mod transformer;
 pub mod transformer_layer;
+pub(crate) mod weaver;

@@ -7,3 +7,4 @@ pub mod prompt_lookup_speculator;
 pub mod repeat_speculator;
 pub mod speculator;
 pub mod token_finder;
+pub mod weaver_speculator;
