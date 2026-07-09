@@ -17,6 +17,7 @@ __all__ = [
     "ChatReplyConfig",
     "ChatReplyFinishReason",
     "ChatReplyPowerStats",
+    "ChatReplySpeculatorStats",
     "ChatReplyStats",
     "ChatRole",
     "ChatSession",
@@ -344,6 +345,12 @@ class ChatReplyPowerStats:
     def __new__(cls, samples_count: builtins.int, average_cpu_watts: builtins.float, average_gpu_watts: builtins.float, average_ane_watts: builtins.float, average_ram_watts: builtins.float, average_total_watts: builtins.float, energy_joules: builtins.float) -> ChatReplyPowerStats: ...
 
 @typing.final
+class ChatReplySpeculatorStats:
+    @property
+    def tokens_per_forward_pass(self) -> builtins.float: ...
+    def __new__(cls, tokens_per_forward_pass: builtins.float) -> ChatReplySpeculatorStats: ...
+
+@typing.final
 class ChatReplyStats:
     @property
     def duration(self) -> builtins.float: ...
@@ -360,10 +367,12 @@ class ChatReplyStats:
     @property
     def memory_used_bytes(self) -> typing.Optional[builtins.int]: ...
     @property
+    def speculator_stats(self) -> typing.Optional[ChatReplySpeculatorStats]: ...
+    @property
     def power_stats(self) -> typing.Optional[ChatReplyPowerStats]: ...
     @property
     def tokens_count(self) -> typing.Optional[builtins.int]: ...
-    def __new__(cls, duration: builtins.float, time_to_first_token: typing.Optional[builtins.float], prefill_tokens_per_second: typing.Optional[builtins.float], generate_tokens_per_second: typing.Optional[builtins.float], tokens_count_input: typing.Optional[builtins.int], tokens_count_output: typing.Optional[builtins.int], memory_used_bytes: typing.Optional[builtins.int], power_stats: typing.Optional[ChatReplyPowerStats]) -> ChatReplyStats: ...
+    def __new__(cls, duration: builtins.float, time_to_first_token: typing.Optional[builtins.float], prefill_tokens_per_second: typing.Optional[builtins.float], generate_tokens_per_second: typing.Optional[builtins.float], tokens_count_input: typing.Optional[builtins.int], tokens_count_output: typing.Optional[builtins.int], memory_used_bytes: typing.Optional[builtins.int], speculator_stats: typing.Optional[ChatReplySpeculatorStats], power_stats: typing.Optional[ChatReplyPowerStats]) -> ChatReplyStats: ...
 
 class ChatRole:
     @typing.final
