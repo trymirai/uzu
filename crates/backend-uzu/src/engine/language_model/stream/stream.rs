@@ -4,6 +4,8 @@ use std::{
     rc::Rc,
 };
 
+use shoji::traits::backend::chat_token::TokenStreamMetrics;
+
 use crate::{
     backends::common::{
         Allocation, AllocationPool, AllocationType, Backend, Context, Encoder, Pending,
@@ -80,6 +82,7 @@ pub struct LanguageModelStream<'a, B: Backend> {
     allocation_pool: Rc<AllocationPool<B>>,
     context_ring: Option<Allocation<B>>,
     decoding_state: DecodingState<B>,
+    metrics: TokenStreamMetrics,
 }
 
 impl<'a, B: Backend> LanguageModelStream<'a, B> {
@@ -132,6 +135,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             } else {
                 None
             };
+
+        let mut metrics = TokenStreamMetrics::default();
 
         let decoding_state = if !input.is_empty() {
             model_state.last_output_token.take();
@@ -249,6 +254,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
             let pending = Box::new([encoder.end_encoding().submit()]);
 
+            metrics.num_forward_passes += 1;
+            metrics.num_tokens_prefilled += input.len();
+            metrics.num_tokens_proposed += 1;
+            metrics.num_tokens_accepted += 1;
+
             DecodingState::ForwardPassPending(DecodingStatePending {
                 input_trie: TrieNode::new(0, 0),
                 full_accept: true,
@@ -269,6 +279,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             allocation_pool,
             context_ring,
             decoding_state,
+            metrics,
         })
     }
 
@@ -282,10 +293,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     if let Some(grammar) = self.options.grammar.as_deref_mut() {
                         let _ = grammar.accept_token(seed_token); // TODO: this should not be ignored
                     }
+                    self.metrics.num_tokens_returned += 1;
                     (ForwardPassChaining::Constant(seed_token), None)
                 },
                 DecodingState::ForwardPassPending(forward_pass_pending) => {
                     if forward_pass_pending.full_accept {
+                        self.metrics.num_tokens_returned += 1;
                         (ForwardPassChaining::InFlight(forward_pass_pending), None)
                     } else {
                         for pending in forward_pass_pending.pending {
@@ -301,6 +314,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             .input_trie
                             .linearize()
                             .accept(&sampled_tokens, self.options.grammar.as_deref_mut())?;
+                        self.metrics.num_tokens_accepted += full.len();
                         self.decoding_state = DecodingState::Accepting {
                             full,
                             num_accepted: 0,
@@ -313,6 +327,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     num_accepted,
                 } => {
                     let output_token_id = full[num_accepted].2;
+
+                    self.metrics.num_tokens_returned += 1;
 
                     if num_accepted < full.len() - 1 {
                         self.decoding_state = DecodingState::Accepting {
@@ -516,6 +532,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         pending.push(encoder.end_encoding().submit());
 
+        self.metrics.num_forward_passes += 1;
+        self.metrics.num_tokens_proposed += input_flat_trie.len();
+        if full_accept {
+            self.metrics.num_tokens_accepted += input_flat_trie.len();
+        }
+
         self.decoding_state = DecodingState::ForwardPassPending(DecodingStatePending {
             input_trie,
             full_accept,
@@ -524,6 +546,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         });
 
         Ok(Some(prev_output.resolve(&mut self.model_state.tokens, self.options.grammar.as_deref_mut())?))
+    }
+
+    pub fn metrics(&self) -> &TokenStreamMetrics {
+        &self.metrics
     }
 }
 

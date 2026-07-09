@@ -52,15 +52,37 @@ impl<B: Backend> Engine<B> {
         &self,
         model_path: &Path,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
-        let context = self.context.clone();
-
         let config: LanguageModelConfig =
             serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
 
-        let data_type = DataType::BF16;
-
         let weights_file = File::open(model_path.join("model.safetensors"))?;
-        let weight_loader = ParameterLoader::new(&weights_file, context.as_ref())?;
+        let weight_loader = ParameterLoader::new(&weights_file, &*self.context)?;
+
+        self.build_language_model(config, &weight_loader)
+    }
+
+    pub fn load_language_model_random(
+        &self,
+        config_path: &Path,
+        header_path: &Path,
+        seed: u64,
+    ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
+        let config: LanguageModelConfig = serde_json::from_reader(BufReader::new(File::open(config_path)?))?;
+
+        let header_file = File::open(header_path)?;
+        let weight_loader = ParameterLoader::new_random(&header_file, &*self.context, seed)?;
+
+        self.build_language_model(config, &weight_loader)
+    }
+
+    fn build_language_model(
+        &self,
+        config: LanguageModelConfig,
+        weight_loader: &ParameterLoader<B>,
+    ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
+        let context = self.context.clone();
+
+        let data_type = DataType::BF16;
 
         let decoder = Decoder::new(
             context.as_ref(),

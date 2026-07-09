@@ -1,4 +1,5 @@
 mod config;
+mod download_contents;
 mod error;
 pub mod types;
 
@@ -9,6 +10,7 @@ use std::{
 };
 
 pub use config::Config;
+pub use download_contents::DownloadContents;
 use download_manager::{FileCheck, FileDownloadManager, FileDownloadPhase};
 pub use error::StorageError;
 use futures_util::future::join_all;
@@ -268,7 +270,11 @@ impl Storage {
                 ModelReference::Mirai {
                     files,
                     ..
-                } => Ok(files.clone()),
+                } => Ok(files
+                    .iter()
+                    .filter(|file| self.config.download_contents.includes_file(&file.name))
+                    .cloned()
+                    .collect()),
                 ModelReference::HuggingFace {
                     ..
                 } => Err(StorageError::UnsupportedItem {

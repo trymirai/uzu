@@ -277,6 +277,11 @@ export declare class ChatReplyPowerStats {
   constructor(samplesCount: number, averageCpuWatts: number, averageGpuWatts: number, averageAneWatts: number, averageRamWatts: number, averageTotalWatts: number, energyJoules: number)
 }
 
+export declare class ChatReplySpeculatorStats {
+  tokensPerForwardPass: number
+  constructor(tokensPerForwardPass: number)
+}
+
 export declare class ChatReplyStats {
   duration: number
   timeToFirstToken?: number
@@ -285,8 +290,9 @@ export declare class ChatReplyStats {
   tokensCountInput?: number
   tokensCountOutput?: number
   memoryUsedBytes?: number
+  speculatorStats?: ChatReplySpeculatorStats
   powerStats?: ChatReplyPowerStats
-  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountOutput?: number, memoryUsedBytes?: number, powerStats?: ChatReplyPowerStats)
+  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountOutput?: number, memoryUsedBytes?: number, speculatorStats?: ChatReplySpeculatorStats, powerStats?: ChatReplyPowerStats)
   get tokensCount(): number | null
 }
 
