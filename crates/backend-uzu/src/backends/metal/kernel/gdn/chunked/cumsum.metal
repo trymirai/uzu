@@ -5,7 +5,7 @@
 using namespace metal;
 
 template <uint CHUNK_SIZE>
-VARIANTS(CHUNK_SIZE, 16, 32, 64)
+VARIANTS(CHUNK_SIZE, 32, 64)
 KERNEL(DeltaNetChunkedCumsum)(
     device const float* log_decay,
     device float* g_out,

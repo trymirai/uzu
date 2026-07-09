@@ -21,7 +21,7 @@ using namespace uzu::matmul;
 // it was removed to avoid the bf16-operand complexity.)
 template <uint HEAD_K_DIM, uint CHUNK_SIZE>
 VARIANTS(HEAD_K_DIM, 128)
-VARIANTS(CHUNK_SIZE, 16, 32, 64)
+VARIANTS(CHUNK_SIZE, 32, 64)
 KERNEL(DeltaNetChunkedGram)(
     device const float* q_norm,
     device const float* k_norm,
@@ -61,6 +61,10 @@ KERNEL(DeltaNetChunkedGram)(
   const uint col_token_base = chunk_token_base + col_base;
   const uint valid_rows = row_token_base < suffix_len ? min(tile_rows, suffix_len - row_token_base) : 0u;
   const uint valid_cols = col_token_base < suffix_len ? min(tile_cols, suffix_len - col_token_base) : 0u;
+  // Fully upper-causal tiles are zero and unused downstream.
+  if (valid_rows == 0 || valid_cols == 0 || col_base >= row_base + valid_rows) {
+    return;
+  }
 
   AccFragment kk_acc;
   AccFragment qk_acc;

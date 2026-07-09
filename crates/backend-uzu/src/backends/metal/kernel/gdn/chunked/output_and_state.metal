@@ -9,7 +9,7 @@
 using namespace metal;
 using namespace uzu::matmul;
 
-// Chunked Mode-L scan. T is the dense chunk inverse from DenseCausalInverse;
+// Chunked Mode-L scan. T is the dense chunk inverse from CausalInv;
 // scratch holds R and then Vnew. State and qk_scaled stay f32; dense T is bf16.
 #define OUTPUT_STATE_THREADS 128
 #define OUTPUT_STATE_NUM_SIMDGROUPS (OUTPUT_STATE_THREADS / METAL_SIMD_SIZE)
@@ -136,7 +136,9 @@ KERNEL(DeltaNetChunkedOutputAndState)(
       vnew_acc.clear();
       const device bfloat* t_head =
           t_mat + chunk_head_base * OUTPUT_STATE_CHUNK * OUTPUT_STATE_CHUNK + row_base * OUTPUT_STATE_CHUNK;
-      for (uint j0 = 0; j0 < OUTPUT_STATE_CHUNK; j0 += FR) {
+      // Skip fully upper-causal T tiles.
+      const uint causal_col_end = min(uint(OUTPUT_STATE_CHUNK), row_base + TOKEN_TILE);
+      for (uint j0 = 0; j0 < causal_col_end; j0 += FR) {
         LeftFragment t_frag;
         RightFragment r_frag;
         t_frag.load_from(lane, fragment_source(t_head + j0, int(OUTPUT_STATE_CHUNK)).bounded(valid_rows, FR));
@@ -178,7 +180,9 @@ KERNEL(DeltaNetChunkedOutputAndState)(
       });
 
       const uint qk_base = chunk_head_base * OUTPUT_STATE_CHUNK * OUTPUT_STATE_CHUNK + row_base * OUTPUT_STATE_CHUNK;
-      for (uint j0 = 0; j0 < OUTPUT_STATE_CHUNK; j0 += FR) {
+      // Skip fully upper-causal qk tiles.
+      const uint causal_col_end = min(uint(OUTPUT_STATE_CHUNK), row_base + TOKEN_TILE);
+      for (uint j0 = 0; j0 < causal_col_end; j0 += FR) {
         const uint valid_j = j0 < valid_tokens ? min(uint(FR), valid_tokens - j0) : 0u;
         LeftFragment a_frag;
         RightFragment v_frag;
