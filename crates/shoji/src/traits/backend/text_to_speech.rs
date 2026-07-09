@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{convert::Infallible, pin::Pin};
 
 use crate::{
     traits::backend::{Error, Instance as InstanceTrait},
@@ -9,6 +9,7 @@ pub type Config = ();
 pub type StreamConfig = ();
 pub type StreamInput = String;
 pub type StreamOutput = PcmBatch;
+pub type StreamMetrics = Option<Infallible>;
 
 pub trait Backend: Send + Sync {
     fn instance(
@@ -19,11 +20,21 @@ pub trait Backend: Send + Sync {
 }
 
 pub trait Instance:
-    InstanceTrait<StreamConfig = StreamConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
+    InstanceTrait<
+        StreamConfig = StreamConfig,
+        StreamInput = StreamInput,
+        StreamOutput = StreamOutput,
+        StreamMetrics = StreamMetrics,
+    >
 {
 }
 
 impl<T> Instance for T where
-    T: InstanceTrait<StreamConfig = StreamConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
+    T: InstanceTrait<
+            StreamConfig = StreamConfig,
+            StreamInput = StreamInput,
+            StreamOutput = StreamOutput,
+            StreamMetrics = StreamMetrics,
+        >
 {
 }

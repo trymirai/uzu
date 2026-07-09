@@ -7,11 +7,13 @@ use crate::{
         LanguageModel,
         grammar::{Grammar, GrammarError},
         state::LanguageModelState,
-        stream::stream::LanguageModelStream,
     },
     speculators::speculator::Speculator,
 };
-pub use crate::{encodable_block::sampling::SamplingMethod, trie::TrieCreationConfig};
+pub use crate::{
+    encodable_block::sampling::SamplingMethod, engine::language_model::stream::stream::LanguageModelStream,
+    trie::TrieCreationConfig,
+};
 
 mod stream;
 
@@ -57,8 +59,7 @@ impl<B: Backend> LanguageModel<B> {
         input: &[u64],
         state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions<'a>,
-    ) -> Result<impl Iterator<Item = Result<u64, LanguageModelStreamError<B>>> + Send + 'a, LanguageModelStreamError<B>>
-    {
+    ) -> Result<LanguageModelStream<'a, B>, LanguageModelStreamError<B>> {
         LanguageModelStream::new(self, input, state, options)
     }
 }

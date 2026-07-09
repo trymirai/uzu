@@ -8,13 +8,22 @@ use crate::{
 };
 
 pub enum TokenStreamOutput {
-    LimitReached,
-    PrefillStarted,
+    LimitReached, // This should be just end of stream
     Token(u64),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TokenStreamMetrics {
+    pub num_forward_passes: usize,
+    pub num_tokens_prefilled: usize,
+    pub num_tokens_proposed: usize,
+    pub num_tokens_accepted: usize,
+    pub num_tokens_returned: usize,
 }
 
 pub type StreamInput = Vec<u64>;
 pub type StreamOutput = TokenStreamOutput;
+pub type StreamMetrics = Option<TokenStreamMetrics>;
 
 pub trait Backend: Send + Sync {
     fn instance<'a>(
@@ -26,7 +35,12 @@ pub trait Backend: Send + Sync {
 }
 
 pub trait Instance:
-    InstanceTrait<StreamConfig = ChatReplyConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
+    InstanceTrait<
+        StreamConfig = ChatReplyConfig,
+        StreamInput = StreamInput,
+        StreamOutput = StreamOutput,
+        StreamMetrics = StreamMetrics,
+    >
 {
     fn max_context_length(&self) -> Option<usize>;
 
