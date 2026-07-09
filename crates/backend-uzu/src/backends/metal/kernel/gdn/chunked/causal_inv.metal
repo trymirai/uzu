@@ -10,8 +10,7 @@ using namespace uzu::matmul;
 #define DIAG_BLOCK_SIZE 16u
 
 // Materializes dense T = (I + A)^-1 as bf16 for output and state. This is block
-// forward substitution over a_packed plus the per-block inverses from
-// PackedAAndDiaInv.
+// forward substitution over a_packed plus the per-block inverses from ADiagInv.
 template <uint CHUNK_SIZE, uint BV>
 VARIANTS(CHUNK_SIZE, 32, 64)
 VARIANTS(BV, 16, 32)
