@@ -40,7 +40,7 @@ fn decode_channel(
         name: cf_string_to_string(unsafe { (functions.channel_get_channel_name)(item) }),
         ..Default::default()
     };
-    if matches!(group, GroupId::CpuStats | GroupId::GpuStats | GroupId::Pmp) {
+    if matches!(group, GroupId::Pmp) {
         decoded.subgroup = cf_string_to_string(unsafe { (functions.channel_get_subgroup)(item) });
     }
 
@@ -54,7 +54,7 @@ fn decode_channel(
         Channel::DramBytes(_) => {
             decoded.integer_value = unsafe { (functions.simple_get_integer_value)(item, 0) };
         },
-        Channel::CpuCluster(_) | Channel::GpuState | Channel::AneBandwidth | Channel::DramHistogram(_) => {
+        Channel::AneBandwidth | Channel::DramHistogram(_) => {
             decoded.states = decode_states(functions, item);
         },
     }

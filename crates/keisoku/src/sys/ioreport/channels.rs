@@ -14,8 +14,6 @@ impl Channels {
         let mut collected: Vec<CFRetained<CFMutableDictionary>> = Vec::with_capacity(5);
         for (flag, group, subgroup) in [
             (IoReportGroups::ENERGY_MODEL, obfstr!("Energy Model"), None::<&str>),
-            (IoReportGroups::CPU_STATS, obfstr!("CPU Stats"), Some(obfstr!("CPU Core Performance States"))),
-            (IoReportGroups::GPU_STATS, obfstr!("GPU Stats"), Some(obfstr!("GPU Performance States"))),
             (IoReportGroups::AMC_STATS, obfstr!("AMC Stats"), None),
             (IoReportGroups::PMP, obfstr!("PMP"), None),
         ] {

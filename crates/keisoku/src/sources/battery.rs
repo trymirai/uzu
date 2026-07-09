@@ -1,4 +1,4 @@
-use crate::providers::data::BatteryMetrics;
+use crate::metrics::BatteryMetrics;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn read_battery() -> Option<BatteryMetrics> {

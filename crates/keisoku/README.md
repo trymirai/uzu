@@ -1,34 +1,31 @@
 # keisoku
 
-System telemetry for Apple platforms — power, energy, memory, bandwidth, frequencies,
-temperatures and sensors — read from the SoC's IOReport/SMC counters via [`kanka`](../kanka).
+System telemetry for Apple platforms — power, energy, memory, temperatures and sensors — read from the SoC's IOReport/SMC counters via [`kanka`](../kanka).
 
-Two providers, each parameterized by a compile-time marker list built with `Select!`.
-Read values from the returned `Sample` with `sample.get::<Marker>()`.
-
-## `Instant<M>` — device facts and instantaneous gauges
+## `Device` — device facts and instantaneous gauges
 
 ```rust
-use keisoku::{Chip, GpuCores, Instant, Memory, Select};
+use keisoku::Device;
 
-let sample = Instant::<Select![Chip, GpuCores, Memory]>::new().read();
-println!("{}  {} GPU cores", sample.get::<Chip>(), sample.get::<GpuCores>());
+let mut device = Device::new();
+println!("{}  {} GPU cores", device.chip(), device.gpu_cores());
+println!("battery {:?}", device.battery());
 ```
 
-## `Interval<M>` — values measured over a window
+## `interval_measurement` — IOReport channel deltas over a window
 
-Build once and reuse; the caller owns timing. `new` pays the IOReport subscription cost,
-`start`/`stop` are cheap counter reads.
+Build once per measurement set. The caller owns timing; `start`/`stop` are cheap counter reads.
 
 ```rust
-use keisoku::{Energy, Interval, Power, Select};
+use keisoku::{AneBandwidth, Cpu, Device, DramBytes, DramRead, EnergyRail, Gpu, Select};
 
-let mut meter = Interval::<Select![Energy, Power]>::try_new().expect("power counters unavailable");
-let session = meter.start();
+let mut handle = Device::interval_measurement::<Select![EnergyRail<Cpu>, EnergyRail<Gpu>, AneBandwidth, DramBytes<DramRead>]>();
+handle.start();
 // ... run work ...
-let sample = meter.stop(session);
+let sample = handle.stop().expect("started");
+println!("CPU energy: {}", sample.get::<EnergyRail<Cpu>>());
 ```
 
 ## Platform
 
-Apple only. `Interval` (IOReport power/energy) is macOS-only; iOS exposes the `Instant` subset.
+Apple only. `interval_measurement` (IOReport) is macOS-only; iOS exposes the `Device` instant subset.

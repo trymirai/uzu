@@ -14,17 +14,17 @@ mod thermal;
 use deferred::Deferred;
 
 #[cfg(target_os = "macos")]
-use crate::providers::data::Fan;
+use crate::metrics::Fan;
 #[cfg(target_os = "macos")]
-use crate::sys::{ioreport::decode::FrequencyTables, smc::Smc, soc::SocInfo};
+use crate::sys::{smc::Smc, soc::SocInfo};
 use crate::{
-    providers::data::FanMetrics,
+    metrics::FanMetrics,
     sensor::{Sensor, SensorKind},
     sys::hid::SensorReader,
     units::Watts,
 };
 
-pub struct Sources {
+pub(crate) struct Sources {
     temperature: Deferred<Option<SensorReader>>,
     voltage: Deferred<Option<SensorReader>>,
     current: Deferred<Option<SensorReader>>,
@@ -47,6 +47,50 @@ impl Sources {
         }
     }
 
+    pub(crate) fn chip(&self) -> String {
+        #[cfg(target_os = "macos")]
+        {
+            self.soc().map(|soc| soc.chip_name.clone()).unwrap_or_default()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            crate::sys::sysctl_string("hw.machine").unwrap_or_default()
+        }
+    }
+
+    pub(crate) fn efficiency_cores(&self) -> u8 {
+        #[cfg(target_os = "macos")]
+        {
+            self.soc().map(|soc| soc.ecpu_cores).unwrap_or(0)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            crate::sys::perflevel_cores().1
+        }
+    }
+
+    pub(crate) fn performance_cores(&self) -> u8 {
+        #[cfg(target_os = "macos")]
+        {
+            self.soc().map(|soc| soc.pcpu_cores).unwrap_or(0)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            crate::sys::perflevel_cores().0
+        }
+    }
+
+    pub(crate) fn gpu_cores(&self) -> u8 {
+        #[cfg(target_os = "macos")]
+        {
+            self.soc().map(|soc| soc.gpu_cores).unwrap_or(0)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            0
+        }
+    }
+
     pub(crate) fn temperature_sensors(&mut self) -> Box<[Sensor]> {
         self.temperature.get().as_mut().map(sensors::read_reader).unwrap_or_default()
     }
@@ -59,15 +103,15 @@ impl Sources {
         self.current.get().as_mut().map(sensors::read_reader).unwrap_or_default()
     }
 
-    pub(crate) fn memory(&mut self) -> Option<crate::providers::data::MemoryMetrics> {
+    pub(crate) fn memory(&mut self) -> Option<crate::metrics::MemoryMetrics> {
         memory::read_memory()
     }
 
-    pub(crate) fn battery(&mut self) -> Option<crate::providers::data::BatteryMetrics> {
+    pub(crate) fn battery(&mut self) -> Option<crate::metrics::BatteryMetrics> {
         battery::read_battery()
     }
 
-    pub(crate) fn thermal(&mut self) -> Option<crate::providers::data::ThermalPressure> {
+    pub(crate) fn thermal(&mut self) -> Option<crate::metrics::ThermalPressure> {
         thermal::read_thermal()
     }
 
@@ -111,14 +155,6 @@ impl Sources {
     #[cfg(target_os = "macos")]
     pub(crate) fn smc(&self) -> Option<&Smc> {
         self.smc.get_or_init(smc::new_smc).as_ref()
-    }
-
-    #[cfg(target_os = "macos")]
-    pub(crate) fn frequencies(&self) -> FrequencyTables<'_> {
-        match self.soc() {
-            Some(soc) => soc::frequencies(soc),
-            None => FrequencyTables::default(),
-        }
     }
 }
 

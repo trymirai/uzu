@@ -1,4 +1,4 @@
-use crate::providers::data::ThermalPressure;
+use crate::metrics::ThermalPressure;
 
 pub(crate) fn read_thermal() -> Option<ThermalPressure> {
     let level = crate::sys::read_thermal_pressure()?;

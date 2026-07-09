@@ -1,10 +1,6 @@
 use obfstr::obfstr;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DramFlow {
-    Read,
-    Write,
-}
+use crate::sys::ioreport::kinds::DramFlow;
 
 pub(crate) fn strip_die_prefix(channel: &str) -> &str {
     let Some(rest) = channel.strip_prefix(obfstr!("DIE")) else {
@@ -16,9 +12,9 @@ pub(crate) fn strip_die_prefix(channel: &str) -> &str {
 
 pub(crate) fn dcs_flow(aggregate: &str) -> Option<DramFlow> {
     if aggregate == obfstr!("DCS RD") {
-        Some(DramFlow::Read)
+        Some(DramFlow::DramRead)
     } else if aggregate == obfstr!("DCS WR") {
-        Some(DramFlow::Write)
+        Some(DramFlow::DramWrite)
     } else {
         None
     }
@@ -26,9 +22,9 @@ pub(crate) fn dcs_flow(aggregate: &str) -> Option<DramFlow> {
 
 pub(crate) fn read_write_flow(name: &str) -> Option<DramFlow> {
     if name.ends_with(obfstr!(" RD")) {
-        Some(DramFlow::Read)
+        Some(DramFlow::DramRead)
     } else if name.ends_with(obfstr!(" WR")) {
-        Some(DramFlow::Write)
+        Some(DramFlow::DramWrite)
     } else {
         None
     }

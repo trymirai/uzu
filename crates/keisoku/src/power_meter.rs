@@ -40,46 +40,47 @@ impl Default for PowerMeter {
 mod inner {
     use super::PowerReading;
     use crate::{
-        Select,
-        providers::{
-            Interval, Session,
-            marker::{Energy, Power},
-        },
+        Device, Select,
+        marker::{Ane, Cpu, EnergyRail, Gpu, Ram},
+        units::{Joules, Watts},
     };
 
-    type Metrics = Select![Energy, Power];
+    type Rails = Select![EnergyRail<Cpu>, EnergyRail<Gpu>, EnergyRail<Ane>, EnergyRail<Ram>];
 
     pub(super) struct Inner {
-        meter: Interval<Metrics>,
-        session: Option<Session<Metrics>>,
+        handle: Option<crate::IntervalHandle<Rails>>,
     }
 
     impl Inner {
         pub(super) fn new() -> Self {
             Self {
-                meter: Interval::new(),
-                session: None,
+                handle: None,
             }
         }
 
         pub(super) fn start(&mut self) {
-            if self.meter.is_available() {
-                self.session = Some(self.meter.start());
-            }
+            let mut handle = Device::interval_measurement::<Rails>();
+            handle.start();
+            self.handle = Some(handle);
         }
 
         pub(super) fn stop(&mut self) -> Option<PowerReading> {
-            let session = self.session.take()?;
-            let sample = self.meter.stop(session);
-            let power = sample.get::<Power>();
-            let energy = sample.get::<Energy>();
+            let mut handle = self.handle.take()?;
+            let elapsed = handle.elapsed().as_secs_f64().max(0.001);
+            let sample = handle.stop()?;
+            let cpu_j = sample.get::<EnergyRail<Cpu>>().value() as f64;
+            let gpu_j = sample.get::<EnergyRail<Gpu>>().value() as f64;
+            let ane_j = sample.get::<EnergyRail<Ane>>().value() as f64;
+            let ram_j = sample.get::<EnergyRail<Ram>>().value() as f64;
+            let total_j = cpu_j + gpu_j + ane_j + ram_j;
+            let to_watts = |joules: f64| Watts((joules / elapsed) as f32);
             Some(PowerReading {
-                cpu: Some(power.cpu),
-                gpu: Some(power.gpu),
-                ane: Some(power.ane),
-                ram: Some(power.ram),
-                total: power.total(),
-                energy: energy.total(),
+                cpu: Some(to_watts(cpu_j)),
+                gpu: Some(to_watts(gpu_j)),
+                ane: Some(to_watts(ane_j)),
+                ram: Some(to_watts(ram_j)),
+                total: to_watts(total_j),
+                energy: Joules(total_j as f32),
                 samples: 1,
             })
         }
@@ -99,8 +100,7 @@ mod inner {
 
     use super::PowerReading;
     use crate::{
-        Select,
-        providers::{Instant as InstantMeter, marker::RailPower},
+        Device,
         units::{Joules, Watts},
     };
 
@@ -129,24 +129,23 @@ mod inner {
         }
 
         pub(super) fn start(&mut self) {
-            *self.accumulator.lock().unwrap() = Accumulator::default();
-            self.running.store(true, Ordering::SeqCst);
+            *self.accumulator.lock().expect("power meter accumulator poisoned") = Accumulator::default();
+            self.running.store(true, Ordering::Relaxed);
             let running = self.running.clone();
             let accumulator = self.accumulator.clone();
             self.worker = Some(thread::spawn(move || {
-                let mut meter = InstantMeter::<Select![RailPower]>::new();
+                let mut device = Device::new();
                 let mut last = Instant::now();
-                while running.load(Ordering::SeqCst) {
+                while running.load(Ordering::Relaxed) {
                     thread::sleep(SAMPLE_INTERVAL);
                     let now = Instant::now();
                     let seconds = now.duration_since(last).as_secs_f64();
                     last = now;
-                    let sample = meter.read();
-                    let Some(watts) = sample.get::<RailPower>() else {
+                    let Some(watts) = device.rail_power() else {
                         continue;
                     };
                     let watts = watts.value() as f64;
-                    let mut accumulator = accumulator.lock().unwrap();
+                    let mut accumulator = accumulator.lock().expect("power meter accumulator poisoned");
                     accumulator.energy_joules += watts * seconds;
                     accumulator.elapsed_seconds += seconds;
                     accumulator.samples += 1;
@@ -155,11 +154,11 @@ mod inner {
         }
 
         pub(super) fn stop(&mut self) -> Option<PowerReading> {
-            self.running.store(false, Ordering::SeqCst);
+            self.running.store(false, Ordering::Relaxed);
             if let Some(worker) = self.worker.take() {
                 let _ = worker.join();
             }
-            let accumulator = self.accumulator.lock().unwrap();
+            let accumulator = self.accumulator.lock().expect("power meter accumulator poisoned");
             if accumulator.samples == 0 {
                 return None;
             }

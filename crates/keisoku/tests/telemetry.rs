@@ -1,39 +1,20 @@
 #[test]
 fn available_telemetry() {
-    use keisoku::{
-        Battery, Chip, CurrentSensors, EfficiencyCores, Fans, GpuCores, Instant, Memory, PerformanceCores, RailPower,
-        Select, TemperatureSensors, Thermal, VoltageSensors,
-    };
+    use keisoku::Device;
 
-    let instant_values = Instant::<
-        Select![
-            Chip,
-            EfficiencyCores,
-            PerformanceCores,
-            GpuCores,
-            Memory,
-            Fans,
-            Battery,
-            Thermal,
-            TemperatureSensors,
-            VoltageSensors,
-            CurrentSensors,
-            RailPower
-        ],
-    >::new()
-    .read();
-    let chip = instant_values.get::<Chip>();
-    let efficiency_cores = instant_values.get::<EfficiencyCores>();
-    let performance_cores = instant_values.get::<PerformanceCores>();
-    let gpu_cores = instant_values.get::<GpuCores>();
-    let memory = instant_values.get::<Memory>();
-    let fans = instant_values.get::<Fans>();
-    let battery = instant_values.get::<Battery>();
-    let thermal = instant_values.get::<Thermal>();
-    let sensors = instant_values.get::<TemperatureSensors>();
-    let voltage = instant_values.get::<VoltageSensors>();
-    let current = instant_values.get::<CurrentSensors>();
-    let rail_power = instant_values.get::<RailPower>();
+    let mut device = Device::new();
+    let chip = device.chip();
+    let efficiency_cores = device.efficiency_cores();
+    let performance_cores = device.performance_cores();
+    let gpu_cores = device.gpu_cores();
+    let memory = device.memory();
+    let fans = device.fans();
+    let battery = device.battery();
+    let thermal = device.thermal();
+    let sensors = device.temperature_sensors();
+    let voltage = device.voltage_sensors();
+    let current = device.current_sensors();
+    let rail_power = device.rail_power();
 
     println!("--- keisoku available telemetry ---");
     println!("device     {}  {}E+{}P  {} GPU", chip, efficiency_cores, performance_cores, gpu_cores);
@@ -69,27 +50,51 @@ fn available_telemetry() {
     {
         use std::time::Duration;
 
-        use keisoku::{Bandwidth, CpuUsage, GpuUsage, Interval, NeuralEngine, Power};
+        use keisoku::{
+            Ane, AneBandwidth, Cpu, Device, DramBytes, DramHistogram, DramRead, DramWrite, EnergyRail, Gpu, Ram, Select,
+        };
 
-        let mut interval = Interval::<Select![CpuUsage, GpuUsage, NeuralEngine, Power, Bandwidth]>::new();
-        let session = interval.start();
+        let mut handle = Device::interval_measurement::<
+            Select![
+                EnergyRail<Cpu>,
+                EnergyRail<Gpu>,
+                EnergyRail<Ane>,
+                EnergyRail<Ram>,
+                AneBandwidth,
+                DramBytes<DramRead>,
+                DramBytes<DramWrite>,
+                DramHistogram<DramRead>,
+                DramHistogram<DramWrite>,
+            ],
+        >();
+        handle.start();
         std::thread::sleep(Duration::from_millis(300));
-        let interval_values = interval.stop(session);
-        let cpu = interval_values.get::<CpuUsage>();
-        let gpu = interval_values.get::<GpuUsage>();
-        let neural_engine = interval_values.get::<NeuralEngine>();
-        let power = interval_values.get::<Power>();
-        let bandwidth = interval_values.get::<Bandwidth>();
+        let sample = handle.stop().expect("interval sample");
+
+        let cpu_energy = sample.get::<EnergyRail<Cpu>>();
+        let gpu_energy = sample.get::<EnergyRail<Gpu>>();
+        let ane_energy = sample.get::<EnergyRail<Ane>>();
+        let ram_energy = sample.get::<EnergyRail<Ram>>();
+        let ane = sample.get::<AneBandwidth>();
+        let dram_read_bytes = sample.get::<DramBytes<DramRead>>();
+        let dram_write_bytes = sample.get::<DramBytes<DramWrite>>();
+        let dram_read = sample.get::<DramHistogram<DramRead>>();
+        let dram_write = sample.get::<DramHistogram<DramWrite>>();
 
         println!(
-            "cpu        {:.2}% @ E{}/P{} MHz",
-            cpu.usage.value(),
-            cpu.ecpu_frequency.value(),
-            cpu.pcpu_frequency.value(),
+            "energy     CPU {:.3} J  GPU {:.3} J  ANE {:.3} J  RAM {:.3} J",
+            cpu_energy.value(),
+            gpu_energy.value(),
+            ane_energy.value(),
+            ram_energy.value(),
         );
-        println!("gpu        {:.0}% @ {} MHz", gpu.usage.value(), gpu.frequency.value());
-        println!("neural     {:.2}%", neural_engine.active.value());
-        println!("power      {:.2} W total", power.total().value());
-        println!("bandwidth  R {:.1} / W {:.1} GB/s", bandwidth.dram_read.value(), bandwidth.dram_write.value());
+        println!("neural     {:.2}%", ane.value());
+        println!(
+            "bandwidth  R {:.1} GB/s ({} B)  W {:.1} GB/s ({} B)",
+            dram_read.value(),
+            dram_read_bytes.value(),
+            dram_write.value(),
+            dram_write_bytes.value(),
+        );
     }
 }
