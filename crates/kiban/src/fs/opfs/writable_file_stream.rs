@@ -96,6 +96,11 @@ impl WritableFileStream {
         Ok(())
     }
 
+    pub async fn abort(&self) -> Result<()> {
+        JsFuture::from(self.0.abort()).await?;
+        Ok(())
+    }
+
     pub fn close_in_background(self) {
         let close = self.0.close();
         spawn_local(async move {

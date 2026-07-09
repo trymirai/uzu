@@ -76,7 +76,7 @@ pub(crate) async fn file_copy(
         match writer.write_with_params(params).await {
             Ok(_) => {},
             Err(err) => {
-                writer.close().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
+                let _ = writer.abort().await;
                 return Err(js_value_to_io_error(&err, ErrorKind::Other));
             },
         }
