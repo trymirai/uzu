@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
+use kiban::rt::RuntimeHandle;
 use mock_registry::{Behavior, MockRegistry};
-use tokio::{
-    runtime::Handle as TokioHandle,
-    sync::{
-        Mutex as TokioMutex,
-        mpsc::{Receiver as TokioMpscReceiver, channel as tokio_mpsc_channel},
-        watch::channel as tokio_watch_channel,
-    },
+use tokio::sync::{
+    Mutex as TokioMutex,
+    mpsc::{Receiver as TokioMpscReceiver, channel as tokio_mpsc_channel},
+    watch::channel as tokio_watch_channel,
 };
 use uuid::Uuid;
 
@@ -39,7 +37,7 @@ async fn test_apple_resume_empty_resume_data_starts_fresh_download() -> Result<(
     let resume_artifact_path = destination.with_extension("resume_data");
     tokio::fs::write(&resume_artifact_path, b"").await?;
 
-    let context = AppleBackendContext::new(TokioHandle::current());
+    let context = AppleBackendContext::new(RuntimeHandle::current());
     let config = Arc::new(DownloadConfig {
         download_id: compute_download_id(&destination),
         source_url: served_file.file.url.clone(),
@@ -85,7 +83,7 @@ async fn dropping_apple_active_task_unregisters_event_sink() -> Result<(), Box<d
     let temporary_directory = tempfile::tempdir()?;
     let destination = temporary_directory.path().join(&served_file.file.name);
 
-    let context = AppleBackendContext::new(TokioHandle::current());
+    let context = AppleBackendContext::new(RuntimeHandle::current());
     let download_id = compute_download_id(&destination);
     let config = Arc::new(DownloadConfig {
         download_id,
@@ -132,7 +130,7 @@ async fn registry_distinguishes_generations_for_same_download_id() -> Result<(),
     let destination = temporary_directory.path().join(&served_file.file.name);
     let download_id = compute_download_id(&destination);
 
-    let context = AppleBackendContext::new(TokioHandle::current());
+    let context = AppleBackendContext::new(RuntimeHandle::current());
     let config = Arc::new(DownloadConfig {
         download_id,
         source_url: served_file.file.url.clone(),
@@ -151,12 +149,7 @@ async fn registry_distinguishes_generations_for_same_download_id() -> Result<(),
 
     let (backend_event_sender_first, _backend_event_receiver_first) = backend_event_sender();
     let first_task = context
-        .download(
-            Arc::clone(&config),
-            ActiveDownloadGeneration::new(0),
-            backend_event_sender_first,
-            &destination_lease,
-        )
+        .download(Arc::clone(&config), ActiveDownloadGeneration::new(0), backend_event_sender_first, &destination_lease)
         .await?;
     assert_eq!(
         context.event_sink_task_identifiers_for_download(download_id).len(),
@@ -192,7 +185,7 @@ async fn claim_cancels_mismatched_task() -> Result<(), Box<dyn std::error::Error
     let destination = temporary_directory.path().join(&served_file.file.name);
     let download_id = compute_download_id(&destination);
 
-    let context = AppleBackendContext::new(TokioHandle::current());
+    let context = AppleBackendContext::new(RuntimeHandle::current());
     let original_config = Arc::new(DownloadConfig {
         download_id,
         source_url: served_file.file.url.clone(),

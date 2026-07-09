@@ -1850,6 +1850,7 @@ dependencies = [
  "chrono",
  "crc32c",
  "futures-util",
+ "kiban",
  "libc",
  "mock-registry",
  "objc-sys",
@@ -1865,6 +1866,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "uuid",
+ "web-sys",
  "wiremock",
 ]
 
@@ -7630,7 +7632,6 @@ dependencies = [
 name = "uzu"
 version = "0.5.12"
 dependencies = [
- "anyhow",
  "apple-native-keyring-store",
  "async-openai",
  "backend-remote",
@@ -7651,6 +7652,7 @@ dependencies = [
  "inventory",
  "iocraft",
  "keyring-core",
+ "kiban",
  "mock-registry",
  "nagare",
  "napi",
