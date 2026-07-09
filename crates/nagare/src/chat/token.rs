@@ -38,6 +38,7 @@ pub struct Session {
     encoding: Encoding,
     input_tokens: Vec<u64>,
     stop_token_ids: Box<[u64]>,
+    power_recorder: Box<dyn PowerRecorder>,
 }
 
 impl Session {
@@ -71,6 +72,7 @@ impl Session {
             encoding,
             input_tokens: Vec::new(),
             stop_token_ids,
+            power_recorder: <dyn PowerRecorder>::create(),
         })
     }
 
@@ -89,7 +91,7 @@ impl Session {
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
         let time_start = Instant::now();
-        let power_recorder = <dyn PowerRecorder>::start();
+        self.power_recorder.begin();
 
         let curr_all_tokens = self.encoding.state().tokens.clone();
         let new_all_tokens = match self.build_input(input) {
@@ -127,7 +129,7 @@ impl Session {
             encoding: &mut self.encoding,
             max_context_length: self.instance.max_context_length(),
             stop_token_ids: self.stop_token_ids.clone(),
-            power_recorder,
+            power_recorder: &mut *self.power_recorder,
 
             time_start,
             time_last_token: None,
@@ -275,7 +277,7 @@ struct StreamingState<'a> {
     encoding: &'a mut Encoding,
     max_context_length: Option<usize>,
     stop_token_ids: Box<[u64]>,
-    power_recorder: Box<dyn PowerRecorder>,
+    power_recorder: &'a mut dyn PowerRecorder,
 
     time_start: Instant,
     time_last_token: Option<Instant>,
@@ -313,7 +315,7 @@ impl StreamingState<'_> {
         &self,
         last_stat: bool,
     ) -> ChatReplyStats {
-        let power_stats = last_stat.then(|| self.power_recorder.stop()).flatten();
+        let power_stats = last_stat.then(|| self.power_recorder.finish()).flatten();
 
         let total_duration = self.time_last_token.unwrap_or(Instant::now()).duration_since(self.time_start);
         let ttft_duration = if let (Some(start), Some(finish)) = (self.time_prefill_start, self.time_first_token) {
