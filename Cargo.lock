@@ -7612,6 +7612,7 @@ dependencies = [
  "backend-uzu",
  "bindings",
  "bindings-types",
+ "bitflags 2.13.0",
  "chrono",
  "confy",
  "dirs",
