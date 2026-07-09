@@ -41,6 +41,7 @@ export const ChatModelCapabilities = cjs.ChatModelCapabilities;
 export const ChatReply = cjs.ChatReply;
 export const ChatReplyConfig = cjs.ChatReplyConfig;
 export const ChatReplyPowerStats = cjs.ChatReplyPowerStats;
+export const ChatReplySpeculatorStats = cjs.ChatReplySpeculatorStats;
 export const ChatReplyStats = cjs.ChatReplyStats;
 export const ChatRoleAssistant = cjs.ChatRoleAssistant;
 export const ChatRoleCustom = cjs.ChatRoleCustom;

@@ -544,6 +544,7 @@ module.exports.ChatModelCapabilities = nativeBinding.ChatModelCapabilities
 module.exports.ChatReply = nativeBinding.ChatReply
 module.exports.ChatReplyConfig = nativeBinding.ChatReplyConfig
 module.exports.ChatReplyPowerStats = nativeBinding.ChatReplyPowerStats
+module.exports.ChatReplySpeculatorStats = nativeBinding.ChatReplySpeculatorStats
 module.exports.ChatReplyStats = nativeBinding.ChatReplyStats
 module.exports.ChatRoleAssistant = nativeBinding.ChatRoleAssistant
 module.exports.ChatRoleCustom = nativeBinding.ChatRoleCustom
