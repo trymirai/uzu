@@ -1,4 +1,4 @@
-use std::{future::Future, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use kiban::rt::RuntimeHandle;
 use objc2_foundation::NSURLSessionTaskState;

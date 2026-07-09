@@ -1,6 +1,6 @@
 use std::{error::Error, path::PathBuf};
 
-use download_manager::{DownloadError, FileCheck, FileDownloadManager, FileDownloadPhase};
+use download_manager::{DownloadError, FileCheck, FileDownloadManager, FileDownloadPhase, compute_download_id};
 use kiban::{eprintf, fs, printf, rt::RuntimeHandle};
 use tokio::sync::OnceCell;
 use tokio_stream::StreamExt;
@@ -67,15 +67,18 @@ async fn download_internal(
     callback: impl Fn(JsFileDownloadState),
 ) -> Result<(), Box<dyn Error>> {
     let file_path = PathBuf::from(file_path_str);
+    let manager = get_manager().await?;
+    manager.remove_file_task(compute_download_id(&file_path)).await?;
+
     if fs::asyn::try_exists(&file_path).await? {
         fs::asyn::remove_file(&file_path).await?;
     }
 
-    let manager = get_manager().await?;
     let task = manager.file_download_task(&url, &file_path, FileCheck::None, None).await?;
     let mut progress_stream = task.progress().await?;
     task.download().await?;
 
+    let mut download_error = None;
     while let Some(Ok(state)) = progress_stream.next().await {
         let (phase, message) = match &state.phase {
             FileDownloadPhase::NotDownloaded => ("not_downloaded", None),
@@ -104,12 +107,21 @@ async fn download_internal(
             },
             FileDownloadPhase::Error(err) => {
                 eprintf!("Error: {err}");
+                download_error = Some(err);
                 break;
             },
             _ => (),
         }
     }
     task.wait().await;
+
+    if let Some(err) = download_error {
+        return Err(DownloadError::Backend(err).into());
+    }
+
+    if let FileDownloadPhase::Error(err) = task.state().await.phase {
+        return Err(DownloadError::Backend(err).into());
+    }
 
     Ok(())
 }
