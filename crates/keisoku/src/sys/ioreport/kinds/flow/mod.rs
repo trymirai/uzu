@@ -10,8 +10,17 @@ pub enum DramFlow {
     DramWrite,
 }
 
-mod dram_read;
-mod dram_write;
+pub struct DramRead;
+pub struct DramWrite;
 
-pub use dram_read::DramRead;
-pub use dram_write::DramWrite;
+impl FlowKind for DramRead {
+    const FLOW: DramFlow = DramFlow::DramRead;
+    const TYPE_BIT_BYTES: u128 = 1 << 5;
+    const TYPE_BIT_HIST: u128 = 1 << 7;
+}
+
+impl FlowKind for DramWrite {
+    const FLOW: DramFlow = DramFlow::DramWrite;
+    const TYPE_BIT_BYTES: u128 = 1 << 6;
+    const TYPE_BIT_HIST: u128 = 1 << 8;
+}

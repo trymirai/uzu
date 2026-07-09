@@ -13,16 +13,6 @@ pub trait IntervalChannel: ChannelMetric {
 
     fn default_value() -> Self::Value;
 
-    fn try_fold(
-        channel: Channel,
-        raw: &RawChannel,
-        value: &mut Self::Value,
-    ) {
-        if channel == Self::CHANNEL {
-            Self::fold(value, raw);
-        }
-    }
-
     fn fold(
         value: &mut Self::Value,
         raw: &RawChannel,
@@ -72,7 +62,9 @@ where
         raw: &RawChannel,
         values: &mut Self::Value,
     ) {
-        H::try_fold(channel, raw, &mut values.head);
+        if channel == H::CHANNEL {
+            H::fold(&mut values.head, raw);
+        }
         T::apply(channel, raw, &mut values.tail);
     }
 }

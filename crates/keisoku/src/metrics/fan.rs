@@ -9,3 +9,8 @@ pub struct Fan {
     pub maximum: Rpm,
     pub target: Rpm,
 }
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct FanMetrics {
+    pub fans: Vec<Fan>,
+}

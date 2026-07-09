@@ -4,17 +4,9 @@ use objc2_io_kit::{
     kIOPSInternalBatteryType, kIOPSIsChargingKey, kIOPSMaxCapacityKey, kIOPSPowerSourceStateKey, kIOPSTypeKey,
 };
 
-use crate::{sys::registry::dictionary_get, units::Percent};
+use crate::{metrics::BatteryMetrics, sys::registry::dictionary_get, units::Percent};
 
-#[derive(Debug, Default, Clone)]
-pub(crate) struct BatterySnapshot {
-    pub present: bool,
-    pub percent: Percent,
-    pub charging: bool,
-    pub on_ac_power: bool,
-}
-
-pub(crate) fn read_battery() -> Option<BatterySnapshot> {
+pub(crate) fn read_battery() -> Option<BatteryMetrics> {
     let info = IOPSCopyPowerSourcesInfo()?;
     let info_ref: &CFType = &info;
     let list = unsafe { IOPSCopyPowerSourcesList(Some(info_ref)) }?;
@@ -49,7 +41,7 @@ pub(crate) fn read_battery() -> Option<BatterySnapshot> {
             0.0
         };
 
-        return Some(BatterySnapshot {
+        return Some(BatteryMetrics {
             present: true,
             percent: Percent(percent),
             charging,

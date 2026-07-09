@@ -23,6 +23,7 @@ unsafe impl<M: IntervalSet> Send for IntervalHandle<M> {}
 
 impl<M: IntervalSet> IntervalHandle<M> {
     pub(super) fn new() -> Self {
+        let _ = M::TYPE_MASK;
         Self {
             engine: IntervalEngine::new(M::GROUPS),
             session: None,
@@ -42,9 +43,8 @@ impl<M: IntervalSet> IntervalHandle<M> {
     /// Ends the measurement and returns channel deltas, or `None` if [`start`](Self::start) was not called.
     pub fn stop(&mut self) -> Option<Sample<M>> {
         let session = self.session.take()?;
-        let reading = self.engine.end(session);
         let mut values = M::default_values();
-        self.engine.fold::<M>(&reading, &mut values);
+        self.engine.fold_end::<M>(session, &mut values);
         Some(Sample::new(values))
     }
 

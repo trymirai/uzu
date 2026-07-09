@@ -23,10 +23,6 @@ impl<M: ChannelSet> Sample<M> {
     ///
     /// Panics if `T` was not included in the `Select!` list used to create this sample.
     pub fn get<T: ChannelMetric>(&self) -> &T::Value {
-        self.try_get::<T>().expect("channel not in sample")
-    }
-
-    pub fn try_get<T: ChannelMetric>(&self) -> Option<&T::Value> {
-        self.values.get::<T>()
+        self.values.get::<T>().expect("channel not in sample")
     }
 }

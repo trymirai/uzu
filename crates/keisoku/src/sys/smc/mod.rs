@@ -14,20 +14,10 @@ use self::{
     fourcc::fourcc,
     key_data::{SmcKeyData, SmcKeyInfo},
 };
-use crate::units::Rpm;
-
-#[derive(Debug, Default, Clone)]
-pub(crate) struct FanSnapshot {
-    pub actual: Rpm,
-    pub minimum: Rpm,
-    pub maximum: Rpm,
-    pub target: Rpm,
-}
-
-#[derive(Debug, Default, Clone)]
-pub(crate) struct FansSnapshot {
-    pub fans: Box<[FanSnapshot]>,
-}
+use crate::{
+    metrics::{Fan, FanMetrics},
+    units::Rpm,
+};
 
 const KERNEL_INDEX_SMC: u32 = 2;
 const SMC_CMD_READ_BYTES: u8 = 5;
@@ -60,17 +50,17 @@ impl Smc {
         })
     }
 
-    pub fn fans(&self) -> FansSnapshot {
+    pub fn fans(&self) -> FanMetrics {
         let count = self.read_u8(obfstr!("FNum")).unwrap_or(0);
         let fans = (0..count)
-            .map(|index| FanSnapshot {
+            .map(|index| Fan {
                 actual: Rpm(self.fan_speed(index, obfstr!("Ac"))),
                 minimum: Rpm(self.fan_speed(index, obfstr!("Mn"))),
                 maximum: Rpm(self.fan_speed(index, obfstr!("Mx"))),
                 target: Rpm(self.fan_speed(index, obfstr!("Tg"))),
             })
             .collect();
-        FansSnapshot {
+        FanMetrics {
             fans,
         }
     }

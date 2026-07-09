@@ -1,28 +1,21 @@
 use core::ffi::c_char;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ThermalPressureLevel {
-    Nominal,
-    Moderate,
-    Heavy,
-    Trapping,
-    Sleeping,
-}
+use crate::metrics::ThermalPressure;
 
-impl ThermalPressureLevel {
+impl ThermalPressure {
     fn from_level(level: u64) -> Option<Self> {
         match level {
-            0 => Some(ThermalPressureLevel::Nominal),
-            1 => Some(ThermalPressureLevel::Moderate),
-            2 => Some(ThermalPressureLevel::Heavy),
-            3 => Some(ThermalPressureLevel::Trapping),
-            4 => Some(ThermalPressureLevel::Sleeping),
+            0 => Some(ThermalPressure::Nominal),
+            1 => Some(ThermalPressure::Moderate),
+            2 => Some(ThermalPressure::Heavy),
+            3 => Some(ThermalPressure::Trapping),
+            4 => Some(ThermalPressure::Sleeping),
             _ => None,
         }
     }
 }
 
-pub(crate) fn read_thermal_pressure() -> Option<ThermalPressureLevel> {
+pub(crate) fn read_thermal_pressure() -> Option<ThermalPressure> {
     unsafe extern "C" {
         fn notify_register_check(
             name: *const c_char,
@@ -46,5 +39,5 @@ pub(crate) fn read_thermal_pressure() -> Option<ThermalPressureLevel> {
     if result != 0 {
         return None;
     }
-    ThermalPressureLevel::from_level(level)
+    ThermalPressure::from_level(level)
 }

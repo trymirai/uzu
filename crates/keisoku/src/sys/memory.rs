@@ -1,14 +1,6 @@
-use crate::units::Bytes;
+use crate::{metrics::MemoryMetrics, units::Bytes};
 
-#[derive(Debug, Default, Clone)]
-pub(crate) struct MemorySnapshot {
-    pub ram_total: Bytes,
-    pub ram_usage: Bytes,
-    pub swap_total: Bytes,
-    pub swap_usage: Bytes,
-}
-
-pub(crate) fn read_memory() -> Option<MemorySnapshot> {
+pub(crate) fn read_memory() -> Option<MemoryMetrics> {
     let mut ram_total = 0u64;
     unsafe {
         let mut name = [libc::CTL_HW, libc::HW_MEMSIZE];
@@ -69,7 +61,7 @@ pub(crate) fn read_memory() -> Option<MemorySnapshot> {
         }
     };
 
-    Some(MemorySnapshot {
+    Some(MemoryMetrics {
         ram_total: Bytes(ram_total),
         ram_usage: Bytes(ram_usage),
         swap_total: Bytes(swap_total),

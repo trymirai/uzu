@@ -48,7 +48,7 @@ mod inner {
     type Rails = Select![EnergyRail<Cpu>, EnergyRail<Gpu>, EnergyRail<Ane>, EnergyRail<Ram>];
 
     pub(super) struct Inner {
-        handle: Option<crate::IntervalHandle<Rails>>,
+        handle: Option<crate::device::IntervalHandle<Rails>>,
     }
 
     impl Inner {

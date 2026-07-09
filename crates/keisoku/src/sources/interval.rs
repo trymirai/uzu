@@ -11,11 +11,6 @@ pub(crate) struct IntervalSession {
     begin: Option<RawIOReportSample>,
 }
 
-pub(crate) struct IntervalReading {
-    begin: Option<RawIOReportSample>,
-    end: Option<RawIOReportSample>,
-}
-
 impl IntervalEngine {
     pub(crate) fn new(groups: IoReportGroups) -> Self {
         Self {
@@ -29,27 +24,22 @@ impl IntervalEngine {
         }
     }
 
-    pub(crate) fn end(
+    pub(crate) fn fold_end<M: IntervalSet>(
         &self,
         session: IntervalSession,
-    ) -> IntervalReading {
-        IntervalReading {
-            begin: session.begin,
-            end: self.ioreport.as_ref().and_then(IoReport::snapshot),
-        }
-    }
-
-    pub(crate) fn fold<M: IntervalSet>(
-        &self,
-        reading: &IntervalReading,
         values: &mut M::Value,
     ) {
-        if let (Some(ioreport), Some(begin), Some(end)) =
-            (self.ioreport.as_ref(), reading.begin.as_ref(), reading.end.as_ref())
-        {
-            ioreport.for_each_channel(begin, end, |channel, raw| {
-                M::apply(channel, raw, values);
-            });
-        }
+        let Some(ioreport) = self.ioreport.as_ref() else {
+            return;
+        };
+        let Some(begin) = session.begin.as_ref() else {
+            return;
+        };
+        let Some(end) = ioreport.snapshot() else {
+            return;
+        };
+        ioreport.for_each_channel(begin, &end, |channel, raw| {
+            M::apply(channel, raw, values);
+        });
     }
 }

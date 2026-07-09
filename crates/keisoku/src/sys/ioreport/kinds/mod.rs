@@ -1,5 +1,3 @@
-//! Energy-rail and DRAM-flow kinds: each marker ZST maps to one enum variant.
-
 mod flow;
 mod rail;
 

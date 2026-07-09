@@ -15,18 +15,10 @@ mod units;
 pub use component::{Component, classify};
 pub use device::Device;
 #[cfg(target_os = "macos")]
-pub use device::IntervalHandle;
-#[cfg(target_os = "macos")]
 pub use marker::{
-    Ane, AneBandwidth, ChannelMetric, ChannelSet, Cons, Cpu, DramBytes, DramHistogram, DramRead, DramWrite, EnergyRail,
-    Gpu, IntervalSet, Nil, Ram, Sample,
+    Ane, AneBandwidth, Cons, Cpu, DramBytes, DramHistogram, DramRead, DramWrite, EnergyRail, Gpu, Nil, Ram, Sample,
 };
 pub use metrics::{BatteryMetrics, Fan, FanMetrics, MemoryMetrics, ThermalPressure};
 pub use power_meter::{PowerMeter, PowerReading};
 pub use sensor::{Sensor, SensorKind, thermal_sensors};
-#[cfg(target_os = "macos")]
-pub use sys::ioreport::{
-    decode::Channel,
-    kinds::{DramFlow, Rail},
-};
-pub use units::{Bytes, GigabytesPerSecond, Joules, Megahertz, Percent, Rpm, Watts};
+pub use units::{Bytes, GigabytesPerSecond, Joules, Percent, Rpm, Watts};

@@ -28,4 +28,4 @@ pub(crate) use constants::{
 pub(crate) use memory::read_memory;
 #[cfg(not(target_os = "macos"))]
 pub(crate) use sysctl::{perflevel_cores, sysctl_string};
-pub(crate) use thermal::{ThermalPressureLevel, read_thermal_pressure};
+pub(crate) use thermal::read_thermal_pressure;

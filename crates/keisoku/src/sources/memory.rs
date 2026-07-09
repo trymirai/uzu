@@ -2,13 +2,7 @@ use crate::metrics::MemoryMetrics;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn read_memory() -> Option<MemoryMetrics> {
-    let snapshot = crate::sys::read_memory()?;
-    Some(MemoryMetrics {
-        ram_total: snapshot.ram_total,
-        ram_usage: snapshot.ram_usage,
-        swap_total: snapshot.swap_total,
-        swap_usage: snapshot.swap_usage,
-    })
+    crate::sys::read_memory()
 }
 
 #[cfg(not(target_os = "macos"))]

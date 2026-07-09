@@ -96,7 +96,6 @@ macro_rules! unit {
 unit!(float Watts(f32) = "W");
 unit!(float Joules(f32) = "J");
 unit!(float Percent(f32) = "%");
-unit!(int Megahertz(u32) = "MHz");
 unit!(float GigabytesPerSecond(f32) = "GB/s");
 unit!(int Bytes(u64) = "B");
 unit!(float Rpm(f32) = "rpm");

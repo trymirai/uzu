@@ -5,16 +5,10 @@ pub(crate) mod interval;
 mod memory;
 mod rail_power;
 mod sensors;
-#[cfg(target_os = "macos")]
-mod smc;
-#[cfg(target_os = "macos")]
-mod soc;
 mod thermal;
 
 use deferred::Deferred;
 
-#[cfg(target_os = "macos")]
-use crate::metrics::Fan;
 #[cfg(target_os = "macos")]
 use crate::sys::{smc::Smc, soc::SocInfo};
 use crate::{
@@ -124,22 +118,7 @@ impl Sources {
     pub(crate) fn fans(&self) -> Option<FanMetrics> {
         #[cfg(target_os = "macos")]
         {
-            self.smc().map(|smc| {
-                let snapshot = smc::fans(smc);
-                let fans = snapshot
-                    .fans
-                    .into_iter()
-                    .map(|fan| Fan {
-                        actual: fan.actual,
-                        minimum: fan.minimum,
-                        maximum: fan.maximum,
-                        target: fan.target,
-                    })
-                    .collect();
-                FanMetrics {
-                    fans,
-                }
-            })
+            self.smc().map(Smc::fans)
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -149,12 +128,12 @@ impl Sources {
 
     #[cfg(target_os = "macos")]
     pub(crate) fn soc(&self) -> Option<&SocInfo> {
-        self.soc.get_or_init(soc::new_soc).as_ref()
+        self.soc.get_or_init(SocInfo::new).as_ref()
     }
 
     #[cfg(target_os = "macos")]
     pub(crate) fn smc(&self) -> Option<&Smc> {
-        self.smc.get_or_init(smc::new_smc).as_ref()
+        self.smc.get_or_init(Smc::new).as_ref()
     }
 }
 
