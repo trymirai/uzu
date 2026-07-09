@@ -1,6 +1,7 @@
 use std::{
     io,
     io::ErrorKind,
+    ops::RangeBounds,
     path::{Component, Path},
     sync::OnceLock,
 };
@@ -114,6 +115,15 @@ pub(crate) async fn file_modified(path: &str) -> Result<SystemTime, io::Error> {
 pub(crate) async fn file_read(path: &str) -> Result<Vec<u8>, io::Error> {
     let file = get_file_handle_root(path, false).await?;
     let result = file.read().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
+    Ok(result)
+}
+
+pub(crate) async fn file_read_range(
+    path: &str,
+    range: impl RangeBounds<u64>,
+) -> Result<Vec<u8>, io::Error> {
+    let file = get_file_handle_root(path, false).await?;
+    let result = file.read_range(range).await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
     Ok(result)
 }
 

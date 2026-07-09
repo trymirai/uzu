@@ -15,10 +15,9 @@ enum ReplyStatsFormat {
 
     // Power/energy values are uncertain on iOS (and unset until a run completes), so the
     // caller renders these rows only when the values are present — these just format.
-    static func power(average: Double, maximum: Double) -> String {
+    static func power(average: Double) -> String {
         let avg = measurement.string(from: Measurement(value: average, unit: UnitPower.watts))
-        let peak = measurement.string(from: Measurement(value: maximum, unit: UnitPower.watts))
-        return "\(avg) avg · \(peak) peak"
+        return "\(avg) avg"
     }
 
     static func energy(_ joules: Double) -> String {

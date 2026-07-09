@@ -1,14 +1,14 @@
 use std::{
-    fs,
-    io::Error as IoError,
+    io::{Error as IoError, ErrorKind},
     path::{Path, PathBuf},
-    time::UNIX_EPOCH,
 };
 
 use base64::Engine;
+use kiban::{fs, time::SystemTime};
 use serde::{Deserialize, Serialize};
 
 const CRC_CACHE_VERSION: u8 = 1;
+const CRC_READ_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 struct CrcCacheReceipt {
@@ -27,11 +27,23 @@ pub async fn calculate_and_verify_crc(
         return Ok(false);
     };
 
-    let bytes = kiban::fs::asyn::read(file_path).await?;
-    Ok(crc32c::crc32c(&bytes) == expected_crc)
+    let file_len = kiban::fs::asyn::file_length(file_path).await?;
+    let mut offset = 0;
+    let mut actual_crc = 0;
+    while offset < file_len {
+        let end = offset.saturating_add(CRC_READ_CHUNK_SIZE).min(file_len);
+        let chunk = kiban::fs::asyn::read_range(file_path, offset..end).await?;
+        if chunk.len() != (end - offset) as usize {
+            return Err(IoError::new(ErrorKind::UnexpectedEof, "file changed during CRC verification"));
+        }
+        actual_crc = crc32c::crc32c_append(actual_crc, &chunk);
+        offset = end;
+    }
+
+    Ok(actual_crc == expected_crc)
 }
 
-pub fn crc_cache_matches(
+pub async fn crc_cache_matches(
     file_path: &Path,
     expected_crc32c_base64: &str,
 ) -> bool {
@@ -39,13 +51,13 @@ pub fn crc_cache_matches(
         return false;
     }
 
-    let Ok(cache_contents) = fs::read_to_string(crc_path_for_file(file_path)) else {
+    let Ok(cache_contents) = kiban::fs::asyn::read_to_string(crc_path_for_file(file_path)).await else {
         return false;
     };
     let Ok(cached_receipt) = serde_json::from_str::<CrcCacheReceipt>(&cache_contents) else {
         return false;
     };
-    let Some(current_receipt) = CrcCacheReceipt::from_file(file_path, expected_crc32c_base64) else {
+    let Some(current_receipt) = CrcCacheReceipt::from_file(file_path, expected_crc32c_base64).await else {
         return false;
     };
 
@@ -56,11 +68,11 @@ pub async fn save_crc_file(
     file_path: &Path,
     crc_value: &str,
 ) -> Result<(), IoError> {
-    let Some(receipt) = CrcCacheReceipt::from_file(file_path, crc_value) else {
+    let Some(receipt) = CrcCacheReceipt::from_file(file_path, crc_value).await else {
         return Ok(());
     };
     let receipt_json = serde_json::to_vec(&receipt).map_err(IoError::other)?;
-    kiban::fs::asyn::write(crc_path_for_file(file_path), receipt_json).await
+    fs::asyn::write(crc_path_for_file(file_path), receipt_json).await
 }
 
 pub fn crc_path_for_file(file_path: &Path) -> PathBuf {
@@ -68,20 +80,20 @@ pub fn crc_path_for_file(file_path: &Path) -> PathBuf {
 }
 
 impl CrcCacheReceipt {
-    fn from_file(
+    async fn from_file(
         file_path: &Path,
         crc: &str,
     ) -> Option<Self> {
-        let metadata = fs::metadata(file_path).ok()?;
-        if !metadata.is_file() {
+        if !fs::asyn::is_file(file_path).await {
             return None;
         }
-        let modified = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
 
+        let file_size = fs::asyn::file_length(file_path).await.ok()?;
+        let modified = fs::asyn::file_modified(file_path).await.ok()?.duration_since(SystemTime::UNIX_EPOCH).ok()?;
         Some(Self {
             version: CRC_CACHE_VERSION,
             crc: crc.to_string(),
-            file_size: metadata.len(),
+            file_size,
             modified_unix_seconds: modified.as_secs(),
             modified_nanos: modified.subsec_nanos(),
         })

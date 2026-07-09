@@ -461,7 +461,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         &mut self,
         part_path: PathBuf,
     ) -> Result<(), DownloadError> {
-        if !fs::asyn::exists(&part_path).await {
+        if !fs::asyn::try_exists(&part_path).await.unwrap_or(false) {
             remove_file(&part_path).await;
             return self.start_fresh_download().await;
         }

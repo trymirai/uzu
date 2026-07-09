@@ -44,7 +44,9 @@ async fn validate_crc_with_cache(
     observation: &DiskObservation,
     expected_crc: &str,
 ) -> (CheckedFileState, Vec<Action>) {
-    if observation.crc_state == FileState::Exists && crc_cache_matches(&observation.destination_path, expected_crc) {
+    if observation.crc_state == FileState::Exists
+        && crc_cache_matches(&observation.destination_path, expected_crc).await
+    {
         return (CheckedFileState::Valid, Vec::new());
     }
 
