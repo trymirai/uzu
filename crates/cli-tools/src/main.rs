@@ -194,6 +194,36 @@ fn language_backend(
 async fn main() -> Result<()> {
     let tokio = tokio::runtime::Handle::current();
     let cli = Cli::parse();
+
+    if let Some(Commands::PowerConsumption {
+        output,
+        source,
+        storage,
+        model_ids,
+        prefill,
+        generate,
+        repetitions,
+        memory_fraction,
+        cooldown_secs,
+        weight_seed,
+    }) = cli.command
+    {
+        return run_power_consumption(
+            tokio,
+            output,
+            source,
+            storage,
+            model_ids,
+            prefill,
+            generate,
+            repetitions,
+            memory_fraction,
+            cooldown_secs,
+            weight_seed,
+        )
+        .await;
+    }
+
     let config = PlatformsConfig::load()?;
     let host_target = config.host_target()?;
 
@@ -240,33 +270,7 @@ async fn main() -> Result<()> {
         Some(Commands::Release {
             version,
         }) => run_release(&version)?,
-        Some(Commands::PowerConsumption {
-            output,
-            source,
-            storage,
-            model_ids,
-            prefill,
-            generate,
-            repetitions,
-            memory_fraction,
-            cooldown_secs,
-            weight_seed,
-        }) => {
-            run_power_consumption(
-                tokio,
-                output,
-                source,
-                storage,
-                model_ids,
-                prefill,
-                generate,
-                repetitions,
-                memory_fraction,
-                cooldown_secs,
-                weight_seed,
-            )
-            .await?
-        },
+        Some(Commands::PowerConsumption { .. }) => unreachable!("handled above"),
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;

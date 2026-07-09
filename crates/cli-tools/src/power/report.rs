@@ -116,8 +116,34 @@ pub struct Report {
 
 impl Report {
     pub fn new(path: &Path) -> Result<Self> {
+        let mut writer = csv::WriterBuilder::new().has_headers(false).from_path(path)?;
+        writer.write_record([
+            "os",
+            "chip",
+            "ram_total_bytes",
+            "gpu_cores",
+            "source",
+            "model_id",
+            "prefill_tokens",
+            "generate_tokens",
+            "prefill_ms",
+            "decode_ms",
+            "total_ms",
+            "decode_tokens_per_second",
+            "energy_total_j",
+            "energy_cpu_j",
+            "energy_gpu_j",
+            "energy_ram_j",
+            "avg_watts_total",
+            "avg_watts_cpu",
+            "avg_watts_gpu",
+            "avg_watts_ram",
+            "avg_joules_per_prefill_token",
+            "avg_joules_per_decode_token",
+        ])?;
+        writer.flush()?;
         Ok(Self {
-            writer: csv::Writer::from_path(path)?,
+            writer,
         })
     }
 

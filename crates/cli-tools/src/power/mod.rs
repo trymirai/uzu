@@ -12,7 +12,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use backend_uzu::{backends::metal::Metal, engine::Engine};
+use backend_uzu::{backends::metal::Metal, engine::Engine, summarize_header};
 use keisoku::{Device as MetricsDevice, PowerMeter};
 use shoji::types::model::Model;
 use tokio::{runtime::Handle as TokioHandle, time::sleep};
@@ -133,18 +133,11 @@ impl Session {
         &mut self,
         target: &BenchmarkTarget,
     ) -> Outcome {
-        let memory_bytes = match target {
-            BenchmarkTarget::Registry(model) => weights_size(model)
-                .map(|size| size as u64)
-                .or_else(|| model.properties.as_ref().map(|properties| properties.size as u64)),
-            BenchmarkTarget::Local(artifact) => Some(artifact.header_summary.logical_payload_bytes),
-        };
-        if let Some(size) = memory_bytes {
-            let limit = self.device_info.ram_total_bytes as f64 * self.options.memory_fraction;
-            if (size as f64) > limit {
-                eprintln!("  skipped: model too large ({size} bytes)");
-                return Outcome::Skipped;
-            }
+        if let Some(size) = estimated_memory_bytes(target)
+            && self.should_skip_for_memory(size)
+        {
+            eprintln!("  skipped: model too large ({size} bytes)");
+            return Outcome::Skipped;
         }
 
         let resolved = match self.resolve_target(target).await {
@@ -154,6 +147,21 @@ impl Session {
                 return Outcome::Faulted;
             },
         };
+
+        let header_summary = match summarize_header(&resolved.files.header_path) {
+            Ok(summary) => summary,
+            Err(error) => {
+                eprintln!("  prepare failed: {error:#}");
+                return Outcome::Faulted;
+            },
+        };
+        if self.should_skip_for_memory(header_summary.logical_payload_bytes) {
+            eprintln!(
+                "  skipped: model too large ({} bytes)",
+                header_summary.logical_payload_bytes
+            );
+            return Outcome::Skipped;
+        }
 
         let sweep = catch_unwind(AssertUnwindSafe(|| self.sweep_target(&resolved)));
         match sweep {
@@ -238,6 +246,17 @@ impl Session {
         }
         Ok(())
     }
+
+    fn memory_limit(&self) -> u64 {
+        memory_limit_bytes(self.device_info.ram_total_bytes, self.options.memory_fraction)
+    }
+
+    fn should_skip_for_memory(
+        &self,
+        size_bytes: u64,
+    ) -> bool {
+        exceeds_memory_limit(size_bytes, self.memory_limit())
+    }
 }
 
 pub async fn run(
@@ -309,6 +328,27 @@ pub fn cache_models_path(storage_base: &Path) -> PathBuf {
     artifacts::cache_models_path(storage_base)
 }
 
+fn estimated_memory_bytes(target: &BenchmarkTarget) -> Option<u64> {
+    match target {
+        BenchmarkTarget::Registry(model) => registry_memory_bytes(model),
+        BenchmarkTarget::Local(artifact) => Some(artifact.header_summary.logical_payload_bytes),
+    }
+}
+
+fn registry_memory_bytes(model: &Model) -> Option<u64> {
+    weights_size(model)
+        .map(|size| size as u64)
+        .or_else(|| model.properties.as_ref().map(|properties| properties.size as u64))
+}
+
+pub fn memory_limit_bytes(ram_total_bytes: u64, memory_fraction: f64) -> u64 {
+    (ram_total_bytes as f64 * memory_fraction) as u64
+}
+
+pub fn exceeds_memory_limit(size_bytes: u64, limit_bytes: u64) -> bool {
+    size_bytes > limit_bytes
+}
+
 fn matches_model_ids(selected: &[String], id: &str) -> bool {
     selected.is_empty() || selected.iter().any(|candidate| candidate == id)
 }
@@ -368,6 +408,18 @@ mod tests {
         assert!(matches_model_ids(&["alpha".to_string()], "alpha"));
         assert!(!matches_model_ids(&["alpha".to_string()], "alpha-extra"));
         assert!(matches_model_ids(&[], "anything"));
+    }
+
+    #[test]
+    fn memory_limit_scales_with_ram_fraction() {
+        assert_eq!(memory_limit_bytes(8_000_000_000, 0.75), 6_000_000_000);
+    }
+
+    #[test]
+    fn exceeds_memory_limit_when_size_above_cap() {
+        let limit = memory_limit_bytes(8_000_000_000, 0.75);
+        assert!(exceeds_memory_limit(limit + 1, limit));
+        assert!(!exceeds_memory_limit(limit, limit));
     }
 
     #[test]
