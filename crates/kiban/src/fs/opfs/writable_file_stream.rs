@@ -8,7 +8,7 @@ use web_sys::{
 use super::Result;
 
 /// Mirrors the `type` field accepted by
-/// [`FileSystemWritableFileStream.write()`](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemWritableFileStream/write).
+/// [`FileSystemWritableFileStream.write()`](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemWritableFileStream/write#type).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteCommandType {
     /// Write [`data`](WriteParams::data) at [`position`](WriteParams::position).

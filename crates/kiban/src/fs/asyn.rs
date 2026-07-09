@@ -10,10 +10,6 @@ pub async fn create_dir_all(path: impl AsRef<Path>) -> Result<(), io::Error> {
     tokio::fs::create_dir_all(path).await
 }
 
-pub async fn exists(path: impl AsRef<Path>) -> bool {
-    try_exists(path.as_ref()).await.unwrap_or(false)
-}
-
 pub async fn file_length(path: impl AsRef<Path>) -> Result<u64, io::Error> {
     #[cfg(target_family = "wasm")]
     return super::asyn_opfs::file_length(path.as_ref().to_str().unwrap()).await;
