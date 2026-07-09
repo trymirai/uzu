@@ -297,8 +297,11 @@ pub(crate) async fn try_restore_quarantine(
     }
 
     if let Err(err) = fs::asyn::write_with_sync_all(&lock_path, &bytes).await {
-        let _ = fs::asyn::remove_file(lock_path).await;
         let _ = fs::asyn::remove_file(quarantine_path).await;
+        if err.kind() == std::io::ErrorKind::AlreadyExists {
+            return Ok(RestoreOutcome::DestinationAlreadyExists);
+        }
+        let _ = fs::asyn::remove_file(lock_path).await;
         return Err(err);
     }
     let _ = fs::asyn::remove_file(quarantine_path).await;
@@ -343,10 +346,6 @@ async fn classify_unparseable_lock(
     lock_path: &Path,
     snapshot: Vec<u8>,
 ) -> LockFileState {
-    if !proc_supported() {
-        return LockFileState::StaleUnparseable(snapshot);
-    }
-
     let stale_duration = Duration::from_secs((LOCK_TIMEOUT_MINUTES * 60) as u64);
     let mtime = match fs::asyn::file_modified(lock_path).await {
         Ok(mtime) => mtime,
