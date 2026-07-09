@@ -15,6 +15,7 @@ pub mod data_type;
 
 pub mod engine;
 
+pub use parameters::{HeaderSummary, summarize_header};
 pub use utils::version::{TOOLCHAIN_VERSION, VERSION};
 
 // needed for tests to resolve `backend_uzu::` imports

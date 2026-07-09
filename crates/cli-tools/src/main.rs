@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::{Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand};
 use cli_tools::{
@@ -9,6 +11,12 @@ use cli_tools::{
     sync::run_sync,
     types::{Capability, Command, Configuration, Language},
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+enum PowerSourceMode {
+    Registry,
+    Local,
+}
 
 #[derive(Parser)]
 #[command(name = "uzu-tools", bin_name = "uzu-tools")]
@@ -62,6 +70,29 @@ enum Commands {
     Release {
         version: String,
     },
+    /// Measure per-model power and energy consumption across a prefill/generate sweep (macOS only)
+    PowerConsumption {
+        #[arg(long, default_value = "power_consumption.csv")]
+        output: PathBuf,
+        #[arg(long, value_enum, default_value_t = PowerSourceMode::Registry)]
+        source: PowerSourceMode,
+        #[arg(long)]
+        storage: Option<PathBuf>,
+        #[arg(long = "model-id")]
+        model_ids: Vec<String>,
+        #[arg(long, value_delimiter = ',', default_value = "128,512,2048")]
+        prefill: Vec<usize>,
+        #[arg(long, value_delimiter = ',', default_value = "32,128")]
+        generate: Vec<usize>,
+        #[arg(long, default_value_t = 6)]
+        repetitions: usize,
+        #[arg(long, default_value_t = 0.75)]
+        memory_fraction: f64,
+        #[arg(long, default_value_t = 3)]
+        cooldown_secs: u64,
+        #[arg(long, default_value_t = 0)]
+        weight_seed: u64,
+    },
 }
 
 fn run_setup(include_platform_specific: bool) -> Result<()> {
@@ -94,6 +125,59 @@ fn run_verify(config: &PlatformsConfig) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+async fn run_power_consumption(
+    tokio: tokio::runtime::Handle,
+    output: PathBuf,
+    source: PowerSourceMode,
+    storage: Option<PathBuf>,
+    model_ids: Vec<String>,
+    prefill: Vec<usize>,
+    generate: Vec<usize>,
+    repetitions: usize,
+    memory_fraction: f64,
+    cooldown_secs: u64,
+    weight_seed: u64,
+) -> Result<()> {
+    let source = match source {
+        PowerSourceMode::Registry => cli_tools::power::SourceMode::Registry,
+        PowerSourceMode::Local => cli_tools::power::SourceMode::Local,
+    };
+    cli_tools::power::run(
+        tokio,
+        cli_tools::power::Options {
+            source,
+            storage,
+            output,
+            model_ids,
+            prefill,
+            generate,
+            repetitions,
+            memory_fraction,
+            cooldown_secs,
+            weight_seed,
+        },
+    )
+    .await
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn run_power_consumption(
+    _tokio: tokio::runtime::Handle,
+    _output: PathBuf,
+    _source: PowerSourceMode,
+    _storage: Option<PathBuf>,
+    _model_ids: Vec<String>,
+    _prefill: Vec<usize>,
+    _generate: Vec<usize>,
+    _repetitions: usize,
+    _memory_fraction: f64,
+    _cooldown_secs: u64,
+    _weight_seed: u64,
+) -> Result<()> {
+    Err(anyhow!("power-consumption is only supported on macOS"))
+}
+
 fn language_backend(
     language: Language,
     config: PlatformsConfig,
@@ -106,7 +190,9 @@ fn language_backend(
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
+    let tokio = tokio::runtime::Handle::current();
     let cli = Cli::parse();
     let config = PlatformsConfig::load()?;
     let host_target = config.host_target()?;
@@ -154,6 +240,33 @@ fn main() -> Result<()> {
         Some(Commands::Release {
             version,
         }) => run_release(&version)?,
+        Some(Commands::PowerConsumption {
+            output,
+            source,
+            storage,
+            model_ids,
+            prefill,
+            generate,
+            repetitions,
+            memory_fraction,
+            cooldown_secs,
+            weight_seed,
+        }) => {
+            run_power_consumption(
+                tokio,
+                output,
+                source,
+                storage,
+                model_ids,
+                prefill,
+                generate,
+                repetitions,
+                memory_fraction,
+                cooldown_secs,
+                weight_seed,
+            )
+            .await?
+        },
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;

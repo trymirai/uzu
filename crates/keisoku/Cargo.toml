@@ -24,6 +24,7 @@ serde = { workspace = true, features = ["derive"] }
 [target.'cfg(target_vendor = "apple")'.dependencies]
 kanka.workspace = true
 objc2-core-foundation.workspace = true
+objc2-foundation.workspace = true
 obfstr.workspace = true
 libc.workspace = true
 

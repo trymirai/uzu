@@ -26,6 +26,19 @@ minijinja.workspace = true
 anyhow.workspace = true
 indexmap.workspace = true
 colored.workspace = true
+tokio.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+backend-uzu.workspace = true
+uzu = { workspace = true, default-features = false, features = ["backend-metal", "capability-grammar"] }
+keisoku.workspace = true
+shoji.workspace = true
+reqwest.workspace = true
+csv.workspace = true
+tokio-stream.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
