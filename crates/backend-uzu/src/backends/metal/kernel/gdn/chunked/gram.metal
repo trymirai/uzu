@@ -99,6 +99,7 @@ KERNEL(DeltaNetChunkedGram)(
   const uint groups_per_head = num_v_heads / num_k_heads;
   for (uint group = 0; group < groups_per_head; ++group) {
     const uint hv_idx = hk_idx * groups_per_head + group;
+    const device float* g_head = g + hv_idx * suffix_len;
     AccFragment scaled = qk_acc;
     scaled.map_coords(lane, [&](short r, short c, float value) {
       const uint row = row_base + uint(r);
@@ -106,8 +107,8 @@ KERNEL(DeltaNetChunkedGram)(
       if (row >= valid_tokens || col >= valid_tokens || col > row) {
         return 0.0f;
       }
-      const float g_row = g[(chunk_token_base + row) * num_v_heads + hv_idx];
-      const float g_col = g[(chunk_token_base + col) * num_v_heads + hv_idx];
+      const float g_row = g_head[chunk_token_base + row];
+      const float g_col = g_head[chunk_token_base + col];
       return value * fast::exp(g_row - g_col);
     });
     const uint dst_base =

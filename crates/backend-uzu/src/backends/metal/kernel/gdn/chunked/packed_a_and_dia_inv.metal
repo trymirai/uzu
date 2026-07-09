@@ -12,7 +12,7 @@ VARIANTS(CHUNK_SIZE, 16, 32, 64)
 KERNEL(DeltaNetChunkedPackedAAndDiaInv)(
     device const float* kk,
     device const float* beta,
-    device const float* g_or_log_decay,
+    device const float* g,
     device float* a_packed,
     device float* a_inv,
     constant const uint& num_v_heads,
@@ -32,6 +32,7 @@ KERNEL(DeltaNetChunkedPackedAAndDiaInv)(
   const uint kk_base = (chunk_idx * num_k_heads + hk_idx) * CHUNK_SIZE * CHUNK_SIZE;
   const uint diag_pair = block_idx / 2;
   const uint diag_col_offset = (block_idx % 2) * CAUSAL_BLOCK_SIZE;
+  const device float* g_head = g + hv_idx * suffix_len;
 
   for (uint idx = lane; idx < num_col_pairs * CAUSAL_BLOCK_SIZE * 2 * CAUSAL_BLOCK_SIZE; idx += METAL_SIMD_SIZE) {
     const uint local_col = idx % (2 * CAUSAL_BLOCK_SIZE);
@@ -45,8 +46,8 @@ KERNEL(DeltaNetChunkedPackedAAndDiaInv)(
     float value = 0.0f;
     if (row < CHUNK_SIZE && col < CHUNK_SIZE && row_token < suffix_len && col_token < suffix_len && col < row) {
       const float beta_row = beta[row_token * num_v_heads + hv_idx];
-      const float g_row = g_or_log_decay[row_token * num_v_heads + hv_idx];
-      const float g_col = g_or_log_decay[col_token * num_v_heads + hv_idx];
+      const float g_row = g_head[row_token];
+      const float g_col = g_head[col_token];
       value = beta_row * fast::exp(g_row - g_col) * kk[kk_base + row * CHUNK_SIZE + col];
     }
 

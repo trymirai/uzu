@@ -79,6 +79,7 @@ KERNEL(DeltaNetChunkedOutputAndState)(
   const uint num_chunks = (suffix_len + OUTPUT_STATE_CHUNK - 1) / OUTPUT_STATE_CHUNK;
   const uint conv_dim = 2 * key_dim + value_dim;
   const uint total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
+  const device float* g_head = g + hv_idx * suffix_len;
 
   // Load the initial state slice transposed into threadgroup memory:
   //   st[k * VT + v] = state[(hv, value_base + v, k)]
@@ -118,7 +119,7 @@ KERNEL(DeltaNetChunkedOutputAndState)(
         }
         const uint token = token_base + row_base + uint(row);
         const float beta_t = beta[token * num_v_heads + hv_idx];
-        const float g_t = g[token * num_v_heads + hv_idx];
+        const float g_t = g_head[token];
         const float v = float(v_tile[uint(row) * total_proj_dim + uint(col)]);
         return beta_t * (v - fast::exp(g_t) * correction);
       });
@@ -173,7 +174,7 @@ KERNEL(DeltaNetChunkedOutputAndState)(
           return 0.0f;
         }
         const uint token = token_base + row_base + uint(row);
-        return value * fast::exp(g[token * num_v_heads + hv_idx]);
+        return value * fast::exp(g_head[token]);
       });
 
       const uint qk_base = chunk_head_base * OUTPUT_STATE_CHUNK * OUTPUT_STATE_CHUNK + row_base * OUTPUT_STATE_CHUNK;
@@ -198,7 +199,7 @@ KERNEL(DeltaNetChunkedOutputAndState)(
     {
       const uint key_base = sg * OUTPUT_STATE_KEY_TILE;
       const uint g_last_token = token_base + (valid_tokens > 0 ? valid_tokens - 1 : 0u);
-      const float g_last = g[g_last_token * num_v_heads + hv_idx];
+      const float g_last = g_head[g_last_token];
       const float alpha = fast::exp(g_last);
 
       UpdAccFragment acc;
@@ -220,7 +221,7 @@ KERNEL(DeltaNetChunkedOutputAndState)(
           const uint token = token_base + j0 + uint(row);
           // decay_scale[t] = exp(g_last - g_t); beta is already baked into Vnew
           // via R, so it does not appear here (matches the fused kernel).
-          return value * fast::exp(g_last - g[token * num_v_heads + hv_idx]);
+          return value * fast::exp(g_last - g_head[token]);
         });
         fragment_mma(acc, v_frag, k_frag);
       }
