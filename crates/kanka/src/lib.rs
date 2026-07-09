@@ -27,7 +27,14 @@ macro_rules! ffi_table {
                 if handle.is_null() {
                     return ::core::option::Option::None;
                 }
-                ::core::option::Option::Some(Self {
+                struct CloseOnDrop(*mut ::core::ffi::c_void);
+                impl ::core::ops::Drop for CloseOnDrop {
+                    fn drop(&mut self) {
+                        unsafe { $crate::libc::dlclose(self.0); }
+                    }
+                }
+                let guard = CloseOnDrop(handle);
+                let table = Self {
                     $($field: {
                         let name = ::std::ffi::CString::new($crate::obfstr::obfstr!($symbol)).ok()?;
                         let symbol = unsafe { $crate::libc::dlsym(handle, name.as_ptr()) };
@@ -38,7 +45,9 @@ macro_rules! ffi_table {
                             ::core::mem::transmute::<*mut ::core::ffi::c_void, $signature>(symbol)
                         }
                     },)*
-                })
+                };
+                ::core::mem::forget(guard);
+                ::core::option::Option::Some(table)
             }
 
             fn get() -> ::core::option::Option<&'static Self> {

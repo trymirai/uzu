@@ -16,13 +16,13 @@ struct ReplyStatsView: View {
                 metricRow(label: "Tokens per second:", value: String(format: "%.3f t/s", stats.tokensPerSecond))
             }
             metricRow(label: "Memory used:", value: ReplyStatsFormat.memory(stats.memoryUsedBytes))
-            if let average = stats.averagePackagePower, let peak = stats.maxPackagePower {
-                metricRow(label: ReplyStatsFormat.powerLabel, value: ReplyStatsFormat.power(average: average, maximum: peak))
+            if let power = stats.totalPower {
+                metricRow(label: ReplyStatsFormat.powerLabel, value: ReplyStatsFormat.power(average: power))
             }
-            if let energy = stats.packageEnergy {
+            if let energy = stats.totalEnergy {
                 metricRow(label: "Energy:", value: ReplyStatsFormat.energy(energy))
             }
-            if let energy = stats.packageEnergy, let tokens = stats.tokensCount, tokens > 0 {
+            if let energy = stats.totalEnergy, let tokens = stats.tokensCount, tokens > 0 {
                 metricRow(label: "Energy / token:", value: ReplyStatsFormat.energyPerToken(joules: energy, tokens: tokens))
             }
             metricRow(label: "Total time:", value: String(format: "%.3f s", stats.totalTime))

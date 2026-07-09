@@ -196,7 +196,7 @@ fn chat_reply_stats_component(
     let power = stats
         .power_stats
         .as_ref()
-        .map(|power| format!("{:.2} W avg / {:.2} W max", power.average_package_watts, power.max_package_watts))
+        .map(|power| format!("{:.2} W avg", power.average_total_watts))
         .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let energy = stats
         .power_stats
@@ -227,11 +227,11 @@ fn chat_reply_stats_component(
                 color: subtitle_color,
             )
             Text(
-                content: format!("package power: {power}"),
+                content: format!("total power: {power}"),
                 color: subtitle_color,
             )
             Text(
-                content: format!("package energy: {energy}"),
+                content: format!("total energy: {energy}"),
                 color: subtitle_color,
             )
             Text(

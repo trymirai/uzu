@@ -6,11 +6,12 @@ mod stub;
 use shoji::types::session::chat::ChatReplyPowerStats;
 
 pub trait PowerRecorder: Send {
-    fn stop(&self) -> Option<ChatReplyPowerStats>;
+    fn begin(&self);
+    fn finish(&self) -> Option<ChatReplyPowerStats>;
 }
 
 impl dyn PowerRecorder {
-    pub fn start() -> Box<dyn PowerRecorder> {
+    pub fn create() -> Box<dyn PowerRecorder> {
         #[cfg(target_vendor = "apple")]
         {
             use crate::util::power::apple::ApplePowerRecorder;
