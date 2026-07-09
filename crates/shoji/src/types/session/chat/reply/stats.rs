@@ -14,6 +14,12 @@ pub struct ChatReplyPowerStats {
 
 #[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ChatReplySpeculatorStats {
+    pub tokens_per_forward_pass: f64,
+}
+
+#[bindings::export(Structure(Class))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ChatReplyStats {
     pub duration: f64,
     pub time_to_first_token: Option<f64>,
@@ -22,6 +28,7 @@ pub struct ChatReplyStats {
     pub tokens_count_input: Option<u32>,
     pub tokens_count_output: Option<u32>,
     pub memory_used_bytes: Option<i64>,
+    pub speculator_stats: Option<ChatReplySpeculatorStats>,
     pub power_stats: Option<ChatReplyPowerStats>,
 }
 
