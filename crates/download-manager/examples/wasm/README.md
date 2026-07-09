@@ -7,6 +7,12 @@ for storage. For this reason, an OPFS browser extension can be useful for debugg
 This example uses [Trunk](https://github.com/trunk-rs/trunk) as the web application bundler, so it must be installed
 first.
 
+Trunk compiles the application for the `wasm32-unknown-unknown` target:
+
+```shell
+rustup target add wasm32-unknown-unknown --toolchain nightly
+```
+
 To run the web application, execute the following:
 
 ```shell
