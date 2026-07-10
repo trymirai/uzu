@@ -15,7 +15,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use backend_uzu::{backends::metal::Metal, engine::Engine};
 use keisoku::{Device as MetricsDevice, PowerMeter};
 use shoji::types::model::Model;
-use tokio::{runtime::Handle as TokioHandle, time::sleep};
+use tokio::time::sleep;
 use uzu::engine::{Engine as UzuEngine, EngineConfig};
 
 use self::{
@@ -84,13 +84,10 @@ struct Session {
 }
 
 impl Session {
-    async fn new(
-        tokio: TokioHandle,
-        options: Options,
-    ) -> Result<Self> {
+    async fn new(options: Options) -> Result<Self> {
         let downloader = if options.source == SourceMode::Registry {
             let storage_base = registry_storage_base(options.storage.clone()).await?;
-            Some(Downloader::new(tokio, Some(storage_base)).await?)
+            Some(Downloader::new(Some(storage_base)).await?)
         } else {
             None
         };
@@ -239,17 +236,14 @@ impl Session {
     }
 }
 
-pub async fn run(
-    tokio: TokioHandle,
-    options: Options,
-) -> Result<()> {
+pub async fn run(options: Options) -> Result<()> {
     validate_options(&options)?;
 
     let output = options.output.clone();
     let targets = prepare_targets(&options).await?;
     eprintln!("Benchmarking {} models", targets.len());
 
-    let mut session = Session::new(tokio, options).await?;
+    let mut session = Session::new(options).await?;
     session.run(&targets).await?;
 
     eprintln!("Wrote {}", output.display());

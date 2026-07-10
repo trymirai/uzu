@@ -4,8 +4,9 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
+use kiban::rt::RuntimeHandle;
 use shoji::types::model::{Model, ModelAccessibility, ModelReference};
-use tokio::{runtime::Handle as TokioHandle, time::timeout};
+use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use uzu::{
     device::Device as StorageDevice,
@@ -29,14 +30,13 @@ pub struct Downloader {
 }
 
 impl Downloader {
-    pub async fn new(
-        tokio: TokioHandle,
-        storage_base: Option<PathBuf>,
-    ) -> Result<Self> {
+    pub async fn new(storage_base: Option<PathBuf>) -> Result<Self> {
+        let runtime_handle = RuntimeHandle::try_current().map_err(|error| anyhow!("runtime handle: {error}"))?;
         let storage_device = StorageDevice::new().map_err(|error| anyhow!("device: {error}"))?;
         let storage_config = StorageConfig::new(storage_device, storage_base, super::artifacts::CACHE_NAME.to_string())
             .with_download_contents(DownloadContents::CONFIG);
-        let storage = Storage::new(tokio, storage_config).await.map_err(|error| anyhow!("storage: {error}"))?;
+        let storage =
+            Storage::new(runtime_handle, storage_config).await.map_err(|error| anyhow!("storage: {error}"))?;
 
         Ok(Self {
             storage,

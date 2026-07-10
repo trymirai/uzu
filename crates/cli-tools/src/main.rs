@@ -127,7 +127,6 @@ fn run_verify(config: &PlatformsConfig) -> Result<()> {
 
 #[cfg(feature = "power-consumption")]
 async fn run_power_consumption(
-    tokio: tokio::runtime::Handle,
     output: PathBuf,
     source: PowerSourceMode,
     storage: Option<PathBuf>,
@@ -143,27 +142,23 @@ async fn run_power_consumption(
         PowerSourceMode::Registry => cli_tools::power::SourceMode::Registry,
         PowerSourceMode::Local => cli_tools::power::SourceMode::Local,
     };
-    cli_tools::power::run(
-        tokio,
-        cli_tools::power::Options {
-            source,
-            storage,
-            output,
-            model_ids,
-            prefill,
-            generate,
-            repetitions,
-            memory_fraction,
-            cooldown_secs,
-            weight_seed,
-        },
-    )
+    cli_tools::power::run(cli_tools::power::Options {
+        source,
+        storage,
+        output,
+        model_ids,
+        prefill,
+        generate,
+        repetitions,
+        memory_fraction,
+        cooldown_secs,
+        weight_seed,
+    })
     .await
 }
 
 #[cfg(not(feature = "power-consumption"))]
 async fn run_power_consumption(
-    _tokio: tokio::runtime::Handle,
     _output: PathBuf,
     _source: PowerSourceMode,
     _storage: Option<PathBuf>,
@@ -194,7 +189,6 @@ fn language_backend(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let tokio = tokio::runtime::Handle::current();
     let cli = Cli::parse();
 
     if let Some(Commands::PowerConsumption {
@@ -211,7 +205,6 @@ async fn main() -> Result<()> {
     }) = cli.command
     {
         return run_power_consumption(
-            tokio,
             output,
             source,
             storage,

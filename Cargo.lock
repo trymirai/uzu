@@ -1072,6 +1072,7 @@ dependencies = [
  "ignore",
  "indexmap 2.14.0",
  "keisoku",
+ "kiban",
  "minijinja",
  "regex",
  "reqwest 0.13.4",
