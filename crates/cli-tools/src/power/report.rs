@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 use serde::Serialize;
 
-use super::workload::Measurement;
+use super::{SourceMode, workload::Measurement};
 
 pub struct DeviceInfo {
     pub os: String,
@@ -12,20 +12,13 @@ pub struct DeviceInfo {
     pub gpu_cores: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Source {
-    Registry,
-    Local,
-}
-
 #[derive(Serialize)]
 pub struct Row {
     pub os: String,
     pub chip: String,
     pub ram_total_bytes: u64,
     pub gpu_cores: u8,
-    pub source: Source,
+    pub source: SourceMode,
     pub model_id: String,
     pub prefill_tokens: usize,
     pub generate_tokens: usize,
@@ -48,7 +41,7 @@ pub struct Row {
 impl Row {
     pub fn measured(
         device: &DeviceInfo,
-        source: Source,
+        source: SourceMode,
         model_id: &str,
         prefill: usize,
         generate: usize,

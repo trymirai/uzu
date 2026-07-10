@@ -85,13 +85,7 @@ enum Commands {
         #[arg(long, value_delimiter = ',', default_value = "32,128")]
         generate: Vec<usize>,
         #[arg(long, default_value_t = 6)]
-        repetitions: usize,
-        #[arg(long, default_value_t = 0.75)]
-        memory_fraction: f64,
-        #[arg(long, default_value_t = 3)]
-        cooldown_secs: u64,
-        #[arg(long, default_value_t = 0)]
-        weight_seed: u64,
+        iterations: usize,
     },
 }
 
@@ -133,10 +127,7 @@ async fn run_power_consumption(
     model_ids: Vec<String>,
     prefill: Vec<usize>,
     generate: Vec<usize>,
-    repetitions: usize,
-    memory_fraction: f64,
-    cooldown_secs: u64,
-    weight_seed: u64,
+    iterations: usize,
 ) -> Result<()> {
     let source = match source {
         PowerSourceMode::Registry => cli_tools::power::SourceMode::Registry,
@@ -149,10 +140,7 @@ async fn run_power_consumption(
         model_ids,
         prefill,
         generate,
-        repetitions,
-        memory_fraction,
-        cooldown_secs,
-        weight_seed,
+        iterations,
     })
     .await
 }
@@ -165,10 +153,7 @@ async fn run_power_consumption(
     _model_ids: Vec<String>,
     _prefill: Vec<usize>,
     _generate: Vec<usize>,
-    _repetitions: usize,
-    _memory_fraction: f64,
-    _cooldown_secs: u64,
-    _weight_seed: u64,
+    _iterations: usize,
 ) -> Result<()> {
     Err(anyhow!(
         "this binary was built without the `power-consumption` feature; rebuild with `--features power-consumption` on macOS"
@@ -198,25 +183,10 @@ async fn main() -> Result<()> {
         model_ids,
         prefill,
         generate,
-        repetitions,
-        memory_fraction,
-        cooldown_secs,
-        weight_seed,
+        iterations,
     }) = cli.command
     {
-        return run_power_consumption(
-            output,
-            source,
-            storage,
-            model_ids,
-            prefill,
-            generate,
-            repetitions,
-            memory_fraction,
-            cooldown_secs,
-            weight_seed,
-        )
-        .await;
+        return run_power_consumption(output, source, storage, model_ids, prefill, generate, iterations).await;
     }
 
     let config = PlatformsConfig::load()?;

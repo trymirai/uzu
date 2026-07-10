@@ -7,13 +7,14 @@ mod workload;
 use std::{
     any::Any,
     panic::{AssertUnwindSafe, catch_unwind},
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use backend_uzu::{backends::metal::Metal, engine::Engine};
 use keisoku::{Device as MetricsDevice, PowerMeter};
+use serde::Serialize;
 use shoji::types::model::Model;
 use tokio::time::sleep;
 use uzu::engine::{Engine as UzuEngine, EngineConfig};
@@ -21,25 +22,20 @@ use uzu::engine::{Engine as UzuEngine, EngineConfig};
 use self::{
     download::{Downloader, ModelFiles, weights_size},
     local::LocalArtifact,
-    report::{DeviceInfo, Report, Row, Source},
+    report::{DeviceInfo, Report, Row},
 };
 
+const WEIGHT_SEED: u64 = 0;
+const MEMORY_FRACTION: f64 = 0.75;
+const COOLDOWN: Duration = Duration::from_secs(3);
 const FAILURE_COOLDOWN_MULTIPLIER: u32 = 2;
-const DEFAULT_REGISTRY_CACHE_DIR: &str = "uzu-power-consumption";
+const REGISTRY_CACHE_DIR: &str = "uzu-power-consumption";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SourceMode {
     Registry,
     Local,
-}
-
-impl From<SourceMode> for Source {
-    fn from(value: SourceMode) -> Self {
-        match value {
-            SourceMode::Registry => Self::Registry,
-            SourceMode::Local => Self::Local,
-        }
-    }
 }
 
 pub struct Options {
@@ -49,10 +45,7 @@ pub struct Options {
     pub model_ids: Vec<String>,
     pub prefill: Vec<usize>,
     pub generate: Vec<usize>,
-    pub repetitions: usize,
-    pub memory_fraction: f64,
-    pub cooldown_secs: u64,
-    pub weight_seed: u64,
+    pub iterations: usize,
 }
 
 enum Outcome {
@@ -67,7 +60,7 @@ enum BenchmarkTarget {
 }
 
 struct ResolvedTarget {
-    source: Source,
+    source: SourceMode,
     id: String,
     files: ModelFiles,
 }
@@ -104,20 +97,18 @@ impl Session {
         &mut self,
         targets: &[BenchmarkTarget],
     ) -> Result<()> {
-        let cooldown = Duration::from_secs(self.options.cooldown_secs);
         let mut previous_faulted = false;
         for target in targets {
             let pause = if previous_faulted {
-                cooldown * FAILURE_COOLDOWN_MULTIPLIER
+                COOLDOWN * FAILURE_COOLDOWN_MULTIPLIER
             } else {
-                cooldown
+                COOLDOWN
             };
             if !pause.is_zero() {
                 sleep(pause).await;
             }
 
-            let id = target_id(target);
-            eprintln!("=> {id}");
+            eprintln!("=> {}", target_id(target));
             let outcome = self.measure_target(target).await;
             previous_faulted = matches!(outcome, Outcome::Faulted);
         }
@@ -129,7 +120,7 @@ impl Session {
         target: &BenchmarkTarget,
     ) -> Outcome {
         if let Some(size) = estimated_memory_bytes(target)
-            && self.should_skip_for_memory(size)
+            && exceeds_memory_limit(size, self.device_info.ram_total_bytes)
         {
             eprintln!("  skipped: model too large ({size} bytes)");
             return Outcome::Skipped;
@@ -166,13 +157,13 @@ impl Session {
                 let downloader = self.downloader.as_ref().context("registry mode requires a downloader")?;
                 let files = downloader.fetch(model).await?;
                 Ok(ResolvedTarget {
-                    source: Source::Registry,
+                    source: SourceMode::Registry,
                     id: model.identifier.clone(),
                     files,
                 })
             },
             BenchmarkTarget::Local(artifact) => Ok(ResolvedTarget {
-                source: Source::Local,
+                source: SourceMode::Local,
                 id: artifact.id.clone(),
                 files: ModelFiles {
                     config_path: artifact.config_path.clone(),
@@ -188,7 +179,7 @@ impl Session {
     ) -> Result<()> {
         let engine = Engine::<Metal>::new().map_err(|error| anyhow!("engine init: {error}"))?;
         let language_model = engine
-            .load_language_model_random(&target.files.config_path, &target.files.header_path, self.options.weight_seed)
+            .load_language_model_random(&target.files.config_path, &target.files.header_path, WEIGHT_SEED)
             .map_err(|error| anyhow!("load model: {error}"))?;
 
         let context_limit = language_model.recommended_context_length();
@@ -205,7 +196,7 @@ impl Session {
                     eprintln!("  warmup failed: {error:#}");
                 }
 
-                for _ in 0..self.options.repetitions {
+                for _ in 0..self.options.iterations {
                     let measurement =
                         workload::run(&language_model, &mut self.meter, &mut self.input_tokens, prefill, generate)?;
                     if let Some(row) =
@@ -217,17 +208,6 @@ impl Session {
             }
         }
         Ok(())
-    }
-
-    fn memory_limit(&self) -> u64 {
-        memory_limit_bytes(self.device_info.ram_total_bytes, self.options.memory_fraction)
-    }
-
-    fn should_skip_for_memory(
-        &self,
-        size_bytes: u64,
-    ) -> bool {
-        exceeds_memory_limit(size_bytes, self.memory_limit())
     }
 }
 
@@ -278,21 +258,9 @@ fn prepare_local_targets(options: &Options) -> Result<Vec<BenchmarkTarget>> {
 }
 
 async fn registry_storage_base(storage: Option<PathBuf>) -> Result<PathBuf> {
-    let base = storage.unwrap_or_else(default_registry_storage_base);
+    let base = storage.unwrap_or_else(|| std::env::temp_dir().join(REGISTRY_CACHE_DIR));
     tokio::fs::create_dir_all(&base).await.with_context(|| format!("create {}", base.display()))?;
     Ok(base)
-}
-
-pub fn default_registry_storage_base() -> PathBuf {
-    std::env::temp_dir().join(DEFAULT_REGISTRY_CACHE_DIR)
-}
-
-pub fn effective_storage_base(storage: Option<PathBuf>) -> PathBuf {
-    storage.unwrap_or_else(default_registry_storage_base)
-}
-
-pub fn cache_models_path(storage_base: &Path) -> PathBuf {
-    artifacts::cache_models_path(storage_base)
 }
 
 fn estimated_memory_bytes(target: &BenchmarkTarget) -> Option<u64> {
@@ -308,18 +276,11 @@ fn registry_memory_bytes(model: &Model) -> Option<u64> {
         .or_else(|| model.properties.as_ref().map(|properties| properties.size as u64))
 }
 
-pub fn memory_limit_bytes(
-    ram_total_bytes: u64,
-    memory_fraction: f64,
-) -> u64 {
-    (ram_total_bytes as f64 * memory_fraction) as u64
-}
-
-pub fn exceeds_memory_limit(
+fn exceeds_memory_limit(
     size_bytes: u64,
-    limit_bytes: u64,
+    ram_total_bytes: u64,
 ) -> bool {
-    size_bytes > limit_bytes
+    size_bytes > (ram_total_bytes as f64 * MEMORY_FRACTION) as u64
 }
 
 fn matches_model_ids(

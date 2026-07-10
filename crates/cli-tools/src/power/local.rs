@@ -8,7 +8,6 @@ use super::artifacts::{CONFIG_FILE, cache_models_path, resolve_weights_path};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalArtifact {
     pub id: String,
-    pub model_dir: PathBuf,
     pub config_path: PathBuf,
     pub header_path: PathBuf,
     pub header_summary: HeaderSummary,
@@ -57,7 +56,6 @@ fn collect_artifacts(
             summarize_header(&header_path).with_context(|| format!("summarize header {}", header_path.display()))?;
         artifacts.push(LocalArtifact {
             id,
-            model_dir: current.to_path_buf(),
             config_path,
             header_path,
             header_summary,

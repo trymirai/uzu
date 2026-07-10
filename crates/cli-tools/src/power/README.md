@@ -53,7 +53,7 @@ Local mode accepts:
 - `model.header.safetensors` (preferred; header-only file), or
 - `model.safetensors` (full weights file; only the header is read)
 
-Both work with random-weight loading because tensor payloads are synthesized from `--weight-seed`.
+Both work with random-weight loading because tensor payloads are synthesized deterministically.
 
 ## Artifact requirements
 
@@ -67,12 +67,9 @@ Both work with random-weight loading because tensor payloads are synthesized fro
 --source registry|local       # default: registry
 --storage <DIR>               # optional cache base for registry (default: temp); required for local
 --model-id <ID>               # repeatable exact model ID selector
---weight-seed <u64>           # deterministic random-weight seed, default 0
 --prefill 128,512,2048        # prefill token counts
 --generate 32,128             # decode token counts
---repetitions 6
---memory-fraction 0.75
---cooldown-secs 3
+--iterations 6                # measured iterations per prefill/generate pair
 ```
 
 ## Registry-to-local replay
@@ -93,7 +90,6 @@ uzu-tools power-consumption \
   --source local \
   --storage ~/power-cache \
   --model-id tiny/tiny-model/v1.0 \
-  --weight-seed 42 \
   --output local.csv
 ```
 
@@ -104,4 +100,3 @@ The CSV includes a `source` column (`registry` or `local`) for each row.
 1. Create a directory tree matching the layout above.
 2. Place a valid Uzu `config.json` and safetensors header (or full `model.safetensors`) in each model directory.
 3. Run with `--source local --storage <DIR>`.
-4. Tune `--weight-seed` for reproducible synthetic weights without downloading payloads.
