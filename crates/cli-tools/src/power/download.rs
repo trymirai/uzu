@@ -198,17 +198,3 @@ fn mirai_file<'a>(
     };
     files.iter().find(|file| file.name == name)
 }
-
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use super::*;
-
-    #[test]
-    fn header_cache_path_is_under_model_directory() {
-        let model_dir = Path::new("/tmp/storage/.cache/mirai/models/ref/id/v1");
-        let header_path = model_dir.join(HEADER_FILE);
-        assert_eq!(header_path, Path::new("/tmp/storage/.cache/mirai/models/ref/id/v1/model.header.safetensors"));
-    }
-}

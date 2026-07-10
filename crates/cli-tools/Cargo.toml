@@ -51,8 +51,5 @@ power-consumption = [
     "dep:tokio-stream",
 ]
 
-[dev-dependencies]
-tempfile.workspace = true
-
 [lints]
 workspace = true
