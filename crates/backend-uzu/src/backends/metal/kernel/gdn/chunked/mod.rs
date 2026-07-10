@@ -13,7 +13,6 @@ use crate::{
 };
 
 const MXU_MIN_T: usize = 256;
-const SIMD_MIN_T: usize = 1024;
 const CHUNK_SIZE: usize = 64;
 const BLOCK_SIZE: usize = 16;
 const VT: usize = 32;
@@ -40,22 +39,18 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
             return Ok(None);
         }
 
-        let use_mxu = context.supports_mxu();
+        if !context.supports_mxu() {
+            return Ok(None);
+        }
+
         let scratch_data_type = if outer_data_type == DataType::BF16 {
             DataType::BF16
         } else {
             DataType::F32
         };
-        let min_t = if use_mxu {
-            MXU_MIN_T
-        } else if context.supports_dynamic_caching() {
-            SIMD_MIN_T
-        } else {
-            return Ok(None);
-        };
 
         Ok(Some(Self {
-            min_t,
+            min_t: MXU_MIN_T,
             prep: DeltaNetPrefillPrepMetalKernel::new(context, outer_data_type, head_dim, true)?,
             cumsum: DeltaNetChunkedCumsumMetalKernel::new(context, CHUNK_SIZE as u32)?,
             gram: DeltaNetChunkedGramMetalKernel::new(context, head_dim, CHUNK_SIZE as u32)?,
@@ -68,7 +63,7 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
                 scratch_data_type,
                 head_dim,
                 VT as u32,
-                use_mxu,
+                true,
             )?,
         }))
     }
