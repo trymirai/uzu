@@ -156,10 +156,7 @@ impl Session {
             },
         };
         if self.should_skip_for_memory(header_summary.logical_payload_bytes) {
-            eprintln!(
-                "  skipped: model too large ({} bytes)",
-                header_summary.logical_payload_bytes
-            );
+            eprintln!("  skipped: model too large ({} bytes)", header_summary.logical_payload_bytes);
             return Outcome::Skipped;
         }
 
@@ -231,14 +228,9 @@ impl Session {
                 for _ in 0..self.options.repetitions {
                     let measurement =
                         workload::run(&language_model, &mut self.meter, &mut self.input_tokens, prefill, generate)?;
-                    if let Some(row) = Row::measured(
-                        &self.device_info,
-                        target.source,
-                        &target.id,
-                        prefill,
-                        generate,
-                        &measurement,
-                    ) {
+                    if let Some(row) =
+                        Row::measured(&self.device_info, target.source, &target.id, prefill, generate, &measurement)
+                    {
                         self.report.write(&row)?;
                     }
                 }
@@ -310,9 +302,7 @@ fn prepare_local_targets(options: &Options) -> Result<Vec<BenchmarkTarget>> {
 
 async fn registry_storage_base(storage: Option<PathBuf>) -> Result<PathBuf> {
     let base = storage.unwrap_or_else(default_registry_storage_base);
-    tokio::fs::create_dir_all(&base)
-        .await
-        .with_context(|| format!("create {}", base.display()))?;
+    tokio::fs::create_dir_all(&base).await.with_context(|| format!("create {}", base.display()))?;
     Ok(base)
 }
 
@@ -341,15 +331,24 @@ fn registry_memory_bytes(model: &Model) -> Option<u64> {
         .or_else(|| model.properties.as_ref().map(|properties| properties.size as u64))
 }
 
-pub fn memory_limit_bytes(ram_total_bytes: u64, memory_fraction: f64) -> u64 {
+pub fn memory_limit_bytes(
+    ram_total_bytes: u64,
+    memory_fraction: f64,
+) -> u64 {
     (ram_total_bytes as f64 * memory_fraction) as u64
 }
 
-pub fn exceeds_memory_limit(size_bytes: u64, limit_bytes: u64) -> bool {
+pub fn exceeds_memory_limit(
+    size_bytes: u64,
+    limit_bytes: u64,
+) -> bool {
     size_bytes > limit_bytes
 }
 
-fn matches_model_ids(selected: &[String], id: &str) -> bool {
+fn matches_model_ids(
+    selected: &[String],
+    id: &str,
+) -> bool {
     selected.is_empty() || selected.iter().any(|candidate| candidate == id)
 }
 

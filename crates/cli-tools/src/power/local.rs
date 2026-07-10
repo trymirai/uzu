@@ -76,7 +76,10 @@ fn collect_artifacts(
     Ok(())
 }
 
-fn matches_model_ids(selected: &[String], id: &str) -> bool {
+fn matches_model_ids(
+    selected: &[String],
+    id: &str,
+) -> bool {
     selected.is_empty() || selected.iter().any(|candidate| candidate == id)
 }
 
@@ -139,11 +142,8 @@ mod tests {
         write_model_tree(temp.path(), "beta/model-b/v2", HEADER_FILE);
         write_model_tree(temp.path(), "gamma/model-c/v3", HEADER_FILE);
 
-        let artifacts = discover(
-            temp.path(),
-            &["alpha/model-a/v1".to_string(), "gamma/model-c/v3".to_string()],
-        )
-        .expect("discover");
+        let artifacts =
+            discover(temp.path(), &["alpha/model-a/v1".to_string(), "gamma/model-c/v3".to_string()]).expect("discover");
         assert_eq!(artifacts.len(), 2);
         assert_eq!(artifacts[0].id, "alpha/model-a/v1");
         assert_eq!(artifacts[1].id, "gamma/model-c/v3");
