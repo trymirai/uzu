@@ -12,7 +12,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use backend_uzu::{backends::metal::Metal, engine::Engine, summarize_header};
+use backend_uzu::{backends::metal::Metal, engine::Engine};
 use keisoku::{Device as MetricsDevice, PowerMeter};
 use shoji::types::model::Model;
 use tokio::{runtime::Handle as TokioHandle, time::sleep};
@@ -147,18 +147,6 @@ impl Session {
                 return Outcome::Faulted;
             },
         };
-
-        let header_summary = match summarize_header(&resolved.files.header_path) {
-            Ok(summary) => summary,
-            Err(error) => {
-                eprintln!("  prepare failed: {error:#}");
-                return Outcome::Faulted;
-            },
-        };
-        if self.should_skip_for_memory(header_summary.logical_payload_bytes) {
-            eprintln!("  skipped: model too large ({} bytes)", header_summary.logical_payload_bytes);
-            return Outcome::Skipped;
-        }
 
         let sweep = catch_unwind(AssertUnwindSafe(|| self.sweep_target(&resolved)));
         match sweep {

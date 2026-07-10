@@ -4,7 +4,6 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use backend_uzu::summarize_header;
 use shoji::types::model::{Model, ModelAccessibility, ModelReference};
 use tokio::{runtime::Handle as TokioHandle, time::timeout};
 use tokio_stream::StreamExt;
@@ -72,8 +71,6 @@ impl Downloader {
             let weights_url = weights_url(model).context("no model.safetensors url in registry entry")?;
             self.download_header(&weights_url, &header_path).await?;
         }
-
-        summarize_header(&header_path).with_context(|| format!("summarize header {}", header_path.display()))?;
 
         Ok(ModelFiles {
             config_path,
