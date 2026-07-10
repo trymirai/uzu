@@ -78,9 +78,9 @@ enum DecodingState<B: Backend> {
 fn prefill_chunk_parts(
     input_chunk: &[u64],
     last_batch: bool,
-    split_sampling_row: bool,
+    split_logits_row: bool,
 ) -> [Option<(&[u64], bool)>; 2] {
-    if last_batch && split_sampling_row && input_chunk.len() > 1 {
+    if last_batch && split_logits_row && input_chunk.len() > 1 {
         let (prompt_chunk, sample_chunk) = input_chunk.split_at(input_chunk.len() - 1);
         [Some((prompt_chunk, false)), Some((sample_chunk, true))]
     } else {
@@ -171,13 +171,13 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 .map_err(LanguageModelStreamError::Backend)?;
 
             let mut output = None;
-            let split_sampling_row = model.decoder.cache_only_prefill_skips_trailing_layers();
+            let split_logits_row = model.decoder.prefill_cache_skips_trailing_layers();
 
             for (input_chunk, sample_last) in input
                 .chunks(max_batch_size)
                 .enumerate()
                 .flat_map(|(batch_idx, input_chunk)| {
-                    prefill_chunk_parts(input_chunk, batch_idx == number_of_batches - 1, split_sampling_row)
+                    prefill_chunk_parts(input_chunk, batch_idx == number_of_batches - 1, split_logits_row)
                 })
                 .flatten()
             {
