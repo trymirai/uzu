@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
+use kiban::rt::RuntimeHandle;
 use tempfile::tempdir;
 use tokio::time::timeout;
 use wiremock::{
@@ -9,8 +10,7 @@ use wiremock::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
-async fn resume_rejects_206_when_content_range_offset_mismatches_request()
--> Result<(), Box<dyn std::error::Error>> {
+async fn resume_rejects_206_when_content_range_offset_mismatches_request() -> Result<(), Box<dyn std::error::Error>> {
     let full_bytes: &[u8] = b"abcdefghij";
     let partial_bytes: &[u8] = b"abcde";
     let total = full_bytes.len();
@@ -31,15 +31,9 @@ async fn resume_rejects_206_when_content_range_offset_mismatches_request()
     let part_path = destination.with_extension("part");
     tokio::fs::write(&part_path, partial_bytes).await?;
 
-    let manager =
-        <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, tokio::runtime::Handle::current()).await?;
+    let manager = <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, RuntimeHandle::current()).await?;
     let task = manager
-        .file_download_task(
-            &format!("{}/model.bin", server.uri()),
-            &destination,
-            FileCheck::None,
-            Some(total as u64),
-        )
+        .file_download_task(&format!("{}/model.bin", server.uri()), &destination, FileCheck::None, Some(total as u64))
         .await?;
 
     assert_eq!(task.state().await.phase, FileDownloadPhase::Paused);

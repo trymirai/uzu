@@ -6,14 +6,11 @@ use std::{
 
 use download_manager::{DownloadError, FileDownloadManager, FileDownloadPhase, FileDownloadState, FileDownloadTask};
 use futures_util::future::join_all;
+use kiban::rt::{RuntimeHandle, TaskJoinHandle};
 use shoji::types::basic::File;
-use tokio::{
-    runtime::Handle as TokioHandle,
-    sync::{
-        broadcast::{Sender as TokioBroadcastSender, channel as tokio_broadcast_channel},
-        mpsc::channel as tokio_mpsc_channel,
-    },
-    task::JoinHandle as TokioJoinHandle,
+use tokio::sync::{
+    broadcast::{Sender as TokioBroadcastSender, channel as tokio_broadcast_channel},
+    mpsc::channel as tokio_mpsc_channel,
 };
 use tokio_stream::wrappers::BroadcastStream;
 
@@ -35,10 +32,10 @@ pub struct Item {
     file_download_tasks: SharedAccess<Vec<Arc<dyn FileDownloadTask>>>,
     file_download_states: SharedAccess<Vec<FileDownloadState>>,
 
-    handle: TokioHandle,
+    runtime_handle: RuntimeHandle,
     broadcast_sender: TokioBroadcastSender<DownloadState>,
     storage_broadcast_sender: StorageDownloadEventSender,
-    listener_task: SharedAccess<Option<TokioJoinHandle<()>>>,
+    listener_task: SharedAccess<Option<Box<dyn TaskJoinHandle<()>>>>,
 }
 
 impl std::fmt::Debug for Item {
@@ -60,7 +57,7 @@ impl Clone for Item {
             file_download_manager: self.file_download_manager.clone(),
             file_download_tasks: self.file_download_tasks.clone(),
             file_download_states: self.file_download_states.clone(),
-            handle: self.handle.clone(),
+            runtime_handle: self.runtime_handle.clone(),
             broadcast_sender: self.broadcast_sender.clone(),
             storage_broadcast_sender: self.storage_broadcast_sender.clone(),
             listener_task: self.listener_task.clone(),
@@ -76,7 +73,7 @@ impl Item {
         download_state: DownloadState,
         file_download_manager: Arc<dyn FileDownloadManager>,
         file_download_tasks: Vec<Arc<dyn FileDownloadTask>>,
-        handle: TokioHandle,
+        runtime_handle: RuntimeHandle,
         storage_broadcast_sender: StorageDownloadEventSender,
     ) -> Self {
         let (broadcast_sender, _) = tokio_broadcast_channel(64);
@@ -89,7 +86,7 @@ impl Item {
             file_download_manager,
             file_download_tasks: SharedAccess::new(file_download_tasks),
             file_download_states,
-            handle,
+            runtime_handle,
             broadcast_sender,
             storage_broadcast_sender,
             listener_task: SharedAccess::new(None),
@@ -571,7 +568,7 @@ impl Item {
 
         let model = self.clone();
         tracing::debug!("[MODEL] Spawning listener task for model: {}", self.identifier);
-        let handle = self.handle.spawn(async move {
+        let handle = self.runtime_handle.spawn(async move {
             tracing::debug!("[MODEL] Listener task started for model: {}", model.identifier);
             use tokio_stream::StreamExt as TokioStreamExt;
 
@@ -582,7 +579,7 @@ impl Item {
 
             for (idx, mut stream) in streams {
                 let tx = tx.clone();
-                let forwarder_handle = model.handle.spawn(async move {
+                let forwarder_handle = model.runtime_handle.spawn(async move {
                     while let Some(item) = stream.next().await {
                         match item {
                             Ok(state) => {
@@ -654,8 +651,7 @@ impl Item {
     pub async fn stop_listening(&self) {
         let mut listener_guard = self.listener_task.lock().await;
         if let Some(handle) = listener_guard.take() {
-            handle.abort();
-            let _ = handle.await;
+            handle.abort_and_join().await;
         }
     }
 
@@ -671,7 +667,7 @@ impl Item {
 }
 
 struct ListenerForwarderHandles {
-    handles: Vec<TokioJoinHandle<()>>,
+    handles: Vec<Box<dyn TaskJoinHandle<()>>>,
 }
 
 impl Drop for ListenerForwarderHandles {

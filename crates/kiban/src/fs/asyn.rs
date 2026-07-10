@@ -1,4 +1,4 @@
-use std::{io, path::Path};
+use std::{io, ops::Range, path::Path};
 
 use crate::time::SystemTime;
 
@@ -56,6 +56,26 @@ pub async fn read(path: impl AsRef<Path>) -> Result<Vec<u8>, io::Error> {
 
     #[cfg(not(target_family = "wasm"))]
     tokio::fs::read(path.as_ref()).await
+}
+
+pub async fn read_range(
+    path: impl AsRef<Path>,
+    range: Range<u64>,
+) -> Result<Vec<u8>, io::Error> {
+    #[cfg(target_family = "wasm")]
+    return super::asyn_opfs::file_read_range(path.as_ref().to_str().unwrap(), range).await;
+
+    #[cfg(not(target_family = "wasm"))]
+    {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+
+        let mut file = tokio::fs::File::open(path).await?;
+        file.seek(SeekFrom::Start(range.start)).await?;
+        let buffer_len = (range.end - range.start) as usize;
+        let mut buffer = vec![0; buffer_len];
+        file.read_exact(&mut buffer).await?;
+        Ok(buffer)
+    }
 }
 
 pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, io::Error> {

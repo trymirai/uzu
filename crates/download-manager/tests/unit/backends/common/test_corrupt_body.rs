@@ -1,6 +1,6 @@
 use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
+use kiban::rt::RuntimeHandle;
 use rstest::rstest;
-use tokio::runtime::Handle as TokioHandle;
 
 use crate::common::{Behavior, MockRegistry, error_message, wait_for_phase};
 
@@ -15,7 +15,7 @@ async fn test_corrupt_body_fails_crc(
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
-    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current()).await.unwrap();
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
     let task = manager
         .file_download_task(
             &tokenizer.file.url,
@@ -30,10 +30,7 @@ async fn test_corrupt_body_fails_crc(
     task.download().await.unwrap();
     let state = wait_for_phase(&task, &mut progress, |phase| matches!(phase, FileDownloadPhase::Error(_))).await;
     let message = error_message(state);
-    assert!(
-        message.contains("CRC") || message.contains("checksum"),
-        "unexpected error: {message}"
-    );
+    assert!(message.contains("CRC") || message.contains("checksum"), "unexpected error: {message}");
     Ok(())
 }
 
@@ -42,13 +39,13 @@ async fn test_corrupt_body_fails_crc(
 #[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_corrupt_body_cancel_resets_error_state(
-    #[case] download_manager_type: FileDownloadManagerType,
+    #[case] download_manager_type: FileDownloadManagerType
 ) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start_with(Behavior::CORRUPT_BODY).await?;
     let tokenizer = registry.file("tokenizer.json")?;
     let temporary_directory = tempfile::tempdir()?;
     let destination = temporary_directory.path().join(&tokenizer.file.name);
-    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current()).await?;
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await?;
     let task = manager
         .file_download_task(
             &tokenizer.file.url,
