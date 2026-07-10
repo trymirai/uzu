@@ -3312,6 +3312,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiban"
+version = "0.5.12"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "libc",
+ "tokio",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
+]
+
+[[package]]
 name = "lab"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
