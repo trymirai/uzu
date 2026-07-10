@@ -26,7 +26,7 @@ minijinja.workspace = true
 anyhow.workspace = true
 indexmap.workspace = true
 colored.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 # Heavy inference-stack dependencies, pulled in only by the `power-consumption`
 # feature so that the default `cargo tools` build stays lightweight.
@@ -49,6 +49,8 @@ power-consumption = [
     "dep:reqwest",
     "dep:csv",
     "dep:tokio-stream",
+    "tokio/time",
+    "tokio/fs",
 ]
 
 [lints]

@@ -40,8 +40,8 @@ struct ThreadgroupTile {
   METAL_CONST ushort TILE_STRIDE_A = SIMDGROUP_BLOCK_SIZE * A_STRIDE_INNER;
   METAL_CONST ushort TILE_STRIDE_B = SIMDGROUP_BLOCK_SIZE * B_STRIDE_INNER;
 
-  Fragment<AccumulatorType, TILE_ROWS, 1, SimdgroupFragmentOps> a_fragment;
-  Fragment<AccumulatorType, 1, TILE_COLS, SimdgroupFragmentOps> b_fragment;
+  Fragment<AT, TILE_ROWS, 1, SimdgroupFragmentOps> a_fragment;
+  Fragment<BT, 1, TILE_COLS, SimdgroupFragmentOps> b_fragment;
   Fragment<AccumulatorType, TILE_ROWS, TILE_COLS, SimdgroupFragmentOps> c_fragment;
 
   ushort simdgroup_row_offset;

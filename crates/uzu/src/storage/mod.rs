@@ -14,11 +14,12 @@ pub use download_contents::DownloadContents;
 use download_manager::{FileCheck, FileDownloadManager, FileDownloadPhase};
 pub use error::StorageError;
 use futures_util::future::join_all;
+use kiban::rt::RuntimeHandle;
 use shoji::types::{
     basic::File,
     model::{Model, ModelAccessibility, ModelReference},
 };
-use tokio::{runtime::Handle as TokioHandle, sync::broadcast::channel as tokio_broadcast_channel};
+use tokio::sync::broadcast::channel as tokio_broadcast_channel;
 
 use crate::{
     helpers::SharedAccess,
@@ -31,12 +32,12 @@ pub struct Storage {
     download_manager: SharedAccess<Arc<dyn FileDownloadManager>>,
     items: SharedAccess<HashMap<String, Item>>,
     items_broadcast_sender: StorageDownloadEventSender,
-    handle: TokioHandle,
+    handle: RuntimeHandle,
 }
 
 impl Storage {
     pub async fn new(
-        tokio_handle: TokioHandle,
+        runtime_handle: RuntimeHandle,
         config: Config,
     ) -> Result<Self, StorageError> {
         create_dir_all(config.cache_path()).map_err(|_| StorageError::UnableToCreateDirectory {
@@ -44,7 +45,7 @@ impl Storage {
         })?;
 
         let download_manager = SharedAccess::new(Arc::from(
-            <dyn FileDownloadManager>::new(config.download_manager_type, tokio_handle.clone()).await.map_err(
+            <dyn FileDownloadManager>::new(config.download_manager_type, runtime_handle.clone()).await.map_err(
                 |error| StorageError::DownloadManager {
                     message: error.to_string(),
                 },
@@ -60,7 +61,7 @@ impl Storage {
             download_manager,
             items,
             items_broadcast_sender,
-            handle: tokio_handle,
+            handle: runtime_handle,
         };
         Ok(storage)
     }
