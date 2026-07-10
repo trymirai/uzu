@@ -47,7 +47,12 @@ struct SimdgroupFragmentOps {
     static_assert(LeftFragment::ROW_FRAGMENTS == rows, "fragment matmul: M dimensions do not match");
     static_assert(RightFragment::COL_FRAGMENTS == cols, "fragment matmul: N dimensions do not match");
     static_assert(RightFragment::ROW_FRAGMENTS == depth, "fragment matmul: K dimensions do not match");
-    using Sg = SimdgroupMMA<typename OutputFragment::ElementType, FRAGMENT_ROWS, FRAGMENT_COLS>;
+    using Sg = SimdgroupMMA<
+        typename OutputFragment::ElementType,
+        FRAGMENT_ROWS,
+        FRAGMENT_COLS,
+        typename LeftFragment::ElementType,
+        typename RightFragment::ElementType>;
 
     METAL_PRAGMA_UNROLL
     for (ushort m = 0; m < rows; ++m) {
