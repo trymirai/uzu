@@ -63,23 +63,23 @@ fn run_prefill<T: ArrayElement>(
     mode: PrefillMode,
 ) -> (Vec<f32>, Vec<f32>) {
     let in_proj_data: Vec<T> = case.in_proj.iter().copied().map(|value| cast(value).unwrap()).collect();
-    let in_proj = alloc_allocation_with_data::<Metal, T>(&context, &in_proj_data);
-    let a_log = alloc_allocation_with_data::<Metal, f32>(&context, &case.a_log);
-    let dt_bias = alloc_allocation_with_data::<Metal, f32>(&context, &case.dt_bias);
-    let norm_weight = alloc_allocation_with_data::<Metal, f32>(&context, &case.norm_weight);
+    let in_proj = alloc_allocation_with_data::<Metal, T>(context, &in_proj_data);
+    let a_log = alloc_allocation_with_data::<Metal, f32>(context, &case.a_log);
+    let dt_bias = alloc_allocation_with_data::<Metal, f32>(context, &case.dt_bias);
+    let norm_weight = alloc_allocation_with_data::<Metal, f32>(context, &case.norm_weight);
     let state_len = NUM_V_HEADS * HEAD_V_DIM * HEAD_K_DIM;
-    let mut state = alloc_allocation::<Metal, f32>(&context, state_len);
-    let mut out = alloc_allocation::<Metal, T>(&context, case.suffix_len * case.value_dim);
-    let mut q = alloc_allocation::<Metal, f32>(&context, case.suffix_len * case.key_dim);
-    let mut k = alloc_allocation::<Metal, f32>(&context, case.suffix_len * case.key_dim);
-    let mut beta = alloc_allocation::<Metal, f32>(&context, case.suffix_len * NUM_V_HEADS);
-    let mut decay = alloc_allocation::<Metal, f32>(&context, case.suffix_len * NUM_V_HEADS);
+    let mut state = alloc_allocation::<Metal, f32>(context, state_len);
+    let mut out = alloc_allocation::<Metal, T>(context, case.suffix_len * case.value_dim);
+    let mut q = alloc_allocation::<Metal, f32>(context, case.suffix_len * case.key_dim);
+    let mut k = alloc_allocation::<Metal, f32>(context, case.suffix_len * case.key_dim);
+    let mut beta = alloc_allocation::<Metal, f32>(context, case.suffix_len * NUM_V_HEADS);
+    let mut decay = alloc_allocation::<Metal, f32>(context, case.suffix_len * NUM_V_HEADS);
     let mut encoder = Encoder::new(context).expect("encoder");
 
     match mode {
         PrefillMode::Recurrent => {
             <BackendKernels<Metal> as Kernels>::DeltaNetPrefillPrepKernel::new(
-                &context,
+                context,
                 T::data_type(),
                 HEAD_K_DIM as u32,
                 false,
@@ -100,7 +100,7 @@ fn run_prefill<T: ArrayElement>(
                 case.suffix_len as u32,
                 &mut encoder,
             );
-            <BackendKernels<Metal> as Kernels>::DeltaNetPrefillKernel::new(&context, T::data_type(), HEAD_K_DIM as u32)
+            <BackendKernels<Metal> as Kernels>::DeltaNetPrefillKernel::new(context, T::data_type(), HEAD_K_DIM as u32)
                 .expect("prefill")
                 .encode(
                     &q,
@@ -121,34 +121,30 @@ fn run_prefill<T: ArrayElement>(
                 );
         },
         PrefillMode::Chunked => {
-            <BackendKernels<Metal> as Kernels>::DeltaNetChunkedPrefill::new(
-                &context,
-                T::data_type(),
-                HEAD_K_DIM as u32,
-            )
-            .expect("chunked")
-            .expect("chunked unsupported")
-            .encode(
-                DeltaNetChunkedPrefillArgs {
-                    in_projected: &in_proj,
-                    a_log: &a_log,
-                    dt_bias: &dt_bias,
-                    ssm_state: &mut state,
-                    delta_output: &mut out,
-                    num_heads: NUM_V_HEADS as u32,
-                    num_groups: NUM_K_HEADS as u32,
-                    value_head_dim: HEAD_V_DIM as u32,
-                    key_dim: case.key_dim as u32,
-                    value_dim: case.value_dim as u32,
-                    suffix_len: case.suffix_len,
-                },
-                &mut encoder,
-            )
-            .expect("chunked encode");
+            <BackendKernels<Metal> as Kernels>::DeltaNetChunkedPrefill::new(context, T::data_type(), HEAD_K_DIM as u32)
+                .expect("chunked")
+                .expect("chunked unsupported")
+                .encode(
+                    DeltaNetChunkedPrefillArgs {
+                        in_projected: &in_proj,
+                        a_log: &a_log,
+                        dt_bias: &dt_bias,
+                        ssm_state: &mut state,
+                        delta_output: &mut out,
+                        num_heads: NUM_V_HEADS as u32,
+                        num_groups: NUM_K_HEADS as u32,
+                        value_head_dim: HEAD_V_DIM as u32,
+                        key_dim: case.key_dim as u32,
+                        value_dim: case.value_dim as u32,
+                        suffix_len: case.suffix_len,
+                    },
+                    &mut encoder,
+                )
+                .expect("chunked encode");
         },
     }
 
-    <BackendKernels<Metal> as Kernels>::DeltaNetNormGateKernel::new(&context, T::data_type()).expect("norm").encode(
+    <BackendKernels<Metal> as Kernels>::DeltaNetNormGateKernel::new(context, T::data_type()).expect("norm").encode(
         &mut out,
         &in_proj,
         &norm_weight,
