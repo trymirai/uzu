@@ -125,7 +125,7 @@ fn run_verify(config: &PlatformsConfig) -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(feature = "power-consumption")]
 async fn run_power_consumption(
     tokio: tokio::runtime::Handle,
     output: PathBuf,
@@ -161,7 +161,7 @@ async fn run_power_consumption(
     .await
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(feature = "power-consumption"))]
 async fn run_power_consumption(
     _tokio: tokio::runtime::Handle,
     _output: PathBuf,
@@ -175,7 +175,9 @@ async fn run_power_consumption(
     _cooldown_secs: u64,
     _weight_seed: u64,
 ) -> Result<()> {
-    Err(anyhow!("power-consumption is only supported on macOS"))
+    Err(anyhow!(
+        "this binary was built without the `power-consumption` feature; rebuild with `--features power-consumption` on macOS"
+    ))
 }
 
 fn language_backend(
@@ -270,7 +272,9 @@ async fn main() -> Result<()> {
         Some(Commands::Release {
             version,
         }) => run_release(&version)?,
-        Some(Commands::PowerConsumption { .. }) => unreachable!("handled above"),
+        Some(Commands::PowerConsumption {
+            ..
+        }) => unreachable!("handled above"),
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;

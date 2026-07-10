@@ -1,6 +1,6 @@
 pub mod configs;
 pub mod languages;
-#[cfg(target_os = "macos")]
+#[cfg(feature = "power-consumption")]
 pub mod power;
 pub mod release;
 pub mod sync;
