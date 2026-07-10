@@ -75,6 +75,19 @@ enum DecodingState<B: Backend> {
     Invalid,
 }
 
+fn prefill_chunk_parts(
+    input_chunk: &[u64],
+    last_batch: bool,
+    split_sampling_row: bool,
+) -> [Option<(&[u64], bool)>; 2] {
+    if last_batch && split_sampling_row && input_chunk.len() > 1 {
+        let (prompt_chunk, sample_chunk) = input_chunk.split_at(input_chunk.len() - 1);
+        [Some((prompt_chunk, false)), Some((sample_chunk, true))]
+    } else {
+        [Some((input_chunk, last_batch)), None]
+    }
+}
+
 pub struct LanguageModelStream<'a, B: Backend> {
     model: &'a LanguageModel<B>,
     model_state: &'a mut LanguageModelState<B>,
@@ -158,20 +171,15 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 .map_err(LanguageModelStreamError::Backend)?;
 
             let mut output = None;
+            let split_sampling_row = model.decoder.cache_only_prefill_skips_trailing_layers();
 
             for (input_chunk, sample_last) in input
                 .chunks(max_batch_size)
                 .enumerate()
                 .flat_map(|(batch_idx, input_chunk)| {
-                    let last_batch = batch_idx == number_of_batches - 1;
-                    if last_batch && input_chunk.len() > 1 && model.decoder.prefill_skips_trailing_layers() {
-                        let (prompt_chunk, sample_chunk) = input_chunk.split_at(input_chunk.len() - 1);
-                        [(prompt_chunk, false), (sample_chunk, true)]
-                    } else {
-                        [(input_chunk, last_batch), (&[][..], false)]
-                    }
+                    prefill_chunk_parts(input_chunk, batch_idx == number_of_batches - 1, split_sampling_row)
                 })
-                .filter(|(input_chunk, _sample_last)| !input_chunk.is_empty())
+                .flatten()
             {
                 let input_trie = TrieNode::flat(model_state.tokens.len(), input_chunk, &model_state.prng);
                 let input_flat_trie = input_trie.linearize();

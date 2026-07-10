@@ -21,12 +21,15 @@ enum TransformerLayerStateType<B: Backend> {
     Shared(usize),
 }
 
-fn prefill_layer_count<I>(mut kv_source_layers: I) -> usize
+fn cache_only_prefill_layer_count<I>(mut kv_source_layers: I) -> usize
 where
     I: DoubleEndedIterator<Item = Option<usize>> + ExactSizeIterator,
 {
-    let layer_count = kv_source_layers.len();
-    kv_source_layers.rposition(|source| source.is_none()).map_or(layer_count, |layer_index| layer_index + 1)
+    let num_layers = kv_source_layers.len();
+    let Some(last_owned_kv_layer_index) = kv_source_layers.rposition(|source| source.is_none()) else {
+        return num_layers;
+    };
+    last_owned_kv_layer_index + 1
 }
 
 pub struct TransformerState<B: Backend> {
@@ -84,14 +87,14 @@ impl<B: Backend> TransformerState<B> {
 mod tests {
     use proc_macros::uzu_test;
 
-    use crate::encodable_block::transformer::prefill_layer_count;
+    use crate::encodable_block::transformer::cache_only_prefill_layer_count;
 
     #[uzu_test]
-    fn prefill_layer_count_uses_last_owned_kv_layer() {
+    fn cache_only_prefill_layer_count_uses_last_owned_kv_layer() {
         for (sources, expected) in
             [(&[None, None, None][..], 3), (&[None, None, Some(1), Some(1)], 2), (&[Some(0), Some(0)], 2)]
         {
-            assert_eq!(prefill_layer_count(sources.iter().copied()), expected);
+            assert_eq!(cache_only_prefill_layer_count(sources.iter().copied()), expected);
         }
     }
 }
@@ -184,12 +187,12 @@ impl<B: Backend> Transformer<B> {
         })
     }
 
-    pub fn prefill_layer_count(&self) -> usize {
-        prefill_layer_count(self.layers.iter().map(|(layer, _rope_index)| layer.kv_source_layer_index))
+    pub fn cache_only_prefill_layer_count(&self) -> usize {
+        cache_only_prefill_layer_count(self.layers.iter().map(|(layer, _rope_index)| layer.kv_source_layer_index))
     }
 
-    pub fn prefill_skips_trailing_layers(&self) -> bool {
-        self.prefill_layer_count() < self.layers.len()
+    pub fn cache_only_prefill_skips_trailing_layers(&self) -> bool {
+        self.cache_only_prefill_layer_count() < self.layers.len()
     }
 
     pub fn create_empty_state(
@@ -228,7 +231,7 @@ impl<B: Backend> Transformer<B> {
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
         let mut hidden = input;
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_empty() {
-            self.prefill_layer_count()
+            self.cache_only_prefill_layer_count()
         } else {
             self.layers.len()
         };
