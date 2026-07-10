@@ -55,8 +55,6 @@ pub struct Options {
     pub weight_seed: u64,
 }
 
-/// Outcome of measuring a single model. Only `Faulted` warrants a longer cooldown
-/// before the next model, giving the GPU command queue time to recover.
 enum Outcome {
     Completed,
     Skipped,
@@ -184,9 +182,6 @@ impl Session {
         }
     }
 
-    /// Runs the prefill x generate sweep for one model, writing each measured repetition
-    /// immediately. Aborts the remaining sweep on the first workload error so a faulted GPU
-    /// queue is not hammered with follow-up submissions.
     fn sweep_target(
         &mut self,
         target: &ResolvedTarget,

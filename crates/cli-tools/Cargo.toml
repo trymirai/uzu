@@ -28,8 +28,6 @@ indexmap.workspace = true
 colored.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
-# Heavy inference-stack dependencies, pulled in only by the `power-consumption`
-# feature so that the default `cargo tools` build stays lightweight.
 backend-uzu = { workspace = true, optional = true }
 uzu = { workspace = true, default-features = false, features = ["backend-metal", "capability-grammar"], optional = true }
 keisoku = { workspace = true, optional = true }
@@ -40,8 +38,6 @@ csv = { workspace = true, optional = true }
 tokio-stream = { workspace = true, optional = true }
 
 [features]
-# Enables the `power-consumption` subcommand. macOS only (pulls in the Metal
-# inference stack and keisoku). Off by default to keep `cargo tools` fast.
 power-consumption = [
     "dep:backend-uzu",
     "dep:uzu",
