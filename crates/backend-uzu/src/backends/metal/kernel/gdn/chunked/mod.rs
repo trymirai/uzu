@@ -1,6 +1,6 @@
 use super::super::{
-    DeltaNetChunkedADiagInvMetalKernel, DeltaNetChunkedCausalInvMetalKernel, DeltaNetChunkedCumsumMetalKernel,
-    DeltaNetChunkedGramMetalKernel, DeltaNetChunkedOutputAndStateMetalKernel, DeltaNetPrefillPrepMetalKernel,
+    DeltaNetChunkedCausalInvMetalKernel, DeltaNetChunkedCumsumMetalKernel, DeltaNetChunkedGramAMetalKernel,
+    DeltaNetChunkedOutputAndStateMetalKernel, DeltaNetPrefillPrepMetalKernel,
 };
 use crate::{
     array::size_for_shape,
@@ -23,8 +23,7 @@ pub struct MetalDeltaNetChunkedPrefill {
     min_t: usize,
     prep: DeltaNetPrefillPrepMetalKernel,
     cumsum: DeltaNetChunkedCumsumMetalKernel,
-    gram: DeltaNetChunkedGramMetalKernel,
-    a_diag_inv: DeltaNetChunkedADiagInvMetalKernel,
+    gram_a: DeltaNetChunkedGramAMetalKernel,
     causal_inv: DeltaNetChunkedCausalInvMetalKernel,
     output_and_state: DeltaNetChunkedOutputAndStateMetalKernel,
 }
@@ -53,8 +52,7 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
             min_t: MXU_MIN_T,
             prep: DeltaNetPrefillPrepMetalKernel::new(context, outer_data_type, head_dim, true)?,
             cumsum: DeltaNetChunkedCumsumMetalKernel::new(context, CHUNK_SIZE as u32)?,
-            gram: DeltaNetChunkedGramMetalKernel::new(context, head_dim, CHUNK_SIZE as u32)?,
-            a_diag_inv: DeltaNetChunkedADiagInvMetalKernel::new(context, CHUNK_SIZE as u32)?,
+            gram_a: DeltaNetChunkedGramAMetalKernel::new(context, head_dim, CHUNK_SIZE as u32)?,
             causal_inv: DeltaNetChunkedCausalInvMetalKernel::new(context, CHUNK_SIZE as u32, VT as u32)?,
             output_and_state: DeltaNetChunkedOutputAndStateMetalKernel::new(
                 context,
@@ -97,10 +95,6 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
         let mut log_decay =
             encoder.allocate_scratch(size_for_shape(&[suffix_len * args.num_heads as usize], DataType::F32))?;
         let mut g = encoder.allocate_scratch(size_for_shape(&[suffix_len * args.num_heads as usize], DataType::F32))?;
-        let mut kk = encoder.allocate_scratch(size_for_shape(
-            &[num_chunks * args.num_groups as usize * CHUNK_SIZE * CHUNK_SIZE],
-            DataType::F32,
-        ))?;
         let mut qk = encoder.allocate_scratch(size_for_shape(
             &[num_chunks * args.num_heads as usize * CHUNK_SIZE * CHUNK_SIZE],
             DataType::F32,
@@ -134,26 +128,17 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
             encoder,
         );
         self.cumsum.encode(&log_decay, &mut g, args.num_heads, suffix_len as u32, encoder);
-        self.gram.encode(
+        self.gram_a.encode(
             &q_norm,
             &k_norm,
             &g,
-            &mut kk,
-            &mut qk,
-            args.num_heads,
-            args.num_groups,
-            args.key_dim,
-            suffix_len as u32,
-            encoder,
-        );
-        self.a_diag_inv.encode(
-            &kk,
             &beta,
-            &g,
+            &mut qk,
             &mut a_packed,
             &mut a_inv,
             args.num_heads,
             args.num_groups,
+            args.key_dim,
             suffix_len as u32,
             encoder,
         );
