@@ -168,6 +168,17 @@ fn run_prefill<T: ArrayElement>(
 #[uzu_test]
 fn chunked_prefill_matches_recurrent_prefill() {
     let context = <Metal as Backend>::Context::new().expect("metal context");
+    if <BackendKernels<Metal> as Kernels>::DeltaNetChunkedPrefill::new(
+        &context,
+        <bf16 as ArrayElement>::data_type(),
+        HEAD_K_DIM as u32,
+    )
+    .expect("chunked")
+    .is_none()
+    {
+        eprintln!("chunked prefill unsupported on this Metal device");
+        return;
+    }
 
     for suffix_len in [CHUNK_SIZE - 1, CHUNK_SIZE, CHUNK_SIZE + 1, CHUNK_SIZE * 2 + 1] {
         let case = test_case(suffix_len);
