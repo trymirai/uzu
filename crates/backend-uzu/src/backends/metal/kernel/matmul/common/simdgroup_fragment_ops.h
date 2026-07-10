@@ -61,12 +61,26 @@ struct SimdgroupFragmentOps {
         const ushort col = (m % 2) ? (cols - 1 - n) : n;
         METAL_PRAGMA_UNROLL
         for (ushort k = 0; k < depth; ++k) {
-          Sg::mma(
-              output.fragment_at(m, col),
-              left.fragment_at(m, k),
-              right.fragment_at(k, col),
-              output.fragment_at(m, col)
-          );
+          if constexpr (
+              metal::is_same_v<typename LeftFragment::ElementType, typename OutputFragment::ElementType> &&
+              metal::is_same_v<typename RightFragment::ElementType, typename OutputFragment::ElementType>
+          ) {
+            Sg::mma(
+                output.fragment_at(m, col),
+                left.fragment_at(m, k),
+                right.fragment_at(k, col),
+                output.fragment_at(m, col)
+            );
+          } else {
+            typename OutputFragment::ThreadVectorType left_values;
+            typename OutputFragment::ThreadVectorType right_values;
+            METAL_PRAGMA_UNROLL
+            for (ushort i = 0; i < ELEMENTS_PER_THREAD; ++i) {
+              left_values[i] = typename OutputFragment::ElementType(left.fragment_at(m, k)[i]);
+              right_values[i] = typename OutputFragment::ElementType(right.fragment_at(k, col)[i]);
+            }
+            Sg::mma(output.fragment_at(m, col), left_values, right_values, output.fragment_at(m, col));
+          }
         }
       }
     }
