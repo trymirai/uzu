@@ -72,32 +72,6 @@ impl<B: Backend> TransformerState<B> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use proc_macros::uzu_test;
-
-    #[uzu_test]
-    fn prefill_cache_layer_count_uses_last_owned_kv_layer() {
-        for (kv_sources, expected) in [
-            (&[None, None, None][..], 3),
-            (&[None, None, Some(1), Some(1)], 2),
-            (&[None, Some(0), None, Some(2)], 3),
-            (&[Some(0), Some(0)], 2),
-        ] {
-            assert_eq!(prefill_cache_layer_count(kv_sources), expected);
-        }
-    }
-
-    fn prefill_cache_layer_count(kv_sources: &[Option<usize>]) -> usize {
-        let num_layers = kv_sources.len();
-        let Some(last_owned_kv_layer_index) = kv_sources.iter().rposition(Option::is_none) else {
-            return num_layers;
-        };
-
-        last_owned_kv_layer_index + 1
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum TransformerNewError<B: Backend> {
     #[error("Backend error: {0}")]
