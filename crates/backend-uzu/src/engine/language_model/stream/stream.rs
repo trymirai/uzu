@@ -159,9 +159,20 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
             let mut output = None;
 
-            for (batch_idx, input_chunk) in input.chunks(max_batch_size).enumerate() {
-                let last_batch = batch_idx == number_of_batches - 1;
-
+            for (input_chunk, sample_last) in input
+                .chunks(max_batch_size)
+                .enumerate()
+                .flat_map(|(batch_idx, input_chunk)| {
+                    let last_batch = batch_idx == number_of_batches - 1;
+                    if last_batch && input_chunk.len() > 1 && model.decoder.prefill_skips_trailing_layers() {
+                        let (prompt_chunk, sample_chunk) = input_chunk.split_at(input_chunk.len() - 1);
+                        [(prompt_chunk, false), (sample_chunk, true)]
+                    } else {
+                        [(input_chunk, last_batch), (&[][..], false)]
+                    }
+                })
+                .filter(|(input_chunk, _sample_last)| !input_chunk.is_empty())
+            {
                 let input_trie = TrieNode::flat(model_state.tokens.len(), input_chunk, &model_state.prng);
                 let input_flat_trie = input_trie.linearize();
 
@@ -178,14 +189,14 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     .encode(
                         &token_ids,
                         &batch_dim,
-                        last_batch.then(|| (input_chunk.len() - 1)..input_chunk.len()),
+                        sample_last.then(|| (input_chunk.len() - 1)..input_chunk.len()),
                         &mut model_state.transformer_state,
                         &mut encoder,
                         &[],
                     )?
                     .logits;
 
-                if last_batch {
+                if sample_last {
                     let logits = logits.unwrap();
 
                     let seeds = if matches!(options.sampling_method, SamplingMethod::Stochastic { .. }) {

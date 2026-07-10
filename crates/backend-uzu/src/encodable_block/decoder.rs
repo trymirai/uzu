@@ -98,6 +98,10 @@ impl<B: Backend> Decoder<B> {
         self.transformer.max_context_length()
     }
 
+    pub fn prefill_skips_trailing_layers(&self) -> bool {
+        self.transformer.prefill_skips_trailing_layers()
+    }
+
     pub fn create_empty_state(
         &self,
         max_context_length: Option<usize>,
