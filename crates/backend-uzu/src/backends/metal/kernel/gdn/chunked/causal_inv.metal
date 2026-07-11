@@ -26,14 +26,13 @@ KERNEL(DeltaNetChunkedCausalInv)(
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
   using Ops = SimdgroupFragmentOps;
-  using InputType = float;
   constexpr ushort TOKEN_FRAGMENTS = DIAG_BLOCK_SIZE / Ops::FRAGMENT_ROWS;
   constexpr ushort VALUE_FRAGMENTS = BV / Ops::FRAGMENT_COLS;
   using TileFragment = Fragment<float, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
-  using MatrixFragment = OperandFragment<InputType, TOKEN_FRAGMENTS, TOKEN_FRAGMENTS, Ops>;
-  using ValueFragment = OperandFragment<InputType, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
-  using PairMatrixFragment = OperandFragment<InputType, TOKEN_FRAGMENTS, 2 * TOKEN_FRAGMENTS, Ops>;
-  using PairValueFragment = OperandFragment<InputType, 2 * TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
+  using MatrixFragment = OperandFragment<float, TOKEN_FRAGMENTS, TOKEN_FRAGMENTS, Ops>;
+  using ValueFragment = OperandFragment<bfloat, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
+  using PairMatrixFragment = OperandFragment<float, TOKEN_FRAGMENTS, 2 * TOKEN_FRAGMENTS, Ops>;
+  using PairValueFragment = OperandFragment<bfloat, 2 * TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
 
   constexpr uint num_blocks = (CHUNK_SIZE + DIAG_BLOCK_SIZE - 1) / DIAG_BLOCK_SIZE;
   constexpr uint num_col_pairs = (num_blocks + 1) / 2;

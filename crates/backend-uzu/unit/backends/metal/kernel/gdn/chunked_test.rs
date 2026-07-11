@@ -75,6 +75,7 @@ fn run_prefill<T: ArrayElement>(
     let mut beta = alloc_allocation::<Metal, f32>(context, case.suffix_len * NUM_V_HEADS);
     let mut decay = alloc_allocation::<Metal, f32>(context, case.suffix_len * NUM_V_HEADS);
     let mut encoder = Encoder::new(context).expect("encoder");
+    encoder.encode_fill(&mut state, 0);
 
     match mode {
         PrefillMode::Recurrent => {

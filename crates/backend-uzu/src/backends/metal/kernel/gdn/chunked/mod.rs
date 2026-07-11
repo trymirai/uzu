@@ -5,19 +5,22 @@ use super::super::{
 use crate::{
     array::size_for_shape,
     backends::{
-        common::{Backend, Encoder, kernel::DeltaNetPrefillPrepKernel},
+        common::{
+            Backend, Encoder,
+            kernel::{
+                DeltaNetPrefillPrepKernel,
+                delta_net_chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
+            },
+        },
         metal::{Metal, MetalContext},
     },
     data_type::DataType,
-    encodable_block::mixer::delta_net::chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
 };
 
 const MXU_MIN_T: usize = 256;
 const CHUNK_SIZE: usize = 64;
 const BLOCK_SIZE: usize = 16;
 const VT: usize = 32;
-const FORCE_CHUNKED_ENV: &str = "UZU_FORCE_GDN_CHUNKED_PREFILL";
-const DISABLE_CHUNKED_ENV: &str = "UZU_DISABLE_GDN_CHUNKED_PREFILL";
 
 pub struct MetalDeltaNetChunkedPrefill {
     min_t: usize,
@@ -72,10 +75,7 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
         &self,
         suffix_len: usize,
     ) -> bool {
-        if std::env::var_os(DISABLE_CHUNKED_ENV).is_some() {
-            return false;
-        }
-        std::env::var_os(FORCE_CHUNKED_ENV).is_some() || suffix_len >= self.min_t
+        suffix_len >= self.min_t
     }
 
     fn encode(
@@ -181,4 +181,5 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
 }
 
 #[cfg(test)]
+#[path = "../../../../../../unit/backends/metal/kernel/gdn/chunked_test.rs"]
 mod tests;

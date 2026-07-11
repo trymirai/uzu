@@ -42,7 +42,6 @@ KERNEL(DeltaNetChunkedGram)(
 
   static_assert(HEAD_K_DIM % Ops::FRAGMENT_ROWS == 0, "HEAD_K_DIM must align to fragment K");
 
-  constexpr uint row_tiles = CHUNK_SIZE / ROW_TILE;
   constexpr uint col_tiles = (CHUNK_SIZE + COL_TILE - 1) / COL_TILE;
   const uint row_tile_idx = tile_idx / col_tiles;
   const uint col_tile_idx = tile_idx - row_tile_idx * col_tiles;
