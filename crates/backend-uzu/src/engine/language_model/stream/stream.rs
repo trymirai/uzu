@@ -75,6 +75,19 @@ enum DecodingState<B: Backend> {
     Invalid,
 }
 
+fn prefill_chunk_parts(
+    input_chunk: &[u64],
+    last_batch: bool,
+    split_logits_row: bool,
+) -> [Option<(&[u64], bool)>; 2] {
+    if last_batch && split_logits_row && input_chunk.len() > 1 {
+        let (prompt_chunk, sample_chunk) = input_chunk.split_at(input_chunk.len() - 1);
+        [Some((prompt_chunk, false)), Some((sample_chunk, true))]
+    } else {
+        [Some((input_chunk, last_batch)), None]
+    }
+}
+
 pub struct LanguageModelStream<'a, B: Backend> {
     model: &'a LanguageModel<B>,
     model_state: &'a mut LanguageModelState<B>,
@@ -158,10 +171,16 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 .map_err(LanguageModelStreamError::Backend)?;
 
             let mut output = None;
+            let split_logits_row = model.decoder.prefill_cache_skips_trailing_layers();
 
-            for (batch_idx, input_chunk) in input.chunks(max_batch_size).enumerate() {
-                let last_batch = batch_idx == number_of_batches - 1;
-
+            for (input_chunk, sample_last) in input
+                .chunks(max_batch_size)
+                .enumerate()
+                .flat_map(|(batch_idx, input_chunk)| {
+                    prefill_chunk_parts(input_chunk, batch_idx == number_of_batches - 1, split_logits_row)
+                })
+                .flatten()
+            {
                 let input_trie = TrieNode::flat(model_state.tokens.len(), input_chunk, &model_state.prng);
                 let input_flat_trie = input_trie.linearize();
 
@@ -178,14 +197,14 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     .encode(
                         &token_ids,
                         &batch_dim,
-                        last_batch.then(|| (input_chunk.len() - 1)..input_chunk.len()),
+                        sample_last.then(|| (input_chunk.len() - 1)..input_chunk.len()),
                         &mut model_state.transformer_state,
                         &mut encoder,
                         &[],
                     )?
                     .logits;
 
-                if last_batch {
+                if sample_last {
                     let logits = logits.unwrap();
 
                     let seeds = if matches!(options.sampling_method, SamplingMethod::Stochastic { .. }) {
