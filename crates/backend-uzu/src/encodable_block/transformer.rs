@@ -160,6 +160,21 @@ impl<B: Backend> Transformer<B> {
         })
     }
 
+    pub fn prefill_cache_layer_count(&self) -> usize {
+        let num_layers = self.layers.len();
+        let Some(last_owned_kv_layer_index) =
+            self.layers.iter().rposition(|(layer, _rope_index)| layer.kv_source_layer_index.is_none())
+        else {
+            return num_layers;
+        };
+
+        last_owned_kv_layer_index + 1
+    }
+
+    pub fn prefill_cache_skips_trailing_layers(&self) -> bool {
+        self.prefill_cache_layer_count() < self.layers.len()
+    }
+
     pub fn create_empty_state(
         &self,
         max_context_length: Option<usize>,
@@ -195,6 +210,11 @@ impl<B: Backend> Transformer<B> {
         hidden_feature_layer_indices: &[usize],
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
         let mut hidden = input;
+        let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_empty() {
+            self.prefill_cache_layer_count()
+        } else {
+            self.layers.len()
+        };
 
         let mut shortcut = encoder.allocate_scratch(hidden.size())?;
         let mut hidden_features = (0..hidden_feature_layer_indices.len()).map(|_| None).collect::<Vec<_>>();
@@ -209,7 +229,7 @@ impl<B: Backend> Transformer<B> {
             .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, encoder))
             .collect::<Result<Box<[_]>, B::Error>>()?;
 
-        for (layer, layer_rope_index) in self.layers.iter() {
+        for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
             let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
 
             let layer_state = if let Some(state) = &mut state {
