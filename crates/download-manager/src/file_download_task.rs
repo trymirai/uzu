@@ -5,7 +5,8 @@ use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
 use crate::{DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadState};
 
-#[async_trait::async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 pub trait FileDownloadTask: Send + Sync + Debug {
     fn download_id(&self) -> DownloadId;
     fn source_url(&self) -> &str;
@@ -29,7 +30,8 @@ pub trait FileDownloadTask: Send + Sync + Debug {
     fn broadcast_sender(&self) -> TokioBroadcastSender<FileDownloadState>;
 }
 
-#[async_trait::async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 pub(crate) trait ManagedFileDownloadTask: FileDownloadTask {
     async fn shutdown_for_removal(&self) -> Result<(), DownloadError>;
     fn is_stopped(&self) -> bool;
