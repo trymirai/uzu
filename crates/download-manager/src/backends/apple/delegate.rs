@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use kiban::rt::RuntimeHandle;
 use objc2::{
     ClassType, DefinedClass, define_class, msg_send,
     rc::{Allocated, Retained},
@@ -13,7 +14,6 @@ use objc2_foundation::{
     NSError, NSObject, NSObjectProtocol, NSURL, NSURLSession, NSURLSessionDelegate, NSURLSessionDownloadDelegate,
     NSURLSessionDownloadTask, NSURLSessionTask, NSURLSessionTaskDelegate,
 };
-use tokio::runtime::Handle as TokioHandle;
 
 use crate::{
     DownloadId,
@@ -27,7 +27,7 @@ pub struct AppleEventSink {
     pub generation: ActiveDownloadGeneration,
     pub destination: PathBuf,
     pub backend_event_sender: BackendEventSender,
-    pub tokio_handle: TokioHandle,
+    pub runtime_handle: RuntimeHandle,
 }
 
 pub type AppleSinkKey = (DownloadId, u64);
@@ -80,7 +80,7 @@ define_class!(
                 return;
             };
             let message = error.localizedDescription().to_string();
-            sink.tokio_handle.clone().spawn(async move {
+            sink.runtime_handle.clone().spawn(async move {
                 let _ = sink.backend_event_sender.send_terminal(BackendEvent::error(sink.generation, message)).await;
             });
         }
@@ -121,7 +121,7 @@ define_class!(
                 Ok(()) => BackendEvent::completed(sink.generation),
                 Err(error) => BackendEvent::error(sink.generation, format!("move into destination failed: {error}")),
             };
-            sink.tokio_handle.clone().spawn(async move {
+            sink.runtime_handle.clone().spawn(async move {
                 let _ = sink.backend_event_sender.send_terminal(terminal_event).await;
             });
         }
@@ -147,7 +147,7 @@ define_class!(
             let downloaded_bytes = cumulative_bytes_written.max(0) as u64;
             let total_bytes = (total_expected_bytes_to_write > 0).then_some(total_expected_bytes_to_write as u64);
 
-            sink.tokio_handle.clone().spawn(async move {
+            sink.runtime_handle.clone().spawn(async move {
                 sink.backend_event_sender.send_progress(sink.generation, downloaded_bytes, total_bytes).await;
             });
         }

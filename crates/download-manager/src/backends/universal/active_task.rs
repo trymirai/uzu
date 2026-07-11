@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use tokio::task::JoinHandle as TokioJoinHandle;
+use kiban::rt::TaskJoinHandle;
+use tokio::sync::{oneshot::Receiver as TokioOneshotReceiver, watch::Sender as TokioWatchSender};
 
 use crate::{
     backends::universal::UniversalBackend,
@@ -8,7 +9,9 @@ use crate::{
 };
 
 pub struct UniversalActiveTask {
-    task_handles: Box<[TokioJoinHandle<()>]>,
+    task_handles: Box<[Box<dyn TaskJoinHandle<()>>]>,
+    pause_sender: Option<TokioWatchSender<bool>>,
+    completion_receiver: Option<TokioOneshotReceiver<()>>,
     resume_artifact_path: PathBuf,
 }
 
@@ -26,11 +29,15 @@ impl std::fmt::Debug for UniversalActiveTask {
 
 impl UniversalActiveTask {
     pub fn new(
-        task_handles: Box<[TokioJoinHandle<()>]>,
+        task_handles: Box<[Box<dyn TaskJoinHandle<()>>]>,
+        pause_sender: TokioWatchSender<bool>,
+        completion_receiver: TokioOneshotReceiver<()>,
         resume_artifact_path: PathBuf,
     ) -> Self {
         Self {
             task_handles,
+            pause_sender: Some(pause_sender),
+            completion_receiver: Some(completion_receiver),
             resume_artifact_path,
         }
     }
@@ -44,7 +51,8 @@ impl Drop for UniversalActiveTask {
     }
 }
 
-#[async_trait::async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 impl ActiveTask for UniversalActiveTask {
     type Backend = UniversalBackend;
 
@@ -52,9 +60,21 @@ impl ActiveTask for UniversalActiveTask {
         mut self,
         _destination: &Path,
     ) -> Result<PathBuf, <Self::Backend as DownloadBackend>::Error> {
-        for task_handle in std::mem::take(&mut self.task_handles) {
-            task_handle.abort();
-            let _ = task_handle.await;
+        if let Some(pause_sender) = self.pause_sender.take() {
+            let _ = pause_sender.send(true);
+        }
+
+        let completed = match self.completion_receiver.take() {
+            Some(completion_receiver) => completion_receiver.await.is_ok(),
+            None => false,
+        };
+
+        if completed {
+            let _ = std::mem::take(&mut self.task_handles);
+        } else {
+            for task_handle in std::mem::take(&mut self.task_handles) {
+                task_handle.abort_and_join().await;
+            }
         }
         Ok(std::mem::take(&mut self.resume_artifact_path))
     }
@@ -64,8 +84,7 @@ impl ActiveTask for UniversalActiveTask {
         _destination: &Path,
     ) -> CancelOutcome {
         for task_handle in std::mem::take(&mut self.task_handles) {
-            task_handle.abort();
-            let _ = task_handle.await;
+            task_handle.abort_and_join().await;
         }
         CancelOutcome::BestEffort
     }

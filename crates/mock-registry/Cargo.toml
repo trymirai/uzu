@@ -19,7 +19,7 @@ serde_json.workspace = true
 shoji.workspace = true
 stream_throttle.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 wiremock.workspace = true
 

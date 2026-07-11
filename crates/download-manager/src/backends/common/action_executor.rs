@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use kiban::fs;
+
 use crate::{
     DownloadError,
     crc_utils::save_crc_file,
@@ -28,7 +30,7 @@ pub async fn apply_actions(
                 destination,
                 crc,
             } => {
-                save_crc_file(destination, crc)?;
+                save_crc_file(destination, crc).await?;
             },
         }
     }
@@ -37,7 +39,7 @@ pub async fn apply_actions(
 }
 
 async fn remove_file_if_present(path: &Path) -> Result<(), DownloadError> {
-    match tokio::fs::remove_file(path).await {
+    match fs::asyn::remove_file(path).await {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(DownloadError::from(error)),
