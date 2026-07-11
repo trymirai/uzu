@@ -43,8 +43,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   const uint sg = tid / METAL_SIMD_SIZE;
 
   const uint conv_dim = 2 * key_dim + value_dim;
-  const uint groups_per_head = num_v_heads / num_k_heads;
-  const uint hk = hv_idx / groups_per_head;
+  const uint hk = hv_idx / (num_v_heads / num_k_heads);
 
   // Load + normalize q/k; each simd group recomputes the norm to skip a
   // barrier.

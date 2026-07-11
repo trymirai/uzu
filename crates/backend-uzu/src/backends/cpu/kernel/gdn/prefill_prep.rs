@@ -21,6 +21,7 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     key_dim: u32,
     value_dim: u32,
     suffix_len: u32,
+    #[specialize] write_log_decay: bool,
 ) {
     let num_v_heads = num_v_heads as usize;
     let num_k_heads = num_k_heads as usize;
@@ -80,11 +81,15 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
                 } else {
                     (1.0 + sp_in.exp()).ln()
                 };
-                let decay = (-a_log_val.exp() * sp).exp();
+                let log_decay = -a_log_val.exp() * sp;
 
                 unsafe {
                     *beta_out.add(token * num_v_heads + hv) = beta;
-                    *decay_out.add(token * num_v_heads + hv) = decay;
+                    *decay_out.add(token * num_v_heads + hv) = if write_log_decay {
+                        log_decay
+                    } else {
+                        log_decay.exp()
+                    };
                 };
             }
         }

@@ -1,9 +1,9 @@
 #include <metal_stdlib>
-#include "../activation/activations.h"
-#include "../common/defines.h"
-#include "../common/dsl.h"
-#include "../common/thread_context.h"
-#include "../generated/trie.h"
+#include "../../activation/activations.h"
+#include "../../common/defines.h"
+#include "../../common/dsl.h"
+#include "../../common/thread_context.h"
+#include "../../generated/trie.h"
 
 #define ROWS_PER_THREADGROUP 4u
 

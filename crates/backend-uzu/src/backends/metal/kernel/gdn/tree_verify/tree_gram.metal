@@ -1,11 +1,13 @@
 #include <metal_stdlib>
-#include "../common/defines.h"
-#include "../common/dsl.h"
-#include "../common/thread_context.h"
-#include "../generated/trie.h"
-#include "../matmul/common/fragment.h"
-#include "../matmul/common/mxu_fragment_ops.h"
-#include "../matmul/common/simdgroup_fragment_ops.h"
+#include "../../common/defines.h"
+#include "../../common/dsl.h"
+#include "../../common/thread_context.h"
+#include "../../generated/trie.h"
+#include "../../matmul/common/fragment.h"
+#include "../../matmul/common/mxu_fragment_ops.h"
+#include "../../matmul/common/simdgroup_fragment_ops.h"
+#include "../common/gram.h"
+#include "../common/tri_inv.h"
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -15,73 +17,6 @@ using namespace uzu::trie;
 #define COL_TILE 32u
 #define NUM_SIMDGROUPS 2u
 #define INVALID_ROW 0xffffffffu
-
-// Ragged blocks are padded with identity columns so the 16x16 output is fully
-// initialized.
-METAL_FUNC void invert_tree_gram_diagonal_block(
-    device float* a_inv_block,
-    threadgroup const float* diag_a_tile,
-    const uint block_size,
-    const uint lane
-) {
-  if (lane >= ROW_TILE) {
-    return;
-  }
-
-  const uint col = lane;
-  float inverse_col[ROW_TILE] = {};
-  inverse_col[col] = 1.0f;
-
-  METAL_PRAGMA_UNROLL
-  for (uint row = 0; row < ROW_TILE; row++) {
-    if (row > col && row < block_size) {
-      float acc = 0.0f;
-      METAL_PRAGMA_UNROLL
-      for (uint prev_row = 0; prev_row < ROW_TILE; prev_row++) {
-        if (prev_row < row) {
-          acc += diag_a_tile[row * ROW_TILE + prev_row] * inverse_col[prev_row];
-        }
-      }
-      inverse_col[row] = -acc;
-    }
-  }
-
-  METAL_PRAGMA_UNROLL
-  for (uint row = 0; row < ROW_TILE; row++) {
-    a_inv_block[row * ROW_TILE + col] = inverse_col[row];
-  }
-}
-
-// Unscaled gram dots for one tile: kk = k[rows].k[cols], qk = q[rows].k[cols].
-template <typename T, typename Ops, typename AccFragment, typename LeftFragment, typename RightFragment>
-METAL_FUNC void tree_gram_dots(
-    const device T* k_rows,
-    const device T* q_rows,
-    const device T* k_cols,
-    const uint head_k_dim,
-    const uint qk_stride,
-    const bool full_rows,
-    const uint tile_rows,
-    const bool full_cols,
-    const uint tile_cols,
-    const ushort lane,
-    thread AccFragment& kk_acc,
-    thread AccFragment& qk_acc
-) {
-  kk_acc.clear();
-  qk_acc.clear();
-  // head_k_dim is a multiple of the fragment K depth, so the contraction has no tail.
-  for (uint kb = 0; kb < head_k_dim; kb += Ops::FRAGMENT_ROWS) {
-    LeftFragment k_left;
-    LeftFragment q_left;
-    RightFragment k_right;
-    k_left.load_maybe_bounded(lane, k_rows + kb, qk_stride, full_rows, tile_rows, Ops::FRAGMENT_ROWS);
-    q_left.load_maybe_bounded(lane, q_rows + kb, qk_stride, full_rows, tile_rows, Ops::FRAGMENT_ROWS);
-    k_right.load_maybe_bounded(lane, k_cols + kb, qk_stride, full_cols, tile_cols, Ops::FRAGMENT_ROWS);
-    fragment_mma(kk_acc, k_left, k_right);
-    fragment_mma(qk_acc, q_left, k_right);
-  }
-}
 
 // kh0 = k @ h0[h0_idx[batch]]^T for one row-tile, walking head_v_dim in COL_TILE
 // chunks from dv_start by dv_stride. No-op for a zero initial state.
@@ -199,8 +134,7 @@ PUBLIC KERNEL(BuildTreeGram)(
   using RightFragment = OperandFragment<InputType, 1, COL_FRAGMENTS, Ops, ReadTranspose>;
   static_assert(COL_TILE == METAL_SIMD_SIZE, "COL_TILE must match the SIMD width");
 
-  const uint value_heads_per_key_head = value_heads / k_heads;
-  const uint key_head_idx = value_head_idx / value_heads_per_key_head;
+  const uint key_head_idx = value_head_idx / (value_heads / k_heads);
   const uint qk_stride = k_heads * head_k_dim;
   const uint qk_base = (batch_idx * tree_size * k_heads + key_head_idx) * head_k_dim;
   const uint prefix_base = batch_idx * tree_size * value_heads + value_head_idx;
@@ -267,20 +201,24 @@ PUBLIC KERNEL(BuildTreeGram)(
 
     AccFragment kk_acc;
     AccFragment qk_acc;
-    tree_gram_dots<T, Ops, AccFragment, LeftFragment, RightFragment>(
-        k_rows,
-        q_rows,
-        k_cols,
-        head_k_dim,
-        qk_stride,
-        full_rows,
-        tile_rows,
-        full_cols,
-        tile_cols,
-        lane,
-        kk_acc,
-        qk_acc
-    );
+    kk_acc.clear();
+    qk_acc.clear();
+    for (uint kb = 0; kb < head_k_dim; kb += Ops::FRAGMENT_ROWS) {
+      accumulate_dual_gram_tile<AccFragment, LeftFragment, RightFragment>(
+          kk_acc,
+          qk_acc,
+          k_rows + kb,
+          q_rows + kb,
+          k_cols + kb,
+          int(qk_stride),
+          ushort(tile_rows),
+          ushort(tile_cols),
+          Ops::FRAGMENT_ROWS,
+          full_rows,
+          full_cols,
+          lane
+      );
+    }
 
     const bool has_diag = col_tile_idx == diag_col_tile;
     simdgroup_barrier(mem_flags::mem_threadgroup);
@@ -320,7 +258,7 @@ PUBLIC KERNEL(BuildTreeGram)(
       simdgroup_barrier(mem_flags::mem_threadgroup);
       device float* a_inv_block =
           a_inv + ((batch_idx * value_heads + value_head_idx) * num_blocks + row_tile_idx) * (ROW_TILE * ROW_TILE);
-      invert_tree_gram_diagonal_block(a_inv_block, diag_a_tile, tile_rows, lane);
+      invert_lower_triangular_block<ROW_TILE>(a_inv_block, diag_a_tile, tile_rows, lane);
     }
   } else if (col_tile_idx < col_tiles) {
     // Above-diagonal zero fill; COL_TILE == METAL_SIMD_SIZE, so each
