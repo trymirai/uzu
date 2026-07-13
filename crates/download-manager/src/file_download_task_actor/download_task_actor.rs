@@ -1,8 +1,11 @@
 use std::{
+    io::ErrorKind,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
+use kiban::fs;
 use tokio::sync::{
     Mutex as TokioMutex,
     broadcast::Sender as TokioBroadcastSender,
@@ -138,7 +141,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                 ..
             } => match active_task.pause(&self.config.destination).await {
                 Ok(part_path) => {
-                    let downloaded_bytes = B::read_resume_progress(&part_path).unwrap_or(0);
+                    let downloaded_bytes = B::read_resume_progress(&part_path).await.unwrap_or(0);
                     self.progress_counters = ProgressCounters {
                         downloaded_bytes,
                         total_bytes: self.config.expected_bytes.unwrap_or(downloaded_bytes),
@@ -237,7 +240,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                 release_destination_lease(destination_lease).await;
                 match pause_result {
                     Ok(part_path) => {
-                        let downloaded_bytes = B::read_resume_progress(&part_path).unwrap_or(0);
+                        let downloaded_bytes = B::read_resume_progress(&part_path).await.unwrap_or(0);
                         self.progress_counters = ProgressCounters {
                             downloaded_bytes,
                             total_bytes: self.config.expected_bytes.unwrap_or(downloaded_bytes),
@@ -283,7 +286,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                 ..
             } => {
                 let _ = active_task.cancel(&self.config.destination).await;
-                remove_resume_artifact(&self.config.destination);
+                remove_resume_artifact(&self.config.destination).await;
                 self.progress_counters = ProgressCounters::default();
                 self.projection = PublicProjection::None;
                 release_destination_lease(destination_lease).await;
@@ -293,7 +296,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             DownloadActorState::Paused {
                 part_path,
             } => {
-                remove_file(&part_path);
+                remove_file(&part_path).await;
                 self.progress_counters = ProgressCounters::default();
                 self.projection = PublicProjection::None;
                 self.finish_transition(from_state, DownloadActorState::NotDownloaded);
@@ -349,7 +352,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         {
             match validate_completed_file(&self.config).await {
                 Ok(total_bytes) => {
-                    remove_resume_artifact(&self.config.destination);
+                    remove_resume_artifact(&self.config.destination).await;
                     self.progress_counters = ProgressCounters {
                         downloaded_bytes: total_bytes,
                         total_bytes,
@@ -360,9 +363,9 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                     self.pending_terminal_outcome = Some(TerminalOutcome::Downloaded);
                 },
                 Err(message) => {
-                    remove_file(&self.config.destination);
-                    remove_resume_artifact(&self.config.destination);
-                    remove_file(&crc_path_for_file(&self.config.destination));
+                    remove_file(&self.config.destination).await;
+                    remove_resume_artifact(&self.config.destination).await;
+                    remove_file(&crc_path_for_file(&self.config.destination)).await;
                     self.progress_counters = ProgressCounters::default();
                     self.projection = PublicProjection::StickyError(message.clone());
                     release_destination_lease(destination_lease).await;
@@ -398,7 +401,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         } = current_state
         {
             let _ = active_task.cancel(&self.config.destination).await;
-            remove_resume_artifact(&self.config.destination);
+            remove_resume_artifact(&self.config.destination).await;
             self.projection = PublicProjection::StickyError(message.clone());
             self.progress_counters = ProgressCounters::default();
             release_destination_lease(destination_lease).await;
@@ -458,14 +461,14 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         &mut self,
         part_path: PathBuf,
     ) -> Result<(), DownloadError> {
-        if !part_path.exists() {
-            remove_file(&part_path);
+        if !fs::asyn::try_exists(&part_path).await.unwrap_or(false) {
+            remove_file(&part_path).await;
             return self.start_fresh_download().await;
         }
 
         let lease = self.acquire_destination_lease().await?;
         let generation = self.generation_counter.allocate_next();
-        let resume_bytes = B::read_resume_progress(&part_path).unwrap_or(0);
+        let resume_bytes = B::read_resume_progress(&part_path).await.unwrap_or(0);
         let active_task = match self
             .context
             .resume(Arc::clone(&self.config), generation, &part_path, self.backend_event_sender.clone(), &lease)
@@ -474,7 +477,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             Ok(active_task) => active_task,
             Err(error) => {
                 release_destination_lease(lease).await;
-                remove_file(&part_path);
+                remove_file(&part_path).await;
                 let message = error.to_string();
                 self.projection = PublicProjection::StickyError(message.clone());
                 self.progress_counters = ProgressCounters::default();
@@ -499,8 +502,13 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
 
     async fn acquire_destination_lease(&mut self) -> Result<DestinationLockLease, DownloadError> {
         let lock_path = lock_path_for_destination(&self.config.destination);
-        match check_lock_file(&lock_path, &self.config.manager_id, self.config.manager_instance_id, std::process::id())
-            .await
+        match check_lock_file(
+            &lock_path,
+            &self.config.manager_id,
+            self.config.manager_instance_id,
+            kiban::process::id(),
+        )
+        .await
         {
             LockFileState::OwnedByOtherApp(lock_file_info) => {
                 self.projection = PublicProjection::LockedByOther(lock_file_info.manager_id.clone());
@@ -524,7 +532,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                             &lock_path,
                             &self.config.manager_id,
                             self.config.manager_instance_id,
-                            std::process::id(),
+                            kiban::process::id(),
                         )
                         .await
                         {
@@ -590,13 +598,13 @@ async fn release_destination_lease(destination_lease: DestinationLockLease) {
     let _ = destination_lease.release().await;
 }
 
-fn remove_file(path: &Path) {
-    let _ = std::fs::remove_file(path);
+async fn remove_file(path: &Path) {
+    let _ = fs::asyn::remove_file(path).await;
 }
 
-fn remove_resume_artifact(destination: &Path) {
-    remove_file(&destination.with_extension("part"));
-    remove_file(&destination.with_extension("resume_data"));
+async fn remove_resume_artifact(destination: &Path) {
+    remove_file(&destination.with_extension("part")).await;
+    remove_file(&destination.with_extension("resume_data")).await;
 }
 
 async fn validate_completed_file(config: &DownloadConfig) -> Result<u64, String> {
@@ -606,22 +614,23 @@ async fn validate_completed_file(config: &DownloadConfig) -> Result<u64, String>
     // present with the expected size (or the budget runs out) so a transient
     // mismatch is not mistaken for a corrupt download. A genuinely truncated file
     // has a stable size and still fails once the retries are exhausted.
-    let mut metadata = config.destination.metadata().ok();
-    for _attempt in 0..10 {
-        let is_ready = match (&metadata, config.expected_bytes) {
-            (Some(metadata), Some(expected_bytes)) => metadata.len() == expected_bytes,
-            (Some(_), None) => true,
-            (None, _) => false,
+    for _ in 0..10 {
+        let is_ready = match fs::asyn::file_length(config.destination.as_path()).await {
+            Ok(dst_len) => match config.expected_bytes {
+                Some(expected_bytes) => dst_len == expected_bytes,
+                None => true,
+            },
+            Err(err) if err.kind() == ErrorKind::NotFound => false,
+            Err(err) => return Err(err.to_string()),
         };
         if is_ready {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        metadata = config.destination.metadata().ok();
-    }
-    let metadata = metadata.ok_or_else(|| "download completed but destination is missing".to_string())?;
-    let actual_bytes = metadata.len();
 
+        kiban::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let actual_bytes = fs::asyn::file_length(config.destination.as_path()).await.map_err(|err| err.to_string())?;
     if let Some(expected_bytes) = config.expected_bytes
         && expected_bytes != actual_bytes
     {
@@ -633,16 +642,12 @@ async fn validate_completed_file(config: &DownloadConfig) -> Result<u64, String>
     match &config.file_check {
         FileCheck::None => Ok(total_bytes),
         FileCheck::CRC(expected_crc) => {
-            let destination = config.destination.clone();
-            let expected = expected_crc.clone();
-            let crc_result = tokio::task::spawn_blocking(move || calculate_and_verify_crc(&destination, &expected))
-                .await
-                .map_err(|error| format!("CRC verification error: {error}"))?;
+            let crc_result = calculate_and_verify_crc(&config.destination, expected_crc).await;
             match crc_result {
                 Ok(true) => {
                     let destination = config.destination.clone();
                     let expected = expected_crc.clone();
-                    let _ = tokio::task::spawn_blocking(move || save_crc_file(&destination, &expected)).await;
+                    let _ = save_crc_file(&destination, &expected).await;
                     Ok(total_bytes)
                 },
                 Ok(false) => Err("CRC verification failed".to_string()),

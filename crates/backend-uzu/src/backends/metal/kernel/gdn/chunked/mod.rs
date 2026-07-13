@@ -5,11 +5,16 @@ use super::super::{
 use crate::{
     array::size_for_shape,
     backends::{
-        common::{Backend, Encoder, kernel::DeltaNetPrefillPrepKernel},
+        common::{
+            Backend, Encoder,
+            kernel::{
+                DeltaNetPrefillPrepKernel,
+                delta_net_chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
+            },
+        },
         metal::{Metal, MetalContext},
     },
     data_type::DataType,
-    encodable_block::mixer::delta_net::chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
 };
 
 const MXU_MIN_T: usize = 256;
@@ -166,4 +171,5 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
 }
 
 #[cfg(test)]
+#[path = "../../../../../../unit/backends/metal/kernel/gdn/chunked_test.rs"]
 mod tests;

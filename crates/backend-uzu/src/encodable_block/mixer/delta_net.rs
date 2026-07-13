@@ -7,6 +7,7 @@ use crate::{
         kernel::{
             Conv1dPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel,
             DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
+            delta_net_chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
         },
     },
     config::token_mixer::delta_net::DeltaNetConfig,
@@ -19,10 +20,6 @@ use crate::{
     parameters::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
 };
-
-pub mod chunked_prefill;
-
-use chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs};
 
 pub struct DeltaNetState<B: Backend> {
     conv_state: Allocation<B>,

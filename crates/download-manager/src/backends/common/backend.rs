@@ -1,6 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 
-use tokio::runtime::Handle as TokioHandle;
+use kiban::rt::RuntimeHandle;
 
 use crate::{
     DownloadError,
@@ -18,14 +18,15 @@ pub enum InitialTaskAttachment<B: Backend> {
     },
 }
 
-#[async_trait::async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 pub trait Backend: DownloadBackend + Debug + Clone + Send + Sync + Sized + 'static {
     const RESUME_ARTIFACT_EXTENSION: &'static str;
     const SUPPORTS_INITIAL_TASK_ATTACHMENT: bool = false;
 
     fn manager_suffix() -> &'static str;
 
-    fn create_context(tokio_handle: TokioHandle) -> Result<Self::Context, DownloadError>;
+    fn create_context(runtime_handle: RuntimeHandle) -> Result<Self::Context, DownloadError>;
 
     async fn initial_task_attachment(
         _context: &Self::Context,

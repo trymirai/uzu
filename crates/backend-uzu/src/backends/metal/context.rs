@@ -42,7 +42,6 @@ pub struct MetalContext {
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: RefCell<MetalSparseHeapPool>,
     device_tier: DeviceTier,
-    supports_dynamic_caching: bool,
     weak_self: Weak<MetalContext>,
     #[cfg(test)]
     timeline_shared_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
@@ -51,10 +50,6 @@ pub struct MetalContext {
 impl MetalContext {
     pub fn supports_mxu(&self) -> bool {
         self.device.supports_mxu()
-    }
-
-    pub fn supports_dynamic_caching(&self) -> bool {
-        self.supports_dynamic_caching
     }
 
     pub(crate) fn device_tier(&self) -> DeviceTier {
@@ -137,8 +132,6 @@ impl Context for MetalContext {
 
         let gpu_core_count = device.gpu_core_count();
         let device_tier = device_tier_for_device(gpu_core_count, device.as_ref());
-        let supports_dynamic_caching = device.supports_family(metal::MTLGPUFamily::Apple9);
-
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = Metal::ALLOCATION_GRANULARITY;
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
@@ -158,7 +151,6 @@ impl Context for MetalContext {
             pipeline_cache: RefCell::new(HashMap::new()),
             sparse_heap_pool: RefCell::new(sparse_pool),
             device_tier,
-            supports_dynamic_caching,
             weak_self: weak_self.clone(),
             #[cfg(test)]
             timeline_shared_event,
