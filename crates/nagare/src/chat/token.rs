@@ -162,7 +162,11 @@ impl Session {
                         let mut output = Self::build_output(event, &mut state);
                         let terminated = terminated || matches!(&output, Ok(out) if out.finish_reason.is_some());
                         if terminated {
-                            inner.as_mut().finish();
+                            if let Err(error) = inner.as_mut().finish() {
+                                output = Err(ChatSessionError::Backend {
+                                    message: error.to_string(),
+                                });
+                            }
                             state.metrics = inner.metrics();
                             state.memory_usage = instance.peak_memory_usage();
                             if let Ok(output) = &mut output {
@@ -173,10 +177,14 @@ impl Session {
                     },
                     None => {
                         if !terminated && state.cancel_token.is_cancelled() {
-                            inner.as_mut().finish();
+                            let finish = inner.as_mut().finish();
                             state.metrics = inner.metrics();
                             state.memory_usage = instance.peak_memory_usage();
-                            let output = Ok(Self::render_output(&state, Some(ChatReplyFinishReason::Cancelled)));
+                            let output = finish
+                                .map(|()| Self::render_output(&state, Some(ChatReplyFinishReason::Cancelled)))
+                                .map_err(|error| ChatSessionError::Backend {
+                                    message: error.to_string(),
+                                });
                             Some((output, (inner, state, true, true)))
                         } else {
                             None

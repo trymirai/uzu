@@ -3,7 +3,7 @@ use std::{io, mem::size_of, sync::atomic::AtomicBool};
 use crate::{
     backends::common::{Backend, Context, DenseBuffer, Encoder, SharedEvent},
     encodable_block::per_layer_embedding::{PerLayerEmbeddingError, StagedRows, row_source::RowSource},
-    staging::{AsyncStager, StageLease, StageRequest, wait_until_event_or_cancelled},
+    staging::{AsyncStager, Reservation, Stage, StageRequest, wait_until_event_or_cancelled},
 };
 
 const SLOT_COUNT: usize = 3;
@@ -54,44 +54,45 @@ impl<B: Backend> DecodeRowStager<B> {
         })
     }
 
-    pub fn reserve_sample(&mut self) -> io::Result<StageLease<B>> {
-        self.stager.reserve(false)
+    pub fn reserve_sample(&self) -> io::Result<Reservation> {
+        self.stager.try_reserve()
     }
 
     pub fn sample_readback(
         &mut self,
-        lease: &StageLease<B>,
+        reservation: &Reservation,
     ) -> &mut B::DenseBuffer {
-        &mut self.sample_id_buffers[lease.slot()]
+        &mut self.sample_id_buffers[reservation.slot()]
     }
 
     pub fn publish_sample(
         &mut self,
-        lease: &mut StageLease<B>,
+        reservation: Reservation,
         encoder: &mut Encoder<B>,
-    ) -> io::Result<()> {
-        encoder.signal_event(&self.sample_event, lease.generation);
-        self.stager.enqueue(lease, (), self.row_bytes)
+    ) -> io::Result<Stage<B>> {
+        let stage = self.stager.submit(reservation, (), self.row_bytes)?;
+        encoder.signal_event(&self.sample_event, stage.generation());
+        Ok(stage)
     }
 
     pub fn stage_token(
         &mut self,
         token_id: u64,
-    ) -> io::Result<StageLease<B>> {
-        let mut lease = self.stager.reserve(false)?;
-        let sample_id = self.sample_id_buffers[lease.slot()].cpu_ptr().as_ptr() as *mut u32;
+    ) -> io::Result<Stage<B>> {
+        let reservation = self.stager.try_reserve()?;
+        let sample_id = self.sample_id_buffers[reservation.slot()].cpu_ptr().as_ptr() as *mut u32;
         unsafe { sample_id.write(token_id as u32) };
-        self.sample_event.signal(lease.generation);
-        self.stager.enqueue(&mut lease, (), self.row_bytes)?;
-        Ok(lease)
+        let stage = self.stager.submit(reservation, (), self.row_bytes)?;
+        self.sample_event.signal(stage.generation());
+        Ok(stage)
     }
 
     pub fn view<'a>(
         &'a self,
-        lease: &'a StageLease<B>,
+        stage: &'a Stage<B>,
     ) -> StagedRows<'a, B> {
         StagedRows {
-            stage: self.stager.view(lease),
+            stage: self.stager.view(stage),
             indices: &self.indices,
             batch_size: 1,
         }

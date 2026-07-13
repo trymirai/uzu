@@ -21,7 +21,7 @@ pub mod grammar;
 pub mod state;
 pub mod stream;
 
-pub use crate::encodable_block::per_layer_embedding::PleOffloadOptions;
+pub use crate::encodable_block::per_layer_embedding::{PageCachePolicy, PleStorage};
 
 pub struct LanguageModel<B: Backend> {
     context: Rc<B::Context>,
@@ -54,13 +54,13 @@ impl<B: Backend> Engine<B> {
         &self,
         model_path: &Path,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
-        self.load_language_model_with_options(model_path, &PleOffloadOptions::default())
+        self.load_language_model_storage(model_path, &PleStorage::Resident)
     }
 
-    pub fn load_language_model_with_options(
+    fn load_language_model_storage(
         &self,
         model_path: &Path,
-        ple_offload: &PleOffloadOptions,
+        ple_storage: &PleStorage,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
         let config: LanguageModelConfig =
             serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
@@ -68,7 +68,7 @@ impl<B: Backend> Engine<B> {
         let weights_file = File::open(model_path.join("model.safetensors"))?;
         let weight_loader = ParameterLoader::new(&weights_file, &*self.context)?;
 
-        self.build_language_model(config, &weight_loader, ple_offload)
+        self.build_language_model(config, &weight_loader, ple_storage)
     }
 
     pub fn load_language_model_random(
@@ -82,14 +82,14 @@ impl<B: Backend> Engine<B> {
         let header_file = File::open(header_path)?;
         let weight_loader = ParameterLoader::new_random(&header_file, &*self.context, seed)?;
 
-        self.build_language_model(config, &weight_loader, &PleOffloadOptions::default())
+        self.build_language_model(config, &weight_loader, &PleStorage::Resident)
     }
 
     fn build_language_model(
         &self,
         config: LanguageModelConfig,
         weight_loader: &ParameterLoader<B>,
-        ple_offload: &PleOffloadOptions,
+        ple_storage: &PleStorage,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
         let context = self.context.clone();
 
@@ -100,7 +100,7 @@ impl<B: Backend> Engine<B> {
             &config.decoder_config,
             &weight_loader.tree().subtree("decoder")?,
             data_type,
-            ple_offload,
+            ple_storage,
         )?;
 
         let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);
@@ -125,6 +125,18 @@ impl<B: Backend> Engine<B> {
             generation_config,
             vocab_size,
         })
+    }
+}
+
+#[cfg(metal_backend)]
+impl Engine<crate::backends::metal::Metal> {
+    pub fn load_language_model_with_storage(
+        &self,
+        model_path: &Path,
+        ple_storage: &PleStorage,
+    ) -> Result<LanguageModel<crate::backends::metal::Metal>, EngineLoadLanguageModelError<crate::backends::metal::Metal>>
+    {
+        self.load_language_model_storage(model_path, ple_storage)
     }
 }
 

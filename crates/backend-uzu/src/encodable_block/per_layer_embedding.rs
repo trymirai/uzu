@@ -27,16 +27,24 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, PostLayerScalar},
     },
     parameters::{ParameterFile, ParameterLoaderError, ParameterTree},
-    staging::{StageLease, StageView},
+    staging::{Reservation, Stage, StageView},
 };
 
+#[derive(Clone, Copy, Debug, Default)]
+pub enum PageCachePolicy {
+    #[default]
+    Buffered,
+    Bypass,
+}
+
 #[derive(Clone, Debug, Default)]
-pub struct PleOffloadOptions {
-    pub offload_rows: bool,
-    pub stage_decode: bool,
-    pub stage_prefill: bool,
-    pub row_file: Option<PathBuf>,
-    pub disable_page_cache: bool,
+pub enum PleStorage {
+    #[default]
+    Resident,
+    FileBacked {
+        path: PathBuf,
+        page_cache: PageCachePolicy,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -45,14 +53,12 @@ pub enum PerLayerEmbeddingError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Row staging error: {0}")]
     RowStaging(#[from] std::io::Error),
-    #[error("invalid PLE offload options: {0}")]
-    InvalidOffloadOptions(&'static str),
     #[error("staged PLE decode requires greedy sampling without grammar or speculation")]
     DecodeStagingUnsupported,
-    #[error("row token IDs are required when PLE row offload is enabled")]
-    RowTokenIdsUnavailable,
-    #[error("wrong number of PLE row token IDs: expected {expected}, got {actual}")]
-    RowTokenIdsLength {
+    #[error("PLE source does not match row storage")]
+    RowSourceMismatch,
+    #[error("wrong number of staged PLE rows: expected {expected}, got {actual}")]
+    StagedRowsLength {
         expected: usize,
         actual: usize,
     },
@@ -80,11 +86,7 @@ pub struct PerLayerEmbedding<B: Backend> {
 
 enum PleRows<B: Backend> {
     Resident(Allocation<B>),
-    Offloaded {
-        source: RowSource,
-        stage_decode: bool,
-        stage_prefill: bool,
-    },
+    FileBacked(RowSource),
 }
 
 pub(crate) struct StagedRows<'a, B: Backend> {
@@ -95,7 +97,6 @@ pub(crate) struct StagedRows<'a, B: Backend> {
 
 pub(crate) enum PleSource<'a, B: Backend> {
     Resident,
-    HostRows(&'a [u64]),
     Staged(StagedRows<'a, B>),
 }
 
@@ -135,38 +136,25 @@ impl<B: Backend> PerLayerEmbedding<B> {
         model_dim: usize,
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
-        offload: &PleOffloadOptions,
+        storage: &PleStorage,
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
         let total_ple_dim = config.num_layers * config.ple_dim;
 
         let token_embedding_leaf =
             parameter_tree.leaf("token_embedding")?.validate(&[config.ple_vocab_size, total_ple_dim], data_type)?;
-        let row_bytes = total_ple_dim * data_type.size_in_bytes();
-        if !offload.offload_rows
-            && (offload.stage_decode
-                || offload.stage_prefill
-                || offload.row_file.is_some()
-                || offload.disable_page_cache)
-        {
-            return Err(PerLayerEmbeddingError::InvalidOffloadOptions("staging and file options require offload_rows"));
-        }
-        let rows = if offload.offload_rows {
-            let model_file = token_embedding_leaf.file()?;
-            let file = if let Some(path) = &offload.row_file {
-                ParameterFile::open_exact(path, model_file.len())?
-            } else {
-                model_file
-            };
-            if offload.disable_page_cache {
-                file.disable_page_cache()?;
-            }
-            PleRows::Offloaded {
-                source: RowSource::new(file, row_bytes)?,
-                stage_decode: offload.stage_decode,
-                stage_prefill: offload.stage_prefill,
-            }
-        } else {
-            PleRows::Resident(token_embedding_leaf.read_allocation()?)
+        let rows = match storage {
+            PleStorage::Resident => PleRows::Resident(token_embedding_leaf.read_allocation()?),
+            PleStorage::FileBacked {
+                path,
+                page_cache,
+            } => {
+                let model_file = token_embedding_leaf.file()?;
+                let file = ParameterFile::open_exact(path, model_file.len())?;
+                if matches!(page_cache, PageCachePolicy::Bypass) {
+                    file.disable_page_cache()?;
+                }
+                PleRows::FileBacked(RowSource::new(file, total_ple_dim * data_type.size_in_bytes())?)
+            },
         };
         let token_embedding_lookup =
             <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
@@ -246,7 +234,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let token_ple = match source {
             PleSource::Staged(rows) => {
                 if batch_dim != rows.batch_size {
-                    return Err(PerLayerEmbeddingError::RowTokenIdsLength {
+                    return Err(PerLayerEmbeddingError::StagedRowsLength {
                         expected: rows.batch_size,
                         actual: batch_dim,
                     });
@@ -254,35 +242,9 @@ impl<B: Backend> PerLayerEmbedding<B> {
                 encoder.wait_for_event(rows.stage.ready_event, rows.stage.value);
                 self.encode_lookup(rows.indices, rows.stage.allocation, batch_dim, batch_dim, total_ple_dim, encoder)?
             },
-            PleSource::HostRows(row_token_ids) => {
-                let PleRows::Offloaded {
-                    source,
-                    ..
-                } = &self.rows
-                else {
-                    return Err(PerLayerEmbeddingError::RowTokenIdsUnavailable);
-                };
-                if row_token_ids.len() != batch_dim {
-                    return Err(PerLayerEmbeddingError::RowTokenIdsLength {
-                        expected: batch_dim,
-                        actual: row_token_ids.len(),
-                    });
-                }
-                let mut raw_rows = encoder
-                    .allocate_constant(size_for_shape(&[batch_dim, total_ple_dim], self.data_type))
-                    .map_err(PerLayerEmbeddingError::BackendError)?;
-                source.read_rows(row_token_ids, raw_rows.as_slice_mut::<u8>())?;
-
-                let mut row_indices = encoder
-                    .allocate_constant(batch_dim * DataType::U64.size_in_bytes())
-                    .map_err(PerLayerEmbeddingError::BackendError)?;
-                row_indices.copyin(&(0..batch_dim as u64).collect::<Box<[u64]>>());
-
-                self.encode_lookup(&row_indices, &raw_rows, batch_dim, batch_dim, total_ple_dim, encoder)?
-            },
             PleSource::Resident => {
                 let PleRows::Resident(token_embedding) = &self.rows else {
-                    return Err(PerLayerEmbeddingError::RowTokenIdsUnavailable);
+                    return Err(PerLayerEmbeddingError::RowSourceMismatch);
                 };
                 self.encode_lookup(token_ids, token_embedding, batch_dim, self.ple_vocab_size, total_ple_dim, encoder)?
             },
@@ -306,7 +268,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
 }
 
 pub(crate) enum PleLease<B: Backend> {
-    Decode(StageLease<B>),
+    Decode(Stage<B>),
     Prefill(PrefillBatch<B>),
 }
 
@@ -322,10 +284,26 @@ impl<B: Backend> PleLease<B> {
 pub(crate) struct PleSession<B: Backend> {
     decode: Option<DecodeRowStager<B>>,
     prefill: Option<PrefillStager<B>>,
-    rows_offloaded: bool,
 }
 
 impl<B: Backend> Unpin for PleSession<B> {}
+
+pub(crate) struct PleSample<'a, B: Backend>(Option<(&'a mut DecodeRowStager<B>, Reservation)>);
+
+impl<B: Backend> PleSample<'_, B> {
+    pub(crate) fn readback(&mut self) -> Option<&mut B::DenseBuffer> {
+        self.0.as_mut().map(|(stager, reservation)| stager.sample_readback(reservation))
+    }
+
+    pub(crate) fn submit(
+        self,
+        encoder: &mut Encoder<B>,
+    ) -> std::io::Result<Option<PleLease<B>>> {
+        self.0
+            .map(|(stager, reservation)| stager.publish_sample(reservation, encoder).map(PleLease::Decode))
+            .transpose()
+    }
+}
 
 impl<B: Backend> PleSession<B> {
     pub(crate) fn new(
@@ -333,63 +311,28 @@ impl<B: Backend> PleSession<B> {
         context: &B::Context,
         decode_staging_supported: bool,
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
-        let Some(PleRows::Offloaded {
-            source,
-            stage_decode: configured_decode,
-            stage_prefill,
-        }) = embedding.map(|embedding| &embedding.rows)
-        else {
+        let Some(PleRows::FileBacked(source)) = embedding.map(|embedding| &embedding.rows) else {
             return Ok(Self {
                 decode: None,
                 prefill: None,
-                rows_offloaded: false,
             });
         };
-        if *configured_decode && !decode_staging_supported {
+        if !decode_staging_supported {
             return Err(PerLayerEmbeddingError::DecodeStagingUnsupported);
         }
         Ok(Self {
-            decode: if decode_staging_supported && *configured_decode {
-                Some(DecodeRowStager::new(context, source.try_clone()?)?)
-            } else {
-                None
-            },
-            prefill: if *stage_prefill {
-                Some(PrefillStager::new(context, source.try_clone()?)?)
-            } else {
-                None
-            },
-            rows_offloaded: true,
+            decode: Some(DecodeRowStager::new(context, source.try_clone()?)?),
+            prefill: Some(PrefillStager::new(context, source.try_clone()?)?),
         })
     }
 
-    pub(crate) fn reserve_sample(&mut self) -> std::io::Result<Option<PleLease<B>>> {
-        self.decode.as_mut().map(|stager| stager.reserve_sample().map(PleLease::Decode)).transpose()
-    }
-
-    pub(crate) fn sample_readback<'a>(
-        &'a mut self,
-        lease: &PleLease<B>,
-    ) -> Option<&'a mut B::DenseBuffer> {
-        match lease {
-            PleLease::Decode(lease) => {
-                Some(self.decode.as_mut().expect("decode stager missing").sample_readback(lease))
-            },
-            PleLease::Prefill(_) => None,
-        }
-    }
-
-    pub(crate) fn publish_sample(
-        &mut self,
-        lease: &mut PleLease<B>,
-        encoder: &mut Encoder<B>,
-    ) -> std::io::Result<()> {
-        match lease {
-            PleLease::Decode(lease) => {
-                self.decode.as_mut().expect("decode stager missing").publish_sample(lease, encoder)
-            },
-            PleLease::Prefill(_) => Ok(()),
-        }
+    pub(crate) fn begin_sample(&mut self) -> std::io::Result<PleSample<'_, B>> {
+        let sample = self
+            .decode
+            .as_mut()
+            .map(|stager| stager.reserve_sample().map(|reservation| (stager, reservation)))
+            .transpose()?;
+        Ok(PleSample(sample))
     }
 
     pub(crate) fn stage_token(
@@ -409,7 +352,6 @@ impl<B: Backend> PleSession<B> {
     pub(crate) fn source<'a>(
         &'a self,
         lease: Option<&'a PleLease<B>>,
-        token_ids: Option<&'a [u64]>,
     ) -> PleSource<'a, B> {
         match lease {
             Some(PleLease::Decode(lease)) => {
@@ -418,22 +360,11 @@ impl<B: Backend> PleSession<B> {
             Some(PleLease::Prefill(batch)) => {
                 PleSource::Staged(self.prefill.as_ref().expect("prefill stager missing").view(batch))
             },
-            None if self.rows_offloaded => {
-                PleSource::HostRows(token_ids.expect("host PLE rows require CPU-visible token IDs"))
+            None => {
+                debug_assert!(self.decode.is_none(), "file-backed PLE requires staged rows");
+                PleSource::Resident
             },
-            None => PleSource::Resident,
         }
-    }
-
-    pub(crate) fn needs_host_rows(
-        &self,
-        lease: Option<&PleLease<B>>,
-    ) -> bool {
-        lease.is_none() && self.rows_offloaded
-    }
-
-    pub(crate) fn requires_decode_token_sync(&self) -> bool {
-        self.rows_offloaded && self.decode.is_none()
     }
 
     pub(crate) fn stages_prefill(&self) -> bool {

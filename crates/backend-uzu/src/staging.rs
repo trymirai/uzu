@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeSet,
     io,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
@@ -31,19 +30,18 @@ pub(crate) fn wait_until_event_or_cancelled<E: SharedEvent>(
 pub(crate) struct StageRequest<R> {
     pub(crate) generation: u64,
     pub(crate) slot: usize,
-    pub(crate) bytes: usize,
+    bytes: usize,
     pub(crate) request: R,
 }
 
-pub(crate) struct StageState {
+struct StageState {
     free_slots: SyncSender<usize>,
     errors: Box<[Mutex<Option<io::Error>>]>,
-    abandoned_generations: Mutex<BTreeSet<u64>>,
-    pub(crate) cancelled: AtomicBool,
+    cancelled: AtomicBool,
 }
 
 impl StageState {
-    pub(crate) fn new(slot_count: usize) -> (Self, Receiver<usize>) {
+    fn new(slot_count: usize) -> (Self, Receiver<usize>) {
         let (free_slots, receiver) = sync_channel(slot_count);
         for slot in 0..slot_count {
             free_slots.send(slot).expect("new staging slot channel disconnected");
@@ -52,7 +50,6 @@ impl StageState {
             Self {
                 free_slots,
                 errors: (0..slot_count).map(|_| Mutex::new(None)).collect(),
-                abandoned_generations: Mutex::new(BTreeSet::new()),
                 cancelled: AtomicBool::new(false),
             },
             receiver,
@@ -60,42 +57,56 @@ impl StageState {
     }
 }
 
-pub(crate) struct StageLease<B: Backend> {
+#[must_use]
+pub(crate) struct Reservation {
     slot: Option<usize>,
-    pub(crate) generation: u64,
-    pub(crate) ready_event: B::SharedEvent,
     state: Arc<StageState>,
-    submitted: bool,
 }
 
-impl<B: Backend> StageLease<B> {
+impl Reservation {
     pub(crate) fn slot(&self) -> usize {
-        self.slot.expect("staging lease already completed")
-    }
-
-    pub(crate) fn complete(mut self) -> io::Result<()> {
-        if self.ready_event.signaled_value() < self.generation {
-            return Err(io::Error::other("staging ready event was not signaled"));
-        }
-        let slot = self.slot.take().expect("staging lease already completed");
-        let error = self.state.errors[slot].lock().unwrap_or_else(PoisonError::into_inner).take();
-        self.state
-            .free_slots
-            .send(slot)
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "stager was dropped"))?;
-        error.map_or(Ok(()), Err)
+        self.slot.expect("staging reservation already submitted")
     }
 }
 
-impl<B: Backend> Drop for StageLease<B> {
+impl Drop for Reservation {
     fn drop(&mut self) {
-        // Submitted slots return only after the consuming command buffer completes.
-        if !self.submitted
-            && let Some(slot) = self.slot.take()
-        {
-            self.state.abandoned_generations.lock().unwrap_or_else(PoisonError::into_inner).insert(self.generation);
+        if let Some(slot) = self.slot.take() {
             let _ = self.state.free_slots.send(slot);
         }
+    }
+}
+
+#[must_use]
+pub(crate) struct Stage<B: Backend> {
+    slot: usize,
+    generation: u64,
+    ready_event: B::SharedEvent,
+    state: Arc<StageState>,
+}
+
+impl<B: Backend> Stage<B> {
+    pub(crate) fn slot(&self) -> usize {
+        self.slot
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn complete(self) -> io::Result<()> {
+        if self.state.cancelled.load(Ordering::Acquire) {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "staging was cancelled"));
+        }
+        if self.ready_event.signaled_value() < self.generation {
+            return Err(io::Error::new(io::ErrorKind::WouldBlock, "staging ready event was not signaled"));
+        }
+        let error = self.state.errors[self.slot].lock().unwrap_or_else(PoisonError::into_inner).take();
+        self.state
+            .free_slots
+            .send(self.slot)
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "stager was dropped"))?;
+        error.map_or(Ok(()), Err)
     }
 }
 
@@ -114,7 +125,6 @@ pub(crate) struct AsyncStager<B: Backend, R: Send + 'static> {
     worker: Option<JoinHandle<()>>,
     slot_bytes: usize,
     next_generation: u64,
-    next_enqueue_generation: u64,
 }
 
 impl<B: Backend, R: Send + 'static> AsyncStager<B, R> {
@@ -147,14 +157,21 @@ impl<B: Backend, R: Send + 'static> AsyncStager<B, R> {
             worker: Some(worker),
             slot_bytes,
             next_generation: 0,
-            next_enqueue_generation: 1,
         })
     }
 
-    pub(crate) fn reserve(
-        &mut self,
+    pub(crate) fn reserve(&self) -> io::Result<Reservation> {
+        self.reserve_slot(true)
+    }
+
+    pub(crate) fn try_reserve(&self) -> io::Result<Reservation> {
+        self.reserve_slot(false)
+    }
+
+    fn reserve_slot(
+        &self,
         wait: bool,
-    ) -> io::Result<StageLease<B>> {
+    ) -> io::Result<Reservation> {
         if self.state.cancelled.load(Ordering::Acquire) {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "staging was cancelled"));
         }
@@ -166,63 +183,57 @@ impl<B: Backend, R: Send + 'static> AsyncStager<B, R> {
                 TryRecvError::Disconnected => io::Error::new(io::ErrorKind::BrokenPipe, "stager was dropped"),
             })?
         };
-        let generation =
-            self.next_generation.checked_add(1).ok_or_else(|| io::Error::other("staging event value overflow"))?;
-        self.next_generation = generation;
-        *self.state.errors[slot].lock().unwrap_or_else(PoisonError::into_inner) = None;
-        Ok(StageLease {
+        Ok(Reservation {
             slot: Some(slot),
-            generation,
-            ready_event: self.ready_event.clone(),
             state: Arc::clone(&self.state),
-            submitted: false,
         })
     }
 
-    pub(crate) fn enqueue(
+    pub(crate) fn submit(
         &mut self,
-        lease: &mut StageLease<B>,
+        mut reservation: Reservation,
         request: R,
         bytes: usize,
-    ) -> io::Result<()> {
+    ) -> io::Result<Stage<B>> {
+        if !Arc::ptr_eq(&self.state, &reservation.state) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "staging reservation belongs to another stager"));
+        }
         if bytes > self.slot_bytes {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "staging request exceeds slot size"));
         }
-        let mut abandoned = self.state.abandoned_generations.lock().unwrap_or_else(PoisonError::into_inner);
-        while abandoned.remove(&self.next_enqueue_generation) {
-            self.next_enqueue_generation += 1;
-        }
-        if lease.generation != self.next_enqueue_generation {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "staging requests must be enqueued in generation order",
-            ));
-        }
-        drop(abandoned);
+        let generation =
+            self.next_generation.checked_add(1).ok_or_else(|| io::Error::other("staging event value overflow"))?;
+        let slot = reservation.slot();
+        *self.state.errors[slot].lock().unwrap_or_else(PoisonError::into_inner) = None;
         self.requests
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "staging worker stopped"))?
             .send(StageRequest {
-                generation: lease.generation,
-                slot: lease.slot(),
+                generation,
+                slot,
                 bytes,
                 request,
             })
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "staging worker stopped"))?;
-        self.next_enqueue_generation += 1;
-        lease.submitted = true;
-        Ok(())
+        self.next_generation = generation;
+        reservation.slot.take();
+        Ok(Stage {
+            slot,
+            generation,
+            ready_event: self.ready_event.clone(),
+            state: Arc::clone(&self.state),
+        })
     }
 
     pub(crate) fn view<'a>(
         &'a self,
-        lease: &'a StageLease<B>,
+        stage: &'a Stage<B>,
     ) -> StageView<'a, B> {
-        assert!(Arc::ptr_eq(&self.state, &lease.state), "staging lease belongs to another stager");
+        assert!(Arc::ptr_eq(&self.state, &stage.state), "stage belongs to another stager");
         StageView {
-            allocation: &self.buffers[lease.slot()],
-            ready_event: &lease.ready_event,
-            value: lease.generation,
+            allocation: &self.buffers[stage.slot()],
+            ready_event: &stage.ready_event,
+            value: stage.generation,
         }
     }
 }
@@ -238,7 +249,7 @@ impl<B: Backend, R: Send + 'static> Drop for AsyncStager<B, R> {
     }
 }
 
-pub(crate) fn run_worker<E, R, L>(
+fn run_worker<E, R, L>(
     receiver: Receiver<StageRequest<R>>,
     pointers: Vec<usize>,
     slot_bytes: usize,

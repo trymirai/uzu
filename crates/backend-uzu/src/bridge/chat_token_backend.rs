@@ -248,8 +248,8 @@ impl<'a, B: Backend> InstanceStream for UzuChatTokenStream<'a, B> {
         Some(self.stream.metrics().clone())
     }
 
-    fn finish(self: Pin<&mut Self>) {
-        self.get_mut().stream.finish();
+    fn finish(self: Pin<&mut Self>) -> Result<(), BackendError> {
+        self.get_mut().stream.finish().map_err(|error| error.to_string().into())
     }
 }
 

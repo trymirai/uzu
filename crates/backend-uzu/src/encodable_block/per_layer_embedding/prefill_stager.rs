@@ -7,14 +7,14 @@ use std::{
 use crate::{
     backends::common::{Backend, Context, DenseBuffer},
     encodable_block::per_layer_embedding::{PerLayerEmbeddingError, StagedRows, row_source::RowSource},
-    staging::{AsyncStager, StageLease, StageRequest},
+    staging::{AsyncStager, Stage, StageRequest},
 };
 
 pub(crate) const PREFILL_CHUNK_SIZE: usize = 1024;
 const SLOT_COUNT: usize = 2;
 
 pub struct PrefillBatch<B: Backend> {
-    pub(crate) stage: StageLease<B>,
+    pub(crate) stage: Stage<B>,
     pub(crate) batch_size: usize,
 }
 
@@ -67,12 +67,12 @@ impl<B: Backend> PrefillStager<B> {
                 format!("PLE prefill chunk length must be in 1..={PREFILL_CHUNK_SIZE}, got {}", input_chunk.len()),
             ));
         }
-        let mut stage = self.stager.reserve(true)?;
-        if let Err(error) =
-            self.stager.enqueue(&mut stage, input_chunk.to_vec().into_boxed_slice(), input_chunk.len() * self.row_bytes)
-        {
-            return Err(error);
-        }
+        let reservation = self.stager.reserve()?;
+        let stage = self.stager.submit(
+            reservation,
+            input_chunk.to_vec().into_boxed_slice(),
+            input_chunk.len() * self.row_bytes,
+        )?;
         Ok(PrefillBatch {
             stage,
             batch_size: input_chunk.len(),

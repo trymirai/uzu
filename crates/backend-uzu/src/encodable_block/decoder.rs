@@ -9,7 +9,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         embedding::{Embedding, EmbeddingError},
-        per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError, PleOffloadOptions, PleSource},
+        per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError, PleSource, PleStorage},
         transformer::{Transformer, TransformerNewError, TransformerState},
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -48,7 +48,7 @@ impl<B: Backend> Decoder<B> {
         config: &DecoderConfig,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
-        ple_offload: &PleOffloadOptions,
+        ple_storage: &PleStorage,
     ) -> Result<Self, DecoderError<B>> {
         let (embedding, readout_input_hadamard_factors) = Embedding::new(
             context,
@@ -71,7 +71,7 @@ impl<B: Backend> Decoder<B> {
                 config.transformer_config.model_dim,
                 data_type,
                 &parameter_tree.subtree("per_layer_embedding")?,
-                ple_offload,
+                ple_storage,
             )?)
         } else {
             None
