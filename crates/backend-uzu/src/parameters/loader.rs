@@ -2,7 +2,6 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     fs::File,
-    path::Path,
 };
 
 use half::{bf16, f16};
@@ -14,10 +13,7 @@ use crate::{
     backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, DenseBuffer},
     data_type::DataType,
     parameters::safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata},
-    utils::{
-        fs::{disable_page_cache, file_read_exact_at},
-        strict_serde::DeserializeStrictOwned,
-    },
+    utils::{fs::file_read_exact_at, strict_serde::DeserializeStrictOwned},
 };
 
 pub struct ParameterMetadata {
@@ -37,8 +33,6 @@ pub enum ParameterLoaderError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Failed to read data")]
     ArrayLoadingError(#[from] std::io::Error),
-    #[error("File access is only available for file-backed parameters")]
-    FileUnavailable,
     #[error("Failed to deserialize metadata")]
     MetadataDeserializationError(#[from] serde_json::Error),
     #[error("Invalid tensor: got {shape:?} @ {data_type:?}, expected {expected_shape:?} @ {expected_data_type:?}")]
@@ -60,62 +54,6 @@ pub enum ParameterLoaderError<B: Backend> {
         prefix: Option<String>,
         keys: Box<[String]>,
     },
-}
-
-pub struct ParameterFile {
-    file: File,
-    offset: u64,
-    len: usize,
-}
-
-impl ParameterFile {
-    pub fn try_clone(&self) -> std::io::Result<Self> {
-        Ok(Self {
-            file: self.file.try_clone()?,
-            offset: self.offset,
-            len: self.len,
-        })
-    }
-
-    pub fn open_exact(
-        path: &Path,
-        len: usize,
-    ) -> std::io::Result<Self> {
-        let file = File::open(path)?;
-        if file.metadata()?.len() != len as u64 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("parameter file must contain exactly {len} bytes"),
-            ));
-        }
-        Ok(Self {
-            file,
-            offset: 0,
-            len,
-        })
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn read_exact_at(
-        &self,
-        offset: usize,
-        destination: &mut [u8],
-    ) -> std::io::Result<()> {
-        let end = offset
-            .checked_add(destination.len())
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "parameter offset overflow"))?;
-        if end > self.len {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "parameter read is out of range"));
-        }
-        file_read_exact_at(&self.file, destination, self.offset + offset as u64)
-    }
-
-    pub fn disable_page_cache(&self) -> std::io::Result<()> {
-        disable_page_cache(&self.file)
-    }
 }
 
 enum ParameterBytes<'a> {
@@ -238,17 +176,6 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, false> {
 }
 
 impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
-    pub fn file(&self) -> Result<ParameterFile, ParameterLoaderError<B>> {
-        let ParameterBytes::File(file) = &self.loader.bytes else {
-            return Err(ParameterLoaderError::FileUnavailable);
-        };
-        Ok(ParameterFile {
-            file: file.try_clone()?,
-            offset: self.metadata.offset as u64,
-            len: self.metadata.size,
-        })
-    }
-
     pub fn read_slice<T: ArrayElement>(&self) -> Result<Box<[T]>, ParameterLoaderError<B>> {
         let element_count = self.metadata.size / std::mem::size_of::<T>();
         let mut data = vec![T::zeroed(); element_count];

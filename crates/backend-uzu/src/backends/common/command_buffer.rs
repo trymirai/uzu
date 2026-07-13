@@ -8,7 +8,7 @@ pub trait CommandBuffer {
     type Initial: CommandBufferInitial<CommandBuffer = Self>;
     type Encoding: CommandBufferEncoding<CommandBuffer = Self>;
     type Executable: CommandBufferExecutable<CommandBuffer = Self>;
-    type Pending: CommandBufferPending<CommandBuffer = Self>;
+    type Pending: CommandBufferPending<CommandBuffer = Self> + Unpin;
     type Completed: CommandBufferCompleted<CommandBuffer = Self>;
 }
 

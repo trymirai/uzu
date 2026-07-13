@@ -39,7 +39,7 @@ impl<B: Backend> DecodeRowStager<B> {
                     return Err(io::Error::new(io::ErrorKind::Interrupted, "row staging was cancelled"));
                 }
                 let token_id = unsafe { std::ptr::read_volatile(sample_id_ptrs[request.slot] as *const u32) };
-                source.read_rows(&[u64::from(token_id)], destination)
+                source.read_rows_while(&[u64::from(token_id)], destination, || true)
             },
         )
         .map_err(PerLayerEmbeddingError::BackendError)?;

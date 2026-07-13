@@ -15,7 +15,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        per_layer_embedding::{PREFILL_CHUNK_SIZE, PleLease, PleSession},
+        per_layer_embedding::{PREFILL_CHUNK_SIZE, PleStaging, PreparedPleRows},
         sampling::SamplingMethod,
     },
     engine::language_model::{
@@ -24,6 +24,7 @@ use crate::{
         state::LanguageModelState,
         stream::{LanguageModelStreamError, LanguageModelStreamOptions},
     },
+    staging::Stage,
     trie::TrieNode,
 };
 
@@ -32,14 +33,14 @@ enum ForwardPass<B: Backend> {
     InFlight(DecodingStatePending<B>),
 }
 
-type PendingPasses<B> = Vec<(Pending<B>, Option<PleLease<B>>)>;
+type PendingPass<B> = (Pending<B>, Option<Stage<B>>);
 
-fn wait_pending<B: Backend>(passes: &mut PendingPasses<B>) -> Result<(), LanguageModelStreamError<B>> {
+fn wait_pending<B: Backend>(passes: &mut Vec<PendingPass<B>>) -> Result<(), LanguageModelStreamError<B>> {
     let mut first_error = None;
-    for (pending, ple_lease) in std::mem::take(passes) {
+    for (pending, stage) in std::mem::take(passes) {
         let pending_error = pending.wait_until_completed().err().map(LanguageModelStreamError::Backend);
-        let ple_error = ple_lease.and_then(|lease| lease.complete().err()).map(Into::into);
-        first_error = first_error.or(pending_error).or(ple_error);
+        let staging_error = stage.and_then(|stage| stage.complete().err()).map(Into::into);
+        first_error = first_error.or(pending_error).or(staging_error);
     }
     first_error.map_or(Ok(()), Err)
 }
@@ -47,7 +48,7 @@ fn wait_pending<B: Backend>(passes: &mut PendingPasses<B>) -> Result<(), Languag
 impl<B: Backend> ForwardPass<B> {
     fn resolve<'grammar>(
         &mut self,
-        pending: &mut PendingPasses<B>,
+        pending: &mut Vec<PendingPass<B>>,
         tokens: &mut Vec<u64>,
         grammar: Option<&mut (dyn Grammar + 'grammar)>,
     ) -> Result<u64, LanguageModelStreamError<B>> {
@@ -74,11 +75,11 @@ struct DecodingStatePending<B: Backend> {
     input_trie: TrieNode,
     full_accept: bool,
     output: Allocation<B>,
-    ple_lease: Option<PleLease<B>>,
+    prepared_ple: Option<PreparedPleRows<B>>,
 }
 
 enum DecodingState<B: Backend> {
-    Seeded(u64, Option<PleLease<B>>),
+    Seeded(u64, Option<PreparedPleRows<B>>),
     ForwardPassPending(DecodingStatePending<B>),
     Accepting {
         full: Box<[(usize, u64, u64)]>,
@@ -108,13 +109,11 @@ pub struct LanguageModelStream<'a, B: Backend> {
     allocation_pool: Rc<AllocationPool<B>>,
     context_ring: Option<Allocation<B>>,
     decoding_state: DecodingState<B>,
-    pending: PendingPasses<B>,
-    next_pending: PendingPasses<B>,
-    ple: PleSession<B>,
+    pending: Vec<PendingPass<B>>,
+    next_pending: Vec<PendingPass<B>>,
+    ple_staging: PleStaging<B>,
     metrics: TokenStreamMetrics,
 }
-
-impl<'a, B: Backend> Unpin for LanguageModelStream<'a, B> {}
 
 impl<'a, B: Backend> LanguageModelStream<'a, B> {
     pub fn new(
@@ -175,7 +174,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         let staged_decode_supported = options.speculator.is_none()
             && options.grammar.is_none()
             && matches!(options.sampling_method, SamplingMethod::Greedy);
-        let mut ple = PleSession::new(model.decoder.per_layer_embedding(), &model.context, staged_decode_supported)?;
+        let mut ple_staging =
+            PleStaging::new(model.decoder.per_layer_embedding(), &model.context, staged_decode_supported)?;
         model_state.poisoned = true;
         let mut submitted_prefill_passes = Vec::new();
         let decoding_state = if !input.is_empty() {
@@ -195,144 +195,139 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 .map_err(LanguageModelStreamError::Backend)?;
 
             let split_logits_row = model.decoder.prefill_cache_skips_trailing_layers();
-            let prefill_chunks = input
+            let mut prefill_chunks = input
                 .chunks(max_batch_size)
                 .enumerate()
                 .flat_map(|(batch_idx, input_chunk)| {
                     prefill_chunk_parts(input_chunk, batch_idx == number_of_batches - 1, split_logits_row)
                 })
                 .flatten()
-                .collect::<Box<[_]>>();
-            let split_prefill_chunks = ple.stages_prefill() && prefill_chunks.len() > 1;
-            let prefill_pool = |last: bool| {
-                last.then(|| allocation_pool.clone())
-                    .unwrap_or_else(|| Rc::new(model.context.create_allocation_pool(false)))
+                .peekable();
+            let first_prefill_chunk = *prefill_chunks.peek().expect("input is not empty");
+            let stage_each_chunk = ple_staging.is_file_backed();
+            let prefill_pool = |sample_last: bool| {
+                if stage_each_chunk && !sample_last {
+                    Rc::new(model.context.create_allocation_pool(false))
+                } else {
+                    allocation_pool.clone()
+                }
             };
             let mut encoder = Some(
-                Encoder::<B>::new_with_pool(&model.context, prefill_pool(!split_prefill_chunks))
+                Encoder::<B>::new_with_pool(&model.context, prefill_pool(first_prefill_chunk.1))
                     .map_err(LanguageModelStreamError::Backend)?,
             );
 
-            let (mut output, mut ple_lease, mut unsplit_prefill_lease) = (None, None, None);
-            let mut staged_prefill = ple.stage_prefill(prefill_chunks[0].0)?;
+            let mut output = None;
+            let mut prepared_ple = None;
+            let mut next_prefill = ple_staging.stage_prefill(first_prefill_chunk.0)?;
 
-            for (chunk_idx, &(input_chunk, sample_last)) in prefill_chunks.iter().enumerate() {
-                if encoder.is_none() {
-                    encoder = Some(
-                        Encoder::<B>::new_with_pool(&model.context, prefill_pool(sample_last))
-                            .map_err(LanguageModelStreamError::Backend)?,
-                    );
-                }
-                let chunk_encoder = encoder.as_mut().expect("prefill encoder missing");
+            while let Some((input_chunk, sample_last)) = prefill_chunks.next() {
+                let prepared_rows = {
+                    let chunk_encoder = encoder.as_mut().expect("prefill encoder missing");
+                    let input_trie = TrieNode::flat(model_state.tokens.len(), input_chunk, &model_state.prng);
+                    let input_flat_trie = input_trie.linearize();
+                    let mut token_ids = chunk_encoder
+                        .allocate_constant(input_chunk.len() * DataType::U64.size_in_bytes())
+                        .map_err(LanguageModelStreamError::Backend)?;
+                    token_ids.copyin(input_chunk);
 
-                let input_trie = TrieNode::flat(model_state.tokens.len(), input_chunk, &model_state.prng);
-                let input_flat_trie = input_trie.linearize();
+                    let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
+                    let batch_dim = BatchTopology::new(&input_flat_trie_nodes, true);
+                    let prepared_rows = next_prefill.take();
+                    let logits = model
+                        .decoder
+                        .encode(
+                            &token_ids,
+                            &batch_dim,
+                            sample_last.then(|| (input_chunk.len() - 1)..input_chunk.len()),
+                            &mut model_state.transformer_state,
+                            chunk_encoder,
+                            ple_staging.source(prepared_rows.as_ref()),
+                            &[],
+                        )?
+                        .logits;
 
-                let mut token_ids = chunk_encoder
-                    .allocate_constant(input_chunk.len() * DataType::U64.size_in_bytes())
-                    .map_err(LanguageModelStreamError::Backend)?;
-                token_ids.copyin(input_chunk);
-
-                let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
-                let batch_dim = BatchTopology::new(&input_flat_trie_nodes, true);
-                let prefill_lease = staged_prefill.take();
-
-                let mut logits = model
-                    .decoder
-                    .encode(
-                        &token_ids,
-                        &batch_dim,
-                        sample_last.then(|| (input_chunk.len() - 1)..input_chunk.len()),
-                        &mut model_state.transformer_state,
-                        chunk_encoder,
-                        ple.source(prefill_lease.as_ref()),
-                        &[],
-                    )?
-                    .logits;
-
-                if sample_last {
-                    let logits = logits.take().unwrap();
-
-                    let seeds = if matches!(options.sampling_method, SamplingMethod::Stochastic { .. }) {
-                        let mut seeds = chunk_encoder
-                            .allocate_constant(DataType::U64.size_in_bytes())
-                            .map_err(LanguageModelStreamError::Backend)?;
-                        seeds.copyin(&[model_state
-                            .prng
-                            .derive((model_state.tokens.len() + input_chunk.len() - 1) as u64)]);
-                        Some(seeds)
-                    } else {
-                        None
-                    };
-
-                    let bitmask = if let Some(grammar) = options.grammar.as_deref_mut() {
-                        let mut bitmask = chunk_encoder
-                            .allocate_constant(
-                                model.vocab_size.div_ceil(DataType::U32.size_in_bits()) * DataType::U32.size_in_bytes(),
+                    if sample_last {
+                        let logits = logits.expect("last prefill chunk must produce logits");
+                        let seeds = if matches!(options.sampling_method, SamplingMethod::Stochastic { .. }) {
+                            let mut seeds = chunk_encoder
+                                .allocate_constant(DataType::U64.size_in_bytes())
+                                .map_err(LanguageModelStreamError::Backend)?;
+                            seeds.copyin(&[model_state
+                                .prng
+                                .derive((model_state.tokens.len() + input_chunk.len() - 1) as u64)]);
+                            Some(seeds)
+                        } else {
+                            None
+                        };
+                        let bitmask = if let Some(grammar) = options.grammar.as_deref_mut() {
+                            let mut bitmask = chunk_encoder
+                                .allocate_constant(
+                                    model.vocab_size.div_ceil(DataType::U32.size_in_bits())
+                                        * DataType::U32.size_in_bytes(),
+                                )
+                                .map_err(LanguageModelStreamError::Backend)?;
+                            grammar.next_bitmask(bitmask.as_slice_mut()).then_some(bitmask)
+                        } else {
+                            None
+                        };
+                        let mut sample = ple_staging.begin_sample()?;
+                        let sampled_output = model
+                            .sampling
+                            .encode(
+                                &logits,
+                                seeds.as_ref(),
+                                bitmask.as_ref(),
+                                context_ring.as_ref(),
+                                Some(&token_ids),
+                                &options.sampling_method,
+                                &batch_dim,
+                                (batch_dim.size() - 1)..batch_dim.size(),
+                                sample.readback(),
+                                chunk_encoder,
                             )
                             .map_err(LanguageModelStreamError::Backend)?;
+                        prepared_ple = sample.submit(chunk_encoder)?;
+                        output = Some(sampled_output);
+                    }
 
-                        grammar.next_bitmask(bitmask.as_slice_mut()).then_some(bitmask)
-                    } else {
-                        None
-                    };
-
-                    let mut sample = ple.begin_sample()?;
-                    let sampled_output = model
-                        .sampling
-                        .encode(
-                            &logits,
-                            seeds.as_ref(),
-                            bitmask.as_ref(),
-                            context_ring.as_ref(),
-                            Some(&token_ids),
-                            &options.sampling_method,
-                            &batch_dim,
-                            (batch_dim.size() - 1)..batch_dim.size(),
-                            sample.readback(),
-                            chunk_encoder,
-                        )
+                    model_state
+                        .transformer_state
+                        .encode_accept(&(0..input_chunk.len()).collect::<Box<[usize]>>(), chunk_encoder)
                         .map_err(LanguageModelStreamError::Backend)?;
-                    ple_lease = sample.submit(chunk_encoder)?;
-                    output = Some(sampled_output);
-                }
+                    if let Some(suffix_repetition_length) = options.sampling_method.suffix_repetition_length() {
+                        model.context_ring_update.encode(
+                            &token_ids,
+                            context_ring.as_mut().unwrap(),
+                            suffix_repetition_length as u32,
+                            input_chunk.len() as u32,
+                            chunk_encoder,
+                        );
+                    }
+                    model_state.tokens.extend(input_chunk);
+                    prepared_rows
+                };
 
-                model_state
-                    .transformer_state
-                    .encode_accept(&(0..input_chunk.len()).collect::<Box<[usize]>>(), chunk_encoder)
-                    .map_err(LanguageModelStreamError::Backend)?;
-
-                if let Some(suffix_repetition_length) = options.sampling_method.suffix_repetition_length() {
-                    model.context_ring_update.encode(
-                        &token_ids,
-                        context_ring.as_mut().unwrap(),
-                        suffix_repetition_length as u32,
-                        input_chunk.len() as u32,
-                        chunk_encoder,
-                    );
-                }
-
-                drop(token_ids);
-                drop(logits);
-                model_state.tokens.extend(input_chunk);
-
-                if split_prefill_chunks {
+                if stage_each_chunk {
                     let chunk_encoder = encoder.take().expect("prefill encoder missing at submit");
-                    submitted_prefill_passes.push((chunk_encoder.end_encoding().submit(), prefill_lease));
-                    if !sample_last {
-                        staged_prefill = ple.stage_prefill(prefill_chunks[chunk_idx + 1].0).map_err(|error| {
+                    submitted_prefill_passes
+                        .push((chunk_encoder.end_encoding().submit(), prepared_rows.map(PreparedPleRows::into_stage)));
+                    if let Some(&(next_chunk, next_sample_last)) = prefill_chunks.peek() {
+                        next_prefill = ple_staging.stage_prefill(next_chunk).map_err(|error| {
                             let _ = wait_pending(&mut submitted_prefill_passes);
                             error
                         })?;
                         wait_pending(&mut submitted_prefill_passes)?;
+                        encoder = Some(
+                            Encoder::<B>::new_with_pool(&model.context, prefill_pool(next_sample_last))
+                                .map_err(LanguageModelStreamError::Backend)?,
+                        );
                     }
-                } else {
-                    unsplit_prefill_lease = prefill_lease;
                 }
             }
 
             if let Some(encoder) = encoder {
-                submitted_prefill_passes.push((encoder.end_encoding().submit(), unsplit_prefill_lease));
+                submitted_prefill_passes.push((encoder.end_encoding().submit(), None));
             }
 
             metrics.num_forward_passes += 1;
@@ -344,13 +339,13 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 input_trie: TrieNode::new(0, 0),
                 full_accept: true,
                 output: output.unwrap(),
-                ple_lease,
+                prepared_ple,
             })
         } else {
             // TODO: this leaks previous LanguageModelStreamOptions
             let seed_token = model_state.last_output_token.take().unwrap();
-            let ple_lease = ple.stage_token(seed_token)?;
-            DecodingState::Seeded(seed_token, ple_lease)
+            let prepared_ple = ple_staging.stage_token(seed_token)?;
+            DecodingState::Seeded(seed_token, prepared_ple)
         };
         model_state.poisoned = false;
 
@@ -363,30 +358,30 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             decoding_state,
             pending: submitted_prefill_passes,
             next_pending: Vec::new(),
-            ple,
+            ple_staging,
             metrics,
         })
     }
 
     fn generate(&mut self) -> Result<Option<u64>, LanguageModelStreamError<B>> {
-        let (mut prev_output, encoder, mut current_ple_lease): (
+        let (mut prev_output, encoder, mut prepared_ple): (
             ForwardPass<B>,
             Option<Encoder<B>>,
-            Option<PleLease<B>>,
+            Option<PreparedPleRows<B>>,
         ) = match replace(&mut self.decoding_state, DecodingState::Invalid) {
-            DecodingState::Seeded(seed_token, ple_lease) => {
+            DecodingState::Seeded(seed_token, prepared_ple) => {
                 self.model_state.tokens.push(seed_token);
                 if let Some(grammar) = self.options.grammar.as_deref_mut() {
                     let _ = grammar.accept_token(seed_token); // TODO: this should not be ignored
                 }
                 self.metrics.num_tokens_returned += 1;
-                (ForwardPass::Constant(seed_token), None, ple_lease)
+                (ForwardPass::Constant(seed_token), None, prepared_ple)
             },
             DecodingState::ForwardPassPending(mut forward_pass_pending) => {
-                let ple_lease = forward_pass_pending.ple_lease.take();
+                let prepared_ple = forward_pass_pending.prepared_ple.take();
                 if forward_pass_pending.full_accept {
                     self.metrics.num_tokens_returned += 1;
-                    (ForwardPass::InFlight(forward_pass_pending), None, ple_lease)
+                    (ForwardPass::InFlight(forward_pass_pending), None, prepared_ple)
                 } else {
                     wait_pending(&mut self.pending)?;
                     let sampled_tokens =
@@ -522,7 +517,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             Some(0..batch_dim.size()),
             &mut self.model_state.transformer_state,
             &mut encoder,
-            self.ple.source(current_ple_lease.as_ref()),
+            self.ple_staging.source(prepared_ple.as_ref()),
             &[],
         )?;
 
@@ -530,7 +525,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         let (bitmask, mut encoder) = if let Some(grammar) = self.options.grammar.as_deref_mut() {
             if copied_chain {
-                self.next_pending.push((encoder.end_encoding().submit(), current_ple_lease.take()));
+                self.next_pending
+                    .push((encoder.end_encoding().submit(), prepared_ple.take().map(PreparedPleRows::into_stage)));
 
                 let mut encoder = Encoder::<B>::new_with_pool(&self.model.context, self.allocation_pool.clone())
                     .map_err(LanguageModelStreamError::Backend)?;
@@ -573,7 +569,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             None
         };
 
-        let mut sample = self.ple.begin_sample()?;
+        let mut sample = self.ple_staging.begin_sample()?;
         let output = self
             .model
             .sampling
@@ -590,7 +586,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 &mut encoder,
             )
             .map_err(LanguageModelStreamError::Backend)?;
-        let next_ple_lease = sample.submit(&mut encoder)?;
+        let next_prepared_ple = sample.submit(&mut encoder)?;
         drop(seeds);
         drop(bitmask);
         drop(logits);
@@ -614,7 +610,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         drop(token_ids);
 
-        self.next_pending.push((encoder.end_encoding().submit(), current_ple_lease));
+        self.next_pending.push((encoder.end_encoding().submit(), prepared_ple.map(PreparedPleRows::into_stage)));
 
         self.metrics.num_forward_passes += 1;
         self.metrics.num_tokens_proposed += input_flat_trie.len();
@@ -632,13 +628,20 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             input_trie,
             full_accept,
             output,
-            ple_lease: next_ple_lease,
+            prepared_ple: next_prepared_ple,
         });
         Ok(Some(token))
     }
 
     pub fn metrics(&self) -> &TokenStreamMetrics {
         &self.metrics
+    }
+
+    fn abort(&mut self) {
+        self.model_state.poisoned = true;
+        self.model_state.last_output_token = None;
+        let _ = (wait_pending(&mut self.pending), wait_pending(&mut self.next_pending));
+        self.decoding_state = DecodingState::Halted;
     }
 }
 
@@ -648,10 +651,7 @@ impl<'a, B: Backend> Iterator for LanguageModelStream<'a, B> {
     fn next(&mut self) -> Option<Result<u64, LanguageModelStreamError<B>>> {
         let result = self.generate();
         if result.is_err() {
-            let _ = (wait_pending(&mut self.pending), wait_pending(&mut self.next_pending));
-            self.model_state.poisoned = true;
-            self.model_state.last_output_token = None;
-            self.decoding_state = DecodingState::Halted;
+            self.abort();
         }
         result.transpose()
     }
@@ -721,10 +721,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
     fn drop(&mut self) {
         if !matches!(self.decoding_state, DecodingState::Halted) {
-            self.model_state.poisoned = true;
-            self.model_state.last_output_token = None;
-            let _ = (wait_pending(&mut self.pending), wait_pending(&mut self.next_pending));
-            self.decoding_state = DecodingState::Halted;
+            self.abort();
         }
     }
 }

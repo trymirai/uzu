@@ -26,7 +26,7 @@ use crate::{
         linear::{Linear, LinearBlockError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar},
     },
-    parameters::{ParameterFile, ParameterLoaderError, ParameterTree},
+    parameters::{ParameterLoaderError, ParameterTree},
     staging::{Reservation, Stage, StageView},
 };
 
@@ -148,12 +148,16 @@ impl<B: Backend> PerLayerEmbedding<B> {
                 path,
                 page_cache,
             } => {
-                let model_file = token_embedding_leaf.file()?;
-                let file = ParameterFile::open_exact(path, model_file.len())?;
+                let row_bytes = total_ple_dim * data_type.size_in_bytes();
+                let source = RowSource::open_exact(
+                    path,
+                    size_for_shape(&[config.ple_vocab_size, total_ple_dim], data_type),
+                    row_bytes,
+                )?;
                 if matches!(page_cache, PageCachePolicy::Bypass) {
-                    file.disable_page_cache()?;
+                    source.disable_page_cache()?;
                 }
-                PleRows::FileBacked(RowSource::new(file, total_ple_dim * data_type.size_in_bytes())?)
+                PleRows::FileBacked(source)
             },
         };
         let token_embedding_lookup =
@@ -267,26 +271,26 @@ impl<B: Backend> PerLayerEmbedding<B> {
     }
 }
 
-pub(crate) enum PleLease<B: Backend> {
+pub(crate) enum PreparedPleRows<B: Backend> {
     Decode(Stage<B>),
     Prefill(PrefillBatch<B>),
 }
 
-impl<B: Backend> PleLease<B> {
-    pub(crate) fn complete(self) -> std::io::Result<()> {
+impl<B: Backend> PreparedPleRows<B> {
+    pub(crate) fn into_stage(self) -> Stage<B> {
         match self {
-            Self::Decode(lease) => lease.complete(),
-            Self::Prefill(batch) => batch.stage.complete(),
+            Self::Decode(stage) => stage,
+            Self::Prefill(batch) => batch.stage,
         }
     }
 }
 
-pub(crate) struct PleSession<B: Backend> {
+pub(crate) struct PleStaging<B: Backend> {
     decode: Option<DecodeRowStager<B>>,
     prefill: Option<PrefillStager<B>>,
 }
 
-impl<B: Backend> Unpin for PleSession<B> {}
+impl<B: Backend> Unpin for PleStaging<B> {}
 
 pub(crate) struct PleSample<'a, B: Backend>(Option<(&'a mut DecodeRowStager<B>, Reservation)>);
 
@@ -298,14 +302,14 @@ impl<B: Backend> PleSample<'_, B> {
     pub(crate) fn submit(
         self,
         encoder: &mut Encoder<B>,
-    ) -> std::io::Result<Option<PleLease<B>>> {
+    ) -> std::io::Result<Option<PreparedPleRows<B>>> {
         self.0
-            .map(|(stager, reservation)| stager.publish_sample(reservation, encoder).map(PleLease::Decode))
+            .map(|(stager, reservation)| stager.publish_sample(reservation, encoder).map(PreparedPleRows::Decode))
             .transpose()
     }
 }
 
-impl<B: Backend> PleSession<B> {
+impl<B: Backend> PleStaging<B> {
     pub(crate) fn new(
         embedding: Option<&PerLayerEmbedding<B>>,
         context: &B::Context,
@@ -338,26 +342,26 @@ impl<B: Backend> PleSession<B> {
     pub(crate) fn stage_token(
         &mut self,
         token_id: u64,
-    ) -> std::io::Result<Option<PleLease<B>>> {
-        self.decode.as_mut().map(|stager| stager.stage_token(token_id).map(PleLease::Decode)).transpose()
+    ) -> std::io::Result<Option<PreparedPleRows<B>>> {
+        self.decode.as_mut().map(|stager| stager.stage_token(token_id).map(PreparedPleRows::Decode)).transpose()
     }
 
     pub(crate) fn stage_prefill(
         &mut self,
         token_ids: &[u64],
-    ) -> std::io::Result<Option<PleLease<B>>> {
-        self.prefill.as_mut().map(|stager| stager.stage(token_ids).map(PleLease::Prefill)).transpose()
+    ) -> std::io::Result<Option<PreparedPleRows<B>>> {
+        self.prefill.as_mut().map(|stager| stager.stage(token_ids).map(PreparedPleRows::Prefill)).transpose()
     }
 
     pub(crate) fn source<'a>(
         &'a self,
-        lease: Option<&'a PleLease<B>>,
+        rows: Option<&'a PreparedPleRows<B>>,
     ) -> PleSource<'a, B> {
-        match lease {
-            Some(PleLease::Decode(lease)) => {
-                PleSource::Staged(self.decode.as_ref().expect("decode stager missing").view(lease))
+        match rows {
+            Some(PreparedPleRows::Decode(stage)) => {
+                PleSource::Staged(self.decode.as_ref().expect("decode stager missing").view(stage))
             },
-            Some(PleLease::Prefill(batch)) => {
+            Some(PreparedPleRows::Prefill(batch)) => {
                 PleSource::Staged(self.prefill.as_ref().expect("prefill stager missing").view(batch))
             },
             None => {
@@ -367,7 +371,7 @@ impl<B: Backend> PleSession<B> {
         }
     }
 
-    pub(crate) fn stages_prefill(&self) -> bool {
+    pub(crate) fn is_file_backed(&self) -> bool {
         self.prefill.is_some()
     }
 }

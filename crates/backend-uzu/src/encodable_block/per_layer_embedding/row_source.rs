@@ -1,40 +1,50 @@
-use std::io;
+use std::{fs::File, io, path::Path};
 
-use crate::parameters::ParameterFile;
+use crate::utils::fs::{disable_page_cache, file_read_exact_at};
 
 pub(crate) struct RowSource {
-    file: ParameterFile,
+    file: File,
     row_bytes: usize,
+    row_count: usize,
 }
 
 impl RowSource {
-    pub(crate) fn new(
-        file: ParameterFile,
+    pub(crate) fn open_exact(
+        path: &Path,
+        expected_len: usize,
         row_bytes: usize,
     ) -> io::Result<Self> {
-        if row_bytes == 0 || !file.len().is_multiple_of(row_bytes) {
+        let file = File::open(path)?;
+        if file.metadata()?.len() != expected_len as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("row file must contain exactly {expected_len} bytes"),
+            ));
+        }
+        if row_bytes == 0 || !expected_len.is_multiple_of(row_bytes) {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "parameter size is not a whole number of rows"));
         }
         Ok(Self {
             file,
             row_bytes,
+            row_count: expected_len / row_bytes,
         })
     }
 
     pub(crate) fn try_clone(&self) -> io::Result<Self> {
-        Self::new(self.file.try_clone()?, self.row_bytes)
+        Ok(Self {
+            file: self.file.try_clone()?,
+            row_bytes: self.row_bytes,
+            row_count: self.row_count,
+        })
     }
 
     pub(crate) fn row_bytes(&self) -> usize {
         self.row_bytes
     }
 
-    pub(crate) fn read_rows(
-        &self,
-        row_ids: &[u64],
-        destination: &mut [u8],
-    ) -> io::Result<()> {
-        self.read_rows_while(row_ids, destination, || true)
+    pub(crate) fn disable_page_cache(&self) -> io::Result<()> {
+        disable_page_cache(&self.file)
     }
 
     pub(crate) fn read_rows_while(
@@ -56,10 +66,13 @@ impl RowSource {
             }
             let row = usize::try_from(row_id)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "row ID does not fit in usize"))?;
+            if row >= self.row_count {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "row ID is out of range"));
+            }
             let offset = row
                 .checked_mul(self.row_bytes)
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "row offset overflow"))?;
-            self.file.read_exact_at(offset, destination)?;
+            file_read_exact_at(&self.file, destination, offset as u64)?;
         }
         Ok(())
     }

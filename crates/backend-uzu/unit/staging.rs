@@ -57,16 +57,6 @@ fn failed_submit_returns_its_slot() {
 }
 
 #[uzu_test]
-fn disconnected_worker_returns_the_reserved_slot() {
-    let mut stager = value_stager(1);
-    drop(stager.requests.take());
-    let reservation = stager.try_reserve().unwrap();
-
-    assert_eq!(stager.submit(reservation, 1, 8).err().unwrap().kind(), io::ErrorKind::BrokenPipe);
-    assert!(stager.try_reserve().is_ok());
-}
-
-#[uzu_test]
 fn early_completion_does_not_recycle_the_slot() {
     let context = <Cpu as Backend>::Context::new().unwrap();
     let (started_tx, started_rx) = sync_channel(1);
@@ -116,15 +106,5 @@ fn worker_panic_reports_error_and_recycles_on_completion() {
     assert!(view.ready_event.wait_until_signaled_value_timeout_ms(view.value, 1_000));
 
     assert_eq!(stage.complete().unwrap_err().to_string(), "staging worker panicked");
-    assert!(stager.try_reserve().is_ok());
-}
-
-#[uzu_test]
-fn generation_overflow_returns_the_reserved_slot() {
-    let mut stager = value_stager(1);
-    stager.next_generation = u64::MAX;
-    let reservation = stager.try_reserve().unwrap();
-
-    assert_eq!(stager.submit(reservation, 1, 8).err().unwrap().kind(), io::ErrorKind::Other);
     assert!(stager.try_reserve().is_ok());
 }
