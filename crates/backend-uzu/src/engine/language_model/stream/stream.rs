@@ -15,7 +15,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        per_layer_embedding::{PleSource, PrefillChunkTicket, PrefillRing, RowRing, RowTicket, prefill_chunk_size},
+        per_layer_embedding::{PleSource, PrefillRing, RowRing, StageTicket, prefill_chunk_size},
         sampling::SamplingMethod,
     },
     engine::language_model::{
@@ -30,31 +30,24 @@ use crate::{
 enum ForwardPassChaining<B: Backend> {
     Constant {
         token_id: u64,
-        row_ticket: Option<RowTicket<B>>,
+        row_ticket: Option<StageTicket<B>>,
     },
     InFlight(DecodingStatePending<B>),
 }
 
 struct PendingPass<B: Backend> {
     pending: Pending<B>,
-    row_ticket: Option<RowTicket<B>>,
-    prefill_ticket: Option<PrefillChunkTicket<B>>,
+    stage_ticket: Option<StageTicket<B>>,
 }
 
 impl<B: Backend> PendingPass<B> {
     fn wait(self) -> Result<(), LanguageModelStreamError<B>> {
         let Self {
             pending,
-            row_ticket,
-            prefill_ticket,
+            stage_ticket,
         } = self;
         let mut first_error = pending.wait_until_completed().err().map(LanguageModelStreamError::Backend);
-        if let Some(ticket) = row_ticket
-            && let Err(error) = ticket.complete()
-        {
-            first_error.get_or_insert(error.into());
-        }
-        if let Some(ticket) = prefill_ticket
+        if let Some(ticket) = stage_ticket
             && let Err(error) = ticket.complete()
         {
             first_error.get_or_insert(error.into());
@@ -72,19 +65,6 @@ struct PendingPassDrain<B: Backend> {
 }
 
 impl<B: Backend> PendingPassDrain<B> {
-    fn new() -> Self {
-        Self {
-            passes: Vec::new(),
-        }
-    }
-
-    fn push(
-        &mut self,
-        pending: PendingPass<B>,
-    ) {
-        self.passes.push(pending);
-    }
-
     fn into_boxed_slice(mut self) -> Box<[PendingPass<B>]> {
         std::mem::take(&mut self.passes).into_boxed_slice()
     }
@@ -99,23 +79,29 @@ impl<B: Backend> Drop for PendingPassDrain<B> {
 }
 
 impl<B: Backend> ForwardPassChaining<B> {
-    fn row_ticket(&self) -> Option<&RowTicket<B>> {
+    fn row_ticket(&self) -> Option<&StageTicket<B>> {
         match self {
             Self::Constant {
                 row_ticket,
                 ..
-            } => row_ticket.as_ref(),
-            Self::InFlight(in_flight) => in_flight.row_ticket.as_ref(),
+            }
+            | Self::InFlight(DecodingStatePending {
+                row_ticket,
+                ..
+            }) => row_ticket.as_ref(),
         }
     }
 
-    fn take_row_ticket(&mut self) -> Option<RowTicket<B>> {
+    fn take_row_ticket(&mut self) -> Option<StageTicket<B>> {
         match self {
             Self::Constant {
                 row_ticket,
                 ..
-            } => row_ticket.take(),
-            Self::InFlight(in_flight) => in_flight.row_ticket.take(),
+            }
+            | Self::InFlight(DecodingStatePending {
+                row_ticket,
+                ..
+            }) => row_ticket.take(),
         }
     }
 
@@ -186,7 +172,7 @@ struct DecodingStatePending<B: Backend> {
     full_accept: bool,
     pending: Box<[PendingPass<B>]>,
     output: Allocation<B>,
-    row_ticket: Option<RowTicket<B>>,
+    row_ticket: Option<StageTicket<B>>,
     _prefill_ring: Option<PrefillRing<B>>,
     _allocation_pool: Option<Rc<AllocationPool<B>>>,
 }
@@ -194,7 +180,7 @@ struct DecodingStatePending<B: Backend> {
 enum DecodingState<B: Backend> {
     Seeded {
         seed_token: u64,
-        row_ticket: Option<RowTicket<B>>,
+        row_ticket: Option<StageTicket<B>>,
     },
     ForwardPassPending(DecodingStatePending<B>),
     Accepting {
@@ -443,8 +429,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         let chunk_encoder = encoder.take().expect("prefill encoder missing at submit");
                         submitted_prefill_passes.push(PendingPass {
                             pending: chunk_encoder.end_encoding().submit(),
-                            row_ticket: None,
-                            prefill_ticket,
+                            stage_ticket: prefill_ticket.map(|ticket| ticket.stage),
                         });
                         if active_prefill_ring.is_some() && !last_batch {
                             let next_start = (batch_idx + 1) * max_batch_size;
@@ -462,15 +447,14 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             }
                         }
                     } else {
-                        unsplit_prefill_ticket = prefill_ticket;
+                        unsplit_prefill_ticket = prefill_ticket.map(|ticket| ticket.stage);
                     }
                 }
 
                 if let Some(encoder) = encoder {
                     submitted_prefill_passes.push(PendingPass {
                         pending: encoder.end_encoding().submit(),
-                        row_ticket: None,
-                        prefill_ticket: unsplit_prefill_ticket,
+                        stage_ticket: unsplit_prefill_ticket,
                     });
                 }
                 let pending = std::mem::take(&mut submitted_prefill_passes).into_boxed_slice();
@@ -672,7 +656,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             return Ok(Some(token));
         }
 
-        let mut pending = PendingPassDrain::<B>::new();
+        let mut pending = PendingPassDrain::<B> {
+            passes: Vec::new(),
+        };
         let mut encoder = if let Some(encoder) = encoder {
             encoder
         } else {
@@ -754,10 +740,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         let (bitmask, mut encoder) = if let Some(grammar) = self.options.grammar.as_deref_mut() {
             if chain_copy.is_some() {
-                pending.push(PendingPass {
+                pending.passes.push(PendingPass {
                     pending: encoder.end_encoding().submit(),
-                    row_ticket: None,
-                    prefill_ticket: None,
+                    stage_ticket: None,
                 });
 
                 let mut encoder = Encoder::<B>::new_with_pool(&self.model.context, self.allocation_pool.clone())
@@ -845,10 +830,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         drop(token_ids);
 
-        pending.push(PendingPass {
+        pending.passes.push(PendingPass {
             pending: encoder.end_encoding().submit(),
-            row_ticket: prev_output.take_row_ticket(),
-            prefill_ticket: None,
+            stage_ticket: prev_output.take_row_ticket(),
         });
 
         self.metrics.num_forward_passes += 1;

@@ -1,11 +1,12 @@
+mod async_stager;
 mod prefill_ring;
 mod row_ring;
-mod staging;
 
 use std::path::PathBuf;
 
-pub(crate) use prefill_ring::{PrefillChunkTicket, PrefillRing, PreparedPrefillBatch, prefill_chunk_size};
-pub(crate) use row_ring::{PreparedRow, RowRing, RowTicket};
+pub(crate) use async_stager::StageTicket;
+pub(crate) use prefill_ring::{PrefillRing, PreparedPrefillBatch, prefill_chunk_size};
+pub(crate) use row_ring::{PreparedRow, RowRing};
 use thiserror::Error;
 
 use crate::{
@@ -266,7 +267,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
                         actual: batch_dim,
                     });
                 }
-                encoder.wait_for_event(prepared.row_event, prepared.value);
+                encoder.wait_for_event(prepared.ready_event, prepared.value);
                 let mut row_index = encoder
                     .allocate_constant(DataType::U64.size_in_bytes())
                     .map_err(PerLayerEmbeddingError::BackendError)?;
