@@ -9,7 +9,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         embedding::{Embedding, EmbeddingError},
-        per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError, PleSource, PrefillRing, RowRing},
+        per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError, PleOffloadOptions, PleSource},
         transformer::{Transformer, TransformerNewError, TransformerState},
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -48,6 +48,7 @@ impl<B: Backend> Decoder<B> {
         config: &DecoderConfig,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
+        ple_offload: &PleOffloadOptions,
     ) -> Result<Self, DecoderError<B>> {
         let (embedding, readout_input_hadamard_factors) = Embedding::new(
             context,
@@ -70,6 +71,7 @@ impl<B: Backend> Decoder<B> {
                 config.transformer_config.model_dim,
                 data_type,
                 &parameter_tree.subtree("per_layer_embedding")?,
+                ple_offload,
             )?)
         } else {
             None
@@ -110,32 +112,8 @@ impl<B: Backend> Decoder<B> {
         self.transformer.create_empty_state(max_context_length, context)
     }
 
-    pub fn create_ple_row_ring(
-        &self,
-        context: &B::Context,
-    ) -> Result<Option<RowRing<B>>, DecoderError<B>> {
-        self.per_layer_embedding
-            .as_ref()
-            .map(|embedding| embedding.create_row_ring(context))
-            .transpose()
-            .map(|ring| ring.flatten())
-            .map_err(DecoderError::PerLayerEmbedding)
-    }
-
-    pub fn ple_rows_offloaded(&self) -> bool {
-        self.per_layer_embedding.as_ref().is_some_and(PerLayerEmbedding::rows_offloaded)
-    }
-
-    pub fn create_ple_prefill_ring(
-        &self,
-        context: &B::Context,
-    ) -> Result<Option<PrefillRing<B>>, DecoderError<B>> {
-        self.per_layer_embedding
-            .as_ref()
-            .map(|embedding| embedding.create_prefill_ring(context))
-            .transpose()
-            .map(|ring| ring.flatten())
-            .map_err(DecoderError::PerLayerEmbedding)
+    pub(crate) fn per_layer_embedding(&self) -> Option<&PerLayerEmbedding<B>> {
+        self.per_layer_embedding.as_ref()
     }
 
     pub fn encode(

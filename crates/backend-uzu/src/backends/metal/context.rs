@@ -13,17 +13,15 @@ use metal::{
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{
-    Metal,
-    device_tier::{DeviceTier, device_tier_for_device},
-    error::MetalError,
-    kernel,
-    metal_extensions::{DeviceExt, LibraryPipelineExtensions},
-};
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
     metal::{
+        Metal,
         command_buffer::MetalCommandBufferInitial,
+        device_tier::{DeviceTier, device_tier_for_device},
+        error::MetalError,
+        kernel,
+        metal_extensions::{DeviceExt, LibraryPipelineExtensions},
         sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
     },
 };

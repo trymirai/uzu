@@ -1,5 +1,4 @@
 use std::{
-    hint::spin_loop,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -117,11 +116,7 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         value: u64,
     ) {
         let event = event.clone();
-        self.push_command(move || {
-            while event.signaled_value() < value {
-                spin_loop();
-            }
-        });
+        self.push_command(move || while !event.wait_until_signaled_value_timeout_ms(value, 1_000) {});
     }
 
     fn encode_signal_event(

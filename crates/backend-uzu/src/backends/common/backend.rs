@@ -1,6 +1,6 @@
-use std::{error::Error, fmt::Debug, time::Duration};
+use std::{error::Error, fmt::Debug};
 
-use super::{CommandBuffer, Context, DenseBuffer, Kernels, SparseBuffer};
+use crate::backends::common::{CommandBuffer, Context, DenseBuffer, Kernels, SparseBuffer};
 
 pub trait SharedEvent: Clone + Send + Sync + Unpin {
     fn signaled_value(&self) -> u64;
@@ -9,21 +9,7 @@ pub trait SharedEvent: Clone + Send + Sync + Unpin {
         &self,
         value: u64,
         timeout_ms: u64,
-    ) -> bool {
-        let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
-        let mut spins = 0_u64;
-        while self.signaled_value() < value {
-            if std::time::Instant::now() >= deadline {
-                return false;
-            }
-            std::hint::spin_loop();
-            spins += 1;
-            if spins.is_multiple_of(1024) {
-                std::thread::yield_now();
-            }
-        }
-        true
-    }
+    ) -> bool;
 
     fn signal(
         &self,

@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::Backend,
-    encodable_block::decoder::DecoderError,
+    encodable_block::{decoder::DecoderError, per_layer_embedding::PerLayerEmbeddingError},
     engine::language_model::{
         LanguageModel,
         grammar::{Grammar, GrammarError},
@@ -37,6 +37,8 @@ pub enum LanguageModelStreamError<B: Backend> {
     Io(#[from] std::io::Error),
     #[error("Decoder error: {0}")]
     Decoder(#[from] DecoderError<B>),
+    #[error("Per-layer embedding error: {0}")]
+    PerLayerEmbedding(#[from] PerLayerEmbeddingError<B>),
     #[error("Grammar error: {0}")]
     Grammar(#[from] GrammarError),
     #[error("Speculators are not supported by this model")]

@@ -1,10 +1,12 @@
 use metal::{MTLBuffer, MTLSharedEvent};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{command_buffer::MetalCommandBuffer, context::MetalContext, error::MetalError, kernel::MetalKernels};
 use crate::backends::{
     common::{Backend, SharedEvent},
-    metal::sparse::MetalSparseBuffer,
+    metal::{
+        command_buffer::MetalCommandBuffer, context::MetalContext, error::MetalError, kernel::MetalKernels,
+        sparse::MetalSparseBuffer,
+    },
 };
 
 #[derive(Debug, Clone)]

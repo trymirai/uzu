@@ -57,6 +57,7 @@ VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(UnifiedSampling) (
   const device T* logits,
   device uint32_t* output,
+  device uint32_t* sample_readback OPTIONAL(has_sample_readback),
   const device uint64_t* seeds OPTIONAL(is_stochastic),
   const device uint32_t* bitmask OPTIONAL(has_bitmask),
   const constant float& temperature OPTIONAL(has_temperature),
@@ -71,6 +72,7 @@ PUBLIC KERNEL(UnifiedSampling) (
   const bool has_top_k SPECIALIZE,
   const bool has_top_p SPECIALIZE,
   const bool has_min_p SPECIALIZE,
+  const bool has_sample_readback SPECIALIZE,
   threadgroup Logit shared[THREADGROUP_SIZE_IN_SIMDS],
   const ThreadContext thread_context,
   uint batch_idx GROUPS(batch_size),
@@ -78,6 +80,9 @@ PUBLIC KERNEL(UnifiedSampling) (
 ) {
   logits += vocab_size * batch_idx;
   output += batch_idx;
+  if (has_sample_readback) {
+    sample_readback += batch_idx;
+  }
   uint64_t rng_seed, rng_offset;
   PhiloxState rng;
   if (is_stochastic) {
@@ -235,6 +240,9 @@ PUBLIC KERNEL(UnifiedSampling) (
 
     if (filters_passed || iteration == MAX_ITERS - 1) {
       *output = candidate_logit_post_gumbel.index;
+      if (has_sample_readback) {
+        *sample_readback = candidate_logit_post_gumbel.index;
+      }
       return;
     }
 

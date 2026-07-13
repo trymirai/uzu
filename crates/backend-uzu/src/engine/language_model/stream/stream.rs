@@ -15,7 +15,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        per_layer_embedding::{PleSource, PrefillRing, RowRing, StageTicket, prefill_chunk_size},
+        per_layer_embedding::{PREFILL_CHUNK_SIZE, PleLease, PleSession},
         sampling::SamplingMethod,
     },
     engine::language_model::{
@@ -27,28 +27,30 @@ use crate::{
     trie::TrieNode,
 };
 
-enum ForwardPassChaining<B: Backend> {
-    Constant {
-        token_id: u64,
-        row_ticket: Option<StageTicket<B>>,
-    },
+enum ForwardPass<B: Backend> {
+    Constant(u64),
     InFlight(DecodingStatePending<B>),
+}
+
+struct ForwardPassChaining<B: Backend> {
+    pass: ForwardPass<B>,
+    ple_lease: Option<PleLease<B>>,
 }
 
 struct PendingPass<B: Backend> {
     pending: Pending<B>,
-    stage_ticket: Option<StageTicket<B>>,
+    ple_lease: Option<PleLease<B>>,
 }
 
 impl<B: Backend> PendingPass<B> {
     fn wait(self) -> Result<(), LanguageModelStreamError<B>> {
         let Self {
             pending,
-            stage_ticket,
+            ple_lease,
         } = self;
         let mut first_error = pending.wait_until_completed().err().map(LanguageModelStreamError::Backend);
-        if let Some(ticket) = stage_ticket
-            && let Err(error) = ticket.complete()
+        if let Some(lease) = ple_lease
+            && let Err(error) = lease.complete()
         {
             first_error.get_or_insert(error.into());
         }
@@ -79,30 +81,30 @@ impl<B: Backend> Drop for PendingPassDrain<B> {
 }
 
 impl<B: Backend> ForwardPassChaining<B> {
-    fn row_ticket(&self) -> Option<&StageTicket<B>> {
-        match self {
-            Self::Constant {
-                row_ticket,
-                ..
-            }
-            | Self::InFlight(DecodingStatePending {
-                row_ticket,
-                ..
-            }) => row_ticket.as_ref(),
+    fn constant(
+        token_id: u64,
+        ple_lease: Option<PleLease<B>>,
+    ) -> Self {
+        Self {
+            pass: ForwardPass::Constant(token_id),
+            ple_lease,
         }
     }
 
-    fn take_row_ticket(&mut self) -> Option<StageTicket<B>> {
-        match self {
-            Self::Constant {
-                row_ticket,
-                ..
-            }
-            | Self::InFlight(DecodingStatePending {
-                row_ticket,
-                ..
-            }) => row_ticket.take(),
+    fn in_flight(mut pass: DecodingStatePending<B>) -> Self {
+        let ple_lease = pass.ple_lease.take();
+        Self {
+            pass: ForwardPass::InFlight(pass),
+            ple_lease,
         }
+    }
+
+    fn ple_lease(&self) -> Option<&PleLease<B>> {
+        self.ple_lease.as_ref()
+    }
+
+    fn take_ple_lease(&mut self) -> Option<PleLease<B>> {
+        self.ple_lease.take()
     }
 
     fn resolve<'grammar>(
@@ -110,12 +112,9 @@ impl<B: Backend> ForwardPassChaining<B> {
         tokens: &mut Vec<u64>,
         grammar: Option<&mut (dyn Grammar + 'grammar)>,
     ) -> Result<u64, LanguageModelStreamError<B>> {
-        match self {
-            Self::Constant {
-                token_id,
-                ..
-            } => Ok(*token_id),
-            Self::InFlight(in_flight) => {
+        match &mut self.pass {
+            ForwardPass::Constant(token_id) => Ok(*token_id),
+            ForwardPass::InFlight(in_flight) => {
                 assert!(in_flight.full_accept);
                 let mut first_error = None;
                 for pending in replace(&mut in_flight.pending, Box::new([])) {
@@ -129,11 +128,7 @@ impl<B: Backend> ForwardPassChaining<B> {
                 let output = in_flight.output.as_slice::<u32>();
                 assert_eq!(output.len(), 1);
                 let token_id = output[0] as u64;
-                let row_ticket = in_flight.row_ticket.take();
-                *self = Self::Constant {
-                    token_id,
-                    row_ticket,
-                };
+                self.pass = ForwardPass::Constant(token_id);
                 tokens.push(token_id);
                 if let Some(grammar) = grammar {
                     grammar.accept_token(token_id)?;
@@ -146,23 +141,10 @@ impl<B: Backend> ForwardPassChaining<B> {
 
 impl<B: Backend> Drop for ForwardPassChaining<B> {
     fn drop(&mut self) {
-        match self {
-            Self::Constant {
-                row_ticket,
-                ..
-            } => {
-                if let Some(ticket) = row_ticket.take() {
-                    let _ = ticket.complete();
-                }
-            },
-            Self::InFlight(in_flight) => {
-                for pending in replace(&mut in_flight.pending, Box::new([])) {
-                    pending.drain();
-                }
-                if let Some(ticket) = in_flight.row_ticket.take() {
-                    let _ = ticket.complete();
-                }
-            },
+        if let ForwardPass::InFlight(in_flight) = &mut self.pass {
+            for pending in replace(&mut in_flight.pending, Box::new([])) {
+                pending.drain();
+            }
         }
     }
 }
@@ -172,15 +154,13 @@ struct DecodingStatePending<B: Backend> {
     full_accept: bool,
     pending: Box<[PendingPass<B>]>,
     output: Allocation<B>,
-    row_ticket: Option<StageTicket<B>>,
-    _prefill_ring: Option<PrefillRing<B>>,
-    _allocation_pool: Option<Rc<AllocationPool<B>>>,
+    ple_lease: Option<PleLease<B>>,
 }
 
 enum DecodingState<B: Backend> {
     Seeded {
         seed_token: u64,
-        row_ticket: Option<StageTicket<B>>,
+        ple_lease: Option<PleLease<B>>,
     },
     ForwardPassPending(DecodingStatePending<B>),
     Accepting {
@@ -198,7 +178,7 @@ pub struct LanguageModelStream<'a, B: Backend> {
     allocation_pool: Rc<AllocationPool<B>>,
     context_ring: Option<Allocation<B>>,
     decoding_state: DecodingState<B>,
-    ple_row_ring: Option<RowRing<B>>,
+    ple: PleSession<B>,
     metrics: TokenStreamMetrics,
 }
 
@@ -258,243 +238,209 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             };
 
         let mut metrics = TokenStreamMetrics::default();
-        let ring_mode_supported = options.speculator.is_none()
+        let staged_decode_supported = options.speculator.is_none()
             && options.grammar.is_none()
             && matches!(options.sampling_method, SamplingMethod::Greedy);
-        let mut ple_row_ring = if ring_mode_supported {
-            model.decoder.create_ple_row_ring(&model.context)?
-        } else {
-            None
+        let mut ple = PleSession::new(model.decoder.per_layer_embedding(), &model.context, staged_decode_supported)?;
+        model_state.poisoned = true;
+        let mut submitted_prefill_passes = PendingPassDrain::<B> {
+            passes: Vec::new(),
         };
-        let mut submitted_prefill_passes = Vec::<PendingPass<B>>::new();
-        let mut active_prefill_ring = None;
-        let decoding_state_result = (|| -> Result<DecodingState<B>, LanguageModelStreamError<B>> {
-            Ok(if !input.is_empty() {
-                model_state.last_output_token.take();
+        let decoding_state = if !input.is_empty() {
+            model_state.last_output_token.take();
 
-                // NOTE: this is required for attention correctness (hardcoded suffix 1024). This is really bad design, attention should be rewritten to allow on-demand suffix length
-                let max_batch_size = prefill_chunk_size();
-                let number_of_batches = input.len().div_ceil(max_batch_size);
-                active_prefill_ring = model.decoder.create_ple_prefill_ring(&model.context)?;
+            // NOTE: this is required for attention correctness (hardcoded suffix 1024). This is really bad design, attention should be rewritten to allow on-demand suffix length
+            let max_batch_size = PREFILL_CHUNK_SIZE;
+            let number_of_batches = input.len().div_ceil(max_batch_size);
+
+            model_state
+                .transformer_state
+                .prepare(
+                    model_state.transformer_state.context_length() + (number_of_batches - 1) * max_batch_size,
+                    usize::min(max_batch_size, input.len()),
+                    &model.context,
+                )
+                .map_err(LanguageModelStreamError::Backend)?;
+
+            let split_prefill_chunks = ple.stages_prefill() && number_of_batches > 1;
+            let mut encoder = Some(
+                Encoder::<B>::new_with_pool(
+                    &model.context,
+                    if split_prefill_chunks {
+                        Rc::new(model.context.create_allocation_pool(false))
+                    } else {
+                        allocation_pool.clone()
+                    },
+                )
+                .map_err(LanguageModelStreamError::Backend)?,
+            );
+
+            let mut output = None;
+            let mut ple_lease = None;
+            let mut unsplit_prefill_lease = None;
+            let first_chunk_len = usize::min(max_batch_size, input.len());
+            let mut staged_prefill = ple.stage_prefill(&input[..first_chunk_len])?;
+
+            for (batch_idx, input_chunk) in input.chunks(max_batch_size).enumerate() {
+                let last_batch = batch_idx == number_of_batches - 1;
+                if encoder.is_none() {
+                    encoder = Some(
+                        Encoder::<B>::new_with_pool(
+                            &model.context,
+                            if last_batch {
+                                allocation_pool.clone()
+                            } else {
+                                Rc::new(model.context.create_allocation_pool(false))
+                            },
+                        )
+                        .map_err(LanguageModelStreamError::Backend)?,
+                    );
+                }
+                let chunk_encoder = encoder.as_mut().expect("prefill encoder missing");
+
+                let input_trie = TrieNode::flat(model_state.tokens.len(), input_chunk, &model_state.prng);
+                let input_flat_trie = input_trie.linearize();
+
+                let mut token_ids = chunk_encoder
+                    .allocate_constant(input_chunk.len() * DataType::U64.size_in_bytes())
+                    .map_err(LanguageModelStreamError::Backend)?;
+                token_ids.copyin(input_chunk);
+
+                let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
+                let batch_dim = BatchTopology::new(&input_flat_trie_nodes, true);
+                let prefill_lease = staged_prefill.take();
+
+                let decoder_output = model.decoder.encode(
+                    &token_ids,
+                    &batch_dim,
+                    last_batch.then(|| (input_chunk.len() - 1)..input_chunk.len()),
+                    &mut model_state.transformer_state,
+                    chunk_encoder,
+                    ple.source(prefill_lease.as_ref(), Some(input_chunk)),
+                    &[],
+                )?;
+
+                let logits = decoder_output.logits;
+
+                if last_batch {
+                    let logits = logits.unwrap();
+
+                    let seeds = if matches!(options.sampling_method, SamplingMethod::Stochastic { .. }) {
+                        let mut seeds = chunk_encoder
+                            .allocate_constant(DataType::U64.size_in_bytes())
+                            .map_err(LanguageModelStreamError::Backend)?;
+                        seeds.copyin(&[model_state
+                            .prng
+                            .derive((model_state.tokens.len() + input_chunk.len() - 1) as u64)]);
+                        Some(seeds)
+                    } else {
+                        None
+                    };
+
+                    let bitmask = if let Some(grammar) = options.grammar.as_deref_mut() {
+                        let mut bitmask = chunk_encoder
+                            .allocate_constant(
+                                model.vocab_size.div_ceil(DataType::U32.size_in_bits()) * DataType::U32.size_in_bytes(),
+                            )
+                            .map_err(LanguageModelStreamError::Backend)?;
+
+                        if grammar.next_bitmask(bitmask.as_slice_mut()) {
+                            Some(bitmask)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    ple_lease = ple.reserve_sample()?;
+                    let sampled_output = model
+                        .sampling
+                        .encode(
+                            &logits,
+                            seeds.as_ref(),
+                            bitmask.as_ref(),
+                            context_ring.as_ref(),
+                            Some(&token_ids),
+                            &options.sampling_method,
+                            &batch_dim,
+                            (batch_dim.size() - 1)..batch_dim.size(),
+                            ple_lease.as_ref().and_then(|lease| ple.sample_readback(lease)),
+                            chunk_encoder,
+                        )
+                        .map_err(LanguageModelStreamError::Backend)?;
+                    if let Some(lease) = ple_lease.as_mut() {
+                        ple.publish_sample(lease, chunk_encoder)?;
+                    }
+                    output = Some(sampled_output);
+                }
 
                 model_state
                     .transformer_state
-                    .prepare(
-                        model_state.transformer_state.context_length() + (number_of_batches - 1) * max_batch_size,
-                        usize::min(max_batch_size, input.len()),
-                        &model.context,
-                    )
+                    .encode_accept(&(0..input_chunk.len()).collect::<Box<[usize]>>(), chunk_encoder)
                     .map_err(LanguageModelStreamError::Backend)?;
 
-                let split_prefill_chunks = active_prefill_ring.is_some() && number_of_batches > 1;
-                let mut encoder_pool = if active_prefill_ring.is_some() {
-                    Rc::new(model.context.create_allocation_pool(false))
-                } else {
-                    allocation_pool.clone()
-                };
-                let mut encoder = Some(
-                    Encoder::<B>::new_with_pool(&model.context, encoder_pool.clone())
-                        .map_err(LanguageModelStreamError::Backend)?,
-                );
-
-                let mut output = None;
-                let mut row_ticket = None;
-                let mut unsplit_prefill_ticket = None;
-                let mut retained_prefill_pool = None;
-                let first_chunk_len = usize::min(max_batch_size, input.len());
-                let mut staged_prefill_ticket =
-                    active_prefill_ring.as_mut().map(|ring| ring.stage(0, &input[..first_chunk_len])).transpose()?;
-
-                for (batch_idx, input_chunk) in input.chunks(max_batch_size).enumerate() {
-                    if encoder.is_none() {
-                        if active_prefill_ring.is_some() {
-                            encoder_pool = Rc::new(model.context.create_allocation_pool(false));
-                        }
-                        encoder = Some(
-                            Encoder::<B>::new_with_pool(&model.context, encoder_pool.clone())
-                                .map_err(LanguageModelStreamError::Backend)?,
-                        );
-                    }
-                    let last_batch = batch_idx == number_of_batches - 1;
-                    if last_batch && active_prefill_ring.is_some() {
-                        retained_prefill_pool = Some(encoder_pool.clone());
-                    }
-                    let chunk_encoder = encoder.as_mut().expect("prefill encoder missing");
-
-                    let input_trie = TrieNode::flat(model_state.tokens.len(), input_chunk, &model_state.prng);
-                    let input_flat_trie = input_trie.linearize();
-
-                    let mut token_ids = chunk_encoder
-                        .allocate_constant(input_chunk.len() * DataType::U64.size_in_bytes())
-                        .map_err(LanguageModelStreamError::Backend)?;
-                    token_ids.copyin(input_chunk);
-
-                    let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
-                    let batch_dim = BatchTopology::new(&input_flat_trie_nodes, true);
-                    let prefill_ticket = staged_prefill_ticket.take();
-                    let prepared_prefill = active_prefill_ring
-                        .as_ref()
-                        .zip(prefill_ticket.as_ref())
-                        .map(|(ring, ticket)| ring.prepared(ticket));
-                    let ple_source = if let Some(prepared_prefill) = prepared_prefill {
-                        PleSource::StagedChunk(prepared_prefill)
-                    } else if model.decoder.ple_rows_offloaded() {
-                        PleSource::HostRows(input_chunk)
-                    } else {
-                        PleSource::Resident
-                    };
-
-                    let decoder_output = model.decoder.encode(
+                if let Some(suffix_repetition_length) = options.sampling_method.suffix_repetition_length() {
+                    model.context_ring_update.encode(
                         &token_ids,
-                        &batch_dim,
-                        last_batch.then(|| (input_chunk.len() - 1)..input_chunk.len()),
-                        &mut model_state.transformer_state,
+                        context_ring.as_mut().unwrap(),
+                        suffix_repetition_length as u32,
+                        input_chunk.len() as u32,
                         chunk_encoder,
-                        ple_source,
-                        &[],
-                    )?;
-
-                    let logits = decoder_output.logits;
-
-                    if last_batch {
-                        let logits = logits.unwrap();
-
-                        let seeds = if matches!(options.sampling_method, SamplingMethod::Stochastic { .. }) {
-                            let mut seeds = chunk_encoder
-                                .allocate_constant(DataType::U64.size_in_bytes())
-                                .map_err(LanguageModelStreamError::Backend)?;
-                            seeds.copyin(&[model_state
-                                .prng
-                                .derive((model_state.tokens.len() + input_chunk.len() - 1) as u64)]);
-                            Some(seeds)
-                        } else {
-                            None
-                        };
-
-                        let bitmask = if let Some(grammar) = options.grammar.as_deref_mut() {
-                            let mut bitmask = chunk_encoder
-                                .allocate_constant(
-                                    model.vocab_size.div_ceil(DataType::U32.size_in_bits())
-                                        * DataType::U32.size_in_bytes(),
-                                )
-                                .map_err(LanguageModelStreamError::Backend)?;
-
-                            if grammar.next_bitmask(bitmask.as_slice_mut()) {
-                                Some(bitmask)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-
-                        let sampled_output = model
-                            .sampling
-                            .encode(
-                                &logits,
-                                seeds.as_ref(),
-                                bitmask.as_ref(),
-                                context_ring.as_ref(),
-                                Some(&token_ids),
-                                &options.sampling_method,
-                                &batch_dim,
-                                (batch_dim.size() - 1)..batch_dim.size(),
-                                chunk_encoder,
-                            )
-                            .map_err(LanguageModelStreamError::Backend)?;
-                        if let Some(row_ring) = &mut ple_row_ring {
-                            row_ticket = Some(row_ring.publish_sample(&sampled_output, chunk_encoder)?);
-                        }
-                        output = Some(sampled_output);
-                    }
-
-                    model_state
-                        .transformer_state
-                        .encode_accept(&(0..input_chunk.len()).collect::<Box<[usize]>>(), chunk_encoder)
-                        .map_err(LanguageModelStreamError::Backend)?;
-
-                    if let Some(suffix_repetition_length) = options.sampling_method.suffix_repetition_length() {
-                        model.context_ring_update.encode(
-                            &token_ids,
-                            context_ring.as_mut().unwrap(),
-                            suffix_repetition_length as u32,
-                            input_chunk.len() as u32,
-                            chunk_encoder,
-                        );
-                    }
-
-                    model_state.tokens.extend(input_chunk);
-
-                    if split_prefill_chunks {
-                        let chunk_encoder = encoder.take().expect("prefill encoder missing at submit");
-                        submitted_prefill_passes.push(PendingPass {
-                            pending: chunk_encoder.end_encoding().submit(),
-                            stage_ticket: prefill_ticket.map(|ticket| ticket.stage),
-                        });
-                        if active_prefill_ring.is_some() && !last_batch {
-                            let next_start = (batch_idx + 1) * max_batch_size;
-                            let next_end = usize::min(next_start + max_batch_size, input.len());
-                            staged_prefill_ticket = active_prefill_ring
-                                .as_mut()
-                                .map(|ring| ring.stage(batch_idx + 1, &input[next_start..next_end]))
-                                .transpose()?;
-                            assert!(
-                                submitted_prefill_passes.len() <= 2,
-                                "staged prefill retained more than two pending passes"
-                            );
-                            for pending in std::mem::take(&mut submitted_prefill_passes) {
-                                pending.wait()?;
-                            }
-                        }
-                    } else {
-                        unsplit_prefill_ticket = prefill_ticket.map(|ticket| ticket.stage);
-                    }
+                    );
                 }
 
-                if let Some(encoder) = encoder {
-                    submitted_prefill_passes.push(PendingPass {
-                        pending: encoder.end_encoding().submit(),
-                        stage_ticket: unsplit_prefill_ticket,
+                model_state.tokens.extend(input_chunk);
+
+                if split_prefill_chunks {
+                    let chunk_encoder = encoder.take().expect("prefill encoder missing at submit");
+                    submitted_prefill_passes.passes.push(PendingPass {
+                        pending: chunk_encoder.end_encoding().submit(),
+                        ple_lease: prefill_lease,
                     });
+                    if !last_batch {
+                        let next_start = (batch_idx + 1) * max_batch_size;
+                        let next_end = usize::min(next_start + max_batch_size, input.len());
+                        staged_prefill = ple.stage_prefill(&input[next_start..next_end])?;
+                        for pending in std::mem::take(&mut submitted_prefill_passes.passes) {
+                            pending.wait()?;
+                        }
+                    }
+                } else {
+                    unsplit_prefill_lease = prefill_lease;
                 }
-                let pending = std::mem::take(&mut submitted_prefill_passes).into_boxed_slice();
+            }
 
-                metrics.num_forward_passes += 1;
-                metrics.num_tokens_prefilled += input.len();
-                metrics.num_tokens_proposed += 1;
-                metrics.num_tokens_accepted += 1;
+            if let Some(encoder) = encoder {
+                submitted_prefill_passes.passes.push(PendingPass {
+                    pending: encoder.end_encoding().submit(),
+                    ple_lease: unsplit_prefill_lease,
+                });
+            }
+            let pending = submitted_prefill_passes.into_boxed_slice();
 
-                DecodingState::ForwardPassPending(DecodingStatePending {
-                    input_trie: TrieNode::new(0, 0),
-                    full_accept: true,
-                    pending,
-                    output: output.unwrap(),
-                    row_ticket,
-                    _prefill_ring: active_prefill_ring.take(),
-                    _allocation_pool: retained_prefill_pool,
-                })
-            } else {
-                // TODO: this leaks previous LanguageModelStreamOptions
-                let seed_token = model_state.last_output_token.take().unwrap();
-                let row_ticket =
-                    ple_row_ring.as_mut().map(|row_ring| row_ring.publish_known(seed_token)).transpose()?;
-                DecodingState::Seeded {
-                    seed_token,
-                    row_ticket,
-                }
+            metrics.num_forward_passes += 1;
+            metrics.num_tokens_prefilled += input.len();
+            metrics.num_tokens_proposed += 1;
+            metrics.num_tokens_accepted += 1;
+
+            DecodingState::ForwardPassPending(DecodingStatePending {
+                input_trie: TrieNode::new(0, 0),
+                full_accept: true,
+                pending,
+                output: output.unwrap(),
+                ple_lease,
             })
-        })();
-        let decoding_state = match decoding_state_result {
-            Ok(decoding_state) => decoding_state,
-            Err(error) => {
-                for pending in std::mem::take(&mut submitted_prefill_passes) {
-                    pending.drain();
-                }
-                drop(active_prefill_ring.take());
-                model_state.poisoned = true;
-                return Err(error);
-            },
+        } else {
+            // TODO: this leaks previous LanguageModelStreamOptions
+            let seed_token = model_state.last_output_token.take().unwrap();
+            let ple_lease = ple.stage_token(seed_token)?;
+            DecodingState::Seeded {
+                seed_token,
+                ple_lease,
+            }
         };
+        model_state.poisoned = false;
 
         Ok(LanguageModelStream {
             model,
@@ -503,37 +449,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             allocation_pool,
             context_ring,
             decoding_state,
-            ple_row_ring,
+            ple,
             metrics,
         })
-    }
-
-    fn halt_and_drain(&mut self) {
-        match replace(&mut self.decoding_state, DecodingState::Halted) {
-            DecodingState::Seeded {
-                row_ticket: Some(ticket),
-                ..
-            } => {
-                let _ = ticket.complete();
-            },
-            DecodingState::ForwardPassPending(in_flight) => {
-                for pending in in_flight.pending {
-                    pending.drain();
-                }
-                if let Some(ticket) = in_flight.row_ticket {
-                    let _ = ticket.complete();
-                }
-            },
-            DecodingState::Seeded {
-                row_ticket: None,
-                ..
-            }
-            | DecodingState::Accepting {
-                ..
-            }
-            | DecodingState::Halted
-            | DecodingState::Invalid => {},
-        }
     }
 
     fn generate(&mut self) -> Result<Option<u64>, LanguageModelStreamError<B>> {
@@ -541,25 +459,19 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             match replace(&mut self.decoding_state, DecodingState::Invalid) {
                 DecodingState::Seeded {
                     seed_token,
-                    row_ticket,
+                    ple_lease,
                 } => {
                     self.model_state.tokens.push(seed_token);
                     if let Some(grammar) = self.options.grammar.as_deref_mut() {
                         let _ = grammar.accept_token(seed_token); // TODO: this should not be ignored
                     }
                     self.metrics.num_tokens_returned += 1;
-                    (
-                        ForwardPassChaining::Constant {
-                            token_id: seed_token,
-                            row_ticket,
-                        },
-                        None,
-                    )
+                    (ForwardPassChaining::constant(seed_token, ple_lease), None)
                 },
                 DecodingState::ForwardPassPending(forward_pass_pending) => {
                     if forward_pass_pending.full_accept {
                         self.metrics.num_tokens_returned += 1;
-                        (ForwardPassChaining::InFlight(forward_pass_pending), None)
+                        (ForwardPassChaining::in_flight(forward_pass_pending), None)
                     } else {
                         let mut first_error = None;
                         for pending in forward_pass_pending.pending {
@@ -628,13 +540,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             );
                         }
                         self.model_state.tokens.extend(accepted_output_token_ids);
-                        (
-                            ForwardPassChaining::Constant {
-                                token_id: output_token_id,
-                                row_ticket: None,
-                            },
-                            Some(encoder),
-                        )
+                        (ForwardPassChaining::constant(output_token_id, None), Some(encoder))
                     }
                 },
                 DecodingState::Halted => return Ok(None),
@@ -643,15 +549,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         let context_length = self.model_state.transformer_state.context_length();
 
-        if self.model.decoder.ple_rows_offloaded() && self.options.speculator.is_none() && self.ple_row_ring.is_none() {
+        if self.ple.requires_decode_token_sync() && self.options.speculator.is_none() {
             prev_output.resolve(&mut self.model_state.tokens, self.options.grammar.as_deref_mut())?;
         }
 
         if self.model_state.max_context_length.is_some_and(|max_context_length| context_length >= max_context_length) {
-            let token = prev_output.resolve(&mut self.model_state.tokens, self.options.grammar.as_deref_mut());
-            let ticket = prev_output.take_row_ticket().map(|ticket| ticket.complete()).transpose();
-            let token = token?;
-            ticket?;
+            let token = prev_output.resolve(&mut self.model_state.tokens, self.options.grammar.as_deref_mut())?;
             self.decoding_state = DecodingState::Halted;
             return Ok(Some(token));
         }
@@ -682,17 +585,15 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
             (input_trie, None, false)
         } else {
-            let (token, chain_copy) = match &prev_output {
-                ForwardPassChaining::Constant {
-                    token_id,
-                    ..
-                } => (*token_id, None),
-                ForwardPassChaining::InFlight(pending) => (0, Some(&pending.output)),
+            let (token, chain_copy) = match &prev_output.pass {
+                ForwardPass::Constant(token_id) => (*token_id, None),
+                ForwardPass::InFlight(pending) => (0, Some(&pending.output)),
             };
             (TrieNode::new(token, self.model_state.prng.derive(context_length as u64)), chain_copy, true)
         };
         let input_flat_trie = input_trie.linearize();
-        let row_token_ids = input_flat_trie.token_ids().collect::<Box<[u64]>>();
+        let row_token_ids = (chain_copy.is_none() || self.ple.needs_host_rows(prev_output.ple_lease()))
+            .then(|| input_flat_trie.token_ids().collect::<Box<[u64]>>());
         let token_ids = if let Some(chain_copy) = chain_copy {
             let mut token_ids =
                 encoder.allocate_scratch(DataType::U64.size_in_bytes()).map_err(LanguageModelStreamError::Backend)?;
@@ -702,7 +603,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             let mut token_ids = encoder
                 .allocate_constant(input_flat_trie.len() * DataType::U64.size_in_bytes())
                 .map_err(LanguageModelStreamError::Backend)?;
-            token_ids.copyin(&row_token_ids);
+            token_ids.copyin(row_token_ids.as_deref().expect("constant token IDs were not collected"));
             token_ids
         };
 
@@ -714,25 +615,13 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             .prepare(self.model_state.transformer_state.context_length(), batch_dim.size(), &self.model.context)
             .map_err(LanguageModelStreamError::Backend)?;
 
-        let prepared_row = self
-            .ple_row_ring
-            .as_ref()
-            .zip(prev_output.row_ticket())
-            .map(|(row_ring, ticket)| row_ring.prepared(ticket));
-        let ple_source = if let Some(prepared_row) = prepared_row {
-            PleSource::StagedRow(prepared_row)
-        } else if self.model.decoder.ple_rows_offloaded() {
-            PleSource::HostRows(row_token_ids.as_ref())
-        } else {
-            PleSource::Resident
-        };
         let decoder_output = self.model.decoder.encode(
             &token_ids,
             &batch_dim,
             Some(0..batch_dim.size()),
             &mut self.model_state.transformer_state,
             &mut encoder,
-            ple_source,
+            self.ple.source(prev_output.ple_lease(), row_token_ids.as_deref()),
             &[],
         )?;
 
@@ -742,7 +631,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             if chain_copy.is_some() {
                 pending.passes.push(PendingPass {
                     pending: encoder.end_encoding().submit(),
-                    stage_ticket: None,
+                    ple_lease: None,
                 });
 
                 let mut encoder = Encoder::<B>::new_with_pool(&self.model.context, self.allocation_pool.clone())
@@ -789,6 +678,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             None
         };
 
+        let mut next_ple_lease = self.ple.reserve_sample()?;
         let output = self
             .model
             .sampling
@@ -801,9 +691,13 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 &self.options.sampling_method,
                 &batch_dim,
                 0..batch_dim.size(),
+                next_ple_lease.as_ref().and_then(|lease| self.ple.sample_readback(lease)),
                 &mut encoder,
             )
             .map_err(LanguageModelStreamError::Backend)?;
+        if let Some(lease) = next_ple_lease.as_mut() {
+            self.ple.publish_sample(lease, &mut encoder)?;
+        }
         drop(seeds);
         drop(bitmask);
         drop(logits);
@@ -825,14 +719,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             }
         }
 
-        let next_row_ticket =
-            self.ple_row_ring.as_mut().map(|row_ring| row_ring.publish_sample(&output, &mut encoder)).transpose()?;
-
         drop(token_ids);
 
         pending.passes.push(PendingPass {
             pending: encoder.end_encoding().submit(),
-            stage_ticket: prev_output.take_row_ticket(),
+            ple_lease: prev_output.take_ple_lease(),
         });
 
         self.metrics.num_forward_passes += 1;
@@ -841,17 +732,14 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             self.metrics.num_tokens_accepted += input_flat_trie.len();
         }
 
+        let token = prev_output.resolve(&mut self.model_state.tokens, self.options.grammar.as_deref_mut())?;
         self.decoding_state = DecodingState::ForwardPassPending(DecodingStatePending {
             input_trie,
             full_accept,
             pending: pending.into_boxed_slice(),
             output,
-            row_ticket: next_row_ticket,
-            _prefill_ring: None,
-            _allocation_pool: None,
+            ple_lease: next_ple_lease,
         });
-
-        let token = prev_output.resolve(&mut self.model_state.tokens, self.options.grammar.as_deref_mut())?;
         Ok(Some(token))
     }
 
@@ -868,7 +756,8 @@ impl<'a, B: Backend> Iterator for LanguageModelStream<'a, B> {
             Ok(token) => token.map(Ok),
             Err(error) => {
                 self.model_state.poisoned = true;
-                self.halt_and_drain();
+                self.model_state.last_output_token = None;
+                self.decoding_state = DecodingState::Halted;
                 Some(Err(error))
             },
         }
@@ -878,29 +767,22 @@ impl<'a, B: Backend> Iterator for LanguageModelStream<'a, B> {
 impl<'a, B: Backend> LanguageModelStream<'a, B> {
     pub(crate) fn finish(&mut self) {
         if matches!(self.decoding_state, DecodingState::Invalid) {
+            self.model_state.poisoned = true;
+            self.model_state.last_output_token = None;
+            return;
+        }
+        if matches!(self.decoding_state, DecodingState::Halted) {
             return;
         }
         let mut poisoned = self.model_state.poisoned;
         let last_output_token = match replace(&mut self.decoding_state, DecodingState::Invalid) {
             DecodingState::Seeded {
                 seed_token,
-                row_ticket,
-            } => {
-                if let Some(ticket) = row_ticket
-                    && ticket.complete().is_err()
-                {
-                    poisoned = true;
-                }
-                Some(seed_token)
-            },
+                ..
+            } => Some(seed_token),
             DecodingState::ForwardPassPending(in_flight) => {
                 for pending in in_flight.pending {
                     if pending.wait().is_err() {
-                        poisoned = true;
-                    }
-                }
-                if let Some(row_ticket) = in_flight.row_ticket {
-                    if row_ticket.complete().is_err() {
                         poisoned = true;
                     }
                 }
@@ -945,12 +827,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     },
                 }
             },
-            DecodingState::Halted => None,
-            DecodingState::Invalid => None, // TODO: proper error handling
+            DecodingState::Halted | DecodingState::Invalid => unreachable!(),
         };
 
         self.model_state.poisoned = poisoned;
         self.model_state.last_output_token = (!poisoned).then_some(last_output_token).flatten();
+        self.decoding_state = DecodingState::Halted;
     }
 }
 

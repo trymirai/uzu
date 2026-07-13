@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::{Backend, Buffer, BufferRangeMut, BufferRangeRef};
+use crate::backends::common::{Backend, Buffer, BufferRangeMut, BufferRangeRef};
 
 pub trait CommandBuffer {
     type Backend: Backend<CommandBuffer = Self>;

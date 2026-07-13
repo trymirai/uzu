@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     backends::common::{
-        Allocation, AllocationType, AsBufferRangeRef, Backend, Context, Encoder, Kernels,
+        Allocation, AllocationType, AsBufferRangeRef, Backend, Buffer, Context, Encoder, Kernels,
         kernel::{RepetitionPenaltyKernel, TensorCopyKernel, UnifiedSamplingKernel},
     },
     data_type::DataType,
@@ -72,6 +72,7 @@ struct UnifiedSamplingKey {
     has_top_k: bool,
     has_top_p: bool,
     has_min_p: bool,
+    has_sample_readback: bool,
 }
 
 // TODO: repetition penalties shouldn't be stochastic only
@@ -87,6 +88,7 @@ impl<B: Backend> Sampling<B> {
         sampling_method: &SamplingMethod,
         batch_dim: &BatchTopology,
         sampling_range: Range<usize>,
+        sample_readback: Option<&mut B::DenseBuffer>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let (is_stochastic, temperature, top_k, top_p, min_p, repetition_penalty, suffix_repetition_length) =
@@ -103,6 +105,9 @@ impl<B: Backend> Sampling<B> {
             };
 
         assert_eq!(is_stochastic, seeds.is_some(), "mismatch between sampling method type and seeds presence");
+        if let Some(sample_readback) = sample_readback.as_ref() {
+            assert!(sample_readback.size() >= sampling_range.len() * size_of::<u32>());
+        }
 
         let key = UnifiedSamplingKey {
             is_stochastic,
@@ -111,6 +116,7 @@ impl<B: Backend> Sampling<B> {
             has_top_k: top_k.is_some(),
             has_top_p: top_p.is_some(),
             has_min_p: min_p.is_some(),
+            has_sample_readback: sample_readback.is_some(),
         };
 
         // TODO: repetition penalty is vibe coded garbage, remove or rewrite properly
@@ -159,6 +165,7 @@ impl<B: Backend> Sampling<B> {
                     key.has_top_k,
                     key.has_top_p,
                     key.has_min_p,
+                    key.has_sample_readback,
                 )?;
 
                 vacant.insert(kernel)
@@ -171,6 +178,7 @@ impl<B: Backend> Sampling<B> {
         kernel.encode(
             logits,
             &mut output,
+            sample_readback,
             seeds,
             bitmask,
             temperature,

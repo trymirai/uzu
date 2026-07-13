@@ -19,10 +19,6 @@ impl<B: Backend> LanguageModelState<B> {
     pub fn tokens(&self) -> &[u64] {
         &self.tokens
     }
-
-    pub fn is_poisoned(&self) -> bool {
-        self.poisoned
-    }
 }
 
 #[derive(Debug, Error)]

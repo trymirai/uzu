@@ -1,33 +1,52 @@
 use std::{
     cell::UnsafeCell,
     pin::Pin,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Condvar, Mutex, PoisonError},
+    time::Duration,
 };
 
-use super::{
-    command_buffer::CpuCommandBuffer, context::CpuContext, error::CpuError, kernel::CpuKernels, sparse::CpuSparseBuffer,
+use crate::backends::{
+    common::{Backend, SharedEvent},
+    cpu::{
+        command_buffer::CpuCommandBuffer, context::CpuContext, error::CpuError, kernel::CpuKernels,
+        sparse::CpuSparseBuffer,
+    },
 };
-use crate::backends::common::{Backend, SharedEvent};
 
 #[derive(Debug, Clone)]
 pub struct Cpu;
 
 #[derive(Debug, Clone, Default)]
-pub struct CpuSharedEvent(Arc<AtomicU64>);
+pub struct CpuSharedEvent(Arc<(Mutex<u64>, Condvar)>);
 
 impl SharedEvent for CpuSharedEvent {
     fn signaled_value(&self) -> u64 {
-        self.0.load(Ordering::Acquire)
+        *self.0.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn wait_until_signaled_value_timeout_ms(
+        &self,
+        value: u64,
+        timeout_ms: u64,
+    ) -> bool {
+        let (current, changed) = &*self.0;
+        let current = current.lock().unwrap_or_else(PoisonError::into_inner);
+        let (current, _) = changed
+            .wait_timeout_while(current, Duration::from_millis(timeout_ms), |current| *current < value)
+            .unwrap_or_else(PoisonError::into_inner);
+        *current >= value
     }
 
     fn signal(
         &self,
         value: u64,
     ) {
-        self.0.fetch_max(value, Ordering::Release);
+        let (current, changed) = &*self.0;
+        let mut current = current.lock().unwrap_or_else(PoisonError::into_inner);
+        if value > *current {
+            *current = value;
+            changed.notify_all();
+        }
     }
 }
 
@@ -35,8 +54,7 @@ impl SharedEvent for CpuSharedEvent {
 mod tests {
     use proc_macros::uzu_test;
 
-    use super::CpuSharedEvent;
-    use crate::backends::common::SharedEvent;
+    use crate::backends::{common::SharedEvent, cpu::CpuSharedEvent};
 
     #[uzu_test]
     fn shared_event_signal_is_monotonic() {
