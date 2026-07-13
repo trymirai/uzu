@@ -56,6 +56,13 @@
         "ordering": "default"
     },
     {
+        "name": "qwen3.6",
+        "parsing": "qwen3.6",
+        "rendering": "qwen3.6",
+        "tokens": "qwen3.6",
+        "ordering": "default"
+    },
+    {
         "name": "gpt-oss",
         "parsing": "gpt-oss",
         "rendering": "gpt-oss",
