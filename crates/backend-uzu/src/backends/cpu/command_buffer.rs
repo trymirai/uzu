@@ -1,4 +1,5 @@
 use std::{
+    hint::spin_loop,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -7,7 +8,7 @@ use crate::{
     backends::{
         common::{
             AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
-            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, SharedEvent,
         },
         cpu::{Cpu, error::CpuError},
     },
@@ -108,6 +109,28 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         _after: AccessFlags,
         _before: AccessFlags,
     ) {
+    }
+
+    fn encode_wait_for_event(
+        &mut self,
+        event: &<<CpuCommandBuffer as CommandBuffer>::Backend as crate::backends::common::Backend>::SharedEvent,
+        value: u64,
+    ) {
+        let event = event.clone();
+        self.push_command(move || {
+            while event.signaled_value() < value {
+                spin_loop();
+            }
+        });
+    }
+
+    fn encode_signal_event(
+        &mut self,
+        event: &<<CpuCommandBuffer as CommandBuffer>::Backend as crate::backends::common::Backend>::SharedEvent,
+        value: u64,
+    ) {
+        let event = event.clone();
+        self.push_command(move || event.signal(value));
     }
 
     fn end_encoding(self) -> CpuCommandBufferExecutable {

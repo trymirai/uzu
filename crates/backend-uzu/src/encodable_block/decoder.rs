@@ -9,7 +9,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         embedding::{Embedding, EmbeddingError},
-        per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
+        per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError, PleSource, PrefillRing, RowRing},
         transformer::{Transformer, TransformerNewError, TransformerState},
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -110,6 +110,34 @@ impl<B: Backend> Decoder<B> {
         self.transformer.create_empty_state(max_context_length, context)
     }
 
+    pub fn create_ple_row_ring(
+        &self,
+        context: &B::Context,
+    ) -> Result<Option<RowRing<B>>, DecoderError<B>> {
+        self.per_layer_embedding
+            .as_ref()
+            .map(|embedding| embedding.create_row_ring(context))
+            .transpose()
+            .map(|ring| ring.flatten())
+            .map_err(DecoderError::PerLayerEmbedding)
+    }
+
+    pub fn ple_rows_offloaded(&self) -> bool {
+        self.per_layer_embedding.as_ref().is_some_and(PerLayerEmbedding::rows_offloaded)
+    }
+
+    pub fn create_ple_prefill_ring(
+        &self,
+        context: &B::Context,
+    ) -> Result<Option<PrefillRing<B>>, DecoderError<B>> {
+        self.per_layer_embedding
+            .as_ref()
+            .map(|embedding| embedding.create_prefill_ring(context))
+            .transpose()
+            .map(|ring| ring.flatten())
+            .map_err(DecoderError::PerLayerEmbedding)
+    }
+
     pub fn encode(
         &self,
         token_ids: &Allocation<B>,
@@ -117,16 +145,13 @@ impl<B: Backend> Decoder<B> {
         output_range: Option<Range<usize>>,
         state: &mut TransformerState<B>,
         encoder: &mut Encoder<B>,
+        ple_source: PleSource<'_, B>,
         hidden_feature_layer_indices: &[usize],
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), encoder)?;
 
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
-            Some(
-                per_layer_embedding
-                    .encode(token_ids, &embedded, batch_dim.size(), encoder)
-                    .map_err(DecoderError::Backend)?,
-            )
+            Some(per_layer_embedding.encode(token_ids, ple_source, &embedded, batch_dim.size(), encoder)?)
         } else {
             None
         };

@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     fs::File,
+    path::Path,
 };
 
 use half::{bf16, f16};
@@ -33,6 +34,8 @@ pub enum ParameterLoaderError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Failed to read data")]
     ArrayLoadingError(#[from] std::io::Error),
+    #[error("Row loading is only available for file-backed parameters")]
+    RowSourceUnavailable,
     #[error("Failed to deserialize metadata")]
     MetadataDeserializationError(#[from] serde_json::Error),
     #[error("Invalid tensor: got {shape:?} @ {data_type:?}, expected {expected_shape:?} @ {expected_data_type:?}")]
@@ -54,6 +57,64 @@ pub enum ParameterLoaderError<B: Backend> {
         prefix: Option<String>,
         keys: Box<[String]>,
     },
+}
+
+pub struct ParameterRowSource {
+    file: File,
+    offset: u64,
+    row_bytes: usize,
+    row_count: usize,
+}
+
+impl ParameterRowSource {
+    pub fn try_clone(&self) -> std::io::Result<Self> {
+        Ok(Self {
+            file: self.file.try_clone()?,
+            offset: self.offset,
+            row_bytes: self.row_bytes,
+            row_count: self.row_count,
+        })
+    }
+
+    pub fn row_bytes(&self) -> usize {
+        self.row_bytes
+    }
+
+    pub fn read_rows(
+        &self,
+        row_ids: &[u64],
+        destination: &mut [u8],
+    ) -> std::io::Result<()> {
+        let expected_size = row_ids
+            .len()
+            .checked_mul(self.row_bytes)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "row staging size overflow"))?;
+        if destination.len() != expected_size {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "row staging destination has the wrong size",
+            ));
+        }
+
+        for (row_index, &row_id) in row_ids.iter().enumerate() {
+            let row_id = usize::try_from(row_id)
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "row ID does not fit in usize"))?;
+            if row_id >= self.row_count {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "row ID is out of range"));
+            }
+            let row_offset = self
+                .offset
+                .checked_add((row_id * self.row_bytes) as u64)
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "row offset overflow"))?;
+            let destination_offset = row_index * self.row_bytes;
+            crate::utils::fs::file_read_exact_at(
+                &self.file,
+                &mut destination[destination_offset..destination_offset + self.row_bytes],
+                row_offset,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 enum ParameterBytes<'a> {
@@ -176,6 +237,49 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, false> {
 }
 
 impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
+    pub fn row_source(
+        &self,
+        row_bytes: usize,
+        row_file: Option<&Path>,
+        disable_page_cache_mode: bool,
+    ) -> Result<ParameterRowSource, ParameterLoaderError<B>> {
+        let ParameterBytes::File(file) = &self.loader.bytes else {
+            return Err(ParameterLoaderError::RowSourceUnavailable);
+        };
+        if row_bytes == 0 || self.metadata.size % row_bytes != 0 {
+            return Err(ParameterLoaderError::InvalidTensorSize {
+                shape: self.metadata.shape.clone(),
+                data_type: self.metadata.data_type,
+                size: self.metadata.size,
+                expected_size: row_bytes,
+            });
+        }
+        let (file, offset) = if let Some(path) = row_file {
+            let file = File::open(path)?;
+            let size = file.metadata()?.len() as usize;
+            if size != self.metadata.size {
+                return Err(ParameterLoaderError::InvalidTensorSize {
+                    shape: self.metadata.shape.clone(),
+                    data_type: self.metadata.data_type,
+                    size,
+                    expected_size: self.metadata.size,
+                });
+            }
+            (file, 0)
+        } else {
+            (file.try_clone()?, self.metadata.offset as u64)
+        };
+        if disable_page_cache_mode {
+            disable_page_cache(&file)?;
+        }
+        Ok(ParameterRowSource {
+            file,
+            offset,
+            row_bytes,
+            row_count: self.metadata.size / row_bytes,
+        })
+    }
+
     pub fn read_slice<T: ArrayElement>(&self) -> Result<Box<[T]>, ParameterLoaderError<B>> {
         let element_count = self.metadata.size / std::mem::size_of::<T>();
         let mut data = vec![T::zeroed(); element_count];
@@ -211,6 +315,30 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
         }
         Ok(allocation)
     }
+}
+
+fn disable_page_cache(file: &File) -> std::io::Result<()> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        use std::os::fd::AsRawFd;
+
+        const F_NOCACHE: libc::c_int = 48;
+        const F_RDAHEAD: libc::c_int = 45;
+        const F_GLOBAL_NOCACHE: libc::c_int = 55;
+        let fd = file.as_raw_fd();
+        if unsafe { libc::fcntl(fd, F_GLOBAL_NOCACHE, 1) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if unsafe { libc::fcntl(fd, F_NOCACHE, 1) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if unsafe { libc::fcntl(fd, F_RDAHEAD, 0) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    let _ = file;
+    Ok(())
 }
 
 fn fill_random(

@@ -2,7 +2,7 @@ use std::{cell::UnsafeCell, path::Path, pin::Pin, rc::Rc, sync::mpsc, thread};
 
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
-    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError},
+    cpu::{Cpu, CpuSharedEvent, command_buffer::CpuCommandBufferInitial, error::CpuError},
 };
 
 pub struct CpuContext {
@@ -52,6 +52,10 @@ impl Context for CpuContext {
 
     fn create_command_buffer(&self) -> Result<CpuCommandBufferInitial, CpuError> {
         Ok(CpuCommandBufferInitial::new(self.command_queue.clone()))
+    }
+
+    fn create_shared_event(&self) -> Result<CpuSharedEvent, CpuError> {
+        Ok(CpuSharedEvent::default())
     }
 
     fn create_sparse_buffer(

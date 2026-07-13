@@ -91,6 +91,18 @@ pub trait CommandBufferEncoding {
         before: AccessFlags,
     );
 
+    fn encode_wait_for_event(
+        &mut self,
+        event: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::SharedEvent,
+        value: u64,
+    );
+
+    fn encode_signal_event(
+        &mut self,
+        event: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::SharedEvent,
+        value: u64,
+    );
+
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }
 

@@ -11,6 +11,9 @@ pub trait Context: Sized {
         &self
     ) -> Result<<<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Initial, <Self::Backend as Backend>::Error>;
 
+    fn create_shared_event(&self)
+    -> Result<<Self::Backend as Backend>::SharedEvent, <Self::Backend as Backend>::Error>;
+
     fn create_buffer(
         &self,
         size: usize,

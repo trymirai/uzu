@@ -33,6 +33,8 @@ pub struct LanguageModelStreamOptions<'a> {
 pub enum LanguageModelStreamError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
     #[error("Decoder error: {0}")]
     Decoder(#[from] DecoderError<B>),
     #[error("Grammar error: {0}")]
@@ -43,6 +45,8 @@ pub enum LanguageModelStreamError<B: Backend> {
     NoSeedToken,
     #[error("Context overflow")]
     ContextOverflow,
+    #[error("Language-model state is unusable after a previous stream failure")]
+    StatePoisoned,
 }
 
 impl<B: Backend> LanguageModel<B> {
