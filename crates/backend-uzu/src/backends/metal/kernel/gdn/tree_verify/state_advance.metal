@@ -5,20 +5,7 @@
 
 using namespace metal;
 
-// Advances the committed GDN state along one accepted proposal-tree path.
-//
-// Shapes (T = proposal tree size, L = accepted path length):
-//   k_norm          [T, num_k_heads, 128] f32
-//   v               [T, num_v_heads, 128] T
-//   log_decay, beta [T, num_v_heads] f32
-//   accepted_indices [L] u32
-//   state           [num_v_heads, 128, 128] f32 input/output
-//
-// Grid: eight 128-thread groups per value head. Each group's four simdgroups
-// own four adjacent value rows each; their lanes cover key dimension in
-// float4 slices. State stays in registers while the kernel follows the
-// accepted indices, then is written once. K/V/G/Beta are read indirectly;
-// no accepted-path gather is required.
+// Advances committed GDN state serially along the accepted path.
 #define STATE_ADVANCE_THREADS 128
 #define DV_PER_SIMDGROUP 4
 #define STATE_ADVANCE_DV_GROUPS 8
@@ -27,11 +14,17 @@ template <typename T, uint HEAD_K_DIM>
 VARIANTS(T, float, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 PUBLIC KERNEL(StateAdvance)(
+    // [tree_size, num_k_heads, HEAD_K_DIM]
     device const float* k_norm,
+    // [tree_size, num_v_heads, HEAD_K_DIM]
     device const T* v,
+    // [tree_size, num_v_heads]
     device const float* log_decay_buf,
+    // [tree_size, num_v_heads]
     device const float* beta_buf,
+    // [accepted_len]
     device const uint* accepted_indices,
+    // [num_v_heads, HEAD_K_DIM, HEAD_K_DIM], input/output
     device float* state,
     constant const uint& accepted_len,
     constant const uint& num_v_heads,
