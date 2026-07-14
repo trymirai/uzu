@@ -1,9 +1,23 @@
+#[cfg(metal_backend)]
+use std::{mem::size_of, time::Duration};
+
+#[cfg(metal_backend)]
+use criterion::Criterion;
+#[cfg(metal_backend)]
+use half::bf16;
+#[cfg(metal_backend)]
+use proc_macros::uzu_bench;
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
+#[cfg(metal_backend)]
+use crate::{
+    backends::{common::Allocation, metal::Metal},
+    tests::{cold_pool::ColdPool, matmul::iter_encode_loop_named},
+};
 use crate::{
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::DeltaNetConvTreeScanKernel},
+        common::{Backend, Context, Encoder, Kernels, kernel::ConvTreeScanKernel},
         cpu::Cpu,
     },
     data_type::DataType,
@@ -45,7 +59,7 @@ fn run<B: Backend>(
     perturb: bool,
 ) -> (Vec<f32>, Vec<f32>) {
     let context = B::Context::new().expect("context");
-    let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetConvTreeScanKernel::new(
+    let kernel = <<B as Backend>::Kernels as Kernels>::ConvTreeScanKernel::new(
         &context,
         DataType::F32,
         KERNEL_SIZE as u32,
@@ -93,7 +107,7 @@ fn run<B: Backend>(
 }
 
 #[uzu_test]
-fn test_delta_net_conv_tree_scan() {
+fn test_conv_tree_scan() {
     for tree_size in [49, 64, 128] {
         for shape in ["chain", "star", "binary", "random"] {
             let expected = run::<Cpu>(tree_size, shape, false);
@@ -112,4 +126,62 @@ fn test_delta_net_conv_tree_scan() {
     let state = 2 * CONV_DIM * STATE_STRIDE..3 * CONV_DIM * STATE_STRIDE;
     assert_eq_float(&baseline.0[output.clone()], &perturbed.0[output], 0.0, "sibling output");
     assert_eq_float(&baseline.1[state.clone()], &perturbed.1[state], 0.0, "sibling state");
+}
+
+#[cfg(metal_backend)]
+struct Buffers {
+    input: Allocation<Metal>,
+    output: Allocation<Metal>,
+    suffix_state: Allocation<Metal>,
+}
+
+#[cfg(metal_backend)]
+#[uzu_bench]
+fn bench_conv_tree_scan(c: &mut Criterion) {
+    const BENCH_CONV_DIM: usize = 10_240;
+    const BENCH_TOTAL_PROJ_DIM: usize = 16_480;
+    const BENCHMARK: &str = "Metal/Kernel/GDNTreeVerify/ConvTreeScan";
+
+    let context = crate::tests::util::shared_metal_context();
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::ConvTreeScanKernel::new(
+        &context,
+        DataType::BF16,
+        KERNEL_SIZE as u32,
+        true,
+    )
+    .expect("kernel");
+    let weights = alloc_allocation_with_data::<Metal, f32>(&context, &vec![0.01; BENCH_CONV_DIM * KERNEL_SIZE]);
+    let bias = alloc_allocation_with_data::<Metal, f32>(&context, &vec![0.0; BENCH_CONV_DIM]);
+    let base_state = alloc_allocation_with_data::<Metal, f32>(&context, &vec![0.0; BENCH_CONV_DIM * STATE_STRIDE]);
+    let mut group = c.benchmark_group(BENCHMARK);
+    group.sample_size(30).warm_up_time(Duration::from_millis(300)).measurement_time(Duration::from_secs(1));
+
+    for tree_size in [49usize, 64, 128] {
+        let parents = alloc_allocation_with_data::<Metal, i32>(&context, &parents(tree_size, "binary"));
+        let input_len = tree_size * BENCH_TOTAL_PROJ_DIM;
+        let state_len = tree_size * BENCH_CONV_DIM * STATE_STRIDE;
+        let mut buffers = ColdPool::new(2 * input_len * size_of::<bf16>() + state_len * size_of::<f32>(), || Buffers {
+            input: alloc_allocation_with_data::<Metal, bf16>(&context, &vec![bf16::from_f32(0.1); input_len]),
+            output: alloc_allocation::<Metal, bf16>(&context, input_len),
+            suffix_state: alloc_allocation::<Metal, f32>(&context, state_len),
+        });
+        group.bench_function(format!("T{tree_size}"), |bencher| {
+            iter_encode_loop_named::<Metal, _>(&context, bencher, &format!("{BENCHMARK}/T{tree_size}"), |encoder| {
+                let buffers = buffers.next_mut();
+                kernel.encode(
+                    &buffers.input,
+                    &weights,
+                    Some(&bias),
+                    &base_state,
+                    &parents,
+                    &mut buffers.output,
+                    &mut buffers.suffix_state,
+                    tree_size as u32,
+                    BENCH_TOTAL_PROJ_DIM as u32,
+                    BENCH_CONV_DIM as u32,
+                    encoder,
+                );
+            });
+        });
+    }
 }

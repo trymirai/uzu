@@ -1,4 +1,3 @@
-mod conv_scan_bench;
 mod conv_scan_test;
 mod out_bench;
 mod out_test;

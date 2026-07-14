@@ -20,7 +20,7 @@ using namespace metal;
 // per-node window for later acceptance. Other projection channels pass through.
 template <typename T>
 VARIANTS(T, float, bfloat)
-PUBLIC KERNEL(DeltaNetConvTreeScan)(
+PUBLIC KERNEL(ConvTreeScan)(
     device const T* in_proj,
     device const float* conv_weight,
     device const float* bias OPTIONAL(has_bias),

@@ -4,9 +4,9 @@ use proc_macros::kernel;
 
 use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 
-#[kernel(DeltaNetConvTreeScan)]
+#[kernel(ConvTreeScan)]
 #[variants(T, f32, bf16)]
-pub fn delta_net_conv_tree_scan<T: ArrayElement + Float>(
+pub fn conv_tree_scan<T: ArrayElement + Float>(
     in_proj: *const T,
     conv_weight: *const f32,
     #[optional(has_bias)] bias: Option<*const f32>,
