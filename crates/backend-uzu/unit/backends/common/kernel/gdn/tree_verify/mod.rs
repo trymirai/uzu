@@ -3,6 +3,7 @@ mod out_bench;
 mod out_test;
 mod prefix_beta_bench;
 mod prefix_beta_test;
+mod state_advance_test;
 mod tree_gram_bench;
 mod tree_gram_test;
 mod tree_update_solve_bench;
