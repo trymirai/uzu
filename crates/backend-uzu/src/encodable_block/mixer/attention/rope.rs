@@ -20,6 +20,9 @@ impl<B: Backend> PrecalculatedRoPE<B> {
         let half_dim = head_dim / 2;
         let attention_scaling_factor = match rope_config {
             AnyRoPEConfig::YARNRoPEConfig(config) => 0.1 * config.scaling_factor.ln() + 1.0,
+            AnyRoPEConfig::LongRoPEConfig(config) if config.scaling_factor > 1.0 => {
+                (1.0 + config.scaling_factor.ln() / (config.original_context_length as f32).ln()).sqrt()
+            },
             _ => 1.0,
         };
 
@@ -74,6 +77,14 @@ impl<B: Backend> PrecalculatedRoPE<B> {
                     let smoothing_factor = 1.0 - ramp;
                     let scaled_frequency = inverse_frequency / config.scaling_factor;
                     scaled_frequency * (1.0 - smoothing_factor) + inverse_frequency * smoothing_factor
+                },
+                AnyRoPEConfig::LongRoPEConfig(config) => {
+                    let factors = if config.max_sequence_length > config.original_context_length {
+                        &config.long_factor
+                    } else {
+                        &config.short_factor
+                    };
+                    inverse_frequency / factors[pair_index]
                 },
             };
 
