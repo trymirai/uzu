@@ -11,13 +11,45 @@ using namespace metal;
 namespace uzu {
 namespace matmul {
 
-///////////////////////////////////////////////////////////////////////////////
-// Fragment - a thread-private tile of values arranged as TILE_ROWS x TILE_COLS
-// sub-tiles. Ops provides the sub-tile shape constants and the MMA primitive;
-// Fragment itself owns lane positioning and device<->register transfer.
-///////////////////////////////////////////////////////////////////////////////
+template <typename Ptr>
+struct FragmentSource {
+  Ptr base;
+  int row_stride;
+  int col_stride;
+  short row_bound;
+  short col_bound;
+  bool ragged;
 
-template <typename T, ushort TILE_ROWS_, ushort TILE_COLS_, class Ops>
+  METAL_FUNC FragmentSource advanced(int elements) const thread {
+    FragmentSource out = *this;
+    out.base += elements;
+    return out;
+  }
+
+  METAL_FUNC FragmentSource bounded(short rows, short cols) const thread {
+    FragmentSource out = *this;
+    out.row_bound = rows;
+    out.col_bound = cols;
+    out.ragged = true;
+    return out;
+  }
+};
+
+template <typename Ptr>
+METAL_FUNC FragmentSource<Ptr> fragment_source(Ptr base, int row_stride, int col_stride = 1) {
+  return FragmentSource<Ptr>{base, row_stride, col_stride, 0, 0, false};
+}
+
+struct ReadDirect {};
+struct ReadTranspose {};
+
+template <
+    typename T,
+    ushort ROW_FRAGMENTS_,
+    ushort COL_FRAGMENTS_,
+    class Ops,
+    class ReadPolicy = ReadDirect,
+    bool MMA_TRANSPOSE_ = false>
 struct Fragment {
   using FragmentOpsType = Ops;
   using ElementType = T;
@@ -38,32 +70,21 @@ struct Fragment {
       "(elements() relies on it)"
   );
 
-  METAL_CONST ushort TILE_ROWS = TILE_ROWS_;
-  METAL_CONST ushort TILE_COLS = TILE_COLS_;
+  METAL_CONST ushort ROW_FRAGMENTS = ROW_FRAGMENTS_;
+  METAL_CONST ushort COL_FRAGMENTS = COL_FRAGMENTS_;
 
-  METAL_CONST ushort FRAGMENT_ROWS = ushort(Ops::FRAGMENT_ROWS);
-  METAL_CONST ushort FRAGMENT_COLS = ushort(Ops::FRAGMENT_COLS);
+  METAL_CONST ushort FRAGMENT_ROWS = Ops::FRAGMENT_ROWS;
+  METAL_CONST ushort FRAGMENT_COLS = Ops::FRAGMENT_COLS;
 
-  METAL_CONST ushort NUM_FRAGS = TILE_ROWS * TILE_COLS;
-  METAL_CONST ushort ELEMENTS_PER_TILE = NUM_FRAGS * Ops::ELEMENTS_PER_THREAD;
+  METAL_CONST ushort NUM_FRAGS = ROW_FRAGMENTS * COL_FRAGMENTS;
+  METAL_CONST ushort ELEMENTS_PER_FRAGMENT = NUM_FRAGS * Ops::ELEMENTS_PER_THREAD;
+  METAL_CONST ushort ROW_REDUCE_LANE_XOR_0 = 1;
+  METAL_CONST ushort ROW_REDUCE_LANE_XOR_1 = 8;
+  METAL_CONST bool MMA_TRANSPOSE = MMA_TRANSPOSE_;
 
   ThreadVectorType fragment_data[NUM_FRAGS];
-  ThreadContext thread_context;
 
-  METAL_FUNC Fragment(const thread ThreadContext& thread_context) thread : thread_context(thread_context) {}
-
-  // Lane origin (row, col) within a single FRAGMENT_ROWS x FRAGMENT_COLS
-  // sub-tile. The mapping depends only on Ops::THREAD_ELEMENT_COLS, so it is
-  // identical for every Fragment sharing that Ops type.
-  METAL_FUNC static constexpr short2 get_position(const thread ThreadContext& thread_context) {
-    const ushort simd_lane_id = ushort(thread_context.simd_lane_id);
-    const short quad = simd_lane_id / 4;
-    const short row = (quad & 4) + (simd_lane_id / 2) % 4;
-    const short col = ((quad & 2) + simd_lane_id % 2) * Ops::THREAD_ELEMENT_COLS;
-    return short2{col, row};
-  }
-
-  METAL_FUNC short2 get_position() const thread { return get_position(thread_context); }
+  METAL_FUNC static constexpr short2 get_position(const ushort simd_lane_id) { return Ops::get_position(simd_lane_id); }
 
   METAL_FUNC constexpr void clear() {
     METAL_PRAGMA_UNROLL
@@ -73,7 +94,7 @@ struct Fragment {
   }
 
   METAL_FUNC constexpr thread ThreadVectorType& fragment_at(const ushort row_index, const ushort col_index) {
-    return fragment_data[row_index * TILE_COLS + col_index];
+    return fragment_data[row_index * COL_FRAGMENTS + col_index];
   }
 
   template <bool transpose>
@@ -91,82 +112,217 @@ struct Fragment {
 
   METAL_FUNC thread ElementType* elements() { return reinterpret_cast<thread ElementType*>(fragment_data); }
 
-  // Unsafe load: copy a (TILE_ROWS * FRAGMENT_ROWS) x (TILE_COLS *
-  // FRAGMENT_COLS) block from device memory into fragment registers. ColStride
-  // defaults to the compile-time constant 1 so that the row-major fast path
-  // triggers when the caller omits it. Tile strides control the gap between
-  // sub-tiles.
+  template <class Fn>
+  METAL_FUNC void map(Fn fn) thread {
+    thread ElementType* data = elements();
+    METAL_PRAGMA_UNROLL
+    for (ushort i = 0; i < ELEMENTS_PER_FRAGMENT; i++) {
+      data[i] = ElementType(fn(data[i]));
+    }
+  }
+
+  template <class Fn>
+  METAL_FUNC void map_coords(const ushort simd_lane_id, Fn fn) thread {
+    thread ElementType* data = elements();
+    const short2 position = get_position(simd_lane_id);
+    for_each_fragment([&](auto fragment_row, auto fragment_col) {
+      const ushort frag_base = (fragment_row.value * COL_FRAGMENTS + fragment_col.value) * Ops::ELEMENTS_PER_THREAD;
+      const short row_base = position.y + fragment_row.value * FRAGMENT_ROWS;
+      const short col_base = position.x + fragment_col.value * FRAGMENT_COLS;
+      METAL_PRAGMA_UNROLL
+      for (ushort element_index = 0; element_index < Ops::ELEMENTS_PER_THREAD; ++element_index) {
+        const short2 element_offset = Ops::get_element_offset(element_index);
+        const short row = row_base + element_offset.y;
+        const short col = col_base + element_offset.x;
+        thread ElementType& value = data[frag_base + element_index];
+        value = ElementType(fn(row, col, value));
+      }
+    });
+  }
+
+  template <class Fn, class... Fragments>
+  METAL_FUNC static void zip_for_each_coord(const ushort simd_lane_id, Fn fn, thread Fragments&... fragments) {
+    static_assert(sizeof...(Fragments) > 0, "zip_for_each_coord needs at least one fragment");
+    static_assert((metal::is_same_v<Fragment, Fragments> && ...), "zipped fragments must have the same type");
+
+    const short2 position = get_position(simd_lane_id);
+    for_each_fragment([&](auto fragment_row, auto fragment_col) {
+      const ushort frag_base = (fragment_row.value * COL_FRAGMENTS + fragment_col.value) * Ops::ELEMENTS_PER_THREAD;
+      const short row_base = position.y + fragment_row.value * FRAGMENT_ROWS;
+      const short col_base = position.x + fragment_col.value * FRAGMENT_COLS;
+      METAL_PRAGMA_UNROLL
+      for (ushort element_index = 0; element_index < Ops::ELEMENTS_PER_THREAD; ++element_index) {
+        const short2 element_offset = Ops::get_element_offset(element_index);
+        const short row = row_base + element_offset.y;
+        const short col = col_base + element_offset.x;
+        const ushort index = frag_base + element_index;
+        fn(row, col, fragments.elements()[index]...);
+      }
+    });
+  }
+
+  // Row lanes differ in bits {0,3} for both simdgroup and MXU layouts.
+  template <typename Acc, class Fn>
+  METAL_FUNC void row_reduce(thread Acc* out, const Acc identity, Fn op) thread {
+    thread ElementType* data = elements();
+    METAL_PRAGMA_UNROLL
+    for (ushort tr = 0; tr < ROW_FRAGMENTS; ++tr) {
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < Ops::THREAD_ELEMENT_ROWS; ++i) {
+        Acc acc = identity;
+        METAL_PRAGMA_UNROLL
+        for (ushort tc = 0; tc < COL_FRAGMENTS; ++tc) {
+          const ushort frag_base = (tr * COL_FRAGMENTS + tc) * Ops::ELEMENTS_PER_THREAD;
+          METAL_PRAGMA_UNROLL
+          for (ushort j = 0; j < Ops::THREAD_ELEMENT_COLS; ++j) {
+            acc = op(acc, Acc(data[frag_base + i * Ops::THREAD_ELEMENT_COLS + j]));
+          }
+        }
+        acc = op(acc, simd_shuffle_xor(acc, ROW_REDUCE_LANE_XOR_0));
+        acc = op(acc, simd_shuffle_xor(acc, ROW_REDUCE_LANE_XOR_1));
+        out[tr * Ops::THREAD_ELEMENT_ROWS + i] = acc;
+      }
+    }
+  }
+
+  template <typename Acc, class Fn>
+  METAL_FUNC void map_rows(const thread Acc* row_vals, Fn fn) thread {
+    thread ElementType* data = elements();
+    METAL_PRAGMA_UNROLL
+    for (ushort tr = 0; tr < ROW_FRAGMENTS; ++tr) {
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < Ops::THREAD_ELEMENT_ROWS; ++i) {
+        const Acc rv = row_vals[tr * Ops::THREAD_ELEMENT_ROWS + i];
+        METAL_PRAGMA_UNROLL
+        for (ushort tc = 0; tc < COL_FRAGMENTS; ++tc) {
+          const ushort frag_base = (tr * COL_FRAGMENTS + tc) * Ops::ELEMENTS_PER_THREAD;
+          METAL_PRAGMA_UNROLL
+          for (ushort j = 0; j < Ops::THREAD_ELEMENT_COLS; ++j) {
+            const ushort e = frag_base + i * Ops::THREAD_ELEMENT_COLS + j;
+            data[e] = ElementType(fn(Acc(data[e]), rv));
+          }
+        }
+      }
+    }
+  }
+
+  template <class Ptr>
+  METAL_FUNC void load_from(const ushort simd_lane_id, FragmentSource<Ptr> src) thread {
+    if constexpr (metal::is_same_v<ReadPolicy, ReadTranspose> && Ops::READ_TRANSPOSE_SWAPS_SOURCE_STRIDES) {
+      const int row_stride = src.row_stride;
+      src.row_stride = src.col_stride;
+      src.col_stride = row_stride;
+      const short row_bound = src.row_bound;
+      src.row_bound = src.col_bound;
+      src.col_bound = row_bound;
+    }
+
+    if (src.ragged) {
+      transfer<LOAD, SAFE>(
+          simd_lane_id,
+          src.base,
+          src.row_stride,
+          src.col_stride,
+          src.row_bound,
+          src.col_bound,
+          Int<1>{},
+          Int<1>{}
+      );
+    } else {
+      transfer<LOAD, UNSAFE>(
+          simd_lane_id,
+          src.base,
+          src.row_stride,
+          src.col_stride,
+          Int<0>{},
+          Int<0>{},
+          Int<1>{},
+          Int<1>{}
+      );
+    }
+  }
+
   template <
       class Ptr,
       class RowStride,
       class ColStride = Int<1>,
-      class TileRowStride = Int<1>,
-      class TileColStride = Int<1>>
-  METAL_FUNC void load(
-      Ptr source,
+      class FragmentRowStride = Int<1>,
+      class FragmentColStride = Int<1>>
+  METAL_FUNC void store(
+      const ushort simd_lane_id,
+      Ptr destination,
       RowStride row_stride,
       ColStride col_stride = {},
-      TileRowStride tile_row_stride = {},
-      TileColStride tile_col_stride = {}
+      FragmentRowStride fragment_row_stride = {},
+      FragmentColStride fragment_col_stride = {}
   ) thread {
-    transfer<LOAD, UNSAFE>(source, row_stride, col_stride, Int<0>{}, Int<0>{}, tile_row_stride, tile_col_stride);
-  }
-
-  // Safe load: col_stride is implicitly 1; out-of-bounds elements become T(0).
-  template <class Ptr, class TileRowStride = Int<1>, class TileColStride = Int<1>>
-  METAL_FUNC void load_safe(
-      Ptr source,
-      const int leading_dimension,
-      const short2 tile_dimensions,
-      TileRowStride tile_row_stride = {},
-      TileColStride tile_col_stride = {}
-  ) thread {
-    transfer<LOAD, SAFE>(
-        source,
-        leading_dimension,
-        Int<1>{},
-        tile_dimensions.y,
-        tile_dimensions.x,
-        tile_row_stride,
-        tile_col_stride
+    transfer<STORE, UNSAFE>(
+        simd_lane_id,
+        destination,
+        row_stride,
+        col_stride,
+        Int<0>{},
+        Int<0>{},
+        fragment_row_stride,
+        fragment_col_stride
     );
   }
 
-  // Unsafe store: mirror of load. Same defaults apply.
-  template <
-      class Ptr,
-      class RowStride,
-      class ColStride = Int<1>,
-      class TileRowStride = Int<1>,
-      class TileColStride = Int<1>>
-  METAL_FUNC void store(
-      Ptr destination,
-      RowStride row_stride,
-      ColStride col_stride = {},
-      TileRowStride tile_row_stride = {},
-      TileColStride tile_col_stride = {}
-  ) thread {
-    transfer<STORE, UNSAFE>(destination, row_stride, col_stride, Int<0>{}, Int<0>{}, tile_row_stride, tile_col_stride);
-  }
-
-  // Safe store: col_stride is implicitly 1; out-of-bounds elements are skipped.
-  template <class Ptr, class TileRowStride = Int<1>, class TileColStride = Int<1>>
+  template <class Ptr, class FragmentRowStride = Int<1>, class FragmentColStride = Int<1>>
   METAL_FUNC void store_safe(
+      const ushort simd_lane_id,
       Ptr destination,
       const int leading_dimension,
       const short2 tile_dimensions,
-      TileRowStride tile_row_stride = {},
-      TileColStride tile_col_stride = {}
+      FragmentRowStride fragment_row_stride = {},
+      FragmentColStride fragment_col_stride = {}
   ) thread {
     transfer<STORE, SAFE>(
+        simd_lane_id,
         destination,
         leading_dimension,
         Int<1>{},
         tile_dimensions.y,
         tile_dimensions.x,
-        tile_row_stride,
-        tile_col_stride
+        fragment_row_stride,
+        fragment_col_stride
     );
+  }
+
+  // Single-line load. `bounded` = true when the tile lies fully in the buffer, so
+  // the load takes the fast path with no per-element clamping; false clamps to
+  // (row_bound, col_bound).
+  template <class Ptr>
+  METAL_FUNC void load_maybe_bounded(
+      const ushort simd_lane_id,
+      Ptr base,
+      int row_stride,
+      bool bounded,
+      short row_bound,
+      short col_bound
+  ) thread {
+    FragmentSource<Ptr> src = fragment_source(base, row_stride);
+    if (!bounded) {
+      src = src.bounded(row_bound, col_bound);
+    }
+    load_from(simd_lane_id, src);
+  }
+
+  // Single-line store mirroring `load`: `bounded` = true stores the full tile;
+  // false clamps to `tile_dimensions`.
+  template <class Ptr>
+  METAL_FUNC void store_maybe_bounded(
+      const ushort simd_lane_id,
+      Ptr destination,
+      const int leading_dimension,
+      bool bounded,
+      const short2 tile_dimensions
+  ) thread {
+    if (!bounded) {
+      store_safe(simd_lane_id, destination, leading_dimension, tile_dimensions);
+    } else {
+      store(simd_lane_id, destination, leading_dimension);
+    }
   }
 
 private:
@@ -176,21 +332,12 @@ private:
   METAL_CONST bool UNSAFE = false;
 
   template <class Fn>
-  METAL_FUNC void for_each_fragment(Fn fn) thread {
-    const_for_loop<0, TILE_ROWS, 1>([&](auto row_index) {
-      const_for_loop<0, TILE_COLS, 1>([&](auto col_index) { fn(row_index, col_index); });
+  METAL_FUNC static void for_each_fragment(Fn fn) {
+    const_for_loop<0, ROW_FRAGMENTS, 1>([&](auto row_index) {
+      const_for_loop<0, COL_FRAGMENTS, 1>([&](auto col_index) { fn(row_index, col_index); });
     });
   }
 
-  // Unified memory transfer between device memory and fragment registers.
-  //
-  // IS_LOAD  - true to read into fragment_data, false to write back.
-  // IS_SAFE  - true to bounds-check each element against (row_limit,
-  // col_limit);
-  //            on load, out-of-bounds elements become T(0); on store, skipped.
-  //
-  // When ColStride is a compile-time 1, the column-stride multiplication is
-  // elided to help the compiler collapse strength-reduced addressing.
   template <
       bool IS_LOAD,
       bool IS_SAFE,
@@ -199,60 +346,100 @@ private:
       class ColStride,
       class RowLimit,
       class ColLimit,
-      class TileRowStride,
-      class TileColStride>
+      class FragmentRowStride,
+      class FragmentColStride>
   METAL_FUNC void transfer(
+      const ushort simd_lane_id,
       Ptr ptr,
       RowStride row_stride,
       ColStride col_stride,
       RowLimit row_limit,
       ColLimit col_limit,
-      TileRowStride tile_row_stride,
-      TileColStride tile_col_stride
+      FragmentRowStride fragment_row_stride,
+      FragmentColStride fragment_col_stride
   ) thread {
     using U = PointerElementType<Ptr>;
     constexpr bool col_stride_is_one = metal::is_same_v<ColStride, Int<1>>;
-
-    const short2 position = get_position();
+    const short2 position = get_position(simd_lane_id);
     ptr += position.y * row_stride + position.x * col_stride;
     const auto local_row_limit = row_limit - position.y;
     const auto local_col_limit = col_limit - position.x;
 
-    for_each_fragment([&](auto tile_row, auto tile_col) {
-      thread auto& frag = fragment_at(tile_row.value, tile_col.value);
-      const auto row_base = tile_row.value * FRAGMENT_ROWS * tile_row_stride;
-      const auto col_base = tile_col.value * FRAGMENT_COLS * tile_col_stride;
+    for_each_fragment([&](auto fragment_row, auto fragment_col) {
+      thread auto& frag = fragment_at(fragment_row.value, fragment_col.value);
+      const auto row_base = fragment_row.value * FRAGMENT_ROWS * fragment_row_stride;
+      const auto col_base = fragment_col.value * FRAGMENT_COLS * fragment_col_stride;
 
       METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < Ops::THREAD_ELEMENT_ROWS; i++) {
-        const auto row = row_base + i * Ops::THREAD_ELEMENT_ROW_STRIDE;
-        METAL_PRAGMA_UNROLL
-        for (ushort j = 0; j < Ops::THREAD_ELEMENT_COLS; j++) {
-          const ushort element_index = i * Ops::THREAD_ELEMENT_COLS + j;
-          const auto col = col_base + j;
-          const auto offset = col_stride_is_one ? (row * row_stride + col) : (row * row_stride + col * col_stride);
+      for (ushort element_index = 0; element_index < Ops::ELEMENTS_PER_THREAD; element_index++) {
+        const short2 element_offset = Ops::get_element_offset(element_index);
+        const auto row = row_base + element_offset.y;
+        const auto col = col_base + element_offset.x;
+        const auto offset = col_stride_is_one ? (row * row_stride + col) : (row * row_stride + col * col_stride);
 
-          if constexpr (IS_LOAD) {
-            if constexpr (IS_SAFE) {
-              const bool in_bounds = (row < local_row_limit) && (col < local_col_limit);
-              frag[element_index] = in_bounds ? static_cast<T>(ptr[offset]) : T(0);
-            } else {
-              frag[element_index] = static_cast<T>(ptr[offset]);
-            }
+        if constexpr (IS_LOAD) {
+          if constexpr (IS_SAFE) {
+            const bool in_bounds = (row < local_row_limit) && (col < local_col_limit);
+            frag[element_index] = in_bounds ? static_cast<T>(ptr[offset]) : T(0);
           } else {
-            if constexpr (IS_SAFE) {
-              if ((row < local_row_limit) && (col < local_col_limit)) {
-                ptr[offset] = static_cast<U>(frag[element_index]);
-              }
-            } else {
+            frag[element_index] = static_cast<T>(ptr[offset]);
+          }
+        } else {
+          if constexpr (IS_SAFE) {
+            if ((row < local_row_limit) && (col < local_col_limit)) {
               ptr[offset] = static_cast<U>(frag[element_index]);
             }
+          } else {
+            ptr[offset] = static_cast<U>(frag[element_index]);
           }
         }
       }
     });
   }
 };
+
+template <class Ops, class Read>
+struct OperandFragmentTraits {
+  METAL_CONST bool READ_TRANSPOSE = metal::is_same_v<Read, ReadTranspose>;
+  METAL_CONST bool MMA_TRANSPOSE = READ_TRANSPOSE && !Ops::READ_TRANSPOSE_SWAPS_SOURCE_STRIDES;
+};
+
+template <typename T, ushort ROW_FRAGMENTS, ushort COL_FRAGMENTS, class Ops, class Read = ReadDirect>
+using OperandFragment = Fragment<
+    T,
+    OperandFragmentTraits<Ops, Read>::MMA_TRANSPOSE ? COL_FRAGMENTS : ROW_FRAGMENTS,
+    OperandFragmentTraits<Ops, Read>::MMA_TRANSPOSE ? ROW_FRAGMENTS : COL_FRAGMENTS,
+    Ops,
+    Read,
+    OperandFragmentTraits<Ops, Read>::MMA_TRANSPOSE>;
+
+template <class OutputFragment, class LeftFragment, class RightFragment>
+METAL_FUNC void fragment_mma(thread OutputFragment& output, thread LeftFragment& left, thread RightFragment& right) {
+  static_assert(
+      metal::is_same_v<typename OutputFragment::FragmentOpsType, typename LeftFragment::FragmentOpsType> &&
+          metal::is_same_v<typename OutputFragment::FragmentOpsType, typename RightFragment::FragmentOpsType>,
+      "fragment_mma requires output, left, and right fragments to use the same FragmentOps"
+  );
+  OutputFragment::FragmentOpsType::template fragment_mma<LeftFragment::MMA_TRANSPOSE, RightFragment::MMA_TRANSPOSE>(
+      output,
+      left,
+      right
+  );
+}
+
+template <class OutputFragment, class LeftFragment, class RightFragment>
+METAL_FUNC void fragment_mm(thread OutputFragment& output, thread LeftFragment& left, thread RightFragment& right) {
+  static_assert(
+      metal::is_same_v<typename OutputFragment::FragmentOpsType, typename LeftFragment::FragmentOpsType> &&
+          metal::is_same_v<typename OutputFragment::FragmentOpsType, typename RightFragment::FragmentOpsType>,
+      "fragment_mm requires output, left, and right fragments to use the same FragmentOps"
+  );
+  OutputFragment::FragmentOpsType::template fragment_mm<LeftFragment::MMA_TRANSPOSE, RightFragment::MMA_TRANSPOSE>(
+      output,
+      left,
+      right
+  );
+}
 
 } // namespace matmul
 } // namespace uzu

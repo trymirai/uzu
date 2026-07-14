@@ -2,6 +2,24 @@ use serde::{Deserialize, Serialize};
 
 #[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ChatReplyPowerStats {
+    pub samples_count: i64,
+    pub average_cpu_watts: f64,
+    pub average_gpu_watts: f64,
+    pub average_ane_watts: f64,
+    pub average_ram_watts: f64,
+    pub average_total_watts: f64,
+    pub energy_joules: f64,
+}
+
+#[bindings::export(Structure(Class))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ChatReplySpeculatorStats {
+    pub tokens_per_forward_pass: f64,
+}
+
+#[bindings::export(Structure(Class))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ChatReplyStats {
     pub duration: f64,
     pub time_to_first_token: Option<f64>,
@@ -9,6 +27,9 @@ pub struct ChatReplyStats {
     pub generate_tokens_per_second: Option<f64>,
     pub tokens_count_input: Option<u32>,
     pub tokens_count_output: Option<u32>,
+    pub memory_used_bytes: Option<i64>,
+    pub speculator_stats: Option<ChatReplySpeculatorStats>,
+    pub power_stats: Option<ChatReplyPowerStats>,
 }
 
 #[bindings::export(Implementation)]

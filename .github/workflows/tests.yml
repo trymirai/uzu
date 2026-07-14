@@ -40,13 +40,23 @@ jobs:
         if: ${{ always() && steps.setup.outcome == 'success' }}
         run: cargo +nightly fmt --check
 
+      - name: Check Rust formatting (mirai app)
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        working-directory: apps/mirai
+        run: cargo +nightly fmt --all --check
+
       - name: Check Metal formatting
         if: ${{ always() && steps.setup.outcome == 'success' }}
         run: ./scripts/clang-format.sh --check
 
       - name: Lint with clippy
         if: ${{ always() && steps.setup.outcome == 'success' }}
-        run: cargo +nightly clippy --workspace --all-targets --features tracing -- -D warnings
+        run: cargo +nightly clippy --workspace --all-targets -- -D warnings
+
+      - name: Lint mirai app with clippy
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        working-directory: apps/mirai
+        run: cargo +nightly clippy --workspace --all-targets -- -D warnings
 
       - name: Check that Cargo.lock is consistent with Cargo.toml
         if: ${{ always() && steps.setup.outcome == 'success' }}
@@ -65,7 +75,6 @@ jobs:
   tests:
     name: ${{ matrix.backend }}
       ${{ matrix.host == 'linux' && ' (linux)' || '' }}
-      ${{ matrix.tracing && ' (tracing)' || '' }}
       ${{ matrix.grammar && ' (grammar)' || '' }}
       ${{ matrix.target != '' && format(' ({0})', matrix.target) || '' }}
     runs-on: ${{ matrix.host == 'linux' && 'ubuntu-latest' || fromJSON('["self-hosted","macos","arm64"]') }}
@@ -75,22 +84,16 @@ jobs:
         backend: [ 'cpu', 'metal' ]
         host: [ 'macos' ]
         target: [ '' ]
-        tracing: [ false, true ]
         include:
           - grammar: true
           - backend: 'cpu'
             host: 'macos'
             target: 'wasm32-wasip1-threads'
-            tracing: false
             grammar: false
           - backend: 'cpu'
             host: 'linux'
             target: ''
-            tracing: false
             grammar: false
-        exclude:
-          - backend: 'cpu'
-            tracing: true
 
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
@@ -99,7 +102,6 @@ jobs:
         ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
         ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }}
         ${{ matrix.grammar && '--features grammar' || '' }}
-        ${{ matrix.tracing && '--features tracing' || '' }}
 
     steps:
       - uses: actions/checkout@v6
@@ -114,12 +116,20 @@ jobs:
       - name: Build crates
         run: cargo +stable build --no-default-features $FEATURE_FLAGS ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu' || '' }} ${{ matrix.host == 'linux' && '-p cli --features backend-cpu,capability-cli' || '' }}
 
+      # Temporary step to check crates that migrated to wasm.
+      # New value to matrix was not added intentionally because the whole project is not wasm supported.
+      - name: Build wasm supported crates
+        if: ${{ matrix.target == 'wasm32-wasip1-threads' }}
+        run: |
+          rustup +stable target add wasm32-unknown-unknown
+          cargo +stable build -p kiban --target wasm32-unknown-unknown
+
       - name: Build benches
-        if: ${{ matrix.backend != 'cpu' && !matrix.tracing }}
+        if: ${{ matrix.backend != 'cpu' }}
         run: cargo +nightly bench --no-run --no-default-features $FEATURE_FLAGS
 
       - name: Run tests
-        if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.grammar || matrix.backend == 'cpu' && !matrix.tracing && !matrix.grammar && matrix.target == 'wasm32-wasip1-threads' }}
+        if: ${{ matrix.backend != 'cpu' && matrix.grammar || matrix.backend == 'cpu' && !matrix.grammar && matrix.target == 'wasm32-wasip1-threads' }}
         run: |
           cargo +nightly nextest run --profile=ci --no-default-features $FEATURE_FLAGS \
             ${{ matrix.target == 'wasm32-wasip1-threads' && '-p backend-uzu backends::common::kernel::tests --lib' || '' }}
@@ -151,8 +161,13 @@ jobs:
           cargo tools install typescript
 
       - name: "Verify"
+        id: verify
         run: |
           cargo tools verify
+
+      - name: "Print diff"
+        if: ${{ always() && steps.verify.outcome == 'failure' }}
+        run: git diff
 
       - name: "Test"
         run: |

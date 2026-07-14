@@ -7,11 +7,6 @@ pub trait Context: Sized {
 
     fn new() -> Result<Rc<Self>, <Self::Backend as Backend>::Error>;
 
-    fn recommended_async_batch_size(
-        &self,
-        model_path: &Path,
-    ) -> Result<usize, <Self::Backend as Backend>::Error>;
-
     fn create_command_buffer(
         &self
     ) -> Result<<<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Initial, <Self::Backend as Backend>::Error>;

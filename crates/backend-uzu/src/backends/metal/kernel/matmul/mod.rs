@@ -6,10 +6,10 @@ use self::gemv::{GemvDispatch, GemvSpecialization};
 use crate::{
     backends::{
         common::{
-            AsBufferRangeRef, Buffer, Encoder,
+            BufferArg, Encoder,
             kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
         },
-        metal::{Metal, context::MetalContext, error::MetalError},
+        metal::{Metal, context::MetalContext, error::MetalError, metal_extensions::DeviceExt},
     },
     data_type::DataType,
 };
@@ -49,20 +49,23 @@ impl MatmulKernel for MatmulMetalKernel {
         })
     }
 
-    fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         &mut self,
-        arguments: MatmulArguments<Metal, TB>,
+        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        match GemvSpecialization::select(
-            &arguments,
-            self.weights_data_type,
-            self.input_data_type,
-            self.output_data_type,
-            encoder.context().device_tier(),
-        ) {
-            Some(spec) => self.gemv.encode(arguments, spec, encoder).map_err(MetalError::from),
-            None => self.gemm.encode(arguments, encoder),
+        let skip_gemv = encoder.context().device.supports_mxu() && self.gemm.should_skip_gemv_for_mxu(&arguments);
+        if !skip_gemv
+            && let Some(gemv) = GemvSpecialization::select(
+                &arguments,
+                self.weights_data_type,
+                self.input_data_type,
+                self.output_data_type,
+                encoder.context().device_tier(),
+            )
+        {
+            return self.gemv.encode(arguments, gemv, encoder).map_err(MetalError::from);
         }
+        self.gemm.encode(arguments, encoder)
     }
 }

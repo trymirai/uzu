@@ -4,6 +4,7 @@ use download_manager::FileDownloadManagerType;
 use serde::{Deserialize, Serialize};
 use shoji::types::model::Model;
 
+use super::download_contents::DownloadContents;
 use crate::device::Device;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -14,6 +15,8 @@ pub struct Config {
     pub name: String,
     #[serde(default)]
     pub download_manager_type: FileDownloadManagerType,
+    #[serde(skip)]
+    pub download_contents: DownloadContents,
 }
 
 impl Config {
@@ -27,6 +30,7 @@ impl Config {
             base_path,
             name,
             download_manager_type: FileDownloadManagerType::default(),
+            download_contents: DownloadContents::default(),
         }
     }
 
@@ -57,6 +61,16 @@ impl Config {
     ) -> Self {
         Self {
             download_manager_type,
+            ..self.clone()
+        }
+    }
+
+    pub fn with_download_contents(
+        &self,
+        download_contents: DownloadContents,
+    ) -> Self {
+        Self {
+            download_contents,
             ..self.clone()
         }
     }

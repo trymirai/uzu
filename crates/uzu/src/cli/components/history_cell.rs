@@ -188,6 +188,26 @@ fn chat_reply_stats_component(
         .generate_tokens_per_second
         .map(|tokens_per_second| format!("{tokens_per_second:.2} t/s"))
         .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let prefill_speed = stats
+        .prefill_tokens_per_second
+        .map(|tokens_per_second| format!("{tokens_per_second:.2} t/s"))
+        .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let tokens_per_forward_pass = stats
+        .speculator_stats
+        .as_ref()
+        .map(|speculator_stats| format!("{:.2} t/f", speculator_stats.tokens_per_forward_pass))
+        .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let memory_used = stats.memory_used_bytes.map(format_memory_used).unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let power = stats
+        .power_stats
+        .as_ref()
+        .map(|power| format!("{:.2} W avg", power.average_total_watts))
+        .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let energy = stats
+        .power_stats
+        .as_ref()
+        .map(|power| format!("{:.2} J", power.energy_joules))
+        .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let duration = format!("{:.2} s", stats.duration);
 
     element! {
@@ -200,7 +220,27 @@ fn chat_reply_stats_component(
                 color: subtitle_color,
             )
             Text(
+                content: format!("prefill speed: {prefill_speed}"),
+                color: subtitle_color,
+            )
+            Text(
                 content: format!("generation speed: {generation_speed}"),
+                color: subtitle_color,
+            )
+            Text(
+                content: format!("tokens per forward pass: {tokens_per_forward_pass}"),
+                color: subtitle_color,
+            )
+            Text(
+                content: format!("memory used: {memory_used}"),
+                color: subtitle_color,
+            )
+            Text(
+                content: format!("total power: {power}"),
+                color: subtitle_color,
+            )
+            Text(
+                content: format!("total energy: {energy}"),
                 color: subtitle_color,
             )
             Text(
@@ -210,6 +250,11 @@ fn chat_reply_stats_component(
         }
     }
     .into()
+}
+
+fn format_memory_used(bytes: i64) -> String {
+    let gibibytes = bytes.max(0) as f64 / 1024.0 / 1024.0 / 1024.0;
+    format!("{gibibytes:.2} GB")
 }
 
 fn text_to_speech_output_component(

@@ -8,11 +8,13 @@ use rand_distr::Normal;
 
 use crate::{
     array::ArrayElement,
-    backends::common::{AllocationType, Backend, Context, Encoder},
+    backends::common::{AllocationType, Backend, Context, Encoder, gpu_types::trie::TrieNode},
     data_type::DataType,
     dispatch_dtype,
-    encodable_block::Sampling,
-    session::parameter::{SamplingMethod, SamplingProcessingOrder},
+    encodable_block::{
+        batch_topology::BatchTopology,
+        sampling::{Sampling, SamplingMethod},
+    },
     tests::proptest::{ComparableTestResults, TestContextes, for_each_context, kernel_data_type},
 };
 
@@ -36,7 +38,7 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
     seeds: Option<&[u64]>,
     bitmask: Option<&[u32]>,
     vocab_size: usize,
-    method: SamplingMethod,
+    method: &SamplingMethod,
     batch_size: usize,
 ) -> Result<SamplingTestResults, TestCaseError> {
     let sampling = Sampling::new(T::data_type(), vocab_size);
@@ -59,6 +61,15 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
         None
     };
 
+    let nodes = (0..batch_size)
+        .map(|index| TrieNode {
+            trie_start: index as u32,
+            trie_end: (batch_size - 1) as u32,
+            height: index as u32,
+        })
+        .collect::<Box<[_]>>();
+    let batch_topology = BatchTopology::new(&nodes, true);
+
     let mut encoder = Encoder::new(context).unwrap();
     let sampled_allocation = sampling
         .encode(
@@ -68,7 +79,8 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
             None, // TODO
             None, // TODO
             method,
-            batch_size,
+            &batch_topology,
+            0..batch_size,
             &mut encoder,
         )
         .unwrap();
@@ -130,26 +142,18 @@ fn sampling_case() -> impl Strategy<Value = SamplingCase> {
 
             let min_p = prop_oneof![Just(None), (0.0f32..=1.0).prop_map(Some),];
 
-            let order = prop_oneof![
-                Just(SamplingProcessingOrder::TemperatureThenFilters),
-                Just(SamplingProcessingOrder::FiltersThenTemperature),
-            ];
-
             prop_oneof![
                 Just(SamplingMethod::Greedy),
-                (temperature, top_k, top_p, min_p, order).prop_map(
-                    |(temperature, top_k, top_p, min_p, processing_order)| {
-                        SamplingMethod::Stochastic {
-                            temperature,
-                            top_k,
-                            top_p,
-                            min_p,
-                            repetition_penalty: None,       // TODO
-                            suffix_repetition_length: None, // TODO
-                            processing_order,
-                        }
-                    },
-                ),
+                (temperature, top_k, top_p, min_p).prop_map(|(temperature, top_k, top_p, min_p)| {
+                    SamplingMethod::Stochastic {
+                        temperature,
+                        top_k,
+                        top_p,
+                        min_p,
+                        repetition_penalty: None,       // TODO
+                        suffix_repetition_length: None, // TODO
+                    }
+                },),
             ]
             .prop_map(move |method| SamplingCase {
                 data_type,
@@ -177,7 +181,7 @@ fn test_sampling_prop() {
                 seeds.as_ref().map(Box::as_ref),
                 bitmask.as_ref().map(Box::as_ref),
                 sampling_case.vocab_size,
-                sampling_case.method,
+                &sampling_case.method,
                 sampling_case.batch_size,
             ))
             .compare_results()?

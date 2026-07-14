@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <link data-trunk rel="rust" href="../Cargo.toml"/>
+</head>
+
+<body>
+<div>
+  <label>
+    URL:<br>
+    <input id="input-url" type="text" style="width: 600px;"
+           value="https://huggingface.co/Qwen/Qwen3.5-0.8B/resolve/main/tokenizer.json"/>
+  </label>
+</div>
+<br>
+
+<div>
+  <label>
+    File path:<br>
+    <input id="input-path" type="text" style="width: 600px;" value="/tmp/test_tokenizer.json"/>
+  </label>
+</div>
+<br>
+
+<div>
+  <button id="btn-download">Download</button>
+</div>
+<br>
+
+<div id="text-state"></div>
+<div id="text-error" style="color: #a80000;"></div>
+<br>
+
+<script data-trunk src="./index.js"></script>
+</body>
+
+</html>

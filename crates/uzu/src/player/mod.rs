@@ -29,6 +29,12 @@ impl Player {
             }),
         })
     }
+
+    /// True once the queue has drained — all appended audio has finished
+    /// playing. Callers poll this since rodio offers no completion callback.
+    pub fn is_finished(&self) -> bool {
+        self.context.player.empty()
+    }
 }
 
 #[bindings::export(Implementation)]

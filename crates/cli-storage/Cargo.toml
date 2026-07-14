@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 shoji.workspace = true
 uzu.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 futures-util.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true

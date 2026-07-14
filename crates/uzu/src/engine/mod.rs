@@ -4,16 +4,24 @@ mod download_manager;
 mod downloader;
 mod error;
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use backend_remote::openai::Backend as OpenAIBackend;
-use backend_uzu::inference::Backend as UzuBackend;
+use backend_uzu::bridge::UzuLlmBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
 pub use download_manager::DownloadManagerType;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
 use indexmap::{IndexMap, IndexSet};
+use kiban::rt::RuntimeHandle;
 use nagare::{
     api::Config as ClientConfig,
     chat::ChatSession,
@@ -28,7 +36,6 @@ use shoji::{
         session::chat::ChatConfig,
     },
 };
-use tokio::runtime::Handle;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
@@ -57,11 +64,15 @@ pub struct Engine {
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
     callback: SharedAccess<Option<Arc<EngineCallback>>>,
     telemetry: SharedAccess<Telemetry>,
+    /// Whether anonymous usage telemetry may be reported. Defaults to `true`;
+    /// consumers (e.g. an app with a privacy toggle) flip it via
+    /// `set_usage_reporting`.
+    report_usage: Arc<AtomicBool>,
 }
 
 impl Engine {
     pub async fn new(config: EngineConfig) -> Result<Self, EngineError> {
-        let tokio_handle = Handle::try_current().map_err(|error| EngineError::TokioError {
+        let runtime_handle = RuntimeHandle::try_current().map_err(|error| EngineError::TokioError {
             message: error.to_string(),
         })?;
 
@@ -99,9 +110,10 @@ impl Engine {
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
         let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string())
             .with_download_manager_type(config.download_manager_type.into());
+        let storage_cache_path = storage_config.cache_path();
         logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
 
-        let storage = SharedAccess::new(Storage::new(tokio_handle, storage_config).await?);
+        let storage = SharedAccess::new(Storage::new(runtime_handle, storage_config).await?);
 
         let engine = Self {
             settings: SharedAccess::new(settings),
@@ -110,11 +122,12 @@ impl Engine {
             backends: SharedAccess::new(HashMap::new()),
             callback: SharedAccess::new(None),
             telemetry,
+            report_usage: Arc::new(AtomicBool::new(true)),
         };
         engine.spawn_storage_listener().await;
 
         {
-            let uzu_backend = UzuBackend::new();
+            let uzu_backend = UzuLlmBackend::new();
             let uzu_backend_identifier = uzu_backend.identifier();
             let uzu_backend_version = uzu_backend.version();
 
@@ -126,6 +139,7 @@ impl Engine {
                     version: uzu_backend_version.clone(),
                 }],
                 include_traces: false,
+                cache_path: storage_cache_path,
             };
             let mirai_registry = Box::new(MiraiRegistry::new(mirai_registry_config)?);
 
@@ -134,11 +148,19 @@ impl Engine {
 
             if let Some(lalamo_path) = config.lalamo_path {
                 let lalamo_registry = LocalRegistry::new(LocalRegistryConfig::lalamo(
-                    uzu_backend_identifier,
-                    uzu_backend_version,
+                    uzu_backend_identifier.clone(),
+                    uzu_backend_version.clone(),
                     lalamo_path,
                 ))?;
                 engine.add_registry(Box::new(lalamo_registry)).await?;
+            }
+            if let Some(local_path) = config.local_path {
+                let local_registry = LocalRegistry::new(LocalRegistryConfig::local(
+                    uzu_backend_identifier.clone(),
+                    uzu_backend_version.clone(),
+                    local_path,
+                ))?;
+                engine.add_registry(Box::new(local_registry)).await?;
             }
         }
 
@@ -174,10 +196,7 @@ impl Engine {
             openai_configs.push(OpenAIConfig::openrouter(openrouter_api_key));
         }
         for config in openai_configs {
-            let registry = OpenAIRegistry::new(config.clone())?;
-            let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;
-            engine.add_registry(Box::new(registry)).await?;
-            engine.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
+            engine.connect_openai(config).await?;
         }
 
         Ok(engine)
@@ -219,6 +238,34 @@ impl Engine {
         backend: Arc<dyn Backend>,
     ) {
         self.backends.lock().await.insert(backend.identifier(), backend);
+    }
+
+    /// Register (or replace) an OpenAI-compatible provider's registry *and*
+    /// execution backend in one step, so a model connected at runtime is
+    /// immediately usable — `add_registry` alone leaves `chat` failing with
+    /// `BackendNotFound` until restart. Mirrors the provider setup `Engine::new`
+    /// does at startup. The registry and backend are constructed *before* any
+    /// existing provider is dropped, so an invalid config leaves it untouched.
+    pub async fn connect_openai(
+        &self,
+        config: OpenAIConfig,
+    ) -> Result<(), EngineError> {
+        let registry = OpenAIRegistry::new(config.clone())?;
+        let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;
+        let identifier = registry.indentifier();
+        self.registry.lock().await.remove(&identifier)?;
+        self.add_registry(Box::new(registry)).await?;
+        self.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
+        Ok(())
+    }
+
+    /// Enable or disable anonymous usage telemetry at runtime (e.g. from a
+    /// privacy toggle). Affects download-event reporting; defaults to enabled.
+    pub fn set_usage_reporting(
+        &self,
+        enabled: bool,
+    ) {
+        self.report_usage.store(enabled, Ordering::Relaxed);
     }
 }
 
@@ -555,6 +602,7 @@ impl Engine {
         let mut stream = self.storage_subscribe().await;
         let callback = self.callback.clone();
         let telemetry = self.telemetry.lock().await.clone();
+        let report_usage = self.report_usage.clone();
         tokio::spawn(async move {
             let mut last_phase: HashMap<String, DownloadPhase> = HashMap::new();
             while let Some(update) = stream.next().await {
@@ -575,7 +623,9 @@ impl Engine {
                     },
                     _ => None,
                 };
-                if let Some(event) = event {
+                if let Some(event) = event
+                    && report_usage.load(Ordering::Relaxed)
+                {
                     telemetry.report(event);
                 }
                 if let Some(callback) = callback.lock().await.as_ref().cloned() {

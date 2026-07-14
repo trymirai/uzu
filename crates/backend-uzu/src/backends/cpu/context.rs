@@ -28,13 +28,6 @@ impl Context for CpuContext {
         }))
     }
 
-    fn recommended_async_batch_size(
-        &self,
-        _model_path: &Path,
-    ) -> Result<usize, CpuError> {
-        Ok(1)
-    }
-
     fn create_buffer(
         &self,
         size: usize,

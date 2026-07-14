@@ -120,7 +120,7 @@ final class ChatModel {
                                 
                                 self.messages[idx].reasoning = reply.message.reasoning()?.trimmingCharacters(in: .whitespacesAndNewlines)
                                 self.messages[idx].content = (reply.message.text() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                                self.messages[idx].stats = MessageStats(stats: reply.stats)
+                                self.messages[idx].stats = ReplyStats(stats: reply.stats)
                             }
                         }
                     case .error(let error):

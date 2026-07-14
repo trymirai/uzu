@@ -17,7 +17,7 @@ maturin = { provider = "uv", version = "1.13.1" }
 [targets."aarch64-apple-darwin"]
 backend = "metal"
 aliases = ["apple", "macos"]
-capabilities_supported = ["grammar", "tracing", "cli"]
+capabilities_supported = ["grammar", "cli"]
 capabilities_default = ["grammar", "cli"]
 required_envs = ["MACOSX_DEPLOYMENT_TARGET"]
 
@@ -31,14 +31,14 @@ required_envs = ["MACOSX_DEPLOYMENT_TARGET"]
 [targets."aarch64-apple-ios"]
 backend = "metal"
 aliases = ["apple", "ios"]
-capabilities_supported = ["grammar", "tracing", "cli"]
+capabilities_supported = ["grammar", "cli"]
 capabilities_default = ["grammar", "cli"]
 required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-apple-ios-sim"]
 backend = "metal"
 aliases = ["apple", "ios-sim", "ios-simulator"]
-capabilities_supported = ["grammar", "tracing", "cli"]
+capabilities_supported = ["grammar", "cli"]
 capabilities_default = ["grammar", "cli"]
 required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
 
@@ -68,7 +68,7 @@ capabilities_default = ["grammar", "cli"]
 
 [targets."wasm32-wasip1-threads"]
 backend = "cpu"
-aliases = ["wasm"]
+aliases = ["wasi"]
 capabilities_supported = []
 capabilities_default = []
 

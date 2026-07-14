@@ -1,4 +1,3 @@
-use super::MoeExpertsTwoPassArguments;
 use crate::{
     array::size_for_shape,
     backends::common::{
@@ -10,6 +9,7 @@ use crate::{
         },
     },
     data_type::DataType,
+    encodable_block::mlp::moe::experts_two_pass_prefill::MoeExpertsTwoPassArguments,
 };
 
 pub struct MoeExpertsTwoPassDecodeBlock<B: Backend> {

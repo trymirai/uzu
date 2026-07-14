@@ -2,9 +2,13 @@ use bytemuck::Pod;
 use half::{bf16, f16};
 use num_traits::NumCast;
 
+#[cfg(test)]
 use crate::data_type::DataType;
 
+// TODO: remove this
+
 pub trait ArrayElement: NumCast + Pod {
+    #[cfg(test)]
     fn data_type() -> DataType;
 }
 
@@ -12,6 +16,7 @@ macro_rules! impl_array_element {
     ($($type:ty => $variant:ident),+ $(,)?) => {
         $(
             impl ArrayElement for $type {
+                #[cfg(test)]
                 fn data_type() -> DataType {
                     DataType::$variant
                 }

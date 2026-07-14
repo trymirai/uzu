@@ -22,15 +22,12 @@ use super::{
     kernel,
     metal_extensions::{DeviceExt, LibraryPipelineExtensions},
 };
-use crate::{
-    backends::{
-        common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
-        metal::{
-            command_buffer::MetalCommandBufferInitial,
-            sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
-        },
+use crate::backends::{
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
+    metal::{
+        command_buffer::MetalCommandBufferInitial,
+        sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
     },
-    utils::model_size::ModelSize,
 };
 
 pub struct MetalContext {
@@ -41,7 +38,6 @@ pub struct MetalContext {
     timeline_value: AtomicU64,
     allocator: Rc<Allocator<Metal>>,
     peak_memory_usage: RefCell<usize>,
-    gpu_core_count: u32,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: RefCell<MetalSparseHeapPool>,
@@ -136,7 +132,6 @@ impl Context for MetalContext {
 
         let gpu_core_count = device.gpu_core_count();
         let device_tier = device_tier_for_device(gpu_core_count, device.as_ref());
-
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = Metal::ALLOCATION_GRANULARITY;
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
@@ -152,7 +147,6 @@ impl Context for MetalContext {
             timeline_value: AtomicU64::new(0),
             allocator: Allocator::new(weak_self.clone()),
             peak_memory_usage: RefCell::new(0),
-            gpu_core_count,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
             sparse_heap_pool: RefCell::new(sparse_pool),
@@ -161,22 +155,6 @@ impl Context for MetalContext {
             #[cfg(test)]
             timeline_shared_event,
         }))
-    }
-
-    fn recommended_async_batch_size(
-        &self,
-        model_path: &Path,
-    ) -> Result<usize, MetalError> {
-        let cores = self.gpu_core_count;
-        let model_size = ModelSize::from_path(model_path)?;
-        Ok(match (model_size, cores) {
-            (ModelSize::Large, c) if c > 20 => 32,
-            (ModelSize::Large, c) if c > 10 => 16,
-            (ModelSize::Large, _) => 8,
-            (ModelSize::Small, c) if c > 20 => 256,
-            (ModelSize::Small, c) if c > 10 => 128,
-            (ModelSize::Small, _) => 64,
-        })
     }
 
     fn create_buffer(

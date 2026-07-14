@@ -1,14 +1,17 @@
-use std::pin::Pin;
+use std::{collections::HashMap, convert::Infallible, pin::Pin};
 
-use crate::{
-    traits::backend::{Error, Instance as InstanceTrait},
-    types::session::classification::{ClassificationMessage, ClassificationOutput},
-};
+use crate::traits::backend::{Error, Instance as InstanceTrait};
+
+pub struct ClassifierOutput {
+    pub logits: Vec<f32>,
+    pub probabilities: HashMap<String, f32>,
+}
 
 pub type Config = ();
 pub type StreamConfig = ();
-pub type StreamInput = Vec<ClassificationMessage>;
-pub type StreamOutput = ClassificationOutput;
+pub type StreamInput = Vec<u64>;
+pub type StreamOutput = ClassifierOutput;
+pub type StreamMetrics = Option<Infallible>;
 
 pub trait Backend: Send + Sync {
     fn instance(
@@ -19,11 +22,21 @@ pub trait Backend: Send + Sync {
 }
 
 pub trait Instance:
-    InstanceTrait<StreamConfig = StreamConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
+    InstanceTrait<
+        StreamConfig = StreamConfig,
+        StreamInput = StreamInput,
+        StreamOutput = StreamOutput,
+        StreamMetrics = StreamMetrics,
+    >
 {
 }
 
 impl<T> Instance for T where
-    T: InstanceTrait<StreamConfig = StreamConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
+    T: InstanceTrait<
+            StreamConfig = StreamConfig,
+            StreamInput = StreamInput,
+            StreamOutput = StreamOutput,
+            StreamMetrics = StreamMetrics,
+        >
 {
 }

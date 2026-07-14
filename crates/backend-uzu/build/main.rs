@@ -53,13 +53,11 @@ async fn main() -> anyhow::Result<()> {
 
     let enum_paths = EnumPaths::from_gpu_types(&gpu_types).context("Failed to build enum path map")?;
 
-    #[allow(unused_mut)]
-    let mut compilers: Vec<Box<dyn Compiler>> = vec![Box::new(cpu::CpuCompiler::new()?)];
-
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    if metal_backend {
-        compilers.push(Box::new(metal::MetalCompiler::new()?));
-    }
+    let compilers: Vec<Box<dyn Compiler>> = vec![
+        Box::new(cpu::CpuCompiler::new()?),
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        Box::new(metal::MetalCompiler::new()?),
+    ];
 
     let backends_kernels = try_join_all(compilers.iter().map(|c| c.build(&gpu_types, &enum_paths))).await?;
 

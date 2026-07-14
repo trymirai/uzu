@@ -16,7 +16,6 @@ default = ["backend-metal", "capability-grammar", "capability-cli"]
 backend-cpu = []
 backend-metal = ["backend-uzu/metal"]
 capability-grammar = ["backend-uzu/grammar"]
-capability-tracing = ["backend-uzu/tracing"]
 capability-cli = ["dep:iocraft", "dep:indoc"]
 bindings = [
     "bindings-uniffi",
@@ -62,8 +61,10 @@ bindings-wasm = [
 bindings-types.workspace = true
 bindings.workspace = true
 backend-uzu.workspace = true
+kiban.workspace = true
 shoji.workspace = true
 anyhow.workspace = true
+bitflags.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
 rodio.workspace = true
@@ -89,8 +90,8 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 futures.workspace = true
-tokio.workspace = true
-tokio-stream.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-stream = { workspace = true, features = ["full"] }
 dirs.workspace = true
 sysinfo.workspace = true
 reqwest.workspace = true

@@ -1,4 +1,11 @@
+use tokenizers::Tokenizer;
+
+mod classification;
+mod util;
+
 pub mod chat;
+
+pub use classification::encoding::ClassificationEncoding;
 
 pub trait Encoding {
     type Config;
@@ -25,4 +32,6 @@ pub trait Encoding {
         &mut self,
         value: Self::Output,
     ) -> Result<(), Self::Error>;
+
+    fn tokenizer(&self) -> Option<&Tokenizer>;
 }

@@ -125,7 +125,7 @@ struct SimdgroupMmaCore {
       }
 
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      accumulator.multiply_accumulate(a_shared, b_shared);
+      accumulator.matmul(a_shared, b_shared);
 
       loader_a.next();
       loader_b.next();
@@ -142,7 +142,7 @@ struct SimdgroupMmaCore {
       loader_b.load_safe(last_tile_dimensions_b);
 
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      accumulator.multiply_accumulate(a_shared, b_shared);
+      accumulator.matmul(a_shared, b_shared);
     }
   }
 

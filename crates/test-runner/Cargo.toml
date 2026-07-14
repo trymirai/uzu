@@ -18,10 +18,10 @@ nightly-harness = []
 [dependencies]
 criterion.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
-# for getting gpu temperature
-macmon.workspace = true
-
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2 = { workspace = true, optional = true }
 objc2-foundation = { workspace = true, optional = true }
+
+# GPU temperature for bench cooldown; keisoku is Apple-only.
+[target.'cfg(target_vendor = "apple")'.dependencies]
+keisoku.workspace = true

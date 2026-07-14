@@ -10,6 +10,8 @@ pub use capabilities::ChatModelCapabilities;
 pub use config::ChatConfig;
 pub use content_block::{ChatContentBlock, ChatContentBlockType};
 pub use message::{ChatMessage, ChatMessageList, ChatMessageMetadata};
-pub use reply::{ChatReply, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats};
+pub use reply::{
+    ChatReply, ChatReplyConfig, ChatReplyFinishReason, ChatReplyPowerStats, ChatReplySpeculatorStats, ChatReplyStats,
+};
 pub use role::ChatRole;
 pub use speculation_preset::ChatSpeculationPreset;

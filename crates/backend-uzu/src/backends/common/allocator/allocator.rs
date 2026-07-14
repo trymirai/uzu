@@ -5,12 +5,11 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use crate::{
-    array::ArrayElement,
-    backends::common::{
-        AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, BufferRangeMut, BufferRangeRef, Context, DenseBuffer,
-        allocator::{RangeAllocationType, RangeAllocator},
-    },
+use bytemuck::{AnyBitPattern, NoUninit};
+
+use crate::backends::common::{
+    AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, BufferRangeMut, BufferRangeRef, Context, DenseBuffer,
+    allocator::{RangeAllocationType, RangeAllocator},
 };
 
 pub struct Allocation<B: Backend> {
@@ -21,25 +20,37 @@ pub struct Allocation<B: Backend> {
 }
 
 impl<B: Backend> Allocation<B> {
-    pub fn copyin<T: ArrayElement>(
-        &mut self,
-        data: &[T],
-    ) {
+    pub fn size(&self) -> usize {
+        self.range.len()
+    }
+
+    pub fn as_slice_mut<T: NoUninit + AnyBitPattern>(&mut self) -> &mut [T] {
         let buffer_range = self.as_buffer_range_mut();
         let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
         let bytes = unsafe {
             std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), range.len())
         };
-        bytemuck::cast_slice_mut::<u8, T>(bytes).copy_from_slice(data);
+        bytemuck::cast_slice_mut(bytes)
     }
 
-    pub fn copyout<T: ArrayElement>(&self) -> Vec<T> {
+    pub fn copyin<T: NoUninit + AnyBitPattern>(
+        &mut self,
+        data: &[T],
+    ) {
+        self.as_slice_mut().copy_from_slice(data);
+    }
+
+    pub fn as_slice<T: AnyBitPattern>(&self) -> &[T] {
         let buffer_range = self.as_buffer_range_ref();
         let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
         let bytes = unsafe {
             std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len())
         };
-        bytemuck::cast_slice(bytes).to_vec()
+        bytemuck::cast_slice(bytes)
+    }
+
+    pub fn copyout<T: AnyBitPattern>(&self) -> Vec<T> {
+        self.as_slice().to_vec()
     }
 }
 

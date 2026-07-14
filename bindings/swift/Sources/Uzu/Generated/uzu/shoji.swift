@@ -1169,6 +1169,130 @@ public func FfiConverterTypeChatReplyConfig_lower(_ value: ChatReplyConfig) -> R
 }
 
 
+public struct ChatReplyPowerStats: Equatable, Hashable, Codable {
+    public var samplesCount: Int64
+    public var averageCpuWatts: Double
+    public var averageGpuWatts: Double
+    public var averageAneWatts: Double
+    public var averageRamWatts: Double
+    public var averageTotalWatts: Double
+    public var energyJoules: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(samplesCount: Int64, averageCpuWatts: Double, averageGpuWatts: Double, averageAneWatts: Double, averageRamWatts: Double, averageTotalWatts: Double, energyJoules: Double) {
+        self.samplesCount = samplesCount
+        self.averageCpuWatts = averageCpuWatts
+        self.averageGpuWatts = averageGpuWatts
+        self.averageAneWatts = averageAneWatts
+        self.averageRamWatts = averageRamWatts
+        self.averageTotalWatts = averageTotalWatts
+        self.energyJoules = energyJoules
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ChatReplyPowerStats: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChatReplyPowerStats: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatReplyPowerStats {
+        return
+            try ChatReplyPowerStats(
+                samplesCount: FfiConverterInt64.read(from: &buf), 
+                averageCpuWatts: FfiConverterDouble.read(from: &buf), 
+                averageGpuWatts: FfiConverterDouble.read(from: &buf), 
+                averageAneWatts: FfiConverterDouble.read(from: &buf), 
+                averageRamWatts: FfiConverterDouble.read(from: &buf), 
+                averageTotalWatts: FfiConverterDouble.read(from: &buf), 
+                energyJoules: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ChatReplyPowerStats, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.samplesCount, into: &buf)
+        FfiConverterDouble.write(value.averageCpuWatts, into: &buf)
+        FfiConverterDouble.write(value.averageGpuWatts, into: &buf)
+        FfiConverterDouble.write(value.averageAneWatts, into: &buf)
+        FfiConverterDouble.write(value.averageRamWatts, into: &buf)
+        FfiConverterDouble.write(value.averageTotalWatts, into: &buf)
+        FfiConverterDouble.write(value.energyJoules, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatReplyPowerStats_lift(_ buf: RustBuffer) throws -> ChatReplyPowerStats {
+    return try FfiConverterTypeChatReplyPowerStats.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatReplyPowerStats_lower(_ value: ChatReplyPowerStats) -> RustBuffer {
+    return FfiConverterTypeChatReplyPowerStats.lower(value)
+}
+
+
+public struct ChatReplySpeculatorStats: Equatable, Hashable, Codable {
+    public var tokensPerForwardPass: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(tokensPerForwardPass: Double) {
+        self.tokensPerForwardPass = tokensPerForwardPass
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ChatReplySpeculatorStats: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChatReplySpeculatorStats: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatReplySpeculatorStats {
+        return
+            try ChatReplySpeculatorStats(
+                tokensPerForwardPass: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ChatReplySpeculatorStats, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.tokensPerForwardPass, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatReplySpeculatorStats_lift(_ buf: RustBuffer) throws -> ChatReplySpeculatorStats {
+    return try FfiConverterTypeChatReplySpeculatorStats.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatReplySpeculatorStats_lower(_ value: ChatReplySpeculatorStats) -> RustBuffer {
+    return FfiConverterTypeChatReplySpeculatorStats.lower(value)
+}
+
+
 public struct ChatReplyStats: Equatable, Hashable, Codable {
     public var duration: Double
     public var timeToFirstToken: Double?
@@ -1176,16 +1300,22 @@ public struct ChatReplyStats: Equatable, Hashable, Codable {
     public var generateTokensPerSecond: Double?
     public var tokensCountInput: UInt32?
     public var tokensCountOutput: UInt32?
+    public var memoryUsedBytes: Int64?
+    public var speculatorStats: ChatReplySpeculatorStats?
+    public var powerStats: ChatReplyPowerStats?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(duration: Double, timeToFirstToken: Double?, prefillTokensPerSecond: Double?, generateTokensPerSecond: Double?, tokensCountInput: UInt32?, tokensCountOutput: UInt32?) {
+    public init(duration: Double, timeToFirstToken: Double?, prefillTokensPerSecond: Double?, generateTokensPerSecond: Double?, tokensCountInput: UInt32?, tokensCountOutput: UInt32?, memoryUsedBytes: Int64?, speculatorStats: ChatReplySpeculatorStats?, powerStats: ChatReplyPowerStats?) {
         self.duration = duration
         self.timeToFirstToken = timeToFirstToken
         self.prefillTokensPerSecond = prefillTokensPerSecond
         self.generateTokensPerSecond = generateTokensPerSecond
         self.tokensCountInput = tokensCountInput
         self.tokensCountOutput = tokensCountOutput
+        self.memoryUsedBytes = memoryUsedBytes
+        self.speculatorStats = speculatorStats
+        self.powerStats = powerStats
     }
 
     
@@ -1217,7 +1347,10 @@ public struct FfiConverterTypeChatReplyStats: FfiConverterRustBuffer {
                 prefillTokensPerSecond: FfiConverterOptionDouble.read(from: &buf), 
                 generateTokensPerSecond: FfiConverterOptionDouble.read(from: &buf), 
                 tokensCountInput: FfiConverterOptionUInt32.read(from: &buf), 
-                tokensCountOutput: FfiConverterOptionUInt32.read(from: &buf)
+                tokensCountOutput: FfiConverterOptionUInt32.read(from: &buf), 
+                memoryUsedBytes: FfiConverterOptionInt64.read(from: &buf), 
+                speculatorStats: FfiConverterOptionTypeChatReplySpeculatorStats.read(from: &buf), 
+                powerStats: FfiConverterOptionTypeChatReplyPowerStats.read(from: &buf)
         )
     }
 
@@ -1228,6 +1361,9 @@ public struct FfiConverterTypeChatReplyStats: FfiConverterRustBuffer {
         FfiConverterOptionDouble.write(value.generateTokensPerSecond, into: &buf)
         FfiConverterOptionUInt32.write(value.tokensCountInput, into: &buf)
         FfiConverterOptionUInt32.write(value.tokensCountOutput, into: &buf)
+        FfiConverterOptionInt64.write(value.memoryUsedBytes, into: &buf)
+        FfiConverterOptionTypeChatReplySpeculatorStats.write(value.speculatorStats, into: &buf)
+        FfiConverterOptionTypeChatReplyPowerStats.write(value.powerStats, into: &buf)
     }
 }
 
@@ -4978,6 +5114,54 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeChatReplyPowerStats: FfiConverterRustBuffer {
+    typealias SwiftType = ChatReplyPowerStats?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeChatReplyPowerStats.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeChatReplyPowerStats.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeChatReplySpeculatorStats: FfiConverterRustBuffer {
+    typealias SwiftType = ChatReplySpeculatorStats?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeChatReplySpeculatorStats.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeChatReplySpeculatorStats.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

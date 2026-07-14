@@ -177,3 +177,30 @@ fn gemv_fp_output_transforms_bf16() {
         check_case::<bf16>(&context, &mut kernel, None, case, 1.0);
     }
 }
+
+#[uzu_test]
+fn small_m_tiles_parity() {
+    use crate::tests::matmul::Shape;
+    let context = MetalContext::new().expect("Metal context");
+    let mut bf16_kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulKernel");
+    let mut f32_kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        f32::data_type(),
+        f32::data_type(),
+        f32::data_type(),
+    )
+    .expect("MatmulKernel");
+
+    for path in gemm_paths_for_hw(&context) {
+        for shape in [Shape::new(8, 256, 256), Shape::new(8, 512, 256)] {
+            check_case::<bf16>(&context, &mut bf16_kernel, Some(path), Case::new(shape), 1.0);
+            check_case::<f32>(&context, &mut f32_kernel, Some(path), Case::new(shape), 0.01);
+        }
+    }
+}

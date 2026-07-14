@@ -63,8 +63,7 @@ indexmap.workspace = true
 reqwest.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
-tokio.workspace = true
-tokio-stream.workspace = true
+tokio = { workspace = true, features = ["full"] }
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }
@@ -79,6 +78,9 @@ tsify = { workspace = true, optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 uuid.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
+keisoku.workspace = true
 
 [build-dependencies]
 napi-build = { workspace = true, optional = true }

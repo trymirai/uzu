@@ -5,14 +5,17 @@ use num_traits::Float;
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
-use super::{AttentionGemmArguments, AttentionGemmBlock};
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Allocation, Backend, Context, Encoder},
+        common::{Backend, Context, Encoder, Kernels, kernel::attention_gemm::AttentionGemmCore},
         cpu::Cpu,
     },
     data_type::DataType,
+    encodable_block::mixer::attention::{
+        core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments, AttentionCores},
+        state::AttentionStateType,
+    },
     tests::{
         assert::assert_eq_float,
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
@@ -40,22 +43,19 @@ fn get_test_data<T: ArrayElement + Float>(
     head_dim: usize,
     do_causal: bool,
 ) -> (Input<T>, Vec<T>) {
-    // queries: [num_heads, suffix_length, head_dim] (contiguous, row-major)
     let q_size = num_heads * suffix_length * head_dim;
     let mut queries = vec![T::zero(); q_size];
     for i in 0..q_size {
         queries[i] = T::from((i as f32 * 0.13 + 0.5).sin() * 0.5).unwrap();
     }
 
-    // keys: [num_kv_heads, sequence_length, head_dim]
-    let k_size = num_kv_heads * sequence_length * head_dim;
+    let k_size = sequence_length * num_kv_heads * head_dim;
     let mut keys = vec![T::zero(); k_size];
     for i in 0..k_size {
         keys[i] = T::from((i as f32 * 0.07 + 1.0).cos() * 0.5).unwrap();
     }
 
-    // values: [num_kv_heads, sequence_length, head_dim]
-    let v_size = num_kv_heads * sequence_length * head_dim;
+    let v_size = sequence_length * num_kv_heads * head_dim;
     let mut values = vec![T::zero(); v_size];
     for i in 0..v_size {
         values[i] = T::from((i as f32 * 0.11 + 2.0).sin() * 0.5).unwrap();
@@ -83,43 +83,57 @@ fn get_test_data<T: ArrayElement + Float>(
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let block = AttentionGemmBlock::<B>::new(T::data_type());
+    let new_arguments = AttentionCoreNewArguments {
+        head_dim: input.head_dim,
+        num_groups: input.num_kv_heads,
+        num_q_heads: input.num_heads,
+        has_sinks: false,
+        is_kv_cache_ring: false,
+        is_causal: input.do_causal,
+        is_trie: false,
+        sliding_window_size: None,
+        scale: Some(input.scale),
+        data_type: T::data_type(),
+    };
 
     let queries_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.queries);
     let keys_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.keys);
     let values_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.values);
 
-    let output_size = input.suffix_length * input.num_heads * input.head_dim;
-    let mut output_allocation = alloc_allocation::<B, T>(context.as_ref(), output_size);
-
     let segment_prefix_length = input.sequence_length - input.suffix_length;
+    let state_type = AttentionStateType::Full {
+        length: segment_prefix_length,
+    };
 
-    let args = AttentionGemmArguments::<B, Allocation<B>> {
+    let args = AttentionCoreEncodeArguments {
         queries: &queries_allocation,
         keys: &keys_allocation,
         values: &values_allocation,
-        output: &mut output_allocation,
+        suffix_length: input.suffix_length,
         trie: None,
         sinks: None,
-        num_heads: input.num_heads,
-        num_groups: input.num_kv_heads,
-        suffix_length: input.suffix_length,
-        sequence_length: input.sequence_length,
-        segment_prefix_length,
-        ring_params: None,
-        head_dim: input.head_dim,
-        sliding_window_size: None,
-        is_causal: input.do_causal,
-        scale: input.scale,
-        k_head_stride: (input.sequence_length * input.head_dim) as u64,
-        k_seq_stride: input.head_dim as u64,
-        v_head_stride: (input.sequence_length * input.head_dim) as u64,
-        v_seq_stride: input.head_dim as u64,
+        state_type: &state_type,
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    block.encode(&mut encoder, args).expect("Failed to encode AttentionGemm");
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let pooled_output =
+        if <<B as Backend>::Kernels as Kernels>::AttentionGemmCore::is_supported(&new_arguments, context.as_ref())
+            .expect("Failed to query AttentionGemm support")
+        {
+            let core = <<B as Backend>::Kernels as Kernels>::AttentionGemmCore::new(context.as_ref(), &new_arguments)
+                .expect("Failed to create AttentionGemmCore");
+            core.encode(args, &mut encoder).expect("Failed to encode AttentionGemm")
+        } else {
+            let core =
+                AttentionCores::<B>::new(new_arguments, context.as_ref()).expect("Failed to create AttentionCore");
+            core.encode(args, &mut encoder).expect("Failed to encode AttentionCore")
+        };
+    let mut output_allocation =
+        alloc_allocation::<B, T>(context.as_ref(), input.suffix_length * input.num_heads * input.head_dim);
+    encoder.encode_copy(&pooled_output, .., &mut output_allocation, ..);
+    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+    drop(pooled_output);
+    drop(completed);
 
     allocation_to_vec::<B, T>(&output_allocation)
 }
@@ -151,31 +165,25 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 fn test_basic<T: ArrayElement + Float + Debug + Display>() {
-    // Non-causal, single token
     let (input, expected) = get_test_data::<T>(4, 4, 8, 1, 64, false);
     test_internal(&input, &expected);
 
-    // Non-causal, multiple tokens
     let (input, expected) = get_test_data::<T>(4, 4, 8, 4, 64, false);
     test_internal(&input, &expected);
 }
 
 fn test_causal<T: ArrayElement + Float + Debug + Display>() {
-    // Causal, single token decode
     let (input, expected) = get_test_data::<T>(4, 4, 16, 1, 64, true);
     test_internal(&input, &expected);
 
-    // Causal, multi-token prefill
     let (input, expected) = get_test_data::<T>(4, 4, 8, 4, 64, true);
     test_internal(&input, &expected);
 }
 
 fn test_gqa<T: ArrayElement + Float + Debug + Display>() {
-    // GQA: 8 query heads, 2 kv heads
     let (input, expected) = get_test_data::<T>(8, 2, 8, 1, 64, false);
     test_internal(&input, &expected);
 
-    // GQA causal
     let (input, expected) = get_test_data::<T>(8, 2, 8, 4, 64, true);
     test_internal(&input, &expected);
 }
@@ -186,16 +194,13 @@ fn test_head_dim<T: ArrayElement + Float + Debug + Display>(head_dim: usize) {
 }
 
 fn test_unaligned<T: ArrayElement + Float + Debug + Display>() {
-    // suffix_length not aligned to BQ=32
     let (input, expected) = get_test_data::<T>(4, 4, 40, 7, 64, true);
     test_internal(&input, &expected);
 
-    // sequence_length not aligned to BK
     let (input, expected) = get_test_data::<T>(4, 4, 13, 4, 64, false);
     test_internal(&input, &expected);
 }
 
-// Basic tests
 #[uzu_test]
 fn test_basic_f32() {
     test_basic::<f32>();
@@ -211,7 +216,6 @@ fn test_basic_bf16() {
     test_basic::<bf16>();
 }
 
-// Causal tests
 #[uzu_test]
 fn test_causal_f32() {
     test_causal::<f32>();
@@ -227,7 +231,6 @@ fn test_causal_bf16() {
     test_causal::<bf16>();
 }
 
-// GQA tests
 #[uzu_test]
 fn test_gqa_f32() {
     test_gqa::<f32>();
@@ -243,7 +246,6 @@ fn test_gqa_bf16() {
     test_gqa::<bf16>();
 }
 
-// Head dim 128
 #[uzu_test]
 fn test_head_dim_128_f32() {
     test_head_dim::<f32>(128);
@@ -259,7 +261,6 @@ fn test_head_dim_128_bf16() {
     test_head_dim::<bf16>(128);
 }
 
-// Unaligned tests
 #[uzu_test]
 fn test_unaligned_f32() {
     test_unaligned::<f32>();
@@ -273,4 +274,12 @@ fn test_unaligned_f16() {
 #[uzu_test]
 fn test_unaligned_bf16() {
     test_unaligned::<bf16>();
+}
+
+#[uzu_test]
+fn test_prefill_mxu() {
+    let (input, expected) = get_test_data::<f16>(4, 4, 128, 128, 64, true);
+    test_internal(&input, &expected);
+    let (input, expected) = get_test_data::<bf16>(8, 2, 100, 96, 128, true);
+    test_internal(&input, &expected);
 }

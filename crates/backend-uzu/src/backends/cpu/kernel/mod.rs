@@ -1,20 +1,18 @@
+use std::convert::Infallible;
+
 use crate::backends::{common::Kernels, cpu::Cpu};
 
 mod activation;
 mod attention;
-mod audio;
-mod delta_net;
 mod embedding;
 mod gated_act_mul;
+mod gdn;
 mod hadamard_transform;
-mod kv_cache_update;
-mod layer_norm;
 mod logit_soft_cap;
 mod matmul;
 mod moe;
+mod normalization;
 mod pooling;
-mod rms_norm;
-mod rope;
 mod sampling;
 mod short_conv;
 mod softmax;
@@ -33,5 +31,7 @@ impl Kernels for CpuKernels {
     type Backend = Cpu;
 
     autogen_kernels!();
+    type AttentionGemmCore = Infallible;
+    type DeltaNetChunkedPrefill = Infallible;
     type MatmulKernel = matmul::MatmulCpuKernel;
 }
