@@ -256,7 +256,15 @@ impl Session {
                 } => Some(ToolCallState::Candidate(value.json.clone())),
                 _ => None,
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        let finish_reason = if let Some(ChatReplyFinishReason::Stop) = finish_reason
+            && !tool_calls.is_empty()
+        {
+            Some(ChatReplyFinishReason::ToolCalls)
+        } else {
+            finish_reason
+        };
 
         Output {
             reasoning: message.reasoning(),

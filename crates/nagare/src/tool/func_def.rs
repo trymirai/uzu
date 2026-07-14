@@ -6,9 +6,50 @@ pub type FutureFunction = dyn Fn(Option<Value>) -> Pin<Box<dyn Future<Output = O
 
 #[derive(Clone)]
 pub struct ToolFunctionDefinition {
-    pub name: String,
-    pub description: String,
-    pub parameters: Option<Value>,
-    pub return_def: Option<Value>,
-    pub func: Arc<FutureFunction>,
+    name: String,
+    description: String,
+    parameters: Option<Value>,
+    return_definition: Option<Value>,
+    func: Arc<FutureFunction>,
+}
+
+impl ToolFunctionDefinition {
+    pub fn new(
+        name: String,
+        description: String,
+        parameters: Option<Value>,
+        return_definition: Option<Value>,
+        func: Box<FutureFunction>,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            parameters,
+            return_definition,
+            func: Arc::new(func),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    pub fn parameters(&self) -> &Option<Value> {
+        &self.parameters
+    }
+
+    pub fn return_definition(&self) -> &Option<Value> {
+        &self.return_definition
+    }
+
+    pub async fn execute(
+        &self,
+        args: Option<Value>,
+    ) -> Option<Value> {
+        (self.func)(args).await
+    }
 }

@@ -16,14 +16,14 @@ use shoji::{
     types::{
         basic::{CancelToken, ToolCall, Value},
         model::{Model, ModelSpecialization},
-        session::chat::{ChatConfig, ChatMessage, ChatReply, ChatReplyConfig},
+        session::chat::{ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatRole},
     },
 };
 use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     telemetry::{Telemetry, TelemetryEvent},
-    tool::registry::ToolRegistry,
+    tool::{func_def::ToolFunctionDefinition, registry::ToolRegistry},
 };
 
 #[bindings::export(Enumeration)]
@@ -96,7 +96,7 @@ pub struct ChatSession {
     messages: Arc<Mutex<Vec<ChatMessage>>>,
     model_id: String,
     telemetry: Telemetry,
-    tool_registry: Option<ToolRegistry>,
+    tool_registry: Option<Arc<Mutex<ToolRegistry>>>,
 }
 
 impl ChatSession {
@@ -138,12 +138,43 @@ impl ChatSession {
             messages: Arc::new(Mutex::new(Vec::new())),
             model_id,
             telemetry,
-            tool_registry: supports_tool_calls.then(|| ToolRegistry::new()),
+            tool_registry: supports_tool_calls.then(|| Arc::new(Mutex::new(ToolRegistry::new()))),
         })
     }
 
     pub async fn peak_memory_usage(&self) -> Option<usize> {
         self.instance.lock().await.peak_memory_usage()
+    }
+
+    pub async fn add_tool_functions(
+        &mut self,
+        definitions: Vec<ToolFunctionDefinition>,
+    ) -> Result<(), ChatSessionError> {
+        if definitions.is_empty() {
+            return Ok(());
+        }
+
+        // re-prefill all history and remove tools definition message for non-empty history
+        {
+            let mut messages = self.messages.lock().await;
+            if !messages.is_empty() {
+                let mut guard = self.instance.lock().await;
+                match &mut *guard {
+                    Instance::Token(session) => session.reset().await?,
+                    Instance::Message(session) => session.reset().await?,
+                };
+                messages.retain(|msg| !contains_tools_definitions(msg))
+            }
+        }
+
+        if let Some(registry) = self.tool_registry.as_mut() {
+            let mut registry_guard = registry.lock().await;
+            for def in definitions {
+                registry_guard.add_function(def)
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -223,6 +254,7 @@ impl ChatSession {
         let telemetry = self.telemetry.clone();
         let model_id = self.model_id.clone();
         let cancel_token = cancel_token_to_return.inner().clone();
+        let tool_registry = self.tool_registry.clone();
 
         tokio::spawn(async move {
             {
@@ -246,6 +278,17 @@ impl ChatSession {
             let all_messages = {
                 let mut messages = messages.lock().await;
                 messages.extend(input);
+
+                // register tools if needed
+                if let Some(registry) = tool_registry {
+                    let namespaces = registry.lock().await.get_namespaces();
+                    if !namespaces.is_empty() && !messages.iter().any(contains_tools_definitions) {
+                        let position = messages.iter().position(|msg| msg.role == ChatRole::System {});
+                        let tools_msg = ChatMessage::developer().with_tool_namespaces(namespaces);
+                        messages.insert(position.map(|pos| pos + 1).unwrap_or(0), tools_msg);
+                    }
+                }
+
                 messages.clone()
             };
 
@@ -342,4 +385,9 @@ fn build_message(output: &BackendOutput) -> ChatMessage {
         };
     }
     message
+}
+
+fn contains_tools_definitions(msg: &ChatMessage) -> bool {
+    msg.role == ChatRole::Developer {}
+        && msg.content.iter().any(|content| matches!(content, ChatContentBlock::Tools { .. }))
 }
