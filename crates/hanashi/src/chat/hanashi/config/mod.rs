@@ -43,6 +43,8 @@ pub enum Config {
     Qwen3Thinking,
     #[serde(rename = "qwen3.5")]
     Qwen35,
+    #[serde(rename = "qwen3.6")]
+    Qwen36,
     #[serde(rename = "lfm2")]
     Lfm2,
     #[serde(rename = "lfm2.5-instruct")]
@@ -142,6 +144,7 @@ impl Config {
             Config::Qwen3Instruct => resolve_bundled_config("qwen3-instruct"),
             Config::Qwen3Thinking => resolve_bundled_config("qwen3-thinking"),
             Config::Qwen35 => resolve_bundled_config("qwen3.5"),
+            Config::Qwen36 => resolve_bundled_config("qwen3.6"),
             Config::Lfm2 => resolve_bundled_config("lfm2"),
             Config::Lfm25Instruct => resolve_bundled_config("lfm2.5-instruct"),
             Config::Lfm25Thinking => resolve_bundled_config("lfm2.5-thinking"),

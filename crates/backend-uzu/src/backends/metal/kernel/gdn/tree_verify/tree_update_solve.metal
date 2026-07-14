@@ -1,9 +1,9 @@
 #include <metal_stdlib>
-#include "../common/defines.h"
-#include "../common/dsl.h"
-#include "../matmul/common/fragment.h"
-#include "../matmul/common/mxu_fragment_ops.h"
-#include "../matmul/common/simdgroup_fragment_ops.h"
+#include "../../common/defines.h"
+#include "../../common/dsl.h"
+#include "../../matmul/common/fragment.h"
+#include "../../matmul/common/mxu_fragment_ops.h"
+#include "../../matmul/common/simdgroup_fragment_ops.h"
 
 using namespace metal;
 using namespace uzu::matmul;

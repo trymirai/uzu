@@ -132,7 +132,6 @@ impl Context for MetalContext {
 
         let gpu_core_count = device.gpu_core_count();
         let device_tier = device_tier_for_device(gpu_core_count, device.as_ref());
-
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = Metal::ALLOCATION_GRANULARITY;
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);

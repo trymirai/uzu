@@ -51,5 +51,5 @@ pub(crate) fn tree_update_solve_variant(
 }
 
 #[cfg(test)]
-#[path = "../../../../../tests/unit/backends/metal/tree_update_solve_dispatch_test.rs"]
+#[path = "../../../../../../tests/unit/backends/metal/tree_update_solve_dispatch_test.rs"]
 mod tests;

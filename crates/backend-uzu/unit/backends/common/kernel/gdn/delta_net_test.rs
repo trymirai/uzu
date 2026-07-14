@@ -330,6 +330,7 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
         &context,
         T::data_type(),
         head_k_dim as u32,
+        false,
     )
     .unwrap();
     let prefill_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(
@@ -508,6 +509,7 @@ fn test_delta_net_prefill_prep() {
         &cpu_ctx,
         DataType::F32,
         head_k_dim as u32,
+        false,
     )
     .unwrap();
     let mut cpu_enc = Encoder::new(cpu_ctx.as_ref()).expect("encoder");
@@ -548,6 +550,7 @@ fn test_delta_net_prefill_prep() {
         &context,
         DataType::F32,
         head_k_dim as u32,
+        false,
     )
     .unwrap();
 
@@ -620,6 +623,7 @@ fn bench_delta_net_prefill() {
         &context,
         DataType::F32,
         head_k_dim as u32,
+        false,
     )
     .unwrap();
     let prefill_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(
