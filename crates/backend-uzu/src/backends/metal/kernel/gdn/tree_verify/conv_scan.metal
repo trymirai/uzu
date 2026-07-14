@@ -4,29 +4,24 @@
 
 using namespace metal;
 
-// Applies the short convolution independently along every proposal-tree path.
-//
-// Shapes (T = suffix_len, K = kernel_size):
-//   in_proj     [T, total_proj_dim] T
-//   conv_weight [conv_dim, K] f32
-//   bias        [conv_dim] f32, optional
-//   base_state  [conv_dim, K - 1] f32, read-only
-//   parents     [T] i32
-//   out_proj    [T, total_proj_dim] T
-//   suffix_state [T, conv_dim, K - 1] f32
-//
-// One thread owns one (tree node, projection channel). Convolved channels walk
-// the node's parent chain and then committed history, recording the resulting
-// per-node window for later acceptance. Other projection channels pass through.
+// Applies short convolution along each proposal-tree path and records every
+// node's pending convolution state. Other projection channels pass through.
 template <typename T>
 VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(ConvTreeScan)(
+    // [suffix_len, total_proj_dim]
     device const T* in_proj,
+    // [conv_dim, kernel_size]
     device const float* conv_weight,
+    // [conv_dim]
     device const float* bias OPTIONAL(has_bias),
+    // [conv_dim, kernel_size - 1], read-only
     device const float* base_state,
+    // [suffix_len]
     device const int* parents,
+    // [suffix_len, total_proj_dim]
     device T* out_proj,
+    // [suffix_len, conv_dim, kernel_size - 1]
     device float* suffix_state,
     constant const uint& suffix_len,
     const uint kernel_size SPECIALIZE,
