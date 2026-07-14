@@ -8,7 +8,7 @@ mod token;
 pub use error::Error;
 use shoji::types::{
     basic::{Token, TokenId},
-    session::chat::{ChatContentBlock, ChatMessage},
+    session::chat::{ChatContentBlock, ChatMessage, ChatRole},
 };
 use token_stream_parser::{Parser as _, token_stream::TokenStreamParser};
 use tokenizers::{Tokenizer, step_decode_stream};
@@ -120,6 +120,10 @@ impl EncodingTrait for Encoding {
 
     fn tokenizer(&self) -> Option<&Tokenizer> {
         Some(&self.tokenizer)
+    }
+
+    fn supports_tool_calls(&self) -> bool {
+        self.config.rendering.rendering.contains_key(&ChatRole::Tool {})
     }
 }
 

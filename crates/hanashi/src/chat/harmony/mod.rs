@@ -117,6 +117,10 @@ impl EncodingTrait for Encoding {
     fn tokenizer(&self) -> Option<&Tokenizer> {
         None
     }
+
+    fn supports_tool_calls(&self) -> bool {
+        true
+    }
 }
 
 impl Encoding {

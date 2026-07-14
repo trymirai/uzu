@@ -34,4 +34,6 @@ pub trait Encoding {
     ) -> Result<(), Self::Error>;
 
     fn tokenizer(&self) -> Option<&Tokenizer>;
+
+    fn supports_tool_calls(&self) -> bool;
 }

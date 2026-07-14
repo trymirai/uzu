@@ -266,6 +266,10 @@ impl Session {
             stats: state.get_stats(have_finish_reason),
         }
     }
+
+    pub fn supports_tool_calls(&self) -> bool {
+        self.encoding.supports_tool_calls()
+    }
 }
 
 struct StreamingState<'a> {
