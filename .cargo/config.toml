@@ -1,5 +1,6 @@
 [alias]
 tools = "run --quiet -p cli-tools --"
+collect-metrics = "run --quiet --features collect-metrics -p cli-tools -- collect-metrics"
 
 [env]
 RUST_TEST_THREADS = "1"

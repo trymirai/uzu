@@ -13,7 +13,7 @@ use cli_tools::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
-enum PowerSourceMode {
+enum CollectMetricsSourceMode {
     Registry,
     Local,
 }
@@ -70,12 +70,12 @@ enum Commands {
     Release {
         version: String,
     },
-    /// Measure per-model power and energy consumption across a prefill/generate sweep (macOS only)
-    PowerConsumption {
-        #[arg(long, default_value = "power_consumption.csv")]
+    /// Measure per-model power, energy, and DRAM traffic across a prefill/generate sweep (macOS only)
+    CollectMetrics {
+        #[arg(long, default_value = "metrics.csv")]
         output: PathBuf,
-        #[arg(long, value_enum, default_value_t = PowerSourceMode::Registry)]
-        source: PowerSourceMode,
+        #[arg(long, value_enum, default_value_t = CollectMetricsSourceMode::Registry)]
+        source: CollectMetricsSourceMode,
         #[arg(long)]
         storage: Option<PathBuf>,
         #[arg(long = "model-id")]
@@ -119,10 +119,10 @@ fn run_verify(config: &PlatformsConfig) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "power-consumption")]
-async fn run_power_consumption(
+#[cfg(feature = "collect-metrics")]
+async fn run_collect_metrics(
     output: PathBuf,
-    source: PowerSourceMode,
+    source: CollectMetricsSourceMode,
     storage: Option<PathBuf>,
     model_ids: Vec<String>,
     prefill: Vec<usize>,
@@ -130,10 +130,10 @@ async fn run_power_consumption(
     iterations: usize,
 ) -> Result<()> {
     let source = match source {
-        PowerSourceMode::Registry => cli_tools::power::SourceMode::Registry,
-        PowerSourceMode::Local => cli_tools::power::SourceMode::Local,
+        CollectMetricsSourceMode::Registry => cli_tools::collect_metrics::SourceMode::Registry,
+        CollectMetricsSourceMode::Local => cli_tools::collect_metrics::SourceMode::Local,
     };
-    cli_tools::power::run(cli_tools::power::Options {
+    cli_tools::collect_metrics::run(cli_tools::collect_metrics::Options {
         source,
         storage,
         output,
@@ -145,10 +145,10 @@ async fn run_power_consumption(
     .await
 }
 
-#[cfg(not(feature = "power-consumption"))]
-async fn run_power_consumption(
+#[cfg(not(feature = "collect-metrics"))]
+async fn run_collect_metrics(
     _output: PathBuf,
-    _source: PowerSourceMode,
+    _source: CollectMetricsSourceMode,
     _storage: Option<PathBuf>,
     _model_ids: Vec<String>,
     _prefill: Vec<usize>,
@@ -156,7 +156,7 @@ async fn run_power_consumption(
     _iterations: usize,
 ) -> Result<()> {
     Err(anyhow!(
-        "this binary was built without the `power-consumption` feature; rebuild with `--features power-consumption` on macOS"
+        "this binary was built without the `collect-metrics` feature; rebuild with `--features collect-metrics` on macOS"
     ))
 }
 
@@ -176,7 +176,7 @@ fn language_backend(
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    if let Some(Commands::PowerConsumption {
+    if let Some(Commands::CollectMetrics {
         output,
         source,
         storage,
@@ -186,7 +186,7 @@ async fn main() -> Result<()> {
         iterations,
     }) = cli.command
     {
-        return run_power_consumption(output, source, storage, model_ids, prefill, generate, iterations).await;
+        return run_collect_metrics(output, source, storage, model_ids, prefill, generate, iterations).await;
     }
 
     let config = PlatformsConfig::load()?;
@@ -235,7 +235,7 @@ async fn main() -> Result<()> {
         Some(Commands::Release {
             version,
         }) => run_release(&version)?,
-        Some(Commands::PowerConsumption {
+        Some(Commands::CollectMetrics {
             ..
         }) => unreachable!("handled above"),
         None => {

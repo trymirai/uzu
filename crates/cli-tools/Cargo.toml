@@ -38,7 +38,7 @@ csv = { workspace = true, optional = true }
 tokio-stream = { workspace = true, optional = true }
 
 [features]
-power-consumption = [
+collect-metrics = [
     "dep:backend-uzu",
     "dep:uzu",
     "dep:keisoku",

@@ -29,7 +29,7 @@ const WEIGHT_SEED: u64 = 0;
 const MEMORY_FRACTION: f64 = 0.75;
 const COOLDOWN: Duration = Duration::from_secs(3);
 const FAILURE_COOLDOWN_MULTIPLIER: u32 = 2;
-const REGISTRY_CACHE_DIR: &str = "uzu-power-consumption";
+const REGISTRY_CACHE_DIR: &str = "uzu-collect-metrics";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
