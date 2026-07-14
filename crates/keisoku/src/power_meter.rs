@@ -8,6 +8,10 @@ pub struct PowerReading {
     pub total: Watts,
     pub energy: Joules,
     pub samples: u64,
+    pub dram_read_bytes: Option<u64>,
+    pub dram_write_bytes: Option<u64>,
+    pub dram_read_gbps: Option<f32>,
+    pub dram_write_gbps: Option<f32>,
 }
 
 pub struct PowerMeter {
@@ -41,11 +45,20 @@ mod inner {
     use super::PowerReading;
     use crate::{
         Device, Select,
-        marker::{Ane, Cpu, EnergyRail, Gpu, Ram},
+        marker::{Ane, Cpu, DramBytes, DramHistogram, DramRead, DramWrite, EnergyRail, Gpu, Ram},
         units::{Joules, Watts},
     };
 
-    type Rails = Select![EnergyRail<Cpu>, EnergyRail<Gpu>, EnergyRail<Ane>, EnergyRail<Ram>];
+    type Rails = Select![
+        EnergyRail<Cpu>,
+        EnergyRail<Gpu>,
+        EnergyRail<Ane>,
+        EnergyRail<Ram>,
+        DramBytes<DramRead>,
+        DramBytes<DramWrite>,
+        DramHistogram<DramRead>,
+        DramHistogram<DramWrite>,
+    ];
 
     pub(super) struct Inner {
         handle: Option<crate::device::IntervalHandle<Rails>>,
@@ -82,6 +95,10 @@ mod inner {
                 total: to_watts(total_j),
                 energy: Joules(total_j as f32),
                 samples: 1,
+                dram_read_bytes: Some(sample.get::<DramBytes<DramRead>>().value()),
+                dram_write_bytes: Some(sample.get::<DramBytes<DramWrite>>().value()),
+                dram_read_gbps: Some(sample.get::<DramHistogram<DramRead>>().value()),
+                dram_write_gbps: Some(sample.get::<DramHistogram<DramWrite>>().value()),
             })
         }
     }
@@ -175,6 +192,10 @@ mod inner {
                 total: Watts(total),
                 energy: Joules(accumulator.energy_joules as f32),
                 samples: accumulator.samples,
+                dram_read_bytes: None,
+                dram_write_bytes: None,
+                dram_read_gbps: None,
+                dram_write_gbps: None,
             })
         }
     }

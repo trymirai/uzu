@@ -16,6 +16,10 @@ pub struct Reading {
     pub cpu_watts: f64,
     pub gpu_watts: f64,
     pub ram_watts: f64,
+    pub dram_read_bytes: u64,
+    pub dram_write_bytes: u64,
+    pub dram_read_gbps: f64,
+    pub dram_write_gbps: f64,
 }
 
 pub struct Measurement {
@@ -73,6 +77,10 @@ pub fn run(
         cpu_watts: power.cpu.map(|watts| watts.value() as f64).unwrap_or(0.0),
         gpu_watts: power.gpu.map(|watts| watts.value() as f64).unwrap_or(0.0),
         ram_watts: power.ram.map(|watts| watts.value() as f64).unwrap_or(0.0),
+        dram_read_bytes: power.dram_read_bytes.unwrap_or(0),
+        dram_write_bytes: power.dram_write_bytes.unwrap_or(0),
+        dram_read_gbps: power.dram_read_gbps.map(|gbps| gbps as f64).unwrap_or(0.0),
+        dram_write_gbps: power.dram_write_gbps.map(|gbps| gbps as f64).unwrap_or(0.0),
     });
 
     Ok(Measurement {

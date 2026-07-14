@@ -67,7 +67,7 @@ Both work with random-weight loading because tensor payloads are synthesized det
 --source registry|local       # default: registry
 --storage <DIR>               # optional cache base for registry (default: temp); required for local
 --model-id <ID>               # repeatable exact model ID selector
---prefill 128,512,2048        # prefill token counts
+--prefill 1,2,4,6,8,10,12,16,32,64,128,256  # prefill token counts
 --generate 32,128             # decode token counts
 --iterations 6                # measured iterations per prefill/generate pair
 ```
@@ -94,6 +94,15 @@ uzu-tools power-consumption \
 ```
 
 The CSV includes a `source` column (`registry` or `local`) for each row.
+
+## DRAM columns
+
+Each row also carries DRAM memory-subsystem metrics captured over the same measurement window:
+
+- `dram_read_bytes` / `dram_write_bytes` — total bytes moved (volume). Sourced from the AMC/PMP byte counters; populated on M1/A18-class chips.
+- `dram_read_gbps` / `dram_write_gbps` — residency-weighted average bandwidth (rate). Sourced from the PMP bandwidth histogram; populated on M4-class chips.
+
+Depending on the chip, typically one of the two sources is populated and the other reads `0`.
 
 ## Power-user workflow
 

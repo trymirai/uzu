@@ -36,6 +36,10 @@ pub struct Row {
     pub avg_watts_ram: f64,
     pub avg_joules_per_prefill_token: f64,
     pub avg_joules_per_decode_token: f64,
+    pub dram_read_bytes: u64,
+    pub dram_write_bytes: u64,
+    pub dram_read_gbps: f64,
+    pub dram_write_gbps: f64,
 }
 
 impl Row {
@@ -99,6 +103,10 @@ impl Row {
             } else {
                 0.0
             },
+            dram_read_bytes: reading.dram_read_bytes,
+            dram_write_bytes: reading.dram_write_bytes,
+            dram_read_gbps: reading.dram_read_gbps,
+            dram_write_gbps: reading.dram_write_gbps,
         })
     }
 }
@@ -133,6 +141,10 @@ impl Report {
             "avg_watts_ram",
             "avg_joules_per_prefill_token",
             "avg_joules_per_decode_token",
+            "dram_read_bytes",
+            "dram_write_bytes",
+            "dram_read_gbps",
+            "dram_write_gbps",
         ])?;
         writer.flush()?;
         Ok(Self {

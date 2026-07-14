@@ -80,7 +80,7 @@ enum Commands {
         storage: Option<PathBuf>,
         #[arg(long = "model-id")]
         model_ids: Vec<String>,
-        #[arg(long, value_delimiter = ',', default_value = "128,512,2048")]
+        #[arg(long, value_delimiter = ',', default_value = "1,2,4,6,8,10,12,16,32,64,128,256")]
         prefill: Vec<usize>,
         #[arg(long, value_delimiter = ',', default_value = "32,128")]
         generate: Vec<usize>,
