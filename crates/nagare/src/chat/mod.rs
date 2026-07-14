@@ -21,7 +21,10 @@ use shoji::{
 };
 use tokio::sync::{Mutex, mpsc};
 
-use crate::telemetry::{Telemetry, TelemetryEvent};
+use crate::{
+    telemetry::{Telemetry, TelemetryEvent},
+    tool::registry::ToolRegistry,
+};
 
 #[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -93,6 +96,7 @@ pub struct ChatSession {
     messages: Arc<Mutex<Vec<ChatMessage>>>,
     model_id: String,
     telemetry: Telemetry,
+    tool_registry: Option<ToolRegistry>,
 }
 
 impl ChatSession {
@@ -123,12 +127,18 @@ impl ChatSession {
             message: error.to_string(),
         })??;
 
+        let supports_tool_calls = match &instance {
+            Instance::Token(session) => session.supports_tool_calls(),
+            Instance::Message(_) => true,
+        };
+
         Ok(Self {
             instance: Arc::new(Mutex::new(instance)),
             state: Arc::new(Mutex::new(ChatSessionState::Idle)),
             messages: Arc::new(Mutex::new(Vec::new())),
             model_id,
             telemetry,
+            tool_registry: supports_tool_calls.then(|| ToolRegistry::new()),
         })
     }
 
