@@ -61,15 +61,14 @@ PUBLIC KERNEL(BuildTreeOut)(
 ) {
   // Relaxed MPP diverges from FP32 across layers.
   using Ops = metal::conditional_t<use_mxu, MxuStrictFragmentOps, SimdgroupFragmentOps>;
-  using InputType = float;
   using H0Read = metal::conditional_t<transposed_h0, ReadTranspose, ReadDirect>;
   constexpr ushort ROWS = Ops::FRAGMENT_ROWS;
   constexpr ushort COL_FRAGMENTS = MATMUL_COLS / Ops::FRAGMENT_COLS;
   using AccFragment = Fragment<float, 1, COL_FRAGMENTS, Ops>;
-  using QFragment = OperandFragment<InputType, 1, 1, Ops>;
+  using QFragment = OperandFragment<float, 1, 1, Ops>;
   using H0Fragment = OperandFragment<float, 1, COL_FRAGMENTS, Ops, H0Read>;
   using QkdFragment = OperandFragment<float, 1, 1, Ops>;
-  using UFragment = OperandFragment<InputType, 1, COL_FRAGMENTS, Ops>;
+  using UFragment = OperandFragment<float, 1, COL_FRAGMENTS, Ops>;
   threadgroup float* u_tile = reinterpret_cast<threadgroup float*>(u_tile_scratch);
 
   const uint batch_idx = batch_value_head_idx / value_heads;

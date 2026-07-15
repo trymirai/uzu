@@ -34,7 +34,7 @@ pub struct TreeVerifyEncodeArguments<'a, B: Backend> {
     pub tree_size: usize,
 }
 
-struct WorkspaceLayout {
+struct Layout {
     tree_size: usize,
     num_blocks: usize,
     num_block_pairs: usize,
@@ -42,7 +42,7 @@ struct WorkspaceLayout {
     head_v_dim: usize,
 }
 
-impl WorkspaceLayout {
+impl Layout {
     fn new(
         tree_size: usize,
         arguments: &TreeVerifyNewArguments,
@@ -75,7 +75,7 @@ pub(crate) fn encode_with<B: Backend>(
     arguments: TreeVerifyEncodeArguments<'_, B>,
     encoder: &mut Encoder<B>,
 ) -> Result<Allocation<B>, B::Error> {
-    let layout = WorkspaceLayout::new(arguments.tree_size, new_arguments);
+    let layout = Layout::new(arguments.tree_size, new_arguments);
     let mut h0_indices = encoder.allocate_constant(DataType::I32.size_in_bytes())?;
     h0_indices.copyin(&[0i32]);
     let mut scratch = |shape: &[usize], data_type| encoder.allocate_scratch(size_for_shape(shape, data_type));

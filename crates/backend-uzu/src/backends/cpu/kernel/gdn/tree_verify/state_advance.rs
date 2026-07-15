@@ -15,8 +15,8 @@ pub fn state_advance<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     accepted_indices: *const u32,
     state: *mut f32,
     accepted_len: u32,
-    num_v_heads: u32,
-    num_k_heads: u32,
+    #[specialize] num_v_heads: u32,
+    #[specialize] num_k_heads: u32,
 ) {
     let accepted_len = accepted_len as usize;
     let num_v_heads = num_v_heads as usize;

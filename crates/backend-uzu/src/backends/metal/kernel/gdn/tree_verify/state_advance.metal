@@ -27,8 +27,8 @@ PUBLIC KERNEL(StateAdvance)(
     // [num_v_heads, HEAD_K_DIM, HEAD_K_DIM], input/output
     device float* state,
     constant const uint& accepted_len,
-    constant const uint& num_v_heads,
-    constant const uint& num_k_heads,
+    const uint num_v_heads SPECIALIZE,
+    const uint num_k_heads SPECIALIZE,
     const ThreadContext thread_context,
     const uint hv_idx GROUPS(num_v_heads),
     const uint dv_group_idx GROUPS(STATE_ADVANCE_DV_GROUPS),

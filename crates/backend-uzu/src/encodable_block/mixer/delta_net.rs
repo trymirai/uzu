@@ -50,8 +50,6 @@ pub struct DeltaNetState<B: Backend> {
     ssm_state: Allocation<B>,
     suffix_status: Option<DeltaNetSuffixStatus<B>>,
     state_advance: <B::Kernels as Kernels>::StateAdvanceKernel,
-    num_heads: u32,
-    num_groups: u32,
 }
 
 impl<B: Backend> MixerState<B> for DeltaNetState<B> {
@@ -110,8 +108,6 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                     &accepted_indices_buffer,
                     &mut self.ssm_state,
                     accepted_indices.len() as u32,
-                    self.num_heads,
-                    self.num_groups,
                     encoder,
                 );
             },
@@ -457,16 +453,19 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         zero_encoder.encode_fill(&mut ssm_state, 0);
         zero_encoder.end_encoding().submit().wait_until_completed()?;
 
-        let state_advance =
-            <B::Kernels as Kernels>::StateAdvanceKernel::new(context, self.outer_data_type, self.head_dim as u32)?;
+        let state_advance = <B::Kernels as Kernels>::StateAdvanceKernel::new(
+            context,
+            self.outer_data_type,
+            self.head_dim as u32,
+            self.num_heads as u32,
+            self.num_groups as u32,
+        )?;
 
         Ok(Box::new(DeltaNetState {
             conv_state,
             ssm_state,
             suffix_status: None,
             state_advance,
-            num_heads: self.num_heads as u32,
-            num_groups: self.num_groups as u32,
         }))
     }
 

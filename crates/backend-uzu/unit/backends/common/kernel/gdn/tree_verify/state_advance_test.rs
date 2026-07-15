@@ -36,9 +36,14 @@ const TEST_NUM_K_HEADS: usize = 2;
 
 fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32> {
     let context = B::Context::new().expect("context");
-    let kernel =
-        <<B as Backend>::Kernels as Kernels>::StateAdvanceKernel::new(&context, T::data_type(), HEAD_DIM as u32)
-            .expect("kernel");
+    let kernel = <<B as Backend>::Kernels as Kernels>::StateAdvanceKernel::new(
+        &context,
+        T::data_type(),
+        HEAD_DIM as u32,
+        TEST_NUM_V_HEADS as u32,
+        TEST_NUM_K_HEADS as u32,
+    )
+    .expect("kernel");
     let key_len = TREE_SIZE * TEST_NUM_K_HEADS * HEAD_DIM;
     let value_len = TREE_SIZE * TEST_NUM_V_HEADS * HEAD_DIM;
     let scalar_len = TREE_SIZE * TEST_NUM_V_HEADS;
@@ -66,8 +71,6 @@ fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32
         &accepted_indices,
         &mut committed_state,
         accepted_len as u32,
-        TEST_NUM_V_HEADS as u32,
-        TEST_NUM_K_HEADS as u32,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -92,9 +95,14 @@ fn bench_state_advance(c: &mut Criterion) {
     const BENCHMARK: &str = "Metal/Kernel/GDNTreeVerify/StateAdvance";
 
     let context = crate::tests::util::shared_metal_context();
-    let kernel =
-        <<Metal as Backend>::Kernels as Kernels>::StateAdvanceKernel::new(&context, DataType::BF16, HEAD_DIM as u32)
-            .expect("kernel");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::StateAdvanceKernel::new(
+        &context,
+        DataType::BF16,
+        HEAD_DIM as u32,
+        NUM_V_HEADS as u32,
+        NUM_K_HEADS as u32,
+    )
+    .expect("kernel");
     let k_norm = alloc_allocation_with_data::<Metal, bf16>(
         &context,
         &vec![bf16::from_f32(0.001); TREE_SIZE * NUM_K_HEADS * HEAD_DIM],
@@ -124,8 +132,6 @@ fn bench_state_advance(c: &mut Criterion) {
                     &accepted_indices,
                     committed_states.next_mut(),
                     accepted_len as u32,
-                    NUM_V_HEADS as u32,
-                    NUM_K_HEADS as u32,
                     encoder,
                 );
             });

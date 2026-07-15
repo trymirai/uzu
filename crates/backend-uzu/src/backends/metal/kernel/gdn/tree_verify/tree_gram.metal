@@ -128,10 +128,9 @@ PUBLIC KERNEL(BuildTreeGram)(
   using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
   constexpr ushort ROW_FRAGMENTS = ROW_TILE / Ops::FRAGMENT_ROWS;
   constexpr ushort COL_FRAGMENTS = COL_TILE / Ops::FRAGMENT_COLS;
-  using InputType = float;
   using AccFragment = Fragment<float, ROW_FRAGMENTS, COL_FRAGMENTS, Ops>;
-  using LeftFragment = OperandFragment<InputType, ROW_FRAGMENTS, 1, Ops>;
-  using RightFragment = OperandFragment<InputType, 1, COL_FRAGMENTS, Ops, ReadTranspose>;
+  using LeftFragment = OperandFragment<float, ROW_FRAGMENTS, 1, Ops>;
+  using RightFragment = OperandFragment<float, 1, COL_FRAGMENTS, Ops, ReadTranspose>;
   static_assert(COL_TILE == METAL_SIMD_SIZE, "COL_TILE must match the SIMD width");
 
   const uint key_head_idx = value_head_idx / (value_heads / k_heads);
