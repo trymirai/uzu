@@ -1,4 +1,4 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
@@ -6,14 +6,16 @@ use crate::array::ArrayElement;
 
 // Pre-compute L2-normalized q/k, beta, and decay for all tokens.
 #[kernel(DeltaNetPrefillPrep)]
-#[variants(T, f32, f16, bf16)]
+#[variants(T, f32, bf16)]
+#[variants(QKT, f32, bf16)]
 #[variants(HEAD_K_DIM, 128)]
-pub fn delta_net_prefill_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
+pub fn delta_net_prefill_prep<T: ArrayElement + Float, QKT: ArrayElement + Float, const HEAD_K_DIM: u32>(
     in_proj: *const T,
-    a_log: *const T,
-    dt_bias: *const T,
-    q_norm_out: *mut f32,
-    k_norm_out: *mut f32,
+    a_log: *const f32,
+    dt_bias: *const f32,
+    q_norm_out: *mut QKT,
+    k_norm_out: *mut QKT,
+    #[optional(write_compact_v)] compact_v_out: Option<*mut T>,
     beta_out: *mut f32,
     decay_out: *mut f32,
     num_v_heads: u32,
@@ -22,7 +24,10 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     value_dim: u32,
     suffix_len: u32,
     #[specialize] write_log_decay: bool,
+    #[specialize] write_compact_v: bool,
 ) {
+    assert_eq!(compact_v_out.is_some(), write_compact_v, "compact V output presence mismatch");
+
     let num_v_heads = num_v_heads as usize;
     let num_k_heads = num_k_heads as usize;
     let head_k_dim = HEAD_K_DIM as usize;
@@ -36,6 +41,14 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     for token in 0..suffix_len {
         let tok_offset = token * total_proj_dim;
 
+        if let Some(compact_v_out) = compact_v_out {
+            unsafe {
+                in_proj
+                    .add(tok_offset + 2 * key_dim)
+                    .copy_to_nonoverlapping(compact_v_out.add(token * value_dim), value_dim)
+            };
+        }
+
         for hk in 0..num_k_heads {
             // Load and L2-normalize q
             let q_off = tok_offset + hk * head_k_dim;
@@ -48,7 +61,9 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
             let q_scale = 1.0 / (head_k_dim as f32).sqrt();
             for j in 0..head_k_dim {
                 let v = unsafe { (*in_proj.add(q_off + j)).to_f32().unwrap() };
-                unsafe { *q_norm_out.add(token * key_dim + hk * head_k_dim + j) = v * q_inv * q_scale };
+                unsafe {
+                    *q_norm_out.add(token * key_dim + hk * head_k_dim + j) = QKT::from(v * q_inv * q_scale).unwrap()
+                };
             }
 
             // Load and L2-normalize k
@@ -61,7 +76,7 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
             let k_inv = 1.0 / (k_sq + 1e-6).sqrt();
             for j in 0..head_k_dim {
                 let v = unsafe { (*in_proj.add(k_off + j)).to_f32().unwrap() };
-                unsafe { *k_norm_out.add(token * key_dim + hk * head_k_dim + j) = v * k_inv };
+                unsafe { *k_norm_out.add(token * key_dim + hk * head_k_dim + j) = QKT::from(v * k_inv).unwrap() };
             }
 
             // Beta and decay for each v-head of this k-head
@@ -71,8 +86,8 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
                 let beta_raw = unsafe { (*in_proj.add(tok_offset + conv_dim + value_dim + hv)).to_f32().unwrap() };
                 let beta = 1.0 / (1.0 + (-beta_raw).exp());
 
-                let a_log_val = unsafe { (*a_log.add(hv)).to_f32().unwrap() };
-                let dt_bias_val = unsafe { (*dt_bias.add(hv)).to_f32().unwrap() };
+                let a_log_val = unsafe { *a_log.add(hv) };
+                let dt_bias_val = unsafe { *dt_bias.add(hv) };
                 let a_raw =
                     unsafe { (*in_proj.add(tok_offset + conv_dim + value_dim + num_v_heads + hv)).to_f32().unwrap() };
                 let sp_in = a_raw + dt_bias_val;

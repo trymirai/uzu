@@ -39,7 +39,7 @@ pub fn rewrite_for_rust(
     Ok(parsed.into_token_stream())
 }
 
-fn qualify_enum_path(
+pub(super) fn qualify_enum_path(
     path: &Path,
     enum_paths: &EnumPaths,
 ) -> Option<Expr> {

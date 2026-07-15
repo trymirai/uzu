@@ -7,7 +7,7 @@ use syn::LitInt;
 
 use super::{
     super::ast::{MetalArgumentType, MetalGroupsType, MetalKernelInfo},
-    variant_path_rewriter::VariantPathRewriter,
+    host_expression_rewriter::HostExpressionRewriter,
 };
 
 pub struct DispatchEmission {
@@ -17,20 +17,20 @@ pub struct DispatchEmission {
 
 pub fn parse(
     kernel: &MetalKernelInfo,
-    variant_path_rewriter: &mut VariantPathRewriter,
+    host_expression_rewriter: &mut HostExpressionRewriter,
 ) -> Result<DispatchEmission> {
     let (dispatch_code, dispatch_size_expressions) = if kernel.has_axis() {
         if kernel.has_groups() || kernel.has_threads() {
             bail!("mixing groups/threads and axis is not supported");
         }
-        build_axis_dispatch(kernel, variant_path_rewriter)?
+        build_axis_dispatch(kernel, host_expression_rewriter)?
     } else if kernel.has_groups_indirect() {
         if kernel.has_groups_direct() {
             bail!("cannot mix indirect and direct groups");
         }
-        build_indirect_dispatch(kernel, variant_path_rewriter)?
+        build_indirect_dispatch(kernel, host_expression_rewriter)?
     } else {
-        build_direct_dispatch(kernel, variant_path_rewriter)?
+        build_direct_dispatch(kernel, host_expression_rewriter)?
     };
 
     let empty_dispatch_guards = build_empty_dispatch_guards(&dispatch_size_expressions);
@@ -43,7 +43,7 @@ pub fn parse(
 
 fn build_axis_dispatch(
     kernel: &MetalKernelInfo,
-    variant_path_rewriter: &mut VariantPathRewriter,
+    host_expression_rewriter: &mut HostExpressionRewriter,
 ) -> Result<(TokenStream, Vec<TokenStream>)> {
     let mut axis_pairs: Vec<(TokenStream, TokenStream)> = kernel
         .arguments
@@ -55,8 +55,8 @@ fn build_axis_dispatch(
             _ => None,
         })
         .map(|(threads_text, threads_per_group_text)| -> Result<(TokenStream, TokenStream)> {
-            let threads = variant_path_rewriter.rewrite(threads_text)?;
-            let threads_per_group = variant_path_rewriter.rewrite(threads_per_group_text)?;
+            let threads = host_expression_rewriter.rewrite(threads_text)?;
+            let threads_per_group = host_expression_rewriter.rewrite(threads_per_group_text)?;
             Ok((threads, threads_per_group))
         })
         .collect::<Result<_>>()?;
@@ -78,9 +78,9 @@ fn build_axis_dispatch(
 
 fn build_indirect_dispatch(
     kernel: &MetalKernelInfo,
-    variant_path_rewriter: &mut VariantPathRewriter,
+    host_expression_rewriter: &mut HostExpressionRewriter,
 ) -> Result<(TokenStream, Vec<TokenStream>)> {
-    let mut threads = collect_thread_expressions(kernel, variant_path_rewriter)?;
+    let mut threads = collect_thread_expressions(kernel, host_expression_rewriter)?;
     threads.extend(repeat_n(quote! { 1 }, 3 - threads.len()));
 
     let dispatch_code = quote! {
@@ -96,9 +96,9 @@ fn build_indirect_dispatch(
 
 fn build_direct_dispatch(
     kernel: &MetalKernelInfo,
-    variant_path_rewriter: &mut VariantPathRewriter,
+    host_expression_rewriter: &mut HostExpressionRewriter,
 ) -> Result<(TokenStream, Vec<TokenStream>)> {
-    let mut threads = collect_thread_expressions(kernel, variant_path_rewriter)?;
+    let mut threads = collect_thread_expressions(kernel, host_expression_rewriter)?;
     threads.extend(repeat_n(quote! { 1 }, 3 - threads.len()));
 
     let mut groups: Vec<TokenStream> = kernel
@@ -106,7 +106,7 @@ fn build_direct_dispatch(
         .iter()
         .filter_map(|argument| match &argument.argument_type {
             MetalArgumentType::Groups(MetalGroupsType::Direct(groups_text)) => {
-                Some(variant_path_rewriter.rewrite(groups_text))
+                Some(host_expression_rewriter.rewrite(groups_text))
             },
             _ => None,
         })
@@ -127,13 +127,13 @@ fn build_direct_dispatch(
 
 fn collect_thread_expressions(
     kernel: &MetalKernelInfo,
-    variant_path_rewriter: &mut VariantPathRewriter,
+    host_expression_rewriter: &mut HostExpressionRewriter,
 ) -> Result<Vec<TokenStream>> {
     kernel
         .arguments
         .iter()
         .filter_map(|argument| match &argument.argument_type {
-            MetalArgumentType::Threads(threads_text) => Some(variant_path_rewriter.rewrite(threads_text)),
+            MetalArgumentType::Threads(threads_text) => Some(host_expression_rewriter.rewrite(threads_text)),
             _ => None,
         })
         .collect()

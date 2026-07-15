@@ -329,7 +329,9 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
     let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &context,
         T::data_type(),
+        DataType::F32,
         head_k_dim as u32,
+        false,
         false,
     )
     .unwrap();
@@ -349,6 +351,7 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
         &dt_bias_array,
         &mut q_norm_array,
         &mut k_norm_array,
+        None::<&mut crate::backends::common::Allocation<Metal>>,
         &mut beta_array,
         &mut decay_array,
         num_v_heads as u32,
@@ -491,25 +494,29 @@ fn test_delta_net_prefill_prep() {
     let conv_dim = 2 * key_dim + value_dim;
     let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
 
-    let in_proj: Vec<f32> = (0..suffix_len * total_proj_dim).map(|i| ((i % 37) as f32) * 0.02 - 0.3).collect();
+    let in_proj: Vec<bf16> =
+        (0..suffix_len * total_proj_dim).map(|i| bf16::from_f32(((i % 37) as f32) * 0.02 - 0.3)).collect();
     let a_log: Vec<f32> = (0..num_v_heads).map(|i| -1.5 + (i as f32) * 0.05).collect();
     let dt_bias: Vec<f32> = (0..num_v_heads).map(|i| 0.3 + (i as f32) * 0.02).collect();
 
     // CPU reference via Kernels trait
     let cpu_ctx = <Cpu as Backend>::Context::new().expect("cpu context");
-    let cpu_in_proj = alloc_allocation_with_data::<Cpu, f32>(&cpu_ctx, &in_proj);
+    let cpu_in_proj = alloc_allocation_with_data::<Cpu, bf16>(&cpu_ctx, &in_proj);
     let cpu_a_log = alloc_allocation_with_data::<Cpu, f32>(&cpu_ctx, &a_log);
     let cpu_dt_bias = alloc_allocation_with_data::<Cpu, f32>(&cpu_ctx, &dt_bias);
-    let mut cpu_q = alloc_allocation::<Cpu, f32>(&cpu_ctx, suffix_len * key_dim);
-    let mut cpu_k = alloc_allocation::<Cpu, f32>(&cpu_ctx, suffix_len * key_dim);
+    let mut cpu_q = alloc_allocation::<Cpu, bf16>(&cpu_ctx, suffix_len * key_dim);
+    let mut cpu_k = alloc_allocation::<Cpu, bf16>(&cpu_ctx, suffix_len * key_dim);
+    let mut cpu_v = alloc_allocation::<Cpu, bf16>(&cpu_ctx, suffix_len * value_dim);
     let mut cpu_beta = alloc_allocation::<Cpu, f32>(&cpu_ctx, suffix_len * num_v_heads);
     let mut cpu_decay = alloc_allocation::<Cpu, f32>(&cpu_ctx, suffix_len * num_v_heads);
 
     let cpu_prep = <<Cpu as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &cpu_ctx,
-        DataType::F32,
+        DataType::BF16,
+        DataType::BF16,
         head_k_dim as u32,
         false,
+        true,
     )
     .unwrap();
     let mut cpu_enc = Encoder::new(cpu_ctx.as_ref()).expect("encoder");
@@ -519,6 +526,7 @@ fn test_delta_net_prefill_prep() {
         &cpu_dt_bias,
         &mut cpu_q,
         &mut cpu_k,
+        Some(&mut cpu_v),
         &mut cpu_beta,
         &mut cpu_decay,
         num_v_heads as u32,
@@ -530,27 +538,36 @@ fn test_delta_net_prefill_prep() {
     );
     cpu_enc.end_encoding().submit().wait_until_completed().unwrap();
 
-    let ref_q: Vec<f32> = allocation_to_vec(&cpu_q);
-    let ref_k: Vec<f32> = allocation_to_vec(&cpu_k);
+    let ref_q = allocation_to_vec::<Cpu, bf16>(&cpu_q).into_iter().map(f32::from).collect::<Vec<_>>();
+    let ref_k = allocation_to_vec::<Cpu, bf16>(&cpu_k).into_iter().map(f32::from).collect::<Vec<_>>();
+    let ref_v: Vec<bf16> = allocation_to_vec(&cpu_v);
     let ref_beta: Vec<f32> = allocation_to_vec(&cpu_beta);
     let ref_decay: Vec<f32> = allocation_to_vec(&cpu_decay);
+    let expected_v = in_proj
+        .chunks_exact(total_proj_dim)
+        .flat_map(|row| row[2 * key_dim..2 * key_dim + value_dim].iter().copied())
+        .collect::<Vec<_>>();
+    assert_eq!(ref_v, expected_v);
 
     // Metal
     let context = <Metal as Backend>::Context::new().expect("context");
-    let in_proj_array = alloc_allocation_with_data::<Metal, f32>(&context, &in_proj);
+    let in_proj_array = alloc_allocation_with_data::<Metal, bf16>(&context, &in_proj);
     let a_log_array = alloc_allocation_with_data::<Metal, f32>(&context, &a_log);
     let dt_bias_array = alloc_allocation_with_data::<Metal, f32>(&context, &dt_bias);
-    let mut q_norm_array = alloc_allocation::<Metal, f32>(&context, suffix_len * key_dim);
-    let mut k_norm_array = alloc_allocation::<Metal, f32>(&context, suffix_len * key_dim);
+    let mut q_norm_array = alloc_allocation::<Metal, bf16>(&context, suffix_len * key_dim);
+    let mut k_norm_array = alloc_allocation::<Metal, bf16>(&context, suffix_len * key_dim);
+    let mut compact_v_array = alloc_allocation::<Metal, bf16>(&context, suffix_len * value_dim);
 
     let mut beta_array = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
     let mut decay_array = alloc_allocation::<Metal, f32>(&context, suffix_len * num_v_heads);
 
     let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &context,
-        DataType::F32,
+        DataType::BF16,
+        DataType::BF16,
         head_k_dim as u32,
         false,
+        true,
     )
     .unwrap();
 
@@ -561,6 +578,7 @@ fn test_delta_net_prefill_prep() {
         &dt_bias_array,
         &mut q_norm_array,
         &mut k_norm_array,
+        Some(&mut compact_v_array),
         &mut beta_array,
         &mut decay_array,
         num_v_heads as u32,
@@ -572,13 +590,15 @@ fn test_delta_net_prefill_prep() {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let gpu_q: Vec<f32> = allocation_to_vec(&q_norm_array);
-    let gpu_k: Vec<f32> = allocation_to_vec(&k_norm_array);
+    let gpu_q = allocation_to_vec::<Metal, bf16>(&q_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
+    let gpu_k = allocation_to_vec::<Metal, bf16>(&k_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
+    let gpu_v: Vec<bf16> = allocation_to_vec(&compact_v_array);
     let gpu_beta: Vec<f32> = allocation_to_vec(&beta_array);
     let gpu_decay: Vec<f32> = allocation_to_vec(&decay_array);
 
     assert_close(&gpu_q, &ref_q, 1e-4, 1e-3, "prep q_norm");
     assert_close(&gpu_k, &ref_k, 1e-4, 1e-3, "prep k_norm");
+    assert_eq!(gpu_v, ref_v);
     assert_close(&gpu_beta, &ref_beta, 1e-4, 1e-3, "prep beta");
     assert_close(&gpu_decay, &ref_decay, 1e-4, 1e-3, "prep decay");
 }
@@ -622,7 +642,9 @@ fn bench_delta_net_prefill() {
     let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &context,
         DataType::F32,
+        DataType::F32,
         head_k_dim as u32,
+        false,
         false,
     )
     .unwrap();
@@ -649,6 +671,7 @@ fn bench_delta_net_prefill() {
             &dt_bias_array,
             &mut q_norm_array,
             &mut k_norm_array,
+            None::<&mut crate::backends::common::Allocation<Metal>>,
             &mut beta_array,
             &mut decay_array,
             num_v_heads as u32,
@@ -674,6 +697,7 @@ fn bench_delta_net_prefill() {
             &dt_bias_array,
             &mut q_norm_array,
             &mut k_norm_array,
+            None::<&mut crate::backends::common::Allocation<Metal>>,
             &mut beta_array,
             &mut decay_array,
             num_v_heads as u32,

@@ -17,29 +17,27 @@ using namespace uzu::matmul;
 // Build tree output for one (batch, value-head, row, value) tile.
 //
 // q:      [B, T, Hg, K], with query head hq = hv / (HV / Hg)
-// prefix: [B, T, HV] path log-decay prefix from BuildPrefixBeta
+// prefix: [B, T, HV] path log-decay prefix from BuildTreePrefix
 // qkd:    [B, HV, T, T] from BuildTreeGram
 // u:      [B, HV, T, V]
 // h0:     [H0, HV, V, K]
 //
 // o[row, value] = exp(prefix[row]) * scale * dot(q[row], h0[value])
 //                 + sum_j qkd[row, j] * u[j, value]
-template <
-    typename T,
-    bool use_mxu,
-    bool transposed_h0>
-VARIANTS(T, float, bfloat)
+template <typename QKT, typename OutputT, bool use_mxu, bool transposed_h0>
+VARIANTS(QKT, float, bfloat)
+VARIANTS(OutputT, float, bfloat)
 VARIANTS(use_mxu, false, true)
 VARIANTS(transposed_h0, false, true)
 CONSTRAINT(!(use_mxu && transposed_h0))
 PUBLIC KERNEL(BuildTreeOut)(
-    const device T* q,
+    const device QKT* q,
     const device float* prefix,
     const device float* qkd,
-    const device T* u,
+    const device float* u,
     const device float* h0 OPTIONAL(use_h0),
     const device int* h0_indices OPTIONAL(use_h0),
-    device T* o,
+    device OutputT* o,
     constant const float& scale,
     constant const uint& batch_size,
     constant const uint& tree_size,
@@ -61,17 +59,17 @@ PUBLIC KERNEL(BuildTreeOut)(
     const uint batch_value_head_idx GROUPS(batch_size * value_heads),
     const uint tid THREADS(SIMDGROUPS_PER_TG * METAL_SIMD_SIZE)
 ) {
-  using Ops = metal::conditional_t<use_mxu, MxuFragmentOps<>, SimdgroupFragmentOps>;
-  using InputType = metal::conditional_t<use_mxu, T, float>;
+  // Relaxed MPP diverges from FP32 across layers.
+  using Ops = metal::conditional_t<use_mxu, MxuStrictFragmentOps, SimdgroupFragmentOps>;
   using H0Read = metal::conditional_t<transposed_h0, ReadTranspose, ReadDirect>;
   constexpr ushort ROWS = Ops::FRAGMENT_ROWS;
   constexpr ushort COL_FRAGMENTS = MATMUL_COLS / Ops::FRAGMENT_COLS;
   using AccFragment = Fragment<float, 1, COL_FRAGMENTS, Ops>;
-  using QFragment = OperandFragment<InputType, 1, 1, Ops>;
+  using QFragment = OperandFragment<float, 1, 1, Ops>;
   using H0Fragment = OperandFragment<float, 1, COL_FRAGMENTS, Ops, H0Read>;
   using QkdFragment = OperandFragment<float, 1, 1, Ops>;
-  using UFragment = OperandFragment<InputType, 1, COL_FRAGMENTS, Ops>;
-  threadgroup T* u_tile = reinterpret_cast<threadgroup T*>(u_tile_scratch);
+  using UFragment = OperandFragment<float, 1, COL_FRAGMENTS, Ops>;
+  threadgroup float* u_tile = reinterpret_cast<threadgroup float*>(u_tile_scratch);
 
   const uint batch_idx = batch_value_head_idx / value_heads;
   const uint value_head_idx = batch_value_head_idx - batch_idx * value_heads;
@@ -136,7 +134,7 @@ PUBLIC KERNEL(BuildTreeOut)(
         const uint local_j = index / MATMUL_COLS;
         const uint local_col = index - local_j * MATMUL_COLS;
         const bool in_bounds = local_j < uint(valid_j) && local_col < uint(valid_cols);
-        u_tile[index] = in_bounds ? u[u_base + (j0 + local_j) * head_v_dim + local_col] : T(0);
+        u_tile[index] = in_bounds ? u[u_base + (j0 + local_j) * head_v_dim + local_col] : 0.0f;
       }
       threadgroup_barrier(mem_flags::mem_threadgroup);
       u_frag.load_from(
@@ -154,7 +152,7 @@ PUBLIC KERNEL(BuildTreeOut)(
     }
   }
 
-  device T* out_tile =
+  device OutputT* out_tile =
       o + ((batch_idx * tree_size + row_base) * value_heads + value_head_idx) * head_v_dim + value_base;
   acc.store_safe(thread_context.simd_lane_id, out_tile, int(value_heads * head_v_dim), short2(valid_cols, valid_rows));
 }

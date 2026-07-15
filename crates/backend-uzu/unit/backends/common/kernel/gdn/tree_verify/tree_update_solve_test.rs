@@ -9,7 +9,6 @@ use crate::{
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::TreeUpdateSolveKernel},
         cpu::Cpu,
-        metal::Metal,
     },
     data_type::DataType,
     tests::{
@@ -88,15 +87,13 @@ const CASES: &[SolveCase] = &[
 fn run_case<B: Backend, T: ArrayElement + Copy>(
     case: SolveCase,
     bv: u32,
-    use_mxu: bool,
     use_h0: bool,
     data_type: DataType,
     cast: impl Fn(f32) -> T + Copy,
 ) -> Vec<f32> {
     let context = B::Context::new().expect("context");
-    let kernel =
-        <<B as Backend>::Kernels as Kernels>::TreeUpdateSolveKernel::new(&context, data_type, bv, use_mxu, use_h0)
-            .expect("kernel");
+    let kernel = <<B as Backend>::Kernels as Kernels>::TreeUpdateSolveKernel::new(&context, data_type, bv, use_h0)
+        .expect("kernel");
 
     let batch_size = case.batch_size as usize;
     let tree_size = case.tree_size as usize;
@@ -191,34 +188,23 @@ fn test_tree_update_solve_cases() {
     for &bv in BVS {
         for &use_h0 in &[true, false] {
             for &case in CASES {
-                let expected = run_case::<Cpu, f32>(case, bv, false, use_h0, DataType::F32, |x| x);
+                let expected = run_case::<Cpu, f32>(case, bv, use_h0, DataType::F32, |x| x);
                 for_each_non_cpu_backend!(|B| {
-                    let output = run_case::<B, f32>(case, bv, false, use_h0, DataType::F32, |x| x);
+                    let output = run_case::<B, f32>(case, bv, use_h0, DataType::F32, |x| x);
                     assert_eq_float(&expected, &output, 1e-4, &format!("{} BV{bv} h0={use_h0}", case.name));
                 });
             }
         }
     }
 
-    {
-        let supports_mxu = <Metal as Backend>::Context::new().expect("context").supports_mxu();
-        let paths: &[(&str, bool)] = if supports_mxu {
-            &[("Simdgroup", false), ("MXU", true)]
-        } else {
-            &[("Simdgroup", false)]
-        };
-
-        // MXU needs an even number of column fragments or MPP row pairing; BV16
-        // (a single 16x16 fragment) is not supported.
-        for &bv in &[32] {
-            for &use_h0 in &[true, false] {
-                for &case in CASES {
-                    let expected = run_case::<Cpu, bf16>(case, bv, false, use_h0, DataType::BF16, bf16::from_f32);
-                    for &(path, use_mxu) in paths {
-                        let output = run_case::<Metal, bf16>(case, bv, use_mxu, use_h0, DataType::BF16, bf16::from_f32);
-                        assert_eq_float(&expected, &output, 1e-2, &format!("{} {path} BV{bv} h0={use_h0}", case.name));
-                    }
-                }
+    for &bv in BVS {
+        for &use_h0 in &[true, false] {
+            for &case in CASES {
+                let expected = run_case::<Cpu, bf16>(case, bv, use_h0, DataType::BF16, bf16::from_f32);
+                for_each_non_cpu_backend!(|B| {
+                    let output = run_case::<B, bf16>(case, bv, use_h0, DataType::BF16, bf16::from_f32);
+                    assert_eq_float(&expected, &output, 5e-4, &format!("{} BV{bv} h0={use_h0}", case.name));
+                });
             }
         }
     }
