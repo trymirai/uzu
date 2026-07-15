@@ -19,7 +19,8 @@ use shoji::{
         session::chat::{ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatRole},
     },
 };
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, mpsc::UnboundedSender};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     telemetry::{Telemetry, TelemetryEvent},
@@ -154,18 +155,16 @@ impl ChatSession {
             return Ok(());
         }
 
-        // re-prefill all history and remove tools definition message for non-empty history
-        {
-            let mut messages = self.messages.lock().await;
-            if !messages.is_empty() {
-                let mut guard = self.instance.lock().await;
-                match &mut *guard {
-                    Instance::Token(session) => session.reset().await?,
-                    Instance::Message(session) => session.reset().await?,
-                };
-                messages.retain(|msg| !contains_tools_definitions(msg))
-            }
+        let mut messages_guard = self.messages.lock().await;
+        if !messages_guard.is_empty() {
+            messages_guard.retain(|msg| !contains_tools_definitions(msg));
+            let mut instance_guard = self.instance.lock().await;
+            match &mut *instance_guard {
+                Instance::Token(session) => session.reset().await?,
+                Instance::Message(session) => session.reset().await?,
+            };
         }
+        drop(messages_guard);
 
         if let Some(registry) = self.tool_registry.as_mut() {
             let mut registry_guard = registry.lock().await;
@@ -175,6 +174,111 @@ impl ChatSession {
         }
 
         Ok(())
+    }
+
+    async fn execute_turn(
+        &self,
+        sender: UnboundedSender<Result<Vec<ChatReply>, ChatSessionError>>,
+        input: Vec<ChatMessage>,
+        config: ChatReplyConfig,
+        cancel_token: CancellationToken,
+    ) {
+        // check state
+        let mut state_guard = self.state.lock().await;
+        match *state_guard {
+            ChatSessionState::Idle => *state_guard = ChatSessionState::Generation,
+            ChatSessionState::Generation | ChatSessionState::ToolCalling | ChatSessionState::Resetting => {
+                let _ = sender.send(Err(ChatSessionError::UnableToPerformOperationInCurrentState {}));
+                return;
+            },
+        }
+        drop(state_guard);
+
+        // prepare all messages
+        let all_messages = {
+            let mut messages_guard = self.messages.lock().await;
+            messages_guard.extend(input);
+
+            // register tools if needed
+            if let Some(ref registry) = self.tool_registry {
+                let namespaces = registry.lock().await.get_namespaces();
+                if !namespaces.is_empty() && !messages_guard.iter().any(contains_tools_definitions) {
+                    let position = messages_guard.iter().position(|msg| msg.role == ChatRole::System {});
+                    let tools_msg = ChatMessage::developer().with_tool_namespaces(namespaces);
+                    messages_guard.insert(position.map(|pos| pos + 1).unwrap_or(0), tools_msg);
+                }
+            }
+
+            messages_guard.clone()
+        };
+
+        self.telemetry.report(TelemetryEvent::ModelInferenceStarted {
+            model_id: self.model_id.clone(),
+        });
+
+        let mut outputs: IndexMap<u32, ChatReply> = IndexMap::new();
+        let mut error_value: Option<serde_json::Value> = None;
+
+        let mut instance = self.instance.lock().await;
+        let mut stream = match &mut *instance {
+            Instance::Token(session) => session.stream(&all_messages, config, cancel_token).await,
+            Instance::Message(session) => session.stream(&all_messages, config, cancel_token),
+        };
+        while let Some(partial_output) = stream.next().await {
+            match partial_output {
+                Ok(backend_output) => {
+                    // prepare reply
+                    let message = build_message(&backend_output);
+                    let finish_reason = backend_output.finish_reason;
+                    let output = ChatReply {
+                        message: message.clone(),
+                        stats: backend_output.stats.clone(),
+                        finish_reason: finish_reason.clone(),
+                    };
+
+                    // add output to messages list
+                    let mut messages_guard = self.messages.lock().await;
+                    let is_new = outputs.insert(0, output).is_none();
+                    if is_new {
+                        messages_guard.push(message.clone());
+                    } else if let Some(last) = messages_guard.last_mut() {
+                        *last = message.clone();
+                    }
+                    drop(messages_guard);
+
+                    // send new output
+                    if sender.send(Ok(outputs.values().cloned().collect())).is_err() {
+                        break;
+                    }
+                    if finish_reason.is_some() {
+                        break;
+                    }
+                },
+                Err(error) => {
+                    error_value = Some(serde_json::json!({ "message": error.to_string() }));
+                    let _ = sender.send(Err(error));
+                    break;
+                },
+            }
+        }
+        drop(stream);
+        drop(instance);
+
+        let mut state_guard = self.state.lock().await;
+        *state_guard = ChatSessionState::Idle;
+        drop(state_guard);
+
+        // telemetry report result
+        if let Some(error) = error_value {
+            self.telemetry.report(TelemetryEvent::ModelInferenceFailed {
+                error,
+            });
+        } else if let Some(last) = outputs.values().last() {
+            self.telemetry.report(TelemetryEvent::ModelInferenceFinished {
+                model_id: self.model_id.clone(),
+                stats: last.stats.clone(),
+            });
+        }
     }
 }
 
@@ -246,117 +350,10 @@ impl ChatSession {
         config: ChatReplyConfig,
     ) -> ChatSessionStream {
         let cancel_token_to_return = CancelToken::new();
-        let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
-
-        let instance = self.instance.clone();
-        let state = self.state.clone();
-        let messages = self.messages.clone();
-        let telemetry = self.telemetry.clone();
-        let model_id = self.model_id.clone();
         let cancel_token = cancel_token_to_return.inner().clone();
-        let tool_registry = self.tool_registry.clone();
-
-        tokio::spawn(async move {
-            {
-                let mut state = state.lock().await;
-                match *state {
-                    ChatSessionState::Idle => {
-                        *state = ChatSessionState::Generation;
-                    },
-                    ChatSessionState::Generation | ChatSessionState::Resetting | ChatSessionState::ToolCalling => {
-                        let _ = sender.send(Err(ChatSessionError::UnableToPerformOperationInCurrentState {}));
-                        return;
-                    },
-                }
-                drop(state);
-            }
-
-            telemetry.report(TelemetryEvent::ModelInferenceStarted {
-                model_id: model_id.clone(),
-            });
-
-            let all_messages = {
-                let mut messages = messages.lock().await;
-                messages.extend(input);
-
-                // register tools if needed
-                if let Some(registry) = tool_registry {
-                    let namespaces = registry.lock().await.get_namespaces();
-                    if !namespaces.is_empty() && !messages.iter().any(contains_tools_definitions) {
-                        let position = messages.iter().position(|msg| msg.role == ChatRole::System {});
-                        let tools_msg = ChatMessage::developer().with_tool_namespaces(namespaces);
-                        messages.insert(position.map(|pos| pos + 1).unwrap_or(0), tools_msg);
-                    }
-                }
-
-                messages.clone()
-            };
-
-            let mut outputs: IndexMap<u32, ChatReply> = IndexMap::new();
-
-            let mut instance = instance.lock().await;
-            let mut stream = match &mut *instance {
-                Instance::Token(session) => session.stream(&all_messages, config, cancel_token).await,
-                Instance::Message(session) => session.stream(&all_messages, config, cancel_token),
-            };
-
-            let turn_index: u32 = 0;
-            let mut errored = false;
-            while let Some(partial_output) = stream.next().await {
-                match partial_output {
-                    Ok(backend_output) => {
-                        let message = build_message(&backend_output);
-                        let finish_reason = backend_output.finish_reason;
-                        let output = ChatReply {
-                            message: message.clone(),
-                            stats: backend_output.stats.clone(),
-                            finish_reason: finish_reason.clone(),
-                        };
-                        let is_new = outputs.insert(turn_index, output).is_none();
-
-                        {
-                            let mut messages = messages.lock().await;
-                            if is_new {
-                                messages.push(message.clone());
-                            } else if let Some(last) = messages.last_mut() {
-                                *last = message.clone();
-                            }
-                        }
-
-                        if sender.send(Ok(outputs.values().cloned().collect())).is_err() {
-                            break;
-                        }
-                        if finish_reason.is_some() {
-                            break;
-                        }
-                    },
-                    Err(error) => {
-                        errored = true;
-                        telemetry.report(TelemetryEvent::ModelInferenceFailed {
-                            error: serde_json::json!({ "message": error.to_string() }),
-                        });
-                        let _ = sender.send(Err(error));
-                        break;
-                    },
-                }
-            }
-
-            drop(stream);
-            drop(instance);
-
-            {
-                let mut state = state.lock().await;
-                *state = ChatSessionState::Idle;
-            }
-
-            if !errored && let Some(last) = outputs.values().last() {
-                telemetry.report(TelemetryEvent::ModelInferenceFinished {
-                    model_id,
-                    stats: last.stats.clone(),
-                });
-            }
-        });
-
+        let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
+        let session = self.clone();
+        tokio::spawn(async move { session.execute_turn(sender, input, config, cancel_token).await });
         ChatSessionStream {
             receiver: Arc::new(Mutex::new(receiver)),
             cancel_token: cancel_token_to_return,
