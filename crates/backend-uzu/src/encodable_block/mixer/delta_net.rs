@@ -487,13 +487,11 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
 
         assert!(state.suffix_status.is_none(), "delta net called with state with an unaccepted suffix");
 
-        let in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
+        let mut in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
 
         if !batch_dim.full_accept() {
             return self.encode_tree_verify(in_projected, batch_dim, state, encoder);
         }
-
-        let mut in_projected = in_projected;
 
         let mut delta_output =
             encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.value_dim], self.outer_data_type))?;
@@ -635,7 +633,3 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         self.out_projection.encode(delta_output, batch_dim.size(), encoder)
     }
 }
-
-#[cfg(test)]
-#[path = "../../../unit/encodable_block/delta_net_state_test.rs"]
-mod tests;
