@@ -23,10 +23,11 @@ pub fn bindgen(
     let struct_name = format_ident!("{}MetalKernel", kernel_name);
 
     let variant_binds = variants::parse(kernel)?;
-    let mut variant_path_rewriter = VariantPathRewriter::new(&variant_binds, kernel_name);
-    let argument_emissions = arguments::parse(kernel, enum_paths, &mut variant_path_rewriter)?;
     let specialize_emission =
         specialize::parse(kernel, specialize_indices.get(&kernel.name).copied(), kernel_name, enum_paths)?;
+    let mut variant_path_rewriter =
+        VariantPathRewriter::new(&variant_binds, specialize_emission.argument_names(), kernel_name);
+    let argument_emissions = arguments::parse(kernel, enum_paths, &mut variant_path_rewriter)?;
     let trait_wiring = trait_wiring::build(kernel, &trait_name, &struct_name);
 
     let dispatch_emission = dispatch::parse(kernel, &mut variant_path_rewriter)?;
@@ -55,6 +56,10 @@ pub fn bindgen(
     let entry_name = dynamic_mangle(kernel_name, variant_kernel_format);
 
     let specialize_arguments = specialize_emission.constructor_arguments();
+    let specialize::RetainedSpecializations {
+        wrapper_fields: retained_specialization_fields,
+        wrapper_initializers: retained_specialization_initializers,
+    } = specialize_emission.retain_referenced(&referenced_parameter_names);
     let function_constants_initialization = specialize_emission.function_constants_initialization();
     let function_constants_argument = specialize_emission.function_constants_argument();
     let cache_key = specialize_emission.cache_key();
@@ -76,6 +81,7 @@ pub fn bindgen(
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
             #(#conditional_buffer_fields,)*
             #(#variant_struct_fields,)*
+            #(#retained_specialization_fields,)*
         }
 
         #[allow(clippy::style, clippy::complexity, clippy::perf)]
@@ -90,7 +96,12 @@ pub fn bindgen(
                 let entry_name = #entry_name;
                 #function_constants_initialization
                 let pipeline = context.compute_pipeline_state(#cache_key, &entry_name, #function_constants_argument)?;
-                Ok(Self { pipeline #(, #conditional_buffer_initializers)* #(, #variant_struct_initializers)* })
+                Ok(Self {
+                    pipeline
+                    #(, #conditional_buffer_initializers)*
+                    #(, #variant_struct_initializers)*
+                    #(, #retained_specialization_initializers)*
+                })
             }
 
             #method_visibility fn encode<#(#encode_lifetimes),*>(
