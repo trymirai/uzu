@@ -12,6 +12,7 @@ use crate::{
             DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
             StateAdvanceKernel,
             delta_net_chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
+            delta_net_tree_verify::DeltaNetTreeVerify as DeltaNetTreeVerifyTrait,
         },
     },
     config::token_mixer::delta_net::DeltaNetConfig,
@@ -22,7 +23,7 @@ use crate::{
         mixer::{
             Mixer, MixerState,
             attention::rope::PrecalculatedRoPE,
-            delta_net::tree_verify::{TreeVerifyCores, TreeVerifyEncodeArguments, TreeVerifyNewArguments},
+            delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
         },
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -111,7 +112,7 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                     encoder,
                 );
             },
-        };
+        }
         Ok(())
     }
 }
@@ -143,7 +144,7 @@ pub struct DeltaNet<B: Backend> {
     delta_net_tree_prep: <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel,
     delta_net_prefill: <B::Kernels as Kernels>::DeltaNetPrefillKernel,
     delta_net_norm_gate: <B::Kernels as Kernels>::DeltaNetNormGateKernel,
-    tree_verify: TreeVerifyCores<B>,
+    tree_verify: Option<<B::Kernels as Kernels>::DeltaNetTreeVerify>,
     chunked: Option<<B::Kernels as Kernels>::DeltaNetChunkedPrefill>,
     out_projection: Box<dyn Linear<B>>,
 }
@@ -266,17 +267,24 @@ impl<B: Backend> DeltaNet<B> {
                 .map_err(DeltaNetNewError::Backend)?;
         let delta_net_norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, outer_data_type)
             .map_err(DeltaNetNewError::Backend)?;
-        let tree_verify = TreeVerifyCores::new(
-            TreeVerifyNewArguments {
-                data_type: outer_data_type,
-                num_k_heads: config.num_groups,
-                num_v_heads: config.num_heads,
-                head_k_dim: config.head_dim,
-                head_v_dim: config.value_head_dim,
-            },
-            context,
-        )
-        .map_err(DeltaNetNewError::Backend)?;
+        let tree_verify =
+            if <<B::Kernels as Kernels>::DeltaNetTreeVerify as DeltaNetTreeVerifyTrait<B>>::is_supported(context) {
+                Some(
+                    <<B::Kernels as Kernels>::DeltaNetTreeVerify as DeltaNetTreeVerifyTrait<B>>::new(
+                        context,
+                        &TreeVerifyNewArguments {
+                            data_type: outer_data_type,
+                            num_k_heads: config.num_groups,
+                            num_v_heads: config.num_heads,
+                            head_k_dim: config.head_dim,
+                            head_v_dim: config.value_head_dim,
+                        },
+                    )
+                    .map_err(DeltaNetNewError::Backend)?,
+                )
+            } else {
+                None
+            };
 
         let chunked =
             <B::Kernels as Kernels>::DeltaNetChunkedPrefill::new(context, outer_data_type, config.head_dim as u32)
@@ -336,6 +344,7 @@ impl<B: Backend> DeltaNet<B> {
         state: &mut DeltaNetState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
         let tree_size = batch_dim.size();
         let mut parents = encoder.allocate_constant(tree_size * DataType::I32.size_in_bytes())?;
         parents.copyin(batch_dim.parents());
@@ -384,7 +393,7 @@ impl<B: Backend> DeltaNet<B> {
             encoder,
         );
 
-        let mut delta_output = self.tree_verify.encode(
+        let mut delta_output = tree_verify.encode(
             TreeVerifyEncodeArguments {
                 q: &q,
                 k: &k,
@@ -426,7 +435,7 @@ impl<B: Backend> DeltaNet<B> {
 
 impl<B: Backend> Mixer<B> for DeltaNet<B> {
     fn speculation_supported(&self) -> bool {
-        true
+        self.tree_verify.is_some()
     }
 
     fn max_context_length(&self) -> Option<usize> {

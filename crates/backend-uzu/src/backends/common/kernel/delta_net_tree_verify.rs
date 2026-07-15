@@ -6,10 +6,7 @@ use crate::{
 };
 
 pub trait DeltaNetTreeVerify<B: Backend<Kernels: Kernels<DeltaNetTreeVerify = Self>>>: Sized {
-    fn is_supported(
-        arguments: &TreeVerifyNewArguments,
-        context: &B::Context,
-    ) -> Result<bool, B::Error>;
+    fn is_supported(context: &B::Context) -> bool;
 
     fn new(
         context: &B::Context,
@@ -24,18 +21,15 @@ pub trait DeltaNetTreeVerify<B: Backend<Kernels: Kernels<DeltaNetTreeVerify = Se
 }
 
 impl<B: Backend<Kernels: Kernels<DeltaNetTreeVerify = Infallible>>> DeltaNetTreeVerify<B> for Infallible {
-    fn is_supported(
-        _arguments: &TreeVerifyNewArguments,
-        _context: &B::Context,
-    ) -> Result<bool, B::Error> {
-        Ok(false)
+    fn is_supported(_context: &B::Context) -> bool {
+        false
     }
 
     fn new(
         _context: &B::Context,
         _arguments: &TreeVerifyNewArguments,
     ) -> Result<Self, B::Error> {
-        unreachable!("unsupported DeltaNet tree-verify core should not be constructed")
+        unreachable!("unsupported DeltaNet tree verifier should not be constructed")
     }
 
     fn encode(
@@ -43,6 +37,6 @@ impl<B: Backend<Kernels: Kernels<DeltaNetTreeVerify = Infallible>>> DeltaNetTree
         _arguments: TreeVerifyEncodeArguments<'_, B>,
         _encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        unreachable!("unsupported DeltaNet tree-verify core cannot encode")
+        unreachable!("unsupported DeltaNet tree verifier cannot encode")
     }
 }
