@@ -8,14 +8,14 @@ use syn::Expr;
 use super::variants::VariantBind;
 use crate::common::expr_rewrite::rewrite_paths_with;
 
-pub struct VariantPathRewriter<'context> {
+pub struct HostExpressionRewriter<'context> {
     variants: &'context [VariantBind],
     specialization_names: Vec<String>,
     referenced_parameter_names: BTreeSet<String>,
     kernel_name: &'context str,
 }
 
-impl<'context> VariantPathRewriter<'context> {
+impl<'context> HostExpressionRewriter<'context> {
     pub fn new(
         variants: &'context [VariantBind],
         specialization_names: Vec<String>,

@@ -1,15 +1,15 @@
 mod arguments;
 mod dispatch;
+mod host_expression_rewriter;
 mod specialize;
 mod trait_wiring;
-mod variant_path_rewriter;
 mod variants;
 
 use anyhow::Result;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use self::variant_path_rewriter::VariantPathRewriter;
+use self::host_expression_rewriter::HostExpressionRewriter;
 use super::{ast::MetalKernelInfo, wrapper::SpecializeBaseIndices};
 use crate::common::{enum_paths::EnumPaths, mangling::dynamic_mangle};
 
@@ -25,13 +25,13 @@ pub fn bindgen(
     let variant_binds = variants::parse(kernel)?;
     let specialize_emission =
         specialize::parse(kernel, specialize_indices.get(&kernel.name).copied(), kernel_name, enum_paths)?;
-    let mut variant_path_rewriter =
-        VariantPathRewriter::new(&variant_binds, specialize_emission.argument_names(), kernel_name);
-    let argument_emissions = arguments::parse(kernel, enum_paths, &mut variant_path_rewriter)?;
+    let mut host_expression_rewriter =
+        HostExpressionRewriter::new(&variant_binds, specialize_emission.argument_names(), kernel_name);
+    let argument_emissions = arguments::parse(kernel, enum_paths, &mut host_expression_rewriter)?;
     let trait_wiring = trait_wiring::build(kernel, &trait_name, &struct_name);
 
-    let dispatch_emission = dispatch::parse(kernel, &mut variant_path_rewriter)?;
-    let referenced_parameter_names = variant_path_rewriter.finish();
+    let dispatch_emission = dispatch::parse(kernel, &mut host_expression_rewriter)?;
+    let referenced_parameter_names = host_expression_rewriter.finish();
 
     let conditional_buffer_fields: Vec<TokenStream> =
         argument_emissions.iter().filter_map(|argument| argument.struct_field()).collect();
