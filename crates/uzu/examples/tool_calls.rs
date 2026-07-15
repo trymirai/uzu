@@ -37,13 +37,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
                 Box::new(|_args| {
                     Box::pin(async {
-                        Some(
-                            serde_json::json!({
-                                "latitude": 59.938784,
-                                "longitude": 30.314997,
-                            })
-                            .into(),
-                        )
+                        Ok(serde_json::json!({
+                            "latitude": 59.938784,
+                            "longitude": 30.314997,
+                        })
+                        .into())
                     })
                 }),
             ),
@@ -82,12 +80,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
                 Box::new(|_args| {
                     Box::pin(async {
-                        Some(
-                            serde_json::json!({
-                                "temperature": 25.9,
-                            })
-                            .into(),
-                        )
+                        Ok(serde_json::json!({
+                            "temperature": 25.9,
+                        })
+                        .into())
                     })
                 }),
             ),

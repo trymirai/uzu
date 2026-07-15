@@ -16,11 +16,14 @@ use shoji::{
     types::{
         basic::{CancelToken, ToolCall, Value},
         model::{Model, ModelSpecialization},
-        session::chat::{ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatRole},
+        session::chat::{
+            ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatReplyFinishReason, ChatRole,
+        },
     },
 };
 use tokio::sync::{Mutex, mpsc, mpsc::UnboundedSender};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::{
     telemetry::{Telemetry, TelemetryEvent},
@@ -280,6 +283,109 @@ impl ChatSession {
             });
         }
     }
+
+    async fn execute_turn_with_tools(
+        &self,
+        sender: UnboundedSender<Result<Vec<ChatReply>, ChatSessionError>>,
+        input: Vec<ChatMessage>,
+        config: ChatReplyConfig,
+        cancel_token: CancellationToken,
+    ) {
+        let mut completed_replies: Vec<ChatReply> = Vec::new();
+        let mut next_input = input;
+
+        loop {
+            // run a single generation turn
+            let (turn_sender, mut turn_receiver) =
+                mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
+            let turn_input = std::mem::take(&mut next_input);
+            let turn_config = config.clone();
+            let turn_cancel_token = cancel_token.clone();
+            let session = self.clone();
+            tokio::spawn(
+                async move { session.execute_turn(turn_sender, turn_input, turn_config, turn_cancel_token).await },
+            );
+            let mut turn_replies: Vec<ChatReply> = Vec::new();
+            while let Some(result) = turn_receiver.recv().await {
+                match result {
+                    Ok(replies) => {
+                        turn_replies = replies;
+                        let mut all_replies = completed_replies.clone();
+                        all_replies.extend(turn_replies.iter().cloned());
+                        if sender.send(Ok(all_replies)).is_err() {
+                            return;
+                        }
+                    },
+                    Err(error) => {
+                        let _ = sender.send(Err(error));
+                        return;
+                    },
+                }
+            }
+
+            // continue only when the model requested tool calls
+            let Some(last_reply) = turn_replies.last() else {
+                return;
+            };
+            if last_reply.finish_reason != Some(ChatReplyFinishReason::ToolCalls) {
+                return;
+            }
+
+            let tool_calls = last_reply.message.tool_calls();
+            let Some(registry) = self.tool_registry.as_ref() else {
+                return;
+            };
+            if tool_calls.is_empty() || cancel_token.is_cancelled() {
+                return;
+            }
+
+            let mut state_guard = self.state.lock().await;
+            if *state_guard != ChatSessionState::Idle {
+                return;
+            }
+            *state_guard = ChatSessionState::ToolCalling;
+            drop(state_guard);
+
+            let registry_guard = registry.lock().await;
+            let mut tool_messages: Vec<ChatMessage> = Vec::with_capacity(tool_calls.len());
+            for call in tool_calls {
+                let function: Option<&ToolFunctionDefinition> = (*registry_guard).get_function(&call.name);
+                let value = if let Some(func) = function {
+                    func.execute(call.arguments).await.unwrap_or_else(|err| {
+                        Value::from(serde_json::json!({
+                            "error": err.to_string(),
+                        }))
+                    })
+                } else {
+                    Value::from(serde_json::json!({
+                        "error": format!("Unknown function: {}", call.name),
+                    }))
+                };
+                // chat templates expect tool results as plain text, one message per call
+                let tool_message = ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+                    identifier: call.identifier.clone(),
+                    name: Some(call.name.clone()),
+                    value: Value::from(serde_json::Value::String(value.json)),
+                });
+                tool_messages.push(tool_message);
+            }
+            drop(registry_guard);
+
+            let mut state_guard = self.state.lock().await;
+            if *state_guard != ChatSessionState::ToolCalling {
+                return;
+            }
+            *state_guard = ChatSessionState::Idle;
+            drop(state_guard);
+
+            if cancel_token.is_cancelled() {
+                return;
+            }
+
+            completed_replies.extend(turn_replies);
+            next_input = tool_messages;
+        }
+    }
 }
 
 #[bindings::export(Implementation)]
@@ -353,7 +459,7 @@ impl ChatSession {
         let cancel_token = cancel_token_to_return.inner().clone();
         let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
         let session = self.clone();
-        tokio::spawn(async move { session.execute_turn(sender, input, config, cancel_token).await });
+        tokio::spawn(async move { session.execute_turn_with_tools(sender, input, config, cancel_token).await });
         ChatSessionStream {
             receiver: Arc::new(Mutex::new(receiver)),
             cancel_token: cancel_token_to_return,
@@ -374,11 +480,17 @@ fn build_message(output: &BackendOutput) -> ChatMessage {
             ToolCallState::Candidate(candidate) => {
                 message.with_tool_call_candidate(Value::from(serde_json::Value::String(candidate.clone())))
             },
-            ToolCallState::Finished(tool_call) => message.with_tool_call(ToolCall {
-                identifier: tool_call.identifier.clone(),
-                name: tool_call.name.clone(),
-                arguments: tool_call.arguments.clone(),
-            }),
+            ToolCallState::Finished(tool_call) => {
+                let mut id = tool_call.identifier.clone();
+                if id.is_none() {
+                    id = Some(Uuid::new_v4().to_string())
+                }
+                message.with_tool_call(ToolCall {
+                    identifier: id,
+                    name: tool_call.name.clone(),
+                    arguments: tool_call.arguments.clone(),
+                })
+            },
         };
     }
     message

@@ -33,6 +33,14 @@
                                 "close_tokens": [
                                     "</tool_call>"
                                 ]
+                            },
+                            {
+                                "type": "bounded",
+                                "name": "tool_call_result",
+                                "open_token": "<tool_response>",
+                                "close_tokens": [
+                                    "</tool_response>"
+                                ]
                             }
                         ]
                     }

@@ -23,6 +23,13 @@ impl ToolRegistry {
         self.functions.insert(function.name().to_string(), function);
     }
 
+    pub fn get_function(
+        &self,
+        name: &str,
+    ) -> Option<&ToolFunctionDefinition> {
+        self.functions.get(name)
+    }
+
     pub fn get_namespaces(&self) -> Vec<ToolNamespace> {
         let mut namespaces = Vec::new();
 

@@ -38,6 +38,7 @@ impl Content {
                 let mut reasoning_parts: Vec<String> = Vec::new();
                 let mut text_parts: Vec<String> = Vec::new();
                 let mut tool_calls: Vec<ChatContentBlock> = Vec::new();
+                let mut tool_call_results: Vec<ChatContentBlock> = Vec::new();
 
                 for section in sections {
                     match section {
@@ -67,6 +68,15 @@ impl Content {
                                 value: Value::Null.into(),
                             });
                         },
+                        Section::ToolCallResult {
+                            value: Some(value),
+                        } => {
+                            tool_call_results.push(ChatContentBlock::ToolCallResult {
+                                identifier: None,
+                                name: None,
+                                value: value.into(),
+                            });
+                        },
                         _ => {},
                     }
                 }
@@ -85,6 +95,7 @@ impl Content {
                     });
                 }
                 blocks.extend(tool_calls);
+                blocks.extend(tool_call_results);
                 blocks
             },
         }

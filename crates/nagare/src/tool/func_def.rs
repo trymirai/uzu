@@ -2,7 +2,9 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use shoji::types::basic::Value;
 
-pub type FutureFunction = dyn Fn(Option<Value>) -> Pin<Box<dyn Future<Output = Option<Value>> + Send>> + Send + Sync;
+pub type FutureError = Box<dyn std::error::Error + Send + Sync>;
+pub type FutureFunction =
+    dyn Fn(Value) -> Pin<Box<dyn Future<Output = Result<Value, FutureError>> + Send>> + Send + Sync;
 
 #[derive(Clone)]
 pub struct ToolFunctionDefinition {
@@ -48,8 +50,8 @@ impl ToolFunctionDefinition {
 
     pub async fn execute(
         &self,
-        args: Option<Value>,
-    ) -> Option<Value> {
+        args: Value,
+    ) -> Result<Value, FutureError> {
         (self.func)(args).await
     }
 }

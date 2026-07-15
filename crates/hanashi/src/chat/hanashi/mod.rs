@@ -179,6 +179,13 @@ impl Encoding {
                 let role = rendering_config.get_role_by_name(&streamed_message.role.to_string());
                 let mut message = ChatMessage::from(streamed_message);
                 message.role = role;
+                // templates may render tool results inside another role's turn
+                // (e.g. qwen renders them as `<|im_start|>user\n<tool_response>...`)
+                if !message.content.is_empty()
+                    && message.content.iter().all(|block| matches!(block, ChatContentBlock::ToolCallResult { .. }))
+                {
+                    message.role = ChatRole::Tool {};
+                }
                 message
             })
             .collect();
