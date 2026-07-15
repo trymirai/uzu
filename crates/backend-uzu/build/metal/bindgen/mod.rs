@@ -26,7 +26,7 @@ pub fn bindgen(
     let specialize_emission =
         specialize::parse(kernel, specialize_indices.get(&kernel.name).copied(), kernel_name, enum_paths)?;
     let mut host_expression_rewriter =
-        HostExpressionRewriter::new(&variant_binds, specialize_emission.argument_names(), kernel_name);
+        HostExpressionRewriter::new(&variant_binds, enum_paths, specialize_emission.argument_names(), kernel_name);
     let argument_emissions = arguments::parse(kernel, enum_paths, &mut host_expression_rewriter)?;
     let trait_wiring = trait_wiring::build(kernel, &trait_name, &struct_name);
 
