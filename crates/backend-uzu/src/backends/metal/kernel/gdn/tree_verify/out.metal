@@ -59,8 +59,9 @@ PUBLIC KERNEL(BuildTreeOut)(
     const uint batch_value_head_idx GROUPS(batch_size * value_heads),
     const uint tid THREADS(SIMDGROUPS_PER_TG * METAL_SIMD_SIZE)
 ) {
-  using Ops = metal::conditional_t<use_mxu, MxuFragmentOps<>, SimdgroupFragmentOps>;
-  using InputType = metal::conditional_t<use_mxu, QKT, float>;
+  // Relaxed MPP diverges from FP32 across layers.
+  using Ops = metal::conditional_t<use_mxu, MxuStrictFragmentOps, SimdgroupFragmentOps>;
+  using InputType = float;
   using H0Read = metal::conditional_t<transposed_h0, ReadTranspose, ReadDirect>;
   constexpr ushort ROWS = Ops::FRAGMENT_ROWS;
   constexpr ushort COL_FRAGMENTS = MATMUL_COLS / Ops::FRAGMENT_COLS;

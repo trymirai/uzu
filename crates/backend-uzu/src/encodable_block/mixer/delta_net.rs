@@ -8,9 +8,9 @@ use crate::{
         Allocation, AllocationType, Backend, Context, Encoder, Kernels,
         gpu_types::trie::TrieNode,
         kernel::{
-            BuildTreeGramKernel, BuildTreeOutKernel, BuildTreePrefixKernel, Conv1dPackKernel, ConvTreeScanKernel,
-            DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel, DeltaNetPrefillKernel,
-            DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel, StateAdvanceKernel, TreeUpdateSolveKernel,
+            Conv1dPackKernel, ConvTreeScanKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel,
+            DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
+            StateAdvanceKernel,
             delta_net_chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
         },
     },
@@ -19,11 +19,17 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError},
-        mixer::{Mixer, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{
+            Mixer, MixerState,
+            attention::rope::PrecalculatedRoPE,
+            delta_net::tree_verify::{TreeVerifyCores, TreeVerifyEncodeArguments, TreeVerifyNewArguments},
+        },
     },
     parameters::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
 };
+
+pub(crate) mod tree_verify;
 
 enum DeltaNetSuffixStatus<B: Backend> {
     Flat {
@@ -141,10 +147,7 @@ pub struct DeltaNet<B: Backend> {
     delta_net_tree_prep: <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel,
     delta_net_prefill: <B::Kernels as Kernels>::DeltaNetPrefillKernel,
     delta_net_norm_gate: <B::Kernels as Kernels>::DeltaNetNormGateKernel,
-    build_tree_prefix: <B::Kernels as Kernels>::BuildTreePrefixKernel,
-    build_tree_gram: <B::Kernels as Kernels>::BuildTreeGramKernel,
-    tree_update_solve: <B::Kernels as Kernels>::TreeUpdateSolveKernel,
-    build_tree_out: <B::Kernels as Kernels>::BuildTreeOutKernel,
+    tree_verify: TreeVerifyCores<B>,
     chunked: Option<<B::Kernels as Kernels>::DeltaNetChunkedPrefill>,
     out_projection: Box<dyn Linear<B>>,
 }
@@ -267,20 +270,15 @@ impl<B: Backend> DeltaNet<B> {
                 .map_err(DeltaNetNewError::Backend)?;
         let delta_net_norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, outer_data_type)
             .map_err(DeltaNetNewError::Backend)?;
-        let build_tree_prefix =
-            <B::Kernels as Kernels>::BuildTreePrefixKernel::new(context).map_err(DeltaNetNewError::Backend)?;
-        let build_tree_gram = <B::Kernels as Kernels>::BuildTreeGramKernel::new(context, outer_data_type, false, true)
-            .map_err(DeltaNetNewError::Backend)?;
-        let tree_update_solve =
-            <B::Kernels as Kernels>::TreeUpdateSolveKernel::new(context, outer_data_type, 32, false, true)
-                .map_err(DeltaNetNewError::Backend)?;
-        let build_tree_out = <B::Kernels as Kernels>::BuildTreeOutKernel::new(
+        let tree_verify = TreeVerifyCores::new(
+            TreeVerifyNewArguments {
+                data_type: outer_data_type,
+                num_k_heads: config.num_groups,
+                num_v_heads: config.num_heads,
+                head_k_dim: config.head_dim,
+                head_v_dim: config.value_head_dim,
+            },
             context,
-            outer_data_type,
-            outer_data_type,
-            false,
-            false,
-            true,
         )
         .map_err(DeltaNetNewError::Backend)?;
 
@@ -327,10 +325,7 @@ impl<B: Backend> DeltaNet<B> {
                 delta_net_tree_prep,
                 delta_net_prefill,
                 delta_net_norm_gate,
-                build_tree_prefix,
-                build_tree_gram,
-                tree_update_solve,
-                build_tree_out,
+                tree_verify,
                 chunked,
                 out_projection,
             },
@@ -338,7 +333,7 @@ impl<B: Backend> DeltaNet<B> {
         ))
     }
 
-    fn encode_tree(
+    fn encode_tree_verify(
         &self,
         in_projected: Allocation<B>,
         batch_dim: &BatchTopology,
@@ -358,17 +353,9 @@ impl<B: Backend> DeltaNet<B> {
         let mut beta = encoder.allocate_scratch(size_for_shape(&[tree_size, self.num_heads], DataType::F32))?;
         let mut log_decay = encoder.allocate_scratch(size_for_shape(&[tree_size, self.num_heads], DataType::F32))?;
 
-        let num_blocks = tree_size.div_ceil(16);
         let mut scratch = |shape: &[usize], data_type| encoder.allocate_scratch(size_for_shape(shape, data_type));
         let mut tree_projected = scratch(&[tree_size, self.total_proj_dim], self.outer_data_type)?;
         let mut q = scratch(&[tree_size, self.key_dim], self.outer_data_type)?;
-        let mut prefix = scratch(&[tree_size, self.num_heads], DataType::F32)?;
-        let mut a_packed = scratch(&[self.num_heads, num_blocks, num_blocks.div_ceil(2), 16, 32], DataType::F32)?;
-        let mut qkd = scratch(&[self.num_heads, tree_size, tree_size], DataType::F32)?;
-        let mut a_inv = scratch(&[self.num_heads, num_blocks, 16, 16], DataType::F32)?;
-        let mut kh0 = scratch(&[tree_size, self.num_heads, self.value_head_dim], DataType::F32)?;
-        let mut u = scratch(&[self.num_heads, tree_size, self.value_head_dim], DataType::F32)?;
-        let mut delta_output = scratch(&[tree_size, self.value_dim], self.outer_data_type)?;
 
         self.conv_tree_scan.encode(
             &in_projected,
@@ -401,73 +388,19 @@ impl<B: Backend> DeltaNet<B> {
             encoder,
         );
 
-        self.build_tree_prefix.encode(
-            &trie,
-            &log_decay,
-            &mut prefix,
-            1,
-            tree_size as u32,
-            self.num_heads as u32,
+        let mut delta_output = self.tree_verify.encode(
+            TreeVerifyEncodeArguments {
+                q: &q,
+                k: &k,
+                v: &v,
+                trie: &trie,
+                log_decay: &log_decay,
+                beta: &beta,
+                h0: &state.ssm_state,
+                tree_size,
+            },
             encoder,
-        );
-
-        let mut h0_indices = encoder.allocate_constant(DataType::I32.size_in_bytes())?;
-        h0_indices.copyin(&[0i32]);
-        self.build_tree_gram.encode(
-            &q,
-            &k,
-            &trie,
-            &prefix,
-            &beta,
-            Some(&state.ssm_state),
-            Some(&h0_indices),
-            &mut a_packed,
-            &mut qkd,
-            &mut a_inv,
-            Some(&mut kh0),
-            1.0,
-            1,
-            tree_size as u32,
-            self.num_groups as u32,
-            self.num_heads as u32,
-            self.head_dim as u32,
-            self.value_head_dim as u32,
-            encoder,
-        );
-
-        self.tree_update_solve.encode(
-            Some(&kh0),
-            &v,
-            &prefix,
-            &beta,
-            &a_packed,
-            &a_inv,
-            Some(&h0_indices),
-            &mut u,
-            1,
-            tree_size as u32,
-            self.num_heads as u32,
-            self.value_head_dim as u32,
-            encoder,
-        );
-
-        self.build_tree_out.encode(
-            &q,
-            &prefix,
-            &qkd,
-            &u,
-            Some(&state.ssm_state),
-            Some(&h0_indices),
-            &mut delta_output,
-            1.0,
-            1,
-            tree_size as u32,
-            self.num_groups as u32,
-            self.num_heads as u32,
-            self.head_dim as u32,
-            self.value_head_dim as u32,
-            encoder,
-        );
+        )?;
         self.delta_net_norm_gate.encode(
             &mut delta_output,
             &tree_projected,
@@ -558,7 +491,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         let in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
 
         if !batch_dim.full_accept() {
-            return self.encode_tree(in_projected, batch_dim, state, encoder);
+            return self.encode_tree_verify(in_projected, batch_dim, state, encoder);
         }
 
         let mut in_projected = in_projected;

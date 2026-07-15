@@ -23,9 +23,9 @@ const NUM_V_HEADS: usize = 48;
 const HEAD_V_DIM: usize = 128;
 const BT: usize = 16;
 const BVS: &[usize] = &[16, 32];
-const MXU_BVS: &[usize] = &[32];
 
 const BENCH_SHAPES: &[(usize, usize)] = &[
+    (1, 32),
     (1, 33),
     (1, 49),
     (1, 64),
@@ -172,51 +172,38 @@ fn buffers_bytes(
 #[uzu_bench]
 fn bench_tree_update_solve(c: &mut Criterion) {
     let context = <Metal as Backend>::Context::new().expect("metal context");
-    let kernel_paths = if context.supports_mxu() {
-        &[("Simdgroup", false, BVS), ("MXU", true, MXU_BVS)][..]
-    } else {
-        &[("Simdgroup", false, BVS)][..]
-    };
+    for &bv in BVS {
+        let kernel = <<Metal as Backend>::Kernels as Kernels>::TreeUpdateSolveKernel::new(
+            &context,
+            DataType::BF16,
+            bv as u32,
+            true,
+        )
+        .expect("TreeUpdateSolveKernel");
 
-    for &(kernel_path, use_mxu, bvs) in kernel_paths {
-        for &bv in bvs {
-            let kernel = <<Metal as Backend>::Kernels as Kernels>::TreeUpdateSolveKernel::new(
-                &context,
-                DataType::BF16,
-                bv as u32,
-                use_mxu,
-                true,
-            )
-            .expect("TreeUpdateSolveKernel");
+        let mut group = c.benchmark_group(format!("Metal/Kernel/GDNTreeVerify/TreeUpdateSolve/Simdgroup/BV{bv}"));
+        // 500ms warmup ramps GPU clocks before measuring (µs-scale benches never
+        // ramp otherwise and medians become run-composition artifacts).
+        group.sample_size(20).warm_up_time(Duration::from_millis(500)).measurement_time(Duration::from_secs(2));
 
-            let mut group =
-                c.benchmark_group(format!("Metal/Kernel/GDNTreeVerify/TreeUpdateSolve/{kernel_path}/BV{bv}"));
-            // 500ms warmup ramps GPU clocks before measuring (µs-scale benches never
-            // ramp otherwise and medians become run-composition artifacts).
-            group.sample_size(20).warm_up_time(Duration::from_millis(500)).measurement_time(Duration::from_secs(2));
+        for &(batch_size, tree_size) in BENCH_SHAPES {
+            let benchmark_path =
+                format!("Metal/Kernel/GDNTreeVerify/TreeUpdateSolve/Simdgroup/BV{bv}/B{batch_size}_T{tree_size}");
+            let benchmark_id =
+                BenchmarkId::from_parameter(format!("B{batch_size}_T{tree_size}_HV{NUM_V_HEADS}_V{HEAD_V_DIM}_BV{bv}"));
+            let mut buffers =
+                ColdPool::new(buffers_bytes(batch_size, tree_size), || make_buffers(&context, batch_size, tree_size));
 
-            for &(batch_size, tree_size) in BENCH_SHAPES {
-                let benchmark_path = format!(
-                    "Metal/Kernel/GDNTreeVerify/TreeUpdateSolve/{kernel_path}/BV{bv}/B{batch_size}_T{tree_size}"
-                );
-                let benchmark_id = BenchmarkId::from_parameter(format!(
-                    "B{batch_size}_T{tree_size}_HV{NUM_V_HEADS}_V{HEAD_V_DIM}_BV{bv}"
-                ));
-                let mut buffers = ColdPool::new(buffers_bytes(batch_size, tree_size), || {
-                    make_buffers(&context, batch_size, tree_size)
+            group.throughput(Throughput::Elements((batch_size * tree_size * NUM_V_HEADS * HEAD_V_DIM) as u64));
+            group.bench_function(benchmark_id, |bencher| {
+                iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
+                    let buffers = buffers.next_mut();
+                    encode(&kernel, buffers, batch_size, tree_size, encoder);
                 });
-
-                group.throughput(Throughput::Elements((batch_size * tree_size * NUM_V_HEADS * HEAD_V_DIM) as u64));
-                group.bench_function(benchmark_id, |bencher| {
-                    iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
-                        let buffers = buffers.next_mut();
-                        encode(&kernel, buffers, batch_size, tree_size, encoder);
-                    });
-                });
-            }
-            group.finish();
-            test_runner::metrics::wait_gpu_cooldown();
+            });
         }
+        group.finish();
+        test_runner::metrics::wait_gpu_cooldown();
     }
 }
 

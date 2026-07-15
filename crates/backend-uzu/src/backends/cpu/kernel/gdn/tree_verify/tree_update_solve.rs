@@ -9,8 +9,7 @@ use crate::array::ArrayElement;
 #[kernel(TreeUpdateSolve)]
 #[variants(T, f32, bf16)]
 #[variants(BV, 16, 32)]
-#[variants(USE_MXU, false)]
-pub fn tree_update_solve<T: ArrayElement + Float, const BV: u32, const USE_MXU: bool>(
+pub fn tree_update_solve<T: ArrayElement + Float, const BV: u32>(
     #[optional(use_h0)] kh0: Option<*const f32>,
     v: *const T,
     prefix: *const f32,

@@ -23,7 +23,7 @@ const K_HEADS: usize = 16;
 const VALUE_HEADS: usize = 48;
 const HEAD_K_DIM: usize = 128;
 const HEAD_V_DIM: usize = 128;
-const TREE_SIZES: &[usize] = &[33, 49, 64, 128, 256, 512];
+const TREE_SIZES: &[usize] = &[32, 33, 49, 64, 128, 256, 512];
 const BATCH_SIZES: &[usize] = &[1, 2, 4, 8];
 
 struct TreeGramBuffers {
