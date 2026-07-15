@@ -32,7 +32,7 @@ struct Inputs<T> {
     q: Vec<T>,
     prefix: Vec<f32>,
     qkd: Vec<f32>,
-    u: Vec<T>,
+    u: Vec<f32>,
     h0: Vec<f32>,
     h0_indices: Vec<i32>,
 }
@@ -57,7 +57,7 @@ fn make_inputs<T: ArrayElement + Float>(shape: Shape) -> Inputs<T> {
             .map(|i| -((i % shape.tree_size) as f32) * 0.01 - ((i % shape.value_heads) as f32) * 0.003)
             .collect(),
         qkd: (0..qkd_len).map(|i| ((i as f32 * 0.013).cos() * 0.1) - 0.02).collect(),
-        u: (0..u_len).map(|i| T::from(((i as f32 * 0.011).sin() * 0.3) + 0.04).unwrap()).collect(),
+        u: (0..u_len).map(|i| ((i as f32 * 0.011).sin() * 0.3) + 0.04).collect(),
         h0: (0..h0_len).map(|i| ((i as f32 * 0.019).cos() * 0.2) - 0.01).collect(),
         h0_indices: (0..shape.batch_size)
             .map(|i| {
@@ -82,6 +82,7 @@ fn run_build_tree_out<B: Backend, T: ArrayElement + Float>(
     let kernel = <<B as Backend>::Kernels as Kernels>::BuildTreeOutKernel::new(
         &context,
         T::data_type(),
+        T::data_type(),
         use_mxu,
         transposed_h0,
         use_h0,
@@ -90,7 +91,7 @@ fn run_build_tree_out<B: Backend, T: ArrayElement + Float>(
     let q = alloc_allocation_with_data::<B, T>(&context, &inputs.q);
     let prefix = alloc_allocation_with_data::<B, f32>(&context, &inputs.prefix);
     let qkd = alloc_allocation_with_data::<B, f32>(&context, &inputs.qkd);
-    let u = alloc_allocation_with_data::<B, T>(&context, &inputs.u);
+    let u = alloc_allocation_with_data::<B, f32>(&context, &inputs.u);
     let h0 = use_h0.then(|| alloc_allocation_with_data::<B, f32>(&context, &inputs.h0));
     let h0_indices = use_h0.then(|| alloc_allocation_with_data::<B, i32>(&context, &inputs.h0_indices));
     let mut o =

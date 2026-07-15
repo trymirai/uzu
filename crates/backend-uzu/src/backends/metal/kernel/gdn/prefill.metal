@@ -13,7 +13,7 @@ using namespace metal;
 static_assert(PREFILL_THREADS % METAL_SIMD_SIZE == 0, "PREFILL_THREADS must be a multiple of METAL_SIMD_SIZE");
 
 template <typename T, uint HEAD_K_DIM>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 PUBLIC KERNEL(DeltaNetPrefill)(
     device const float* q_norm,

@@ -1,4 +1,4 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
@@ -14,7 +14,7 @@ use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 // in_proj:    [suffix_len, out_stride] — first conv_dim channels overwritten
 // state_out: [conv_dim, state_stride]
 #[kernel(DeltaNetConvScan)]
-#[variants(T, f32, f16, bf16)]
+#[variants(T, f32, bf16)]
 pub fn delta_net_conv_scan<T: ArrayElement + Float>(
     conv_padded: *const f32,
     conv_weight: *const f32,

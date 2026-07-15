@@ -6,7 +6,7 @@ using namespace metal;
 
 // Single-token causal conv1d with SiLU, in-place.
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(DeltaNetConvUpdate)(
     device const float* conv_weight,
     device const float* bias OPTIONAL(has_bias),

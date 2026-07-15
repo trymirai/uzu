@@ -14,7 +14,7 @@ using namespace metal;
 // One simd group per output dim dv; 32 lanes cover Dk (coalesced state IO,
 // reduction via simd_sum). Activations are model dtype T; state stays float.
 template <typename T, uint HEAD_K_DIM>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 PUBLIC KERNEL(DeltaNetUpdate)(
     device const T* in_proj,

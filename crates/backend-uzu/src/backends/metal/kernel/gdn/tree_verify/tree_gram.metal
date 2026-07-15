@@ -23,7 +23,7 @@ using namespace uzu::trie;
 template <typename T, typename Ops, typename AccFragment, typename LeftFragment, typename RightFragment>
 METAL_FUNC void tree_kh0(
     const device T* k_rows,
-    const device T* h0,
+    const device float* h0,
     const device int* h0_idx,
     device float* kh0,
     const uint batch_idx,
@@ -44,7 +44,7 @@ METAL_FUNC void tree_kh0(
   if (h0_slot < 0) {
     return;
   }
-  const device T* h0_head = h0 + (uint(h0_slot) * value_heads + value_head_idx) * head_v_dim * head_k_dim;
+  const device float* h0_head = h0 + (uint(h0_slot) * value_heads + value_head_idx) * head_v_dim * head_k_dim;
   device float* kh0_rows =
       kh0 + (batch_idx * tree_size + row_base) * value_heads * head_v_dim + value_head_idx * head_v_dim;
   const uint kh0_row_stride = value_heads * head_v_dim;
@@ -54,7 +54,7 @@ METAL_FUNC void tree_kh0(
     AccFragment kh0_acc;
     kh0_acc.clear();
 
-    const device T* h0_tile = h0_head + dv_base * head_k_dim;
+    const device float* h0_tile = h0_head + dv_base * head_k_dim;
     const bool full_dvs = tile_dvs == COL_TILE;
 
     for (uint kb = 0; kb < head_k_dim; kb += Ops::FRAGMENT_ROWS) {
@@ -96,7 +96,7 @@ PUBLIC KERNEL(BuildTreeGram)(
     const device TrieNode* trie,
     const device float* prefix,
     const device float* beta,
-    const device T* h0 OPTIONAL(use_h0),
+    const device float* h0 OPTIONAL(use_h0),
     const device int* h0_idx OPTIONAL(use_h0),
     device float* a_packed,
     device float* qkd,

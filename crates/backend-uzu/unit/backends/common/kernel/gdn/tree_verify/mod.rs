@@ -1,8 +1,8 @@
 mod conv_scan_test;
 mod out_bench;
 mod out_test;
-mod prefix_beta_bench;
-mod prefix_beta_test;
+mod prefix_bench;
+mod prefix_test;
 mod state_advance_test;
 mod tree_gram_bench;
 mod tree_gram_test;

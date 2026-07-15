@@ -15,7 +15,7 @@ VARIANTS(T, float, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 PUBLIC KERNEL(StateAdvance)(
     // [tree_size, num_k_heads, HEAD_K_DIM]
-    device const float* k_norm,
+    device const T* k_norm,
     // [tree_size, num_v_heads, HEAD_K_DIM]
     device const T* v,
     // [tree_size, num_v_heads]
@@ -60,7 +60,7 @@ PUBLIC KERNEL(StateAdvance)(
     const float decay = fast::exp(log_decay_buf[tree_head_offset]);
     const float beta = beta_buf[tree_head_offset];
     const uint k_offset = tree_idx * key_dim + hk_idx * HEAD_K_DIM + dk_base;
-    const float4 k = *reinterpret_cast<device const float4*>(k_norm + k_offset);
+    const float4 k = float4(*reinterpret_cast<const device vec<T, 4>*>(k_norm + k_offset));
 
     state_rows[0] *= decay;
     state_rows[1] *= decay;

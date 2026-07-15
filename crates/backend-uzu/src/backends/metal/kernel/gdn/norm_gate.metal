@@ -15,7 +15,7 @@ using namespace metal;
 #define HEAD_V_DIM 128
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(DeltaNetNormGate)(
     device T* in_out,
     device const T* in_proj,
