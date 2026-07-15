@@ -23,7 +23,7 @@ const K_HEADS: usize = 16;
 const VALUE_HEADS: usize = 48;
 const HEAD_K_DIM: usize = 128;
 const HEAD_V_DIM: usize = 128;
-const TREE_SIZES: &[usize] = &[33, 49, 64, 128, 256, 512];
+const TREE_SIZES: &[usize] = &[32, 33, 49, 64, 128, 256, 512];
 const BATCH_SIZES: &[usize] = &[1, 2, 4, 8];
 
 struct TreeGramBuffers {
@@ -104,7 +104,7 @@ fn make_buffers(
         .map(|i| -((i % tree_size) as f32) * 0.01 - ((i % VALUE_HEADS) as f32) * 0.003)
         .collect::<Vec<_>>();
     let beta = (0..scalar_len).map(|i| 0.25 + ((i as f32 * 0.013).sin() + 1.0) * 0.2).collect::<Vec<_>>();
-    let h0 = (0..h0_len).map(|i| bf16::from_f32(((i as f32 * 0.007).sin() * 0.05) - 0.01)).collect::<Vec<_>>();
+    let h0 = (0..h0_len).map(|i| ((i as f32 * 0.007).sin() * 0.05) - 0.01).collect::<Vec<_>>();
     let h0_idx = (0..batch_size).map(|i| i as i32).collect::<Vec<_>>();
     let scale = (HEAD_K_DIM as f32).sqrt().recip();
     (
@@ -114,7 +114,7 @@ fn make_buffers(
             trie: alloc_allocation_with_data::<Metal, u32>(context, &trie),
             prefix: alloc_allocation_with_data::<Metal, f32>(context, &prefix),
             beta: alloc_allocation_with_data::<Metal, f32>(context, &beta),
-            h0: alloc_allocation_with_data::<Metal, bf16>(context, &h0),
+            h0: alloc_allocation_with_data::<Metal, f32>(context, &h0),
             h0_idx: alloc_allocation_with_data::<Metal, i32>(context, &h0_idx),
             a_packed: alloc_allocation::<Metal, f32>(context, a_len),
             qkd: alloc_allocation::<Metal, f32>(context, out_len),
@@ -137,7 +137,8 @@ fn buffers_bytes(
     let a_inv_len = batch_size * VALUE_HEADS * num_blocks * 16 * 16;
     let h0_len = batch_size * VALUE_HEADS * HEAD_V_DIM * HEAD_K_DIM;
     let kh0_len = batch_size * tree_size * VALUE_HEADS * HEAD_V_DIM;
-    (qk_len * 2 + h0_len) * size_of::<bf16>()
+    qk_len * 2 * size_of::<bf16>()
+        + h0_len * size_of::<f32>()
         + batch_size * tree_size * 3 * size_of::<u32>()
         + scalar_len * size_of::<f32>() * 2
         + (out_len + a_len + a_inv_len + kh0_len) * size_of::<f32>()

@@ -36,20 +36,25 @@ const TEST_NUM_K_HEADS: usize = 2;
 
 fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32> {
     let context = B::Context::new().expect("context");
-    let kernel =
-        <<B as Backend>::Kernels as Kernels>::StateAdvanceKernel::new(&context, T::data_type(), HEAD_DIM as u32)
-            .expect("kernel");
+    let kernel = <<B as Backend>::Kernels as Kernels>::StateAdvanceKernel::new(
+        &context,
+        T::data_type(),
+        HEAD_DIM as u32,
+        TEST_NUM_V_HEADS as u32,
+        TEST_NUM_K_HEADS as u32,
+    )
+    .expect("kernel");
     let key_len = TREE_SIZE * TEST_NUM_K_HEADS * HEAD_DIM;
     let value_len = TREE_SIZE * TEST_NUM_V_HEADS * HEAD_DIM;
     let scalar_len = TREE_SIZE * TEST_NUM_V_HEADS;
     let state_len = TEST_NUM_V_HEADS * HEAD_DIM * HEAD_DIM;
-    let k_norm = (0..key_len).map(|i| (i % 17) as f32 * 0.002 - 0.016).collect::<Vec<_>>();
+    let k_norm = (0..key_len).map(|i| T::from((i % 17) as f32 * 0.002 - 0.016).unwrap()).collect::<Vec<_>>();
     let v = (0..value_len).map(|i| T::from((i % 19) as f32 * 0.003 - 0.027).unwrap()).collect::<Vec<_>>();
     let log_decay = (0..scalar_len).map(|i| -0.01 - (i % 7) as f32 * 0.002).collect::<Vec<_>>();
     let beta = (0..scalar_len).map(|i| 0.2 + (i % 5) as f32 * 0.03).collect::<Vec<_>>();
     let initial_state = (0..state_len).map(|i| (i % 23) as f32 * 0.001 - 0.011).collect::<Vec<_>>();
 
-    let k_norm = alloc_allocation_with_data::<B, f32>(&context, &k_norm);
+    let k_norm = alloc_allocation_with_data::<B, T>(&context, &k_norm);
     let v = alloc_allocation_with_data::<B, T>(&context, &v);
     let log_decay = alloc_allocation_with_data::<B, f32>(&context, &log_decay);
     let beta = alloc_allocation_with_data::<B, f32>(&context, &beta);
@@ -66,8 +71,6 @@ fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32
         &accepted_indices,
         &mut committed_state,
         accepted_len as u32,
-        TEST_NUM_V_HEADS as u32,
-        TEST_NUM_K_HEADS as u32,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -92,10 +95,18 @@ fn bench_state_advance(c: &mut Criterion) {
     const BENCHMARK: &str = "Metal/Kernel/GDNTreeVerify/StateAdvance";
 
     let context = crate::tests::util::shared_metal_context();
-    let kernel =
-        <<Metal as Backend>::Kernels as Kernels>::StateAdvanceKernel::new(&context, DataType::BF16, HEAD_DIM as u32)
-            .expect("kernel");
-    let k_norm = alloc_allocation_with_data::<Metal, f32>(&context, &vec![0.001; TREE_SIZE * NUM_K_HEADS * HEAD_DIM]);
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::StateAdvanceKernel::new(
+        &context,
+        DataType::BF16,
+        HEAD_DIM as u32,
+        NUM_V_HEADS as u32,
+        NUM_K_HEADS as u32,
+    )
+    .expect("kernel");
+    let k_norm = alloc_allocation_with_data::<Metal, bf16>(
+        &context,
+        &vec![bf16::from_f32(0.001); TREE_SIZE * NUM_K_HEADS * HEAD_DIM],
+    );
     let v = alloc_allocation_with_data::<Metal, bf16>(
         &context,
         &vec![bf16::from_f32(0.01); TREE_SIZE * NUM_V_HEADS * HEAD_DIM],
@@ -121,8 +132,6 @@ fn bench_state_advance(c: &mut Criterion) {
                     &accepted_indices,
                     committed_states.next_mut(),
                     accepted_len as u32,
-                    NUM_V_HEADS as u32,
-                    NUM_K_HEADS as u32,
                     encoder,
                 );
             });

@@ -8,15 +8,15 @@ use crate::array::ArrayElement;
 #[variants(T, f32, bf16)]
 #[variants(HEAD_K_DIM, 128)]
 pub fn state_advance<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
-    k_norm: *const f32,
+    k_norm: *const T,
     v: *const T,
     log_decay_buf: *const f32,
     beta_buf: *const f32,
     accepted_indices: *const u32,
     state: *mut f32,
     accepted_len: u32,
-    num_v_heads: u32,
-    num_k_heads: u32,
+    #[specialize] num_v_heads: u32,
+    #[specialize] num_k_heads: u32,
 ) {
     let accepted_len = accepted_len as usize;
     let num_v_heads = num_v_heads as usize;
@@ -42,13 +42,16 @@ pub fn state_advance<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
                 for dk_idx in 0..head_k_dim {
                     let state_element_ptr = unsafe { state.add(state_row_offset + dk_idx) };
                     unsafe { *state_element_ptr *= decay };
-                    kv_mem += unsafe { *state_element_ptr * *k_norm.add(k_offset + dk_idx) };
+                    kv_mem += unsafe { *state_element_ptr * (*k_norm.add(k_offset + dk_idx)).to_f32().unwrap() };
                 }
                 let v_value =
                     unsafe { (*v.add(tree_idx * value_dim + hv_idx * head_v_dim + dv_idx)).to_f32().unwrap() };
                 let delta = beta * (v_value - kv_mem);
                 for dk_idx in 0..head_k_dim {
-                    unsafe { *state.add(state_row_offset + dk_idx) += *k_norm.add(k_offset + dk_idx) * delta };
+                    unsafe {
+                        *state.add(state_row_offset + dk_idx) +=
+                            (*k_norm.add(k_offset + dk_idx)).to_f32().unwrap() * delta
+                    };
                 }
             }
         }

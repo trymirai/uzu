@@ -33,5 +33,6 @@ impl Kernels for CpuKernels {
     autogen_kernels!();
     type AttentionGemmCore = Infallible;
     type DeltaNetChunkedPrefill = Infallible;
+    type DeltaNetTreeVerify = Infallible;
     type MatmulKernel = matmul::MatmulCpuKernel;
 }

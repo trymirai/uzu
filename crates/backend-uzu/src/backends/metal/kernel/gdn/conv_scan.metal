@@ -15,7 +15,7 @@ using namespace metal;
 // state_out: [conv_dim, state_stride]
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(DeltaNetConvScan)(
     device const float* conv_padded,
     device const float* conv_weight,

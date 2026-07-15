@@ -25,7 +25,7 @@ const HEAD_K_DIM: usize = 128;
 const HEAD_V_DIM: usize = 128;
 const TREE_OUT_MATMUL_MXU_ROWS: usize = 16;
 const TREE_OUT_MATMUL_SIMDGROUP_ROWS: usize = 8;
-const TREE_SIZES: &[usize] = &[33, 49, 64, 128, 256, 512];
+const TREE_SIZES: &[usize] = &[32, 33, 49, 64, 128, 256, 512];
 const BATCH_SIZES: &[usize] = &[1, 2, 4, 8];
 const TREE_OUT_VALUE_COLS: usize = 32;
 const TREE_OUT_SIMDGROUPS_PER_TG: usize = 4;
@@ -60,7 +60,7 @@ fn make_buffers<T: ArrayElement + Float>(
         .map(|i| -((i % tree_size) as f32) * 0.01 - ((i % VALUE_HEADS) as f32) * 0.003)
         .collect::<Vec<_>>();
     let qkd = (0..qkd_len).map(|i| ((i as f32 * 0.013).cos() * 0.03) - 0.01).collect::<Vec<_>>();
-    let u = (0..uv_len).map(|i| T::from(((i as f32 * 0.011).sin() * 0.3) + 0.04).unwrap()).collect::<Vec<_>>();
+    let u = (0..uv_len).map(|i| (i as f32 * 0.011).sin() * 0.3 + 0.04).collect::<Vec<_>>();
     let h0 = (0..h0_len).map(|i| ((i as f32 * 0.019).cos() * 0.2) - 0.01).collect::<Vec<_>>();
     let h0_indices = (0..batch_size as i32).collect::<Vec<_>>();
 
@@ -68,7 +68,7 @@ fn make_buffers<T: ArrayElement + Float>(
         q: alloc_allocation_with_data::<Metal, T>(context, &q),
         prefix: alloc_allocation_with_data::<Metal, f32>(context, &prefix),
         qkd: alloc_allocation_with_data::<Metal, f32>(context, &qkd),
-        u: alloc_allocation_with_data::<Metal, T>(context, &u),
+        u: alloc_allocation_with_data::<Metal, f32>(context, &u),
         h0: alloc_allocation_with_data::<Metal, f32>(context, &h0),
         h0_indices: alloc_allocation_with_data::<Metal, i32>(context, &h0_indices),
         o: alloc_allocation::<Metal, T>(context, uv_len),
@@ -108,6 +108,7 @@ fn bench_build_tree_out_type<T: ArrayElement + Float>(
 
                 let kernel = <<Metal as Backend>::Kernels as Kernels>::BuildTreeOutKernel::new(
                     context,
+                    T::data_type(),
                     T::data_type(),
                     use_mxu,
                     transposed_h0,

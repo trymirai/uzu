@@ -5,15 +5,16 @@ use proc_macros::kernel;
 use crate::array::ArrayElement;
 
 #[kernel(BuildTreeOut)]
-#[variants(T, f32, bf16)]
-pub fn build_tree_out<T: ArrayElement + Float>(
-    q: *const T,
+#[variants(QKT, f32, bf16)]
+#[variants(OutputT, f32, bf16)]
+pub fn build_tree_out<QKT: ArrayElement + Float, OutputT: ArrayElement + Float>(
+    q: *const QKT,
     prefix: *const f32,
     qkd: *const f32,
-    u: *const T,
+    u: *const f32,
     #[optional(use_h0)] h0: Option<*const f32>,
     #[optional(use_h0)] h0_indices: Option<*const i32>,
-    o: *mut T,
+    o: *mut OutputT,
     scale: f32,
     batch_size: u32,
     tree_size: u32,
@@ -75,12 +76,12 @@ pub fn build_tree_out<T: ArrayElement + Float>(
 
                     for col in 0..tree_size {
                         let qkd_value = unsafe { *qkd.add(qkd_base + row * tree_size + col) };
-                        let u_value = unsafe { (*u.add(u_base + col * head_v_dim + value_col)).to_f32().unwrap() };
+                        let u_value = unsafe { *u.add(u_base + col * head_v_dim + value_col) };
                         acc += qkd_value * u_value;
                     }
 
                     unsafe {
-                        *o.add(out_base + row * value_heads * head_v_dim + value_col) = T::from(acc).unwrap();
+                        *o.add(out_base + row * value_heads * head_v_dim + value_col) = OutputT::from(acc).unwrap();
                     }
                 }
             }

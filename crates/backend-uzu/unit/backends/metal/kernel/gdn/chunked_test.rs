@@ -82,7 +82,9 @@ fn run_prefill<T: ArrayElement>(
             <BackendKernels<Metal> as Kernels>::DeltaNetPrefillPrepKernel::new(
                 context,
                 T::data_type(),
+                DataType::F32,
                 HEAD_K_DIM as u32,
+                false,
                 false,
             )
             .expect("prep")
@@ -92,6 +94,7 @@ fn run_prefill<T: ArrayElement>(
                 &dt_bias,
                 &mut q,
                 &mut k,
+                None::<&mut crate::backends::common::Allocation<Metal>>,
                 &mut beta,
                 &mut decay,
                 NUM_V_HEADS as u32,

@@ -15,7 +15,7 @@ VARIANTS(T, float, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 PUBLIC KERNEL(StateAdvance)(
     // [tree_size, num_k_heads, HEAD_K_DIM]
-    device const float* k_norm,
+    device const T* k_norm,
     // [tree_size, num_v_heads, HEAD_K_DIM]
     device const T* v,
     // [tree_size, num_v_heads]
@@ -27,8 +27,8 @@ PUBLIC KERNEL(StateAdvance)(
     // [num_v_heads, HEAD_K_DIM, HEAD_K_DIM], input/output
     device float* state,
     constant const uint& accepted_len,
-    constant const uint& num_v_heads,
-    constant const uint& num_k_heads,
+    const uint num_v_heads SPECIALIZE,
+    const uint num_k_heads SPECIALIZE,
     const ThreadContext thread_context,
     const uint hv_idx GROUPS(num_v_heads),
     const uint dv_group_idx GROUPS(STATE_ADVANCE_DV_GROUPS),
@@ -60,7 +60,7 @@ PUBLIC KERNEL(StateAdvance)(
     const float decay = fast::exp(log_decay_buf[tree_head_offset]);
     const float beta = beta_buf[tree_head_offset];
     const uint k_offset = tree_idx * key_dim + hk_idx * HEAD_K_DIM + dk_base;
-    const float4 k = *reinterpret_cast<device const float4*>(k_norm + k_offset);
+    const float4 k = float4(*reinterpret_cast<const device vec<T, 4>*>(k_norm + k_offset));
 
     state_rows[0] *= decay;
     state_rows[1] *= decay;
