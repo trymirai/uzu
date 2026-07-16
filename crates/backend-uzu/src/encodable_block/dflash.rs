@@ -3,9 +3,10 @@ use thiserror::Error;
 use crate::{
     backends::common::Backend,
     config::{
-        dflash::{DFlashAttentionConfig, DFlashDraftConfig, DFlashDraftLayerConfig},
+        dflash::{DFlashDraftConfig, DFlashDraftLayerConfig},
         mlp::AnyMLPConfig,
         normalization::NormalizationConfig,
+        token_mixer::attention::AttentionConfig,
     },
     data_type::DataType,
     encodable_block::{
@@ -16,7 +17,6 @@ use crate::{
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
-// TODO: remove once traversal verification consumes the loaded DFlash model.
 #[allow(dead_code)]
 pub(crate) struct DFlashDraft<B: Backend> {
     context_projection: Box<dyn Linear<B>>,
@@ -27,7 +27,6 @@ pub(crate) struct DFlashDraft<B: Backend> {
     max_context_length: Option<usize>,
 }
 
-// TODO: remove once traversal verification consumes the loaded DFlash model.
 #[allow(dead_code)]
 struct DFlashDraftLayer<B: Backend> {
     attention: DFlashAttention<B>,
@@ -36,12 +35,10 @@ struct DFlashDraftLayer<B: Backend> {
     mlp: Box<dyn Mlp<B>>,
 }
 
-// TODO: remove once traversal verification consumes the loaded DFlash model.
 #[allow(dead_code)]
 struct DFlashAttention<B: Backend> {
-    query_projection: Box<dyn Linear<B>>,
-    key_value_projection: Box<dyn Linear<B>>,
-    output_projection: Box<dyn Linear<B>>,
+    qkv_projection: Box<dyn Linear<B>>,
+    out_projection: Box<dyn Linear<B>>,
     query_norm: Normalization<B>,
     key_norm: Normalization<B>,
 }
@@ -56,6 +53,8 @@ pub enum DFlashDraftNewError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("MLP error: {0}")]
     Mlp(#[from] MlpBlockError<B>),
+    #[error("invalid DFlash attention config: {0}")]
+    InvalidAttentionConfig(&'static str),
 }
 
 fn plain_norm<B: Backend>(
@@ -113,11 +112,7 @@ impl<B: Backend> DFlashDraft<B> {
             &parameter_tree.subtree("output_norm")?,
             data_type,
         )?;
-        let max_context_length = config
-            .layer_configs
-            .iter()
-            .map(|layer_config| *layer_config.attention_config.rope_config.max_sequence_length())
-            .min();
+        let max_context_length = Some(*config.rope_config.max_sequence_length());
         Ok(Self {
             context_projection,
             context_norm,
@@ -176,55 +171,44 @@ impl<B: Backend> DFlashAttention<B> {
     fn new(
         context: &B::Context,
         model_dim: usize,
-        config: &DFlashAttentionConfig,
+        config: &AttentionConfig,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, DFlashDraftNewError<B>> {
         let query_dim = config.num_heads * config.head_dim;
-        let key_value_dim = config.num_key_value_heads * config.head_dim;
-        let query_projection = <dyn Linear<B>>::new(
+        let key_value_dim = config.num_groups * config.head_dim;
+        let qkv_projection = <dyn Linear<B>>::new(
             model_dim,
-            [query_dim],
-            config.has_attention_biases,
+            [query_dim, key_value_dim, key_value_dim],
+            config.has_qkv_biases,
             context,
             data_type,
-            &parameter_tree.subtree("query_projection")?,
+            &parameter_tree.subtree("qkv_projection")?,
         )?;
-        let key_value_projection = <dyn Linear<B>>::new(
-            model_dim,
-            [2 * key_value_dim],
-            config.has_attention_biases,
-            context,
-            data_type,
-            &parameter_tree.subtree("key_value_projection")?,
-        )?;
-        let output_projection = <dyn Linear<B>>::new(
+        let out_projection = <dyn Linear<B>>::new(
             query_dim,
             [model_dim],
-            config.has_output_biases,
+            config.has_out_biases,
             context,
             data_type,
-            &parameter_tree.subtree("output_projection")?,
+            &parameter_tree.subtree("out_projection")?,
         )?;
-        let query_norm = plain_norm(
-            context,
-            config.head_dim,
-            &config.query_norm_config,
-            &parameter_tree.subtree("query_norm")?,
-            data_type,
-        )?;
-        let key_norm = plain_norm(
-            context,
-            config.head_dim,
-            &config.key_norm_config,
-            &parameter_tree.subtree("key_norm")?,
-            data_type,
-        )?;
+        let query_norm_config = config
+            .query_norm_config
+            .as_ref()
+            .ok_or(DFlashDraftNewError::InvalidAttentionConfig("query_norm_config is required"))?;
+        let query_norm =
+            plain_norm(context, config.head_dim, query_norm_config, &parameter_tree.subtree("query_norm")?, data_type)?;
+        let key_norm_config = config
+            .key_norm_config
+            .as_ref()
+            .ok_or(DFlashDraftNewError::InvalidAttentionConfig("key_norm_config is required"))?;
+        let key_norm =
+            plain_norm(context, config.head_dim, key_norm_config, &parameter_tree.subtree("key_norm")?, data_type)?;
 
         Ok(Self {
-            query_projection,
-            key_value_projection,
-            output_projection,
+            qkv_projection,
+            out_projection,
             query_norm,
             key_norm,
         })
