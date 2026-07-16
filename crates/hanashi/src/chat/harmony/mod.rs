@@ -1,5 +1,6 @@
 mod bridging;
 mod config;
+mod encoding_name;
 mod error;
 
 use bridging::{bridge_messages_from_harmony, bridge_messages_to_harmony};
