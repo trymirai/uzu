@@ -8,7 +8,7 @@ pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder, kernel::ActivationPrepareConfig},
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
         full_precision_spec::FullPrecisionSpec,
@@ -212,12 +212,33 @@ impl<B: Backend> dyn Linear<B> {
         let weights_tree = parameter_tree.subtree("weights")?;
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         if let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+            quantization_spec,
             adapter_spec: None,
             incoherence_block_size: Some(32),
             incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
             ..
-        }) = spec
+        }) = &spec
         {
+            if rht_wrapper::activation_prepare_group_size(
+                ActivationPrepareConfig::from_env(),
+                input_dimension,
+                quantization_spec,
+            )
+            .is_some()
+            {
+                let linear = RHTLinearWrapper::new(
+                    context,
+                    input_dimension,
+                    output_dimension_sum,
+                    has_biases,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    parameter_tree,
+                )?;
+                return Ok((Box::new(linear), None));
+            }
+
             let input_factors = weights_tree
                 .leaf("incoherence_signs.input_signs")?
                 .validate(&[input_dimension], DataType::I32)?

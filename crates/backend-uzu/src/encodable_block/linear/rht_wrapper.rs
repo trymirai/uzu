@@ -1,24 +1,28 @@
 use thiserror::Error;
 
 use crate::{
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        gpu_types::HadamardTransformOrder,
-        kernel::{HadamardTransformKernel, Kernels},
+        gpu_types::{ActivationPrepareOps, HadamardTransformOrder},
+        kernel::{
+            ActivationPrepareConfig, ActivationsPrepareKernel, HadamardTransformKernel, Kernels, matmul::MatmulA,
+        },
     },
     config::weight_matrix::{
-        AnyWeightMatrixSpec,
+        AnyWeightMatrixSpec, Layout,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+        int_spec::IntSpec,
     },
     data_type::DataType,
-    encodable_block::linear::{Linear, OutputHadamardLinearError},
+    encodable_block::linear::{Linear, LinearMatmul, LinearMatmulError},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
 pub enum RHTLinearWrapperError<B: Backend> {
     #[error("Inner linear error: {0}")]
-    InnerLinearError(#[from] OutputHadamardLinearError<B>),
+    InnerLinearError(#[from] LinearMatmulError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Backend error: {0}")]
@@ -27,11 +31,40 @@ pub enum RHTLinearWrapperError<B: Backend> {
     UnsupportedConfiguration(String),
 }
 
+struct Int8Preparation<B: Backend> {
+    kernel: <B::Kernels as Kernels>::ActivationsPrepareKernel,
+    group_size: u32,
+}
+
 pub struct RHTLinearWrapper<B: Backend> {
     input_hadamard_kernel: <B::Kernels as Kernels>::HadamardTransformKernel,
+    int8_preparation: Option<Int8Preparation<B>>,
     input_factors: Allocation<B>,
-    inner_linear: Box<dyn Linear<B>>,
+    inner_linear: LinearMatmul<B>,
     input_dimension: usize,
+}
+
+pub(super) fn activation_prepare_group_size(
+    config: ActivationPrepareConfig,
+    input_dimension: usize,
+    quantization_spec: &AnyWeightMatrixSpec,
+) -> Option<u32> {
+    let AnyWeightMatrixSpec::IntSpec(IntSpec {
+        bits: 8,
+        group_size,
+        is_symmetric: true,
+        layout: Layout::OutputInput,
+        ..
+    }) = quantization_spec
+    else {
+        return None;
+    };
+
+    if input_dimension.is_multiple_of(32) && config.supports_group_size(*group_size) {
+        u32::try_from(*group_size).ok()
+    } else {
+        None
+    }
 }
 
 impl<B: Backend> RHTLinearWrapper<B> {
@@ -65,26 +98,46 @@ impl<B: Backend> RHTLinearWrapper<B> {
             .leaf("incoherence_signs.output_signs")?
             .validate(&[output_dimension], DataType::I32)?
             .read_allocation()?;
+        let quantized_weights_tree = weights_tree.subtree("quantized")?;
+        let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
+
         let input_hadamard_kernel = <B::Kernels as Kernels>::HadamardTransformKernel::new(
             context,
             input_data_type,
             HadamardTransformOrder::Input,
         )
         .map_err(RHTLinearWrapperError::BackendError)?;
-        let inner_linear = <dyn Linear<B>>::new_with_output_hadamard_mixed_precision(
+
+        let config = ActivationPrepareConfig::from_env();
+        let int8_preparation = activation_prepare_group_size(config, input_dimension, &quantization_spec)
+            .map(|group_size| {
+                let ops = ActivationPrepareOps::INPUT_RHT;
+                <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type, ops, config.stat).map(
+                    |kernel| Int8Preparation {
+                        kernel,
+                        group_size,
+                    },
+                )
+            })
+            .transpose()
+            .map_err(RHTLinearWrapperError::BackendError)?;
+
+        let inner_linear = LinearMatmul::quantized(
             context,
-            parameter_tree,
-            output_factors,
+            quantization_spec,
             input_dimension,
             output_dimension,
-            has_biases,
             weights_data_type,
             input_data_type,
             output_data_type,
+            &quantized_weights_tree,
+            has_biases.then_some(parameter_tree),
+            Some(output_factors),
         )?;
 
         Ok(Self {
             input_hadamard_kernel,
+            int8_preparation,
             input_factors,
             inner_linear,
             input_dimension,
@@ -95,10 +148,41 @@ impl<B: Backend> RHTLinearWrapper<B> {
 impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
     fn encode(
         &self,
-        mut input: Allocation<B>,
+        input: Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        if let Some(preparation) = &self.int8_preparation
+            && self.inner_linear.supports_int8_symmetric_a(encoder.context(), batch_dim, preparation.group_size)
+        {
+            let groups_per_row = self.input_dimension.div_ceil(preparation.group_size as usize);
+            let mut values =
+                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
+            let mut scales = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::F32))?;
+
+            preparation.kernel.encode(
+                &input,
+                &mut values,
+                &mut scales,
+                Some(&self.input_factors),
+                batch_dim as u32,
+                self.input_dimension as u32,
+                preparation.group_size,
+                encoder,
+            );
+
+            return self.inner_linear.encode_with_a(
+                MatmulA::Int8Symmetric {
+                    values: &values,
+                    scales: &scales,
+                    group_size: preparation.group_size,
+                },
+                batch_dim,
+                encoder,
+            );
+        }
+
+        let mut input = input;
         self.input_hadamard_kernel.encode(
             &mut input,
             &self.input_factors,

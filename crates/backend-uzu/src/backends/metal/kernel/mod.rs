@@ -25,3 +25,7 @@ impl Kernels for MetalKernels {
     type DeltaNetTreeVerify = gdn::tree_verify::MetalDeltaNetTreeVerify;
     type MatmulKernel = matmul::MatmulMetalKernel;
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/backends/metal/kernel/activation_prepare_test.rs"]
+mod activation_prepare_test;
