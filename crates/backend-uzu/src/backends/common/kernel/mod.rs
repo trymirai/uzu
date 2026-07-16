@@ -20,5 +20,5 @@ pub trait Kernels: Sized {
 }
 
 #[cfg(test)]
-#[path = "../../../../unit/backends/common/kernel/mod.rs"]
+#[path = "../../../../tests/unit/backends/common/kernel/mod.rs"]
 mod tests;
