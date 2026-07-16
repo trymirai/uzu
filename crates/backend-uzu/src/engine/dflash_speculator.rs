@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::Backend,
-    config::{model::speculator_model::SpeculatorModelConfig, speculator::AnySpeculatorConfig},
+    config::speculator::{AnySpeculatorConfig, model::SpeculatorModelConfig},
     data_type::DataType,
     encodable_block::{
         dflash::{DFlashDraft, DFlashDraftNewError},
