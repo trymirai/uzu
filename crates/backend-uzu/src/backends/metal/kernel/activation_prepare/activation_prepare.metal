@@ -16,8 +16,8 @@ template <typename InputT>
 VARIANTS(InputT, float, half, bfloat)
 PUBLIC KERNEL(ActivationsPrepare)(
     const device InputT* input,
-    device int8_t* q_out,
-    device float* scales_out,
+    device int8_t* q_out OPTIONAL(ops.contains(ActivationPrepareOps::QUANTIZE)),
+    device float* scales_out OPTIONAL(ops.contains(ActivationPrepareOps::QUANTIZE)),
     const device int32_t* rht_factors OPTIONAL(ops.contains(ActivationPrepareOps::INPUT_RHT)),
     constant uint& batch_size,
     constant uint& element_count,
@@ -29,6 +29,10 @@ PUBLIC KERNEL(ActivationsPrepare)(
     const uint batch_idx GROUPS(batch_size),
     const uint thread_in_row THREADS(ACTIVATION_PREPARE_BLOCK_SIZE)
 ) {
+  if (!ops.contains(ActivationPrepareOps::QUANTIZE)) {
+    return;
+  }
+
   const uint row_offset = batch_idx * element_count;
   const device InputT* row_input = input + row_offset;
   device int8_t* row_q = q_out + row_offset;

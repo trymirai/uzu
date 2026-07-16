@@ -35,8 +35,8 @@ fn input_rht(values: &mut [f32; RHT_BLOCK_SIZE]) {
 #[variants(InputT, f32, f16, bf16)]
 pub fn activations_prepare<InputT: ArrayElement + Float>(
     input: *const InputT,
-    q_out: *mut i8,
-    scales_out: *mut f32,
+    #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] q_out: Option<*mut i8>,
+    #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] scales_out: Option<*mut f32>,
     #[optional(ops.contains(ActivationPrepareOps::INPUT_RHT))] rht_factors: Option<*const i32>,
     batch_size: u32,
     element_count: u32,
@@ -50,6 +50,12 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     assert!(group_size.is_multiple_of(RHT_BLOCK_SIZE));
     assert!(columns.is_multiple_of(RHT_BLOCK_SIZE));
     assert_eq!(rht_factors.is_some(), ops.contains(ActivationPrepareOps::INPUT_RHT));
+    assert_eq!(q_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
+    assert_eq!(scales_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
+
+    let (Some(q_out), Some(scales_out)) = (q_out, scales_out) else {
+        return;
+    };
 
     let groups = columns.div_ceil(group_size);
     let mut prepared = vec![0.0f32; columns];

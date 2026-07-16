@@ -209,8 +209,8 @@ fn encode_int8(
 ) {
     prepare.encode(
         &buffers.activations,
-        &mut buffers.int8_activations,
-        &mut buffers.activation_scales,
+        Some(&mut buffers.int8_activations),
+        Some(&mut buffers.activation_scales),
         Some(&buffers.rht_factors),
         buffers.m,
         buffers.k,
@@ -310,7 +310,7 @@ fn bench_a8w8(c: &mut Criterion) {
 
     let mut matmul = <MetalMatmul as MatmulKernel>::new(&context, DataType::BF16, DataType::BF16, DataType::BF16)
         .expect("matmul kernel");
-    let ops = ActivationPrepareOps::INPUT_RHT;
+    let ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
     let prepare =
         <MetalPrepare as ActivationsPrepareKernel>::new(&context, DataType::BF16, ops, ActivationScaleStat::AbsMax)
             .expect("prepare kernel");

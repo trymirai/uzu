@@ -92,14 +92,14 @@ fn run_metal(
     let factors = alloc_allocation_with_data::<Metal, i32>(context, factors);
     let mut values = alloc_allocation::<Metal, i8>(context, rows * columns);
     let mut scales = alloc_allocation::<Metal, f32>(context, rows * groups);
-    let ops = ActivationPrepareOps::INPUT_RHT;
+    let ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
     let kernel = ActivationsPrepareMetalKernel::new(context, DataType::F32, ops, stat).expect("prepare kernel");
     let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
 
     kernel.encode(
         &input,
-        &mut values,
-        &mut scales,
+        Some(&mut values),
+        Some(&mut scales),
         Some(&factors),
         rows as u32,
         columns as u32,
