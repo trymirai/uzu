@@ -10,6 +10,7 @@ use crate::{
         batch_topology::BatchTopology,
         mixer::{MixerState, attention::rope::PrecalculatedRoPE},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar},
+        residual_capture::ResidualCapture,
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -88,6 +89,7 @@ pub struct Transformer<B: Backend> {
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
     output_norm: Normalization<B>,
+    residual_capture: ResidualCapture<B>,
 }
 
 impl<B: Backend> Transformer<B> {
@@ -139,10 +141,14 @@ impl<B: Backend> Transformer<B> {
             context,
         )?;
 
+        let residual_capture = ResidualCapture::new(context, transformer_config.model_dim, data_type)
+            .map_err(TransformerNewError::Backend)?;
+
         Ok(Self {
             ropes: ropes.into_boxed_slice(),
             layers,
             output_norm,
+            residual_capture,
         })
     }
 
@@ -259,8 +265,7 @@ impl<B: Backend> Transformer<B> {
 
             for (feature_index, &layer_index) in hidden_feature_layer_indices.iter().enumerate() {
                 if layer_index == layer.layer_index {
-                    let mut feature = encoder.allocate_scratch(hidden.size())?;
-                    encoder.encode_copy(&hidden, .., &mut feature, ..);
+                    let feature = self.residual_capture.encode(&shortcut, &hidden, batch_dim.size(), encoder)?;
                     hidden_features[feature_index] = Some(feature);
                 }
             }
