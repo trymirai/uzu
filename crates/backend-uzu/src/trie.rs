@@ -340,5 +340,5 @@ impl<'a> FlatTrie<'a> {
 }
 
 #[cfg(test)]
-#[path = "../unit/trie_test.rs"]
+#[path = "../tests/unit/trie_test.rs"]
 mod tests;

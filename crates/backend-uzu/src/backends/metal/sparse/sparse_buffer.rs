@@ -152,5 +152,5 @@ impl SparseBuffer for MetalSparseBuffer {
 }
 
 #[cfg(test)]
-#[path = "../../../../unit/backends/metal/sparse/sparse_buffer_test.rs"]
+#[path = "../../../../tests/unit/backends/metal/sparse/sparse_buffer_test.rs"]
 mod tests;

@@ -174,5 +174,5 @@ impl MetalSparseHeapPool {
 }
 
 #[cfg(test)]
-#[path = "../../../../unit/backends/metal/sparse/sparse_heap_pool_test.rs"]
+#[path = "../../../../tests/unit/backends/metal/sparse/sparse_heap_pool_test.rs"]
 mod tests;
