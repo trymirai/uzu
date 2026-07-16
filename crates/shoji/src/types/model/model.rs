@@ -4,7 +4,7 @@ use crate::types::{
     basic::Metadata,
     model::{
         ModelAccessibility, ModelBackend, ModelFamily, ModelProperties, ModelQuantization, ModelReference,
-        ModelRegistry, ModelSpecialization,
+        ModelRegistry, ModelSpecialization, encoding_config::EncodingConfig,
     },
 };
 
@@ -21,6 +21,7 @@ pub struct Model {
     pub quantization: Option<ModelQuantization>,
     pub specializations: Vec<ModelSpecialization>,
     pub accessibility: ModelAccessibility,
+    pub encodings: Vec<EncodingConfig>,
 }
 
 #[bindings::export(Implementation)]
@@ -184,6 +185,7 @@ impl Model {
         backend_version: String,
         specializations: Vec<ModelSpecialization>,
         accessibility: ModelAccessibility,
+        encodings: Vec<EncodingConfig>,
     ) -> Self {
         let registry = ModelRegistry {
             identifier: registry_identifier,
@@ -203,6 +205,7 @@ impl Model {
             quantization: None,
             specializations,
             accessibility,
+            encodings,
         }
     }
 }

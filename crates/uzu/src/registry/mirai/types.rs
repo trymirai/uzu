@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use shoji::types::{
     basic::Metadata,
     model::{
-        Model, ModelAccessibility, ModelBackend, ModelFamily, ModelProperties, ModelQuantization, ModelRegistry,
-        ModelSpecialization, ModelVendor,
+        EncodingConfig, Model, ModelAccessibility, ModelBackend, ModelFamily, ModelProperties, ModelQuantization,
+        ModelRegistry, ModelSpecialization, ModelVendor,
     },
 };
 
@@ -160,6 +160,7 @@ pub struct ResponseModel {
     pub quantization: Option<Quantization>,
     pub specializations: Vec<ModelSpecialization>,
     pub accessibility: ModelAccessibility,
+    pub encodings: Vec<EncodingConfig>,
 }
 
 impl ResponseModel {
@@ -184,8 +185,6 @@ impl ResponseModel {
             Some(quantization) => Some(quantization.to(metadatas)?),
             None => None,
         };
-        let specializations = self.specializations.clone();
-        let accessibility = self.accessibility.clone();
         Some(Model {
             identifier: self.id.clone(),
             registry,
@@ -193,8 +192,9 @@ impl ResponseModel {
             family,
             properties,
             quantization,
-            specializations,
-            accessibility,
+            specializations: self.specializations.clone(),
+            accessibility: self.accessibility.clone(),
+            encodings: self.encodings.clone(),
         })
     }
 }

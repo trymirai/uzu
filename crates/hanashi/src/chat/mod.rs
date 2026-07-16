@@ -5,11 +5,10 @@ pub mod hanashi;
 pub mod harmony;
 mod state;
 
-pub use config::Config;
 pub use context::{Context, TokenizerLocation};
 pub use error::Error;
 pub use hanashi::renderer::strftime_now;
-use shoji::types::{basic::TokenId, session::chat::ChatMessage};
+use shoji::types::{basic::TokenId, model::EncodingConfig, session::chat::ChatMessage};
 pub use state::{State, SynchronizationError, SynchronizationResult};
 use tokenizers::Tokenizer;
 
@@ -39,7 +38,7 @@ pub enum Encoding {
 }
 
 impl EncodingTrait for Encoding {
-    type Config = Config;
+    type Config = EncodingConfig;
     type Context = Context;
     type Input = Vec<ChatMessage>;
     type Output = Vec<TokenId>;
@@ -51,8 +50,8 @@ impl EncodingTrait for Encoding {
         context: Self::Context,
     ) -> Result<Self, Self::Error> {
         match config {
-            Config::Hanashi(config) => Ok(Encoding::Hanashi(HanashiEncoding::new(config, context)?)),
-            Config::Harmony(config) => Ok(Encoding::Harmony(HarmonyEncoding::new(config, context)?)),
+            EncodingConfig::Hanashi(config) => Ok(Encoding::Hanashi(HanashiEncoding::new(config, context)?)),
+            EncodingConfig::Harmony(config) => Ok(Encoding::Harmony(HarmonyEncoding::new(config, context)?)),
         }
     }
 

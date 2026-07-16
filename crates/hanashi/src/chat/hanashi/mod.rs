@@ -5,10 +5,10 @@ mod ordering;
 pub mod renderer;
 mod token;
 
-pub use config::Config;
 pub use error::Error;
 use shoji::types::{
     basic::{Token, TokenId},
+    model::HanashiConfig,
     session::chat::{ChatContentBlock, ChatMessage},
 };
 use token_stream_parser::{Parser as _, token_stream::TokenStreamParser};
@@ -19,7 +19,9 @@ use crate::{
     Encoding as EncodingTrait,
     chat::{
         Context, State, SynchronizationError, SynchronizationResult,
-        hanashi::{messages::rendered::FieldConfig, renderer::Renderer, token::ToParserToken},
+        hanashi::{
+            config::hanashi_config_resolve, messages::rendered::FieldConfig, renderer::Renderer, token::ToParserToken,
+        },
     },
     util::tokenizer::load_tokenizer,
 };
@@ -38,7 +40,7 @@ pub struct Encoding {
 }
 
 impl EncodingTrait for Encoding {
-    type Config = Config;
+    type Config = HanashiConfig;
     type Context = Context;
     type Input = Vec<ChatMessage>;
     type Output = Vec<TokenId>;
@@ -49,7 +51,7 @@ impl EncodingTrait for Encoding {
         config: Self::Config,
         context: Self::Context,
     ) -> Result<Self, Self::Error> {
-        let config = config.resolve()?;
+        let config = hanashi_config_resolve(&config)?;
         let tokenizer = load_tokenizer(&context.tokenizer_location).map_err(|_| Error::UnableToLoadTokenizer)?;
         let parser = TokenStreamParser::new(config.parsing.clone())?;
         let renderer = Renderer::new(config.rendering.clone());
