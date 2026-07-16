@@ -33,6 +33,11 @@ pub enum EngineLoadDFlashSpeculatorError<B: Backend> {
     Draft(#[from] DFlashDraftNewError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverNewError<B>),
+    #[error("DFlash mask_token_id {mask_token_id} is outside vocabulary size {vocab_size}")]
+    InvalidMaskTokenId {
+        mask_token_id: u64,
+        vocab_size: usize,
+    },
 }
 
 impl<B: Backend> Engine<B> {
@@ -43,6 +48,13 @@ impl<B: Backend> Engine<B> {
         let config: SpeculatorModelConfig =
             serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
         let AnySpeculatorConfig::DFlashSpeculatorConfig(speculator_config) = config.speculator_config;
+        let draft_config = &speculator_config.draft_config;
+        if draft_config.mask_token_id >= draft_config.vocab_size as u64 {
+            return Err(EngineLoadDFlashSpeculatorError::InvalidMaskTokenId {
+                mask_token_id: draft_config.mask_token_id,
+                vocab_size: draft_config.vocab_size,
+            });
+        }
 
         let data_type = DataType::BF16;
 
@@ -61,6 +73,6 @@ impl<B: Backend> Engine<B> {
 
         weight_loader.tree().assert_all_tensors_validated()?;
 
-        Ok(DFlashSpeculator::new(draft_model, weaver, speculator_config))
+        Ok(DFlashSpeculator::new(self.context.clone(), draft_model, weaver, speculator_config))
     }
 }

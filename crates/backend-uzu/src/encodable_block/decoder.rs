@@ -37,12 +37,19 @@ pub struct Decoder<B: Backend> {
 
 pub struct DecoderEncodeOutput<B: Backend> {
     pub logits: Option<Allocation<B>>,
-    // TODO: remove after DFlash wiring
-    #[allow(dead_code)]
+    /// Captured intermediate target-layer outputs for `DFlash` context append.
+    #[allow(dead_code)] // Consumed by the decoder/speculator integration seam.
     pub hidden_features: Box<[Allocation<B>]>,
+    /// Final normalized target hidden state used by Weaver.
+    #[allow(dead_code)] // Consumed by the decoder/speculator integration seam.
+    pub final_hidden: Option<Allocation<B>>,
 }
 
 impl<B: Backend> Decoder<B> {
+    pub(crate) fn embedding(&self) -> &Embedding<B> {
+        &self.embedding
+    }
+
     pub fn new(
         context: &B::Context,
         config: &DecoderConfig,
@@ -144,8 +151,26 @@ impl<B: Backend> Decoder<B> {
             )
             .map_err(DecoderError::Backend)?;
 
+        // DFlash requests intermediate features, so preserve the final
+        // normalized row for Weaver only on that capture path.  Ordinary
+        // target-model decoding keeps the existing allocation profile.
+        let final_hidden = if hidden_feature_layer_indices.is_empty() {
+            None
+        } else {
+            transformer_output
+                .output
+                .as_ref()
+                .map(|output| {
+                    let mut copy = encoder.allocate_scratch(output.size()).map_err(DecoderError::Backend)?;
+                    encoder.encode_copy(output, .., &mut copy, ..);
+                    Ok::<_, DecoderError<B>>(copy)
+                })
+                .transpose()?
+        };
         let logits = if let Some(output_range) = output_range {
-            Some(self.embedding.encode_readout(output_range.len(), &transformer_output.output.unwrap(), encoder)?)
+            let output =
+                transformer_output.output.as_ref().expect("decoder output range requires a transformer output");
+            Some(self.embedding.encode_readout(output_range.len(), output, encoder)?)
         } else {
             None
         };
@@ -153,6 +178,7 @@ impl<B: Backend> Decoder<B> {
         Ok(DecoderEncodeOutput {
             logits,
             hidden_features: transformer_output.hidden_features,
+            final_hidden,
         })
     }
 }

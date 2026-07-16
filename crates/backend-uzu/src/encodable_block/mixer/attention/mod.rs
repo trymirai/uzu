@@ -17,7 +17,6 @@ use crate::{
                 mode::{LinearProjection, QkvProjection},
                 qkv_norm::{QKVNorm, QKVNormError},
                 rope::PrecalculatedRoPE,
-                state::AttentionState,
             },
         },
     },
@@ -29,6 +28,8 @@ pub(crate) mod core;
 mod mode;
 mod qkv_norm;
 mod state;
+
+pub(crate) use state::AttentionState;
 
 pub mod rope;
 
@@ -170,8 +171,9 @@ impl<B: Backend> Attention<B> {
             .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_allocation())
             .transpose()?;
 
-        // TODO: remove when wiring with DFlash: split non-causal attention needs full KV storage and a window mask.
-        let is_kv_cache_ring = sliding_window_size.is_some();
+        // Non-causal DFlash attention keeps a full prefix; causal sliding-window
+        // attention retains the existing ring cache behavior.
+        let is_kv_cache_ring = is_causal && sliding_window_size.is_some();
 
         let flat_core = AttentionCores::new(
             AttentionCoreNewArguments {
@@ -240,6 +242,45 @@ impl<B: Backend> Attention<B> {
             },
             in_projection_input_hadamard_factors,
         ))
+    }
+
+    pub(crate) fn create_state(
+        &self,
+        max_context_length: Option<usize>,
+        context: &B::Context,
+    ) -> Result<AttentionState<B>, B::Error> {
+        AttentionState::create_empty(self, max_context_length, context)
+    }
+
+    pub(crate) fn encode_with_state(
+        &self,
+        hidden: Allocation<B>,
+        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        batch_dim: &BatchTopology,
+        state: &mut AttentionState<B>,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        self.attend(hidden, precalculated_rope, batch_dim, Some(MaybeMut::Mut(state)), encoder)
+    }
+
+    pub(crate) fn encode_stateless(
+        &self,
+        hidden: Allocation<B>,
+        batch_dim: &BatchTopology,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        self.attend(hidden, None, batch_dim, None, encoder)
+    }
+
+    pub(crate) fn append_kv_to_state(
+        &self,
+        hidden: Allocation<B>,
+        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        batch_dim: usize,
+        state: &mut AttentionState<B>,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        self.append_kv(hidden, precalculated_rope, batch_dim, state, encoder)
     }
 }
 

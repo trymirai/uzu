@@ -116,6 +116,14 @@ struct LogitSoftCap<B: Backend> {
 // TODO: embedding lookup dtype (u64) should match sampling (u32)
 
 impl<B: Backend> Embedding<B> {
+    pub(crate) fn vocab_size(&self) -> usize {
+        self.vocab_size as usize
+    }
+
+    pub(crate) fn model_dim(&self) -> usize {
+        self.model_dim as usize
+    }
+
     pub fn new(
         context: &B::Context,
         vocab_size: u32,
@@ -635,6 +643,178 @@ impl<B: Backend> Embedding<B> {
         }
 
         Ok(output_allocation)
+    }
+
+    /// Dense full-precision LM-head readout used by DFlash candidate ranking.
+    ///
+    /// Keeping the accumulator in f32 avoids BF16 quantization changing the
+    /// candidate-pool ranks. Quantized heads and logit soft caps stay on the
+    /// existing path until they need an equivalent f32 kernel.
+    pub(crate) fn encode_readout_f32(
+        &self,
+        batch_dim: usize,
+        input_allocation: &Allocation<B>,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        assert!(batch_dim > 0, "Embedding readout requires at least one row");
+        if self.logit_soft_cap.is_some() {
+            return Err(EmbeddingError::UnsupportedConfiguration(
+                "f32 readout does not support logit soft caps yet".to_string(),
+            ));
+        }
+        let (weights, readout) = match &self.tying {
+            EmbeddingTying::Tied {
+                ty:
+                    TiedEmbeddingType::FullPrecision {
+                        weights,
+                        lookup: _,
+                        readout: _,
+                    },
+            }
+            | EmbeddingTying::Untied {
+                input_ty: _,
+                output_ty:
+                    UntiedEmbeddingReadoutType::FullPrecision {
+                        weights,
+                        readout: _,
+                    },
+            } => (
+                weights,
+                <B::Kernels as Kernels>::MatmulKernel::new(
+                    encoder.context(),
+                    self.data_type,
+                    self.data_type,
+                    DataType::F32,
+                ),
+            ),
+            _ => {
+                return Err(EmbeddingError::UnsupportedConfiguration(
+                    "f32 readout currently requires a full-precision LM head".to_string(),
+                ));
+            },
+        };
+        let mut readout = readout.map_err(EmbeddingError::BackendError)?;
+        let mut output = encoder
+            .allocate_scratch(size_for_shape(&[batch_dim, self.vocab_size as usize], DataType::F32))
+            .map_err(EmbeddingError::BackendError)?;
+        readout
+            .encode(
+                MatmulArguments {
+                    a: input_allocation,
+                    a_offset: 0,
+                    b: MatmulB::FullPrecision {
+                        b: weights,
+                    },
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    d: &mut output,
+                    d_transform: MatmulDOps::none(),
+                    m: batch_dim as u32,
+                    n: self.vocab_size,
+                    k: self.model_dim,
+                },
+                encoder,
+            )
+            .map_err(EmbeddingError::BackendError)?;
+        Ok(output)
+    }
+
+    /// Computes only the requested LM-head rows. This is the gather form used
+    /// by Weaver; unlike `encode_readout`, it never materializes vocab-sized
+    /// logits. Quantized embedding readout remains on the existing dense path.
+    pub(crate) fn encode_readout_candidates(
+        &self,
+        input: &Allocation<B>,
+        candidate_ids: &Allocation<B>,
+        rows: usize,
+        candidates: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        assert!(rows > 0 && candidates > 0);
+        let mut output = encoder
+            .allocate_scratch(size_for_shape(&[rows, candidates], DataType::F32))
+            .map_err(EmbeddingError::BackendError)?;
+        let model_dim = self.model_dim as usize;
+        let row_bytes = model_dim * self.data_type.size_in_bytes();
+        let candidate_bytes = candidates * DataType::U64.size_in_bytes();
+        match &self.tying {
+            EmbeddingTying::Tied {
+                ty:
+                    TiedEmbeddingType::FullPrecision {
+                        weights: output_weights,
+                        lookup,
+                        readout: _,
+                    },
+            }
+            | EmbeddingTying::Untied {
+                input_ty:
+                    UntiedEmbeddingLookupType::FullPrecision {
+                        lookup,
+                        ..
+                    },
+                output_ty:
+                    UntiedEmbeddingReadoutType::FullPrecision {
+                        weights: output_weights,
+                        readout: _,
+                    },
+            } => {
+                let mut readout_f32 = <B::Kernels as Kernels>::MatmulKernel::new(
+                    encoder.context(),
+                    self.data_type,
+                    self.data_type,
+                    DataType::F32,
+                )
+                .map_err(EmbeddingError::BackendError)?;
+                for row in 0..rows {
+                    let mut gathered = encoder
+                        .allocate_scratch(size_for_shape(&[candidates, model_dim], self.data_type))
+                        .map_err(EmbeddingError::BackendError)?;
+                    lookup.encode(
+                        (candidate_ids, row * candidate_bytes),
+                        output_weights,
+                        &mut gathered,
+                        candidates as u32,
+                        self.vocab_size,
+                        self.model_dim,
+                        1.0,
+                        encoder,
+                    );
+                    let mut row_output = encoder
+                        .allocate_scratch(size_for_shape(&[1, candidates], DataType::F32))
+                        .map_err(EmbeddingError::BackendError)?;
+                    readout_f32
+                        .encode(
+                            MatmulArguments {
+                                a: input,
+                                a_offset: row * row_bytes,
+                                b: MatmulB::FullPrecision {
+                                    b: &gathered,
+                                },
+                                b_leading_dimension: None,
+                                b_transpose: true,
+                                d: &mut row_output,
+                                d_transform: MatmulDOps::none(),
+                                m: 1,
+                                n: candidates as u32,
+                                k: self.model_dim,
+                            },
+                            encoder,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
+                    encoder.encode_copy(
+                        &row_output,
+                        ..,
+                        &mut output,
+                        row * candidates * DataType::F32.size_in_bytes()
+                            ..(row + 1) * candidates * DataType::F32.size_in_bytes(),
+                    );
+                }
+                Ok(output)
+            },
+            _ => Err(EmbeddingError::UnsupportedConfiguration(
+                "candidate readout currently requires full-precision embedding weights".to_string(),
+            )),
+        }
     }
 }
 

@@ -214,35 +214,70 @@ impl<B: Backend> Attention<B> {
         self.out_projection.encode(attention_output, batch_dim.size(), encoder)
     }
 
-    #[allow(dead_code)] // TODO: remove when wiring with DFlash.
     pub(super) fn append_kv(
         &self,
         hidden: Allocation<B>,
-        precalculated_rope: &PrecalculatedRoPE<B>,
+        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: usize,
         state: &mut AttentionState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let QkvProjection::Split {
-            kv,
-            kv_prepare,
-            ..
-        } = &self.projection
-        else {
-            panic!("append-only attention requires split Q/KV projection");
-        };
-        let key_value = kv.project(hidden, batch_dim, encoder)?;
-        self.prepare_kv_and_queries(
-            kv_prepare,
-            &key_value,
-            state.keys.as_mut(),
-            state.values.as_mut(),
-            state.state_type.physical_prefix_length(),
-            0,
-            Some(precalculated_rope),
-            batch_dim,
-            encoder,
-        )?;
+        match &self.projection {
+            QkvProjection::Split {
+                kv,
+                kv_prepare,
+                ..
+            } => {
+                let key_value = kv.project(hidden, batch_dim, encoder)?;
+                self.prepare_kv_and_queries(
+                    kv_prepare,
+                    &key_value,
+                    state.keys.as_mut(),
+                    state.values.as_mut(),
+                    state.state_type.physical_prefix_length(),
+                    0,
+                    precalculated_rope,
+                    batch_dim,
+                    encoder,
+                )?;
+            },
+            QkvProjection::Packed {
+                qkv,
+                prepare,
+            } => {
+                let projected = qkv.project(hidden, batch_dim, encoder)?;
+                let num_kv_heads = self.num_kv_heads.expect("packed KV append requires separate KV heads");
+                let q_elements = self.num_q_heads * self.head_dim;
+                let kv_elements = num_kv_heads * self.head_dim;
+                let element_size = self.data_type.size_in_bytes();
+                let mut key_value =
+                    encoder.allocate_scratch(size_for_shape(&[batch_dim, 2 * kv_elements], self.data_type))?;
+                let projected_row_elements = q_elements + 2 * kv_elements;
+                for row in 0..batch_dim {
+                    let source_start = (row * projected_row_elements + q_elements) * element_size;
+                    let source_end = source_start + 2 * kv_elements * element_size;
+                    let destination_start = row * 2 * kv_elements * element_size;
+                    let destination_end = destination_start + 2 * kv_elements * element_size;
+                    encoder.encode_copy(
+                        &projected,
+                        source_start..source_end,
+                        &mut key_value,
+                        destination_start..destination_end,
+                    );
+                }
+                self.prepare_kv_and_queries(
+                    prepare,
+                    &key_value,
+                    state.keys.as_mut(),
+                    state.values.as_mut(),
+                    state.state_type.physical_prefix_length(),
+                    0,
+                    precalculated_rope,
+                    batch_dim,
+                    encoder,
+                )?;
+            },
+        }
         state.append_full(batch_dim);
         Ok(())
     }
