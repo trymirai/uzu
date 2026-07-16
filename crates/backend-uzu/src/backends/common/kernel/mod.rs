@@ -1,9 +1,14 @@
 use crate::backends::common::Backend;
 
+pub mod activation_prepare;
 pub mod attention_gemm;
 pub mod delta_net_chunked_prefill;
 pub mod delta_net_tree_verify;
 pub mod matmul;
+
+pub use activation_prepare::{
+    ActivationPrepareConfig, INT8_SYMMETRIC_QMAX, group_stat, quantize_symmetric_i8, symmetric_divisor,
+};
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 

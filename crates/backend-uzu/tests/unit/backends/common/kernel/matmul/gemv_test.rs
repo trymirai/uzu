@@ -13,7 +13,7 @@ use crate::{
             Backend, Context, Encoder,
             kernel::{
                 Kernels,
-                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -71,8 +71,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     kernel
         .encode(
             MatmulArguments {
-                a: &a_allocation,
-                a_offset: 0,
+                a: MatmulA::FullPrecision {
+                    values: &a_allocation,
+                    offset: 0,
+                },
                 b: MatmulB::FullPrecision {
                     b: &b_allocation,
                 },

@@ -9,6 +9,7 @@
 #include "../../common/mxu_gemm_loop.h"
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
+#include "../../../generated/activation_prepare.h"
 #include "block_geometry.h"
 #include "gemm_tiling.h"
 #include "quant_pack.h"
@@ -20,6 +21,8 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
+using uzu::activation_prepare::GemmAPrologueKind;
+
 template <
     typename AT,
     typename BT,
@@ -28,7 +31,8 @@ template <
     bool TRANSPOSE_B,
     GemmBPrologueKind B_PROLOGUE = GemmBPrologueKind::FullPrecision,
     int BITS = 0,
-    int GROUP_SIZE = 0>
+    int GROUP_SIZE = 0,
+    GemmAPrologueKind A_PROLOGUE = GemmAPrologueKind::FullPrecision>
 struct MxuMmaCore {
   METAL_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   METAL_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
@@ -148,6 +152,102 @@ struct MxuMmaCore {
     return accumulator;
   }
 
+  // Accumulate one int8 group at a time because every group has different A and
+  // B scales. Convert each group's int32 result to float before moving on.
+  template <bool ALIGNED_M, bool ALIGNED_N>
+  static METAL_FUNC AccumFragment quant_k_loop_int8(
+      const device int8_t* a_int8_simdgroup,
+      const device uint8_t* b_quant_simdgroup,
+      const device float* a_scales,
+      const device BT* b_scales,
+      const int leading_dimension_a,
+      const int leading_dimension_b,
+      const int group_iterations,
+      const short simdgroup_limit_m,
+      const short simdgroup_limit_n,
+      const uint abs_row_base,
+      const uint abs_col_base,
+      const uint k_offset_groups,
+      const uint groups_per_row,
+      const thread ThreadContext& thread_context
+  ) {
+    using Ops = uzu::matmul::MxuFragmentOps<>;
+    AccumFragment accumulator;
+    accumulator.clear();
+
+    const short2 position = Ops::get_position(thread_context.simd_lane_id);
+    thread float* accumulator_data = accumulator.elements();
+
+    METAL_PRAGMA_NO_UNROLL
+    for (int group = 0; group < group_iterations; ++group) {
+      uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> group_accumulator;
+      group_accumulator.clear();
+
+      METAL_PRAGMA_NO_UNROLL
+      for (int inner_k = 0; inner_k < int(GROUP_SIZE); inner_k += SIMDGROUP_BLOCK_K) {
+        uzu::matmul::Fragment<int8_t, TILES_M, TILES_K, Ops> left_tile;
+        uzu::matmul::Fragment<uint8_t, TILES_N, TILES_K, Ops> right_raw;
+        uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> right_tile;
+
+        auto left_src = uzu::matmul::fragment_source(a_int8_simdgroup + inner_k, leading_dimension_a);
+        if constexpr (!ALIGNED_M) {
+          left_src = left_src.bounded(simdgroup_limit_m, SIMDGROUP_BLOCK_K);
+        }
+        left_tile.load_from(thread_context.simd_lane_id, left_src);
+
+        auto right_src = uzu::matmul::fragment_source(b_quant_simdgroup + inner_k, leading_dimension_b);
+        if constexpr (!ALIGNED_N) {
+          right_src = right_src.bounded(simdgroup_limit_n, SIMDGROUP_BLOCK_K);
+        }
+        right_raw.load_from(thread_context.simd_lane_id, right_src);
+
+        // Symmetric weights are stored as unsigned bytes centered at 128.
+        constexpr ushort b_element_count = TILES_N * TILES_K * Ops::ELEMENTS_PER_THREAD;
+        thread uint8_t* raw_elements = right_raw.elements();
+        thread int8_t* signed_elements = right_tile.elements();
+        METAL_PRAGMA_UNROLL
+        for (ushort e = 0; e < b_element_count; ++e) {
+          signed_elements[e] = static_cast<int8_t>(raw_elements[e] ^ 0x80);
+        }
+
+        Ops::template fragment_mma<false, true>(group_accumulator, left_tile, right_tile);
+      }
+
+      const uint group_index = k_offset_groups + uint(group);
+      thread int* group_data = group_accumulator.elements();
+
+      METAL_PRAGMA_UNROLL
+      for (ushort tile_row = 0; tile_row < TILES_M; ++tile_row) {
+        METAL_PRAGMA_UNROLL
+        for (ushort tile_col = 0; tile_col < TILES_N; ++tile_col) {
+          const ushort frag_base = (tile_row * TILES_N + tile_col) * Ops::ELEMENTS_PER_THREAD;
+          const short row_base = position.y + tile_row * Ops::FRAGMENT_ROWS;
+          const short col_base = position.x + tile_col * Ops::FRAGMENT_COLS;
+          METAL_PRAGMA_UNROLL
+          for (ushort element = 0; element < Ops::ELEMENTS_PER_THREAD; ++element) {
+            const short2 element_offset = Ops::get_element_offset(element);
+            const short row = row_base + element_offset.y;
+            const short col = col_base + element_offset.x;
+            const bool row_ok = ALIGNED_M || (row < simdgroup_limit_m);
+            const bool col_ok = ALIGNED_N || (col < simdgroup_limit_n);
+            if (row_ok && col_ok) {
+              const float a_scale = a_scales[(abs_row_base + uint(row)) * groups_per_row + group_index];
+              const float b_scale =
+                  static_cast<float>(b_scales[(abs_col_base + uint(col)) * groups_per_row + group_index]);
+              const ushort index = frag_base + element;
+              accumulator_data[index] += a_scale * b_scale * static_cast<float>(group_data[index]);
+            }
+          }
+        }
+      }
+
+      a_int8_simdgroup += GROUP_SIZE;
+      b_quant_simdgroup += GROUP_SIZE;
+    }
+
+    return accumulator;
+  }
+
   static METAL_FUNC void run(
       const device AT* a,
       const device BT* b,
@@ -160,6 +260,8 @@ struct MxuMmaCore {
       const device uint8_t* zero_points,
       const device BT* output_bias,
       const device int32_t* rht_factors,
+      const device int8_t* a_int8,
+      const device float* a_scales,
       threadgroup BT* b_shared,
       const thread ThreadContext& thread_context
   ) {
@@ -179,7 +281,6 @@ struct MxuMmaCore {
         (B_PROLOGUE == GemmBPrologueKind::FullPrecision) ? uint(THREADGROUP_BLOCK_K_FP) : uint(QUANT_BK);
     const uint k_offset = partition * params->aligned_inner_iterations * k_offset_per_block;
 
-    const device AT* a_block = a + block_row * params->leading_dimension_a + k_offset;
     const device BT* b_block_fp = b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col) +
                                   (TRANSPOSE_B ? k_offset : k_offset * uint(params->leading_dimension_b));
 
@@ -199,7 +300,11 @@ struct MxuMmaCore {
             ? SIMDGROUP_BLOCK_N
             : short(min(int(SIMDGROUP_BLOCK_N), int(params->N) - int(geometry.block_col_start + tile_col_offset)));
 
-    const device AT* a_simdgroup = a_block + size_t(tile_row_offset) * params->leading_dimension_a;
+    const device AT* a_simdgroup = a;
+    if constexpr (A_PROLOGUE == GemmAPrologueKind::FullPrecision) {
+      a_simdgroup +=
+          block_row * params->leading_dimension_a + k_offset + size_t(tile_row_offset) * params->leading_dimension_a;
+    }
     const device BT* b_simdgroup_fp =
         b_block_fp +
         (TRANSPOSE_B ? size_t(tile_col_offset) * int(params->leading_dimension_b) : size_t(tile_col_offset));
@@ -228,7 +333,35 @@ struct MxuMmaCore {
                 alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
                 [&](auto aligned_n) {
                   auto accumulator_tile = [&]() {
-                    if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
+                    if constexpr (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric) {
+                      const int weight_row_stride = int(params->K);
+                      const device int8_t* a_int8_block =
+                          a_int8 + block_row * params->leading_dimension_a + k_offset;
+                      const device int8_t* a_int8_simdgroup =
+                          a_int8_block + size_t(tile_row_offset) * params->leading_dimension_a;
+                      const device uint8_t* b_weights = reinterpret_cast<const device uint8_t*>(b);
+                      const device uint8_t* b_quant_block = b_weights + block_col * weight_row_stride + int(k_offset);
+                      const device uint8_t* b_quant_simdgroup =
+                          b_quant_block + size_t(tile_col_offset) * weight_row_stride;
+                      const uint groups_per_row = (uint(params->K) + uint(GROUP_SIZE) - 1u) / uint(GROUP_SIZE);
+                      const uint k_offset_groups = k_offset / uint(GROUP_SIZE);
+                      return quant_k_loop_int8<aligned_m.value, aligned_n.value>(
+                          a_int8_simdgroup,
+                          b_quant_simdgroup,
+                          a_scales,
+                          scales,
+                          int(params->leading_dimension_a),
+                          weight_row_stride,
+                          int(params->aligned_inner_iterations),
+                          simdgroup_limit_m,
+                          simdgroup_limit_n,
+                          uint(geometry.block_row_start) + tile_row_offset,
+                          uint(geometry.block_col_start) + tile_col_offset,
+                          k_offset_groups,
+                          groups_per_row,
+                          thread_context
+                      );
+                    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
                       const int aligned_k_iterations_fp = int(params->aligned_inner_iterations);
                       return uzu::matmul::gemm_loop<
                           AT,

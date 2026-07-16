@@ -6,7 +6,7 @@ use crate::{
         Allocation, Backend, BufferArg, Encoder, Kernels,
         kernel::{
             AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, SoftmaxKernel,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     data_type::DataType,
@@ -91,8 +91,10 @@ impl<B: Backend> AttentionFallbackCore<B> {
         for group_index in 0..self.num_groups {
             self.matmul.borrow_mut().encode(
                 MatmulArguments {
-                    a: arguments.queries,
-                    a_offset: group_index * gqa_factor * arguments.suffix_length * self.head_dim * dt_bytes,
+                    a: MatmulA::FullPrecision {
+                        values: arguments.queries,
+                        offset: group_index * gqa_factor * arguments.suffix_length * self.head_dim * dt_bytes,
+                    },
                     b: MatmulB::FullPrecision {
                         b: (arguments.keys, group_index * self.head_dim * dt_bytes),
                     },
@@ -141,8 +143,10 @@ impl<B: Backend> AttentionFallbackCore<B> {
         for group_index in 0..self.num_groups {
             self.matmul.borrow_mut().encode(
                 MatmulArguments {
-                    a: &scores,
-                    a_offset: group_index * gqa_factor * arguments.suffix_length * sequence_length * dt_bytes,
+                    a: MatmulA::FullPrecision {
+                        values: &scores,
+                        offset: group_index * gqa_factor * arguments.suffix_length * sequence_length * dt_bytes,
+                    },
                     b: MatmulB::FullPrecision {
                         b: (arguments.values, group_index * self.head_dim * dt_bytes),
                     },

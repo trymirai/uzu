@@ -6,7 +6,7 @@ use crate::{
             gpu_types::HadamardTransformOrder,
             kernel::{
                 HadamardTransformKernel,
-                matmul::{MatmulArguments, MatmulError, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulError, MatmulKernel},
             },
         },
         cpu::{Cpu, context::CpuContext, error::CpuError},
@@ -49,6 +49,17 @@ impl MatmulKernel for MatmulCpuKernel {
         })
     }
 
+    fn supports_int8_symmetric_a(
+        &self,
+        _context: &CpuContext,
+        _m: u32,
+        _n: u32,
+        _k: u32,
+        group_size: u32,
+    ) -> bool {
+        group_size != 0 && group_size.is_multiple_of(32)
+    }
+
     fn encode<'a, 'b, 'd, TB: BufferArg<'b, Cpu>>(
         &mut self,
         arguments: MatmulArguments<'a, 'b, 'd, Cpu, TB>,
@@ -61,7 +72,6 @@ impl MatmulKernel for MatmulCpuKernel {
 
         let MatmulArguments {
             a,
-            a_offset,
             b,
             b_leading_dimension,
             b_transpose,
@@ -79,9 +89,53 @@ impl MatmulKernel for MatmulCpuKernel {
         let input_data_type = self.input_data_type;
         let output_data_type = self.output_data_type;
 
-        let a_buffer_range = a.as_buffer_range_ref();
-        let a_byte_off = a_buffer_range.range().start + a_offset * input_data_type.size_in_bytes();
-        let a_ptr = SendPtr(unsafe { &*a_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(a_byte_off));
+        #[derive(Clone, Copy)]
+        enum AData {
+            FullPrecision(SendPtr<u8>),
+            Int8Symmetric {
+                values: SendPtr<u8>,
+                scales: SendPtr<u8>,
+                group_size: usize,
+            },
+        }
+        let a_data = match a {
+            MatmulA::FullPrecision {
+                values,
+                offset,
+            } => {
+                let range = values.as_buffer_range_ref();
+                let byte_offset = range.range().start + offset * input_data_type.size_in_bytes();
+                AData::FullPrecision(SendPtr(unsafe { &*range.buffer().get() }.as_ptr().wrapping_byte_add(byte_offset)))
+            },
+            MatmulA::Int8Symmetric {
+                values,
+                scales,
+                group_size,
+            } => {
+                if group_size == 0
+                    || !group_size.is_multiple_of(32)
+                    || b.group_size() != Some(group_size)
+                    || b.bits_per_b() != Some(8)
+                {
+                    return Err(MatmulError::IncompatibleA {
+                        path: "CpuMatmul",
+                        reason: "int8 activation groups must be non-zero multiples of 32 and match 8-bit weights",
+                    }
+                    .into());
+                }
+                let values_range = values.as_buffer_range_ref();
+                let scales_range = scales.as_buffer_range_ref();
+                AData::Int8Symmetric {
+                    values: SendPtr(
+                        unsafe { &*values_range.buffer().get() }.as_ptr().wrapping_byte_add(values_range.range().start),
+                    ),
+                    scales: SendPtr(
+                        unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
+                    ),
+                    group_size: group_size as usize,
+                }
+            },
+        };
         let bias_ptr = bias_alloc.map(|bias| {
             let r = bias.as_buffer_range_ref();
             SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
@@ -124,7 +178,19 @@ impl MatmulKernel for MatmulCpuKernel {
                     for col in 0..n_u {
                         let mut accumulator = 0.0f32;
                         for inner in 0..k_u {
-                            let a_value = read_f32(a_ptr.as_ptr(), input_data_type, row * k_u + inner);
+                            let a_value = match a_data {
+                                AData::FullPrecision(ptr) => read_f32(ptr.as_ptr(), input_data_type, row * k_u + inner),
+                                AData::Int8Symmetric {
+                                    values,
+                                    scales,
+                                    group_size,
+                                } => {
+                                    let groups = k_u.div_ceil(group_size);
+                                    let q = *(values.as_ptr() as *const i8).add(row * k_u + inner) as f32;
+                                    let scale = *(scales.as_ptr() as *const f32).add(row * groups + inner / group_size);
+                                    q * scale
+                                },
+                            };
                             let b_value = match &weight_data {
                                 WeightData::FullPrecision {
                                     ptr,

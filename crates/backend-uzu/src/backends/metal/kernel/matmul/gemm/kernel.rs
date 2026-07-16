@@ -6,12 +6,12 @@ use crate::{
         common::{
             Allocation, Backend, BufferArg, Encoder,
             gpu_types::{
-                GemmParams, HadamardTransformOrder,
+                GemmAPrologueKind, GemmParams, HadamardTransformOrder,
                 gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
             },
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulError},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
             },
         },
         metal::{
@@ -85,6 +85,7 @@ impl GemmKernel {
                     specialization.b_prologue,
                     specialization.bits_per_b.unwrap_or(0),
                     specialization.group_size.unwrap_or(0),
+                    specialization.a_prologue,
                     specialization.output_transform,
                     specialization.alignment,
                 )?;
@@ -243,7 +244,6 @@ impl GemmKernel {
 
         let MatmulArguments {
             a,
-            a_offset,
             b,
             b_leading_dimension,
             b_transpose,
@@ -260,6 +260,17 @@ impl GemmKernel {
             MatmulB::FullPrecision {
                 b: weights,
             } => {
+                let MatmulA::FullPrecision {
+                    values: a,
+                    offset: a_offset,
+                } = a
+                else {
+                    return Err(MatmulError::IncompatibleA {
+                        path: "Gemm",
+                        reason: "int8 activations require symmetric 8-bit weights",
+                    }
+                    .into());
+                };
                 let tiling = if use_mxu {
                     if b_transpose {
                         select_mxu_tiling(m, n, k)
@@ -352,11 +363,12 @@ impl GemmKernel {
                     b_prologue,
                     bits_per_b,
                     group_size,
+                    a_prologue: GemmAPrologueKind::FullPrecision,
                 };
                 specialization.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
-                    (a, a_offset),
+                    Some((a, a_offset)),
                     weights,
                     &mut *d,
                     None::<&Allocation<Metal>>,
@@ -364,6 +376,8 @@ impl GemmKernel {
                     None::<&Allocation<Metal>>,
                     output_bias,
                     rht_factors,
+                    None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
                     std::slice::from_ref(&params),
                     group_count_x,
                     group_count_y,
@@ -401,6 +415,34 @@ impl GemmKernel {
                     _ => unreachable!(),
                 };
 
+                let (a, a_offset, a_int8, a_scales, a_prologue) = match a {
+                    MatmulA::FullPrecision {
+                        values,
+                        offset,
+                    } => (Some(values), offset, None, None, GemmAPrologueKind::FullPrecision),
+                    MatmulA::Int8Symmetric {
+                        values,
+                        scales,
+                        group_size: a_group_size,
+                    } => {
+                        if !use_mxu
+                            || a_group_size == 0
+                            || !a_group_size.is_multiple_of(32)
+                            || !k.is_multiple_of(a_group_size)
+                            || b_prologue != GemmBPrologueKind::ScaleSymmetricDequant
+                            || bits_per_b != Some(8)
+                            || group_size != Some(a_group_size)
+                        {
+                            return Err(MatmulError::IncompatibleA {
+                                path: "Gemm",
+                                reason: "int8 activations require MXU, complete 32-aligned groups, and matching symmetric 8-bit weights",
+                            }
+                            .into());
+                        }
+                        (None, 0, Some(values), Some(scales), GemmAPrologueKind::Int8Symmetric)
+                    },
+                };
+
                 let tiling = if use_mxu {
                     select_mxu_quant_tiling(m, n, group_size.unwrap_or(0))
                 } else {
@@ -413,12 +455,16 @@ impl GemmKernel {
                 let group_count_y = m.div_ceil(tiling.block_m());
 
                 let zero_point_4bit = zero_points.is_some() && bits_per_b == Some(4);
-                let split_k = select_split_k(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), false, zero_point_4bit);
+                let split_k = if a_prologue == GemmAPrologueKind::Int8Symmetric {
+                    1
+                } else {
+                    select_split_k(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), false, zero_point_4bit)
+                };
                 if split_k > 1
                     && split_k_output_supported(output_transform, n, self.weights_data_type, self.output_data_type)
                 {
                     return self.encode_split_k(
-                        a,
+                        a.expect("split-K only supports full-precision activations"),
                         a_offset,
                         weights,
                         scales,
@@ -452,11 +498,12 @@ impl GemmKernel {
                     b_prologue,
                     bits_per_b,
                     group_size,
+                    a_prologue,
                 };
                 specialization.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
-                    (a, a_offset),
+                    a.map(|values| (values, a_offset)),
                     weights,
                     &mut *d,
                     scales,
@@ -464,6 +511,8 @@ impl GemmKernel {
                     zero_points,
                     output_bias,
                     rht_factors,
+                    a_int8,
+                    a_scales,
                     std::slice::from_ref(&params),
                     group_count_x,
                     group_count_y,
@@ -518,6 +567,7 @@ impl GemmKernel {
             b_prologue,
             bits_per_b,
             group_size,
+            a_prologue: GemmAPrologueKind::FullPrecision,
         };
         part_spec.validate()?;
 
@@ -540,12 +590,14 @@ impl GemmKernel {
         };
         let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
         part_kernel.encode(
-            (a, a_offset),
+            Some((a, a_offset)),
             weights,
             &mut temp,
             scales,
             biases,
             zero_points,
+            None::<&Allocation<Metal>>,
+            None::<&Allocation<Metal>>,
             None::<&Allocation<Metal>>,
             None::<&Allocation<Metal>>,
             std::slice::from_ref(&params),

@@ -1,6 +1,9 @@
 use super::error::GemmSpecializationError;
 use crate::{
-    backends::common::gpu_types::gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
+    backends::common::gpu_types::{
+        GemmAPrologueKind,
+        gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
+    },
     data_type::DataType,
 };
 
@@ -12,6 +15,7 @@ pub(crate) struct GemmSpecialization {
     pub(crate) output_transform: GemmDTransform,
     pub(crate) alignment: GemmAlignment,
     pub(crate) transpose_b: bool,
+    pub(crate) a_prologue: GemmAPrologueKind,
     pub(crate) b_prologue: GemmBPrologueKind,
     pub(crate) bits_per_b: Option<u32>,
     pub(crate) group_size: Option<u32>,
@@ -48,6 +52,19 @@ impl GemmSpecialization {
         }
         if self.b_prologue != GemmBPrologueKind::FullPrecision && !self.transpose_b {
             return Err(GemmSpecializationError::QuantizedRequiresTransposedB);
+        }
+        if self.a_prologue == GemmAPrologueKind::Int8Symmetric
+            && !(self.use_mxu
+                && self.bits_per_b == Some(8)
+                && self.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant
+                && self.transpose_b)
+        {
+            return Err(GemmSpecializationError::Int8ActivationUnsupported {
+                use_mxu: self.use_mxu,
+                bits: self.bits_per_b,
+                b_prologue: self.b_prologue,
+                transpose_b: self.transpose_b,
+            });
         }
         Ok(())
     }

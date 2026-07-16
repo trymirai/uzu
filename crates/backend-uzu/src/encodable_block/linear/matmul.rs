@@ -9,7 +9,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             Kernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout, int_spec::IntSpec, mlx_spec::MLXSpec},
@@ -209,10 +209,36 @@ fn load_biases<B: Backend>(
         .transpose()?)
 }
 
-impl<B: Backend> Linear<B> for LinearMatmul<B> {
-    fn encode(
+impl<B: Backend> LinearMatmul<B> {
+    pub(crate) fn supports_int8_symmetric_a(
         &self,
-        input: Allocation<B>,
+        context: &B::Context,
+        batch_dim: usize,
+        group_size: u32,
+    ) -> bool {
+        let compatible_weights = matches!(
+            &self.mode,
+            Mode::Quantized {
+                method: QuantizationMethod::ScaleSymmetric,
+                mode: QuantizationMode::U8,
+                group_size: weight_group_size,
+                ..
+            } if *weight_group_size == group_size
+        );
+
+        compatible_weights
+            && self.kernel.borrow().supports_int8_symmetric_a(
+                context,
+                batch_dim as u32,
+                self.output_dim as u32,
+                self.input_dim as u32,
+                group_size,
+            )
+    }
+
+    pub(crate) fn encode_with_a(
+        &self,
+        a: MatmulA<'_, B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
@@ -272,8 +298,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
 
         self.kernel.borrow_mut().encode(
             MatmulArguments {
-                a: &input,
-                a_offset: 0,
+                a,
                 b,
                 b_leading_dimension: None,
                 b_transpose: true,
@@ -287,5 +312,23 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         )?;
 
         Ok(output)
+    }
+}
+
+impl<B: Backend> Linear<B> for LinearMatmul<B> {
+    fn encode(
+        &self,
+        input: Allocation<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        self.encode_with_a(
+            MatmulA::FullPrecision {
+                values: &input,
+                offset: 0,
+            },
+            batch_dim,
+            encoder,
+        )
     }
 }

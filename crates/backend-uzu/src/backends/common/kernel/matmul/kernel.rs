@@ -13,6 +13,17 @@ pub trait MatmulKernel: Sized {
         output_data_type: DataType,
     ) -> Result<Self, <Self::Backend as Backend>::Error>;
 
+    fn supports_int8_symmetric_a(
+        &self,
+        _context: &<Self::Backend as Backend>::Context,
+        _m: u32,
+        _n: u32,
+        _k: u32,
+        _group_size: u32,
+    ) -> bool {
+        false
+    }
+
     fn encode<'a, 'b, 'd, TB: BufferArg<'b, Self::Backend>>(
         &mut self,
         arguments: MatmulArguments<'a, 'b, 'd, Self::Backend, TB>,

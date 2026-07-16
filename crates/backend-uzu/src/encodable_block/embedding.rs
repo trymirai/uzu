@@ -9,7 +9,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::{
@@ -539,8 +539,10 @@ impl<B: Backend> Embedding<B> {
                     .borrow_mut()
                     .encode(
                         MatmulArguments {
-                            a: input_allocation,
-                            a_offset: 0,
+                            a: MatmulA::FullPrecision {
+                                values: input_allocation,
+                                offset: 0,
+                            },
                             b: MatmulB::FullPrecision {
                                 b: weights,
                             },
@@ -608,8 +610,10 @@ impl<B: Backend> Embedding<B> {
                     .borrow_mut()
                     .encode(
                         MatmulArguments {
-                            a: input_allocation,
-                            a_offset: 0,
+                            a: MatmulA::FullPrecision {
+                                values: input_allocation,
+                                offset: 0,
+                            },
                             b,
                             b_leading_dimension: None,
                             b_transpose: true,

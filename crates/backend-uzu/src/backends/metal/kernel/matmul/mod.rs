@@ -49,6 +49,29 @@ impl MatmulKernel for MatmulMetalKernel {
         })
     }
 
+    fn supports_int8_symmetric_a(
+        &self,
+        context: &MetalContext,
+        m: u32,
+        n: u32,
+        k: u32,
+        group_size: u32,
+    ) -> bool {
+        if !context.supports_mxu()
+            || group_size == 0
+            || !group_size.is_multiple_of(32)
+            || !k.is_multiple_of(group_size)
+            || ![self.weights_data_type, self.input_data_type, self.output_data_type]
+                .into_iter()
+                .all(|data_type| data_type == DataType::BF16)
+        {
+            return false;
+        }
+
+        let tiling = gemm::select_mxu_quant_tiling(m, n, group_size);
+        k.is_multiple_of(tiling.block_k())
+    }
+
     fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         &mut self,
         arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,

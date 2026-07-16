@@ -10,16 +10,23 @@ use crate::{
     backends::{
         common::{
             Allocation, Backend, Context, Encoder,
-            gpu_types::{QuantizationMethod, QuantizationMode},
+            gpu_types::{ActivationScaleStat, QuantizationMethod, QuantizationMode},
             kernel::{
-                Kernels,
-                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                Kernels, group_stat,
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                quantize_symmetric_i8, symmetric_divisor,
             },
         },
         cpu::Cpu,
     },
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
+
+pub struct PreparedInt8A {
+    pub values: Vec<i8>,
+    pub scales: Vec<f32>,
+    pub group_size: u32,
+}
 
 pub struct QuantInput<T: ArrayElement + Float> {
     pub w_packed: Vec<u32>,
@@ -33,6 +40,7 @@ pub struct QuantInput<T: ArrayElement + Float> {
     pub group_size: u32,
     pub quant_method: QuantizationMethod,
     pub mode: QuantizationMode,
+    pub prepared_a: Option<PreparedInt8A>,
 }
 
 fn mode_for_bits(bits: u32) -> QuantizationMode {
@@ -89,7 +97,42 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             group_size,
             quant_method,
             mode: mode_for_bits(bits),
+            prepared_a: None,
         }
+    }
+
+    pub fn with_prepared_a(
+        mut self,
+        stat: ActivationScaleStat,
+    ) -> Self {
+        let group_size = self.group_size as usize;
+        assert!(group_size > 0);
+        let rows = self.m as usize;
+        let columns = self.k as usize;
+        let groups = columns.div_ceil(group_size);
+        let mut values = vec![0i8; rows * columns];
+        let mut scales = vec![0.0f32; rows * groups];
+
+        for row in 0..rows {
+            for group in 0..groups {
+                let start = group * group_size;
+                let end = (start + group_size).min(columns);
+                let prepared =
+                    (start..end).map(|column| self.x[row * columns + column].to_f32().unwrap()).collect::<Vec<_>>();
+                let divisor = symmetric_divisor(group_stat(&prepared, stat));
+                scales[row * groups + group] = divisor;
+                for (column, value) in (start..end).zip(prepared) {
+                    values[row * columns + column] = quantize_symmetric_i8(value, divisor);
+                }
+            }
+        }
+
+        self.prepared_a = Some(PreparedInt8A {
+            values,
+            scales,
+            group_size: self.group_size,
+        });
+        self
     }
 
     pub(crate) fn weight_buffer_bytes(&self) -> usize {
@@ -106,6 +149,8 @@ pub struct QuantBuffers<B: Backend, T: ArrayElement + Float> {
     pub zp: Option<Allocation<B>>,
     pub bias: Option<Allocation<B>>,
     pub x: Allocation<B>,
+    pub prepared_a: Option<Allocation<B>>,
+    pub prepared_a_scales: Option<Allocation<B>>,
     pub y: Allocation<B>,
     _t: std::marker::PhantomData<T>,
 }
@@ -121,6 +166,14 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
             zp: input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(context, zp)),
             bias: input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(context, b)),
             x: alloc_allocation_with_data::<B, T>(context, &input.x),
+            prepared_a: input
+                .prepared_a
+                .as_ref()
+                .map(|prepared| alloc_allocation_with_data::<B, i8>(context, &prepared.values)),
+            prepared_a_scales: input
+                .prepared_a
+                .as_ref()
+                .map(|prepared| alloc_allocation_with_data::<B, f32>(context, &prepared.scales)),
             y: alloc_allocation::<B, T>(context, (input.m as usize) * (input.n as usize)),
             _t: std::marker::PhantomData,
         }
@@ -153,9 +206,19 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
             group_size: input.group_size,
         },
     };
+    let a = match &input.prepared_a {
+        Some(prepared) => MatmulA::Int8Symmetric {
+            values: buffers.prepared_a.as_ref().expect("prepared activation buffer"),
+            scales: buffers.prepared_a_scales.as_ref().expect("prepared activation scales"),
+            group_size: prepared.group_size,
+        },
+        None => MatmulA::FullPrecision {
+            values: &buffers.x,
+            offset: 0,
+        },
+    };
     MatmulArguments {
-        a: &buffers.x,
-        a_offset: 0,
+        a,
         b: b_variant,
         b_leading_dimension: None,
         b_transpose: true,

@@ -23,4 +23,13 @@ pub enum GemmSpecializationError {
         tiling: GemmTiling,
         group_size: u32,
     },
+    #[error(
+        "int8 activations require MXU and 8-bit symmetric transposed weights (use_mxu={use_mxu}, bits={bits:?}, b_prologue={b_prologue:?}, transpose_b={transpose_b})"
+    )]
+    Int8ActivationUnsupported {
+        use_mxu: bool,
+        bits: Option<u32>,
+        b_prologue: crate::backends::common::gpu_types::gemm::GemmBPrologueKind,
+        transpose_b: bool,
+    },
 }

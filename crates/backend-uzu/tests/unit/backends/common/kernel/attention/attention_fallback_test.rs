@@ -9,7 +9,7 @@ use crate::{
             kernel::{
                 AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, AttentionSinglePassKernel,
                 SoftmaxKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -132,8 +132,10 @@ fn pipeline_output<B: Backend>(
         matmul
             .encode(
                 MatmulArguments {
-                    a: &qa,
-                    a_offset: g as usize * GQA as usize * SUFFIX as usize * q_row,
+                    a: MatmulA::FullPrecision {
+                        values: &qa,
+                        offset: g as usize * GQA as usize * SUFFIX as usize * q_row,
+                    },
                     b: MatmulB::FullPrecision {
                         b: (&ka, g as usize * head_stride * dt),
                     },
@@ -172,8 +174,10 @@ fn pipeline_output<B: Backend>(
         matmul
             .encode(
                 MatmulArguments {
-                    a: &scores,
-                    a_offset: g as usize * GQA as usize * SUFFIX as usize * s_row,
+                    a: MatmulA::FullPrecision {
+                        values: &scores,
+                        offset: g as usize * GQA as usize * SUFFIX as usize * s_row,
+                    },
                     b: MatmulB::FullPrecision {
                         b: (&va, g as usize * head_stride * dt),
                     },
