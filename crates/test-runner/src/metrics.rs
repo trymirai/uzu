@@ -2,7 +2,7 @@ use std::{thread::sleep, time::Duration};
 
 const COOL_GPU_TEMP: f32 = 60.0;
 
-#[cfg(target_vendor = "apple")]
+#[cfg(target_os = "macos")]
 fn get_gpu_temp() -> f32 {
     let (sum, count) = keisoku::thermal_sensors()
         .iter()
@@ -15,7 +15,8 @@ fn get_gpu_temp() -> f32 {
     }
 }
 
-#[cfg(not(target_vendor = "apple"))]
+// iOS / non-macOS: keisoku is unavailable, so cooldown is a no-op.
+#[cfg(not(target_os = "macos"))]
 fn get_gpu_temp() -> f32 {
     0.0
 }
