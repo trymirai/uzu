@@ -1,120 +1,97 @@
 # Kernel Benchmarks
 
-Criterion-based microbenchmarks for Metal kernels. Runs on macOS (native)
-and on iPhone (via `cargo-dinghy`). Results from both are consolidated
-under a single `target/criterion/<label>/` tree so you can compare
-baselines side by side.
+Criterion microbenchmarks for Metal kernels, runnable on macOS (native) and on a
+physical iPhone (built + installed with `cargo-dinghy`). macOS results are written
+under `target/criterion/<label>/`; on-device results stay on the phone (see below).
 
 ## Prerequisites
 
-- Rust nightly: `rustup toolchain install nightly`
-- For iOS runs:
-    - Apple target: `rustup target add aarch64-apple-ios`
-    - `cargo-dinghy` built from the [trymirai/dinghy](https://github.com/trymirai/dinghy/tree/mirai):
+- Toolchain: the repo pins nightly via `rust-toolchain.toml` (the bench target uses
+  `#![feature(custom_test_frameworks)]`), so no manual toolchain step is needed.
+- For iPhone runs:
+    - Apple target: `rustup target add aarch64-apple-ios`.
+    - Official `cargo-dinghy` (from crates.io): `cargo install cargo-dinghy`.
+    - A physical device connected via **USB**, **unlocked**, with **Developer Mode**
+      enabled (Settings → Privacy & Security → Developer Mode).
+    - Two different identifiers are used:
+        - `cargo-dinghy` matches the **hardware ECID** — copy it from
+          `cargo dinghy all-devices` (e.g. `Eugene's iPhone (00008150-… aarch64 27.0)`).
+        - `xcrun devicectl` uses the **CoreDevice UUID** — copy the Identifier column
+          from `xcrun devicectl list devices`.
 
-      ```bash
-      cargo install \
-        --git https://github.com/trymirai/dinghy \
-        --branch mirai \
-        cargo-dinghy
-      ```
+## Bench targets
 
-    - A physical device connected via USB with a device ID from
-      `xcrun devicectl list devices`.
-
-## Available benchmark groups
-
-The Cargo bench target is `main`. Its source lives at
-`crates/backend-uzu/benches/main.rs`.
-
-| Group id                                | Filter                              |
-|-----------------------------------------|-------------------------------------|
-| `Metal/Kernel/Matmul/GEMM`              | `Metal/Kernel/Matmul/GEMM`          |
-| `Metal/Kernel/Matmul/GEMM_MXU`          | `Metal/Kernel/Matmul/GEMM_MXU`      |
-| `Metal/Kernel/UnifiedQuantizedGemm/...` | `Metal/Kernel/UnifiedQuantizedGemm` |
-| `Metal/Kernel/Gemv/...`                 | `Metal/Kernel/Gemv`                 |
-| `Metal/Kernel/Qwen3Layers/...`          | `Metal/Kernel/Qwen3Layers`          |
-| `Metal/Kernel/RMSNorm`                  | `Metal/Kernel/RMSNorm`              |
-| `Metal/Kernel/Sampling/Argmax`          | `Metal/Kernel/Sampling/Argmax`      |
-| `ChatSession run`                       | `ChatSession run`                   |
-| `Forward pass`                          | `Forward pass`                      |
-
-The prefix `Metal/Kernel/Matmul` runs both `GEMM` and `GEMM_MXU` in one pass.
-The session and language-model groups require the test model path configured by
-the test helpers.
-
-## Output layout
-
-Every run writes into `target/criterion/<label>/…`, where `<label>` is a
-free-form name you choose (e.g. `m2_max`, `a19`). The Criterion baseline
-you saved lives at `target/criterion/<label>/<benchmark-path>/<baseline-name>/`.
+- **`--bench main`** (`benches/main.rs`) — the target that runs on device. Groups:
+  `Model loading` (needs the test model) and `Metal/Kernel/A8W8`.
+- **`--lib`** — the other Metal-kernel microbenches are `#[uzu_bench]` cases woven
+  into the library test harness. List them with
+  `cargo bench -p backend-uzu --lib -- --list` and run them with `--lib`. They run on
+  macOS (they are not part of the `--bench main` target used for the phone).
 
 ## Running on macOS
 
-From the repo root. Use an **absolute** `CRITERION_HOME` so it doesn't
-resolve relative to the package dir:
+Use an **absolute** `CRITERION_HOME` so it does not resolve relative to the package dir.
 
 ```bash
-CRITERION_HOME="$PWD/target/criterion/m2_max" cargo bench \
-  -p backend-uzu \
-  --bench main -- "Metal/Kernel/Matmul" \
-  --save-baseline matmul_baseline_m2_max
+# a --bench main group (A8W8 self-skips on GPUs without MXU, i.e. M1–M4):
+CRITERION_HOME="$PWD/target/criterion/m2_max" \
+  cargo bench -p backend-uzu --bench main -- "Metal/Kernel/A8W8"
+
+# a --lib kernel microbench (use `--lib -- --list` to discover filters):
+CRITERION_HOME="$PWD/target/criterion/m2_max" \
+  cargo bench -p backend-uzu --lib -- "<filter>"
 ```
 
-Set `UZU_CAPTURE_BENCH=1` to capture the first matching benchmark command
-buffer as a Metal `.gputrace`. `UZU_CAPTURE_BENCH_FILTER` is an optional
-benchmark path substring; `UZU_CAPTURE_BENCH_DIR` defaults to the current
-directory.
+Set `UZU_CAPTURE_BENCH=1` to capture the first matching command buffer as a Metal
+`.gputrace`. `UZU_CAPTURE_BENCH_FILTER` narrows by benchmark-path substring;
+`UZU_CAPTURE_BENCH_DIR` sets the output directory (defaults to the current directory).
 
-## Running on iPhone (via `cargo-dinghy`)
+## Running on iPhone
 
-Run one benchmark group at a time to avoid the iOS watchdog killing the
-app.
-
-Key flags:
-
-- `-e CRITERION_HOME=target/criterion/a19` — on-device env var. Path is
-  relative to the app's cwd (`Documents/`), so this becomes
-  `Documents/target/criterion/a19/` on device.
-- `--copy-back "Documents/target=$(pwd)/target"` — after the run,
-  `cargo-dinghy` pulls `Documents/target` from the device into your
-  repo's `target/`. `$(pwd)` is required (absolute DST) because the
-  cargo runner is launched with cwd set to the package dir, not the
-  workspace root.
+`cargo-dinghy` builds and installs the bench app via `xcrun devicectl`, but its own
+launch step shells out to `pymobiledevice3` (RSD), which on iOS 17 needs a root tunnel
+and is sensitive to the installed `pymobiledevice3` CLI version. The reliable path is
+to let dinghy build + install, then launch the installed app with `devicectl` directly
+— no `pymobiledevice3`, no tunnel, no `sudo`. Run one group at a time to avoid the iOS
+watchdog killing the app.
 
 ```bash
-DEVICE=<DEVICE_ID>
+ECID=<from `cargo dinghy all-devices`>        # e.g. 00008150-001965E22282401C
+UUID=<from `xcrun devicectl list devices`>    # e.g. DD4B4CF2-F102-5B4F-A616-5D824E55B6FF
 
-cargo dinghy \
-  -d "$DEVICE" \
-  -e CRITERION_HOME=target/criterion/a19 \
-  --copy-back "Documents/target=$(pwd)/target" \
-  bench -p backend-uzu --bench main -- \
-    "Metal/Kernel/Matmul" \
-    --save-baseline matmul_baseline_a19
+# 1) Build (release, aarch64-apple-ios) + install the app (bundle id org.zoy.kali.Dinghy)
+#    via devicectl. dinghy then exits non-zero at its pymobiledevice3 launch step —
+#    that is expected; the app is already installed by that point.
+cargo dinghy -d "$ECID" bench -p backend-uzu --bench main -- "Metal/Kernel/A8W8" || true
+
+# 2) Launch the installed bench directly; stdout/stderr stream over --console.
+xcrun devicectl device process launch --console --terminate-existing \
+  --device "$UUID" \
+  -e '{"CRITERION_HOME":"target/criterion/a19"}' \
+  org.zoy.kali.Dinghy  Metal/Kernel/A8W8 --save-baseline a8w8_a19 --bench
 ```
 
-After the run completes you'll have
-`target/criterion/a19/Metal/Kernel/Matmul/<GEMM|GEMM_MXU>/…/matmul_baseline_a19/`
-on the host, next to any `m2_max/` baselines.
+Criterion output stays on the phone under `Documents/target/criterion/a19`; pull it
+with `xcrun devicectl device copy from` if you want the host-side HTML report.
 
-## Viewing reports
+## A8W8 int8 GEMM (A19 only)
 
-Open the Criterion HTML report:
+`Metal/Kernel/A8W8` (`benches/kernels/a8w8_bench.rs`) self-skips on GPUs without MXU.
+On M5/A19 it first runs a correctness check — the int8×int8→int32 GEMM against a
+plain-Rust A8W8 reference; a mismatch panics — then times int8 vs bf16. The int8
+timing includes the fused RHT + activation-preparation dispatch. Because the correctness
+asserts stream over `--console` before any timing, a panic there means the int8 result
+diverged from the reference.
+
+## Viewing reports (macOS)
 
 ```bash
-open target/criterion/report/index.html
-```
-
-To inspect a specific label only:
-
-```bash
-open target/criterion/m2_max/report/index.html
-open target/criterion/a19/report/index.html
+open target/criterion/report/index.html          # all labels
+open target/criterion/<label>/report/index.html  # a single label
 ```
 
 ## Cold GEMV
 
-GEMV-class benches cycle through enough quant-buffer copies to cover a 256 MiB
-weight working set before reusing one. This avoids ranking kernels on
-cache-warm weights; pools allocate lazily, so criterion filters skip their cost.
+GEMV-class benches cycle through enough quant-buffer copies to cover a 256 MiB weight
+working set before reusing one, so kernels are not ranked on cache-warm weights; pools
+allocate lazily, so criterion filters skip their cost.
