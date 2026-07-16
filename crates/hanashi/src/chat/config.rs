@@ -5,7 +5,11 @@ use crate::chat::{Error, hanashi::config::hanashi_config_capabilities, harmony::
 #[allow(dead_code)]
 pub fn encoding_config_capabilities(config: &EncodingConfig) -> Result<ChatModelCapabilities, Error> {
     match config {
-        EncodingConfig::Hanashi(config) => hanashi_config_capabilities(config).map_err(Error::from),
-        EncodingConfig::Harmony(config) => Ok(harmony_config_capabilities(config)),
+        EncodingConfig::Hanashi {
+            config,
+        } => hanashi_config_capabilities(config).map_err(Error::from),
+        EncodingConfig::Harmony {
+            config,
+        } => Ok(harmony_config_capabilities(config)),
     }
 }

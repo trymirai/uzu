@@ -2020,10 +2020,11 @@ public struct Model: Equatable, Hashable, Codable {
     public var quantization: ModelQuantization?
     public var specializations: [ModelSpecialization]
     public var accessibility: ModelAccessibility
+    public var encodings: [EncodingConfig]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(identifier: String, registry: ModelRegistry, backends: [ModelBackend], family: ModelFamily?, properties: ModelProperties?, quantization: ModelQuantization?, specializations: [ModelSpecialization], accessibility: ModelAccessibility) {
+    public init(identifier: String, registry: ModelRegistry, backends: [ModelBackend], family: ModelFamily?, properties: ModelProperties?, quantization: ModelQuantization?, specializations: [ModelSpecialization], accessibility: ModelAccessibility, encodings: [EncodingConfig]) {
         self.identifier = identifier
         self.registry = registry
         self.backends = backends
@@ -2032,6 +2033,7 @@ public struct Model: Equatable, Hashable, Codable {
         self.quantization = quantization
         self.specializations = specializations
         self.accessibility = accessibility
+        self.encodings = encodings
     }
 
     
@@ -2177,7 +2179,8 @@ public struct FfiConverterTypeModel: FfiConverterRustBuffer {
                 properties: FfiConverterOptionTypeModelProperties.read(from: &buf), 
                 quantization: FfiConverterOptionTypeModelQuantization.read(from: &buf), 
                 specializations: FfiConverterSequenceTypeModelSpecialization.read(from: &buf), 
-                accessibility: FfiConverterTypeModelAccessibility.read(from: &buf)
+                accessibility: FfiConverterTypeModelAccessibility.read(from: &buf), 
+                encodings: FfiConverterSequenceTypeEncodingConfig.read(from: &buf)
         )
     }
 
@@ -2190,6 +2193,7 @@ public struct FfiConverterTypeModel: FfiConverterRustBuffer {
         FfiConverterOptionTypeModelQuantization.write(value.quantization, into: &buf)
         FfiConverterSequenceTypeModelSpecialization.write(value.specializations, into: &buf)
         FfiConverterTypeModelAccessibility.write(value.accessibility, into: &buf)
+        FfiConverterSequenceTypeEncodingConfig.write(value.encodings, into: &buf)
     }
 }
 
@@ -3978,6 +3982,79 @@ public func FfiConverterTypeContextLength_lower(_ value: ContextLength) -> RustB
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum EncodingConfig: Equatable, Hashable, Codable {
+    
+    case hanashi(config: HanashiConfig
+    )
+    case harmony(config: HarmonyConfig
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension EncodingConfig: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeEncodingConfig: FfiConverterRustBuffer {
+    typealias SwiftType = EncodingConfig
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EncodingConfig {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .hanashi(config: try FfiConverterTypeHanashiConfig.read(from: &buf)
+        )
+        
+        case 2: return .harmony(config: try FfiConverterTypeHarmonyConfig.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: EncodingConfig, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .hanashi(config):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeHanashiConfig.write(config, into: &buf)
+            
+        
+        case let .harmony(config):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeHarmonyConfig.write(config, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEncodingConfig_lift(_ buf: RustBuffer) throws -> EncodingConfig {
+    return try FfiConverterTypeEncodingConfig.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEncodingConfig_lower(_ value: EncodingConfig) -> RustBuffer {
+    return FfiConverterTypeEncodingConfig.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum Grammar: Equatable, Hashable, Codable {
     
     case jsonAny
@@ -4052,6 +4129,210 @@ public func FfiConverterTypeGrammar_lift(_ buf: RustBuffer) throws -> Grammar {
 #endif
 public func FfiConverterTypeGrammar_lower(_ value: Grammar) -> RustBuffer {
     return FfiConverterTypeGrammar.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum HanashiConfig: Equatable, Hashable, Codable {
+    
+    case functionGemma
+    case gemma3
+    case gemma4
+    case gptOss
+    case lfm2
+    case lfm25Instruct
+    case lfm25Thinking
+    case llama32
+    case qwen3
+    case qwen3Instruct
+    case qwen3Thinking
+    case qwen35
+    case qwen36
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension HanashiConfig: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHanashiConfig: FfiConverterRustBuffer {
+    typealias SwiftType = HanashiConfig
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HanashiConfig {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .functionGemma
+        
+        case 2: return .gemma3
+        
+        case 3: return .gemma4
+        
+        case 4: return .gptOss
+        
+        case 5: return .lfm2
+        
+        case 6: return .lfm25Instruct
+        
+        case 7: return .lfm25Thinking
+        
+        case 8: return .llama32
+        
+        case 9: return .qwen3
+        
+        case 10: return .qwen3Instruct
+        
+        case 11: return .qwen3Thinking
+        
+        case 12: return .qwen35
+        
+        case 13: return .qwen36
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: HanashiConfig, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .functionGemma:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .gemma3:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .gemma4:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .gptOss:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .lfm2:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .lfm25Instruct:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .lfm25Thinking:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .llama32:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .qwen3:
+            writeInt(&buf, Int32(9))
+        
+        
+        case .qwen3Instruct:
+            writeInt(&buf, Int32(10))
+        
+        
+        case .qwen3Thinking:
+            writeInt(&buf, Int32(11))
+        
+        
+        case .qwen35:
+            writeInt(&buf, Int32(12))
+        
+        
+        case .qwen36:
+            writeInt(&buf, Int32(13))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHanashiConfig_lift(_ buf: RustBuffer) throws -> HanashiConfig {
+    return try FfiConverterTypeHanashiConfig.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHanashiConfig_lower(_ value: HanashiConfig) -> RustBuffer {
+    return FfiConverterTypeHanashiConfig.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum HarmonyConfig: Equatable, Hashable, Codable {
+    
+    case gptOss
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension HarmonyConfig: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHarmonyConfig: FfiConverterRustBuffer {
+    typealias SwiftType = HarmonyConfig
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HarmonyConfig {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .gptOss
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: HarmonyConfig, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .gptOss:
+            writeInt(&buf, Int32(1))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHarmonyConfig_lift(_ buf: RustBuffer) throws -> HarmonyConfig {
+    return try FfiConverterTypeHarmonyConfig.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHarmonyConfig_lower(_ value: HarmonyConfig) -> RustBuffer {
+    return FfiConverterTypeHarmonyConfig.lower(value)
 }
 
 
@@ -5660,6 +5941,31 @@ fileprivate struct FfiConverterSequenceTypeChatContentBlock: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeEncodingConfig: FfiConverterRustBuffer {
+    typealias SwiftType = [EncodingConfig]
+
+    public static func write(_ value: [EncodingConfig], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeEncodingConfig.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [EncodingConfig] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [EncodingConfig]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeEncodingConfig.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeModelSpecialization: FfiConverterRustBuffer {
     typealias SwiftType = [ModelSpecialization]
 
@@ -5771,7 +6077,7 @@ public func metadataExternal(name: String) -> Metadata  {
     )
 })
 }
-public func modelExternal(identifier: String, registryIdentifier: String, registryName: String, backendIdentifier: String, backendName: String, backendVersion: String, specializations: [ModelSpecialization], accessibility: ModelAccessibility) -> Model  {
+public func modelExternal(identifier: String, registryIdentifier: String, registryName: String, backendIdentifier: String, backendName: String, backendVersion: String, specializations: [ModelSpecialization], accessibility: ModelAccessibility, encodings: [EncodingConfig]) -> Model  {
     return try!  FfiConverterTypeModel_lift(try! rustCall() {
     uniffi_shoji_fn_func_model_external(
         FfiConverterString.lower(identifier),
@@ -5781,7 +6087,8 @@ public func modelExternal(identifier: String, registryIdentifier: String, regist
         FfiConverterString.lower(backendName),
         FfiConverterString.lower(backendVersion),
         FfiConverterSequenceTypeModelSpecialization.lower(specializations),
-        FfiConverterTypeModelAccessibility_lower(accessibility),$0
+        FfiConverterTypeModelAccessibility_lower(accessibility),
+        FfiConverterSequenceTypeEncodingConfig.lower(encodings),$0
     )
 })
 }
@@ -5870,7 +6177,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_shoji_checksum_func_metadata_external() != 17881) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_shoji_checksum_func_model_external() != 53960) {
+    if (uniffi_shoji_checksum_func_model_external() != 39316) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_shoji_checksum_func_chat_config_create() != 48867) {

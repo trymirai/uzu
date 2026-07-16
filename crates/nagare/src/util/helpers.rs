@@ -1,4 +1,4 @@
-use std::{io, io::ErrorKind, pin::Pin};
+use std::{io, pin::Pin};
 
 use futures::{Stream, stream};
 use hanashi::{
@@ -22,12 +22,12 @@ pub fn build_encoding(
     reference: String,
     model: &Model,
 ) -> Result<Encoding, io::Error> {
-    let config: Option<EncodingConfig> = if model.encodings.len() == 0 {
+    let config: Option<EncodingConfig> = if model.encodings.is_empty() {
         None
     } else if model.encodings.len() == 1 {
         model.encodings.first().cloned()
     } else {
-        let hanashi_config = model.encodings.iter().find(|config| matches!(config, EncodingConfig::Hanashi(_)));
+        let hanashi_config = model.encodings.iter().find(|config| matches!(config, EncodingConfig::Hanashi { .. }));
         if hanashi_config.is_some() {
             hanashi_config.cloned()
         } else {
@@ -35,7 +35,7 @@ pub fn build_encoding(
         }
     };
     let Some(config) = config else {
-        return Err(io::Error::new(ErrorKind::Other, "can not get encoding config"));
+        return Err(io::Error::other("can not get encoding config"));
     };
 
     let encoding_context = Context {

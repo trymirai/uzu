@@ -1,12 +1,20 @@
 use serde::{Deserialize, Serialize};
 
+#[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EncodingConfig {
-    Hanashi(HanashiConfig),
-    Harmony(HarmonyConfig),
+    Hanashi {
+        #[serde(flatten)]
+        config: HanashiConfig,
+    },
+    Harmony {
+        #[serde(flatten)]
+        config: HarmonyConfig,
+    },
 }
 
+#[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum HanashiConfig {
@@ -38,6 +46,7 @@ pub enum HanashiConfig {
     Qwen36,
 }
 
+#[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum HarmonyConfig {

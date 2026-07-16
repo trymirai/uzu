@@ -50,8 +50,12 @@ impl EncodingTrait for Encoding {
         context: Self::Context,
     ) -> Result<Self, Self::Error> {
         match config {
-            EncodingConfig::Hanashi(config) => Ok(Encoding::Hanashi(HanashiEncoding::new(config, context)?)),
-            EncodingConfig::Harmony(config) => Ok(Encoding::Harmony(HarmonyEncoding::new(config, context)?)),
+            EncodingConfig::Hanashi {
+                config,
+            } => Ok(Encoding::Hanashi(HanashiEncoding::new(config, context)?)),
+            EncodingConfig::Harmony {
+                config,
+            } => Ok(Encoding::Harmony(HarmonyEncoding::new(config, context)?)),
         }
     }
 

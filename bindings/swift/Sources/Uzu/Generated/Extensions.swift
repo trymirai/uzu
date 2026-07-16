@@ -97,8 +97,8 @@ extension Metadata {
 }
 
 extension Model {
-    public static func external(identifier: String, registryIdentifier: String, registryName: String, backendIdentifier: String, backendName: String, backendVersion: String, specializations: [ModelSpecialization], accessibility: ModelAccessibility) -> Model {
-        modelExternal(identifier: identifier, registryIdentifier: registryIdentifier, registryName: registryName, backendIdentifier: backendIdentifier, backendName: backendName, backendVersion: backendVersion, specializations: specializations, accessibility: accessibility)
+    public static func external(identifier: String, registryIdentifier: String, registryName: String, backendIdentifier: String, backendName: String, backendVersion: String, specializations: [ModelSpecialization], accessibility: ModelAccessibility, encodings: [EncodingConfig]) -> Model {
+        modelExternal(identifier: identifier, registryIdentifier: registryIdentifier, registryName: registryName, backendIdentifier: backendIdentifier, backendName: backendName, backendVersion: backendVersion, specializations: specializations, accessibility: accessibility, encodings: encodings)
     }
 }
 

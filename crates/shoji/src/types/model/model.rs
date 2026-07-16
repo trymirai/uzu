@@ -21,6 +21,7 @@ pub struct Model {
     pub quantization: Option<ModelQuantization>,
     pub specializations: Vec<ModelSpecialization>,
     pub accessibility: ModelAccessibility,
+    #[serde(default)]
     pub encodings: Vec<EncodingConfig>,
 }
 
