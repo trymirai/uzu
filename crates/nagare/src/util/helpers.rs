@@ -22,7 +22,7 @@ pub fn build_encoding(
     let encoding_configs = model
         .encodings
         .iter()
-        .map(|value| serde_json::from_str::<EncodingConfig>(value.json.as_str()))
+        .map(|value| serde_json::from_str::<EncodingConfig>(value.json.as_str()).map_err(io::Error::other))
         .collect::<Result<Vec<_>, _>>()?;
 
     let config: Option<EncodingConfig> = if encoding_configs.is_empty() {
