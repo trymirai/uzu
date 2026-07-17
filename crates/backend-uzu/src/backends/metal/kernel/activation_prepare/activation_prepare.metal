@@ -58,7 +58,10 @@ PUBLIC KERNEL(ActivationsPrepare)(
       float value = static_cast<float>(row_input[i]);
       if (ops.contains(ActivationPrepareOps::INPUT_RHT)) {
         value = simdgroup_input_random_hadamard_transform(
-            static_cast<ushort>(i % HADAMARD_TRANSFORM_BLOCK_SIZE), value, rht_factors[i]);
+            static_cast<ushort>(i % HADAMARD_TRANSFORM_BLOCK_SIZE),
+            value,
+            rht_factors[i]
+        );
       }
       thread_absmax = max(thread_absmax, fabs(value));
       thread_min = min(thread_min, value);
@@ -72,24 +75,33 @@ PUBLIC KERNEL(ActivationsPrepare)(
     if (asymmetric) {
       if (stat == ActivationScaleStatistic::AbsMax) {
         const float min_v = threadgroup_cooperative_reduce<SimdReduceMin<float>, ACTIVATION_PREPARE_BLOCK_SIZE>(
-            thread_min, shared_reduce, thread_context);
+            thread_min,
+            shared_reduce,
+            thread_context
+        );
         const float max_v = threadgroup_cooperative_reduce<SimdReduceMax<float>, ACTIVATION_PREPARE_BLOCK_SIZE>(
-            thread_max, shared_reduce, thread_context);
+            thread_max,
+            shared_reduce,
+            thread_context
+        );
         if (isfinite(min_v) && isfinite(max_v) && max_v > min_v) {
           const float qmin = -INT8_ASYMMETRIC_QUANTIZATION_MINIMUM_MAGNITUDE;
           scale = (max_v - min_v) / (INT8_ASYMMETRIC_QUANTIZATION_MAXIMUM - qmin);
           scale = max(scale, metal::numeric_limits<float>::epsilon());
-          const float zp_f = clamp(
-              round(qmin - min_v / scale),
-              qmin,
-              INT8_ASYMMETRIC_QUANTIZATION_MAXIMUM);
+          const float zp_f = clamp(round(qmin - min_v / scale), qmin, INT8_ASYMMETRIC_QUANTIZATION_MAXIMUM);
           zero_point = static_cast<int8_t>(zp_f);
         }
       } else {
         const float total = threadgroup_cooperative_reduce<SimdReduceSum<float>, ACTIVATION_PREPARE_BLOCK_SIZE>(
-            thread_sum, shared_reduce, thread_context);
+            thread_sum,
+            shared_reduce,
+            thread_context
+        );
         const float total_sq = threadgroup_cooperative_reduce<SimdReduceSum<float>, ACTIVATION_PREPARE_BLOCK_SIZE>(
-            thread_sum_of_squares, shared_reduce, thread_context);
+            thread_sum_of_squares,
+            shared_reduce,
+            thread_context
+        );
         const float mean = total / static_cast<float>(count);
         const float rms = sqrt(total_sq / static_cast<float>(count));
         scale = rms > 0.0f ? rms / INT8_SYMMETRIC_QUANTIZATION_MAXIMUM : 1.0f;
@@ -105,10 +117,16 @@ PUBLIC KERNEL(ActivationsPrepare)(
       float scale_stat;
       if (stat == ActivationScaleStatistic::AbsMax) {
         scale_stat = threadgroup_cooperative_reduce<SimdReduceMax<float>, ACTIVATION_PREPARE_BLOCK_SIZE>(
-            thread_absmax, shared_reduce, thread_context);
+            thread_absmax,
+            shared_reduce,
+            thread_context
+        );
       } else {
         const float total_sq = threadgroup_cooperative_reduce<SimdReduceSum<float>, ACTIVATION_PREPARE_BLOCK_SIZE>(
-            thread_sum_of_squares, shared_reduce, thread_context);
+            thread_sum_of_squares,
+            shared_reduce,
+            thread_context
+        );
         scale_stat = sqrt(total_sq / static_cast<float>(count));
       }
       scale = scale_stat > 0.0f ? scale_stat / INT8_SYMMETRIC_QUANTIZATION_MAXIMUM : 1.0f;
@@ -128,20 +146,21 @@ PUBLIC KERNEL(ActivationsPrepare)(
       float value = static_cast<float>(row_input[i]);
       if (ops.contains(ActivationPrepareOps::INPUT_RHT)) {
         value = simdgroup_input_random_hadamard_transform(
-            static_cast<ushort>(i % HADAMARD_TRANSFORM_BLOCK_SIZE), value, rht_factors[i]);
+            static_cast<ushort>(i % HADAMARD_TRANSFORM_BLOCK_SIZE),
+            value,
+            rht_factors[i]
+        );
       }
       int8_t q;
       if (asymmetric) {
         const float qmin = -INT8_ASYMMETRIC_QUANTIZATION_MINIMUM_MAGNITUDE;
-        q = static_cast<int8_t>(clamp(
-            round(value / scale) + static_cast<float>(zero_point),
-            qmin,
-            INT8_ASYMMETRIC_QUANTIZATION_MAXIMUM));
+        q = static_cast<int8_t>(
+            clamp(round(value / scale) + static_cast<float>(zero_point), qmin, INT8_ASYMMETRIC_QUANTIZATION_MAXIMUM)
+        );
       } else {
-        q = static_cast<int8_t>(clamp(
-            round(value / scale),
-            -INT8_SYMMETRIC_QUANTIZATION_MAXIMUM,
-            INT8_SYMMETRIC_QUANTIZATION_MAXIMUM));
+        q = static_cast<int8_t>(
+            clamp(round(value / scale), -INT8_SYMMETRIC_QUANTIZATION_MAXIMUM, INT8_SYMMETRIC_QUANTIZATION_MAXIMUM)
+        );
       }
       row_q[i] = q;
       if (emit_row_sums) {
@@ -150,9 +169,12 @@ PUBLIC KERNEL(ActivationsPrepare)(
     }
 
     if (emit_row_sums) {
-      const int group_sum = static_cast<int>(threadgroup_cooperative_reduce<
-          SimdReduceSum<float>,
-          ACTIVATION_PREPARE_BLOCK_SIZE>(static_cast<float>(thread_row_sum), shared_reduce, thread_context));
+      const int group_sum =
+          static_cast<int>(threadgroup_cooperative_reduce<SimdReduceSum<float>, ACTIVATION_PREPARE_BLOCK_SIZE>(
+              static_cast<float>(thread_row_sum),
+              shared_reduce,
+              thread_context
+          ));
       if (thread_in_row == 0) {
         row_sums[group] = group_sum;
       }

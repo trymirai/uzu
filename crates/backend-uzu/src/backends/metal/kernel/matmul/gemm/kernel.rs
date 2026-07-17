@@ -456,16 +456,7 @@ impl GemmKernel {
                             }
                             .into());
                         }
-                        (
-                            None,
-                            0,
-                            Some(values),
-                            Some(a_scales),
-                            None,
-                            row_sums,
-                            None,
-                            GemmAPrologueKind::Int8Symmetric,
-                        )
+                        (None, 0, Some(values), Some(a_scales), None, row_sums, None, GemmAPrologueKind::Int8Symmetric)
                     },
                     MatmulA::Int8Asymmetric {
                         values,

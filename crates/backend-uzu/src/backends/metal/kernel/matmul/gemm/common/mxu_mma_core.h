@@ -223,8 +223,7 @@ struct MxuMmaCore {
             const uint scale_index_a = (abs_row_base + uint(row)) * groups_per_row + group_index;
             a_scale_cache[cache_index] = a_scales[scale_index_a];
             z_a_cache[cache_index] = a_asymmetric ? static_cast<float>(a_zero_points[scale_index_a]) : 0.0f;
-            a_row_sum_cache[cache_index] =
-                b_asymmetric ? static_cast<float>(a_row_sums[scale_index_a]) : 0.0f;
+            a_row_sum_cache[cache_index] = b_asymmetric ? static_cast<float>(a_row_sums[scale_index_a]) : 0.0f;
           }
         }
       }
@@ -241,11 +240,9 @@ struct MxuMmaCore {
           if (ALIGNED_N || col < simdgroup_limit_n) {
             const uint scale_index_b = (abs_col_base + uint(col)) * groups_per_row + group_index;
             b_scale_cache[cache_index] = static_cast<float>(b_scales[scale_index_b]);
-            z_b_cache[cache_index] = b_asymmetric
-                                         ? static_cast<float>(static_cast<int>(b_zero_points[scale_index_b]) - 128)
-                                         : 0.0f;
-            b_col_sum_cache[cache_index] =
-                a_asymmetric ? static_cast<float>(b_col_sums[scale_index_b]) : 0.0f;
+            z_b_cache[cache_index] =
+                b_asymmetric ? static_cast<float>(static_cast<int>(b_zero_points[scale_index_b]) - 128) : 0.0f;
+            b_col_sum_cache[cache_index] = a_asymmetric ? static_cast<float>(b_col_sums[scale_index_b]) : 0.0f;
           }
         }
       }
@@ -387,8 +384,7 @@ struct MxuMmaCore {
                         A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric
                     ) {
                       const int weight_row_stride = int(params->K);
-                      const device int8_t* a_int8_block =
-                          a_int8 + block_row * params->leading_dimension_a + k_offset;
+                      const device int8_t* a_int8_block = a_int8 + block_row * params->leading_dimension_a + k_offset;
                       const device int8_t* a_int8_simdgroup =
                           a_int8_block + size_t(tile_row_offset) * params->leading_dimension_a;
                       const device int8_t* b_weights = reinterpret_cast<const device int8_t*>(b);

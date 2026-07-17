@@ -12,10 +12,8 @@ using namespace metal;
 using namespace uzu::gemm;
 using namespace uzu::activation_prepare;
 
-#define A_IS_INT8                                                                                                      \
-  (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric || A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric)
-#define GEMM_MXU_QUANT                                                                                                 \
-  (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
+#define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric || A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric)
+#define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_TGB_ELEMENTS                                                                                              \

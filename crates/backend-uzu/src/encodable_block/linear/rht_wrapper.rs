@@ -36,7 +36,9 @@ pub enum RHTLinearWrapperError<B: Backend> {
 
 enum Int8Scheme<B: Backend> {
     Symmetric,
-    Asymmetric { b_col_sums: Allocation<B> },
+    Asymmetric {
+        b_col_sums: Allocation<B>,
+    },
 }
 
 struct Int8Preparation<B: Backend> {
@@ -155,7 +157,9 @@ impl<B: Backend> RHTLinearWrapper<B> {
                         .create_allocation(sums.len() * size_of::<i32>(), AllocationType::Global)
                         .map_err(RHTLinearWrapperError::BackendError)?;
                     b_col_sums.copyin(&sums);
-                    Int8Scheme::Asymmetric { b_col_sums }
+                    Int8Scheme::Asymmetric {
+                        b_col_sums,
+                    }
                 },
             };
             let kernel = <B::Kernels as Kernels>::ActivationsPrepareKernel::new(
@@ -245,7 +249,9 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                         encoder,
                     )
                 },
-                Int8Scheme::Asymmetric { b_col_sums } => {
+                Int8Scheme::Asymmetric {
+                    b_col_sums,
+                } => {
                     let mut zero_points =
                         encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::I8))?;
                     preparation.kernel.encode(
