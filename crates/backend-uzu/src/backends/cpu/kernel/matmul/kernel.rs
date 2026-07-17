@@ -199,6 +199,9 @@ impl MatmulKernel for MatmulCpuKernel {
                 } => None,
             };
 
+            // A8W8 stores W8 codes pre-signed (XOR 0x80); match Metal and decode as i8.
+            let signed_u8_weights = matches!(a_data, AData::Int8 { .. });
+
             unsafe {
                 for row in 0..m_u {
                     for col in 0..n_u {
@@ -250,6 +253,11 @@ impl MatmulKernel for MatmulCpuKernel {
                                         let bit_offset = (weight_linear_index % pack_factor) * 4;
                                         let w = weights.as_ptr() as *const u32;
                                         ((w.add(word_index).read_unaligned() >> bit_offset) & 0xF) as f32
+                                    } else if signed_u8_weights {
+                                        let word_index = weight_linear_index / pack_factor;
+                                        let bit_offset = (weight_linear_index % pack_factor) * 8;
+                                        let w = weights.as_ptr() as *const u32;
+                                        ((w.add(word_index).read_unaligned() >> bit_offset) as u8) as i8 as f32
                                     } else {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 8;
@@ -269,11 +277,19 @@ impl MatmulKernel for MatmulCpuKernel {
                                                 ((byte_value >> 4) & 0x0F) as f32
                                             }
                                         } else {
-                                            *zp.as_ptr().add(col * zero_point_stride + group_index) as f32
+                                            let zp_u8 = *zp.as_ptr().add(col * zero_point_stride + group_index);
+                                            if signed_u8_weights {
+                                                // Match Metal: signed ZP = unsigned ZP - 128.
+                                                zp_u8 as f32 - 128.0
+                                            } else {
+                                                zp_u8 as f32
+                                            }
                                         };
                                         -scale * zero_point
                                     } else if let Some(b) = biases {
                                         read_f32(b.as_ptr(), weights_data_type, col * num_groups_k + group_index)
+                                    } else if signed_u8_weights {
+                                        0.0
                                     } else {
                                         let midpoint = (1u32 << (bits - 1)) as f32;
                                         -scale * midpoint
