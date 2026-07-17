@@ -1,9 +1,10 @@
 use std::{
-    cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     path::Path,
-    rc::{Rc, Weak},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
 };
 
 #[cfg(test)]
@@ -14,6 +15,7 @@ use metal::{
     MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
+use parking_lot::{Mutex, MutexGuard};
 
 use super::{
     Metal,
@@ -36,11 +38,11 @@ pub struct MetalContext {
     pub command_queue4: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
     timeline_event: Retained<ProtocolObject<dyn MTLEvent>>,
     timeline_value: AtomicU64,
-    allocator: Rc<Allocator<Metal>>,
-    peak_memory_usage: RefCell<usize>,
+    allocator: Arc<Allocator<Metal>>,
+    peak_memory_usage: AtomicUsize,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
-    pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
-    sparse_heap_pool: RefCell<MetalSparseHeapPool>,
+    pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
+    sparse_heap_pool: Mutex<MetalSparseHeapPool>,
     device_tier: DeviceTier,
     weak_self: Weak<MetalContext>,
     #[cfg(test)]
@@ -57,8 +59,7 @@ impl MetalContext {
     }
 
     pub(super) fn update_peak_memory_usage(&self) {
-        let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
-        *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
+        self.peak_memory_usage.fetch_max(self.device.current_allocated_size(), Ordering::Relaxed);
     }
 
     pub fn compute_pipeline_state(
@@ -67,22 +68,18 @@ impl MetalContext {
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
     ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
-        if let Some(pipeline) = self.pipeline_cache.borrow().get(cache_key) {
+        if let Some(pipeline) = self.pipeline_cache.lock().get(cache_key) {
             return Ok(pipeline.clone());
         }
 
         let pipeline = self.library.compute_pipeline_state(function_name, constants)?;
-        self.pipeline_cache.borrow_mut().insert(cache_key.to_string(), pipeline.clone());
+        self.pipeline_cache.lock().insert(cache_key.to_string(), pipeline.clone());
 
         Ok(pipeline)
     }
 
-    pub(super) fn sparse_heap_pool(&self) -> Ref<'_, MetalSparseHeapPool> {
-        self.sparse_heap_pool.borrow()
-    }
-
-    pub(super) fn sparse_heap_pool_mut(&self) -> RefMut<'_, MetalSparseHeapPool> {
-        self.sparse_heap_pool.borrow_mut()
+    pub(super) fn sparse_heap_pool(&self) -> MutexGuard<'_, MetalSparseHeapPool> {
+        self.sparse_heap_pool.lock()
     }
 
     pub(super) fn sparse_update_mappings(
@@ -96,7 +93,7 @@ impl MetalContext {
         let wait_value = self.timeline_get_and_increment();
         self.command_queue4.wait_for_event_value(&self.timeline_event, wait_value);
         for op in mappings {
-            self.command_queue4.update_buffer_mappings(&op.buffer, Some(op.heap.borrow().heap()), &op.mtl_operations);
+            self.command_queue4.update_buffer_mappings(&op.buffer, Some(op.heap.lock().heap()), &op.mtl_operations);
         }
         self.command_queue4.signal_event_value(&self.timeline_event, wait_value + 1);
 
@@ -117,7 +114,7 @@ impl MetalContext {
 impl Context for MetalContext {
     type Backend = Metal;
 
-    fn new() -> Result<Rc<Self>, MetalError> {
+    fn new() -> Result<Arc<Self>, MetalError> {
         let device: Retained<ProtocolObject<dyn MTLDevice>> =
             <dyn MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
 
@@ -139,17 +136,17 @@ impl Context for MetalContext {
         #[cfg(test)]
         let timeline_shared_event = device.new_shared_event().ok_or(MetalError::CannotCreateEvent)?;
 
-        Ok(Rc::new_cyclic(|weak_self| Self {
+        Ok(Arc::new_cyclic(|weak_self| Self {
             device,
             command_queue,
             command_queue4,
             timeline_event,
             timeline_value: AtomicU64::new(0),
             allocator: Allocator::new(weak_self.clone()),
-            peak_memory_usage: RefCell::new(0),
+            peak_memory_usage: AtomicUsize::new(0),
             library,
-            pipeline_cache: RefCell::new(HashMap::new()),
-            sparse_heap_pool: RefCell::new(sparse_pool),
+            pipeline_cache: Mutex::new(HashMap::new()),
+            sparse_heap_pool: Mutex::new(sparse_pool),
             device_tier,
             weak_self: weak_self.clone(),
             #[cfg(test)]
@@ -197,13 +194,13 @@ impl Context for MetalContext {
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
-        let sparse_page_size = self.sparse_heap_pool.borrow().page_size();
+        let sparse_page_size = self.sparse_heap_pool.lock().page_size();
         let context = self.weak_self.upgrade().ok_or(MetalError::CannotCreateBuffer)?;
         MetalSparseBuffer::new(context, capacity, sparse_page_size)
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {
-        Some(*self.peak_memory_usage.borrow())
+        Some(self.peak_memory_usage.load(Ordering::Relaxed))
     }
 
     fn enable_capture() {

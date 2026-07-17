@@ -15,7 +15,7 @@ use crate::{
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
-pub trait Mlp<B: Backend> {
+pub trait Mlp<B: Backend>: Send + Sync {
     fn encode(
         &self,
         input: Allocation<B>,

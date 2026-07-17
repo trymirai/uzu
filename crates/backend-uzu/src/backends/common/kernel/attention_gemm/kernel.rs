@@ -5,7 +5,7 @@ use crate::{
     encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
 };
 
-pub trait AttentionGemmCore<B: Backend<Kernels: Kernels<AttentionGemmCore = Self>>>: Sized {
+pub trait AttentionGemmCore<B: Backend<Kernels: Kernels<AttentionGemmCore = Self>>>: Sized + Send + Sync {
     fn is_supported(
         arguments: &AttentionCoreNewArguments,
         context: &B::Context,

@@ -1,7 +1,7 @@
 use std::{
     iter::{once, repeat_n},
     mem::replace,
-    rc::Rc,
+    sync::Arc,
 };
 
 use shoji::traits::backend::chat_token::TokenStreamMetrics;
@@ -92,7 +92,7 @@ pub struct LanguageModelStream<'a, B: Backend> {
     model: &'a LanguageModel<B>,
     model_state: &'a mut LanguageModelState<B>,
     options: LanguageModelStreamOptions<'a>,
-    allocation_pool: Rc<AllocationPool<B>>,
+    allocation_pool: Arc<AllocationPool<B>>,
     context_ring: Option<Allocation<B>>,
     decoding_state: DecodingState<B>,
     metrics: TokenStreamMetrics,
@@ -120,7 +120,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             return Err(LanguageModelStreamError::ContextOverflow);
         }
 
-        let allocation_pool = Rc::new(model.context.create_allocation_pool(false));
+        let allocation_pool = Arc::new(model.context.create_allocation_pool(false));
 
         let mut context_ring =
             if let Some(suffix_repetition_length) = options.sampling_method.suffix_repetition_length() {
@@ -628,5 +628,3 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
         self.model_state.last_output_token = last_output_token;
     }
 }
-
-unsafe impl<'a, B: Backend> Send for LanguageModelStream<'a, B> {} // TODO: this should be done properly

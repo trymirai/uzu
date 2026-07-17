@@ -108,7 +108,7 @@ pub struct NoGrammarBackend;
 
 // TODO: jumpforward?
 
-pub trait Grammar {
+pub trait Grammar: Send {
     fn next_bitmask(
         &mut self,
         bitmask: &mut [u32],

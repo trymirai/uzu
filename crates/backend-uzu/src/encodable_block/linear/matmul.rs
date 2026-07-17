@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-
+use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
@@ -43,7 +42,7 @@ enum Mode<B: Backend> {
 }
 
 pub struct LinearMatmul<B: Backend> {
-    kernel: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+    kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     weights: Allocation<B>,
     biases: Option<Allocation<B>>,
     input_dim: usize,
@@ -81,7 +80,7 @@ impl<B: Backend> LinearMatmul<B> {
                 .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
-            kernel: RefCell::new(kernel),
+            kernel: Mutex::new(kernel),
             weights,
             biases,
             input_dim,
@@ -175,7 +174,7 @@ impl<B: Backend> LinearMatmul<B> {
                 .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
-            kernel: RefCell::new(kernel),
+            kernel: Mutex::new(kernel),
             weights,
             biases,
             input_dim,
@@ -302,7 +301,7 @@ impl<B: Backend> LinearMatmul<B> {
             rht_factors,
         };
 
-        self.kernel.borrow_mut().encode(
+        self.kernel.lock().encode(
             MatmulArguments {
                 a,
                 b,

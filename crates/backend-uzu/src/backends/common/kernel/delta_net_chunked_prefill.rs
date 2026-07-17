@@ -19,7 +19,7 @@ pub struct DeltaNetChunkedPrefillArgs<'a, B: Backend> {
     pub suffix_len: usize,
 }
 
-pub trait DeltaNetChunkedPrefill<B: Backend>: Sized {
+pub trait DeltaNetChunkedPrefill<B: Backend>: Sized + Send + Sync {
     fn new(
         context: &B::Context,
         outer_data_type: DataType,

@@ -4,7 +4,7 @@ use std::{
     fs::File,
     io::{self, BufReader},
     path::Path,
-    rc::Rc,
+    sync::Arc,
 };
 
 use half::bf16;
@@ -21,7 +21,7 @@ use crate::{
 };
 
 pub struct ClassifierModel<B: Backend> {
-    context: Rc<B::Context>,
+    context: Arc<B::Context>,
     classifier: ClassifierEncodable<B>,
     output_labels: Box<[String]>,
     data_type: DataType,

@@ -1,19 +1,23 @@
-use std::{cell::UnsafeCell, path::Path, pin::Pin, rc::Rc, sync::mpsc, thread};
+use std::{
+    path::Path,
+    sync::{Arc, mpsc},
+    thread,
+};
 
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
-    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError},
+    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, dense_buffer::CpuBuffer, error::CpuError},
 };
 
 pub struct CpuContext {
-    allocator: Rc<Allocator<Cpu>>,
+    allocator: Arc<Allocator<Cpu>>,
     command_queue: mpsc::Sender<Box<dyn FnOnce() + Send>>,
 }
 
 impl Context for CpuContext {
     type Backend = Cpu;
 
-    fn new() -> Result<Rc<Self>, CpuError> {
+    fn new() -> Result<Arc<Self>, CpuError> {
         let (command_queue_sender, command_queue_receiever) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
 
         thread::spawn(|| {
@@ -22,7 +26,7 @@ impl Context for CpuContext {
             }
         });
 
-        Ok(Rc::new_cyclic(|weak_self| CpuContext {
+        Ok(Arc::new_cyclic(|weak_self| CpuContext {
             allocator: Allocator::new(weak_self.clone()),
             command_queue: command_queue_sender,
         }))
@@ -31,8 +35,8 @@ impl Context for CpuContext {
     fn create_buffer(
         &self,
         size: usize,
-    ) -> Result<UnsafeCell<Pin<Box<[u8]>>>, CpuError> {
-        Ok(UnsafeCell::new(Pin::new(vec![0; size].into_boxed_slice())))
+    ) -> Result<CpuBuffer, CpuError> {
+        Ok(CpuBuffer::new(size))
     }
 
     fn create_allocation(

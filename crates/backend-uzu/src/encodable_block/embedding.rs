@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-
+use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
@@ -46,7 +45,7 @@ enum TiedEmbeddingType<B: Backend> {
     FullPrecision {
         weights: Allocation<B>,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
-        readout: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+        readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     },
     Quantized {
         weights: Allocation<B>,
@@ -55,7 +54,7 @@ enum TiedEmbeddingType<B: Backend> {
         quantization_method: QuantizationMethod,
         output_hadamard_factors: Option<Allocation<B>>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
-        readout: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+        readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
         readout_config: ReadoutQuantConfig,
     },
 }
@@ -78,13 +77,13 @@ enum UntiedEmbeddingLookupType<B: Backend> {
 enum UntiedEmbeddingReadoutType<B: Backend> {
     FullPrecision {
         weights: Allocation<B>,
-        readout: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+        readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     },
     Quantized {
         weights: Allocation<B>,
         scales: Allocation<B>,
         zero_points_or_biases: Option<Allocation<B>>,
-        readout: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+        readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
         readout_config: ReadoutQuantConfig,
     },
 }
@@ -145,7 +144,7 @@ impl<B: Backend> Embedding<B> {
                         let readout_kernel =
                             <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
                                 .map_err(EmbeddingError::BackendError)?;
-                        let readout = RefCell::new(readout_kernel);
+                        let readout = Mutex::new(readout_kernel);
 
                         (
                             TiedEmbeddingType::FullPrecision {
@@ -347,7 +346,7 @@ impl<B: Backend> Embedding<B> {
                         let readout_kernel =
                             <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
                                 .map_err(EmbeddingError::BackendError)?;
-                        let readout = RefCell::new(readout_kernel);
+                        let readout = Mutex::new(readout_kernel);
 
                         UntiedEmbeddingReadoutType::FullPrecision {
                             weights,
@@ -536,7 +535,7 @@ impl<B: Backend> Embedding<B> {
                     },
             } => {
                 readout
-                    .borrow_mut()
+                    .lock()
                     .encode(
                         MatmulArguments {
                             a: MatmulA::FullPrecision {
@@ -607,7 +606,7 @@ impl<B: Backend> Embedding<B> {
                     },
                 };
                 readout
-                    .borrow_mut()
+                    .lock()
                     .encode(
                         MatmulArguments {
                             a: MatmulA::FullPrecision {
@@ -757,11 +756,11 @@ fn quantized_readout<B: Backend>(
     mode: QuantizationMode,
     method: QuantizationMethod,
     group_size: usize,
-) -> Result<(RefCell<<B::Kernels as Kernels>::MatmulKernel>, ReadoutQuantConfig), EmbeddingError<B>> {
+) -> Result<(Mutex<<B::Kernels as Kernels>::MatmulKernel>, ReadoutQuantConfig), EmbeddingError<B>> {
     let readout = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
         .map_err(EmbeddingError::BackendError)?;
     Ok((
-        RefCell::new(readout),
+        Mutex::new(readout),
         ReadoutQuantConfig {
             method,
             mode,

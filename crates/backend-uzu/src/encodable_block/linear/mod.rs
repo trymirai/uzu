@@ -20,7 +20,7 @@ use crate::{
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
-pub trait Linear<B: Backend> {
+pub trait Linear<B: Backend>: Send + Sync {
     fn encode(
         &self,
         input: Allocation<B>,
