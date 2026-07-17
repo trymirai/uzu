@@ -4,6 +4,7 @@ use crate::backends::{common::Kernels, cpu::Cpu};
 
 mod activation;
 mod attention;
+mod dflash_top_k;
 mod embedding;
 mod gated_act_mul;
 mod gdn;
@@ -22,6 +23,7 @@ mod tensor_add_scale;
 mod tensor_add_swap;
 mod tensor_copy;
 mod token_copy;
+mod weaver_top_children;
 
 include!(concat!(env!("OUT_DIR"), "/cpu/dsl.rs"));
 

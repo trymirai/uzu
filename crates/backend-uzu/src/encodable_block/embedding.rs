@@ -652,6 +652,7 @@ impl<B: Backend> Embedding<B> {
     /// existing path until they need an equivalent f32 kernel.
     pub(crate) fn encode_readout_f32(
         &self,
+        row_offset: usize,
         batch_dim: usize,
         input_allocation: &Allocation<B>,
         encoder: &mut Encoder<B>,
@@ -701,7 +702,7 @@ impl<B: Backend> Embedding<B> {
             .encode(
                 MatmulArguments {
                     a: input_allocation,
-                    a_offset: 0,
+                    a_offset: row_offset * self.model_dim as usize * self.data_type.size_in_bytes(),
                     b: MatmulB::FullPrecision {
                         b: weights,
                     },
@@ -731,19 +732,13 @@ impl<B: Backend> Embedding<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
         assert!(rows > 0 && candidates > 0);
-        let mut output = encoder
-            .allocate_scratch(size_for_shape(&[rows, candidates], DataType::F32))
-            .map_err(EmbeddingError::BackendError)?;
-        let model_dim = self.model_dim as usize;
-        let row_bytes = model_dim * self.data_type.size_in_bytes();
-        let candidate_bytes = candidates * DataType::U64.size_in_bytes();
-        match &self.tying {
+        let (weights, lookup) = match &self.tying {
             EmbeddingTying::Tied {
                 ty:
                     TiedEmbeddingType::FullPrecision {
-                        weights: output_weights,
+                        weights,
                         lookup,
-                        readout: _,
+                        ..
                     },
             }
             | EmbeddingTying::Untied {
@@ -754,67 +749,79 @@ impl<B: Backend> Embedding<B> {
                     },
                 output_ty:
                     UntiedEmbeddingReadoutType::FullPrecision {
-                        weights: output_weights,
-                        readout: _,
+                        weights,
+                        ..
                     },
-            } => {
-                let mut readout_f32 = <B::Kernels as Kernels>::MatmulKernel::new(
-                    encoder.context(),
-                    self.data_type,
-                    self.data_type,
-                    DataType::F32,
+                ..
+            } => (weights, lookup),
+            _ => {
+                return Err(EmbeddingError::UnsupportedConfiguration(
+                    "candidate readout currently requires full-precision embedding weights".to_string(),
+                ));
+            },
+        };
+        let input_dim = self.model_dim as usize;
+        let mut output = encoder
+            .allocate_scratch(size_for_shape(&[rows, candidates], DataType::F32))
+            .map_err(EmbeddingError::BackendError)?;
+        let row_bytes = input_dim * self.data_type.size_in_bytes();
+        let candidate_bytes = candidates * DataType::U64.size_in_bytes();
+        let mut readout_f32 = <B::Kernels as Kernels>::MatmulKernel::new(
+            encoder.context(),
+            self.data_type,
+            self.data_type,
+            DataType::F32,
+        )
+        .map_err(EmbeddingError::BackendError)?;
+        for row in 0..rows {
+            let mut row_input = encoder
+                .allocate_scratch(size_for_shape(&[1, input_dim], self.data_type))
+                .map_err(EmbeddingError::BackendError)?;
+            encoder.encode_copy(input, row * row_bytes..(row + 1) * row_bytes, &mut row_input, ..);
+            let mut gathered = encoder
+                .allocate_scratch(size_for_shape(&[candidates, input_dim], self.data_type))
+                .map_err(EmbeddingError::BackendError)?;
+            lookup.encode(
+                (candidate_ids, row * candidate_bytes),
+                weights,
+                &mut gathered,
+                candidates as u32,
+                self.vocab_size,
+                input_dim as u32,
+                1.0,
+                encoder,
+            );
+            let mut row_output = encoder
+                .allocate_scratch(size_for_shape(&[1, candidates], DataType::F32))
+                .map_err(EmbeddingError::BackendError)?;
+            readout_f32
+                .encode(
+                    MatmulArguments {
+                        a: &row_input,
+                        a_offset: 0,
+                        b: MatmulB::FullPrecision {
+                            b: &gathered,
+                        },
+                        b_leading_dimension: None,
+                        b_transpose: true,
+                        d: &mut row_output,
+                        d_transform: MatmulDOps::none(),
+                        m: 1,
+                        n: candidates as u32,
+                        k: input_dim as u32,
+                    },
+                    encoder,
                 )
                 .map_err(EmbeddingError::BackendError)?;
-                for row in 0..rows {
-                    let mut gathered = encoder
-                        .allocate_scratch(size_for_shape(&[candidates, model_dim], self.data_type))
-                        .map_err(EmbeddingError::BackendError)?;
-                    lookup.encode(
-                        (candidate_ids, row * candidate_bytes),
-                        output_weights,
-                        &mut gathered,
-                        candidates as u32,
-                        self.vocab_size,
-                        self.model_dim,
-                        1.0,
-                        encoder,
-                    );
-                    let mut row_output = encoder
-                        .allocate_scratch(size_for_shape(&[1, candidates], DataType::F32))
-                        .map_err(EmbeddingError::BackendError)?;
-                    readout_f32
-                        .encode(
-                            MatmulArguments {
-                                a: input,
-                                a_offset: row * row_bytes,
-                                b: MatmulB::FullPrecision {
-                                    b: &gathered,
-                                },
-                                b_leading_dimension: None,
-                                b_transpose: true,
-                                d: &mut row_output,
-                                d_transform: MatmulDOps::none(),
-                                m: 1,
-                                n: candidates as u32,
-                                k: self.model_dim,
-                            },
-                            encoder,
-                        )
-                        .map_err(EmbeddingError::BackendError)?;
-                    encoder.encode_copy(
-                        &row_output,
-                        ..,
-                        &mut output,
-                        row * candidates * DataType::F32.size_in_bytes()
-                            ..(row + 1) * candidates * DataType::F32.size_in_bytes(),
-                    );
-                }
-                Ok(output)
-            },
-            _ => Err(EmbeddingError::UnsupportedConfiguration(
-                "candidate readout currently requires full-precision embedding weights".to_string(),
-            )),
+            encoder.encode_copy(
+                &row_output,
+                ..,
+                &mut output,
+                row * candidates * DataType::F32.size_in_bytes()
+                    ..(row + 1) * candidates * DataType::F32.size_in_bytes(),
+            );
         }
+        Ok(output)
     }
 }
 

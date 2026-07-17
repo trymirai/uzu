@@ -1,12 +1,14 @@
-use half::bf16;
 use thiserror::Error;
 
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
         gpu_types::trie::TrieNode,
-        kernel::{ActivationKernel, TensorAddBiasKernel, TensorAddSwapKernel},
+        kernel::{
+            ActivationKernel, AttentionLastQueryKernel, TensorAddBiasKernel, TensorAddSwapKernel,
+            WeaverTopChildrenKernel,
+        },
     },
     config::{normalization::NormalizationConfig, token_mixer::attention::AttentionConfig, weaver::WeaverConfig},
     data_type::DataType,
@@ -23,19 +25,40 @@ use crate::{
 
 /// Host-side prefix state used by the correctness-first Weaver implementation.
 /// Each entry is the input to one Weaver block for every prefix position.
-pub(crate) struct WeaverPrefix {
-    pub(crate) layer_inputs: Box<[Vec<bf16>]>,
+pub(crate) struct WeaverPrefix<B: Backend> {
+    pub(crate) layer_inputs: Box<[Allocation<B>]>,
     pub(crate) length: usize,
 }
 
-/// Host-side state for one expanded Weaver node.
-pub(crate) struct WeaverNode {
-    pub(crate) layer_inputs: Box<[Vec<bf16>]>,
+pub(crate) struct WeaverBatchStepOutput {
+    pub children: Vec<(u32, f32)>,
 }
 
-pub(crate) struct WeaverStepOutput {
-    pub logits: Vec<f32>,
-    pub node: WeaverNode,
+pub(crate) struct WeaverBatchStepInput<'a> {
+    pub node_index: usize,
+    pub parent_token: u32,
+    pub candidates: &'a [u32],
+    pub candidate_scores: &'a [f32],
+    pub ancestors: &'a [usize],
+    pub depth: usize,
+}
+
+pub(crate) struct WeaverNodeState<B: Backend> {
+    layer_inputs: Box<[Allocation<B>]>,
+    capacity: usize,
+}
+
+struct EncodedWeaverBatch<B: Backend> {
+    _token_ids: Allocation<B>,
+    _candidate_ids: Allocation<B>,
+    _token_embedding: Allocation<B>,
+    _current: Allocation<B>,
+    _query: Allocation<B>,
+    _candidate_scores: Allocation<B>,
+    _candidate_logits: Allocation<B>,
+    child_ids: Allocation<B>,
+    child_logprobs: Allocation<B>,
+    _node_inputs: Vec<Allocation<B>>,
 }
 
 pub(crate) struct Weaver<B: Backend> {
@@ -48,6 +71,7 @@ pub(crate) struct Weaver<B: Backend> {
     query_projection: Box<dyn Linear<B>>,
     position_embeddings: Allocation<B>,
     position_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
+    top_children: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
     model_dim: usize,
     target_model_dim: usize,
     max_depth: usize,
@@ -69,6 +93,8 @@ struct WeaverBlock<B: Backend> {
     down_projection: Box<dyn Linear<B>>,
     activation: <B::Kernels as Kernels>::ActivationKernel,
     residual_add: <B::Kernels as Kernels>::TensorAddSwapKernel,
+    last_query_attention: <B::Kernels as Kernels>::AttentionLastQueryKernel,
+    attention_scale: f32,
     model_dim: usize,
     hidden_dim: usize,
 }
@@ -161,6 +187,22 @@ impl<B: Backend> WeaverNorm<B> {
 }
 
 impl<B: Backend> Weaver<B> {
+    pub(crate) fn create_node_state(
+        &self,
+        capacity: usize,
+        context: &B::Context,
+    ) -> Result<WeaverNodeState<B>, WeaverEncodeError<B>> {
+        assert!(capacity > 0);
+        let size = size_for_shape(&[capacity, self.model_dim], self.data_type);
+        let layer_inputs = (0..self.blocks.len())
+            .map(|_| context.create_allocation(size, AllocationType::Global).map_err(WeaverEncodeError::Backend))
+            .collect::<Result<Box<[_]>, _>>()?;
+        Ok(WeaverNodeState {
+            layer_inputs,
+            capacity,
+        })
+    }
+
     pub(crate) fn new(
         context: &B::Context,
         config: &WeaverConfig,
@@ -240,6 +282,8 @@ impl<B: Backend> Weaver<B> {
         );
         let position_add = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, DataType::F32, true)
             .map_err(WeaverNewError::Backend)?;
+        let top_children =
+            <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context).map_err(WeaverNewError::Backend)?;
         Ok(Self {
             embedding_norm,
             hidden_state_norm,
@@ -250,6 +294,7 @@ impl<B: Backend> Weaver<B> {
             query_projection,
             position_embeddings,
             position_add,
+            top_children,
             model_dim: config.model_dim,
             target_model_dim: config.target_model_dim,
             max_depth: config.max_depth,
@@ -259,24 +304,29 @@ impl<B: Backend> Weaver<B> {
 
     pub(crate) fn prompt_prefix(
         &self,
-        target_hidden: &[bf16],
-        lookaheads: &[bf16],
+        target_hidden: &Allocation<B>,
+        lookaheads: &Allocation<B>,
+        lookahead_offset: usize,
+        lookahead_count: usize,
         context: &B::Context,
-    ) -> Result<WeaverPrefix, WeaverEncodeError<B>> {
-        assert_eq!(target_hidden.len(), self.target_model_dim);
-        assert_eq!(lookaheads.len() % self.target_model_dim, 0);
-        let lookahead_count = lookaheads.len() / self.target_model_dim;
+    ) -> Result<WeaverPrefix<B>, WeaverEncodeError<B>> {
         let length = lookahead_count + 1;
         assert!(lookahead_count <= self.max_depth);
+        let row_bytes = self.target_model_dim * self.data_type.size_in_bytes();
+        assert!(target_hidden.size() >= row_bytes);
+        assert!(lookaheads.size() >= (lookahead_offset + lookahead_count) * row_bytes);
 
         let mut encoder = Encoder::new(context).map_err(WeaverEncodeError::Backend)?;
         let mut input = encoder
-            .allocate_constant(size_for_shape(&[length, self.target_model_dim], self.data_type))
+            .allocate_scratch(size_for_shape(&[length, self.target_model_dim], self.data_type))
             .map_err(WeaverEncodeError::Backend)?;
-        let mut host_input = Vec::with_capacity(length * self.target_model_dim);
-        host_input.extend_from_slice(target_hidden);
-        host_input.extend_from_slice(lookaheads);
-        input.copyin(&host_input);
+        encoder.encode_copy(target_hidden, 0..row_bytes, &mut input, 0..row_bytes);
+        encoder.encode_copy(
+            lookaheads,
+            lookahead_offset * row_bytes..(lookahead_offset + lookahead_count) * row_bytes,
+            &mut input,
+            row_bytes..length * row_bytes,
+        );
         let normalized =
             self.hidden_state_norm.encode(&input, length, &mut encoder).map_err(WeaverEncodeError::Backend)?;
         let mut hidden = self
@@ -295,155 +345,218 @@ impl<B: Backend> Weaver<B> {
         let topology = BatchTopology::new(&nodes, true);
         let mut layer_inputs = Vec::with_capacity(self.blocks.len());
         for block in &self.blocks {
-            let mut snapshot = encoder.allocate_constant(hidden.size()).map_err(WeaverEncodeError::Backend)?;
+            let mut snapshot =
+                context.create_allocation(hidden.size(), AllocationType::Global).map_err(WeaverEncodeError::Backend)?;
             encoder.encode_copy(&hidden, .., &mut snapshot, ..);
             layer_inputs.push(snapshot);
             hidden = block.forward(hidden, &topology, length, &mut encoder).map_err(WeaverEncodeError::Backend)?;
         }
         let completed = encoder.end_encoding().submit().wait_until_completed().map_err(WeaverEncodeError::Backend)?;
         drop(input);
-        let layer_input_allocations = layer_inputs;
-        let layer_inputs =
-            layer_input_allocations.iter().map(|allocation| allocation.copyout::<bf16>()).collect::<Box<[_]>>();
         drop(hidden);
-        drop(layer_input_allocations);
         drop(completed);
         Ok(WeaverPrefix {
-            layer_inputs,
+            layer_inputs: layer_inputs.into_boxed_slice(),
             length,
         })
     }
 
-    pub(crate) fn step(
+    pub(crate) fn step_batch(
         &self,
-        prefix: &WeaverPrefix,
-        parent_token: u32,
-        candidates: &[u32],
-        candidate_scores: &[f32],
-        ancestors: &[&WeaverNode],
-        depth: usize,
+        prefix: &WeaverPrefix<B>,
+        inputs: &[WeaverBatchStepInput<'_>],
+        state: &mut WeaverNodeState<B>,
+        children: usize,
         target_embedding: &Embedding<B>,
         context: &B::Context,
-    ) -> Result<WeaverStepOutput, WeaverEncodeError<B>> {
-        assert_eq!(candidates.len(), candidate_scores.len());
-        assert!(!candidates.is_empty());
-        assert!(depth < self.max_depth);
+    ) -> Result<Vec<WeaverBatchStepOutput>, WeaverEncodeError<B>> {
+        assert!(!inputs.is_empty());
         let mut encoder = Encoder::new(context).map_err(WeaverEncodeError::Backend)?;
+        let encoded = self.encode_step_batch(prefix, inputs, state, children, target_embedding, &mut encoder)?;
+        let completed = encoder.end_encoding().submit().wait_until_completed().map_err(WeaverEncodeError::Backend)?;
+        let child_ids = encoded.child_ids.copyout::<u32>();
+        let child_logprobs = encoded.child_logprobs.copyout::<f32>();
+        let outputs = inputs
+            .iter()
+            .enumerate()
+            .map(|(batch_index, _)| WeaverBatchStepOutput {
+                children: (0..children)
+                    .map(|child| {
+                        let index = batch_index * children + child;
+                        (child_ids[index], child_logprobs[index])
+                    })
+                    .collect(),
+            })
+            .collect();
+        drop(encoded);
+        drop(completed);
+        Ok(outputs)
+    }
+
+    fn encode_step_batch(
+        &self,
+        prefix: &WeaverPrefix<B>,
+        inputs: &[WeaverBatchStepInput<'_>],
+        state: &mut WeaverNodeState<B>,
+        children: usize,
+        target_embedding: &Embedding<B>,
+        encoder: &mut Encoder<B>,
+    ) -> Result<EncodedWeaverBatch<B>, WeaverEncodeError<B>> {
+        let rows = inputs.len();
+        let candidates = inputs[0].candidates.len();
+        assert!(candidates > 0);
+        assert!(children > 0 && children <= candidates);
+        assert!(inputs.iter().all(|input| {
+            input.candidates.len() == candidates
+                && input.candidate_scores.len() == candidates
+                && input.depth < self.max_depth
+                && input.node_index < state.capacity
+        }));
+
         let mut token_ids =
-            encoder.allocate_constant(size_for_shape(&[1], DataType::U64)).map_err(WeaverEncodeError::Backend)?;
-        token_ids.copyin(&[parent_token as u64]);
+            encoder.allocate_constant(size_for_shape(&[rows], DataType::U64)).map_err(WeaverEncodeError::Backend)?;
+        token_ids.copyin(&inputs.iter().map(|input| input.parent_token as u64).collect::<Vec<_>>());
         let mut candidate_ids = encoder
-            .allocate_constant(size_for_shape(&[candidates.len()], DataType::U64))
+            .allocate_constant(size_for_shape(&[rows, candidates], DataType::U64))
             .map_err(WeaverEncodeError::Backend)?;
-        candidate_ids.copyin(&candidates.iter().map(|&token| token as u64).collect::<Box<[_]>>());
-        let token_embedding = target_embedding.encode_lookup(&token_ids, 1, &mut encoder)?;
+        candidate_ids.copyin(
+            &inputs.iter().flat_map(|input| input.candidates.iter().map(|&token| token as u64)).collect::<Vec<_>>(),
+        );
+        let mut candidate_scores = encoder
+            .allocate_constant(size_for_shape(&[rows, candidates], DataType::F32))
+            .map_err(WeaverEncodeError::Backend)?;
+        candidate_scores
+            .copyin(&inputs.iter().flat_map(|input| input.candidate_scores.iter().copied()).collect::<Vec<_>>());
+        let token_embedding = target_embedding.encode_lookup(&token_ids, rows, encoder)?;
         let embedding_normalized =
-            self.embedding_norm.encode(&token_embedding, 1, &mut encoder).map_err(WeaverEncodeError::Backend)?;
+            self.embedding_norm.encode(&token_embedding, rows, encoder).map_err(WeaverEncodeError::Backend)?;
         let mut current = self
             .embedding_projection
-            .encode(embedding_normalized, 1, &mut encoder)
+            .encode(embedding_normalized, rows, encoder)
             .map_err(WeaverEncodeError::Backend)?;
-        self.add_positions(&mut current, 1, depth, 0, &mut encoder);
+        for (row, input) in inputs.iter().enumerate() {
+            self.add_positions(&mut current, 1, input.depth, row, encoder);
+        }
 
+        let row_bytes = self.model_dim * self.data_type.size_in_bytes();
         let mut node_inputs = Vec::with_capacity(self.blocks.len());
         for (layer_index, block) in self.blocks.iter().enumerate() {
             let mut snapshot = encoder.allocate_constant(current.size()).map_err(WeaverEncodeError::Backend)?;
             encoder.encode_copy(&current, .., &mut snapshot, ..);
-            let mut sequence = Vec::with_capacity(prefix.length + ancestors.len() + 1);
-            sequence.extend_from_slice(&prefix.layer_inputs[layer_index]);
-            for ancestor in ancestors {
-                sequence.extend_from_slice(&ancestor.layer_inputs[layer_index]);
+            for (row, input) in inputs.iter().enumerate() {
+                let destination_start = input.node_index * row_bytes;
+                encoder.encode_copy(
+                    &snapshot,
+                    row * row_bytes..(row + 1) * row_bytes,
+                    &mut state.layer_inputs[layer_index],
+                    destination_start..destination_start + row_bytes,
+                );
             }
-            let sequence_length = prefix.length + ancestors.len() + 1;
-            sequence.resize(sequence_length * self.model_dim, bf16::from_f32(0.0));
-            let mut sequence_allocation = encoder
-                .allocate_constant(size_for_shape(&[sequence_length, self.model_dim], self.data_type))
+            node_inputs.push(snapshot);
+            let lengths =
+                inputs.iter().map(|input| (prefix.length + input.ancestors.len() + 1) as u32).collect::<Vec<_>>();
+            let sequence_length = lengths.iter().copied().max().unwrap() as usize;
+            let mut sequences = encoder
+                .allocate_scratch(size_for_shape(&[rows, sequence_length, self.model_dim], self.data_type))
                 .map_err(WeaverEncodeError::Backend)?;
-            sequence_allocation.copyin(&sequence);
-            let row_size = self.model_dim * self.data_type.size_in_bytes();
-            let current_start = (sequence_length - 1) * row_size;
-            encoder.encode_copy(&current, .., &mut sequence_allocation, current_start..sequence_length * row_size);
-            let topology_nodes = (0..sequence_length)
-                .map(|index| TrieNode {
-                    trie_start: index as u32,
-                    trie_end: index as u32 + 1,
-                    height: index as u32,
-                })
-                .collect::<Box<[_]>>();
-            let topology = BatchTopology::new(&topology_nodes, true);
-            let normalized_sequence = block
+            encoder.encode_fill(&mut sequences, 0);
+            let prefix_bytes = prefix.length * row_bytes;
+            for (row, input) in inputs.iter().enumerate() {
+                let sequence_start = row * sequence_length * row_bytes;
+                encoder.encode_copy(
+                    &prefix.layer_inputs[layer_index],
+                    ..,
+                    &mut sequences,
+                    sequence_start..sequence_start + prefix_bytes,
+                );
+                for (ancestor_offset, &ancestor) in input.ancestors.iter().enumerate() {
+                    assert!(ancestor < state.capacity);
+                    let destination_start = sequence_start + prefix_bytes + ancestor_offset * row_bytes;
+                    encoder.encode_copy(
+                        &state.layer_inputs[layer_index],
+                        ancestor * row_bytes..(ancestor + 1) * row_bytes,
+                        &mut sequences,
+                        destination_start..destination_start + row_bytes,
+                    );
+                }
+                let destination_start = sequence_start + (lengths[row] as usize - 1) * row_bytes;
+                encoder.encode_copy(
+                    &current,
+                    row * row_bytes..(row + 1) * row_bytes,
+                    &mut sequences,
+                    destination_start..destination_start + row_bytes,
+                );
+            }
+            let mut lengths_allocation = encoder
+                .allocate_constant(size_for_shape(&[rows], DataType::U32))
+                .map_err(WeaverEncodeError::Backend)?;
+            lengths_allocation.copyin(&lengths);
+            let normalized_sequences = block
                 .pre_attention_norm
-                .encode(&sequence_allocation, sequence_length, &mut encoder)
+                .encode(&sequences, rows * sequence_length, encoder)
                 .map_err(WeaverEncodeError::Backend)?;
-            let attention = block
+            let mut attention_rows = block
                 .attention
-                .encode_stateless(normalized_sequence, &topology, &mut encoder)
+                .encode_packed_last_queries(
+                    normalized_sequences,
+                    &lengths_allocation,
+                    rows,
+                    sequence_length,
+                    block.attention_scale,
+                    &block.last_query_attention,
+                    encoder,
+                )
                 .map_err(WeaverEncodeError::Backend)?;
-            let mut attention_current = encoder
-                .allocate_scratch(size_for_shape(&[1, self.model_dim], self.data_type))
-                .map_err(WeaverEncodeError::Backend)?;
-            encoder.encode_copy(
-                &attention,
-                (sequence_length - 1) * row_size..sequence_length * row_size,
-                &mut attention_current,
-                ..,
-            );
-            let mut attention_residual =
-                encoder.allocate_scratch(current.size()).map_err(WeaverEncodeError::Backend)?;
-            encoder.encode_copy(&current, .., &mut attention_residual, ..);
-            block.residual_add.encode(
-                &mut attention_residual,
-                &mut attention_current,
-                self.model_dim as u32,
-                &mut encoder,
-            );
-            let normalized =
-                block.pre_mlp_norm.encode(&attention_residual, 1, &mut encoder).map_err(WeaverEncodeError::Backend)?;
-            let mut mlp =
-                block.up_projection.encode(normalized, 1, &mut encoder).map_err(WeaverEncodeError::Backend)?;
+            let mut residual = encoder.allocate_scratch(current.size()).map_err(WeaverEncodeError::Backend)?;
+            encoder.encode_copy(&current, .., &mut residual, ..);
+            block.residual_add.encode(&mut residual, &mut attention_rows, (rows * self.model_dim) as u32, encoder);
+            let normalized = block.pre_mlp_norm.encode(&residual, rows, encoder).map_err(WeaverEncodeError::Backend)?;
+            let mut mlp = block.up_projection.encode(normalized, rows, encoder).map_err(WeaverEncodeError::Backend)?;
             block.activation.encode(
                 None::<&Allocation<B>>,
                 &mut mlp,
-                block.hidden_dim as u32,
+                (rows * block.hidden_dim) as u32,
                 crate::backends::common::gpu_types::ActivationType::GELUExact,
-                &mut encoder,
+                encoder,
             );
-            let mut output = block.down_projection.encode(mlp, 1, &mut encoder).map_err(WeaverEncodeError::Backend)?;
-            block.residual_add.encode(&mut output, &mut attention_residual, self.model_dim as u32, &mut encoder);
-            current = attention_residual;
-            node_inputs.push(snapshot);
+            let mut output = block.down_projection.encode(mlp, rows, encoder).map_err(WeaverEncodeError::Backend)?;
+            block.residual_add.encode(&mut output, &mut residual, (rows * self.model_dim) as u32, encoder);
+            current = residual;
         }
 
-        let output_normalized =
-            self.output_norm.encode(&current, 1, &mut encoder).map_err(WeaverEncodeError::Backend)?;
+        let output_normalized = self.output_norm.encode(&current, rows, encoder).map_err(WeaverEncodeError::Backend)?;
         let query =
-            self.query_projection.encode(output_normalized, 1, &mut encoder).map_err(WeaverEncodeError::Backend)?;
+            self.query_projection.encode(output_normalized, rows, encoder).map_err(WeaverEncodeError::Backend)?;
         let candidate_logits =
-            target_embedding.encode_readout_candidates(&query, &candidate_ids, 1, candidates.len(), &mut encoder)?;
-        let completed = encoder.end_encoding().submit().wait_until_completed().map_err(WeaverEncodeError::Backend)?;
-        let logits = candidate_logits.copyout::<f32>();
-        let node_input_allocations = node_inputs;
-        let node_inputs =
-            node_input_allocations.iter().map(|allocation| allocation.copyout::<bf16>()).collect::<Box<[_]>>();
-        drop(candidate_logits);
-        drop(query);
-        drop(current);
-        drop(node_input_allocations);
-        drop(token_embedding);
-        drop(candidate_ids);
-        drop(token_ids);
-        drop(completed);
-        let logits = candidates
-            .iter()
-            .zip(candidate_scores)
-            .enumerate()
-            .map(|(index, (_, &score))| score + logits[index])
-            .collect();
-        Ok(WeaverStepOutput {
-            logits,
-            node: WeaverNode {
-                layer_inputs: node_inputs,
-            },
+            target_embedding.encode_readout_candidates(&query, &candidate_ids, rows, candidates, encoder)?;
+        let mut child_ids = encoder
+            .allocate_scratch(size_for_shape(&[rows, children], DataType::U32))
+            .map_err(WeaverEncodeError::Backend)?;
+        let mut child_logprobs = encoder
+            .allocate_scratch(size_for_shape(&[rows, children], DataType::F32))
+            .map_err(WeaverEncodeError::Backend)?;
+        self.top_children.encode(
+            &candidate_logits,
+            &candidate_scores,
+            &candidate_ids,
+            &mut child_ids,
+            &mut child_logprobs,
+            rows as u32,
+            candidates as u32,
+            children as u32,
+            encoder,
+        );
+        Ok(EncodedWeaverBatch {
+            _token_ids: token_ids,
+            _candidate_ids: candidate_ids,
+            _token_embedding: token_embedding,
+            _current: current,
+            _query: query,
+            _candidate_scores: candidate_scores,
+            _candidate_logits: candidate_logits,
+            child_ids,
+            child_logprobs,
+            _node_inputs: node_inputs,
         })
     }
 
@@ -483,6 +596,7 @@ impl<B: Backend> WeaverBlock<B> {
         data_type: DataType,
     ) -> Result<Self, WeaverNewError<B>> {
         let head_dim = model_dim / num_heads;
+        let attention_scale = 1.0 / (head_dim as f32).sqrt();
         let attention_config: AttentionConfig = serde_json::from_value(serde_json::json!({
             "type": "AttentionConfig",
             "qkv_projection_config": {},
@@ -493,7 +607,7 @@ impl<B: Backend> WeaverBlock<B> {
             "num_groups": num_heads,
             "head_dim": head_dim,
             "is_causal": true,
-            "scale": 1.0 / (head_dim as f32).sqrt(),
+            "scale": attention_scale,
             "sliding_window_size": null,
             "logit_soft_cap": null,
             "has_sinks": false,
@@ -528,6 +642,8 @@ impl<B: Backend> WeaverBlock<B> {
             .map_err(WeaverNewError::Backend)?;
         let residual_add =
             <B::Kernels as Kernels>::TensorAddSwapKernel::new(context, data_type).map_err(WeaverNewError::Backend)?;
+        let last_query_attention =
+            <B::Kernels as Kernels>::AttentionLastQueryKernel::new(context).map_err(WeaverNewError::Backend)?;
         Ok(Self {
             attention,
             pre_attention_norm,
@@ -536,6 +652,8 @@ impl<B: Backend> WeaverBlock<B> {
             down_projection,
             activation,
             residual_add,
+            last_query_attention,
+            attention_scale,
             model_dim,
             hidden_dim,
         })

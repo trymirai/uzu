@@ -3,7 +3,7 @@ use crate::{
     backends::common::{
         Allocation, Backend, BufferArgMut, Encoder, Kernels,
         gpu_types::trie::TrieNode,
-        kernel::{AttentionPrepareKernel, SigmoidGateKernel},
+        kernel::{AttentionLastQueryKernel, AttentionPrepareKernel, SigmoidGateKernel},
     },
     encodable_block::{
         batch_topology::BatchTopology,
@@ -48,7 +48,7 @@ pub(super) enum QkvProjection<B: Backend> {
         prepare: PrepareKernel<B>,
     },
     /// Separate Q and KV projections.
-    #[allow(dead_code)] // TODO: remove when wiring with DFlash.
+    #[allow(dead_code)] // Retained for model families with separate Q and KV weights.
     Split {
         q: LinearProjection<B>,
         kv: LinearProjection<B>,
@@ -58,6 +58,41 @@ pub(super) enum QkvProjection<B: Backend> {
 }
 
 impl<B: Backend> Attention<B> {
+    pub(super) fn attend_packed_last_queries(
+        &self,
+        hidden: Allocation<B>,
+        lengths: &Allocation<B>,
+        rows: usize,
+        sequence_length: usize,
+        scale: f32,
+        kernel: &<B::Kernels as Kernels>::AttentionLastQueryKernel,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        let QkvProjection::Packed {
+            qkv,
+            ..
+        } = &self.projection
+        else {
+            panic!("packed last-query attention requires packed QKV");
+        };
+        assert_eq!(self.num_kv_heads, Some(self.num_q_heads));
+        let qkv = qkv.project(hidden, rows * sequence_length, encoder)?;
+        let mut attention_output =
+            encoder.allocate_scratch(size_for_shape(&[rows, self.num_q_heads, self.head_dim], self.data_type))?;
+        kernel.encode(
+            &qkv,
+            lengths,
+            &mut attention_output,
+            rows as u32,
+            sequence_length as u32,
+            self.num_q_heads as u32,
+            self.head_dim as u32,
+            scale,
+            encoder,
+        );
+        self.out_projection.encode(attention_output, rows, encoder)
+    }
+
     pub(super) fn attend(
         &self,
         hidden: Allocation<B>,

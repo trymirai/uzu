@@ -1,9 +1,11 @@
 use thiserror::Error;
 
 use crate::{
+    array::size_for_shape,
     backends::common::{
-        Allocation, AllocationType, Backend, Context, Encoder, Kernels, gpu_types::trie::TrieNode,
-        kernel::TensorAddSwapKernel,
+        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+        gpu_types::trie::TrieNode,
+        kernel::{DFlashTopKKernel, TensorAddSwapKernel},
     },
     config::{
         dflash::{DFlashDraftConfig, DFlashDraftLayerConfig},
@@ -61,6 +63,7 @@ pub(crate) struct DFlashDraft<B: Backend> {
     context_norm: Normalization<B>,
     layers: Box<[DFlashDraftLayer<B>]>,
     output_norm: Normalization<B>,
+    top_k: <B::Kernels as Kernels>::DFlashTopKKernel,
     model_dim: usize,
     max_context_length: usize,
     block_size: usize,
@@ -159,12 +162,14 @@ impl<B: Backend> DFlashDraft<B> {
             &parameter_tree.subtree("output_norm")?,
             data_type,
         )?;
+        let top_k = <B::Kernels as Kernels>::DFlashTopKKernel::new(context).map_err(DFlashDraftNewError::Backend)?;
 
         Ok(Self {
             context_projection,
             context_norm,
             layers,
             output_norm,
+            top_k,
             model_dim: config.model_dim,
             max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
@@ -316,11 +321,25 @@ impl<B: Backend> DFlashDraft<B> {
     ) -> Result<DFlashChainOutput<B>, DFlashEncodeError<B>> {
         let token_embeddings = target_embedding.encode_lookup(noise_token_ids, self.block_size, encoder)?;
         let hidden = self.encode_block(state, token_embeddings, encoder).map_err(DFlashEncodeError::Backend)?;
-        let logits = target_embedding.encode_readout_f32(self.block_size, &hidden, encoder)?;
+        let logits = target_embedding.encode_readout_f32(1, self.block_size - 1, &hidden, encoder)?;
         Ok(DFlashChainOutput {
             hidden,
             logits,
         })
+    }
+
+    pub(crate) fn encode_top_k(
+        &self,
+        logits: &Allocation<B>,
+        rows: usize,
+        vocab_size: usize,
+        k: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
+        let mut ids = encoder.allocate_scratch(size_for_shape(&[rows, k], DataType::U32))?;
+        let mut scores = encoder.allocate_scratch(size_for_shape(&[rows, k], DataType::F32))?;
+        self.top_k.encode(logits, &mut ids, &mut scores, rows as u32, vocab_size as u32, k as u32, encoder);
+        Ok((ids, scores))
     }
 
     pub(crate) fn block_size(&self) -> usize {

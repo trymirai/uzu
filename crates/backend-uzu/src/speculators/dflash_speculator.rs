@@ -1,6 +1,5 @@
 use std::{cmp::Ordering, collections::BinaryHeap, rc::Rc};
 
-use half::bf16;
 use thiserror::Error;
 
 pub use crate::encodable_block::dflash::DFlashState;
@@ -11,7 +10,7 @@ use crate::{
     encodable_block::{
         dflash::{DFlashChainOutput, DFlashDraft, DFlashEncodeError},
         embedding::{Embedding, EmbeddingError},
-        weaver::{Weaver, WeaverEncodeError, WeaverNode},
+        weaver::{Weaver, WeaverBatchStepInput, WeaverEncodeError},
     },
 };
 
@@ -29,8 +28,8 @@ const MAX_CHILDREN_PER_NODE: usize = 8;
 impl Default for DFlashTreeOptions {
     fn default() -> Self {
         Self {
-            budget: 64,
-            frontier_width: 4,
+            budget: 128,
+            frontier_width: 8,
             children_per_node: 8,
         }
     }
@@ -47,7 +46,6 @@ pub struct SpeculationTree<B: Backend> {
     pub draft_logprobs: Allocation<B>,
     pub len: usize,
 }
-
 
 #[derive(Debug, Error)]
 pub enum DFlashTreeError<B: Backend> {
@@ -72,7 +70,6 @@ struct HostTreeNode {
     logprob: f32,
     score: f32,
     children: Vec<usize>,
-    state: Option<WeaverNode>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -119,10 +116,10 @@ fn build_host_tree<E>(
     mut nodes: Vec<HostTreeNode>,
     budget: usize,
     frontier_width: usize,
-    mut expand: impl FnMut(usize, &mut Vec<HostTreeNode>, &mut BinaryHeap<FrontierEntry>) -> Result<(), E>,
+    mut expand: impl FnMut(&[usize], &mut Vec<HostTreeNode>, &mut BinaryHeap<FrontierEntry>) -> Result<(), E>,
 ) -> Result<Vec<HostTreeNode>, E> {
     let mut frontier = BinaryHeap::new();
-    expand(0, &mut nodes, &mut frontier)?;
+    expand(&[0], &mut nodes, &mut frontier)?;
     while nodes.len() < budget + 1 && !frontier.is_empty() {
         let remaining = budget + 1 - nodes.len();
         let mut expanded = Vec::with_capacity(frontier_width.min(remaining));
@@ -139,14 +136,11 @@ fn build_host_tree<E>(
                 logprob: entry.logprob,
                 score: entry.score,
                 children: Vec::new(),
-                state: None,
             });
             nodes[parent_index].children.push(index);
             expanded.push(index);
         }
-        for index in expanded {
-            expand(index, &mut nodes, &mut frontier)?;
-        }
+        expand(&expanded, &mut nodes, &mut frontier)?;
     }
     Ok(nodes)
 }
@@ -258,14 +252,17 @@ impl<B: Backend> DFlashSpeculator<B> {
         }
         let block_size = self.block_size();
         let target_model_dim = self.config.draft_config.model_dim;
+        let vocab_size = self.config.draft_config.vocab_size;
+        let pool_size =
+            self.config.weaver_config.as_ref().map_or(1, |config| config.candidate_pool_size.min(vocab_size));
         if target_embedding.vocab_size() != self.config.draft_config.vocab_size
             || target_embedding.model_dim() != target_model_dim
             || self.config.weaver_config.as_ref().is_some_and(|config| config.target_model_dim != target_model_dim)
         {
             return Err(DFlashTreeError::InvalidOptions);
         }
-        let target_hidden = state.last_target_hidden().ok_or(DFlashTreeError::MissingTargetHidden)?.copyout::<bf16>();
-        if target_hidden.len() != target_model_dim {
+        let target_hidden_size = state.last_target_hidden().ok_or(DFlashTreeError::MissingTargetHidden)?.size();
+        if target_hidden_size != target_model_dim * DataType::BF16.size_in_bytes() {
             return Err(DFlashTreeError::InvalidOptions);
         }
 
@@ -276,17 +273,26 @@ impl<B: Backend> DFlashSpeculator<B> {
         noise[0] = bonus_token as u64;
         noise_ids.copyin(&noise);
         let chain = self.encode_chain(state, &noise_ids, target_embedding, &mut encoder)?;
+        let (candidate_ids_allocation, candidate_scores_allocation) = self
+            .model
+            .encode_top_k(&chain.logits, block_size - 1, vocab_size, pool_size, &mut encoder)
+            .map_err(DFlashTreeError::Backend)?;
         let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
-        let hidden = chain.hidden.copyout::<bf16>();
-        let logits = chain.logits.copyout::<f32>();
-        drop(chain);
+        let candidate_ids = candidate_ids_allocation.copyout::<u32>();
+        let candidate_scores = candidate_scores_allocation.copyout::<f32>();
+        drop(candidate_ids_allocation);
+        drop(candidate_scores_allocation);
+        let chain_logits = self.weaver.is_none().then(|| chain.logits.copyout::<f32>());
         drop(noise_ids);
-        drop(completed);
-        let vocab_size = self.config.draft_config.vocab_size;
-        let pool_size =
-            self.config.weaver_config.as_ref().map_or(1, |config| config.candidate_pool_size.min(vocab_size));
-        let candidate_pools = (0..block_size)
-            .map(|row| top_candidates(&logits[row * vocab_size..(row + 1) * vocab_size], pool_size))
+        let candidate_pools = (0..block_size - 1)
+            .map(|row| {
+                (0..pool_size)
+                    .map(|rank| {
+                        let index = row * pool_size + rank;
+                        (candidate_ids[index], candidate_scores[index])
+                    })
+                    .collect::<Vec<_>>()
+            })
             .collect::<Vec<_>>();
 
         let mut nodes = vec![HostTreeNode {
@@ -296,14 +302,13 @@ impl<B: Backend> DFlashSpeculator<B> {
             logprob: 0.0,
             score: 0.0,
             children: Vec::new(),
-            state: None,
         }];
         let Some(weaver) = self.weaver.as_ref() else {
+            let logits = chain_logits.as_ref().unwrap();
             for depth in 0..options.budget.min(block_size.saturating_sub(1)) {
-                let (token, _) = candidate_pools[depth + 1][0];
-                let row_start = (depth + 1) * vocab_size;
-                let row = logits[row_start..row_start + vocab_size].to_vec();
-                let logprob = log_softmax(&row)[token as usize];
+                let (token, _) = candidate_pools[depth][0];
+                let row_start = depth * vocab_size;
+                let logprob = log_softmax(&logits[row_start..row_start + vocab_size])[token as usize];
                 let parent = nodes.len() - 1;
                 let index = nodes.len();
                 nodes.push(HostTreeNode {
@@ -313,66 +318,91 @@ impl<B: Backend> DFlashSpeculator<B> {
                     logprob,
                     score: nodes[parent].score + logprob,
                     children: Vec::new(),
-                    state: None,
                 });
                 nodes[parent].children.push(index);
             }
-            return Self::finish_tree(&self.context, nodes);
+            let tree = Self::finish_tree(&self.context, nodes)?;
+            drop(chain);
+            drop(completed);
+            return Ok(tree);
         };
 
         let max_depth = self.config.weaver_config.as_ref().unwrap().max_depth;
         let lookahead_count = max_depth.min(block_size.saturating_sub(1));
-        let lookahead_start = target_model_dim;
-        let lookahead_end = (lookahead_count + 1) * target_model_dim;
-        let prefix = weaver.prompt_prefix(&target_hidden, &hidden[lookahead_start..lookahead_end], &self.context)?;
+        let target_hidden = state.last_target_hidden().ok_or(DFlashTreeError::MissingTargetHidden)?;
+        let prefix = weaver.prompt_prefix(target_hidden, &chain.hidden, 1, lookahead_count, &self.context)?;
+        drop(chain);
+        drop(completed);
+        let mut weaver_state = weaver.create_node_state(options.budget + 1, &self.context)?;
         // Expand the root once to seed the frontier.  Thereafter the heap
         // contains candidate edges, not already-materialized tree nodes: each
         // iteration pops the globally best `frontier_width` edges, materializes
         // those nodes, and expands only those winners.
-        let expand = |parent_index: usize,
+        let expand = |parent_indices: &[usize],
                       nodes: &mut Vec<HostTreeNode>,
                       frontier: &mut BinaryHeap<FrontierEntry>|
          -> Result<(), DFlashTreeError<B>> {
-            let depth = nodes[parent_index].depth;
-            if depth >= lookahead_count || depth >= max_depth {
+            let parent_indices = parent_indices
+                .iter()
+                .copied()
+                .filter(|&index| nodes[index].depth < lookahead_count && nodes[index].depth < max_depth)
+                .collect::<Vec<_>>();
+            if parent_indices.is_empty() {
                 return Ok(());
             }
-            let mut ancestor_indices = Vec::new();
-            let mut ancestor = nodes[parent_index].parent;
-            while let Some(index) = ancestor {
-                ancestor_indices.push(index);
-                ancestor = nodes[index].parent;
-            }
-            ancestor_indices.reverse();
-            let ancestors =
-                ancestor_indices.iter().filter_map(|&index| nodes[index].state.as_ref()).collect::<Vec<_>>();
-            let pool = &candidate_pools[depth + 1];
-            let candidate_ids = pool.iter().map(|&(token, _)| token).collect::<Vec<_>>();
-            let candidate_scores = pool.iter().map(|&(_, score)| score).collect::<Vec<_>>();
-            let step = weaver.step(
-                &prefix,
-                nodes[parent_index].token,
-                &candidate_ids,
-                &candidate_scores,
-                &ancestors,
-                depth,
-                target_embedding,
-                &self.context,
-            )?;
-            nodes[parent_index].state = Some(step.node);
-            let logprobs = log_softmax(&step.logits);
-            let mut choices = (0..candidate_ids.len()).collect::<Vec<_>>();
-            choices.sort_by(|&a, &b| {
-                step.logits[b].total_cmp(&step.logits[a]).then_with(|| candidate_ids[a].cmp(&candidate_ids[b]))
-            });
-            for choice in choices.into_iter().take(options.children_per_node) {
-                let score = nodes[parent_index].score + logprobs[choice];
-                frontier.push(FrontierEntry {
-                    score,
-                    parent: parent_index,
-                    token: candidate_ids[choice],
-                    logprob: logprobs[choice],
-                });
+            let candidate_ids = parent_indices
+                .iter()
+                .map(|&index| candidate_pools[nodes[index].depth].iter().map(|&(token, _)| token).collect::<Vec<_>>())
+                .collect::<Vec<_>>();
+            let candidate_scores = parent_indices
+                .iter()
+                .map(|&index| candidate_pools[nodes[index].depth].iter().map(|&(_, score)| score).collect::<Vec<_>>())
+                .collect::<Vec<_>>();
+            let ancestor_indices = parent_indices
+                .iter()
+                .map(|&parent_index| {
+                    let mut indices = Vec::new();
+                    let mut ancestor = nodes[parent_index].parent;
+                    while let Some(index) = ancestor {
+                        indices.push(index);
+                        ancestor = nodes[index].parent;
+                    }
+                    indices.reverse();
+                    indices
+                })
+                .collect::<Vec<_>>();
+            let steps = {
+                let inputs = parent_indices
+                    .iter()
+                    .enumerate()
+                    .map(|(batch_index, &parent_index)| WeaverBatchStepInput {
+                        node_index: parent_index,
+                        parent_token: nodes[parent_index].token,
+                        candidates: &candidate_ids[batch_index],
+                        candidate_scores: &candidate_scores[batch_index],
+                        ancestors: &ancestor_indices[batch_index],
+                        depth: nodes[parent_index].depth,
+                    })
+                    .collect::<Vec<_>>();
+                weaver.step_batch(
+                    &prefix,
+                    &inputs,
+                    &mut weaver_state,
+                    options.children_per_node,
+                    target_embedding,
+                    &self.context,
+                )?
+            };
+            for (parent_index, step) in parent_indices.into_iter().zip(steps) {
+                for (token, logprob) in step.children {
+                    let score = nodes[parent_index].score + logprob;
+                    frontier.push(FrontierEntry {
+                        score,
+                        parent: parent_index,
+                        token,
+                        logprob,
+                    });
+                }
             }
             Ok(())
         };
@@ -466,22 +496,6 @@ impl<B: Backend> DFlashWeaver<'_, B> {
     ) -> Result<SpeculationTree<B>, DFlashTreeError<B>> {
         self.speculator.encode_tree_with_embedding(state, bonus_token, self.target_embedding, options)
     }
-
-}
-
-fn top_candidates(
-    row: &[f32],
-    count: usize,
-) -> Vec<(u32, f32)> {
-    let count = count.min(row.len());
-    let mut indices = (0..row.len()).collect::<Vec<_>>();
-    let compare = |&a: &usize, &b: &usize| row[b].total_cmp(&row[a]).then_with(|| a.cmp(&b));
-    if count < indices.len() {
-        indices.select_nth_unstable_by(count, compare);
-        indices.truncate(count);
-    }
-    indices.sort_by(compare);
-    indices.into_iter().map(|index| (index as u32, row[index])).collect()
 }
 
 fn log_softmax(logits: &[f32]) -> Vec<f32> {
