@@ -38,7 +38,8 @@ pub enum GemmTiling {
     Tile128x128x256_Simdgroups4x4,
 }
 
-const MXU_SIMDGROUP_BLOCK_K: u32 = 32;
+/// Number of K elements processed by one MXU SIMD group per inner iteration.
+pub const MXU_SIMDGROUP_BLOCK_K: u32 = 32;
 
 impl GemmTiling {
     pub const fn block_m(self) -> u32 {
