@@ -772,7 +772,6 @@ dependencies = [
  "futures",
  "half",
  "itertools 0.14.0",
- "keisoku",
  "libc",
  "libm",
  "memmap2",
@@ -785,6 +784,7 @@ dependencies = [
  "obfstr",
  "objc2 0.6.4",
  "objc2-foundation 0.3.2",
+ "parking_lot",
  "prettyplease",
  "proc-macro2",
  "proc-macros",
@@ -2234,6 +2234,7 @@ dependencies = [
  "chrono",
  "crc32c",
  "futures-util",
+ "kiban",
  "libc",
  "objc-sys",
  "objc2 0.6.4",
@@ -2246,6 +2247,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "uuid",
+ "web-sys",
 ]
 
 [[package]]
@@ -4249,6 +4251,7 @@ dependencies = [
 name = "keisoku"
 version = "0.5.12"
 dependencies = [
+ "bitflags 2.13.0",
  "kanka",
  "libc",
  "obfstr",
@@ -4295,6 +4298,20 @@ name = "khronos_api"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
+
+[[package]]
+name = "kiban"
+version = "0.5.12"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "libc",
+ "tokio",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
+]
 
 [[package]]
 name = "kurbo"
@@ -4871,9 +4888,9 @@ dependencies = [
 
 [[package]]
 name = "mtl-rs"
-version = "0.1.13"
+version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb19a6103808f1af363f96d845bd734c49df73eda4ada4177d118560cd4cf0ba"
+checksum = "6365d3a49e40c611ee28aa0f1bc90abc69b3b3a38172f63b1fdb0061809cba91"
 dependencies = [
  "bitflags 2.13.0",
  "block2 0.6.2",
@@ -8815,6 +8832,7 @@ dependencies = [
  "backend-uzu",
  "bindings",
  "bindings-types",
+ "bitflags 2.13.0",
  "confy",
  "dirs 6.0.0",
  "download-manager",
@@ -8823,6 +8841,7 @@ dependencies = [
  "futures-util",
  "indexmap 2.14.0",
  "keyring-core",
+ "kiban",
  "nagare",
  "objc2 0.6.4",
  "objc2-foundation 0.3.2",
@@ -8984,6 +9003,8 @@ dependencies = [
  "cfg-if",
  "once_cell",
  "rustversion",
+ "serde",
+ "serde_json",
  "wasm-bindgen-macro",
  "wasm-bindgen-shared",
 ]
