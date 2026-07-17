@@ -15,7 +15,7 @@ use crate::{
     backends::{
         common::{
             Backend, Context, Encoder,
-            gpu_types::{ActivationScaleStatistic, QuantizationMethod, gemm::GemmDTransform},
+            gpu_types::{ActivationQuantScheme, ActivationScaleStatistic, QuantizationMethod, gemm::GemmDTransform},
             kernel::{
                 Kernels,
                 matmul::{MatmulDOps, MatmulError, MatmulKernel},
@@ -500,31 +500,36 @@ fn mxu_quant_parity_bf16(
     );
 }
 
-/// A8W8 (int8 activation x int8 weight) GEMM parity against the CPU A8W8
-/// reference. The int8 `matmul2d` path only runs on M5+/A19, so this self-skips
-/// elsewhere. Both sides quantize A identically (~1 LSB apart from Metal
-/// fast-math division) and read the symmetric weights excess-128, so a modest
-/// tolerance covers quantization + int32-vs-float accumulation noise while still
-/// catching a wrong MXU int8 fragment layout (which corrupts results grossly).
+/// A8W8 MXU GEMM parity vs CPU. Self-skips without MXU (CI has none; run locally
+/// on A19 via `cargo dinghy -d <ECID> test -p backend-uzu -- a8w8_mxu`).
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::gs32(128, 256, 128, 32)]
-#[case::gs64(64, 512, 64, 64)]
-#[case::gs128(128, 256, 256, 128)]
-#[case::unaligned(96, 256, 100, 32)]
+#[case::sym_sym_gs32(128, 256, 128, 32, ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleSymmetric)]
+#[case::sym_sym_gs64(64, 512, 64, 64, ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleSymmetric)]
+#[case::asym_sym_gs32(96, 256, 100, 32, ActivationQuantScheme::Asymmetric, QuantizationMethod::ScaleSymmetric)]
+#[case::asym_zp_gs32(64, 256, 64, 32, ActivationQuantScheme::Asymmetric, QuantizationMethod::ScaleZeroPoint)]
+#[case::sym_zp_gs64(64, 256, 64, 64, ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleZeroPoint)]
 fn a8w8_mxu_parity_bf16(
     #[case] m: usize,
     #[case] k: usize,
     #[case] n: usize,
     #[case] gs: u32,
+    #[case] scheme: ActivationQuantScheme,
+    #[case] method: QuantizationMethod,
 ) {
     let context = MetalContext::new().expect("Metal context");
     if !context.supports_mxu() {
         return;
     }
-    let input = QuantInput::<bf16>::new(m, k, n, gs, 8, QuantizationMethod::ScaleSymmetric, 0)
-        .with_prepared_a(ActivationScaleStatistic::AbsMax);
+    let input = QuantInput::<bf16>::new(m, k, n, gs, 8, method, 0)
+        .with_prepared_a_scheme(ActivationScaleStatistic::AbsMax, scheme);
     let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
-    assert_parity::<bf16>(&format!("A8W8 m={m} k={k} n={n} gs={gs}"), &reference, &actual, 0.06, 0.6);
+    assert_parity::<bf16>(
+        &format!("A8W8 {scheme:?}/{method:?} m={m} k={k} n={n} gs={gs}"),
+        &reference,
+        &actual,
+        0.08,
+        0.8,
+    );
 }

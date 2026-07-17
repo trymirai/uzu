@@ -10,11 +10,11 @@ use crate::{
     backends::{
         common::{
             Allocation, Backend, Context, Encoder,
-            gpu_types::{ActivationScaleStatistic, QuantizationMethod, QuantizationMode},
+            gpu_types::{ActivationQuantScheme, ActivationScaleStatistic, QuantizationMethod, QuantizationMode},
             kernel::{
-                Kernels, group_stat,
+                Kernels, asymmetric_scale_zero_point, compute_b_col_sums, group_stat,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
-                quantize_symmetric_i8, symmetric_divisor,
+                quantize_asymmetric_i8, quantize_symmetric_i8, symmetric_divisor,
             },
         },
         cpu::Cpu,
@@ -25,7 +25,11 @@ use crate::{
 pub struct PreparedInt8A {
     pub values: Vec<i8>,
     pub scales: Vec<f32>,
+    pub zero_points: Option<Vec<i8>>,
+    pub row_sums: Vec<i32>,
+    pub b_col_sums: Option<Vec<i32>>,
     pub group_size: u32,
+    pub scheme: ActivationQuantScheme,
 }
 
 pub struct QuantInput<T: ArrayElement + Float> {
@@ -46,9 +50,22 @@ pub struct QuantInput<T: ArrayElement + Float> {
 fn mode_for_bits(bits: u32) -> QuantizationMode {
     match bits {
         4 => QuantizationMode::U4,
-        8 => QuantizationMode::I8,
+        8 => QuantizationMode::U8,
         _ => unreachable!("unsupported bits: {bits}"),
     }
+}
+
+fn unpack_u8_weights(
+    w_packed: &[u32],
+    n: usize,
+    k: usize,
+) -> Vec<u8> {
+    let mut weights = vec![0u8; n * k];
+    for index in 0..n * k {
+        let word = w_packed[index / 4];
+        weights[index] = (word >> ((index % 4) * 8)) as u8;
+    }
+    weights
 }
 
 impl<T: ArrayElement + Float> QuantInput<T> {
@@ -102,8 +119,16 @@ impl<T: ArrayElement + Float> QuantInput<T> {
     }
 
     pub fn with_prepared_a(
+        self,
+        stat: ActivationScaleStatistic,
+    ) -> Self {
+        self.with_prepared_a_scheme(stat, ActivationQuantScheme::Symmetric)
+    }
+
+    pub fn with_prepared_a_scheme(
         mut self,
         stat: ActivationScaleStatistic,
+        scheme: ActivationQuantScheme,
     ) -> Self {
         let group_size = self.group_size as usize;
         assert!(group_size > 0);
@@ -112,6 +137,12 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let groups = columns.div_ceil(group_size);
         let mut values = vec![0i8; rows * columns];
         let mut scales = vec![0.0f32; rows * groups];
+        let mut row_sums = vec![0i32; rows * groups];
+        let mut zero_points = if scheme == ActivationQuantScheme::Asymmetric {
+            Some(vec![0i8; rows * groups])
+        } else {
+            None
+        };
 
         for row in 0..rows {
             for group in 0..groups {
@@ -119,18 +150,47 @@ impl<T: ArrayElement + Float> QuantInput<T> {
                 let end = (start + group_size).min(columns);
                 let prepared =
                     (start..end).map(|column| self.x[row * columns + column].to_f32().unwrap()).collect::<Vec<_>>();
-                let divisor = symmetric_divisor(group_stat(&prepared, stat));
-                scales[row * groups + group] = divisor;
-                for (column, value) in (start..end).zip(prepared) {
-                    values[row * columns + column] = quantize_symmetric_i8(value, divisor);
+                let mut sum = 0i32;
+                match scheme {
+                    ActivationQuantScheme::Symmetric => {
+                        let divisor = symmetric_divisor(group_stat(&prepared, stat));
+                        scales[row * groups + group] = divisor;
+                        for (column, value) in (start..end).zip(prepared) {
+                            let q = quantize_symmetric_i8(value, divisor);
+                            values[row * columns + column] = q;
+                            sum += i32::from(q);
+                        }
+                    },
+                    ActivationQuantScheme::Asymmetric => {
+                        let (scale, zp) = asymmetric_scale_zero_point(&prepared, stat);
+                        scales[row * groups + group] = scale;
+                        zero_points.as_mut().unwrap()[row * groups + group] = zp;
+                        for (column, value) in (start..end).zip(prepared) {
+                            let q = quantize_asymmetric_i8(value, scale, zp);
+                            values[row * columns + column] = q;
+                            sum += i32::from(q);
+                        }
+                    },
                 }
+                row_sums[row * groups + group] = sum;
             }
         }
+
+        let b_col_sums = if scheme == ActivationQuantScheme::Asymmetric {
+            let weights = unpack_u8_weights(&self.w_packed, self.n as usize, self.k as usize);
+            Some(compute_b_col_sums(&weights, self.n as usize, self.k as usize, group_size))
+        } else {
+            None
+        };
 
         self.prepared_a = Some(PreparedInt8A {
             values,
             scales,
+            zero_points,
+            row_sums,
+            b_col_sums,
             group_size: self.group_size,
+            scheme,
         });
         self
     }
@@ -151,6 +211,9 @@ pub struct QuantBuffers<B: Backend, T: ArrayElement + Float> {
     pub x: Allocation<B>,
     pub prepared_a: Option<Allocation<B>>,
     pub prepared_a_scales: Option<Allocation<B>>,
+    pub prepared_a_zero_points: Option<Allocation<B>>,
+    pub prepared_a_row_sums: Option<Allocation<B>>,
+    pub b_col_sums: Option<Allocation<B>>,
     pub y: Allocation<B>,
     _t: std::marker::PhantomData<T>,
 }
@@ -174,6 +237,19 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
                 .prepared_a
                 .as_ref()
                 .map(|prepared| alloc_allocation_with_data::<B, f32>(context, &prepared.scales)),
+            prepared_a_zero_points: input.prepared_a.as_ref().and_then(|prepared| {
+                prepared
+                    .zero_points
+                    .as_ref()
+                    .map(|zero_points| alloc_allocation_with_data::<B, i8>(context, zero_points))
+            }),
+            prepared_a_row_sums: input
+                .prepared_a
+                .as_ref()
+                .map(|prepared| alloc_allocation_with_data::<B, i32>(context, &prepared.row_sums)),
+            b_col_sums: input.prepared_a.as_ref().and_then(|prepared| {
+                prepared.b_col_sums.as_ref().map(|sums| alloc_allocation_with_data::<B, i32>(context, sums))
+            }),
             y: alloc_allocation::<B, T>(context, (input.m as usize) * (input.n as usize)),
             _t: std::marker::PhantomData,
         }
@@ -207,10 +283,21 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         },
     };
     let a = match &input.prepared_a {
-        Some(prepared) => MatmulA::Int8Symmetric {
-            values: buffers.prepared_a.as_ref().expect("prepared activation buffer"),
-            scales: buffers.prepared_a_scales.as_ref().expect("prepared activation scales"),
-            group_size: prepared.group_size,
+        Some(prepared) => match prepared.scheme {
+            ActivationQuantScheme::Symmetric => MatmulA::Int8Symmetric {
+                values: buffers.prepared_a.as_ref().expect("prepared activation buffer"),
+                scales: buffers.prepared_a_scales.as_ref().expect("prepared activation scales"),
+                row_sums: buffers.prepared_a_row_sums.as_ref().expect("prepared activation row sums"),
+                group_size: prepared.group_size,
+            },
+            ActivationQuantScheme::Asymmetric => MatmulA::Int8Asymmetric {
+                values: buffers.prepared_a.as_ref().expect("prepared activation buffer"),
+                scales: buffers.prepared_a_scales.as_ref().expect("prepared activation scales"),
+                zero_points: buffers.prepared_a_zero_points.as_ref().expect("prepared activation zero points"),
+                row_sums: buffers.prepared_a_row_sums.as_ref().expect("prepared activation row sums"),
+                b_col_sums: buffers.b_col_sums.as_ref().expect("b_col_sums"),
+                group_size: prepared.group_size,
+            },
         },
         None => MatmulA::FullPrecision {
             values: &buffers.x,
