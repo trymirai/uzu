@@ -361,6 +361,7 @@ impl ChatSession {
                         "error": format!("Unknown function: {}", call.name),
                     }))
                 };
+
                 // chat templates expect tool results as plain text, one message per call
                 let tool_message = ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
                     identifier: call.identifier.clone(),
