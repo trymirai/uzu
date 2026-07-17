@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-
+use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
@@ -34,8 +33,8 @@ pub struct QLoRALinearWrapper<B: Backend> {
     base_linear: LinearMatmul<B>,
     input_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
     output_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
-    adapter_down_kernel: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
-    adapter_up_kernel: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+    adapter_down_kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
+    adapter_up_kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     adapter_down: Allocation<B>,
     adapter_up: Allocation<B>,
     input_dim: usize,
@@ -116,7 +115,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             (None, None)
         };
 
-        let adapter_down_kernel = RefCell::new(
+        let adapter_down_kernel = Mutex::new(
             <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::new(
                 context,
                 weights_data_type,
@@ -125,7 +124,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             )
             .map_err(QLoRALinearWrapperError::BackendError)?,
         );
-        let adapter_up_kernel = RefCell::new(
+        let adapter_up_kernel = Mutex::new(
             <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::new(
                 context,
                 weights_data_type,
@@ -173,7 +172,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.weights_data_type))?;
 
         {
-            let mut adapter_kernel = self.adapter_down_kernel.borrow_mut();
+            let mut adapter_kernel = self.adapter_down_kernel.lock();
             adapter_kernel.encode(
                 MatmulArguments {
                     a: &input,
@@ -212,7 +211,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         let mut output = self.base_linear.encode(base_input, batch_dim, encoder)?;
 
         {
-            let mut adapter_kernel = self.adapter_up_kernel.borrow_mut();
+            let mut adapter_kernel = self.adapter_up_kernel.lock();
             adapter_kernel.encode(
                 MatmulArguments {
                     a: &intermediate,

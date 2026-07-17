@@ -62,7 +62,7 @@ keisoku = { path = "crates/keisoku", default-features = false }
 kanka = { path = "crates/kanka", default-features = false }
 kiban = { path = "crates/kiban", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
-xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgrammar-rs.git", tag = "0.2.2", features = ["tokenizers"] }
+xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgrammar-rs.git", tag = "0.2.3", features = ["tokenizers"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17"
 serde = { version = "1.0", features = ["derive"] }
@@ -78,7 +78,7 @@ objc2-core-foundation = "0.3.2"
 objc2-io-kit = { version = "0.3.2", default-features = false, features = ["libc", "ps"] }
 objc2-security = "0.3.2"
 obfstr = "0.4.4"
-metal = { package = "mtl-rs", version = "0.1.12" }
+metal = { package = "mtl-rs", version = "0.1.14" }
 block2 = "0.6"
 bytemuck = "1.23"
 bytesize = "2"
@@ -108,6 +108,7 @@ depfile = "0.1"
 tempfile = "3.24"
 clang-ast = "0.1"
 rangemap = "1.7.1"
+parking_lot = "0.12"
 futures = "0.3"
 async-stream = "0.3"
 tokio = "1.49"

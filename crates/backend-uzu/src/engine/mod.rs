@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -9,7 +9,7 @@ pub mod dflash_speculator;
 pub mod language_model;
 
 pub struct Engine<B: Backend> {
-    context: Rc<B::Context>,
+    context: Arc<B::Context>,
 }
 
 #[derive(Debug, Error)]

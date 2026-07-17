@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use parking_lot::Mutex;
 
 use crate::{
     array::size_for_shape,
@@ -23,7 +23,7 @@ pub struct AttentionFallbackCore<B: Backend> {
     scatter_scores: <B::Kernels as Kernels>::AttentionFallbackScatterScoresKernel,
     scatter_values: <B::Kernels as Kernels>::AttentionFallbackScatterValuesKernel,
     softmax: <B::Kernels as Kernels>::SoftmaxKernel,
-    matmul: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+    matmul: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
 }
 
 impl<B: Backend> AttentionFallbackCore<B> {
@@ -44,7 +44,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
         let scatter_values =
             <B::Kernels as Kernels>::AttentionFallbackScatterValuesKernel::new(context, arguments.data_type)?;
         let softmax = <B::Kernels as Kernels>::SoftmaxKernel::new(context, arguments.data_type, arguments.has_sinks)?;
-        let matmul = RefCell::new(<B::Kernels as Kernels>::MatmulKernel::new(
+        let matmul = Mutex::new(<B::Kernels as Kernels>::MatmulKernel::new(
             context,
             arguments.data_type,
             arguments.data_type,
@@ -89,7 +89,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
         ))?;
 
         for group_index in 0..self.num_groups {
-            self.matmul.borrow_mut().encode(
+            self.matmul.lock().encode(
                 MatmulArguments {
                     a: arguments.queries,
                     a_offset: group_index * gqa_factor * arguments.suffix_length * self.head_dim * dt_bytes,
@@ -139,7 +139,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
             .allocate_scratch(size_for_shape(&[gqa_factor * arguments.suffix_length, self.head_dim], self.data_type))?;
 
         for group_index in 0..self.num_groups {
-            self.matmul.borrow_mut().encode(
+            self.matmul.lock().encode(
                 MatmulArguments {
                     a: &scores,
                     a_offset: group_index * gqa_factor * arguments.suffix_length * sequence_length * dt_bytes,

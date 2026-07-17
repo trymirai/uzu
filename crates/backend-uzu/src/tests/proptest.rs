@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use proptest::prelude::*;
 
@@ -17,9 +17,9 @@ pub fn kernel_data_type() -> impl Strategy<Value = DataType> {
 }
 
 pub struct TestContextes {
-    pub cpu: Rc<<Cpu as Backend>::Context>,
+    pub cpu: Arc<<Cpu as Backend>::Context>,
     #[cfg(metal_backend)]
-    pub metal: Rc<<Metal as Backend>::Context>,
+    pub metal: Arc<<Metal as Backend>::Context>,
 }
 
 impl TestContextes {

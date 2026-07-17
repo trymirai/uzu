@@ -1,4 +1,4 @@
-use std::{fs::File, io, io::BufReader, path::Path, rc::Rc};
+use std::{fs::File, io, io::BufReader, path::Path, sync::Arc};
 
 use thiserror::Error;
 
@@ -22,7 +22,7 @@ pub mod state;
 pub mod stream;
 
 pub struct LanguageModel<B: Backend> {
-    context: Rc<B::Context>,
+    context: Arc<B::Context>,
     decoder: Decoder<B>,
     sampling: Sampling<B>,
     token_copy: <B::Kernels as Kernels>::TokenCopySampledKernel,
