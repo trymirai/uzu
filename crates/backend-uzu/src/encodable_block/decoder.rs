@@ -37,11 +37,9 @@ pub struct Decoder<B: Backend> {
 
 pub struct DecoderEncodeOutput<B: Backend> {
     pub logits: Option<Allocation<B>>,
-    /// Captured intermediate target-layer outputs for `DFlash` context append.
-    #[allow(dead_code)] // Consumed by the decoder/speculator integration seam.
+    #[allow(dead_code)]
     pub hidden_features: Box<[Allocation<B>]>,
-    /// Final normalized target hidden state used by Weaver.
-    #[allow(dead_code)] // Consumed by the decoder/speculator integration seam.
+    #[allow(dead_code)]
     pub final_hidden: Option<Allocation<B>>,
 }
 

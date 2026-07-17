@@ -234,7 +234,7 @@ impl<B: Backend> DFlashDraft<B> {
             state_layer.prepare(state.context_length, num_tokens, encoder.context())?;
             let mut layer_input = encoder.allocate_scratch(projected.size())?;
             encoder.encode_copy(&projected, .., &mut layer_input, ..);
-            layer.attention.append_kv_to_state(layer_input, Some(&rope), num_tokens, state_layer, encoder)?;
+            layer.attention.append_kv(layer_input, Some(&rope), num_tokens, state_layer, encoder)?;
         }
 
         state.context_length += num_tokens;

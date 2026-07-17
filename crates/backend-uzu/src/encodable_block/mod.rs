@@ -9,7 +9,6 @@ pub mod mlp;
 pub mod normalization;
 pub mod per_layer_embedding;
 pub mod prediction_head;
-mod residual_capture;
 pub mod sampling;
 pub mod transformer;
 pub mod transformer_layer;

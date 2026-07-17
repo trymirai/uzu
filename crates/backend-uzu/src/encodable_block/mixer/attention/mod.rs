@@ -171,8 +171,6 @@ impl<B: Backend> Attention<B> {
             .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_allocation())
             .transpose()?;
 
-        // Non-causal DFlash attention keeps a full prefix; causal sliding-window
-        // attention retains the existing ring cache behavior.
         let is_kv_cache_ring = is_causal && sliding_window_size.is_some();
 
         let flat_core = AttentionCores::new(
@@ -242,17 +240,6 @@ impl<B: Backend> Attention<B> {
             },
             in_projection_input_hadamard_factors,
         ))
-    }
-
-    pub(crate) fn append_kv_to_state(
-        &self,
-        hidden: Allocation<B>,
-        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: usize,
-        state: &mut AttentionState<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        self.append_kv(hidden, precalculated_rope, batch_dim, state, encoder)
     }
 }
 

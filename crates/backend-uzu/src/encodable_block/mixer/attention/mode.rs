@@ -214,7 +214,7 @@ impl<B: Backend> Attention<B> {
         self.out_projection.encode(attention_output, batch_dim.size(), encoder)
     }
 
-    pub(super) fn append_kv(
+    pub(crate) fn append_kv(
         &self,
         hidden: Allocation<B>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
