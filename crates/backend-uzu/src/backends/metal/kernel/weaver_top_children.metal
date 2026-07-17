@@ -1,17 +1,13 @@
 #include <metal_stdlib>
 #include "common/dsl.h"
 #include "common/thread_context.h"
+#include "common/top_k.h"
 
 using namespace metal;
 
 constant uint WEAVER_CANDIDATES_MAX = 512;
 constant uint WEAVER_TOP_CHILDREN_THREADS = 256;
 constant uint WEAVER_TOP_CHILDREN_SIMDGROUPS = 8;
-
-static inline uint weaver_score_key(float score) {
-  const uint bits = as_type<uint>(score);
-  return (bits & 0x80000000u) ? ~bits : (bits ^ 0x80000000u);
-}
 
 PUBLIC KERNEL(WeaverTopChildren)(
     const device float* residual_logits,
@@ -50,8 +46,8 @@ PUBLIC KERNEL(WeaverTopChildren)(
       second_valid ? candidate_scores[base + second_index] + residual_logits[base + second_index] : -INFINITY;
   const uint first_token = first_valid ? uint(candidate_ids[base + first_index]) : 0xffffffffu;
   const uint second_token = second_valid ? uint(candidate_ids[base + second_index]) : 0xffffffffu;
-  const uint first_score = first_valid ? weaver_score_key(first_logit) : 0u;
-  const uint second_score = second_valid ? weaver_score_key(second_logit) : 0u;
+  const uint first_score = first_valid ? top_k_score_key(first_logit) : 0u;
+  const uint second_score = second_valid ? top_k_score_key(second_logit) : 0u;
   bool first_active = first_valid;
   bool second_active = second_valid;
 
@@ -99,9 +95,7 @@ PUBLIC KERNEL(WeaverTopChildren)(
       local_index = first_index;
     }
     if (second_active &&
-        (second_score > local_score ||
-         (second_score == local_score &&
-          (second_token < local_token || (second_token == local_token && second_index < local_index))))) {
+        top_k_better(second_score, second_token, second_index, local_score, local_token, local_index)) {
       local_score = second_score;
       local_token = second_token;
       local_index = second_index;

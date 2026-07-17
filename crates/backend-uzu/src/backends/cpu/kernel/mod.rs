@@ -4,7 +4,6 @@ use crate::backends::{common::Kernels, cpu::Cpu};
 
 mod activation;
 mod attention;
-mod dflash_top_k;
 mod embedding;
 mod gated_act_mul;
 mod gdn;
@@ -38,3 +37,4 @@ impl Kernels for CpuKernels {
     type DeltaNetTreeVerify = Infallible;
     type MatmulKernel = matmul::MatmulCpuKernel;
 }
+mod radix_top_k;
