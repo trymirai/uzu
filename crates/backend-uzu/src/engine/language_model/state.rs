@@ -12,6 +12,7 @@ pub struct LanguageModelState<B: Backend> {
     pub(super) prng: PRng,
     pub(super) transformer_state: TransformerState<B>,
     pub(super) max_context_length: Option<usize>,
+    pub(super) poisoned: bool,
 }
 
 impl<B: Backend> LanguageModelState<B> {
@@ -47,6 +48,7 @@ impl<B: Backend> LanguageModel<B> {
             prng,
             transformer_state,
             max_context_length,
+            poisoned: false,
         })
     }
 }

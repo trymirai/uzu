@@ -9,7 +9,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         embedding::{Embedding, EmbeddingError},
-        per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
+        per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError, PleSource, PleStorage},
         transformer::{Transformer, TransformerNewError, TransformerState},
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -48,6 +48,7 @@ impl<B: Backend> Decoder<B> {
         config: &DecoderConfig,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
+        ple_storage: &PleStorage,
     ) -> Result<Self, DecoderError<B>> {
         let (embedding, readout_input_hadamard_factors) = Embedding::new(
             context,
@@ -70,6 +71,7 @@ impl<B: Backend> Decoder<B> {
                 config.transformer_config.model_dim,
                 data_type,
                 &parameter_tree.subtree("per_layer_embedding")?,
+                ple_storage,
             )?)
         } else {
             None
@@ -110,6 +112,10 @@ impl<B: Backend> Decoder<B> {
         self.transformer.create_empty_state(max_context_length, context)
     }
 
+    pub(crate) fn per_layer_embedding(&self) -> Option<&PerLayerEmbedding<B>> {
+        self.per_layer_embedding.as_ref()
+    }
+
     pub fn encode(
         &self,
         token_ids: &Allocation<B>,
@@ -117,16 +123,13 @@ impl<B: Backend> Decoder<B> {
         output_range: Option<Range<usize>>,
         state: &mut TransformerState<B>,
         encoder: &mut Encoder<B>,
+        ple_source: PleSource<'_, B>,
         hidden_feature_layer_indices: &[usize],
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), encoder)?;
 
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
-            Some(
-                per_layer_embedding
-                    .encode(token_ids, &embedded, batch_dim.size(), encoder)
-                    .map_err(DecoderError::Backend)?,
-            )
+            Some(per_layer_embedding.encode(token_ids, ple_source, &embedded, batch_dim.size(), encoder)?)
         } else {
             None
         };

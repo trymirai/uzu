@@ -157,6 +157,24 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
     ) {
     }
 
+    fn encode_wait_for_event(
+        &mut self,
+        event: &<<MetalCommandBuffer as CommandBuffer>::Backend as crate::backends::common::Backend>::SharedEvent,
+        value: u64,
+    ) {
+        self.ensure_none();
+        self.command_buffer.encode_wait_for_event_value(event.as_ref(), value);
+    }
+
+    fn encode_signal_event(
+        &mut self,
+        event: &<<MetalCommandBuffer as CommandBuffer>::Backend as crate::backends::common::Backend>::SharedEvent,
+        value: u64,
+    ) {
+        self.ensure_none();
+        self.command_buffer.encode_signal_event_value(event.as_ref(), value);
+    }
+
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
         self.ensure_none();
 

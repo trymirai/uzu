@@ -9,7 +9,7 @@ mod hazard_tracker;
 pub mod kernel;
 
 pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
-pub use backend::Backend;
+pub use backend::{Backend, SharedEvent};
 pub use buffer::{
     Buffer, BufferGpuAddressRangeExt,
     arg::{BufferArg, BufferArgMut},

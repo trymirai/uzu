@@ -247,6 +247,10 @@ impl<'a, B: Backend> InstanceStream for UzuChatTokenStream<'a, B> {
     fn metrics(&self) -> Self::Metrics {
         Some(self.stream.metrics().clone())
     }
+
+    fn finish(self: Pin<&mut Self>) -> Result<(), BackendError> {
+        self.get_mut().stream.finish().map_err(|error| error.to_string().into())
+    }
 }
 
 unsafe impl<'a, B: Backend> Send for UzuChatTokenStream<'a, B> {}

@@ -109,6 +109,7 @@ pub struct Allocator<B: Backend> {
     context: Weak<B::Context>,
     allocator_buffers: RefCell<Vec<AllocatorBuffer<B>>>,
     next_pool_number: RefCell<usize>,
+    free_pool_numbers: RefCell<Vec<usize>>,
     peak_memory_usage: RefCell<usize>,
 }
 
@@ -118,6 +119,7 @@ impl<B: Backend> Allocator<B> {
             context,
             allocator_buffers: RefCell::new(Vec::new()),
             next_pool_number: RefCell::new(0),
+            free_pool_numbers: RefCell::new(Vec::new()),
             peak_memory_usage: RefCell::new(0),
         })
     }
@@ -189,9 +191,11 @@ impl<B: Backend> Allocator<B> {
         self: &Rc<Self>,
         reusable: bool,
     ) -> AllocationPool<B> {
-        let pool_number = *self.next_pool_number.borrow();
-
-        *self.next_pool_number.borrow_mut() += 1;
+        let pool_number = self.free_pool_numbers.borrow_mut().pop().unwrap_or_else(|| {
+            let pool_number = *self.next_pool_number.borrow();
+            *self.next_pool_number.borrow_mut() += 1;
+            pool_number
+        });
 
         AllocationPool {
             reusable,
@@ -242,6 +246,8 @@ impl<B: Backend> Allocator<B> {
         if allocator_buffers.len() > 1 {
             allocator_buffers.sort_by_key(|allocator_buffer| allocator_buffer.range_allocator.total_available());
         }
+        drop(allocator_buffers);
+        self.free_pool_numbers.borrow_mut().push(pool.pool_number);
     }
 
     fn restore_buffer_order(

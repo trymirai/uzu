@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::Backend,
-    encodable_block::decoder::DecoderError,
+    encodable_block::{decoder::DecoderError, per_layer_embedding::PerLayerEmbeddingError},
     engine::language_model::{
         LanguageModel,
         grammar::{Grammar, GrammarError},
@@ -33,8 +33,12 @@ pub struct LanguageModelStreamOptions<'a> {
 pub enum LanguageModelStreamError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
     #[error("Decoder error: {0}")]
     Decoder(#[from] DecoderError<B>),
+    #[error("Per-layer embedding error: {0}")]
+    PerLayerEmbedding(#[from] PerLayerEmbeddingError<B>),
     #[error("Grammar error: {0}")]
     Grammar(#[from] GrammarError),
     #[error("Speculators are not supported by this model")]
@@ -43,6 +47,8 @@ pub enum LanguageModelStreamError<B: Backend> {
     NoSeedToken,
     #[error("Context overflow")]
     ContextOverflow,
+    #[error("Language-model state is unusable after a previous stream failure")]
+    StatePoisoned,
 }
 
 impl<B: Backend> LanguageModel<B> {

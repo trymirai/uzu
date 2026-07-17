@@ -40,6 +40,10 @@ pub trait InstanceStream: Stream {
     type Metrics;
 
     fn metrics(&self) -> Self::Metrics;
+
+    fn finish(self: Pin<&mut Self>) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 pub struct NoMetricsStream<S, T> {

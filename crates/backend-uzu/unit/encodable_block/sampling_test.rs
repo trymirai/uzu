@@ -1,4 +1,7 @@
-use std::{iter::repeat_with, mem::MaybeUninit};
+use std::{
+    iter::repeat_with,
+    mem::{MaybeUninit, size_of},
+};
 
 use num_traits::{Float, NumCast};
 use proc_macros::uzu_test;
@@ -8,7 +11,7 @@ use rand_distr::Normal;
 
 use crate::{
     array::ArrayElement,
-    backends::common::{AllocationType, Backend, Context, Encoder, gpu_types::trie::TrieNode},
+    backends::common::{AllocationType, Backend, Context, DenseBuffer, Encoder, gpu_types::trie::TrieNode},
     data_type::DataType,
     dispatch_dtype,
     encodable_block::{
@@ -71,6 +74,7 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
     let batch_topology = BatchTopology::new(&nodes, true);
 
     let mut encoder = Encoder::new(context).unwrap();
+    let mut sample_readback = context.create_buffer(batch_size * size_of::<u32>()).unwrap();
     let sampled_allocation = sampling
         .encode(
             &logits_allocation,
@@ -81,12 +85,16 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
             method,
             &batch_topology,
             0..batch_size,
+            Some(&mut sample_readback),
             &mut encoder,
         )
         .unwrap();
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let sampled = sampled_allocation.copyout::<u32>();
+    let sample_readback =
+        unsafe { std::slice::from_raw_parts(sample_readback.cpu_ptr().as_ptr().cast::<u32>(), batch_size) };
+    prop_assert_eq!(&sampled, sample_readback);
 
     Ok(SamplingTestResults(sampled))
 }

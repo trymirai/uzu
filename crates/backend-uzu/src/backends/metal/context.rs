@@ -6,26 +6,22 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-#[cfg(test)]
-use metal::MTLSharedEvent;
 use metal::{
     MTL4CommandQueue, MTL4CommandQueueExt, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager,
     MTLCommandQueue, MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent,
-    MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
+    MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions, MTLSharedEvent, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{
-    Metal,
-    device_tier::{DeviceTier, device_tier_for_device},
-    error::MetalError,
-    kernel,
-    metal_extensions::{DeviceExt, LibraryPipelineExtensions},
-};
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
     metal::{
+        Metal,
         command_buffer::MetalCommandBufferInitial,
+        device_tier::{DeviceTier, device_tier_for_device},
+        error::MetalError,
+        kernel,
+        metal_extensions::{DeviceExt, LibraryPipelineExtensions},
         sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
     },
 };
@@ -191,6 +187,10 @@ impl Context for MetalContext {
             self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
             self.weak_self.upgrade().unwrap(), // never fails
         ))
+    }
+
+    fn create_shared_event(&self) -> Result<Retained<ProtocolObject<dyn MTLSharedEvent>>, MetalError> {
+        self.device.new_shared_event().ok_or(MetalError::CannotCreateEvent)
     }
 
     fn create_sparse_buffer(

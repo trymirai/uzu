@@ -7,7 +7,7 @@ use crate::{
     backends::{
         common::{
             AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
-            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, SharedEvent,
         },
         cpu::{Cpu, error::CpuError},
     },
@@ -108,6 +108,24 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         _after: AccessFlags,
         _before: AccessFlags,
     ) {
+    }
+
+    fn encode_wait_for_event(
+        &mut self,
+        event: &<<CpuCommandBuffer as CommandBuffer>::Backend as crate::backends::common::Backend>::SharedEvent,
+        value: u64,
+    ) {
+        let event = event.clone();
+        self.push_command(move || while !event.wait_until_signaled_value_timeout_ms(value, 1_000) {});
+    }
+
+    fn encode_signal_event(
+        &mut self,
+        event: &<<CpuCommandBuffer as CommandBuffer>::Backend as crate::backends::common::Backend>::SharedEvent,
+        value: u64,
+    ) {
+        let event = event.clone();
+        self.push_command(move || event.signal(value));
     }
 
     fn end_encoding(self) -> CpuCommandBufferExecutable {

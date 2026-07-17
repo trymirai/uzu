@@ -127,6 +127,7 @@ impl Session {
         };
 
         let instance = self.instance.as_ref();
+        let time_prefill_start = Instant::now();
         let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone());
 
         let stream_state = StreamingState {
@@ -139,7 +140,7 @@ impl Session {
 
             time_start,
             time_last_token: None,
-            time_prefill_start: Instant::now(),
+            time_prefill_start,
             time_first_token: None,
             total_tokens_input: self.input_tokens.len(),
             total_tokens_output: 0,
@@ -158,13 +159,32 @@ impl Session {
                     Some(event) => {
                         state.metrics = inner.metrics();
                         state.memory_usage = instance.peak_memory_usage();
-                        let output = Self::build_output(event, &mut state);
+                        let mut output = Self::build_output(event, &mut state);
                         let terminated = terminated || matches!(&output, Ok(out) if out.finish_reason.is_some());
-                        Some((output, (inner, state, terminated, false)))
+                        if terminated {
+                            if let Err(error) = inner.as_mut().finish() {
+                                output = Err(ChatSessionError::Backend {
+                                    message: error.to_string(),
+                                });
+                            }
+                            state.metrics = inner.metrics();
+                            state.memory_usage = instance.peak_memory_usage();
+                            if let Ok(output) = &mut output {
+                                output.stats = state.get_stats(true);
+                            }
+                        }
+                        Some((output, (inner, state, terminated, terminated)))
                     },
                     None => {
                         if !terminated && state.cancel_token.is_cancelled() {
-                            let output = Ok(Self::render_output(&state, Some(ChatReplyFinishReason::Cancelled)));
+                            let finish = inner.as_mut().finish();
+                            state.metrics = inner.metrics();
+                            state.memory_usage = instance.peak_memory_usage();
+                            let output = finish
+                                .map(|()| Self::render_output(&state, Some(ChatReplyFinishReason::Cancelled)))
+                                .map_err(|error| ChatSessionError::Backend {
+                                    message: error.to_string(),
+                                });
                             Some((output, (inner, state, true, true)))
                         } else {
                             None

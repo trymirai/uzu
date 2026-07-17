@@ -7,4 +7,4 @@ mod error;
 mod kernel;
 mod sparse;
 
-pub use backend::Cpu;
+pub use backend::{Cpu, CpuSharedEvent};

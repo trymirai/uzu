@@ -141,6 +141,22 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         }
     }
 
+    pub fn wait_for_event(
+        &mut self,
+        event: &B::SharedEvent,
+        value: u64,
+    ) {
+        self.command_buffer.encode_wait_for_event(event, value);
+    }
+
+    pub fn signal_event(
+        &mut self,
+        event: &B::SharedEvent,
+        value: u64,
+    ) {
+        self.command_buffer.encode_signal_event(event, value);
+    }
+
     pub fn as_command_buffer_mut(&mut self) -> &mut <B::CommandBuffer as CommandBuffer>::Encoding {
         &mut self.command_buffer
     }

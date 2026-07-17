@@ -15,6 +15,7 @@ use crate::{
 pub fn unified_sampling<T: ArrayElement + Float>(
     logits: *const T,
     output: *mut u32,
+    #[optional(has_sample_readback)] sample_readback: Option<*mut u32>,
     #[optional(is_stochastic)] seeds: Option<*const u64>,
     #[optional(has_bitmask)] bitmask: Option<*const u32>,
     #[optional(has_temperature)] temperature: Option<f32>,
@@ -29,7 +30,9 @@ pub fn unified_sampling<T: ArrayElement + Float>(
     #[specialize] has_top_k: bool,
     #[specialize] has_top_p: bool,
     #[specialize] has_min_p: bool,
+    #[specialize] has_sample_readback: bool,
 ) {
+    assert_eq!(sample_readback.is_some(), has_sample_readback);
     for batch_idx in 0..batch_size {
         let mut logits = unsafe {
             std::slice::from_raw_parts(logits.wrapping_add((vocab_size * batch_idx) as usize), vocab_size as usize)
@@ -94,6 +97,11 @@ pub fn unified_sampling<T: ArrayElement + Float>(
             .unwrap()
             .0;
 
-        unsafe { *output.wrapping_add(batch_idx as usize) = argmax as u32 }
+        unsafe {
+            *output.wrapping_add(batch_idx as usize) = argmax as u32;
+            if has_sample_readback {
+                *sample_readback.unwrap().wrapping_add(batch_idx as usize) = argmax as u32;
+            }
+        }
     }
 }

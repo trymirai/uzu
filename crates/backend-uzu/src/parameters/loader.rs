@@ -8,11 +8,11 @@ use half::{bf16, f16};
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use thiserror::Error;
 
-use super::safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata};
 use crate::{
     array::{ArrayElement, size_for_shape},
     backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, DenseBuffer},
     data_type::DataType,
+    parameters::safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata},
     utils::{fs::file_read_exact_at, strict_serde::DeserializeStrictOwned},
 };
 

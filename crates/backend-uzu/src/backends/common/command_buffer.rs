@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::{Backend, Buffer, BufferRangeMut, BufferRangeRef};
+use crate::backends::common::{Backend, Buffer, BufferRangeMut, BufferRangeRef};
 
 pub trait CommandBuffer {
     type Backend: Backend<CommandBuffer = Self>;
@@ -8,7 +8,7 @@ pub trait CommandBuffer {
     type Initial: CommandBufferInitial<CommandBuffer = Self>;
     type Encoding: CommandBufferEncoding<CommandBuffer = Self>;
     type Executable: CommandBufferExecutable<CommandBuffer = Self>;
-    type Pending: CommandBufferPending<CommandBuffer = Self>;
+    type Pending: CommandBufferPending<CommandBuffer = Self> + Unpin;
     type Completed: CommandBufferCompleted<CommandBuffer = Self>;
 }
 
@@ -89,6 +89,18 @@ pub trait CommandBufferEncoding {
         &mut self,
         after: AccessFlags,
         before: AccessFlags,
+    );
+
+    fn encode_wait_for_event(
+        &mut self,
+        event: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::SharedEvent,
+        value: u64,
+    );
+
+    fn encode_signal_event(
+        &mut self,
+        event: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::SharedEvent,
+        value: u64,
     );
 
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
