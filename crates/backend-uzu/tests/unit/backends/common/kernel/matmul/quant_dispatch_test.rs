@@ -507,6 +507,8 @@ fn mxu_quant_parity_bf16(
 #[case::asym_sym_gs32(96, 256, 100, 32, ActivationQuantScheme::Asymmetric, QuantizationMethod::ScaleSymmetric)]
 #[case::asym_zp_gs32(64, 256, 64, 32, ActivationQuantScheme::Asymmetric, QuantizationMethod::ScaleZeroPoint)]
 #[case::sym_zp_gs64(64, 256, 64, 64, ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleZeroPoint)]
+#[case::small_m1_sym(1, 2048, 2048, 64, ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleSymmetric)]
+#[case::small_m8_sym(8, 2048, 2048, 64, ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleSymmetric)]
 fn a8w8_mxu_parity_bf16(
     #[case] m: usize,
     #[case] k: usize,

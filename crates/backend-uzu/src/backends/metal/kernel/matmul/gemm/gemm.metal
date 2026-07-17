@@ -89,7 +89,10 @@ CONSTRAINT(
 CONSTRAINT(
     !(GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
       GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4) ||
-    (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::FullPrecision))
+    (TRANSPOSE_B &&
+     (B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
+      A_PROLOGUE == GemmAPrologueKind::Int8Symmetric ||
+      A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric)))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || BITS == 8)
 CONSTRAINT(

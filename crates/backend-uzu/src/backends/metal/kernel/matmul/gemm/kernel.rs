@@ -170,8 +170,17 @@ impl GemmKernel {
                 if !arguments.b_transpose || arguments.b_leading_dimension.is_some() {
                     return None;
                 }
-                let tiling = select_mxu_quant_tiling(arguments.m, arguments.n, arguments.b.group_size().unwrap_or(0));
-                arguments.k.is_multiple_of(tiling.block_k()).then_some(tiling)
+                let group_size = arguments.b.group_size().unwrap_or(0);
+                let tiling = if arguments.a.is_int8() {
+                    select_mxu_a8w8_tiling(arguments.m, arguments.n, arguments.k, group_size)
+                } else {
+                    select_mxu_quant_tiling(arguments.m, arguments.n, group_size)
+                };
+                if arguments.a.is_int8() {
+                    (group_size != 0 && arguments.k.is_multiple_of(group_size)).then_some(tiling)
+                } else {
+                    arguments.k.is_multiple_of(tiling.block_k()).then_some(tiling)
+                }
             },
         }
     }
@@ -306,17 +315,23 @@ impl GemmKernel {
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
 
                 if b_transpose && b_leading_dimension.is_none() {
-                    let split_k = select_split_k(m, n, k, tiling, use_mxu, 0, true, false);
+                    let split_k = select_split_k(m, n, k, tiling, use_mxu, 0, true, false, 512);
                     if split_k > 1
                         && split_k_output_supported(output_transform, n, self.weights_data_type, self.output_data_type)
                     {
                         return self.encode_split_k(
-                            a,
+                            Some(a),
                             a_offset,
                             weights,
                             None,
                             None,
                             None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            GemmAPrologueKind::FullPrecision,
                             &mut *d,
                             m,
                             n,
@@ -500,8 +515,14 @@ impl GemmKernel {
                     },
                 };
 
+                let a_is_int8 =
+                    matches!(a_prologue, GemmAPrologueKind::Int8Symmetric | GemmAPrologueKind::Int8Asymmetric);
                 let tiling = if use_mxu {
-                    select_mxu_quant_tiling(m, n, group_size.unwrap_or(0))
+                    if a_is_int8 {
+                        select_mxu_a8w8_tiling(m, n, k, group_size.unwrap_or(0))
+                    } else {
+                        select_mxu_quant_tiling(m, n, group_size.unwrap_or(0))
+                    }
                 } else {
                     select_quant_tiling(m, n, group_size.unwrap_or(0))
                 };
@@ -512,23 +533,39 @@ impl GemmKernel {
                 let group_count_y = m.div_ceil(tiling.block_m());
 
                 let zero_point_4bit = zero_points.is_some() && bits_per_b == Some(4);
-                let a_is_int8 =
-                    matches!(a_prologue, GemmAPrologueKind::Int8Symmetric | GemmAPrologueKind::Int8Asymmetric);
-                let split_k = if a_is_int8 {
-                    1
+                // A8W8 kernels are cheaper per tile; a lower target avoids oversplitting MN-heavy shapes.
+                let split_k_target = if a_is_int8 {
+                    128
                 } else {
-                    select_split_k(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), false, zero_point_4bit)
+                    512
                 };
+                let split_k = select_split_k(
+                    m,
+                    n,
+                    k,
+                    tiling,
+                    use_mxu,
+                    group_size.unwrap_or(0),
+                    false,
+                    zero_point_4bit,
+                    split_k_target,
+                );
                 if split_k > 1
                     && split_k_output_supported(output_transform, n, self.weights_data_type, self.output_data_type)
                 {
                     return self.encode_split_k(
-                        a.expect("split-K only supports full-precision activations"),
+                        a,
                         a_offset,
                         weights,
                         scales,
                         biases,
                         zero_points,
+                        a_int8,
+                        a_scales,
+                        a_zero_points,
+                        a_row_sums,
+                        b_col_sums,
+                        a_prologue,
                         &mut *d,
                         m,
                         n,
@@ -590,12 +627,18 @@ impl GemmKernel {
     #[allow(clippy::too_many_arguments)]
     fn encode_split_k<'a, WB: BufferArg<'a, Metal>>(
         &mut self,
-        a: &Allocation<Metal>,
+        a: Option<&Allocation<Metal>>,
         a_offset: usize,
         weights: WB,
         scales: Option<&Allocation<Metal>>,
         biases: Option<&Allocation<Metal>>,
         zero_points: Option<&Allocation<Metal>>,
+        a_int8: Option<&Allocation<Metal>>,
+        a_scales: Option<&Allocation<Metal>>,
+        a_zero_points: Option<&Allocation<Metal>>,
+        a_row_sums: Option<&Allocation<Metal>>,
+        b_col_sums: Option<&Allocation<Metal>>,
+        a_prologue: GemmAPrologueKind,
         d: &mut Allocation<Metal>,
         m: u32,
         n: u32,
@@ -629,7 +672,7 @@ impl GemmKernel {
             b_prologue,
             bits_per_b,
             group_size,
-            a_prologue: GemmAPrologueKind::FullPrecision,
+            a_prologue,
         };
         part_spec.validate()?;
 
@@ -652,7 +695,7 @@ impl GemmKernel {
         };
         let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
         part_kernel.encode(
-            Some((a, a_offset)),
+            a.map(|values| (values, a_offset)),
             weights,
             &mut temp,
             scales,
@@ -660,11 +703,11 @@ impl GemmKernel {
             zero_points,
             None::<&Allocation<Metal>>,
             None::<&Allocation<Metal>>,
-            None::<&Allocation<Metal>>,
-            None::<&Allocation<Metal>>,
-            None::<&Allocation<Metal>>,
-            None::<&Allocation<Metal>>,
-            None::<&Allocation<Metal>>,
+            a_int8,
+            a_scales,
+            a_zero_points,
+            a_row_sums,
+            b_col_sums,
             std::slice::from_ref(&params),
             base_gx,
             base_gy,
@@ -757,6 +800,7 @@ fn select_split_k(
     group_size: u32,
     full_precision: bool,
     zero_point_4bit: bool,
+    target_tiles: u32,
 ) -> u32 {
     let base_tiles = n.div_ceil(tiling.block_n()) * m.div_ceil(tiling.block_m());
     if base_tiles == 0 {
@@ -765,7 +809,7 @@ fn select_split_k(
     if !((m as u64) * (n as u64)).is_multiple_of(4) {
         return 1;
     }
-    let mut split_k = (512 / base_tiles).max(1);
+    let mut split_k = (target_tiles / base_tiles).max(1);
     let step = match split_k_step(tiling, use_mxu, group_size, full_precision) {
         Some(s) => s,
         None => return 1,
@@ -856,6 +900,34 @@ pub(crate) fn select_mxu_quant_tiling(
     group_size: u32,
 ) -> GemmTiling {
     let tiling = select_base_mxu_tiling(m, n);
+    if tiling.fits_quant_group_size(group_size) {
+        tiling
+    } else {
+        GemmTiling::Tile64x64x256_Simdgroups2x2
+    }
+}
+
+pub(crate) fn select_mxu_a8w8_tiling(
+    m: u32,
+    n: u32,
+    k: u32,
+    group_size: u32,
+) -> GemmTiling {
+    let tiling = if m < 64 && n >= 64 {
+        if n == k {
+            if m < 16 && k <= 2560 {
+                GemmTiling::Tile16x32x256_Simdgroups1x1
+            } else {
+                GemmTiling::Tile32x64x256_Simdgroups2x2
+            }
+        } else if m < 16 {
+            select_small_m_mxu_tiling(n, k)
+        } else {
+            select_base_mxu_tiling(m, n)
+        }
+    } else {
+        select_base_mxu_tiling(m, n)
+    };
     if tiling.fits_quant_group_size(group_size) {
         tiling
     } else {
