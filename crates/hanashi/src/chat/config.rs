@@ -16,14 +16,16 @@ pub enum EncodingConfig {
     },
 }
 
-#[allow(dead_code)]
-pub fn encoding_config_capabilities(config: &EncodingConfig) -> Result<ChatModelCapabilities, Error> {
-    match config {
-        EncodingConfig::Hanashi {
-            config,
-        } => config.capabilities().map_err(Error::from),
-        EncodingConfig::Harmony {
-            config,
-        } => Ok(config.capabilities()),
+impl EncodingConfig {
+    #[allow(dead_code)]
+    fn capabilities(&self) -> Result<ChatModelCapabilities, Error> {
+        match self {
+            EncodingConfig::Hanashi {
+                config,
+            } => config.capabilities().map_err(Error::from),
+            EncodingConfig::Harmony {
+                config,
+            } => Ok(config.capabilities()),
+        }
     }
 }

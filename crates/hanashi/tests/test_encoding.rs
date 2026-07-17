@@ -4,7 +4,9 @@ use std::collections::HashMap;
 
 use hanashi::{
     Encoding as EncodingTrait,
-    chat::{Context, Encoding, TokenizerLocation},
+    chat::{
+        Context, Encoding, EncodingConfig, TokenizerLocation, hanashi::config::HanashiConfig, harmony::HarmonyConfig,
+    },
 };
 use helpers::{
     build_messages, load_registry, load_response_test_data, load_tokenizer, normalize_pattern, response_path,
@@ -12,7 +14,6 @@ use helpers::{
 };
 use shoji::types::{
     basic::ReasoningEffort,
-    model::{EncodingConfig, HanashiConfig, HarmonyConfig},
     session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
 
