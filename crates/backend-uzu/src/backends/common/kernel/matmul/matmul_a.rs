@@ -8,14 +8,14 @@ pub enum MatmulA<'a, B: Backend> {
     Int8Symmetric {
         values: &'a Allocation<B>,
         scales: &'a Allocation<B>,
-        row_sums: &'a Allocation<B>,
+        row_sums: Option<&'a Allocation<B>>,
         group_size: u32,
     },
     Int8Asymmetric {
         values: &'a Allocation<B>,
         scales: &'a Allocation<B>,
         zero_points: &'a Allocation<B>,
-        row_sums: &'a Allocation<B>,
+        row_sums: Option<&'a Allocation<B>>,
         b_col_sums: &'a Allocation<B>,
         group_size: u32,
     },

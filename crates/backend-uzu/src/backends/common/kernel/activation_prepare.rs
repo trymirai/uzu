@@ -113,7 +113,7 @@ pub fn quantize_asymmetric_i8(
 }
 
 pub fn compute_b_col_sums(
-    weights: &[u8],
+    signed_weights: &[u8],
     n: usize,
     k: usize,
     group_size: usize,
@@ -126,10 +126,14 @@ pub fn compute_b_col_sums(
             let end = (start + group_size).min(k);
             let mut sum = 0i32;
             for inner in start..end {
-                sum += i32::from((weights[col * k + inner] ^ 0x80) as i8);
+                sum += i32::from(signed_weights[col * k + inner] as i8);
             }
             sums[col * groups + group] = sum;
         }
     }
     sums
+}
+
+pub fn pack_signed_weight_codes(weights: &[u8]) -> Vec<u8> {
+    weights.iter().map(|code| code ^ 0x80).collect()
 }

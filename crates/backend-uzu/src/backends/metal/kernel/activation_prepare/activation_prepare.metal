@@ -17,7 +17,7 @@ PUBLIC KERNEL(ActivationsPrepare)(
     const device InputT* input,
     device int8_t* q_out OPTIONAL(ops.contains(ActivationPrepareOps::QUANTIZE)),
     device float* scales_out OPTIONAL(ops.contains(ActivationPrepareOps::QUANTIZE)),
-    device int32_t* row_sums_out OPTIONAL(ops.contains(ActivationPrepareOps::QUANTIZE)),
+    device int32_t* row_sums_out OPTIONAL(ops.contains(ActivationPrepareOps::ROW_SUMS)),
     device int8_t* zero_points_out OPTIONAL(ops.contains(ActivationPrepareOps::ASYMMETRIC)),
     const device int32_t* rht_factors OPTIONAL(ops.contains(ActivationPrepareOps::INPUT_RHT)),
     constant uint& batch_size,
@@ -35,12 +35,13 @@ PUBLIC KERNEL(ActivationsPrepare)(
   }
 
   const bool asymmetric = ops.contains(ActivationPrepareOps::ASYMMETRIC);
+  const bool emit_row_sums = ops.contains(ActivationPrepareOps::ROW_SUMS);
   const uint row_offset = batch_idx * element_count;
   const device InputT* row_input = input + row_offset;
   device int8_t* row_q = q_out + row_offset;
   const uint groups = (element_count + group_size - 1u) / group_size;
   device float* row_scales = scales_out + batch_idx * groups;
-  device int32_t* row_sums = row_sums_out + batch_idx * groups;
+  device int32_t* row_sums = emit_row_sums ? (row_sums_out + batch_idx * groups) : nullptr;
   device int8_t* row_zero_points = asymmetric ? (zero_points_out + batch_idx * groups) : nullptr;
 
   for (uint group = 0; group < groups; ++group) {
@@ -143,14 +144,18 @@ PUBLIC KERNEL(ActivationsPrepare)(
             INT8_SYMMETRIC_QUANTIZATION_MAXIMUM));
       }
       row_q[i] = q;
-      thread_row_sum += static_cast<int>(q);
+      if (emit_row_sums) {
+        thread_row_sum += static_cast<int>(q);
+      }
     }
 
-    const int group_sum = static_cast<int>(threadgroup_cooperative_reduce<
-        SimdReduceSum<float>,
-        ACTIVATION_PREPARE_BLOCK_SIZE>(static_cast<float>(thread_row_sum), shared_reduce, thread_context));
-    if (thread_in_row == 0) {
-      row_sums[group] = group_sum;
+    if (emit_row_sums) {
+      const int group_sum = static_cast<int>(threadgroup_cooperative_reduce<
+          SimdReduceSum<float>,
+          ACTIVATION_PREPARE_BLOCK_SIZE>(static_cast<float>(thread_row_sum), shared_reduce, thread_context));
+      if (thread_in_row == 0) {
+        row_sums[group] = group_sum;
+      }
     }
   }
 }

@@ -18,6 +18,7 @@ struct ActivationPrepareOps {
   static constant constexpr uint INPUT_RHT = 1 << 0;
   static constant constexpr uint QUANTIZE = 1 << 1;
   static constant constexpr uint ASYMMETRIC = 1 << 2;
+  static constant constexpr uint ROW_SUMS = 1 << 3;
   constexpr bool contains(uint flag) const thread { return (raw_value & flag) != 0; }
   constexpr bool contains(uint flag) const constant { return (raw_value & flag) != 0; }
   constexpr uint bits() const thread { return raw_value; }

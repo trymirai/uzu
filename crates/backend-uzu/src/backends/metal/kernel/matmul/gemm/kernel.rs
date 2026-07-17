@@ -449,13 +449,20 @@ impl GemmKernel {
                             }
                             .into());
                         }
+                        if matches!(b_prologue, GemmBPrologueKind::ScaleZeroPointDequant) && row_sums.is_none() {
+                            return Err(MatmulError::IncompatibleA {
+                                path: "Gemm",
+                                reason: "int8 activations with ZP weights require row_sums",
+                            }
+                            .into());
+                        }
                         (
                             None,
                             0,
                             Some(values),
                             Some(a_scales),
                             None,
-                            Some(row_sums),
+                            row_sums,
                             None,
                             GemmAPrologueKind::Int8Symmetric,
                         )
@@ -482,13 +489,20 @@ impl GemmKernel {
                             }
                             .into());
                         }
+                        if matches!(b_prologue, GemmBPrologueKind::ScaleZeroPointDequant) && row_sums.is_none() {
+                            return Err(MatmulError::IncompatibleA {
+                                path: "Gemm",
+                                reason: "int8 activations with ZP weights require row_sums",
+                            }
+                            .into());
+                        }
                         (
                             None,
                             0,
                             Some(values),
                             Some(a_scales),
                             Some(a_zero_points),
-                            Some(row_sums),
+                            row_sums,
                             Some(b_col_sums),
                             GemmAPrologueKind::Int8Asymmetric,
                         )

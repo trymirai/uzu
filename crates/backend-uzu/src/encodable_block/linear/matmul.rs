@@ -238,12 +238,22 @@ impl<B: Backend> LinearMatmul<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        self.encode_with_a_b(a, &self.weights, batch_dim, encoder)
+    }
+
+    pub(crate) fn encode_with_a_b(
+        &self,
+        a: MatmulA<'_, B>,
+        b_weights: &Allocation<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
         let b = match &self.mode {
             Mode::FullPrecision => MatmulB::FullPrecision {
-                b: &self.weights,
+                b: b_weights,
             },
             Mode::Quantized {
                 method,
@@ -254,14 +264,14 @@ impl<B: Backend> LinearMatmul<B> {
                 ..
             } => match method {
                 QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
-                    b: &self.weights,
+                    b: b_weights,
                     scales,
                     biases: zero_points_or_biases.as_ref().expect("ScaleBias quantization requires biases"),
                     mode: *mode,
                     group_size: *group_size,
                 },
                 QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
-                    b: &self.weights,
+                    b: b_weights,
                     scales,
                     zero_points: zero_points_or_biases
                         .as_ref()
@@ -270,7 +280,7 @@ impl<B: Backend> LinearMatmul<B> {
                     group_size: *group_size,
                 },
                 QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
-                    b: &self.weights,
+                    b: b_weights,
                     scales,
                     mode: *mode,
                     group_size: *group_size,

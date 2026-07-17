@@ -37,7 +37,7 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     input: *const InputT,
     #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] q_out: Option<*mut i8>,
     #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] scales_out: Option<*mut f32>,
-    #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] row_sums_out: Option<*mut i32>,
+    #[optional(ops.contains(ActivationPrepareOps::ROW_SUMS))] row_sums_out: Option<*mut i32>,
     #[optional(ops.contains(ActivationPrepareOps::ASYMMETRIC))] zero_points_out: Option<*mut i8>,
     #[optional(ops.contains(ActivationPrepareOps::INPUT_RHT))] rht_factors: Option<*const i32>,
     batch_size: u32,
@@ -54,14 +54,15 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     assert_eq!(rht_factors.is_some(), ops.contains(ActivationPrepareOps::INPUT_RHT));
     assert_eq!(q_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
     assert_eq!(scales_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
-    assert_eq!(row_sums_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
+    let emit_row_sums = ops.contains(ActivationPrepareOps::ROW_SUMS);
+    assert_eq!(row_sums_out.is_some(), emit_row_sums);
     let asymmetric = ops.contains(ActivationPrepareOps::ASYMMETRIC);
     assert_eq!(zero_points_out.is_some(), asymmetric);
-    if asymmetric {
+    if asymmetric || emit_row_sums {
         assert!(ops.contains(ActivationPrepareOps::QUANTIZE));
     }
 
-    let (Some(q_out), Some(scales_out), Some(row_sums_out)) = (q_out, scales_out, row_sums_out) else {
+    let (Some(q_out), Some(scales_out)) = (q_out, scales_out) else {
         return;
     };
 
@@ -96,7 +97,9 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
                     unsafe { *q_out.add(row * columns + index) = q };
                     row_sum += q as i32;
                 }
-                unsafe { *row_sums_out.add(row * groups + group) = row_sum };
+                if emit_row_sums {
+                    unsafe { *row_sums_out.unwrap().add(row * groups + group) = row_sum };
+                }
             } else {
                 let divisor = symmetric_divisor(group_stat(slice, stat));
                 unsafe { *scales_out.add(row * groups + group) = divisor };
@@ -106,7 +109,9 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
                     unsafe { *q_out.add(row * columns + index) = q };
                     row_sum += q as i32;
                 }
-                unsafe { *row_sums_out.add(row * groups + group) = row_sum };
+                if emit_row_sums {
+                    unsafe { *row_sums_out.unwrap().add(row * groups + group) = row_sum };
+                }
             }
         }
     }

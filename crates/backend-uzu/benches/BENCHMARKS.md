@@ -61,19 +61,21 @@ cargo dinghy -d "$ECID" bench -p backend-uzu --bench main -- "Metal/Kernel/A8W8"
 If dinghy’s launch step fails after install, launch the installed app with
 `xcrun devicectl device process launch --console --terminate-existing --device <UUID> org.zoy.kali.Dinghy …`.
 
-## A8W8 vs ordinary MXU (`Metal/Kernel/A8W8`)
+## RHT A8W8 vs RHT ABF16W8 (`Metal/Kernel/A8W8`)
 
-[`benches/kernels/a8w8_bench.rs`](kernels/a8w8_bench.rs) compares two MXU paths over
-the same random buffers and shapes (Criterion [comparing functions](https://bheisler.github.io/criterion.rs/book/user_guide/comparing_functions.html)):
+[`benches/kernels/a8w8_bench.rs`](kernels/a8w8_bench.rs) is the **primary KPI**: full RHT-enabled
+linear on both sides, same W8 weights, GPU timestamps.
 
-| Function id | What it times |
-|-------------|----------------|
-| `mxu_a8w8`  | fused RHT+quantize prepare + int8×int8 MXU GEMM |
-| `mxu_bf16`  | input RHT + bf16×dequant-B MXU GEMM |
+| Function id | Timed work |
+|-------------|------------|
+| `linear_a8w8` | Dyn act prepare (`RHT + quant`) + int8×W8 MXU GEMM |
+| `linear_abf16w8` | Input RHT + BF16×W8 MXU GEMM (scale-symmetric dequant B) |
+
+Activation quantization is **runtime-only** on the A8W8 arm. Weights, scales, and RHT
+signs are preloaded. Both arms share the same shapes and RHT factors.
 
 Correctness is covered only by unit tests (`a8w8_*`), not by this bench. On non-MXU
-GPUs the group self-skips. Open Criterion’s HTML report for per-shape violin/line
-comparison of the two IDs.
+GPUs the group self-skips.
 
 ## Viewing reports (macOS)
 

@@ -9,7 +9,7 @@ use crate::{
         },
         kernel::{
             ActivationPrepareConfig, ActivationsPrepareKernel, HadamardTransformKernel, Kernels, compute_b_col_sums,
-            matmul::MatmulA,
+            matmul::MatmulA, pack_signed_weight_codes,
         },
     },
     config::weight_matrix::{
@@ -43,6 +43,8 @@ struct Int8Preparation<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationsPrepareKernel,
     group_size: u32,
     scheme: Int8Scheme<B>,
+    signed_weights: Allocation<B>,
+    needs_row_sums: bool,
 }
 
 pub struct RHTLinearWrapper<B: Backend> {
@@ -120,17 +122,35 @@ impl<B: Backend> RHTLinearWrapper<B> {
         let int8_preparation = if let Some(group_size) =
             activation_prepare_group_size(activation_prepare, input_dimension, &quantization_spec)
         {
+            let AnyWeightMatrixSpec::IntSpec(IntSpec {
+                is_symmetric: weights_symmetric,
+                ..
+            }) = &quantization_spec
+            else {
+                return Err(RHTLinearWrapperError::UnsupportedConfiguration(format!("{quantization_spec:?}")));
+            };
+            let needs_row_sums = !*weights_symmetric;
+
+            let weights = quantized_weights_tree
+                .leaf("weights")?
+                .validate(&[output_dimension, input_dimension], DataType::U8)?
+                .read_allocation()?;
+            let host = weights.copyout::<u8>();
+            let signed = pack_signed_weight_codes(&host);
+            let mut signed_weights = context
+                .create_allocation(signed.len(), AllocationType::Global)
+                .map_err(RHTLinearWrapperError::BackendError)?;
+            signed_weights.copyin(&signed);
+
             let mut ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
+            if needs_row_sums {
+                ops |= ActivationPrepareOps::ROW_SUMS;
+            }
             let scheme = match activation_prepare.scheme {
                 ActivationQuantScheme::Symmetric => Int8Scheme::Symmetric,
                 ActivationQuantScheme::Asymmetric => {
                     ops |= ActivationPrepareOps::ASYMMETRIC;
-                    let weights = quantized_weights_tree
-                        .leaf("weights")?
-                        .validate(&[output_dimension, input_dimension], DataType::U8)?
-                        .read_allocation()?;
-                    let host = weights.copyout::<u8>();
-                    let sums = compute_b_col_sums(&host, output_dimension, input_dimension, group_size as usize);
+                    let sums = compute_b_col_sums(&signed, output_dimension, input_dimension, group_size as usize);
                     let mut b_col_sums = context
                         .create_allocation(sums.len() * size_of::<i32>(), AllocationType::Global)
                         .map_err(RHTLinearWrapperError::BackendError)?;
@@ -149,6 +169,8 @@ impl<B: Backend> RHTLinearWrapper<B> {
                 kernel,
                 group_size,
                 scheme,
+                signed_weights,
+                needs_row_sums,
             })
         } else {
             None
@@ -191,7 +213,11 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::F32))?;
-            let mut row_sums = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::I32))?;
+            let mut row_sums = if preparation.needs_row_sums {
+                Some(encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::I32))?)
+            } else {
+                None
+            };
 
             return match &preparation.scheme {
                 Int8Scheme::Symmetric => {
@@ -199,7 +225,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                         &input,
                         Some(&mut values),
                         Some(&mut scales),
-                        Some(&mut row_sums),
+                        row_sums.as_mut(),
                         None::<&mut Allocation<B>>,
                         Some(&self.input_factors),
                         batch_dim as u32,
@@ -207,13 +233,14 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                         preparation.group_size,
                         encoder,
                     );
-                    self.inner_linear.encode_with_a(
+                    self.inner_linear.encode_with_a_b(
                         MatmulA::Int8Symmetric {
                             values: &values,
                             scales: &scales,
-                            row_sums: &row_sums,
+                            row_sums: row_sums.as_ref(),
                             group_size: preparation.group_size,
                         },
+                        &preparation.signed_weights,
                         batch_dim,
                         encoder,
                     )
@@ -225,7 +252,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                         &input,
                         Some(&mut values),
                         Some(&mut scales),
-                        Some(&mut row_sums),
+                        row_sums.as_mut(),
                         Some(&mut zero_points),
                         Some(&self.input_factors),
                         batch_dim as u32,
@@ -233,15 +260,16 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                         preparation.group_size,
                         encoder,
                     );
-                    self.inner_linear.encode_with_a(
+                    self.inner_linear.encode_with_a_b(
                         MatmulA::Int8Asymmetric {
                             values: &values,
                             scales: &scales,
                             zero_points: &zero_points,
-                            row_sums: &row_sums,
+                            row_sums: row_sums.as_ref(),
                             b_col_sums,
                             group_size: preparation.group_size,
                         },
+                        &preparation.signed_weights,
                         batch_dim,
                         encoder,
                     )

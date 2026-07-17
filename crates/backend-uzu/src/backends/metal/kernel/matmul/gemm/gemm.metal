@@ -12,7 +12,10 @@ using namespace metal;
 using namespace uzu::gemm;
 using namespace uzu::activation_prepare;
 
-#define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision)
+#define A_IS_INT8                                                                                                      \
+  (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric || A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric)
+#define GEMM_MXU_QUANT                                                                                                 \
+  (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_TGB_ELEMENTS                                                                                              \
@@ -97,8 +100,6 @@ CONSTRAINT(
      (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant ||
       B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant)))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
-#define A_IS_INT8                                                                                                      \
-  (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric || A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric)
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
     const device BT* b,
@@ -117,7 +118,8 @@ KERNEL(Gemm)(
     const device float* a_scales OPTIONAL(A_IS_INT8),
     const device int8_t* a_zero_points
         OPTIONAL(A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric),
-    const device int32_t* a_row_sums OPTIONAL(A_IS_INT8),
+    const device int32_t* a_row_sums
+        OPTIONAL(A_IS_INT8 && B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
     const device int32_t* b_col_sums
         OPTIONAL(A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric),
     const constant uzu::matmul::GemmParams* params,

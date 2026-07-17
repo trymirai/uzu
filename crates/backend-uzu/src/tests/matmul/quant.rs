@@ -14,7 +14,7 @@ use crate::{
             kernel::{
                 Kernels, asymmetric_scale_zero_point, compute_b_col_sums, group_stat,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
-                quantize_asymmetric_i8, quantize_symmetric_i8, symmetric_divisor,
+                pack_signed_weight_codes, quantize_asymmetric_i8, quantize_symmetric_i8, symmetric_divisor,
             },
         },
         cpu::Cpu,
@@ -178,7 +178,8 @@ impl<T: ArrayElement + Float> QuantInput<T> {
 
         let b_col_sums = if scheme == ActivationQuantScheme::Asymmetric {
             let weights = unpack_u8_weights(&self.w_packed, self.n as usize, self.k as usize);
-            Some(compute_b_col_sums(&weights, self.n as usize, self.k as usize, group_size))
+            let signed = pack_signed_weight_codes(&weights);
+            Some(compute_b_col_sums(&signed, self.n as usize, self.k as usize, group_size))
         } else {
             None
         };
@@ -223,8 +224,17 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         context: &B::Context,
         input: &QuantInput<T>,
     ) -> Self {
+        let w_packed = if input.prepared_a.is_some() {
+            let mut packed = input.w_packed.clone();
+            for word in &mut packed {
+                *word ^= 0x8080_8080;
+            }
+            packed
+        } else {
+            input.w_packed.clone()
+        };
         Self {
-            w: alloc_allocation_with_data::<B, u32>(context, &input.w_packed),
+            w: alloc_allocation_with_data::<B, u32>(context, &w_packed),
             scales: alloc_allocation_with_data::<B, T>(context, &input.scales),
             zp: input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(context, zp)),
             bias: input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(context, b)),
@@ -243,10 +253,10 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
                     .as_ref()
                     .map(|zero_points| alloc_allocation_with_data::<B, i8>(context, zero_points))
             }),
-            prepared_a_row_sums: input
-                .prepared_a
-                .as_ref()
-                .map(|prepared| alloc_allocation_with_data::<B, i32>(context, &prepared.row_sums)),
+            prepared_a_row_sums: input.prepared_a.as_ref().and_then(|prepared| {
+                (input.quant_method == QuantizationMethod::ScaleZeroPoint)
+                    .then(|| alloc_allocation_with_data::<B, i32>(context, &prepared.row_sums))
+            }),
             b_col_sums: input.prepared_a.as_ref().and_then(|prepared| {
                 prepared.b_col_sums.as_ref().map(|sums| alloc_allocation_with_data::<B, i32>(context, sums))
             }),
@@ -287,14 +297,14 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
             ActivationQuantScheme::Symmetric => MatmulA::Int8Symmetric {
                 values: buffers.prepared_a.as_ref().expect("prepared activation buffer"),
                 scales: buffers.prepared_a_scales.as_ref().expect("prepared activation scales"),
-                row_sums: buffers.prepared_a_row_sums.as_ref().expect("prepared activation row sums"),
+                row_sums: buffers.prepared_a_row_sums.as_ref(),
                 group_size: prepared.group_size,
             },
             ActivationQuantScheme::Asymmetric => MatmulA::Int8Asymmetric {
                 values: buffers.prepared_a.as_ref().expect("prepared activation buffer"),
                 scales: buffers.prepared_a_scales.as_ref().expect("prepared activation scales"),
                 zero_points: buffers.prepared_a_zero_points.as_ref().expect("prepared activation zero points"),
-                row_sums: buffers.prepared_a_row_sums.as_ref().expect("prepared activation row sums"),
+                row_sums: buffers.prepared_a_row_sums.as_ref(),
                 b_col_sums: buffers.b_col_sums.as_ref().expect("b_col_sums"),
                 group_size: prepared.group_size,
             },

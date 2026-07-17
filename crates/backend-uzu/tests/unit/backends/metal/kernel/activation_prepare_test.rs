@@ -128,7 +128,7 @@ fn run_metal(
     } else {
         None
     };
-    let mut ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
+    let mut ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE | ActivationPrepareOps::ROW_SUMS;
     if scheme == ActivationQuantScheme::Asymmetric {
         ops |= ActivationPrepareOps::ASYMMETRIC;
     }
