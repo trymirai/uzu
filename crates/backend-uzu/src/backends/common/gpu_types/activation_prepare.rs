@@ -1,10 +1,8 @@
 use bitflags::bitflags;
 use derive_more::Display;
 
-/// Largest magnitude representable by symmetric int8 quantization.
 pub const INT8_SYMMETRIC_QUANTIZATION_MAXIMUM: f32 = 127.0;
 
-/// Inclusive asymmetric int8 bounds as magnitudes (signed min is `-MINIMUM_MAGNITUDE`).
 pub const INT8_ASYMMETRIC_QUANTIZATION_MINIMUM_MAGNITUDE: f32 = 128.0;
 pub const INT8_ASYMMETRIC_QUANTIZATION_MAXIMUM: f32 = 127.0;
 

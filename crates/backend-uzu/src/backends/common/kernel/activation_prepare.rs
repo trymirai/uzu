@@ -14,25 +14,6 @@ pub struct ActivationPrepareConfig {
 }
 
 impl ActivationPrepareConfig {
-    pub const fn disabled() -> Self {
-        Self {
-            enabled: false,
-            scheme: ActivationQuantScheme::Symmetric,
-            statistic: ActivationScaleStatistic::AbsMax,
-        }
-    }
-
-    pub const fn new(
-        scheme: ActivationQuantScheme,
-        statistic: ActivationScaleStatistic,
-    ) -> Self {
-        Self {
-            enabled: true,
-            scheme,
-            statistic,
-        }
-    }
-
     pub const fn supports_group_size(
         self,
         group_size: usize,
@@ -43,7 +24,11 @@ impl ActivationPrepareConfig {
 
 impl Default for ActivationPrepareConfig {
     fn default() -> Self {
-        Self::disabled()
+        Self {
+            enabled: false,
+            scheme: ActivationQuantScheme::Symmetric,
+            statistic: ActivationScaleStatistic::AbsMax,
+        }
     }
 }
 
@@ -60,11 +45,11 @@ pub fn group_stat(
     }
 }
 
-pub fn group_min_max(values: &[f32]) -> (f32, f32) {
+fn group_min_max(values: &[f32]) -> (f32, f32) {
     values.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), &value| (min.min(value), max.max(value)))
 }
 
-pub fn group_mean(values: &[f32]) -> f32 {
+fn group_mean(values: &[f32]) -> f32 {
     let count = values.len().max(1) as f32;
     values.iter().sum::<f32>() / count
 }
@@ -84,7 +69,6 @@ pub fn quantize_symmetric_i8(
     (value / divisor).round().clamp(-INT8_SYMMETRIC_QUANTIZATION_MAXIMUM, INT8_SYMMETRIC_QUANTIZATION_MAXIMUM) as i8
 }
 
-/// Scale and zero-point for asymmetric int8: `x ≈ scale · (q − zp)`.
 pub fn asymmetric_scale_zero_point(
     values: &[f32],
     statistic: ActivationScaleStatistic,
@@ -128,7 +112,6 @@ pub fn quantize_asymmetric_i8(
         .clamp(INT8_ASYMMETRIC_QUANTIZATION_MINIMUM as i32, INT8_ASYMMETRIC_QUANTIZATION_MAXIMUM as i32) as i8
 }
 
-/// Sum of signed weight codes (`u8 ^ 0x80` as i8) per output row / K-group.
 pub fn compute_b_col_sums(
     weights: &[u8],
     n: usize,

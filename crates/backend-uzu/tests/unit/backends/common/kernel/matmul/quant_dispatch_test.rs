@@ -500,8 +500,6 @@ fn mxu_quant_parity_bf16(
     );
 }
 
-/// A8W8 MXU GEMM parity vs CPU. Self-skips without MXU (CI has none; run locally
-/// on A19 via `cargo dinghy -d <ECID> test -p backend-uzu -- a8w8_mxu`).
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::sym_sym_gs32(128, 256, 128, 32, ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleSymmetric)]

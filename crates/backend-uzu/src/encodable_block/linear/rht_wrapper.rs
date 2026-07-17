@@ -34,11 +34,15 @@ pub enum RHTLinearWrapperError<B: Backend> {
     UnsupportedConfiguration(String),
 }
 
+enum Int8Scheme<B: Backend> {
+    Symmetric,
+    Asymmetric { b_col_sums: Allocation<B> },
+}
+
 struct Int8Preparation<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationsPrepareKernel,
     group_size: u32,
-    scheme: ActivationQuantScheme,
-    b_col_sums: Option<Allocation<B>>,
+    scheme: Int8Scheme<B>,
 }
 
 pub struct RHTLinearWrapper<B: Backend> {
@@ -117,9 +121,23 @@ impl<B: Backend> RHTLinearWrapper<B> {
             activation_prepare_group_size(activation_prepare, input_dimension, &quantization_spec)
         {
             let mut ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
-            if activation_prepare.scheme == ActivationQuantScheme::Asymmetric {
-                ops |= ActivationPrepareOps::ASYMMETRIC;
-            }
+            let scheme = match activation_prepare.scheme {
+                ActivationQuantScheme::Symmetric => Int8Scheme::Symmetric,
+                ActivationQuantScheme::Asymmetric => {
+                    ops |= ActivationPrepareOps::ASYMMETRIC;
+                    let weights = quantized_weights_tree
+                        .leaf("weights")?
+                        .validate(&[output_dimension, input_dimension], DataType::U8)?
+                        .read_allocation()?;
+                    let host = weights.copyout::<u8>();
+                    let sums = compute_b_col_sums(&host, output_dimension, input_dimension, group_size as usize);
+                    let mut b_col_sums = context
+                        .create_allocation(sums.len() * size_of::<i32>(), AllocationType::Global)
+                        .map_err(RHTLinearWrapperError::BackendError)?;
+                    b_col_sums.copyin(&sums);
+                    Int8Scheme::Asymmetric { b_col_sums }
+                },
+            };
             let kernel = <B::Kernels as Kernels>::ActivationsPrepareKernel::new(
                 context,
                 input_data_type,
@@ -127,26 +145,10 @@ impl<B: Backend> RHTLinearWrapper<B> {
                 activation_prepare.statistic,
             )
             .map_err(RHTLinearWrapperError::BackendError)?;
-            let b_col_sums = if activation_prepare.scheme == ActivationQuantScheme::Asymmetric {
-                let weights = quantized_weights_tree
-                    .leaf("weights")?
-                    .validate(&[output_dimension, input_dimension], DataType::U8)?
-                    .read_allocation()?;
-                let host = weights.copyout::<u8>();
-                let sums = compute_b_col_sums(&host, output_dimension, input_dimension, group_size as usize);
-                let mut allocation = context
-                    .create_allocation(sums.len() * size_of::<i32>(), AllocationType::Global)
-                    .map_err(RHTLinearWrapperError::BackendError)?;
-                allocation.copyin(&sums);
-                Some(allocation)
-            } else {
-                None
-            };
             Some(Int8Preparation {
                 kernel,
                 group_size,
-                scheme: activation_prepare.scheme,
-                b_col_sums,
+                scheme,
             })
         } else {
             None
@@ -190,43 +192,61 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::F32))?;
             let mut row_sums = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::I32))?;
-            let mut zero_points = if preparation.scheme == ActivationQuantScheme::Asymmetric {
-                Some(encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::I8))?)
-            } else {
-                None
-            };
 
-            preparation.kernel.encode(
-                &input,
-                Some(&mut values),
-                Some(&mut scales),
-                Some(&mut row_sums),
-                zero_points.as_mut(),
-                Some(&self.input_factors),
-                batch_dim as u32,
-                self.input_dimension as u32,
-                preparation.group_size,
-                encoder,
-            );
-
-            let a = match preparation.scheme {
-                ActivationQuantScheme::Symmetric => MatmulA::Int8Symmetric {
-                    values: &values,
-                    scales: &scales,
-                    row_sums: &row_sums,
-                    group_size: preparation.group_size,
+            return match &preparation.scheme {
+                Int8Scheme::Symmetric => {
+                    preparation.kernel.encode(
+                        &input,
+                        Some(&mut values),
+                        Some(&mut scales),
+                        Some(&mut row_sums),
+                        None::<&mut Allocation<B>>,
+                        Some(&self.input_factors),
+                        batch_dim as u32,
+                        self.input_dimension as u32,
+                        preparation.group_size,
+                        encoder,
+                    );
+                    self.inner_linear.encode_with_a(
+                        MatmulA::Int8Symmetric {
+                            values: &values,
+                            scales: &scales,
+                            row_sums: &row_sums,
+                            group_size: preparation.group_size,
+                        },
+                        batch_dim,
+                        encoder,
+                    )
                 },
-                ActivationQuantScheme::Asymmetric => MatmulA::Int8Asymmetric {
-                    values: &values,
-                    scales: &scales,
-                    zero_points: zero_points.as_ref().expect("asymmetric allocate zero_points"),
-                    row_sums: &row_sums,
-                    b_col_sums: preparation.b_col_sums.as_ref().expect("asymmetric b_col_sums"),
-                    group_size: preparation.group_size,
+                Int8Scheme::Asymmetric { b_col_sums } => {
+                    let mut zero_points =
+                        encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::I8))?;
+                    preparation.kernel.encode(
+                        &input,
+                        Some(&mut values),
+                        Some(&mut scales),
+                        Some(&mut row_sums),
+                        Some(&mut zero_points),
+                        Some(&self.input_factors),
+                        batch_dim as u32,
+                        self.input_dimension as u32,
+                        preparation.group_size,
+                        encoder,
+                    );
+                    self.inner_linear.encode_with_a(
+                        MatmulA::Int8Asymmetric {
+                            values: &values,
+                            scales: &scales,
+                            zero_points: &zero_points,
+                            row_sums: &row_sums,
+                            b_col_sums,
+                            group_size: preparation.group_size,
+                        },
+                        batch_dim,
+                        encoder,
+                    )
                 },
             };
-
-            return self.inner_linear.encode_with_a(a, batch_dim, encoder);
         }
 
         let mut input = input;

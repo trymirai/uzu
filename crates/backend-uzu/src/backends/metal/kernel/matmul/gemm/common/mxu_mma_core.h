@@ -152,10 +152,6 @@ struct MxuMmaCore {
     return accumulator;
   }
 
-  // Accumulate one int8 group at a time because every group has different A and
-  // B scales. Convert each group's int32 result to float before moving on.
-  // Epilogue (2B): sA·sB·[ΣqA·qB − zA·ΣqB − zB·ΣqA + G·zA·zB], with B codes
-  // mapped through XOR 0x80 so zB_signed = zB_u8 − 128 for ScaleZeroPoint.
   template <bool ALIGNED_M, bool ALIGNED_N>
   static METAL_FUNC AccumFragment quant_k_loop_int8(
       const device int8_t* a_int8_simdgroup,
@@ -209,7 +205,6 @@ struct MxuMmaCore {
         }
         right_raw.load_from(thread_context.simd_lane_id, right_src);
 
-        // Map U8 weight codes into signed int8 for MXU (XOR 0x80 ≡ −128).
         constexpr ushort b_element_count = TILES_N * TILES_K * Ops::ELEMENTS_PER_THREAD;
         thread uint8_t* raw_elements = right_raw.elements();
         thread int8_t* signed_elements = right_tile.elements();

@@ -26,7 +26,6 @@ type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 type MetalPrepare = <<Metal as Backend>::Kernels as Kernels>::ActivationsPrepareKernel;
 type MetalHadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel;
 
-/// Prefill-ish and decode-ish shapes with RHT-aligned groups.
 const SHAPES: &[(usize, usize, usize, u32)] =
     &[(1, 2048, 2048, 64), (8, 2048, 2048, 64), (128, 2048, 2048, 64), (256, 4096, 2048, 128)];
 

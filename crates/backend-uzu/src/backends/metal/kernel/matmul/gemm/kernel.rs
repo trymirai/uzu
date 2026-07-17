@@ -181,12 +181,8 @@ impl GemmKernel {
         arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        // int8 symmetric activations are an MXU-only path (the int8 K-loop is
-        // group-based, so it needs no FP tiling alignment); route it to MXU
-        // directly rather than through the full-precision tiling gate.
-        let wants_int8_a = arguments.a.is_int8();
         let path = if encoder.context().device.supports_mxu()
-            && (wants_int8_a || self.select_mxu_tiling(&arguments).is_some())
+            && (arguments.a.is_int8() || self.select_mxu_tiling(&arguments).is_some())
         {
             GemmDispatchPath::Mxu
         } else {

@@ -16,7 +16,6 @@ pub enum MatmulA<'a, B: Backend> {
         scales: &'a Allocation<B>,
         zero_points: &'a Allocation<B>,
         row_sums: &'a Allocation<B>,
-        /// Sum of signed weight codes (`u8 ^ 0x80` as i8) per `[N, groups]`.
         b_col_sums: &'a Allocation<B>,
         group_size: u32,
     },

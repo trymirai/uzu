@@ -225,9 +225,6 @@ impl<B: Backend> LinearMatmul<B> {
             } if *weight_group_size == group_size
         );
 
-        // The int8 GEMM is MXU-only and its K-loop is group-based, so the only
-        // requirements are 8-bit sym/ZP weights, an RHT-block-aligned group that
-        // divides K, and a hardware matrix unit.
         compatible_weights
             && context.supports_mxu()
             && group_size != 0

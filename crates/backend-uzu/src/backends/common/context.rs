@@ -45,8 +45,6 @@ pub trait Context: Sized {
 
     fn sparse_buffers_supported(&self) -> bool;
 
-    /// Whether the backend has a hardware matrix unit (MXU), i.e. can run the
-    /// int8 symmetric activation (A8W8) matmul path. Defaults to false.
     fn supports_mxu(&self) -> bool {
         false
     }
