@@ -157,6 +157,11 @@ impl ChatSession {
         if definitions.is_empty() {
             return Ok(());
         }
+        if !self.instance.lock().await.supports_tool_calls() {
+            return Err(ChatSessionError::Backend {
+                message: "Tool calls are not supported by this model".to_string(),
+            });
+        }
 
         let mut messages_guard = self.messages.lock().await;
         if !messages_guard.is_empty() {
