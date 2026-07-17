@@ -3,7 +3,7 @@ mod config;
 mod error;
 
 use bridging::{bridge_messages_from_harmony, bridge_messages_to_harmony};
-pub use config::harmony_config_capabilities;
+pub use config::HarmonyConfig;
 pub use error::Error;
 use openai_harmony::{
     HarmonyEncoding, HarmonyEncodingName, StreamableParser,
@@ -15,7 +15,6 @@ use openai_harmony::{
 };
 use shoji::types::{
     basic::{Token, TokenId},
-    model::HarmonyConfig,
     session::chat::ChatMessage,
 };
 use tokenizers::Tokenizer;

@@ -3,12 +3,9 @@ use std::{io, pin::Pin};
 use futures::{Stream, stream};
 use hanashi::{
     Encoding as EncodingTrait,
-    chat::{Context, Encoding, TokenizerLocation},
+    chat::{Context, Encoding, EncodingConfig, TokenizerLocation},
 };
-use shoji::{
-    traits::backend::chat_message::Output,
-    types::model::{EncodingConfig, Model},
-};
+use shoji::{traits::backend::chat_message::Output, types::model::Model};
 
 use crate::chat::ChatSessionError;
 
@@ -22,16 +19,22 @@ pub fn build_encoding(
     reference: String,
     model: &Model,
 ) -> Result<Encoding, io::Error> {
-    let config: Option<EncodingConfig> = if model.encodings.is_empty() {
+    let encoding_configs = model
+        .encodings
+        .iter()
+        .map(|value| serde_json::from_str::<EncodingConfig>(value.json.as_str()))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let config: Option<EncodingConfig> = if encoding_configs.is_empty() {
         None
-    } else if model.encodings.len() == 1 {
-        model.encodings.first().cloned()
+    } else if encoding_configs.len() == 1 {
+        encoding_configs.first().cloned()
     } else {
-        let hanashi_config = model.encodings.iter().find(|config| matches!(config, EncodingConfig::Hanashi { .. }));
+        let hanashi_config = encoding_configs.iter().find(|config| matches!(config, EncodingConfig::Hanashi { .. }));
         if hanashi_config.is_some() {
             hanashi_config.cloned()
         } else {
-            model.encodings.first().cloned()
+            encoding_configs.first().cloned()
         }
     };
     let Some(config) = config else {

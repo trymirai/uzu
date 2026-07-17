@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use shoji::types::{
-    basic::Metadata,
+    basic::{Metadata, Value},
     model::{
-        EncodingConfig, Model, ModelAccessibility, ModelBackend, ModelFamily, ModelProperties, ModelQuantization,
-        ModelRegistry, ModelSpecialization, ModelVendor,
+        Model, ModelAccessibility, ModelBackend, ModelFamily, ModelProperties, ModelQuantization, ModelRegistry,
+        ModelSpecialization, ModelVendor,
     },
 };
 
@@ -160,7 +160,7 @@ pub struct ResponseModel {
     pub quantization: Option<Quantization>,
     pub specializations: Vec<ModelSpecialization>,
     pub accessibility: ModelAccessibility,
-    pub encodings: Vec<EncodingConfig>,
+    pub encodings: Vec<Value>,
 }
 
 impl ResponseModel {

@@ -5,10 +5,11 @@ pub mod hanashi;
 pub mod harmony;
 mod state;
 
+pub use config::EncodingConfig;
 pub use context::{Context, TokenizerLocation};
 pub use error::Error;
 pub use hanashi::renderer::strftime_now;
-use shoji::types::{basic::TokenId, model::EncodingConfig, session::chat::ChatMessage};
+use shoji::types::{basic::TokenId, session::chat::ChatMessage};
 pub use state::{State, SynchronizationError, SynchronizationResult};
 use tokenizers::Tokenizer;
 
