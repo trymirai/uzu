@@ -1,53 +1,79 @@
 use half::bf16;
 use proc_macros::kernel;
 
+use super::attention_single_pass::attention_single_pass;
+
 #[kernel(AttentionLastQuery)]
-pub fn attention_last_query(
-    qkv: *const bf16,
-    lengths: *const u32,
+#[variants(HEAD_DIM, 128)]
+fn attention_last_query<const HEAD_DIM: u32>(
+    prefix_qkv: *const bf16,
+    node_qkv: *mut bf16,
+    current_qkv: *const bf16,
+    ancestor_indices: *const u32,
+    ancestor_counts: *const u32,
+    node_indices: *const u32,
     output: *mut bf16,
     rows: u32,
-    sequence_length: u32,
-    num_heads: u32,
-    head_dim: u32,
+    prefix_length: u32,
+    ancestor_stride: u32,
     scale: f32,
+    #[specialize] num_heads: u32,
 ) {
-    let rows = rows as usize;
-    let sequence_length = sequence_length as usize;
+    const QKV_COMPONENTS: usize = 3;
+    const KEY_COMPONENT: usize = 1;
+    let head_dim = HEAD_DIM as usize;
     let num_heads = num_heads as usize;
-    let head_dim = head_dim as usize;
-    let qkv_width = 3 * num_heads * head_dim;
-    unsafe {
-        for row in 0..rows {
-            let length = (*lengths.add(row) as usize).min(sequence_length);
-            let query_row = qkv.add((row * sequence_length + length - 1) * qkv_width);
-            for head in 0..num_heads {
-                let query = query_row.add(head * head_dim);
-                let mut max_score = f32::NEG_INFINITY;
-                let mut sum = 0.0f32;
-                let mut values = vec![0.0f32; head_dim];
-                for position in 0..length {
-                    let row_qkv = qkv.add((row * sequence_length + position) * qkv_width);
-                    let key = row_qkv.add((num_heads + head) * head_dim);
-                    let value = row_qkv.add((2 * num_heads + head) * head_dim);
-                    let mut score = 0.0f32;
-                    for dim in 0..head_dim {
-                        score += (*query.add(dim)).to_f32() * (*key.add(dim)).to_f32();
-                    }
-                    score *= scale;
-                    let new_max = max_score.max(score);
-                    let old_factor = (max_score - new_max).exp();
-                    let factor = (score - new_max).exp();
-                    sum = sum * old_factor + factor;
-                    for dim in 0..head_dim {
-                        values[dim] = values[dim] * old_factor + factor * (*value.add(dim)).to_f32();
-                    }
-                    max_score = new_max;
-                }
-                for dim in 0..head_dim {
-                    *output.add((row * num_heads + head) * head_dim + dim) = bf16::from_f32(values[dim] / sum);
-                }
+    let packed_width = QKV_COMPONENTS * num_heads * head_dim;
+    let kv_offset = KEY_COMPONENT * num_heads * head_dim;
+    let kv_width = 2 * num_heads * head_dim;
+
+    for row in 0..rows as usize {
+        unsafe {
+            let current = current_qkv.add(row * packed_width);
+            let node = node_qkv.add(*node_indices.add(row) as usize * packed_width);
+            std::ptr::copy_nonoverlapping(current.add(kv_offset), node.add(kv_offset), kv_width);
+
+            let ancestor_count = *ancestor_counts.add(row) as usize;
+            let length = prefix_length as usize + ancestor_count + 1;
+            let mut sequence = vec![bf16::ZERO; length * packed_width];
+            std::ptr::copy_nonoverlapping(prefix_qkv, sequence.as_mut_ptr(), prefix_length as usize * packed_width);
+            for offset in 0..ancestor_count {
+                let ancestor = *ancestor_indices.add(row * ancestor_stride as usize + offset) as usize;
+                std::ptr::copy_nonoverlapping(
+                    node_qkv.add(ancestor * packed_width + kv_offset),
+                    sequence.as_mut_ptr().add((prefix_length as usize + offset) * packed_width + kv_offset),
+                    kv_width,
+                );
             }
+            std::ptr::copy_nonoverlapping(
+                current,
+                sequence.as_mut_ptr().add((length - 1) * packed_width),
+                packed_width,
+            );
+            attention_single_pass::<bf16, HEAD_DIM>(
+                current,
+                sequence.as_ptr().add(kv_offset),
+                sequence.as_ptr().add(2 * num_heads * head_dim),
+                output.add(row * num_heads * head_dim),
+                1,
+                length as u32,
+                HEAD_DIM,
+                packed_width as u32,
+                HEAD_DIM,
+                packed_width as u32,
+                None,
+                scale,
+                None,
+                None,
+                None,
+                num_heads as u32,
+                1,
+                false,
+                false,
+                false,
+                false,
+                false,
+            );
         }
     }
 }

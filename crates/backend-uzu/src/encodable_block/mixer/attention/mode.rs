@@ -3,7 +3,7 @@ use crate::{
     backends::common::{
         Allocation, Backend, BufferArgMut, Encoder, Kernels,
         gpu_types::trie::TrieNode,
-        kernel::{AttentionLastQueryKernel, AttentionPrepareKernel, SigmoidGateKernel},
+        kernel::{AttentionPrepareKernel, SigmoidGateKernel},
     },
     encodable_block::{
         batch_topology::BatchTopology,
@@ -48,7 +48,7 @@ pub(super) enum QkvProjection<B: Backend> {
         prepare: PrepareKernel<B>,
     },
     /// Separate Q and KV projections.
-    #[allow(dead_code)] // Retained for model families with separate Q and KV weights.
+    #[allow(dead_code)] // TODO: remove when wiring with DFlash.
     Split {
         q: LinearProjection<B>,
         kv: LinearProjection<B>,
@@ -58,41 +58,6 @@ pub(super) enum QkvProjection<B: Backend> {
 }
 
 impl<B: Backend> Attention<B> {
-    pub(super) fn attend_packed_last_queries(
-        &self,
-        hidden: Allocation<B>,
-        lengths: &Allocation<B>,
-        rows: usize,
-        sequence_length: usize,
-        scale: f32,
-        kernel: &<B::Kernels as Kernels>::AttentionLastQueryKernel,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        let QkvProjection::Packed {
-            qkv,
-            ..
-        } = &self.projection
-        else {
-            panic!("packed last-query attention requires packed QKV");
-        };
-        assert_eq!(self.num_kv_heads, Some(self.num_q_heads));
-        let qkv = qkv.project(hidden, rows * sequence_length, encoder)?;
-        let mut attention_output =
-            encoder.allocate_scratch(size_for_shape(&[rows, self.num_q_heads, self.head_dim], self.data_type))?;
-        kernel.encode(
-            &qkv,
-            lengths,
-            &mut attention_output,
-            rows as u32,
-            sequence_length as u32,
-            self.num_q_heads as u32,
-            self.head_dim as u32,
-            scale,
-            encoder,
-        );
-        self.out_projection.encode(attention_output, rows, encoder)
-    }
-
     pub(super) fn attend(
         &self,
         hidden: Allocation<B>,
@@ -263,6 +228,7 @@ impl<B: Backend> Attention<B> {
                 kv_prepare,
                 ..
             } => {
+                let precalculated_rope = precalculated_rope.expect("split attention requires RoPE");
                 let key_value = kv.project(hidden, batch_dim, encoder)?;
                 self.prepare_kv_and_queries(
                     kv_prepare,
@@ -271,7 +237,7 @@ impl<B: Backend> Attention<B> {
                     state.values.as_mut(),
                     state.state_type.physical_prefix_length(),
                     0,
-                    precalculated_rope,
+                    Some(precalculated_rope),
                     batch_dim,
                     encoder,
                 )?;
@@ -281,32 +247,13 @@ impl<B: Backend> Attention<B> {
                 prepare,
             } => {
                 let projected = qkv.project(hidden, batch_dim, encoder)?;
-                let num_kv_heads = self.num_kv_heads.expect("packed KV append requires separate KV heads");
-                let q_elements = self.num_q_heads * self.head_dim;
-                let kv_elements = num_kv_heads * self.head_dim;
-                let element_size = self.data_type.size_in_bytes();
-                let mut key_value =
-                    encoder.allocate_scratch(size_for_shape(&[batch_dim, 2 * kv_elements], self.data_type))?;
-                let projected_row_elements = q_elements + 2 * kv_elements;
-                for row in 0..batch_dim {
-                    let source_start = (row * projected_row_elements + q_elements) * element_size;
-                    let source_end = source_start + 2 * kv_elements * element_size;
-                    let destination_start = row * 2 * kv_elements * element_size;
-                    let destination_end = destination_start + 2 * kv_elements * element_size;
-                    encoder.encode_copy(
-                        &projected,
-                        source_start..source_end,
-                        &mut key_value,
-                        destination_start..destination_end,
-                    );
-                }
                 self.prepare_kv_and_queries(
                     prepare,
-                    &key_value,
+                    &projected,
                     state.keys.as_mut(),
                     state.values.as_mut(),
                     state.state_type.physical_prefix_length(),
-                    0,
+                    self.num_q_heads as u32,
                     precalculated_rope,
                     batch_dim,
                     encoder,

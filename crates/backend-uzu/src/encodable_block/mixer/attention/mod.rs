@@ -29,7 +29,7 @@ mod mode;
 mod qkv_norm;
 mod state;
 
-pub(crate) use state::AttentionState;
+pub(crate) use state::{AttentionState, AttentionStateType};
 
 pub mod rope;
 
@@ -242,47 +242,6 @@ impl<B: Backend> Attention<B> {
             },
             in_projection_input_hadamard_factors,
         ))
-    }
-
-    pub(crate) fn create_state(
-        &self,
-        max_context_length: Option<usize>,
-        context: &B::Context,
-    ) -> Result<AttentionState<B>, B::Error> {
-        AttentionState::create_empty(self, max_context_length, context)
-    }
-
-    pub(crate) fn encode_with_state(
-        &self,
-        hidden: Allocation<B>,
-        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: &BatchTopology,
-        state: &mut AttentionState<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        self.attend(hidden, precalculated_rope, batch_dim, Some(MaybeMut::Mut(state)), encoder)
-    }
-
-    pub(crate) fn encode_stateless(
-        &self,
-        hidden: Allocation<B>,
-        batch_dim: &BatchTopology,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        self.attend(hidden, None, batch_dim, None, encoder)
-    }
-
-    pub(crate) fn encode_packed_last_queries(
-        &self,
-        hidden: Allocation<B>,
-        lengths: &Allocation<B>,
-        rows: usize,
-        sequence_length: usize,
-        scale: f32,
-        kernel: &<B::Kernels as Kernels>::AttentionLastQueryKernel,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        self.attend_packed_last_queries(hidden, lengths, rows, sequence_length, scale, kernel, encoder)
     }
 
     pub(crate) fn append_kv_to_state(

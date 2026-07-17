@@ -18,20 +18,21 @@ use crate::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError},
         mixer::{
-            MixerState,
-            attention::{Attention, AttentionNewError, rope::PrecalculatedRoPE},
+            Mixer, MixerState,
+            attention::{Attention, AttentionNewError, AttentionState, rope::PrecalculatedRoPE},
         },
         mlp::{Mlp, MlpBlockError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar},
     },
     parameters::{ParameterLoaderError, ParameterTree},
+    utils::maybe_mut::MaybeMut,
 };
 
 const RADIX_TOP_K_MAX: usize = 512;
 
 /// Persistent `DFlash` context state for one decoder stream.
 pub struct DFlashState<B: Backend> {
-    layer_states: Box<[crate::encodable_block::mixer::attention::AttentionState<B>]>,
+    layer_states: Box<[AttentionState<B>]>,
     context_length: usize,
     context_capacity: usize,
     /// The final target-model output (`output_norm` in the reference
@@ -172,7 +173,7 @@ impl<B: Backend> DFlashDraft<B> {
         let layer_states = self
             .layers
             .iter()
-            .map(|layer| layer.attention.create_state(Some(context_capacity), context))
+            .map(|layer| AttentionState::create_empty(&layer.attention, Some(context_capacity), context))
             .collect::<Result<Box<[_]>, B::Error>>()?;
         Ok(DFlashState {
             layer_states,
@@ -262,8 +263,13 @@ impl<B: Backend> DFlashDraft<B> {
         for (layer, state_layer) in self.layers.iter().zip(state.layer_states.iter_mut()) {
             state_layer.prepare(state.context_length, batch_dim, encoder.context())?;
             let normalized = layer.input_norm.encode(&hidden, 0, batch_dim, None, encoder)?;
-            let mut attention_output =
-                layer.attention.encode_with_state(normalized, Some(&rope), &batch_topology, state_layer, encoder)?;
+            let mut attention_output = layer.attention.encode(
+                normalized,
+                Some(&rope),
+                &batch_topology,
+                Some(MaybeMut::Mut(state_layer)),
+                encoder,
+            )?;
             let mut attention_residual = encoder.allocate_scratch(hidden.size())?;
             encoder.encode_copy(&hidden, .., &mut attention_residual, ..);
             layer.residual_add.encode(
