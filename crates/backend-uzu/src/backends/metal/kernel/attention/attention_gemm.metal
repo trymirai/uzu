@@ -129,7 +129,7 @@ KERNEL(AttentionGemm)(
   const short simdgroup_row_base = FRAGMENT_ROWS * QUERY_ROW_FRAGMENTS * short(thread_context.simdgroup_index);
   constexpr short head_dim_fragment_stride = FRAGMENT_ROWS;
 
-  const bool ragged_q = (!align_q && int(q_tile_idx) == params.nq_aligned);
+  const bool ragged_q = (!align_q && q_tile_idx == params.nq_aligned);
   constexpr short query_leading_dimension = BD + ROW_PADDING_ELEMENTS;
   threadgroup T* query_shared = q_smem;
   const short query_shared_offset = simdgroup_row_base * query_leading_dimension;
@@ -195,7 +195,7 @@ KERNEL(AttentionGemm)(
       typename Ops::BlockStorage>;
   threadgroup T* kv_shared = kv_smem;
 
-  for (int kb = 0; kb < kb_lim; kb++) {
+  for (uint32_t kb = 0; kb < kb_lim; kb++) {
     const bool tail_k = (!align_k && kb == params.nk_aligned);
     const short valid_k_rows = tail_k ? short(params.k_rem) : short(BK);
     const device T* k_block = k + int64_t(kb) * int(BK) * key_source_stride;
