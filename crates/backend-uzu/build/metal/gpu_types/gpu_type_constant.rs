@@ -15,7 +15,7 @@ fn rust_to_metal(ty: &str) -> anyhow::Result<&'static str> {
         "f32" => Ok("float"),
         "bool" => Ok("bool"),
         "usize" => Ok("size_t"),
-        "isize" => Ok("ptrdiff_t"),
+        "isize" => Ok("intptr_t"),
         unknown => bail!("Unsupported GPU constant type: {unknown}"),
     }
 }
