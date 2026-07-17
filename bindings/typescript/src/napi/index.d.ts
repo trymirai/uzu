@@ -393,16 +393,6 @@ export declare class ContextLengthMaximal {
   constructor()
 }
 
-export declare class EncodingConfigHanashi {
-  config: HanashiConfig
-  constructor(config: HanashiConfig)
-}
-
-export declare class EncodingConfigHarmony {
-  config: HarmonyConfig
-  constructor(config: HarmonyConfig)
-}
-
 export declare class Feature {
   name: string
   values: Array<string>
@@ -470,8 +460,8 @@ export declare class Model {
   quantization?: ModelQuantization
   specializations: Array<ModelSpecialization>
   accessibility: ModelAccessibility
-  encodings: Array<EncodingConfig>
-  constructor(identifier: string, registry: ModelRegistry, backends: Array<ModelBackend>, family?: ModelFamily, properties?: ModelProperties, quantization?: ModelQuantization, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encodings: Array<EncodingConfig>)
+  encodings: Array<any>
+  constructor(identifier: string, registry: ModelRegistry, backends: Array<ModelBackend>, family?: ModelFamily, properties?: ModelProperties, quantization?: ModelQuantization, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encodings: Array<any>)
   get name(): string
   get isLocal(): boolean
   get isRemote(): boolean
@@ -483,7 +473,7 @@ export declare class Model {
   get referenceName(): string | null
   get checkpointVersion(): string | null
 
-  static external(identifier: string, registryIdentifier: string, registryName: string, backendIdentifier: string, backendName: string, backendVersion: string, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encodings: Array<EncodingConfig>): Model
+  static external(identifier: string, registryIdentifier: string, registryName: string, backendIdentifier: string, backendName: string, backendVersion: string, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encodings: Array<any>): Model
   get isChatCapable(): boolean
   get isClassificationCapable(): boolean
   get isTextToSpeechCapable(): boolean
@@ -764,31 +754,8 @@ export declare const enum ClassificationRole {
 export type ContextLength =
   ContextLengthDefault | ContextLengthMaximal | ContextLengthCustom
 
-export type EncodingConfig =
-  EncodingConfigHanashi | EncodingConfigHarmony
-
 export type Grammar =
   GrammarJsonAny | GrammarJsonSchema | GrammarRegex
-
-export declare const enum HanashiConfig {
-  FunctionGemma = 'FunctionGemma',
-  Gemma3 = 'Gemma3',
-  Gemma4 = 'Gemma4',
-  GptOss = 'GptOss',
-  Lfm2 = 'Lfm2',
-  Lfm25Instruct = 'Lfm25Instruct',
-  Lfm25Thinking = 'Lfm25Thinking',
-  Llama32 = 'Llama32',
-  Qwen3 = 'Qwen3',
-  Qwen3Instruct = 'Qwen3Instruct',
-  Qwen3Thinking = 'Qwen3Thinking',
-  Qwen35 = 'Qwen35',
-  Qwen36 = 'Qwen36'
-}
-
-export declare const enum HarmonyConfig {
-  GptOss = 'GptOss'
-}
 
 export declare const enum HashMethod {
   CRC32C = 'CRC32C',
