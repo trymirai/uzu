@@ -5,7 +5,7 @@ use crate::{
     backends::common::{
         Allocation, AllocationType, Backend, Context, Encoder, Kernels,
         gpu_types::trie::TrieNode,
-        kernel::{RadixTopKKernel, TensorAddSwapKernel},
+        kernel::{TensorAddSwapKernel, radix_top_k_small::RadixTopKSmall},
     },
     config::{
         dflash::{DFlashDraftConfig, DFlashDraftLayerConfig},
@@ -26,6 +26,8 @@ use crate::{
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
+
+const RADIX_TOP_K_MAX: usize = 512;
 
 /// Persistent `DFlash` context state for one decoder stream.
 pub struct DFlashState<B: Backend> {
@@ -48,7 +50,7 @@ pub(crate) struct DFlashDraft<B: Backend> {
     context_norm: Normalization<B>,
     layers: Box<[DFlashDraftLayer<B>]>,
     output_norm: Normalization<B>,
-    top_k: <B::Kernels as Kernels>::RadixTopKKernel,
+    top_k: <B::Kernels as Kernels>::RadixTopKSmall,
     rope_config: AnyRoPEConfig,
     model_dim: usize,
     max_context_length: usize,
@@ -143,7 +145,8 @@ impl<B: Backend> DFlashDraft<B> {
             &parameter_tree.subtree("output_norm")?,
             data_type,
         )?;
-        let top_k = <B::Kernels as Kernels>::RadixTopKKernel::new(context).map_err(DFlashDraftNewError::Backend)?;
+        let top_k = <B::Kernels as Kernels>::RadixTopKSmall::new(context, config.vocab_size as u32)
+            .map_err(DFlashDraftNewError::Backend)?;
 
         Ok(Self {
             context_projection,
@@ -285,14 +288,13 @@ impl<B: Backend> DFlashDraft<B> {
         &self,
         logits: &Allocation<B>,
         rows: usize,
-        vocab_size: usize,
         k: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
-        assert!(k > 0 && k <= 512);
+        assert!(k > 0 && k <= RADIX_TOP_K_MAX);
         let mut ids = encoder.allocate_scratch(size_for_shape(&[rows, k], DataType::U32))?;
         let mut scores = encoder.allocate_scratch(size_for_shape(&[rows, k], DataType::F32))?;
-        self.top_k.encode(logits, &mut ids, &mut scores, rows as u32, vocab_size as u32, k as u32, encoder);
+        self.top_k.encode(logits, &mut ids, &mut scores, rows as u32, k as u32, encoder)?;
         Ok((ids, scores))
     }
 

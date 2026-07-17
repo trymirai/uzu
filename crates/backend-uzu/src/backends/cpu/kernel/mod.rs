@@ -36,5 +36,6 @@ impl Kernels for CpuKernels {
     type DeltaNetChunkedPrefill = Infallible;
     type DeltaNetTreeVerify = Infallible;
     type MatmulKernel = matmul::MatmulCpuKernel;
+    type RadixTopKSmall = radix_top_k_small::CpuRadixTopKSmall;
 }
-mod radix_top_k;
+mod radix_top_k_small;

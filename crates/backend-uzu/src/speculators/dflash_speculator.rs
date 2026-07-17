@@ -223,7 +223,7 @@ impl<B: Backend> DFlashSpeculator<B> {
         let draft_logits = target_embedding.encode_readout_f32(1, block_size - 1, &draft_hidden, &mut encoder)?;
         let (candidate_ids_allocation, candidate_scores_allocation) = self
             .model
-            .encode_top_k(&draft_logits, block_size - 1, vocab_size, pool_size, &mut encoder)
+            .encode_top_k(&draft_logits, block_size - 1, pool_size, &mut encoder)
             .map_err(DFlashTreeError::Backend)?;
         let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
         let candidate_ids = candidate_ids_allocation.copyout::<u32>();
