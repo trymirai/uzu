@@ -6,7 +6,7 @@ use crate::{
         common::{
             Allocation, Backend, BufferArg, Encoder,
             gpu_types::{
-                GemmAPrologueKind, GemmParams, HadamardTransformOrder,
+                GemmAPrologueKind, GemmParams, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder,
                 gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
             },
             kernel::{
@@ -427,7 +427,7 @@ impl GemmKernel {
                     } => {
                         if !use_mxu
                             || a_group_size == 0
-                            || !a_group_size.is_multiple_of(32)
+                            || !a_group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
                             || !k.is_multiple_of(a_group_size)
                             || b_prologue != GemmBPrologueKind::ScaleSymmetricDequant
                             || bits_per_b != Some(8)
@@ -435,7 +435,7 @@ impl GemmKernel {
                         {
                             return Err(MatmulError::IncompatibleA {
                                 path: "Gemm",
-                                reason: "int8 activations require MXU, complete 32-aligned groups, and matching symmetric 8-bit weights",
+                                reason: "int8 activations require MXU, complete RHT-block-aligned groups, and matching symmetric 8-bit weights",
                             }
                             .into());
                         }

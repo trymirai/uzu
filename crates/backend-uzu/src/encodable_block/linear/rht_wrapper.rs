@@ -4,7 +4,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        gpu_types::{ActivationPrepareOps, HadamardTransformOrder},
+        gpu_types::{ActivationPrepareOps, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
         kernel::{
             ActivationPrepareConfig, ActivationsPrepareKernel, HadamardTransformKernel, Kernels, matmul::MatmulA,
         },
@@ -60,7 +60,7 @@ pub(super) fn activation_prepare_group_size(
         return None;
     };
 
-    if input_dimension.is_multiple_of(32) && config.supports_group_size(*group_size) {
+    if input_dimension.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) && config.supports_group_size(*group_size) {
         u32::try_from(*group_size).ok()
     } else {
         None
@@ -82,7 +82,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             adapter_spec: None,
-            incoherence_block_size: Some(32),
+            incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
             incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
             ..
         }) = &spec

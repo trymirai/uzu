@@ -3,7 +3,7 @@ use crate::{
     backends::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
-            gpu_types::HadamardTransformOrder,
+            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
             kernel::{
                 HadamardTransformKernel,
                 matmul::{MatmulA, MatmulArguments, MatmulError, MatmulKernel},
@@ -57,7 +57,7 @@ impl MatmulKernel for MatmulCpuKernel {
         _k: u32,
         group_size: u32,
     ) -> bool {
-        group_size != 0 && group_size.is_multiple_of(32)
+        group_size != 0 && group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
     }
 
     fn encode<'a, 'b, 'd, TB: BufferArg<'b, Cpu>>(
@@ -113,13 +113,13 @@ impl MatmulKernel for MatmulCpuKernel {
                 group_size,
             } => {
                 if group_size == 0
-                    || !group_size.is_multiple_of(32)
+                    || !group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
                     || b.group_size() != Some(group_size)
                     || b.bits_per_b() != Some(8)
                 {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
-                        reason: "int8 activation groups must be non-zero multiples of 32 and match 8-bit weights",
+                        reason: "int8 activation groups must be non-zero RHT-block multiples and match 8-bit weights",
                     }
                     .into());
                 }

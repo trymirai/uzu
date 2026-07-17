@@ -1,4 +1,4 @@
-use crate::backends::common::gpu_types::ActivationScaleStatistic;
+use crate::backends::common::gpu_types::{ActivationScaleStatistic, HADAMARD_TRANSFORM_BLOCK_SIZE};
 
 pub const INT8_SYMMETRIC_QMAX: f32 = 127.0;
 
@@ -23,7 +23,7 @@ impl ActivationPrepareConfig {
         self,
         group_size: usize,
     ) -> bool {
-        self.enabled && group_size != 0 && group_size.is_multiple_of(32)
+        self.enabled && group_size != 0 && group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
     }
 }
 

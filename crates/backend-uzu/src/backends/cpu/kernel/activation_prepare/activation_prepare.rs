@@ -5,17 +5,15 @@ use proc_macros::kernel;
 use crate::{
     array::ArrayElement,
     backends::common::{
-        gpu_types::{ActivationPrepareOps, ActivationScaleStatistic},
+        gpu_types::{ActivationPrepareOps, ActivationScaleStatistic, HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::{group_stat, quantize_symmetric_i8, symmetric_divisor},
     },
 };
 
-const RHT_BLOCK_SIZE: usize = 32;
-
-fn input_rht(values: &mut [f32; RHT_BLOCK_SIZE]) {
+fn input_rht(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE]) {
     let mut stride = 1;
-    while stride < RHT_BLOCK_SIZE {
-        for lane in 0..RHT_BLOCK_SIZE {
+    while stride < HADAMARD_TRANSFORM_BLOCK_SIZE {
+        for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
             if lane & stride == 0 {
                 let left = values[lane];
                 let right = values[lane | stride];
@@ -25,7 +23,7 @@ fn input_rht(values: &mut [f32; RHT_BLOCK_SIZE]) {
         }
         stride <<= 1;
     }
-    let scale = 1.0 / (RHT_BLOCK_SIZE as f32).sqrt();
+    let scale = 1.0 / (HADAMARD_TRANSFORM_BLOCK_SIZE as f32).sqrt();
     for value in values {
         *value *= scale;
     }
@@ -47,8 +45,8 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     let rows = batch_size as usize;
     let columns = element_count as usize;
     let group_size = group_size as usize;
-    assert!(group_size.is_multiple_of(RHT_BLOCK_SIZE));
-    assert!(columns.is_multiple_of(RHT_BLOCK_SIZE));
+    assert!(group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
+    assert!(columns.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
     assert_eq!(rht_factors.is_some(), ops.contains(ActivationPrepareOps::INPUT_RHT));
     assert_eq!(q_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
     assert_eq!(scales_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
@@ -60,9 +58,9 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     let groups = columns.div_ceil(group_size);
     let mut prepared = vec![0.0f32; columns];
     for row in 0..rows {
-        for block_start in (0..columns).step_by(RHT_BLOCK_SIZE) {
-            let mut block = [0.0f32; RHT_BLOCK_SIZE];
-            for lane in 0..RHT_BLOCK_SIZE {
+        for block_start in (0..columns).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE) {
+            let mut block = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE];
+            for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
                 let index = block_start + lane;
                 let value: f32 = NumCast::from(unsafe { *input.add(row * columns + index) }).unwrap();
                 let factor = rht_factors.map_or(1.0, |factors| unsafe { *factors.add(index) } as f32);
@@ -71,7 +69,7 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
             if ops.contains(ActivationPrepareOps::INPUT_RHT) {
                 input_rht(&mut block);
             }
-            prepared[block_start..block_start + RHT_BLOCK_SIZE].copy_from_slice(&block);
+            prepared[block_start..block_start + HADAMARD_TRANSFORM_BLOCK_SIZE].copy_from_slice(&block);
         }
 
         for group in 0..groups {

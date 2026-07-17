@@ -31,7 +31,7 @@ impl EnumPaths {
                 let (name_str, kind) = match ty {
                     GpuType::Enum(enum_type) => (enum_type.name.as_ref(), GpuTypeKind::Enum),
                     GpuType::OptionSet(option_set) => (option_set.name.as_ref(), GpuTypeKind::OptionSet),
-                    GpuType::Struct(_) => continue,
+                    GpuType::Constant(_) | GpuType::Struct(_) => continue,
                 };
                 let name = GpuTypeName::from(name_str);
                 let path =

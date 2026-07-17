@@ -9,7 +9,7 @@ use crate::{
     backends::{
         common::{
             Context, Encoder,
-            gpu_types::{ActivationPrepareOps, ActivationScaleStatistic},
+            gpu_types::{ActivationPrepareOps, ActivationScaleStatistic, HADAMARD_TRANSFORM_BLOCK_SIZE},
             kernel::{ActivationsPrepareKernel, group_stat, quantize_symmetric_i8, symmetric_divisor},
         },
         metal::{Metal, MetalContext},
@@ -18,12 +18,10 @@ use crate::{
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
 
-const RHT_BLOCK_SIZE: usize = 32;
-
-fn hadamard(values: &mut [f32; RHT_BLOCK_SIZE]) {
+fn hadamard(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE]) {
     let mut stride = 1;
-    while stride < RHT_BLOCK_SIZE {
-        for lane in 0..RHT_BLOCK_SIZE {
+    while stride < HADAMARD_TRANSFORM_BLOCK_SIZE {
+        for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
             if lane & stride == 0 {
                 let left = values[lane];
                 let right = values[lane | stride];
@@ -34,7 +32,7 @@ fn hadamard(values: &mut [f32; RHT_BLOCK_SIZE]) {
         stride <<= 1;
     }
 
-    let scale = 1.0 / (RHT_BLOCK_SIZE as f32).sqrt();
+    let scale = 1.0 / (HADAMARD_TRANSFORM_BLOCK_SIZE as f32).sqrt();
     for value in values {
         *value *= scale;
     }
@@ -54,14 +52,14 @@ fn reference(
     let mut prepared = vec![0.0f32; columns];
 
     for row in 0..rows {
-        for block_start in (0..columns).step_by(RHT_BLOCK_SIZE) {
-            let mut block = [0.0f32; RHT_BLOCK_SIZE];
-            for lane in 0..RHT_BLOCK_SIZE {
+        for block_start in (0..columns).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE) {
+            let mut block = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE];
+            for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
                 let column = block_start + lane;
                 block[lane] = input[row * columns + column] * factors[column] as f32;
             }
             hadamard(&mut block);
-            prepared[block_start..block_start + RHT_BLOCK_SIZE].copy_from_slice(&block);
+            prepared[block_start..block_start + HADAMARD_TRANSFORM_BLOCK_SIZE].copy_from_slice(&block);
         }
 
         for group in 0..groups {

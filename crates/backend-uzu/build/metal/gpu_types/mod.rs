@@ -5,10 +5,12 @@ use itertools::Itertools;
 
 use crate::common::gpu_types::{GpuType, GpuTypeFile, GpuTypes};
 
+mod gpu_type_constant;
 mod gpu_type_enum;
 mod gpu_type_option_set;
 mod gpu_type_struct;
 
+use gpu_type_constant::gpu_type_gen_constant;
 use gpu_type_enum::gpu_type_gen_enum;
 use gpu_type_option_set::gpu_type_gen_option_set;
 use gpu_type_struct::gpu_type_gen_struct;
@@ -36,6 +38,8 @@ async fn gpu_type_gen_file(
         .types
         .iter()
         .map(|gpu_type| match gpu_type {
+            GpuType::Constant(gpu_type_constant) => gpu_type_gen_constant(gpu_type_constant)
+                .with_context(|| format!("Failed to generate bindings for {gpu_type_constant:?}")),
             GpuType::Enum(gpu_type_enum) => gpu_type_gen_enum(gpu_type_enum)
                 .with_context(|| format!("Failed to generate bindings for {gpu_type_enum:?}")),
             GpuType::Struct(gpu_type_struct) => gpu_type_gen_struct(gpu_type_struct)

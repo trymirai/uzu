@@ -4,7 +4,10 @@ use backend_uzu::{
     backends::{
         common::{
             Allocation, AllocationType, Backend, Context, Encoder,
-            gpu_types::{ActivationPrepareOps, ActivationScaleStatistic, HadamardTransformOrder, QuantizationMode},
+            gpu_types::{
+                ActivationPrepareOps, ActivationScaleStatistic, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder,
+                QuantizationMode,
+            },
             kernel::{
                 ActivationsPrepareKernel, HadamardTransformKernel, Kernels, group_stat,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -27,12 +30,10 @@ type MetalHadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransform
 const CORRECTNESS_SHAPES: &[(usize, usize, usize, u32)] =
     &[(128, 256, 128, 32), (64, 512, 64, 64), (128, 256, 256, 128), (96, 256, 100, 32)];
 const PERF_SHAPES: &[(usize, usize, usize, u32)] = &[(256, 2048, 2048, 64), (128, 4096, 2048, 128)];
-const RHT_BLOCK_SIZE: usize = 32;
-
-fn hadamard(values: &mut [f32; RHT_BLOCK_SIZE]) {
+fn hadamard(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE]) {
     let mut stride = 1;
-    while stride < RHT_BLOCK_SIZE {
-        for lane in 0..RHT_BLOCK_SIZE {
+    while stride < HADAMARD_TRANSFORM_BLOCK_SIZE {
+        for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
             if lane & stride == 0 {
                 let left = values[lane];
                 let right = values[lane | stride];
@@ -42,7 +43,7 @@ fn hadamard(values: &mut [f32; RHT_BLOCK_SIZE]) {
         }
         stride <<= 1;
     }
-    let scale = 1.0 / (RHT_BLOCK_SIZE as f32).sqrt();
+    let scale = 1.0 / (HADAMARD_TRANSFORM_BLOCK_SIZE as f32).sqrt();
     for value in values {
         *value *= scale;
     }
@@ -92,15 +93,15 @@ impl HostInputs {
     fn prepared_activations(&self) -> Vec<f32> {
         let mut prepared = vec![0.0f32; self.m * self.k];
         for row in 0..self.m {
-            for block_start in (0..self.k).step_by(RHT_BLOCK_SIZE) {
-                let mut block = [0.0f32; RHT_BLOCK_SIZE];
-                for lane in 0..RHT_BLOCK_SIZE {
+            for block_start in (0..self.k).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE) {
+                let mut block = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE];
+                for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
                     let column = block_start + lane;
                     block[lane] = self.activations[row * self.k + column].to_f32() * self.rht_factors[column] as f32;
                 }
                 hadamard(&mut block);
                 let start = row * self.k + block_start;
-                prepared[start..start + RHT_BLOCK_SIZE].copy_from_slice(&block);
+                prepared[start..start + HADAMARD_TRANSFORM_BLOCK_SIZE].copy_from_slice(&block);
             }
         }
         prepared

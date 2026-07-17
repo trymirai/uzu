@@ -8,7 +8,9 @@ pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, kernel::ActivationPrepareConfig},
+    backends::common::{
+        Allocation, Backend, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE, kernel::ActivationPrepareConfig,
+    },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
         full_precision_spec::FullPrecisionSpec,
@@ -86,7 +88,7 @@ impl<B: Backend> dyn Linear<B> {
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 adapter_spec: None,
-                incoherence_block_size: Some(32),
+                incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
                 incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
                 ..
             }) => Ok(Box::new(RHTLinearWrapper::new(
@@ -214,7 +216,7 @@ impl<B: Backend> dyn Linear<B> {
         if let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
             adapter_spec: None,
-            incoherence_block_size: Some(32),
+            incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
             incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
             ..
         }) = &spec

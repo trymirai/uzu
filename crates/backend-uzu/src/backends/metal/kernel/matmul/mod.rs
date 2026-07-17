@@ -7,6 +7,7 @@ use crate::{
     backends::{
         common::{
             BufferArg, Encoder,
+            gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
             kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
         },
         metal::{Metal, context::MetalContext, error::MetalError, metal_extensions::DeviceExt},
@@ -59,7 +60,7 @@ impl MatmulKernel for MatmulMetalKernel {
     ) -> bool {
         if !context.supports_mxu()
             || group_size == 0
-            || !group_size.is_multiple_of(32)
+            || !group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
             || !k.is_multiple_of(group_size)
             || ![self.weights_data_type, self.input_data_type, self.output_data_type]
                 .into_iter()

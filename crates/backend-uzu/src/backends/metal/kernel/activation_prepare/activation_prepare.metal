@@ -48,7 +48,7 @@ PUBLIC KERNEL(ActivationsPrepare)(
       float value = static_cast<float>(row_input[i]);
       if (ops.contains(ActivationPrepareOps::INPUT_RHT)) {
         value = simdgroup_input_random_hadamard_transform(
-            static_cast<ushort>(i % METAL_SIMD_SIZE), value, rht_factors[i]);
+            static_cast<ushort>(i % HADAMARD_TRANSFORM_BLOCK_SIZE), value, rht_factors[i]);
       }
       thread_absmax = max(thread_absmax, fabs(value));
       thread_sum_of_squares += value * value;
@@ -72,7 +72,7 @@ PUBLIC KERNEL(ActivationsPrepare)(
       float value = static_cast<float>(row_input[i]);
       if (ops.contains(ActivationPrepareOps::INPUT_RHT)) {
         value = simdgroup_input_random_hadamard_transform(
-            static_cast<ushort>(i % METAL_SIMD_SIZE), value, rht_factors[i]);
+            static_cast<ushort>(i % HADAMARD_TRANSFORM_BLOCK_SIZE), value, rht_factors[i]);
       }
       row_q[i] = static_cast<int8_t>(clamp(round(value / divisor), -INT8_SYMMETRIC_QMAX, INT8_SYMMETRIC_QMAX));
     }
