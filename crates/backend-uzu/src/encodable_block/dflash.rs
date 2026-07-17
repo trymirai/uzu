@@ -17,7 +17,6 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError},
         mixer::{
             MixerState,
@@ -43,19 +42,6 @@ impl<B: Backend> DFlashState<B> {
     pub(crate) fn last_target_hidden(&self) -> Option<&Allocation<B>> {
         self.last_target_hidden.as_ref()
     }
-}
-
-pub(crate) struct DFlashChainOutput<B: Backend> {
-    pub hidden: Allocation<B>,
-    pub logits: Allocation<B>,
-}
-
-#[derive(Debug, Error)]
-pub enum DFlashEncodeError<B: Backend> {
-    #[error("Backend error: {0}")]
-    Backend(B::Error),
-    #[error("Embedding error: {0}")]
-    Embedding(#[from] EmbeddingError<B>),
 }
 
 pub(crate) struct DFlashDraft<B: Backend> {
@@ -205,33 +191,25 @@ impl<B: Backend> DFlashDraft<B> {
         &self,
         state: &mut DFlashState<B>,
         target_features: &[Allocation<B>],
-        target_hidden: &Allocation<B>,
+        num_tokens: usize,
+        last_target_hidden: &Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let row_size = self.model_dim * self.data_type.size_in_bytes();
-        assert_eq!(target_hidden.size() % row_size, 0);
-        let num_tokens = target_hidden.size() / row_size;
         if num_tokens == 0 {
             return Ok(());
         }
 
-        assert_eq!(target_features.len(), self.target_feature_width / self.model_dim);
+        let expected_feature_count = self.target_feature_width / self.model_dim;
+        assert_eq!(target_features.len(), expected_feature_count);
+        let row_size = self.model_dim * self.data_type.size_in_bytes();
         let layer_feature_size = num_tokens * self.model_dim * self.data_type.size_in_bytes();
         assert!(target_features.iter().all(|features| features.size() == layer_feature_size));
-        assert_eq!(
-            target_hidden.size(),
-            num_tokens * self.model_dim * self.data_type.size_in_bytes(),
-            "DFlash target hidden allocation has the wrong shape"
-        );
-        assert!(state.context_length + num_tokens <= state.context_capacity, "DFlash state capacity exceeded");
-        assert!(
-            state.context_length + num_tokens <= self.max_context_length,
-            "DFlash context exceeds configured RoPE capacity"
-        );
+        assert_eq!(last_target_hidden.size(), row_size);
+        let context_length = state.context_length + num_tokens;
+        assert!(context_length <= state.context_capacity, "DFlash state capacity exceeded");
+        assert!(context_length <= self.max_context_length, "DFlash context exceeds configured RoPE capacity");
 
-        // Interleave the per-layer rows directly into a temporary projection
-        // input. Retaining this full batch in persistent state would pin tens
-        // of megabytes per stream for no later use.
+        // Pack feature layers token-major.
         let mut projection_input =
             encoder.allocate_scratch(num_tokens * self.target_feature_width * self.data_type.size_in_bytes())?;
         let layer_feature_bytes = self.model_dim * self.data_type.size_in_bytes();
@@ -248,8 +226,7 @@ impl<B: Backend> DFlashDraft<B> {
             }
         }
         let mut stored_hidden = encoder.context().create_allocation(row_size, AllocationType::Global)?;
-        let final_row_start = (num_tokens - 1) * row_size;
-        encoder.encode_copy(target_hidden, final_row_start..final_row_start + row_size, &mut stored_hidden, ..);
+        encoder.encode_copy(last_target_hidden, .., &mut stored_hidden, ..);
         state.last_target_hidden = Some(stored_hidden);
 
         let projected = self.context_projection.encode(projection_input, num_tokens, encoder)?;
@@ -310,22 +287,6 @@ impl<B: Backend> DFlashDraft<B> {
         }
 
         self.output_norm.encode(&hidden, 0, batch_dim, None, encoder)
-    }
-
-    pub(crate) fn encode_chain(
-        &self,
-        state: &mut DFlashState<B>,
-        noise_token_ids: &Allocation<B>,
-        target_embedding: &Embedding<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<DFlashChainOutput<B>, DFlashEncodeError<B>> {
-        let token_embeddings = target_embedding.encode_lookup(noise_token_ids, self.block_size, encoder)?;
-        let hidden = self.encode_block(state, token_embeddings, encoder).map_err(DFlashEncodeError::Backend)?;
-        let logits = target_embedding.encode_readout_f32(1, self.block_size - 1, &hidden, encoder)?;
-        Ok(DFlashChainOutput {
-            hidden,
-            logits,
-        })
     }
 
     pub(crate) fn encode_top_k(

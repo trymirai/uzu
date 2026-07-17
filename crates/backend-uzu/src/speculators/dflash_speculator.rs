@@ -8,7 +8,7 @@ use crate::{
     config::speculator::dflash::DFlashSpeculatorConfig,
     data_type::DataType,
     encodable_block::{
-        dflash::{DFlashChainOutput, DFlashDraft, DFlashEncodeError},
+        dflash::DFlashDraft,
         embedding::{Embedding, EmbeddingError},
         weaver::{Weaver, WeaverBatchStepInput, WeaverEncodeError},
     },
@@ -35,16 +35,13 @@ impl Default for DFlashTreeOptions {
     }
 }
 
-pub struct SpeculationTree<B: Backend> {
-    /// Token IDs in verifier-ready DFS order; slot 0 is the target bonus root.
-    pub tokens: Allocation<B>,
-    /// Parent slot for each DFS node (`-1` only for the root).
+pub struct TreeProposal<B: Backend> {
+    /// DFS order; slot 0 is the bonus root.
+    pub token_ids: Allocation<B>,
     pub parents: Allocation<B>,
-    /// Absolute depth within the proposed tree.
     pub depths: Allocation<B>,
-    /// Weaver log probability for the selected edge into each node.
     pub draft_logprobs: Allocation<B>,
-    pub len: usize,
+    pub length: usize,
 }
 
 #[derive(Debug, Error)]
@@ -53,8 +50,6 @@ pub enum DFlashTreeError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("embedding error: {0}")]
     Embedding(#[from] EmbeddingError<B>),
-    #[error("DFlash error: {0}")]
-    DFlash(#[from] DFlashEncodeError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverEncodeError<B>),
     #[error("DFlash tree construction requires target hidden features in the state")]
@@ -152,12 +147,9 @@ pub struct DFlashSpeculator<B: Backend> {
     pub(crate) config: DFlashSpeculatorConfig,
 }
 
-/// Unified DFlash + Weaver drafting facade used by the decoder seam.
-///
-/// The target model owns the embedding/readout weights, so the decoder binds
-/// that immutable view once instead of making the speculator load a second
-/// copy of the target vocabulary.
-pub struct DFlashWeaver<'a, B: Backend> {
+/// DFlash-TfM bound to target embedding weights.
+#[derive(Clone, Copy)]
+pub struct DFlashTfm<'a, B: Backend> {
     speculator: &'a DFlashSpeculator<B>,
     target_embedding: &'a Embedding<B>,
 }
@@ -187,60 +179,33 @@ impl<B: Backend> DFlashSpeculator<B> {
     pub(crate) fn bind_target_embedding<'a>(
         &'a self,
         target_embedding: &'a Embedding<B>,
-    ) -> DFlashWeaver<'a, B> {
-        DFlashWeaver {
+    ) -> DFlashTfm<'a, B> {
+        DFlashTfm {
             speculator: self,
             target_embedding,
         }
     }
 
-    /// Appends target-model auxiliary layers and final normalized hidden
-    /// state. The input allocations must remain alive until `encoder`
-    /// completes because the copies are queued asynchronously.
+    /// Appends feature rows and the last token's normalized hidden row.
+    /// Inputs must remain alive until `encoder` completes.
     pub(crate) fn append_state(
         &self,
         state: &mut DFlashState<B>,
         target_features: &[Allocation<B>],
-        target_hidden: &Allocation<B>,
+        num_tokens: usize,
+        last_target_hidden: &Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        self.model.append_state(state, target_features, target_hidden, encoder)
+        self.model.append_state(state, target_features, num_tokens, last_target_hidden, encoder)
     }
 
-    /// Appends accepted, newly committed rows, including the bonus root when
-    /// it was not already in the DFlash context. The final hidden allocation
-    /// must contain the same rows in the same order.
-    pub(crate) fn update_state(
-        &self,
-        state: &mut DFlashState<B>,
-        accepted_target_features: &[Allocation<B>],
-        accepted_target_hidden: &Allocation<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        self.append_state(state, accepted_target_features, accepted_target_hidden, encoder)
-    }
-
-    pub(crate) fn encode_chain(
-        &self,
-        state: &mut DFlashState<B>,
-        noise_token_ids: &Allocation<B>,
-        target_embedding: &Embedding<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<DFlashChainOutput<B>, DFlashEncodeError<B>> {
-        self.model.encode_chain(state, noise_token_ids, target_embedding, encoder)
-    }
-
-    fn encode_tree_with_embedding(
+    fn propose_tree_with_embedding(
         &self,
         state: &mut DFlashState<B>,
         bonus_token: u32,
         target_embedding: &Embedding<B>,
         options: DFlashTreeOptions,
-    ) -> Result<SpeculationTree<B>, DFlashTreeError<B>> {
-        // `append_state` queues work on the caller's encoder.  Its target
-        // feature allocation must be complete before this host-side copyout;
-        // the decoder seam therefore submits/waits that encoder between the
-        // append and this method.
+    ) -> Result<TreeProposal<B>, DFlashTreeError<B>> {
         if options.budget == 0
             || options.budget > MAX_TREE_BUDGET
             || options.frontier_width == 0
@@ -272,17 +237,20 @@ impl<B: Backend> DFlashSpeculator<B> {
         let mut noise = vec![self.config.draft_config.mask_token_id; block_size];
         noise[0] = bonus_token as u64;
         noise_ids.copyin(&noise);
-        let chain = self.encode_chain(state, &noise_ids, target_embedding, &mut encoder)?;
+        let token_embeddings = target_embedding.encode_lookup(&noise_ids, block_size, &mut encoder)?;
+        let draft_hidden =
+            self.model.encode_block(state, token_embeddings, &mut encoder).map_err(DFlashTreeError::Backend)?;
+        let logits = target_embedding.encode_readout_f32(1, block_size - 1, &draft_hidden, &mut encoder)?;
         let (candidate_ids_allocation, candidate_scores_allocation) = self
             .model
-            .encode_top_k(&chain.logits, block_size - 1, vocab_size, pool_size, &mut encoder)
+            .encode_top_k(&logits, block_size - 1, vocab_size, pool_size, &mut encoder)
             .map_err(DFlashTreeError::Backend)?;
         let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
         let candidate_ids = candidate_ids_allocation.copyout::<u32>();
         let candidate_scores = candidate_scores_allocation.copyout::<f32>();
         drop(candidate_ids_allocation);
         drop(candidate_scores_allocation);
-        let chain_logits = self.weaver.is_none().then(|| chain.logits.copyout::<f32>());
+        let logits = self.weaver.is_none().then(|| logits.copyout::<f32>());
         drop(noise_ids);
         let candidate_pools = (0..block_size - 1)
             .map(|row| {
@@ -304,7 +272,7 @@ impl<B: Backend> DFlashSpeculator<B> {
             children: Vec::new(),
         }];
         let Some(weaver) = self.weaver.as_ref() else {
-            let logits = chain_logits.as_ref().unwrap();
+            let logits = logits.as_ref().unwrap();
             for depth in 0..options.budget.min(block_size.saturating_sub(1)) {
                 let (token, _) = candidate_pools[depth][0];
                 let row_start = depth * vocab_size;
@@ -322,7 +290,7 @@ impl<B: Backend> DFlashSpeculator<B> {
                 nodes[parent].children.push(index);
             }
             let tree = Self::finish_tree(&self.context, nodes)?;
-            drop(chain);
+            drop(draft_hidden);
             drop(completed);
             return Ok(tree);
         };
@@ -330,8 +298,8 @@ impl<B: Backend> DFlashSpeculator<B> {
         let max_depth = self.config.weaver_config.as_ref().unwrap().max_depth;
         let lookahead_count = max_depth.min(block_size.saturating_sub(1));
         let target_hidden = state.last_target_hidden().ok_or(DFlashTreeError::MissingTargetHidden)?;
-        let prefix = weaver.prompt_prefix(target_hidden, &chain.hidden, 1, lookahead_count, &self.context)?;
-        drop(chain);
+        let prefix = weaver.prompt_prefix(target_hidden, &draft_hidden, 1, lookahead_count, &self.context)?;
+        drop(draft_hidden);
         drop(completed);
         let mut weaver_state = weaver.create_node_state(options.budget + 1, &self.context)?;
         // Expand the root once to seed the frontier.  Thereafter the heap
@@ -414,7 +382,7 @@ impl<B: Backend> DFlashSpeculator<B> {
     fn finish_tree(
         context: &B::Context,
         nodes: Vec<HostTreeNode>,
-    ) -> Result<SpeculationTree<B>, DFlashTreeError<B>> {
+    ) -> Result<TreeProposal<B>, DFlashTreeError<B>> {
         let mut order = Vec::with_capacity(nodes.len());
         let mut stack = vec![0usize];
         while let Some(index) = stack.pop() {
@@ -441,12 +409,12 @@ impl<B: Backend> DFlashSpeculator<B> {
         let parents = global_allocation(context, &parents).map_err(DFlashTreeError::Backend)?;
         let depths = global_allocation(context, &depths).map_err(DFlashTreeError::Backend)?;
         let draft_logprobs = global_allocation(context, &draft_logprobs).map_err(DFlashTreeError::Backend)?;
-        Ok(SpeculationTree {
-            tokens,
+        Ok(TreeProposal {
+            token_ids: tokens,
             parents,
             depths,
             draft_logprobs,
-            len: order.len(),
+            length: order.len(),
         })
     }
 
@@ -455,7 +423,7 @@ impl<B: Backend> DFlashSpeculator<B> {
     }
 }
 
-impl<B: Backend> DFlashWeaver<'_, B> {
+impl<B: Backend> DFlashTfm<'_, B> {
     pub fn empty_state(
         &self,
         context_capacity: usize,
@@ -463,38 +431,30 @@ impl<B: Backend> DFlashWeaver<'_, B> {
         self.speculator.empty_state(context_capacity)
     }
 
+    pub fn hidden_feature_layer_indices(&self) -> &[usize] {
+        &self.speculator.config.draft_config.target_layer_ids
+    }
+
     pub fn append_state(
         &self,
         state: &mut DFlashState<B>,
         target_features: &[Allocation<B>],
-        target_hidden: &Allocation<B>,
+        num_tokens: usize,
+        last_target_hidden: &Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        self.speculator.append_state(state, target_features, target_hidden, encoder)
+        self.speculator.append_state(state, target_features, num_tokens, last_target_hidden, encoder)
     }
 
-    pub fn update_state(
-        &self,
-        state: &mut DFlashState<B>,
-        accepted_target_features: &[Allocation<B>],
-        accepted_target_hidden: &Allocation<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        self.speculator.update_state(state, accepted_target_features, accepted_target_hidden, encoder)
-    }
-
-    /// Builds one verifier-ready tree after the encoder that supplied the
-    /// latest append/update has completed.
-    ///
-    /// `bonus_token` is the target model's next token at the current DFlash
-    /// context boundary; it becomes slot zero and is verified with the tree.
-    pub fn encode_tree(
+    /// Proposes a tree rooted at `bonus_token`.
+    /// The last append encoder must be complete.
+    pub fn propose_tree(
         &self,
         state: &mut DFlashState<B>,
         bonus_token: u32,
         options: DFlashTreeOptions,
-    ) -> Result<SpeculationTree<B>, DFlashTreeError<B>> {
-        self.speculator.encode_tree_with_embedding(state, bonus_token, self.target_embedding, options)
+    ) -> Result<TreeProposal<B>, DFlashTreeError<B>> {
+        self.speculator.propose_tree_with_embedding(state, bonus_token, self.target_embedding, options)
     }
 }
 

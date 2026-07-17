@@ -151,28 +151,17 @@ impl<B: Backend> Decoder<B> {
             )
             .map_err(DecoderError::Backend)?;
 
-        // DFlash requests intermediate features, so preserve the final
-        // normalized row for Weaver only on that capture path.  Ordinary
-        // target-model decoding keeps the existing allocation profile.
-        let final_hidden = if hidden_feature_layer_indices.is_empty() {
-            None
-        } else {
-            transformer_output
-                .output
-                .as_ref()
-                .map(|output| {
-                    let mut copy = encoder.allocate_scratch(output.size()).map_err(DecoderError::Backend)?;
-                    encoder.encode_copy(output, .., &mut copy, ..);
-                    Ok::<_, DecoderError<B>>(copy)
-                })
-                .transpose()?
-        };
         let logits = if let Some(output_range) = output_range {
             let output =
                 transformer_output.output.as_ref().expect("decoder output range requires a transformer output");
             Some(self.embedding.encode_readout(output_range.len(), output, encoder)?)
         } else {
             None
+        };
+        let final_hidden = if hidden_feature_layer_indices.is_empty() {
+            None
+        } else {
+            transformer_output.output
         };
 
         Ok(DecoderEncodeOutput {

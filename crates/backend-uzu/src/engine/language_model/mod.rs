@@ -15,7 +15,7 @@ use crate::{
     },
     engine::Engine,
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
-    speculators::dflash_speculator::{DFlashSpeculator, DFlashWeaver},
+    speculators::dflash_speculator::{DFlashSpeculator, DFlashTfm},
 };
 
 pub mod grammar;
@@ -118,7 +118,6 @@ impl<B: Backend> Engine<B> {
 }
 
 impl<B: Backend> LanguageModel<B> {
-
     pub fn max_context_length(&self) -> Option<usize> {
         self.decoder.max_context_length()
     }
@@ -126,7 +125,7 @@ impl<B: Backend> LanguageModel<B> {
     pub fn bind_dflash<'a>(
         &'a self,
         speculator: &'a DFlashSpeculator<B>,
-    ) -> DFlashWeaver<'a, B> {
+    ) -> DFlashTfm<'a, B> {
         speculator.bind_target_embedding(self.decoder.embedding())
     }
 
