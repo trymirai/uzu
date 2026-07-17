@@ -47,7 +47,6 @@ pub(crate) struct WeaverNodeState<B: Backend> {
 }
 
 struct EncodedWeaverBatch<B: Backend> {
-    _query: Allocation<B>,
     child_ids: Allocation<B>,
     child_logprobs: Allocation<B>,
     _retained: Vec<Allocation<B>>,
@@ -117,6 +116,18 @@ pub enum WeaverEncodeError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("embedding error: {0}")]
     Embedding(#[from] EmbeddingError<B>),
+}
+
+fn linear<B: Backend>(
+    context: &B::Context,
+    parameter_tree: &ParameterTree<B>,
+    name: &str,
+    input_dim: usize,
+    output_dim: usize,
+    has_biases: bool,
+    data_type: DataType,
+) -> Result<Box<dyn Linear<B>>, WeaverNewError<B>> {
+    Ok(<dyn Linear<B>>::new(input_dim, [output_dim], has_biases, context, data_type, &parameter_tree.subtree(name)?)?)
 }
 
 fn plain_norm<B: Backend>(
@@ -218,13 +229,14 @@ impl<B: Backend> Weaver<B> {
             &parameter_tree.subtree("hidden_state_norm")?,
             data_type,
         )?;
-        let embedding_projection = <dyn Linear<B>>::new(
-            config.target_embedding_dim,
-            [config.model_dim],
-            true,
+        let embedding_projection = linear(
             context,
+            parameter_tree,
+            "embedding_projection",
+            config.target_embedding_dim,
+            config.model_dim,
+            true,
             data_type,
-            &parameter_tree.subtree("embedding_projection")?,
         )?;
         let blocks_tree = parameter_tree.subtree("blocks")?;
         let blocks = (0..config.num_layers)
@@ -247,31 +259,28 @@ impl<B: Backend> Weaver<B> {
             &parameter_tree.subtree("output_norm")?,
             data_type,
         )?;
-        let hidden_state_projection = <dyn Linear<B>>::new(
+        let hidden_state_projection = linear(
+            context,
+            parameter_tree,
+            "hidden_state_projection",
             config.target_model_dim,
-            [config.model_dim],
-            true,
-            context,
-            data_type,
-            &parameter_tree.subtree("hidden_state_projection")?,
-        )?;
-        let query_projection = <dyn Linear<B>>::new(
             config.model_dim,
-            [config.target_model_dim],
-            false,
-            context,
+            true,
             data_type,
-            &parameter_tree.subtree("query_projection")?,
+        )?;
+        let query_projection = linear(
+            context,
+            parameter_tree,
+            "query_projection",
+            config.model_dim,
+            config.target_model_dim,
+            false,
+            data_type,
         )?;
         let position_embeddings = parameter_tree
             .leaf("position_embeddings")?
             .validate(&[config.max_depth, config.model_dim], DataType::F32)?
             .read_allocation()?;
-        assert_eq!(
-            position_embeddings.size(),
-            config.max_depth * config.model_dim * DataType::F32.size_in_bytes(),
-            "Weaver position embedding allocation does not match max_depth"
-        );
         let position_add = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, DataType::F32, true)
             .map_err(WeaverNewError::Backend)?;
         let top_children =
@@ -489,7 +498,7 @@ impl<B: Backend> Weaver<B> {
         let query =
             self.query_projection.encode(output_normalized, rows, encoder).map_err(WeaverEncodeError::Backend)?;
         let candidate_logits =
-            target_embedding.encode_readout_candidates(&query, &candidate_ids, rows, candidates, encoder)?;
+            target_embedding.encode_readout_sparse(&query, &candidate_ids, rows, candidates, encoder)?;
         let mut child_ids = encoder
             .allocate_scratch(size_for_shape(&[rows, children], DataType::U32))
             .map_err(WeaverEncodeError::Backend)?;
@@ -507,9 +516,16 @@ impl<B: Backend> Weaver<B> {
             children as u32,
             encoder,
         );
-        retained.extend([token_ids, candidate_ids, token_embedding, current, candidate_scores, candidate_logits]);
+        retained.extend([
+            token_ids,
+            candidate_ids,
+            token_embedding,
+            current,
+            candidate_scores,
+            candidate_logits,
+            query,
+        ]);
         Ok(EncodedWeaverBatch {
-            _query: query,
             child_ids,
             child_logprobs,
             _retained: retained,
@@ -553,22 +569,9 @@ impl<B: Backend> WeaverBlock<B> {
     ) -> Result<Self, WeaverNewError<B>> {
         let head_dim = model_dim / num_heads;
         let attention_scale = 1.0 / (head_dim as f32).sqrt();
-        let qkv_projection = <dyn Linear<B>>::new(
-            model_dim,
-            [3 * model_dim],
-            false,
-            context,
-            data_type,
-            &parameter_tree.subtree("qkv_projection")?,
-        )?;
-        let out_projection = <dyn Linear<B>>::new(
-            model_dim,
-            [model_dim],
-            false,
-            context,
-            data_type,
-            &parameter_tree.subtree("out_projection")?,
-        )?;
+        let qkv_projection =
+            linear(context, parameter_tree, "qkv_projection", model_dim, 3 * model_dim, false, data_type)?;
+        let out_projection = linear(context, parameter_tree, "out_projection", model_dim, model_dim, false, data_type)?;
         let prefix_attention = AttentionCores::new(
             AttentionCoreNewArguments {
                 head_dim,
@@ -592,22 +595,9 @@ impl<B: Backend> WeaverBlock<B> {
             plain_norm(context, model_dim, norm_config, &parameter_tree.subtree("pre_attention_norm")?, data_type)?;
         let pre_mlp_norm =
             plain_norm(context, model_dim, norm_config, &parameter_tree.subtree("pre_mlp_norm")?, data_type)?;
-        let up_projection = <dyn Linear<B>>::new(
-            model_dim,
-            [hidden_dim],
-            true,
-            context,
-            data_type,
-            &parameter_tree.subtree("up_projection")?,
-        )?;
-        let down_projection = <dyn Linear<B>>::new(
-            hidden_dim,
-            [model_dim],
-            true,
-            context,
-            data_type,
-            &parameter_tree.subtree("down_projection")?,
-        )?;
+        let up_projection = linear(context, parameter_tree, "up_projection", model_dim, hidden_dim, true, data_type)?;
+        let down_projection =
+            linear(context, parameter_tree, "down_projection", hidden_dim, model_dim, true, data_type)?;
         let activation = <B::Kernels as Kernels>::ActivationKernel::new(context, data_type, true)
             .map_err(WeaverNewError::Backend)?;
         let residual_add =

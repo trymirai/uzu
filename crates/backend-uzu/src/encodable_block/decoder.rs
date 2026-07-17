@@ -154,7 +154,7 @@ impl<B: Backend> Decoder<B> {
         let logits = if let Some(output_range) = output_range {
             let output =
                 transformer_output.output.as_ref().expect("decoder output range requires a transformer output");
-            Some(self.embedding.encode_readout(output_range.len(), output, encoder)?)
+            Some(self.embedding.encode_readout(0, output_range.len(), output, self.embedding.data_type(), encoder)?)
         } else {
             None
         };
