@@ -12,7 +12,6 @@ use crate::{
         mlp::AnyMLPConfig,
         normalization::NormalizationConfig,
         rope::AnyRoPEConfig,
-        token_mixer::attention::AttentionConfig,
     },
     data_type::DataType,
     encodable_block::{
@@ -50,6 +49,7 @@ pub(crate) struct DFlashDraft<B: Backend> {
     layers: Box<[DFlashDraftLayer<B>]>,
     output_norm: Normalization<B>,
     top_k: <B::Kernels as Kernels>::DFlashTopKKernel,
+    rope_config: AnyRoPEConfig,
     model_dim: usize,
     max_context_length: usize,
     block_size: usize,
@@ -58,16 +58,11 @@ pub(crate) struct DFlashDraft<B: Backend> {
 }
 
 struct DFlashDraftLayer<B: Backend> {
-    attention: DFlashAttention<B>,
+    attention: Attention<B>,
     input_norm: Normalization<B>,
     post_attention_norm: Normalization<B>,
     mlp: Box<dyn Mlp<B>>,
     residual_add: <B::Kernels as Kernels>::TensorAddSwapKernel,
-}
-
-struct DFlashAttention<B: Backend> {
-    attention: Attention<B>,
-    rope_config: AnyRoPEConfig,
 }
 
 #[derive(Debug, Error)]
@@ -156,6 +151,7 @@ impl<B: Backend> DFlashDraft<B> {
             layers,
             output_norm,
             top_k,
+            rope_config: config.rope_config.clone(),
             model_dim: config.model_dim,
             max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
@@ -173,7 +169,7 @@ impl<B: Backend> DFlashDraft<B> {
         let layer_states = self
             .layers
             .iter()
-            .map(|layer| layer.attention.create_state(context_capacity, context))
+            .map(|layer| layer.attention.create_state(Some(context_capacity), context))
             .collect::<Result<Box<[_]>, B::Error>>()?;
         Ok(DFlashState {
             layer_states,
@@ -183,10 +179,6 @@ impl<B: Backend> DFlashDraft<B> {
         })
     }
 
-    /// Appends the hidden feature rows for the configured target layers.
-    ///
-    /// The input allocations must remain alive until the encoder containing
-    /// this call has completed; the append copies are asynchronous on Metal.
     pub(crate) fn append_state(
         &self,
         state: &mut DFlashState<B>,
@@ -232,13 +224,13 @@ impl<B: Backend> DFlashDraft<B> {
         let projected = self.context_projection.encode(projection_input, num_tokens, encoder)?;
         let projected = self.context_norm.encode(&projected, 0, num_tokens, None, encoder)?;
         let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();
+        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, encoder)?;
 
         for (layer, state_layer) in self.layers.iter().zip(state.layer_states.iter_mut()) {
             state_layer.prepare(state.context_length, num_tokens, encoder.context())?;
             let mut layer_input = encoder.allocate_scratch(projected.size())?;
             encoder.encode_copy(&projected, .., &mut layer_input, ..);
-            let rope = PrecalculatedRoPE::precalculate(&layer.attention.rope_config, &token_positions, encoder)?;
-            layer.attention.append_kv(layer_input, &rope, num_tokens, state_layer, encoder)?;
+            layer.attention.append_kv_to_state(layer_input, Some(&rope), num_tokens, state_layer, encoder)?;
         }
 
         state.context_length += num_tokens;
@@ -261,14 +253,14 @@ impl<B: Backend> DFlashDraft<B> {
             .collect::<Box<[_]>>();
         let batch_topology = BatchTopology::new(&nodes, true);
         let token_positions = (state.context_length..state.context_length + batch_dim).collect::<Box<[_]>>();
+        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, encoder)?;
 
         let mut hidden = token_embeddings;
         for (layer, state_layer) in self.layers.iter().zip(state.layer_states.iter_mut()) {
             state_layer.prepare(state.context_length, batch_dim, encoder.context())?;
             let normalized = layer.input_norm.encode(&hidden, 0, batch_dim, None, encoder)?;
-            let rope = PrecalculatedRoPE::precalculate(&layer.attention.rope_config, &token_positions, encoder)?;
             let mut attention_output =
-                layer.attention.encode(normalized, &rope, &batch_topology, state_layer, encoder)?;
+                layer.attention.encode_with_state(normalized, Some(&rope), &batch_topology, state_layer, encoder)?;
             let mut attention_residual = encoder.allocate_scratch(hidden.size())?;
             encoder.encode_copy(&hidden, .., &mut attention_residual, ..);
             layer.residual_add.encode(
@@ -318,13 +310,16 @@ impl<B: Backend> DFlashDraftLayer<B> {
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, DFlashDraftNewError<B>> {
-        let attention = DFlashAttention::new(
-            context,
+        if config.attention_config.is_causal {
+            return Err(DFlashDraftNewError::InvalidAttentionConfig("DFlash attention must be non-causal"));
+        }
+        let (attention, _) = Attention::new(
             model_dim,
-            &config.attention_config,
-            rope_config,
-            &parameter_tree.subtree("attention")?,
             data_type,
+            Some(rope_config),
+            &config.attention_config,
+            &parameter_tree.subtree("attention")?,
+            context,
         )?;
         let input_norm = plain_norm(
             context,
@@ -353,56 +348,5 @@ impl<B: Backend> DFlashDraftLayer<B> {
             mlp,
             residual_add,
         })
-    }
-}
-
-impl<B: Backend> DFlashAttention<B> {
-    fn new(
-        context: &B::Context,
-        model_dim: usize,
-        config: &AttentionConfig,
-        rope_config: &AnyRoPEConfig,
-        parameter_tree: &ParameterTree<B>,
-        data_type: DataType,
-    ) -> Result<Self, DFlashDraftNewError<B>> {
-        if config.is_causal {
-            return Err(DFlashDraftNewError::InvalidAttentionConfig("DFlash attention must be non-causal"));
-        }
-        let (attention, _) = Attention::new(model_dim, data_type, Some(rope_config), config, parameter_tree, context)?;
-
-        Ok(Self {
-            attention,
-            rope_config: rope_config.clone(),
-        })
-    }
-
-    fn create_state(
-        &self,
-        max_context_length: usize,
-        context: &B::Context,
-    ) -> Result<crate::encodable_block::mixer::attention::AttentionState<B>, B::Error> {
-        self.attention.create_state(Some(max_context_length), context)
-    }
-
-    fn append_kv(
-        &self,
-        hidden: Allocation<B>,
-        rope: &PrecalculatedRoPE<B>,
-        batch_dim: usize,
-        state: &mut crate::encodable_block::mixer::attention::AttentionState<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        self.attention.append_kv_to_state(hidden, Some(rope), batch_dim, state, encoder)
-    }
-
-    fn encode(
-        &self,
-        hidden: Allocation<B>,
-        rope: &PrecalculatedRoPE<B>,
-        batch_topology: &BatchTopology,
-        state: &mut crate::encodable_block::mixer::attention::AttentionState<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        self.attention.encode_with_state(hidden, Some(rope), batch_topology, state, encoder)
     }
 }

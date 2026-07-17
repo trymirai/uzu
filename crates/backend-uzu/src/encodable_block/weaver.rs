@@ -17,14 +17,11 @@ use crate::{
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError},
         mixer::attention::{Attention, AttentionNewError},
-        mlp::MlpBlockError,
         normalization::{Normalization, NormalizationNewError, PostLayerScalar},
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
-/// Host-side prefix state used by the correctness-first Weaver implementation.
-/// Each entry is the input to one Weaver block for every prefix position.
 pub(crate) struct WeaverPrefix<B: Backend> {
     pub(crate) layer_inputs: Box<[Allocation<B>]>,
     pub(crate) length: usize,
@@ -49,16 +46,10 @@ pub(crate) struct WeaverNodeState<B: Backend> {
 }
 
 struct EncodedWeaverBatch<B: Backend> {
-    _token_ids: Allocation<B>,
-    _candidate_ids: Allocation<B>,
-    _token_embedding: Allocation<B>,
-    _current: Allocation<B>,
     _query: Allocation<B>,
-    _candidate_scores: Allocation<B>,
-    _candidate_logits: Allocation<B>,
     child_ids: Allocation<B>,
     child_logprobs: Allocation<B>,
-    _node_inputs: Vec<Allocation<B>>,
+    _retained: Vec<Allocation<B>>,
 }
 
 pub(crate) struct Weaver<B: Backend> {
@@ -107,8 +98,6 @@ pub enum WeaverNewError<B: Backend> {
     Linear(#[from] LinearBlockError<B>),
     #[error("normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
-    #[error("MLP error: {0}")]
-    Mlp(#[from] MlpBlockError<B>),
     #[error("attention error: {0}")]
     Attention(#[from] AttentionNewError<B>),
     #[error("backend error: {0}")]
@@ -546,17 +535,13 @@ impl<B: Backend> Weaver<B> {
             children as u32,
             encoder,
         );
+        let mut retained = vec![token_ids, candidate_ids, token_embedding, current, candidate_scores, candidate_logits];
+        retained.extend(node_inputs);
         Ok(EncodedWeaverBatch {
-            _token_ids: token_ids,
-            _candidate_ids: candidate_ids,
-            _token_embedding: token_embedding,
-            _current: current,
             _query: query,
-            _candidate_scores: candidate_scores,
-            _candidate_logits: candidate_logits,
             child_ids,
             child_logprobs,
-            _node_inputs: node_inputs,
+            _retained: retained,
         })
     }
 

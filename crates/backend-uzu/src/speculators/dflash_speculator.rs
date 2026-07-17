@@ -169,13 +169,6 @@ impl<B: Backend> DFlashSpeculator<B> {
         }
     }
 
-    pub(crate) fn empty_state(
-        &self,
-        context_capacity: usize,
-    ) -> Result<DFlashState<B>, B::Error> {
-        self.model.empty_state(context_capacity, &self.context)
-    }
-
     pub(crate) fn bind_target_embedding<'a>(
         &'a self,
         target_embedding: &'a Embedding<B>,
@@ -184,19 +177,6 @@ impl<B: Backend> DFlashSpeculator<B> {
             speculator: self,
             target_embedding,
         }
-    }
-
-    /// Appends feature rows and the last token's normalized hidden row.
-    /// Inputs must remain alive until `encoder` completes.
-    pub(crate) fn append_state(
-        &self,
-        state: &mut DFlashState<B>,
-        target_features: &[Allocation<B>],
-        num_tokens: usize,
-        last_target_hidden: &Allocation<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        self.model.append_state(state, target_features, num_tokens, last_target_hidden, encoder)
     }
 
     fn propose_tree_with_embedding(
@@ -215,7 +195,7 @@ impl<B: Backend> DFlashSpeculator<B> {
         {
             return Err(DFlashTreeError::InvalidOptions);
         }
-        let block_size = self.block_size();
+        let block_size = self.model.block_size();
         let target_model_dim = self.config.draft_config.model_dim;
         let vocab_size = self.config.draft_config.vocab_size;
         let pool_size =
@@ -240,17 +220,18 @@ impl<B: Backend> DFlashSpeculator<B> {
         let token_embeddings = target_embedding.encode_lookup(&noise_ids, block_size, &mut encoder)?;
         let draft_hidden =
             self.model.encode_block(state, token_embeddings, &mut encoder).map_err(DFlashTreeError::Backend)?;
-        let logits = target_embedding.encode_readout_f32(1, block_size - 1, &draft_hidden, &mut encoder)?;
+        let draft_logits = target_embedding.encode_readout_f32(1, block_size - 1, &draft_hidden, &mut encoder)?;
         let (candidate_ids_allocation, candidate_scores_allocation) = self
             .model
-            .encode_top_k(&logits, block_size - 1, vocab_size, pool_size, &mut encoder)
+            .encode_top_k(&draft_logits, block_size - 1, vocab_size, pool_size, &mut encoder)
             .map_err(DFlashTreeError::Backend)?;
         let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
         let candidate_ids = candidate_ids_allocation.copyout::<u32>();
         let candidate_scores = candidate_scores_allocation.copyout::<f32>();
         drop(candidate_ids_allocation);
         drop(candidate_scores_allocation);
-        let logits = self.weaver.is_none().then(|| logits.copyout::<f32>());
+        let host_logits = self.weaver.is_none().then(|| draft_logits.copyout::<f32>());
+        drop(draft_logits);
         drop(noise_ids);
         let candidate_pools = (0..block_size - 1)
             .map(|row| {
@@ -272,7 +253,7 @@ impl<B: Backend> DFlashSpeculator<B> {
             children: Vec::new(),
         }];
         let Some(weaver) = self.weaver.as_ref() else {
-            let logits = logits.as_ref().unwrap();
+            let logits = host_logits.as_ref().unwrap();
             for depth in 0..options.budget.min(block_size.saturating_sub(1)) {
                 let (token, _) = candidate_pools[depth][0];
                 let row_start = depth * vocab_size;
@@ -417,10 +398,6 @@ impl<B: Backend> DFlashSpeculator<B> {
             length: order.len(),
         })
     }
-
-    pub(crate) fn block_size(&self) -> usize {
-        self.model.block_size()
-    }
 }
 
 impl<B: Backend> DFlashTfm<'_, B> {
@@ -428,7 +405,7 @@ impl<B: Backend> DFlashTfm<'_, B> {
         &self,
         context_capacity: usize,
     ) -> Result<DFlashState<B>, B::Error> {
-        self.speculator.empty_state(context_capacity)
+        self.speculator.model.empty_state(context_capacity, &self.speculator.context)
     }
 
     pub fn hidden_feature_layer_indices(&self) -> &[usize] {
@@ -443,7 +420,7 @@ impl<B: Backend> DFlashTfm<'_, B> {
         last_target_hidden: &Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        self.speculator.append_state(state, target_features, num_tokens, last_target_hidden, encoder)
+        self.speculator.model.append_state(state, target_features, num_tokens, last_target_hidden, encoder)
     }
 
     /// Proposes a tree rooted at `bonus_token`.
