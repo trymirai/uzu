@@ -5,6 +5,8 @@
 using namespace metal;
 
 namespace uzu::activation_prepare {
+static constant constexpr float INT8_SYMMETRIC_QUANTIZATION_MAXIMUM = 127.0;
+
 struct ActivationPrepareOps {
   uint raw_value;
   constexpr ActivationPrepareOps() thread : raw_value(0) {}

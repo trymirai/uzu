@@ -1,6 +1,9 @@
 use bitflags::bitflags;
 use derive_more::Display;
 
+/// Largest magnitude representable by symmetric int8 quantization.
+pub const INT8_SYMMETRIC_QUANTIZATION_MAXIMUM: f32 = 127.0;
+
 bitflags! {
     #[repr(transparent)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

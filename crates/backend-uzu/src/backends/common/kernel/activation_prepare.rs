@@ -1,6 +1,6 @@
-use crate::backends::common::gpu_types::{ActivationScaleStatistic, HADAMARD_TRANSFORM_BLOCK_SIZE};
-
-pub const INT8_SYMMETRIC_QMAX: f32 = 127.0;
+use crate::backends::common::gpu_types::{
+    ActivationScaleStatistic, HADAMARD_TRANSFORM_BLOCK_SIZE, INT8_SYMMETRIC_QUANTIZATION_MAXIMUM,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivationPrepareConfig {
@@ -42,7 +42,7 @@ pub fn group_stat(
 
 pub fn symmetric_divisor(stat: f32) -> f32 {
     if stat > 0.0 {
-        stat / INT8_SYMMETRIC_QMAX
+        stat / INT8_SYMMETRIC_QUANTIZATION_MAXIMUM
     } else {
         1.0
     }
@@ -52,5 +52,5 @@ pub fn quantize_symmetric_i8(
     value: f32,
     divisor: f32,
 ) -> i8 {
-    (value / divisor).round().clamp(-INT8_SYMMETRIC_QMAX, INT8_SYMMETRIC_QMAX) as i8
+    (value / divisor).round().clamp(-INT8_SYMMETRIC_QUANTIZATION_MAXIMUM, INT8_SYMMETRIC_QUANTIZATION_MAXIMUM) as i8
 }

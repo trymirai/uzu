@@ -10,7 +10,6 @@ using namespace metal;
 using namespace uzu::activation_prepare;
 
 #define ACTIVATION_PREPARE_BLOCK_SIZE 256
-#define INT8_SYMMETRIC_QMAX 127.0f
 
 template <typename InputT>
 VARIANTS(InputT, float, half, bfloat)
@@ -63,7 +62,7 @@ PUBLIC KERNEL(ActivationsPrepare)(
           thread_sum_of_squares, shared_reduce, thread_context);
       scale_stat = sqrt(total_sq / static_cast<float>(max(end - start, 1u)));
     }
-    const float divisor = scale_stat > 0.0f ? scale_stat / INT8_SYMMETRIC_QMAX : 1.0f;
+    const float divisor = scale_stat > 0.0f ? scale_stat / INT8_SYMMETRIC_QUANTIZATION_MAXIMUM : 1.0f;
     if (thread_in_row == 0) {
       row_scales[group] = divisor;
     }
@@ -74,7 +73,10 @@ PUBLIC KERNEL(ActivationsPrepare)(
         value = simdgroup_input_random_hadamard_transform(
             static_cast<ushort>(i % HADAMARD_TRANSFORM_BLOCK_SIZE), value, rht_factors[i]);
       }
-      row_q[i] = static_cast<int8_t>(clamp(round(value / divisor), -INT8_SYMMETRIC_QMAX, INT8_SYMMETRIC_QMAX));
+      row_q[i] = static_cast<int8_t>(clamp(
+          round(value / divisor),
+          -INT8_SYMMETRIC_QUANTIZATION_MAXIMUM,
+          INT8_SYMMETRIC_QUANTIZATION_MAXIMUM));
     }
   }
 }
