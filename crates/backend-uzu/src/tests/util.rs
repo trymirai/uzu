@@ -1,10 +1,13 @@
-use test_runner::env_vars;
+#[cfg(metal_backend)]
+use std::{cell::OnceCell, sync::Arc};
 
 #[cfg(metal_backend)]
-pub fn shared_metal_context() -> std::rc::Rc<crate::backends::metal::MetalContext> {
-    use crate::backends::{common::Context, metal::MetalContext};
+use crate::backends::{common::Context, metal::MetalContext};
+
+#[cfg(metal_backend)]
+pub fn shared_metal_context() -> Arc<MetalContext> {
     thread_local! {
-        static CTX: std::cell::OnceCell<std::rc::Rc<MetalContext>> = const { std::cell::OnceCell::new() };
+        static CTX: OnceCell<Arc<MetalContext>> = const { OnceCell::new() };
     }
     CTX.with(|cell| cell.get_or_init(|| MetalContext::new().expect("Metal context")).clone())
 }

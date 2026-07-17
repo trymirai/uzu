@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, hash_map::Entry},
     fs::File,
     io::BufReader,
-    rc::Rc,
+    sync::Arc,
     time::Instant,
 };
 
@@ -60,7 +60,7 @@ fn bench_allocator_generation_trace() {
 
     let context = <<Metal as Backend>::Context as Context>::new().unwrap();
 
-    let mut allocators: HashMap<usize, Rc<Allocator<Metal>>> = HashMap::new();
+    let mut allocators: HashMap<usize, Arc<Allocator<Metal>>> = HashMap::new();
     let mut pools: HashMap<(usize, usize), AllocationPool<Metal>> = HashMap::new();
     let mut allocations: HashMap<(usize, usize), Allocation<Metal>> = HashMap::new();
 
@@ -73,7 +73,7 @@ fn bench_allocator_generation_trace() {
                     panic!("Duplicate allocator id: {}", event.allocator_id);
                 };
 
-                vacant.insert(Allocator::new(Rc::downgrade(&context)));
+                vacant.insert(Allocator::new(Arc::downgrade(&context)));
             },
             TraceEventType::CreatePool {
                 reusable,

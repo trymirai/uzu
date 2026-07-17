@@ -2,7 +2,7 @@ use std::{
     cmp::{max, min},
     fmt::Debug,
     ops::Range,
-    rc::Rc,
+    sync::Arc,
 };
 
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions, MTLSparsePageSize};
@@ -19,13 +19,13 @@ use crate::backends::{
 pub struct MetalSparseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     mapped_pages: RangeSet<usize>,
-    context: Rc<MetalContext>,
+    context: Arc<MetalContext>,
     page_size: MTLSparsePageSize,
 }
 
 impl MetalSparseBuffer {
     pub(crate) fn new(
-        context: Rc<MetalContext>,
+        context: Arc<MetalContext>,
         capacity: usize,
         page_size: MTLSparsePageSize,
     ) -> Result<Self, MetalError> {
@@ -97,10 +97,10 @@ impl SparseBuffer for MetalSparseBuffer {
         let mut all_batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
         let gaps = self.mapped_pages.gaps(pages).collect::<Vec<_>>();
         let pages_to_map = gaps.iter().map(|gap| gap.len()).sum();
-        context.sparse_heap_pool_mut().ensure_enough_free_pages(context, pages_to_map)?;
+        context.sparse_heap_pool().ensure_enough_free_pages(context, pages_to_map)?;
 
         for gap in gaps.iter() {
-            let mut pool = context.sparse_heap_pool_mut();
+            let mut pool = context.sparse_heap_pool();
             let operations = pool.create_map_operations(context, &self.buffer, gap)?;
             pool.apply_map_operations(&operations);
             all_batches.extend(operations);
@@ -133,7 +133,7 @@ impl SparseBuffer for MetalSparseBuffer {
             .collect::<Vec<_>>();
         for mapped_range in mapped_ranges.iter() {
             let batches = context.sparse_heap_pool().create_unmap_operations(&self.buffer, mapped_range);
-            context.sparse_heap_pool_mut().apply_map_operations(&batches);
+            context.sparse_heap_pool().apply_map_operations(&batches);
             all_batches.extend(batches);
         }
 

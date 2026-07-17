@@ -498,6 +498,7 @@ dependencies = [
  "obfstr",
  "objc2",
  "objc2-foundation",
+ "parking_lot",
  "prettyplease",
  "proc-macro2",
  "proc-macros",
@@ -1952,9 +1953,6 @@ name = "esaxx-rs"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d817e038c30374a4bcb22f94d0a8a0e216958d4c3dcde369b1439fec4bdda6e6"
-dependencies = [
- "cc",
-]
 
 [[package]]
 name = "etcetera"
@@ -3757,9 +3755,9 @@ dependencies = [
 
 [[package]]
 name = "mtl-rs"
-version = "0.1.13"
+version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb19a6103808f1af363f96d845bd734c49df73eda4ada4177d118560cd4cf0ba"
+checksum = "6365d3a49e40c611ee28aa0f1bc90abc69b3b3a38172f63b1fdb0061809cba91"
 dependencies = [
  "bitflags 2.13.0",
  "block2",
@@ -4309,28 +4307,6 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
-
-[[package]]
-name = "onig"
-version = "6.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cc3cbf698f9438986c11a880c90a6d04b9de27575afd28bbf45b154b6c709e2"
-dependencies = [
- "bitflags 2.13.0",
- "libc",
- "once_cell",
- "onig_sys",
-]
-
-[[package]]
-name = "onig_sys"
-version = "69.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e68317604e77e53b85896388e1a803c1d21b74c899ec9e5e1112db90735edd7"
-dependencies = [
- "cc",
- "pkg-config",
-]
 
 [[package]]
 name = "oorandom"
@@ -6922,12 +6898,10 @@ dependencies = [
  "esaxx-rs",
  "fancy-regex 0.14.0",
  "getrandom 0.3.4",
- "indicatif",
  "itertools 0.14.0",
  "log",
  "macro_rules_attribute",
  "monostate",
- "onig",
  "paste",
  "rand 0.9.4",
  "rayon",
@@ -8000,6 +7974,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "which"
+version = "8.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f3ef584124b911bcc3875c2f1472e80f24361ceb789bd1c62b3e9a3df9ff43c"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8429,15 +8412,17 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xgrammar-rs"
-version = "0.2.2"
-source = "git+https://github.com/trymirai/xgrammar-rs.git?tag=0.2.2#d55d5bb1403f443d6a379c5acc7191a28bbcbb92"
+version = "0.2.3"
+source = "git+https://github.com/trymirai/xgrammar-rs.git?tag=0.2.3#e1e0f27df369c5d6027cc89ba4801fcda10e7b9e"
 dependencies = [
+ "cc",
  "cmake",
  "cxx",
  "cxx-build",
  "serde_json",
  "tokenizers",
  "walkdir",
+ "which",
 ]
 
 [[package]]

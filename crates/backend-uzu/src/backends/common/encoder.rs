@@ -1,6 +1,6 @@
 use std::{
     ops::{Bound, Range, RangeBounds},
-    rc::Rc,
+    sync::Arc,
     time::Duration,
 };
 
@@ -34,18 +34,18 @@ fn resolve_copy_range(
 pub struct Encoder<'encoding, B: Backend> {
     context: &'encoding B::Context,
     command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
-    allocation_pool: Rc<AllocationPool<B>>,
+    allocation_pool: Arc<AllocationPool<B>>,
     hazard_tracker: HazardTracker,
 }
 
 impl<'encoding, B: Backend> Encoder<'encoding, B> {
     pub fn new(context: &'encoding B::Context) -> Result<Self, B::Error> {
-        Self::new_with_pool(context, Rc::new(context.create_allocation_pool(false)))
+        Self::new_with_pool(context, Arc::new(context.create_allocation_pool(false)))
     }
 
     pub fn new_with_pool(
         context: &'encoding B::Context,
-        allocation_pool: Rc<AllocationPool<B>>,
+        allocation_pool: Arc<AllocationPool<B>>,
     ) -> Result<Self, B::Error> {
         let command_buffer = context.create_command_buffer()?.start_encoding();
         let hazard_tracker = HazardTracker::new();
@@ -159,7 +159,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
 
 pub struct Executable<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Executable,
-    allocation_pool: Rc<AllocationPool<B>>,
+    allocation_pool: Arc<AllocationPool<B>>,
 }
 
 impl<B: Backend> Executable<B> {
@@ -173,7 +173,7 @@ impl<B: Backend> Executable<B> {
 
 pub struct Pending<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Pending,
-    allocation_pool: Rc<AllocationPool<B>>,
+    allocation_pool: Arc<AllocationPool<B>>,
 }
 
 impl<B: Backend> Pending<B> {
@@ -188,7 +188,7 @@ impl<B: Backend> Pending<B> {
 pub struct Completed<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Completed,
     #[allow(unused)]
-    allocation_pool: Rc<AllocationPool<B>>,
+    allocation_pool: Arc<AllocationPool<B>>,
 }
 
 impl<B: Backend> Completed<B> {

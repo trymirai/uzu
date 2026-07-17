@@ -1,5 +1,5 @@
 #![cfg(test)]
-#![allow(dead_code, unused_imports, unused_macros)]
+#![allow(dead_code)]
 
 pub extern crate test;
 
