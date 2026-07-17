@@ -179,24 +179,13 @@ impl ChatSession {
         Ok(())
     }
 
-    async fn execute_turn(
+    async fn send_input(
         &self,
         sender: UnboundedSender<Result<Vec<ChatReply>, ChatSessionError>>,
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
     ) {
-        // check state
-        let mut state_guard = self.state.lock().await;
-        match *state_guard {
-            ChatSessionState::Idle => *state_guard = ChatSessionState::Generation,
-            ChatSessionState::Generation | ChatSessionState::ToolCalling | ChatSessionState::Resetting => {
-                let _ = sender.send(Err(ChatSessionError::UnableToPerformOperationInCurrentState {}));
-                return;
-            },
-        }
-        drop(state_guard);
-
         // prepare all messages
         let all_messages = {
             let mut messages_guard = self.messages.lock().await;
@@ -267,10 +256,6 @@ impl ChatSession {
         drop(stream);
         drop(instance);
 
-        let mut state_guard = self.state.lock().await;
-        *state_guard = ChatSessionState::Idle;
-        drop(state_guard);
-
         // telemetry report result
         if let Some(error) = error_value {
             self.telemetry.report(TelemetryEvent::ModelInferenceFailed {
@@ -284,18 +269,23 @@ impl ChatSession {
         }
     }
 
-    async fn execute_turn_with_tools(
+    async fn execute_turn(
         &self,
         sender: UnboundedSender<Result<Vec<ChatReply>, ChatSessionError>>,
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
     ) {
+        // check state
+        if !self.try_transition(ChatSessionState::Idle, ChatSessionState::Generation).await {
+            let _ = sender.send(Err(ChatSessionError::UnableToPerformOperationInCurrentState {}));
+            return;
+        }
+
         let mut completed_replies: Vec<ChatReply> = Vec::new();
         let mut next_input = input;
 
-        loop {
-            // run a single generation turn
+        'turns: loop {
             let (turn_sender, mut turn_receiver) =
                 mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
             let turn_input = std::mem::take(&mut next_input);
@@ -303,8 +293,10 @@ impl ChatSession {
             let turn_cancel_token = cancel_token.clone();
             let session = self.clone();
             tokio::spawn(
-                async move { session.execute_turn(turn_sender, turn_input, turn_config, turn_cancel_token).await },
+                async move { session.send_input(turn_sender, turn_input, turn_config, turn_cancel_token).await },
             );
+
+            // send message
             let mut turn_replies: Vec<ChatReply> = Vec::new();
             while let Some(result) = turn_receiver.recv().await {
                 match result {
@@ -313,78 +305,97 @@ impl ChatSession {
                         let mut all_replies = completed_replies.clone();
                         all_replies.extend(turn_replies.iter().cloned());
                         if sender.send(Ok(all_replies)).is_err() {
-                            return;
+                            break 'turns;
                         }
                     },
                     Err(error) => {
                         let _ = sender.send(Err(error));
-                        return;
+                        break 'turns;
                     },
                 }
             }
 
-            // continue only when the model requested tool calls
-            let Some(last_reply) = turn_replies.last() else {
-                return;
-            };
-            if last_reply.finish_reason != Some(ChatReplyFinishReason::ToolCalls) {
-                return;
-            }
+            // check for tool calls and execute if needed
+            if let Some(last_reply) = turn_replies.last()
+                && last_reply.finish_reason == Some(ChatReplyFinishReason::ToolCalls)
+                && !cancel_token.is_cancelled()
+            {
+                if self.try_transition(ChatSessionState::Generation, ChatSessionState::ToolCalling).await {
+                    let tool_calls = last_reply.message.tool_calls();
+                    let tool_messages = self.execute_tool_calls(tool_calls).await;
 
-            let tool_calls = last_reply.message.tool_calls();
-            let Some(registry) = self.tool_registry.as_ref() else {
-                return;
-            };
-            if tool_calls.is_empty() || cancel_token.is_cancelled() {
-                return;
-            }
-
-            let mut state_guard = self.state.lock().await;
-            if *state_guard != ChatSessionState::Idle {
-                return;
-            }
-            *state_guard = ChatSessionState::ToolCalling;
-            drop(state_guard);
-
-            let registry_guard = registry.lock().await;
-            let mut tool_messages: Vec<ChatMessage> = Vec::with_capacity(tool_calls.len());
-            for call in tool_calls {
-                let function: Option<&ToolFunctionDefinition> = (*registry_guard).get_function(&call.name);
-                let value = if let Some(func) = function {
-                    func.execute(call.arguments).await.unwrap_or_else(|err| {
-                        Value::from(serde_json::json!({
-                            "error": err.to_string(),
-                        }))
-                    })
+                    if self.try_transition(ChatSessionState::ToolCalling, ChatSessionState::Generation).await {
+                        if !tool_messages.is_empty() && !cancel_token.is_cancelled() {
+                            completed_replies.extend(turn_replies);
+                            next_input = tool_messages;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        return;
+                    }
                 } else {
+                    return;
+                }
+            } else {
+                break;
+            }
+        }
+
+        *self.state.lock().await = ChatSessionState::Idle;
+    }
+
+    async fn execute_tool_calls(
+        &self,
+        tool_calls: Vec<ToolCall>,
+    ) -> Vec<ChatMessage> {
+        if tool_calls.is_empty() {
+            return vec![];
+        }
+        let Some(ref registry) = self.tool_registry else {
+            return vec![];
+        };
+
+        let registry_guard = registry.lock().await;
+        let mut tool_messages: Vec<ChatMessage> = Vec::with_capacity(tool_calls.len());
+        for call in tool_calls {
+            let function: Option<&ToolFunctionDefinition> = (*registry_guard).get_function(&call.name);
+            let value = if let Some(func) = function {
+                func.execute(call.arguments).await.unwrap_or_else(|err| {
                     Value::from(serde_json::json!({
-                        "error": format!("Unknown function: {}", call.name),
+                        "error": err.to_string(),
                     }))
-                };
+                })
+            } else {
+                Value::from(serde_json::json!({
+                    "error": format!("Unknown function: {}", call.name),
+                }))
+            };
 
-                // chat templates expect tool results as plain text, one message per call
-                let tool_message = ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
-                    identifier: call.identifier.clone(),
-                    name: Some(call.name.clone()),
-                    value: Value::from(serde_json::Value::String(value.json)),
-                });
-                tool_messages.push(tool_message);
-            }
-            drop(registry_guard);
+            // chat templates expect tool results as plain text, one message per call
+            let tool_message = ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+                identifier: call.identifier.clone(),
+                name: Some(call.name.clone()),
+                value: Value::from(serde_json::Value::String(value.json)),
+            });
+            tool_messages.push(tool_message);
+        }
+        tool_messages
+    }
 
-            let mut state_guard = self.state.lock().await;
-            if *state_guard != ChatSessionState::ToolCalling {
-                return;
-            }
-            *state_guard = ChatSessionState::Idle;
-            drop(state_guard);
-
-            if cancel_token.is_cancelled() {
-                return;
-            }
-
-            completed_replies.extend(turn_replies);
-            next_input = tool_messages;
+    /// Atomically switches state from `from` to `to`.
+    /// Returns false (leaving state untouched) if the current state differs.
+    async fn try_transition(
+        &self,
+        from: ChatSessionState,
+        to: ChatSessionState,
+    ) -> bool {
+        let mut state_guard = self.state.lock().await;
+        if *state_guard == from {
+            *state_guard = to;
+            true
+        } else {
+            false
         }
     }
 }
@@ -460,7 +471,7 @@ impl ChatSession {
         let cancel_token = cancel_token_to_return.inner().clone();
         let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
         let session = self.clone();
-        tokio::spawn(async move { session.execute_turn_with_tools(sender, input, config, cancel_token).await });
+        tokio::spawn(async move { session.execute_turn(sender, input, config, cancel_token).await });
         ChatSessionStream {
             receiver: Arc::new(Mutex::new(receiver)),
             cancel_token: cancel_token_to_return,
