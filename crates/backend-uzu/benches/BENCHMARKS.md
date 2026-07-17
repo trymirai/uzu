@@ -13,7 +13,9 @@ under `target/criterion/<label>/`; on-device results stay on the phone (see belo
     - Official `cargo-dinghy` (from crates.io): `cargo install cargo-dinghy`.
     - A physical device connected via **USB**, **unlocked**, with **Developer Mode**
       enabled (Settings → Privacy & Security → Developer Mode).
-    - Two different identifiers are used:
+    - Start an RSD tunnel in a separate terminal (needed for dinghy launch):
+      `sudo pymobiledevice3 remote tunneld`
+    - Identifiers:
         - `cargo-dinghy` matches the **hardware ECID** — copy it from
           `cargo dinghy all-devices` (e.g. `Eugene's iPhone (00008150-… aarch64 27.0)`).
         - `xcrun devicectl` uses the **CoreDevice UUID** — copy the Identifier column
@@ -33,7 +35,7 @@ under `target/criterion/<label>/`; on-device results stay on the phone (see belo
 Use an **absolute** `CRITERION_HOME` so it does not resolve relative to the package dir.
 
 ```bash
-# a --bench main group (A8W8 self-skips on GPUs without MXU, i.e. M1–M4):
+# A8W8 self-skips on GPUs without MXU (i.e. M1–M4):
 CRITERION_HOME="$PWD/target/criterion/m2_max" \
   cargo bench -p backend-uzu --bench main -- "Metal/Kernel/A8W8"
 
@@ -48,40 +50,30 @@ Set `UZU_CAPTURE_BENCH=1` to capture the first matching command buffer as a Meta
 
 ## Running on iPhone
 
-`cargo-dinghy` builds and installs the bench app via `xcrun devicectl`, but its own
-launch step shells out to `pymobiledevice3` (RSD), which on iOS 17 needs a root tunnel
-and is sensitive to the installed `pymobiledevice3` CLI version. The reliable path is
-to let dinghy build + install, then launch the installed app with `devicectl` directly
-— no `pymobiledevice3`, no tunnel, no `sudo`. Run one group at a time to avoid the iOS
-watchdog killing the app.
+With `tunneld` running and the phone unlocked:
 
 ```bash
 ECID=<from `cargo dinghy all-devices`>        # e.g. 00008150-001965E22282401C
-UUID=<from `xcrun devicectl list devices`>    # e.g. DD4B4CF2-F102-5B4F-A616-5D824E55B6FF
 
-# 1) Build (release, aarch64-apple-ios) + install the app (bundle id org.zoy.kali.Dinghy)
-#    via devicectl. dinghy then exits non-zero at its pymobiledevice3 launch step —
-#    that is expected; the app is already installed by that point.
-cargo dinghy -d "$ECID" bench -p backend-uzu --bench main -- "Metal/Kernel/A8W8" || true
-
-# 2) Launch the installed bench directly; stdout/stderr stream over --console.
-xcrun devicectl device process launch --console --terminate-existing \
-  --device "$UUID" \
-  -e '{"CRITERION_HOME":"target/criterion/a19"}' \
-  org.zoy.kali.Dinghy  Metal/Kernel/A8W8 --save-baseline a8w8_a19 --bench
+cargo dinghy -d "$ECID" bench -p backend-uzu --bench main -- "Metal/Kernel/A8W8"
 ```
 
-Criterion output stays on the phone under `Documents/target/criterion/a19`; pull it
-with `xcrun devicectl device copy from` if you want the host-side HTML report.
+If dinghy’s launch step fails after install, launch the installed app with
+`xcrun devicectl device process launch --console --terminate-existing --device <UUID> org.zoy.kali.Dinghy …`.
 
-## A8W8 int8 GEMM (A19 only)
+## A8W8 vs ordinary MXU (`Metal/Kernel/A8W8`)
 
-`Metal/Kernel/A8W8` (`benches/kernels/a8w8_bench.rs`) self-skips on GPUs without MXU.
-On M5/A19 it first runs a correctness check — the int8×int8→int32 GEMM against a
-plain-Rust A8W8 reference; a mismatch panics — then times int8 vs bf16. The int8
-timing includes the fused RHT + activation-preparation dispatch. Because the correctness
-asserts stream over `--console` before any timing, a panic there means the int8 result
-diverged from the reference.
+[`benches/kernels/a8w8_bench.rs`](kernels/a8w8_bench.rs) compares two MXU paths over
+the same random buffers and shapes (Criterion [comparing functions](https://bheisler.github.io/criterion.rs/book/user_guide/comparing_functions.html)):
+
+| Function id | What it times |
+|-------------|----------------|
+| `mxu_a8w8`  | fused RHT+quantize prepare + int8×int8 MXU GEMM |
+| `mxu_bf16`  | input RHT + bf16×dequant-B MXU GEMM |
+
+Correctness is covered only by unit tests (`a8w8_*`), not by this bench. On non-MXU
+GPUs the group self-skips. Open Criterion’s HTML report for per-shape violin/line
+comparison of the two IDs.
 
 ## Viewing reports (macOS)
 
