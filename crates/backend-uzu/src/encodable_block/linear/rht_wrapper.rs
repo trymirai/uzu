@@ -152,7 +152,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         if let Some(preparation) = &self.int8_preparation
-            && self.inner_linear.supports_int8_symmetric_a(encoder.context(), batch_dim, preparation.group_size)
+            && self.inner_linear.supports_int8_symmetric_a(encoder.context(), preparation.group_size)
         {
             let groups_per_row = self.input_dimension.div_ceil(preparation.group_size as usize);
             let mut values =

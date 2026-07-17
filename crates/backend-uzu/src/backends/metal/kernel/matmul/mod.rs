@@ -7,7 +7,6 @@ use crate::{
     backends::{
         common::{
             BufferArg, Encoder,
-            gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
             kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
         },
         metal::{Metal, context::MetalContext, error::MetalError, metal_extensions::DeviceExt},
@@ -48,29 +47,6 @@ impl MatmulKernel for MatmulMetalKernel {
             input_data_type,
             output_data_type,
         })
-    }
-
-    fn supports_int8_symmetric_a(
-        &self,
-        context: &MetalContext,
-        m: u32,
-        n: u32,
-        k: u32,
-        group_size: u32,
-    ) -> bool {
-        if !context.supports_mxu()
-            || group_size == 0
-            || !group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
-            || !k.is_multiple_of(group_size)
-            || ![self.weights_data_type, self.input_data_type, self.output_data_type]
-                .into_iter()
-                .all(|data_type| data_type == DataType::BF16)
-        {
-            return false;
-        }
-
-        let tiling = gemm::select_mxu_quant_tiling(m, n, group_size);
-        k.is_multiple_of(tiling.block_k())
     }
 
     fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(

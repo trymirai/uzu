@@ -49,17 +49,6 @@ impl MatmulKernel for MatmulCpuKernel {
         })
     }
 
-    fn supports_int8_symmetric_a(
-        &self,
-        _context: &CpuContext,
-        _m: u32,
-        _n: u32,
-        _k: u32,
-        group_size: u32,
-    ) -> bool {
-        group_size != 0 && group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
-    }
-
     fn encode<'a, 'b, 'd, TB: BufferArg<'b, Cpu>>(
         &mut self,
         arguments: MatmulArguments<'a, 'b, 'd, Cpu, TB>,

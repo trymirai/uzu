@@ -5,8 +5,8 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder,
-        gpu_types::{QuantizationMethod, QuantizationMode},
+        Allocation, Backend, Context, Encoder,
+        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
         kernel::{
             Kernels,
             matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -213,7 +213,6 @@ impl<B: Backend> LinearMatmul<B> {
     pub(crate) fn supports_int8_symmetric_a(
         &self,
         context: &B::Context,
-        batch_dim: usize,
         group_size: u32,
     ) -> bool {
         let compatible_weights = matches!(
@@ -226,14 +225,14 @@ impl<B: Backend> LinearMatmul<B> {
             } if *weight_group_size == group_size
         );
 
+        // The int8 GEMM is MXU-only and its K-loop is group-based, so the only
+        // requirements are symmetric 8-bit weights, an RHT-block-aligned group
+        // that divides K, and a hardware matrix unit.
         compatible_weights
-            && self.kernel.borrow().supports_int8_symmetric_a(
-                context,
-                batch_dim as u32,
-                self.output_dim as u32,
-                self.input_dim as u32,
-                group_size,
-            )
+            && context.supports_mxu()
+            && group_size != 0
+            && group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
+            && (self.input_dim as u32).is_multiple_of(group_size)
     }
 
     pub(crate) fn encode_with_a(
