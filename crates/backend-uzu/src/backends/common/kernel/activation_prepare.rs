@@ -5,14 +5,14 @@ use crate::backends::common::gpu_types::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivationPrepareConfig {
     pub enabled: bool,
-    pub stat: ActivationScaleStatistic,
+    pub statistic: ActivationScaleStatistic,
 }
 
 impl ActivationPrepareConfig {
     pub fn from_env() -> Self {
         Self {
             enabled: std::env::var("UZU_A8W8").is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true")),
-            stat: match std::env::var("UZU_A8W8_STAT").ok().as_deref() {
+            statistic: match std::env::var("UZU_A8W8_STAT").ok().as_deref() {
                 Some("rms") => ActivationScaleStatistic::Rms,
                 _ => ActivationScaleStatistic::AbsMax,
             },

@@ -112,12 +112,11 @@ impl<B: Backend> RHTLinearWrapper<B> {
         let int8_preparation = activation_prepare_group_size(config, input_dimension, &quantization_spec)
             .map(|group_size| {
                 let ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
-                <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type, ops, config.stat).map(
-                    |kernel| Int8Preparation {
+                <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type, ops, config.statistic)
+                    .map(|kernel| Int8Preparation {
                         kernel,
                         group_size,
-                    },
-                )
+                    })
             })
             .transpose()
             .map_err(RHTLinearWrapperError::BackendError)?;
