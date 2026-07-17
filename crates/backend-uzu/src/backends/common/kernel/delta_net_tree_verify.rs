@@ -5,7 +5,7 @@ use crate::{
     encodable_block::mixer::delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
 };
 
-pub trait DeltaNetTreeVerify<B: Backend<Kernels: Kernels<DeltaNetTreeVerify = Self>>>: Sized {
+pub trait DeltaNetTreeVerify<B: Backend<Kernels: Kernels<DeltaNetTreeVerify = Self>>>: Sized + Send + Sync {
     fn is_supported(context: &B::Context) -> bool;
 
     fn new(

@@ -1,7 +1,6 @@
-use std::{
-    cell::{RefCell, RefMut},
-    collections::{HashMap, hash_map::Entry},
-};
+use std::collections::{HashMap, hash_map::Entry};
+
+use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
 use crate::{
     array::size_for_shape,
@@ -14,7 +13,7 @@ use crate::{
 };
 
 pub struct AttentionGemmMetalCore {
-    kernels: RefCell<HashMap<AttentionGemmKey, AttentionGemmMetalKernel>>,
+    kernels: Mutex<HashMap<AttentionGemmKey, AttentionGemmMetalKernel>>,
     head_dim: usize,
     num_groups: usize,
     num_q_heads: usize,
@@ -54,8 +53,8 @@ impl AttentionGemmMetalCore {
         &self,
         context: &MetalContext,
         key: AttentionGemmKey,
-    ) -> Result<RefMut<'_, AttentionGemmMetalKernel>, MetalError> {
-        let mut kernels = self.kernels.borrow_mut();
+    ) -> Result<MappedMutexGuard<'_, AttentionGemmMetalKernel>, MetalError> {
+        let mut kernels = self.kernels.lock();
         if let Entry::Vacant(entry) = kernels.entry(key) {
             let bk = if key.use_mxu {
                 32
@@ -78,7 +77,7 @@ impl AttentionGemmMetalCore {
             )?;
             entry.insert(kernel);
         }
-        Ok(RefMut::map(kernels, |kernels| kernels.get_mut(&key).expect("kernel was just initialized")))
+        Ok(MutexGuard::map(kernels, |kernels| kernels.get_mut(&key).expect("kernel was just initialized")))
     }
 }
 
@@ -101,7 +100,7 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
         };
 
         Ok(Self {
-            kernels: RefCell::new(HashMap::new()),
+            kernels: Mutex::new(HashMap::new()),
             head_dim: arguments.head_dim,
             num_groups: arguments.num_groups,
             num_q_heads: arguments.num_q_heads,

@@ -1,4 +1,4 @@
-use std::{mem::size_of, rc::Rc};
+use std::{mem::size_of, sync::Arc};
 
 use crate::{
     array::ArrayElement,
@@ -62,7 +62,7 @@ pub fn write_allocation<B: Backend, T: ArrayElement>(
     destination[..bytes.len()].copy_from_slice(bytes);
 }
 
-pub fn create_context<B: Backend>() -> Rc<<B as Backend>::Context> {
+pub fn create_context<B: Backend>() -> Arc<<B as Backend>::Context> {
     B::Context::new().unwrap_or_else(|_| panic!("Failed to create context for {}", std::any::type_name::<B>()))
 }
 

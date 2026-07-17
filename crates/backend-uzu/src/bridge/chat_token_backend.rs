@@ -2,11 +2,12 @@ use std::{
     any::Any,
     path::PathBuf,
     pin::Pin,
-    sync::MutexGuard,
+    sync::Arc,
     task::{Context, Poll},
 };
 
 use futures::Stream;
+use parking_lot::{Mutex, MutexGuard};
 use shoji::{
     traits::{
         State,
@@ -28,7 +29,6 @@ use crate::{
     bridge::{
         chat_token_state::UzuChatTokenBackendInstanceState,
         helpers::{error_stream, get_grammar, get_max_context_length, get_sampling_method, get_speculator},
-        sync_shared::SyncShared,
     },
     engine::{
         Engine,
@@ -42,8 +42,8 @@ use crate::{
 };
 
 pub struct UzuChatTokenBackendInstance<B: Backend> {
-    engine: SyncShared<Engine<B>>,
-    model: SyncShared<LanguageModel<B>>,
+    engine: Arc<Mutex<Engine<B>>>,
+    model: Arc<Mutex<LanguageModel<B>>>,
     config: ChatConfig,
     tokenizer: Tokenizer,
     stop_token_ids: Vec<i32>,
@@ -72,8 +72,8 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
         let max_context_length = get_max_context_length(&model, config.context_length.clone());
 
         Ok(Self {
-            engine: SyncShared::new(engine),
-            model: SyncShared::new(model),
+            engine: Arc::new(Mutex::new(engine)),
+            model: Arc::new(Mutex::new(model)),
             config,
             tokenizer: tokenizer.clone(),
             stop_token_ids,
@@ -91,7 +91,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
     fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn State>, BackendError>> + Send + '_>> {
         Box::pin(async move {
-            let model = self.model.lock().map_err(|err| BackendError::from(err.to_string()))?;
+            let model = self.model.lock();
             let max_context_length = get_max_context_length(&model, self.config.context_length.clone());
             model
                 .create_empty_state(max_context_length)
@@ -114,11 +114,11 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         >,
     > {
         let model = self.model.clone();
-        let model_guard = Box::pin(model.lock().unwrap());
+        let model_guard = Box::pin(model.lock());
 
         let state =
             (state as &mut dyn Any).downcast_mut::<UzuChatTokenBackendInstanceState<B>>().unwrap().value.clone();
-        let mut state_guard = Box::pin(state.lock().unwrap());
+        let mut state_guard = Box::pin(state.lock());
 
         let token_limit = config.token_limit.map(|count| count as usize);
 
@@ -173,7 +173,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {
-        self.engine.lock().ok().and_then(|engine| engine.peak_memory_usage())
+        self.engine.lock().peak_memory_usage()
     }
 }
 
@@ -195,9 +195,9 @@ struct UzuChatTokenStream<'a, B: Backend> {
     tokens_generated: usize,
     token_limit: Option<usize>,
     _state_guard: Pin<Box<MutexGuard<'a, LanguageModelState<B>>>>,
-    _state: SyncShared<LanguageModelState<B>>,
+    _state: Arc<Mutex<LanguageModelState<B>>>,
     _model_guard: Pin<Box<MutexGuard<'a, LanguageModel<B>>>>,
-    _model: SyncShared<LanguageModel<B>>,
+    _model: Arc<Mutex<LanguageModel<B>>>,
 }
 
 impl<'a, B: Backend> UzuChatTokenStream<'a, B> {
@@ -248,5 +248,3 @@ impl<'a, B: Backend> InstanceStream for UzuChatTokenStream<'a, B> {
         Some(self.stream.metrics().clone())
     }
 }
-
-unsafe impl<'a, B: Backend> Send for UzuChatTokenStream<'a, B> {}

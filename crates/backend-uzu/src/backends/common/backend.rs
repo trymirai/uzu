@@ -2,7 +2,7 @@ use std::{error::Error, fmt::Debug};
 
 use super::{CommandBuffer, Context, DenseBuffer, Kernels, SparseBuffer};
 
-pub trait Backend: Debug + Clone + 'static {
+pub trait Backend: Debug + Clone + Send + Sync + 'static {
     type Context: Context<Backend = Self>;
     type CommandBuffer: CommandBuffer<Backend = Self>;
     type DenseBuffer: DenseBuffer<Backend = Self>;

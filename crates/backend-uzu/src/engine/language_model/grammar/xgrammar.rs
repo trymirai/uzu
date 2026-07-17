@@ -115,6 +115,7 @@ impl XGrammar {
                     *strict_mode,
                     None,
                     false,
+                    false,
                 )
                 .map_err(XGrammarError::XGrammar)?
             },

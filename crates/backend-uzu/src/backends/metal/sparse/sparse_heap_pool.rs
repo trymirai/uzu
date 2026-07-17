@@ -1,12 +1,12 @@
 use std::{
-    cell::RefCell,
     cmp::{max, min},
     ops::Range,
-    rc::Rc,
+    sync::Arc,
 };
 
 use metal::{MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLSparsePageSize, MTLSparseTextureMappingMode};
 use objc2::{rc::Retained, runtime::ProtocolObject};
+use parking_lot::Mutex;
 
 use crate::backends::metal::{
     MetalContext,
@@ -16,7 +16,7 @@ use crate::backends::metal::{
 };
 
 pub struct MetalSparseHeapPool {
-    heaps: Vec<Rc<RefCell<MetalSparseHeap>>>,
+    heaps: Vec<Arc<Mutex<MetalSparseHeap>>>,
     heap_capacity: usize,
     page_size: MTLSparsePageSize,
 }
@@ -40,7 +40,7 @@ impl MetalSparseHeapPool {
     ) -> Result<(), MetalError> {
         let mut pages_to_alloc = pages;
         for heap in self.heaps.iter() {
-            for free_pages_range in heap.borrow().free_pages().iter() {
+            for free_pages_range in heap.lock().free_pages().iter() {
                 pages_to_alloc -= min(free_pages_range.len(), pages_to_alloc);
             }
         }
@@ -52,7 +52,7 @@ impl MetalSparseHeapPool {
         for _ in 0..new_heaps_count {
             let heap = MetalSparseHeap::new(context, self.heap_capacity, self.page_size)?;
             context.update_peak_memory_usage();
-            self.heaps.push(Rc::new(RefCell::new(heap)));
+            self.heaps.push(Arc::new(Mutex::new(heap)));
         }
 
         Ok(())
@@ -70,7 +70,7 @@ impl MetalSparseHeapPool {
         let mut batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
         for heap in self.heaps.iter() {
             let mut heap_mtl_operations: Vec<MTL4UpdateSparseBufferMappingOperation> = Vec::new();
-            for heap_free_pages_range in heap.borrow().free_pages().iter() {
+            for heap_free_pages_range in heap.lock().free_pages().iter() {
                 let map_pages_count = min(heap_free_pages_range.len(), pages_to_map.len());
                 if map_pages_count == 0 {
                     break;
@@ -110,7 +110,7 @@ impl MetalSparseHeapPool {
         for heap in self.heaps.iter() {
             let mut heap_mtl_operations: Vec<MTL4UpdateSparseBufferMappingOperation> = Vec::new();
 
-            for (heap_range, mapping) in heap.borrow().mappings_for(buffer_address) {
+            for (heap_range, mapping) in heap.lock().mappings_for(buffer_address) {
                 let mapped_buffer_pages = mapping.buffer_pages_for(&heap_range);
                 let unmap_start_page = max(buffer_pages.start, mapped_buffer_pages.start);
                 let unmap_end_page = min(buffer_pages.end, mapped_buffer_pages.end);
@@ -144,13 +144,13 @@ impl MetalSparseHeapPool {
     ) {
         for batch in batches.iter() {
             for sparse_heap in self.heaps.iter() {
-                if sparse_heap.borrow().heap() == batch.heap.borrow().heap() {
-                    sparse_heap.borrow_mut().apply_mapping_operations(batch);
+                if Arc::ptr_eq(sparse_heap, &batch.heap) {
+                    sparse_heap.lock().apply_mapping_operations(batch);
                 }
             }
         }
 
-        self.heaps.retain(|heap| !heap.borrow().is_empty());
+        self.heaps.retain(|heap| !heap.lock().is_empty());
     }
 
     #[cfg(test)]
