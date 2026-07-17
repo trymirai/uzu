@@ -210,7 +210,7 @@ fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
-    pub(crate) fn supports_int8_symmetric_a(
+    pub(crate) fn supports_int8_a(
         &self,
         context: &B::Context,
         group_size: u32,
@@ -218,7 +218,7 @@ impl<B: Backend> LinearMatmul<B> {
         let compatible_weights = matches!(
             &self.mode,
             Mode::Quantized {
-                method: QuantizationMethod::ScaleSymmetric,
+                method: QuantizationMethod::ScaleSymmetric | QuantizationMethod::ScaleZeroPoint,
                 mode: QuantizationMode::U8,
                 group_size: weight_group_size,
                 ..
@@ -226,8 +226,8 @@ impl<B: Backend> LinearMatmul<B> {
         );
 
         // The int8 GEMM is MXU-only and its K-loop is group-based, so the only
-        // requirements are symmetric 8-bit weights, an RHT-block-aligned group
-        // that divides K, and a hardware matrix unit.
+        // requirements are 8-bit sym/ZP weights, an RHT-block-aligned group that
+        // divides K, and a hardware matrix unit.
         compatible_weights
             && context.supports_mxu()
             && group_size != 0

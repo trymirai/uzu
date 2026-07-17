@@ -184,7 +184,7 @@ impl GemmKernel {
         // int8 symmetric activations are an MXU-only path (the int8 K-loop is
         // group-based, so it needs no FP tiling alignment); route it to MXU
         // directly rather than through the full-precision tiling gate.
-        let wants_int8_a = matches!(arguments.a, MatmulA::Int8Symmetric { .. });
+        let wants_int8_a = arguments.a.is_int8();
         let path = if encoder.context().device.supports_mxu()
             && (wants_int8_a || self.select_mxu_tiling(&arguments).is_some())
         {
@@ -384,6 +384,9 @@ impl GemmKernel {
                     rht_factors,
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
                     std::slice::from_ref(&params),
                     group_count_x,
                     group_count_y,
@@ -421,31 +424,78 @@ impl GemmKernel {
                     _ => unreachable!(),
                 };
 
-                let (a, a_offset, a_int8, a_scales, a_prologue) = match a {
+                let b_ok_for_int8 = matches!(
+                    b_prologue,
+                    GemmBPrologueKind::ScaleSymmetricDequant | GemmBPrologueKind::ScaleZeroPointDequant
+                );
+                let (a, a_offset, a_int8, a_scales, a_zero_points, a_row_sums, b_col_sums, a_prologue) = match a {
                     MatmulA::FullPrecision {
                         values,
                         offset,
-                    } => (Some(values), offset, None, None, GemmAPrologueKind::FullPrecision),
+                    } => (Some(values), offset, None, None, None, None, None, GemmAPrologueKind::FullPrecision),
                     MatmulA::Int8Symmetric {
                         values,
-                        scales,
+                        scales: a_scales,
+                        row_sums,
                         group_size: a_group_size,
                     } => {
                         if !use_mxu
                             || a_group_size == 0
                             || !a_group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
                             || !k.is_multiple_of(a_group_size)
-                            || b_prologue != GemmBPrologueKind::ScaleSymmetricDequant
+                            || !b_ok_for_int8
                             || bits_per_b != Some(8)
                             || group_size != Some(a_group_size)
                         {
                             return Err(MatmulError::IncompatibleA {
                                 path: "Gemm",
-                                reason: "int8 activations require MXU, complete RHT-block-aligned groups, and matching symmetric 8-bit weights",
+                                reason: "int8 activations require MXU, complete RHT-block-aligned groups, and matching 8-bit symmetric/ZP weights",
                             }
                             .into());
                         }
-                        (None, 0, Some(values), Some(scales), GemmAPrologueKind::Int8Symmetric)
+                        (
+                            None,
+                            0,
+                            Some(values),
+                            Some(a_scales),
+                            None,
+                            Some(row_sums),
+                            None,
+                            GemmAPrologueKind::Int8Symmetric,
+                        )
+                    },
+                    MatmulA::Int8Asymmetric {
+                        values,
+                        scales: a_scales,
+                        zero_points: a_zero_points,
+                        row_sums,
+                        b_col_sums,
+                        group_size: a_group_size,
+                    } => {
+                        if !use_mxu
+                            || a_group_size == 0
+                            || !a_group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
+                            || !k.is_multiple_of(a_group_size)
+                            || !b_ok_for_int8
+                            || bits_per_b != Some(8)
+                            || group_size != Some(a_group_size)
+                        {
+                            return Err(MatmulError::IncompatibleA {
+                                path: "Gemm",
+                                reason: "int8 activations require MXU, complete RHT-block-aligned groups, and matching 8-bit symmetric/ZP weights",
+                            }
+                            .into());
+                        }
+                        (
+                            None,
+                            0,
+                            Some(values),
+                            Some(a_scales),
+                            Some(a_zero_points),
+                            Some(row_sums),
+                            Some(b_col_sums),
+                            GemmAPrologueKind::Int8Asymmetric,
+                        )
                     },
                 };
 
@@ -461,7 +511,9 @@ impl GemmKernel {
                 let group_count_y = m.div_ceil(tiling.block_m());
 
                 let zero_point_4bit = zero_points.is_some() && bits_per_b == Some(4);
-                let split_k = if a_prologue == GemmAPrologueKind::Int8Symmetric {
+                let a_is_int8 =
+                    matches!(a_prologue, GemmAPrologueKind::Int8Symmetric | GemmAPrologueKind::Int8Asymmetric);
+                let split_k = if a_is_int8 {
                     1
                 } else {
                     select_split_k(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), false, zero_point_4bit)
@@ -519,6 +571,9 @@ impl GemmKernel {
                     rht_factors,
                     a_int8,
                     a_scales,
+                    a_zero_points,
+                    a_row_sums,
+                    b_col_sums,
                     std::slice::from_ref(&params),
                     group_count_x,
                     group_count_y,
@@ -602,6 +657,9 @@ impl GemmKernel {
             scales,
             biases,
             zero_points,
+            None::<&Allocation<Metal>>,
+            None::<&Allocation<Metal>>,
+            None::<&Allocation<Metal>>,
             None::<&Allocation<Metal>>,
             None::<&Allocation<Metal>>,
             None::<&Allocation<Metal>>,

@@ -3,10 +3,13 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder,
-        gpu_types::{ActivationPrepareOps, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
+        Allocation, AllocationType, Backend, Context, Encoder,
+        gpu_types::{
+            ActivationPrepareOps, ActivationQuantScheme, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder,
+        },
         kernel::{
-            ActivationPrepareConfig, ActivationsPrepareKernel, HadamardTransformKernel, Kernels, matmul::MatmulA,
+            ActivationPrepareConfig, ActivationsPrepareKernel, HadamardTransformKernel, Kernels, compute_b_col_sums,
+            matmul::MatmulA,
         },
     },
     config::weight_matrix::{
@@ -34,6 +37,8 @@ pub enum RHTLinearWrapperError<B: Backend> {
 struct Int8Preparation<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationsPrepareKernel,
     group_size: u32,
+    scheme: ActivationQuantScheme,
+    b_col_sums: Option<Allocation<B>>,
 }
 
 pub struct RHTLinearWrapper<B: Backend> {
@@ -52,7 +57,6 @@ pub(super) fn activation_prepare_group_size(
     let AnyWeightMatrixSpec::IntSpec(IntSpec {
         bits: 8,
         group_size,
-        is_symmetric: true,
         layout: Layout::OutputInput,
         ..
     }) = quantization_spec
@@ -77,6 +81,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         input_data_type: DataType,
         output_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
+        activation_prepare: ActivationPrepareConfig,
     ) -> Result<Self, RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights")?;
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
@@ -108,18 +113,44 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )
         .map_err(RHTLinearWrapperError::BackendError)?;
 
-        let config = ActivationPrepareConfig::from_env();
-        let int8_preparation = activation_prepare_group_size(config, input_dimension, &quantization_spec)
-            .map(|group_size| {
-                let ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
-                <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type, ops, config.statistic)
-                    .map(|kernel| Int8Preparation {
-                        kernel,
-                        group_size,
-                    })
-            })
-            .transpose()
+        let int8_preparation = if let Some(group_size) =
+            activation_prepare_group_size(activation_prepare, input_dimension, &quantization_spec)
+        {
+            let mut ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
+            if activation_prepare.scheme == ActivationQuantScheme::Asymmetric {
+                ops |= ActivationPrepareOps::ASYMMETRIC;
+            }
+            let kernel = <B::Kernels as Kernels>::ActivationsPrepareKernel::new(
+                context,
+                input_data_type,
+                ops,
+                activation_prepare.statistic,
+            )
             .map_err(RHTLinearWrapperError::BackendError)?;
+            let b_col_sums = if activation_prepare.scheme == ActivationQuantScheme::Asymmetric {
+                let weights = quantized_weights_tree
+                    .leaf("weights")?
+                    .validate(&[output_dimension, input_dimension], DataType::U8)?
+                    .read_allocation()?;
+                let host = weights.copyout::<u8>();
+                let sums = compute_b_col_sums(&host, output_dimension, input_dimension, group_size as usize);
+                let mut allocation = context
+                    .create_allocation(sums.len() * size_of::<i32>(), AllocationType::Global)
+                    .map_err(RHTLinearWrapperError::BackendError)?;
+                allocation.copyin(&sums);
+                Some(allocation)
+            } else {
+                None
+            };
+            Some(Int8Preparation {
+                kernel,
+                group_size,
+                scheme: activation_prepare.scheme,
+                b_col_sums,
+            })
+        } else {
+            None
+        };
 
         let inner_linear = LinearMatmul::quantized(
             context,
@@ -152,17 +183,25 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         if let Some(preparation) = &self.int8_preparation
-            && self.inner_linear.supports_int8_symmetric_a(encoder.context(), preparation.group_size)
+            && self.inner_linear.supports_int8_a(encoder.context(), preparation.group_size)
         {
             let groups_per_row = self.input_dimension.div_ceil(preparation.group_size as usize);
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::F32))?;
+            let mut row_sums = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::I32))?;
+            let mut zero_points = if preparation.scheme == ActivationQuantScheme::Asymmetric {
+                Some(encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::I8))?)
+            } else {
+                None
+            };
 
             preparation.kernel.encode(
                 &input,
                 Some(&mut values),
                 Some(&mut scales),
+                Some(&mut row_sums),
+                zero_points.as_mut(),
                 Some(&self.input_factors),
                 batch_dim as u32,
                 self.input_dimension as u32,
@@ -170,15 +209,24 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 encoder,
             );
 
-            return self.inner_linear.encode_with_a(
-                MatmulA::Int8Symmetric {
+            let a = match preparation.scheme {
+                ActivationQuantScheme::Symmetric => MatmulA::Int8Symmetric {
                     values: &values,
                     scales: &scales,
+                    row_sums: &row_sums,
                     group_size: preparation.group_size,
                 },
-                batch_dim,
-                encoder,
-            );
+                ActivationQuantScheme::Asymmetric => MatmulA::Int8Asymmetric {
+                    values: &values,
+                    scales: &scales,
+                    zero_points: zero_points.as_ref().expect("asymmetric allocate zero_points"),
+                    row_sums: &row_sums,
+                    b_col_sums: preparation.b_col_sums.as_ref().expect("asymmetric b_col_sums"),
+                    group_size: preparation.group_size,
+                },
+            };
+
+            return self.inner_linear.encode_with_a(a, batch_dim, encoder);
         }
 
         let mut input = input;

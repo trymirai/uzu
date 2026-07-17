@@ -100,6 +100,7 @@ impl<B: Backend> dyn Linear<B> {
                 input_data_type,
                 output_data_type,
                 parameter_tree,
+                ActivationPrepareConfig::default(),
             )?)),
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
@@ -221,12 +222,9 @@ impl<B: Backend> dyn Linear<B> {
             ..
         }) = &spec
         {
-            if rht_wrapper::activation_prepare_group_size(
-                ActivationPrepareConfig::from_env(),
-                input_dimension,
-                quantization_spec,
-            )
-            .is_some()
+            let activation_prepare = ActivationPrepareConfig::default();
+            if rht_wrapper::activation_prepare_group_size(activation_prepare, input_dimension, quantization_spec)
+                .is_some()
             {
                 let linear = RHTLinearWrapper::new(
                     context,
@@ -237,6 +235,7 @@ impl<B: Backend> dyn Linear<B> {
                     input_data_type,
                     output_data_type,
                     parameter_tree,
+                    activation_prepare,
                 )?;
                 return Ok((Box::new(linear), None));
             }

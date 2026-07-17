@@ -57,7 +57,11 @@ VARIANTS(
     GemmBPrologueKind::ScaleSymmetricDequant)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
-VARIANTS(A_PROLOGUE, GemmAPrologueKind::FullPrecision, GemmAPrologueKind::Int8Symmetric)
+VARIANTS(
+    A_PROLOGUE,
+    GemmAPrologueKind::FullPrecision,
+    GemmAPrologueKind::Int8Symmetric,
+    GemmAPrologueKind::Int8Asymmetric)
 CONSTRAINT(
     USE_MXU ==
     (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
@@ -89,8 +93,12 @@ CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || BITS == 8)
 CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
-    (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant))
+    (TRANSPOSE_B &&
+     (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant ||
+      B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant)))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
+#define A_IS_INT8                                                                                                      \
+  (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric || A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric)
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
     const device BT* b,
@@ -105,10 +113,13 @@ KERNEL(Gemm)(
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const device int32_t* rht_factors
         OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
-    const device int8_t* a_int8
-        OPTIONAL(A_PROLOGUE == GemmAPrologueKind::Int8Symmetric),
-    const device float* a_scales
-        OPTIONAL(A_PROLOGUE == GemmAPrologueKind::Int8Symmetric),
+    const device int8_t* a_int8 OPTIONAL(A_IS_INT8),
+    const device float* a_scales OPTIONAL(A_IS_INT8),
+    const device int8_t* a_zero_points
+        OPTIONAL(A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric),
+    const device int32_t* a_row_sums OPTIONAL(A_IS_INT8),
+    const device int32_t* b_col_sums
+        OPTIONAL(A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric),
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
@@ -147,6 +158,9 @@ KERNEL(Gemm)(
         rht_factors,
         a_int8,
         a_scales,
+        a_zero_points,
+        a_row_sums,
+        b_col_sums,
         b_shared,
         thread_context
     );

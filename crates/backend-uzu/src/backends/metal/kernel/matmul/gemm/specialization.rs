@@ -53,12 +53,12 @@ impl GemmSpecialization {
         if self.b_prologue != GemmBPrologueKind::FullPrecision && !self.transpose_b {
             return Err(GemmSpecializationError::QuantizedRequiresTransposedB);
         }
-        if self.a_prologue == GemmAPrologueKind::Int8Symmetric
-            && !(self.use_mxu
-                && self.bits_per_b == Some(8)
-                && self.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant
-                && self.transpose_b)
-        {
+        let a_is_int8 = matches!(self.a_prologue, GemmAPrologueKind::Int8Symmetric | GemmAPrologueKind::Int8Asymmetric);
+        let b_ok_for_int8 = matches!(
+            self.b_prologue,
+            GemmBPrologueKind::ScaleSymmetricDequant | GemmBPrologueKind::ScaleZeroPointDequant
+        );
+        if a_is_int8 && !(self.use_mxu && self.bits_per_b == Some(8) && b_ok_for_int8 && self.transpose_b) {
             return Err(GemmSpecializationError::Int8ActivationUnsupported {
                 use_mxu: self.use_mxu,
                 bits: self.bits_per_b,

@@ -6,7 +6,9 @@ use crate::{
     array::ArrayElement,
     backends::common::{
         gpu_types::{ActivationPrepareOps, ActivationScaleStatistic, HADAMARD_TRANSFORM_BLOCK_SIZE},
-        kernel::{group_stat, quantize_symmetric_i8, symmetric_divisor},
+        kernel::{
+            asymmetric_scale_zero_point, group_stat, quantize_asymmetric_i8, quantize_symmetric_i8, symmetric_divisor,
+        },
     },
 };
 
@@ -35,6 +37,8 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     input: *const InputT,
     #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] q_out: Option<*mut i8>,
     #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] scales_out: Option<*mut f32>,
+    #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] row_sums_out: Option<*mut i32>,
+    #[optional(ops.contains(ActivationPrepareOps::ASYMMETRIC))] zero_points_out: Option<*mut i8>,
     #[optional(ops.contains(ActivationPrepareOps::INPUT_RHT))] rht_factors: Option<*const i32>,
     batch_size: u32,
     element_count: u32,
@@ -50,8 +54,14 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     assert_eq!(rht_factors.is_some(), ops.contains(ActivationPrepareOps::INPUT_RHT));
     assert_eq!(q_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
     assert_eq!(scales_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
+    assert_eq!(row_sums_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
+    let asymmetric = ops.contains(ActivationPrepareOps::ASYMMETRIC);
+    assert_eq!(zero_points_out.is_some(), asymmetric);
+    if asymmetric {
+        assert!(ops.contains(ActivationPrepareOps::QUANTIZE));
+    }
 
-    let (Some(q_out), Some(scales_out)) = (q_out, scales_out) else {
+    let (Some(q_out), Some(scales_out), Some(row_sums_out)) = (q_out, scales_out, row_sums_out) else {
         return;
     };
 
@@ -75,10 +85,28 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
         for group in 0..groups {
             let start = group * group_size;
             let end = (start + group_size).min(columns);
-            let divisor = symmetric_divisor(group_stat(&prepared[start..end], stat));
-            unsafe { *scales_out.add(row * groups + group) = divisor };
-            for index in start..end {
-                unsafe { *q_out.add(row * columns + index) = quantize_symmetric_i8(prepared[index], divisor) };
+            let slice = &prepared[start..end];
+            if asymmetric {
+                let (scale, zero_point) = asymmetric_scale_zero_point(slice, stat);
+                unsafe { *scales_out.add(row * groups + group) = scale };
+                unsafe { *zero_points_out.unwrap().add(row * groups + group) = zero_point };
+                let mut row_sum = 0i32;
+                for index in start..end {
+                    let q = quantize_asymmetric_i8(prepared[index], scale, zero_point);
+                    unsafe { *q_out.add(row * columns + index) = q };
+                    row_sum += q as i32;
+                }
+                unsafe { *row_sums_out.add(row * groups + group) = row_sum };
+            } else {
+                let divisor = symmetric_divisor(group_stat(slice, stat));
+                unsafe { *scales_out.add(row * groups + group) = divisor };
+                let mut row_sum = 0i32;
+                for index in start..end {
+                    let q = quantize_symmetric_i8(prepared[index], divisor);
+                    unsafe { *q_out.add(row * columns + index) = q };
+                    row_sum += q as i32;
+                }
+                unsafe { *row_sums_out.add(row * groups + group) = row_sum };
             }
         }
     }

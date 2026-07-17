@@ -6,7 +6,10 @@ pub mod delta_net_chunked_prefill;
 pub mod delta_net_tree_verify;
 pub mod matmul;
 
-pub use activation_prepare::{ActivationPrepareConfig, group_stat, quantize_symmetric_i8, symmetric_divisor};
+pub use activation_prepare::{
+    ActivationPrepareConfig, asymmetric_scale_zero_point, compute_b_col_sums, group_mean, group_min_max, group_stat,
+    quantize_asymmetric_i8, quantize_symmetric_i8, symmetric_divisor,
+};
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 
