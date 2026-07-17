@@ -45,7 +45,7 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     engine: Arc<Mutex<Engine<B>>>,
     model: Arc<Mutex<LanguageModel<B>>>,
     config: ChatConfig,
-    tokenizer: Tokenizer,
+    tokenizer: Option<Tokenizer>,
     stop_token_ids: Vec<i32>,
     speculator: Option<(Box<dyn Speculator>, usize)>,
     max_context_length: Option<usize>,
@@ -55,7 +55,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
     pub fn new(
         model_path: String,
         config: ChatConfig,
-        tokenizer: &Tokenizer,
+        tokenizer: Option<&Tokenizer>,
     ) -> Result<Self, BackendError> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
@@ -75,7 +75,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             engine: Arc::new(Mutex::new(engine)),
             model: Arc::new(Mutex::new(model)),
             config,
-            tokenizer: tokenizer.clone(),
+            tokenizer: tokenizer.map(|tok| tok.clone()),
             stop_token_ids,
             speculator,
             max_context_length,
@@ -123,11 +123,15 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         let token_limit = config.token_limit.map(|count| count as usize);
 
         let grammar = if let Some(grammar_config) = config.grammar {
-            match get_grammar(grammar_config, &self.tokenizer, &self.stop_token_ids) {
-                Ok(grammar) => Some(grammar),
-                Err(err) => {
-                    return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));
-                },
+            if let Some(ref tokenizer) = self.tokenizer {
+                match get_grammar(grammar_config, tokenizer, &self.stop_token_ids) {
+                    Ok(grammar) => Some(grammar),
+                    Err(err) => {
+                        return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));
+                    },
+                }
+            } else {
+                None
             }
         } else {
             None

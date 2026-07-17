@@ -54,14 +54,11 @@ impl Session {
         let encoding = build_encoding(reference.clone(), model).map_err(|err| ChatSessionError::Loading {
             message: err.to_string(),
         })?;
-        let tokenizer = encoding.tokenizer().ok_or_else(|| ChatSessionError::Loading {
-            message: "tokenizer is empty".to_string(),
-        })?;
-
-        let instance =
-            backend.instance(reference, config, tokenizer).await.map_err(|error| ChatSessionError::Backend {
+        let instance = backend.instance(reference, config, encoding.tokenizer()).await.map_err(|error| {
+            ChatSessionError::Backend {
                 message: error.to_string(),
-            })?;
+            }
+        })?;
         let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;

@@ -52,7 +52,7 @@ impl ChatTokenBackend for UzuLlmBackend {
         &'a self,
         reference: String,
         config: ChatConfig,
-        tokenizer: &'a Tokenizer,
+        tokenizer: Option<&'a Tokenizer>,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn ChatTokenInstance>, BackendError>> + Send + 'a>> {
         Box::pin(async move {
             let instance = select_backend!(
