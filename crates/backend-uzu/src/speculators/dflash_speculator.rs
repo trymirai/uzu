@@ -473,9 +473,15 @@ fn top_candidates(
     row: &[f32],
     count: usize,
 ) -> Vec<(u32, f32)> {
+    let count = count.min(row.len());
     let mut indices = (0..row.len()).collect::<Vec<_>>();
-    indices.sort_by(|&a, &b| row[b].total_cmp(&row[a]).then_with(|| a.cmp(&b)));
-    indices.into_iter().take(count).map(|index| (index as u32, row[index])).collect()
+    let compare = |&a: &usize, &b: &usize| row[b].total_cmp(&row[a]).then_with(|| a.cmp(&b));
+    if count < indices.len() {
+        indices.select_nth_unstable_by(count, compare);
+        indices.truncate(count);
+    }
+    indices.sort_by(compare);
+    indices.into_iter().map(|index| (index as u32, row[index])).collect()
 }
 
 fn log_softmax(logits: &[f32]) -> Vec<f32> {
