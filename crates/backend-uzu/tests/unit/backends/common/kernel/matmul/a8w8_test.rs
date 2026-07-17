@@ -1,7 +1,7 @@
 use proc_macros::uzu_test;
 
 use crate::{
-    backends::common::gpu_types::{ActivationScaleStat, QuantizationMethod},
+    backends::common::gpu_types::{ActivationScaleStatistic, QuantizationMethod},
     tests::matmul::{QuantInput, run_quant_cpu},
 };
 
@@ -30,7 +30,8 @@ fn a8w8_symmetric_groupwise_absmax_matches_full_precision_activations() {
     let group_size = 32;
     for (m, k, n) in [(16usize, 128usize, 32usize), (8, 256, 64), (33, 128, 48)] {
         let baseline = run_quant_cpu(&symmetric_input(m, k, n, group_size));
-        let a8w8 = run_quant_cpu(&symmetric_input(m, k, n, group_size).with_prepared_a(ActivationScaleStat::AbsMax));
+        let a8w8 =
+            run_quant_cpu(&symmetric_input(m, k, n, group_size).with_prepared_a(ActivationScaleStatistic::AbsMax));
         let rel = relative_l2(&baseline, &a8w8);
         assert!(rel < 0.05, "group-wise absmax A8W8 rel-L2 error {rel} too high for shape {m}x{k}x{n}");
     }
@@ -39,6 +40,6 @@ fn a8w8_symmetric_groupwise_absmax_matches_full_precision_activations() {
 #[uzu_test]
 fn a8w8_symmetric_rms_runs_and_is_finite() {
     let (m, k, n) = (16, 128, 32);
-    let a8w8 = run_quant_cpu(&symmetric_input(m, k, n, 32).with_prepared_a(ActivationScaleStat::Rms));
+    let a8w8 = run_quant_cpu(&symmetric_input(m, k, n, 32).with_prepared_a(ActivationScaleStatistic::Rms));
     assert!(a8w8.iter().all(|v| v.is_finite()), "RMS A8W8 produced non-finite output");
 }

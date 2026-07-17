@@ -23,7 +23,7 @@ PUBLIC KERNEL(ActivationsPrepare)(
     constant uint& element_count,
     constant uint& group_size,
     const ActivationPrepareOps ops SPECIALIZE,
-    const ActivationScaleStat stat SPECIALIZE,
+    const ActivationScaleStatistic stat SPECIALIZE,
     threadgroup float shared_reduce[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
@@ -55,7 +55,7 @@ PUBLIC KERNEL(ActivationsPrepare)(
     }
 
     float scale_stat;
-    if (stat == ActivationScaleStat::AbsMax) {
+    if (stat == ActivationScaleStatistic::AbsMax) {
       scale_stat = threadgroup_cooperative_reduce<SimdReduceMax<float>, ACTIVATION_PREPARE_BLOCK_SIZE>(
           thread_absmax, shared_reduce, thread_context);
     } else {

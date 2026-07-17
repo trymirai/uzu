@@ -5,7 +5,7 @@ use proc_macros::kernel;
 use crate::{
     array::ArrayElement,
     backends::common::{
-        gpu_types::{ActivationPrepareOps, ActivationScaleStat},
+        gpu_types::{ActivationPrepareOps, ActivationScaleStatistic},
         kernel::{group_stat, quantize_symmetric_i8, symmetric_divisor},
     },
 };
@@ -42,7 +42,7 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     element_count: u32,
     group_size: u32,
     #[specialize] ops: ActivationPrepareOps,
-    #[specialize] stat: ActivationScaleStat,
+    #[specialize] stat: ActivationScaleStatistic,
 ) {
     let rows = batch_size as usize;
     let columns = element_count as usize;

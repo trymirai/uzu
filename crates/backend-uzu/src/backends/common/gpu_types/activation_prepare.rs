@@ -19,7 +19,7 @@ pub enum GemmAPrologueKind {
 
 #[repr(C)]
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ActivationScaleStat {
+pub enum ActivationScaleStatistic {
     AbsMax,
     Rms,
 }

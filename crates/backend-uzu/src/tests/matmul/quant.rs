@@ -10,7 +10,7 @@ use crate::{
     backends::{
         common::{
             Allocation, Backend, Context, Encoder,
-            gpu_types::{ActivationScaleStat, QuantizationMethod, QuantizationMode},
+            gpu_types::{ActivationScaleStatistic, QuantizationMethod, QuantizationMode},
             kernel::{
                 Kernels, group_stat,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -103,7 +103,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
 
     pub fn with_prepared_a(
         mut self,
-        stat: ActivationScaleStat,
+        stat: ActivationScaleStatistic,
     ) -> Self {
         let group_size = self.group_size as usize;
         assert!(group_size > 0);

@@ -22,7 +22,7 @@ enum class GemmAPrologueKind : uint32_t {
   Int8Symmetric = 1,
 };
 
-enum class ActivationScaleStat : uint32_t {
+enum class ActivationScaleStatistic : uint32_t {
   AbsMax = 0,
   Rms = 1,
 };

@@ -4,7 +4,7 @@ use backend_uzu::{
     backends::{
         common::{
             Allocation, AllocationType, Backend, Context, Encoder,
-            gpu_types::{ActivationPrepareOps, ActivationScaleStat, HadamardTransformOrder, QuantizationMode},
+            gpu_types::{ActivationPrepareOps, ActivationScaleStatistic, HadamardTransformOrder, QuantizationMode},
             kernel::{
                 ActivationsPrepareKernel, HadamardTransformKernel, Kernels, group_stat,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -120,7 +120,7 @@ impl HostInputs {
                 let row_start = row * self.k;
                 let divisor = symmetric_divisor(group_stat(
                     &prepared[row_start + start..row_start + end],
-                    ActivationScaleStat::AbsMax,
+                    ActivationScaleStatistic::AbsMax,
                 ));
                 scales[row * groups + group] = divisor;
                 for column in start..end {
@@ -311,9 +311,13 @@ fn bench_a8w8(c: &mut Criterion) {
     let mut matmul = <MetalMatmul as MatmulKernel>::new(&context, DataType::BF16, DataType::BF16, DataType::BF16)
         .expect("matmul kernel");
     let ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
-    let prepare =
-        <MetalPrepare as ActivationsPrepareKernel>::new(&context, DataType::BF16, ops, ActivationScaleStat::AbsMax)
-            .expect("prepare kernel");
+    let prepare = <MetalPrepare as ActivationsPrepareKernel>::new(
+        &context,
+        DataType::BF16,
+        ops,
+        ActivationScaleStatistic::AbsMax,
+    )
+    .expect("prepare kernel");
     let hadamard =
         <MetalHadamard as HadamardTransformKernel>::new(&context, DataType::BF16, HadamardTransformOrder::Input)
             .expect("RHT kernel");

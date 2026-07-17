@@ -9,7 +9,7 @@ use crate::{
     backends::{
         common::{
             Context, Encoder,
-            gpu_types::{ActivationPrepareOps, ActivationScaleStat},
+            gpu_types::{ActivationPrepareOps, ActivationScaleStatistic},
             kernel::{ActivationsPrepareKernel, group_stat, quantize_symmetric_i8, symmetric_divisor},
         },
         metal::{Metal, MetalContext},
@@ -46,7 +46,7 @@ fn reference(
     rows: usize,
     columns: usize,
     group_size: usize,
-    stat: ActivationScaleStat,
+    stat: ActivationScaleStatistic,
 ) -> (Vec<i8>, Vec<f32>) {
     let groups = columns.div_ceil(group_size);
     let mut values = vec![0i8; rows * columns];
@@ -85,7 +85,7 @@ fn run_metal(
     rows: usize,
     columns: usize,
     group_size: usize,
-    stat: ActivationScaleStat,
+    stat: ActivationScaleStatistic,
 ) -> (Vec<i8>, Vec<f32>) {
     let groups = columns.div_ceil(group_size);
     let input = alloc_allocation_with_data::<Metal, f32>(context, input);
@@ -113,14 +113,14 @@ fn run_metal(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::absmax_32(5, 96, 32, ActivationScaleStat::AbsMax)]
-#[case::absmax_64(8, 256, 64, ActivationScaleStat::AbsMax)]
-#[case::rms_128(4, 224, 128, ActivationScaleStat::Rms)]
+#[case::absmax_32(5, 96, 32, ActivationScaleStatistic::AbsMax)]
+#[case::absmax_64(8, 256, 64, ActivationScaleStatistic::AbsMax)]
+#[case::rms_128(4, 224, 128, ActivationScaleStatistic::Rms)]
 fn rht_and_quantization_match_cpu(
     #[case] rows: usize,
     #[case] columns: usize,
     #[case] group_size: usize,
-    #[case] stat: ActivationScaleStat,
+    #[case] stat: ActivationScaleStatistic,
 ) {
     let context = MetalContext::new().expect("Metal context");
     let mut rng = SmallRng::seed_from_u64(0x5EED_0001 ^ columns as u64);

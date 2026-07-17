@@ -15,7 +15,7 @@ use crate::{
     backends::{
         common::{
             Backend, Context, Encoder,
-            gpu_types::{ActivationScaleStat, QuantizationMethod, gemm::GemmDTransform},
+            gpu_types::{ActivationScaleStatistic, QuantizationMethod, gemm::GemmDTransform},
             kernel::{
                 Kernels,
                 matmul::{MatmulDOps, MatmulError, MatmulKernel},
@@ -523,7 +523,7 @@ fn a8w8_mxu_parity_bf16(
         return;
     }
     let input = QuantInput::<bf16>::new(m, k, n, gs, 8, QuantizationMethod::ScaleSymmetric, 0)
-        .with_prepared_a(ActivationScaleStat::AbsMax);
+        .with_prepared_a(ActivationScaleStatistic::AbsMax);
     let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>(&format!("A8W8 m={m} k={k} n={n} gs={gs}"), &reference, &actual, 0.06, 0.6);

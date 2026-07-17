@@ -1,11 +1,11 @@
-use crate::backends::common::gpu_types::ActivationScaleStat;
+use crate::backends::common::gpu_types::ActivationScaleStatistic;
 
 pub const INT8_SYMMETRIC_QMAX: f32 = 127.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivationPrepareConfig {
     pub enabled: bool,
-    pub stat: ActivationScaleStat,
+    pub stat: ActivationScaleStatistic,
 }
 
 impl ActivationPrepareConfig {
@@ -13,8 +13,8 @@ impl ActivationPrepareConfig {
         Self {
             enabled: std::env::var("UZU_A8W8").is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true")),
             stat: match std::env::var("UZU_A8W8_STAT").ok().as_deref() {
-                Some("rms") => ActivationScaleStat::Rms,
-                _ => ActivationScaleStat::AbsMax,
+                Some("rms") => ActivationScaleStatistic::Rms,
+                _ => ActivationScaleStatistic::AbsMax,
             },
         }
     }
@@ -29,11 +29,11 @@ impl ActivationPrepareConfig {
 
 pub fn group_stat(
     values: &[f32],
-    stat: ActivationScaleStat,
+    stat: ActivationScaleStatistic,
 ) -> f32 {
     match stat {
-        ActivationScaleStat::AbsMax => values.iter().fold(0.0, |result, value| result.max(value.abs())),
-        ActivationScaleStat::Rms => {
+        ActivationScaleStatistic::AbsMax => values.iter().fold(0.0, |result, value| result.max(value.abs())),
+        ActivationScaleStatistic::Rms => {
             let count = values.len().max(1) as f32;
             (values.iter().map(|value| value * value).sum::<f32>() / count).sqrt()
         },
