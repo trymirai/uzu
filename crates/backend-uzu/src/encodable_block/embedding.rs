@@ -326,13 +326,58 @@ impl<B: Backend> Embedding<B> {
                             lookup,
                         }
                     },
+                    AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                        quantization_spec,
+                        adapter_spec: None,
+                        incoherence_block_size: Some(32),
+                        incoherence_processing_mode: IncoherenceProcessingMode::Output,
+                        ..
+                    }) => {
+                        let (embedding_quantization_mode, group_size, quantization_method) =
+                            input_quantization_from_spec(*quantization_spec)?;
+                        let quantized_tree = input_embedding_tree.subtree("quantized")?;
+                        let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
+                            &quantized_tree,
+                            vocab_size as usize,
+                            model_dim as usize,
+                            data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
+                        let output_hadamard_factors = Some(
+                            input_embedding_tree
+                                .subtree("incoherence_signs")?
+                                .leaf("output_signs")?
+                                .validate(&[model_dim as usize], DataType::I32)?
+                                .read_allocation()?,
+                        );
+                        let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
+                            context,
+                            data_type,
+                            group_size as u32,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            true,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
+
+                        UntiedEmbeddingLookupType::Quantized {
+                            weights,
+                            scales,
+                            zero_points_or_biases,
+                            quantization_method,
+                            output_hadamard_factors,
+                            lookup,
+                        }
+                    },
                     spec => return Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
                 };
 
                 let output_embedding_tree = parameter_tree.subtree("output_embedding")?;
                 let output_embedding_spec = output_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
-                let output_ty = match output_embedding_spec {
+                let (output_ty, readout_input_hadamard_factors) = match output_embedding_spec {
                     AnyWeightMatrixSpec::FullPrecisionSpec(FullPrecisionSpec {
                         layout: Layout::OutputInput,
                         ..
@@ -346,10 +391,13 @@ impl<B: Backend> Embedding<B> {
                                 .map_err(EmbeddingError::BackendError)?;
                         let readout = Mutex::new(readout_kernel);
 
-                        UntiedEmbeddingReadoutType::FullPrecision {
-                            weights,
-                            readout,
-                        }
+                        (
+                            UntiedEmbeddingReadoutType::FullPrecision {
+                                weights,
+                                readout,
+                            },
+                            None,
+                        )
                     },
                     spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
                         let (embedding_quantization_mode, group_size, quantization_method) =
@@ -371,13 +419,61 @@ impl<B: Backend> Embedding<B> {
                             group_size,
                         )?;
 
-                        UntiedEmbeddingReadoutType::Quantized {
-                            weights,
-                            scales,
-                            zero_points_or_biases,
-                            readout,
-                            readout_config,
-                        }
+                        (
+                            UntiedEmbeddingReadoutType::Quantized {
+                                weights,
+                                scales,
+                                zero_points_or_biases,
+                                readout,
+                                readout_config,
+                            },
+                            None,
+                        )
+                    },
+                    AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                        quantization_spec,
+                        adapter_spec: None,
+                        incoherence_block_size: Some(32),
+                        incoherence_processing_mode: IncoherenceProcessingMode::Input,
+                        ..
+                    }) => {
+                        let (embedding_quantization_mode, group_size, quantization_method) =
+                            output_quantization_from_spec(*quantization_spec)?;
+                        let quantized_tree = output_embedding_tree.subtree("quantized")?;
+                        let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
+                            &quantized_tree,
+                            vocab_size as usize,
+                            model_dim as usize,
+                            data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
+                        let readout_input_hadamard_factors = Some(
+                            output_embedding_tree
+                                .subtree("incoherence_signs")?
+                                .leaf("input_signs")?
+                                .validate(&[model_dim as usize], DataType::I32)?
+                                .read_allocation()?,
+                        );
+                        let (readout, readout_config) = quantized_readout(
+                            context,
+                            data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
+
+                        (
+                            UntiedEmbeddingReadoutType::Quantized {
+                                weights,
+                                scales,
+                                zero_points_or_biases,
+                                readout,
+                                readout_config,
+                            },
+                            readout_input_hadamard_factors,
+                        )
                     },
                     spec => return Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
                 };
@@ -387,7 +483,7 @@ impl<B: Backend> Embedding<B> {
                         input_ty,
                         output_ty,
                     },
-                    None,
+                    readout_input_hadamard_factors,
                 )
             },
         };
