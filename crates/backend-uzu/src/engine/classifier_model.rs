@@ -108,9 +108,10 @@ impl<B: Backend> ClassifierModel<B> {
 
         let mut encoder = Encoder::<B>::new(&self.context).map_err(ClassifierModelClassifyError::Backend)?;
 
-        let mut token_ids =
-            encoder.allocate_constant(size_of_val(input)).map_err(ClassifierModelClassifyError::Backend)?;
-        token_ids.copyin(input);
+        let mut token_ids = encoder
+            .allocate_constant(input.len() * DataType::U32.size_in_bytes())
+            .map_err(ClassifierModelClassifyError::Backend)?;
+        token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 
         let logits = self.classifier.encode(&token_ids, input.len(), &mut encoder)?;
 
