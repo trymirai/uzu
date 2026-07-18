@@ -277,7 +277,7 @@ fn test_symmetric_u8<T: ArrayElement + Float + Debug + Display>() {
     });
 }
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 fn test_zero_point_group16_hadamard_constructor<T: ArrayElement + Float + Debug + Display>() {
     use crate::backends::metal::Metal;
 
@@ -350,7 +350,7 @@ fn test_uint4_zero_point_group16_bf16() {
     test_zero_point_group16::<bf16>();
 }
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 #[uzu_test]
 fn test_uint4_zero_point_group16_hadamard_bf16_constructor() {
     test_zero_point_group16_hadamard_constructor::<bf16>();

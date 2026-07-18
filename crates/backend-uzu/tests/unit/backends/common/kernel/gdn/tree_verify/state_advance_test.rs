@@ -1,11 +1,11 @@
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use std::time::Duration;
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use criterion::Criterion;
 use half::bf16;
 use num_traits::Float;
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use proc_macros::uzu_bench;
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
@@ -21,7 +21,7 @@ use crate::{
         helpers::{alloc_allocation_with_data, allocation_to_vec},
     },
 };
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use crate::{
     backends::metal::Metal,
     data_type::DataType,
@@ -87,7 +87,7 @@ fn test_state_advance() {
     }
 }
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 #[uzu_bench]
 fn bench_state_advance(c: &mut Criterion) {
     const NUM_V_HEADS: usize = 48;

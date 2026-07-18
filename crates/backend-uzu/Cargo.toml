@@ -13,7 +13,9 @@ build = "build/main.rs"
 workspace = true
 
 [features]
-default = ["metal", "grammar"]
+default = ["cpu", "metal", "grammar"]
+
+cpu = []
 
 metal = [
     "dep:clang-ast",

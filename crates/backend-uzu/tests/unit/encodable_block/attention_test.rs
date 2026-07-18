@@ -1,4 +1,4 @@
-#![cfg(metal_backend)]
+#![cfg(backend = "metal")]
 
 use ndarray::{Array4, s};
 use proc_macros::uzu_test;

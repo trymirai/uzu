@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use thiserror::Error;
 use tokenizers::Tokenizer;
 
-#[cfg(grammar_xgrammar)]
+#[cfg(grammar)]
 mod xgrammar;
 
 #[derive(Debug, Clone)]
@@ -128,17 +128,17 @@ pub trait Grammar: Send {
 }
 
 impl dyn Grammar {
-    #[cfg_attr(not(grammar_xgrammar), allow(unused_variables))]
+    #[cfg_attr(not(grammar), allow(unused_variables))]
     pub fn new(
         config: &GrammarConfig,
         tokenizer: &Tokenizer,
         trigger_token_id: Option<u64>,
         stop_token_ids: Option<&[i32]>,
     ) -> Result<Box<dyn Grammar>, GrammarError> {
-        #[cfg(grammar_xgrammar)]
+        #[cfg(grammar)]
         return Ok(Box::new(xgrammar::XGrammar::new(config, tokenizer, trigger_token_id, stop_token_ids)?));
 
-        #[cfg(not(grammar_xgrammar))]
+        #[cfg(not(grammar))]
         return Err(GrammarError(Box::new(NoGrammarBackend)));
     }
 }
