@@ -28,7 +28,7 @@ fn uzu(m: &pyo3::Bound<'_, pyo3::types::PyModule>) -> pyo3::PyResult<()> {
 #[cfg(feature = "bindings-pyo3")]
 pyo3_stub_gen::define_stub_info_gatherer!(pyo3_bindings_annotations);
 
-#[cfg(feature = "capability-cli")]
+#[cfg(all(feature = "capability-cli", not(target_family = "wasm")))]
 pub mod cli;
 #[cfg(not(target_family = "wasm"))]
 pub mod device;

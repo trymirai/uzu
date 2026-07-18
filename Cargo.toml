@@ -82,7 +82,6 @@ metal = { package = "mtl-rs", version = "0.1.14" }
 block2 = "0.6"
 bytemuck = "1.23"
 bytesize = "2"
-zerocopy = "0.8.27"
 xxhash-rust = "0.8.15"
 memmap2 = "0.9.8"
 num-traits = "0.2"

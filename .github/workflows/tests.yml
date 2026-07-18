@@ -53,11 +53,6 @@ jobs:
         if: ${{ always() && steps.setup.outcome == 'success' }}
         run: cargo +nightly clippy --workspace --all-targets -- -D warnings
 
-      - name: Lint mirai app with clippy
-        if: ${{ always() && steps.setup.outcome == 'success' }}
-        working-directory: apps/mirai
-        run: cargo +nightly clippy --workspace --all-targets -- -D warnings
-
       - name: Check that Cargo.lock is consistent with Cargo.toml
         if: ${{ always() && steps.setup.outcome == 'success' }}
         run: |
@@ -72,71 +67,79 @@ jobs:
         if: ${{ always() && steps.setup.outcome == 'success' }}
         run: cargo tools sync --check
 
+  linters-gpui-app:
+    name: linters (gpui app)
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v6
+      - id: setup
+        uses: ./.github/actions/setup
+        with:
+          linters: true
+          metal: true
+
+      - name: Lint mirai app with clippy
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        working-directory: apps/mirai
+        run: cargo +nightly clippy --workspace --all-targets -- -D warnings
+
   tests:
-    name: ${{ matrix.backend }}
-      ${{ matrix.host == 'linux' && ' (linux)' || '' }}
-      ${{ matrix.grammar && ' (grammar)' || '' }}
-      ${{ matrix.target != '' && format(' ({0})', matrix.target) || '' }}
+    name: ${{ matrix.host }}${{ matrix.target && format(' ({0})', matrix.target) }}
     runs-on: ${{ matrix.host == 'linux' && 'ubuntu-latest' || fromJSON('["self-hosted","macos","arm64"]') }}
 
     strategy:
       matrix:
-        backend: [ 'cpu', 'metal' ]
-        host: [ 'macos' ]
-        target: [ '' ]
         include:
-          - grammar: true
-          - backend: 'cpu'
-            host: 'macos'
+          - host: 'macos'
+            tests: true
+            benches: true
+          - host: 'linux'
+            crates: ['cli']
+          - host: 'linux'
             target: 'wasm32-wasip1-threads'
-            grammar: false
-          - backend: 'cpu'
-            host: 'linux'
-            target: ''
-            grammar: false
+            crates: ['uzu']
+            tests: 'kernels'
+          - host: 'linux'
+            target: 'wasm32-unknown-unknown'
+            crates: ['kiban']
 
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      FEATURE_FLAGS: >-
-        ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
-        ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }}
-        ${{ matrix.grammar && '--features grammar' || '' }}
 
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
         with:
-          metal: ${{ matrix.backend == 'metal' }}
-          test_data: ${{ matrix.host != 'linux' }}
-          nextest: ${{ matrix.host != 'linux' }}
+          metal: ${{ matrix.host == 'macos' && 'true' || 'false' }}
+          test_data: ${{ matrix.tests == true && 'true' || 'false' }}
+          nextest: ${{ matrix.tests && 'true' || 'false' }}
           target: ${{ matrix.target }}
-          linux: ${{ matrix.host == 'linux' }}
 
       - name: Build crates
-        run: cargo +stable build --no-default-features $FEATURE_FLAGS ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu' || '' }} ${{ matrix.host == 'linux' && '-p cli --features backend-cpu,capability-cli' || '' }}
-
-      # Temporary step to check crates that migrated to wasm.
-      # New value to matrix was not added intentionally because the whole project is not wasm supported.
-      - name: Build wasm supported crates
-        if: ${{ matrix.target == 'wasm32-wasip1-threads' }}
         run: |
-          rustup +stable target add wasm32-unknown-unknown
-          cargo +stable build -p kiban --target wasm32-unknown-unknown
+          cargo +stable build \
+            ${{ matrix.target && format('--target {0}', matrix.target) }} \
+            ${{ matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) }}
 
       - name: Build benches
-        if: ${{ matrix.backend != 'cpu' }}
-        run: cargo +nightly bench --no-run --no-default-features $FEATURE_FLAGS
+        if: ${{ matrix.benches }}
+        run: |
+          cargo +nightly bench --no-run \
+            ${{ matrix.target && format('--target {0}', matrix.target) }} \
+            ${{ matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) }}
 
       - name: Run tests
-        if: ${{ matrix.backend != 'cpu' && matrix.grammar || matrix.backend == 'cpu' && !matrix.grammar && matrix.target == 'wasm32-wasip1-threads' }}
+        if: ${{ matrix.tests }}
         run: |
-          cargo +nightly nextest run --profile=ci --no-default-features $FEATURE_FLAGS \
-            ${{ matrix.target == 'wasm32-wasip1-threads' && '-p backend-uzu backends::common::kernel::tests --lib' || '' }}
+          cargo +nightly nextest run --profile=ci \
+            ${{ matrix.target && format('--target {0}', matrix.target) }} \
+            ${{ matrix.tests == 'kernels' && '-p backend-uzu backends::common::kernel::tests --lib' }}
 
   validate-bindings:
     name: validate-bindings
-    runs-on: [ self-hosted, macos, arm64 ]
+    runs-on: [self-hosted, macos, arm64]
 
     steps:
       - uses: actions/checkout@v6
@@ -144,13 +147,6 @@ jobs:
         with:
           metal: true
           bindings: true
-
-      - name: "Reset existing rustup toolchains on self-hosted runner"
-        run: |
-          if command -v rustup >/dev/null; then
-            rustup toolchain uninstall stable 2>/dev/null || true
-            rustup toolchain uninstall nightly 2>/dev/null || true
-          fi
 
       - name: "Setup"
         run: |
@@ -178,11 +174,12 @@ jobs:
   completed:
     name: completed
     runs-on: ubuntu-latest
-    needs: [ linters, tests, validate-bindings ]
+    needs: [linters, linters-gpui-app, tests, validate-bindings]
     if: ${{ always() }}
 
     steps:
       - run: |
           [ "${{ needs.linters.result }}" = success ]
+          [ "${{ needs.linters-gpui-app.result }}" = success ]
           [ "${{ needs.tests.result }}" = success ]
           [ "${{ needs.validate-bindings.result }}" = success ]
