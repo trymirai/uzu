@@ -16,4 +16,3 @@ mod tensor_add_bias_test;
 mod tensor_add_scale_test;
 mod tensor_add_swap_test;
 mod tensor_copy_test;
-mod token_copy_test;
