@@ -13,6 +13,7 @@ mod matmul;
 mod moe;
 mod normalization;
 mod pooling;
+mod radix_top_k_small;
 mod sampling;
 mod short_conv;
 mod softmax;
@@ -34,4 +35,5 @@ impl Kernels for CpuKernels {
     type DeltaNetChunkedPrefill = Infallible;
     type DeltaNetTreeVerify = Infallible;
     type MatmulKernel = matmul::MatmulCpuKernel;
+    type RadixTopKSmall = radix_top_k_small::CpuRadixTopKSmall;
 }
