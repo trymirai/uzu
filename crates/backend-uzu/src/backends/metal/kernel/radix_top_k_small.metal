@@ -13,7 +13,7 @@ constant uint BUCKETS = 1 << RADIX_BITS;
 constant uint BUCKETS_PER_THREAD = BUCKETS / THREADS_PER_TG;
 constant uint VECTOR_WIDTH = 4;
 
-static bool arrive_last(device atomic_uint* count, uint expected) {
+METAL_FUNC bool arrive_last(device atomic_uint* count, uint expected) {
   atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
   const bool last = atomic_fetch_add_explicit(count, 1u, memory_order_relaxed) == expected - 1;
   if (last)
@@ -21,13 +21,13 @@ static bool arrive_last(device atomic_uint* count, uint expected) {
   return last;
 }
 
-static void reset_arrival(device atomic_uint* count) {
+METAL_FUNC void reset_arrival(device atomic_uint* count) {
   atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
   atomic_store_explicit(count, 0u, memory_order_relaxed);
 }
 
 template <typename Visitor>
-static inline void visit_partition_keys(
+METAL_FUNC void visit_partition_keys(
     const device float* input,
     uint columns,
     uint index_bits,
