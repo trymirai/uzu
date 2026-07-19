@@ -20,6 +20,11 @@ static bool arrive_last(device atomic_uint* count, uint expected) {
   return last;
 }
 
+static void reset_arrival(device atomic_uint* count) {
+  atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
+  atomic_store_explicit(count, 0u, memory_order_relaxed);
+}
+
 template <typename Visitor>
 static inline void visit_partition_keys(
     const device float* input,
@@ -79,16 +84,19 @@ KERNEL(RadixTopKSmallPass)(
   const ulong prefix = prefixes[row];
   const ulong mask = prefix_masks[row];
 
-  device atomic_uint* partial = partial_histograms + (row * partitions + partition) * BUCKETS;
+  // Build this partition's histogram.
+  device atomic_uint* partition_histogram = partial_histograms + (row * partitions + partition) * BUCKETS;
   for (uint bucket = lid; bucket < BUCKETS; bucket += THREADS_PER_TG)
-    atomic_store_explicit(&partial[bucket], 0u, memory_order_relaxed);
+    atomic_store_explicit(&partition_histogram[bucket], 0u, memory_order_relaxed);
   // Order this partition's clears before its histogram updates.
   threadgroup_barrier(mem_flags::mem_device);
   visit_partition_keys(row_input, columns, index_bits, partition, partitions, lid, [&](ulong key) {
     if ((key & mask) == prefix)
-      atomic_fetch_add_explicit(&partial[(key >> shift) & (BUCKETS - 1)], 1u, memory_order_relaxed);
+      atomic_fetch_add_explicit(&partition_histogram[(key >> shift) & (BUCKETS - 1)], 1u, memory_order_relaxed);
   });
   threadgroup_barrier(mem_flags::mem_device);
+
+  // The last partition merges the row.
   if (lid == 0)
     is_last = arrive_last(&done_counts[row], partitions);
   threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
@@ -138,10 +146,8 @@ KERNEL(RadixTopKSmallPass)(
     ranks[row] = rank;
   }
   threadgroup_barrier(mem_flags::mem_device);
-  if (lid == 0) {
-    atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
-    atomic_store_explicit(&done_counts[row], 0u, memory_order_relaxed);
-  }
+  if (lid == 0)
+    reset_arrival(&done_counts[row]);
 }
 
 KERNEL(RadixTopKSmallCollect)(
