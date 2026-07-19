@@ -6,11 +6,12 @@
 
 using namespace metal;
 
-constant uint THREADS_PER_TG = 256;
+#define THREADS_PER_TG 256
 constant uint MAX_K = 512;
 constant uint RADIX_BITS = 10;
 constant uint BUCKETS = 1 << RADIX_BITS;
 constant uint BUCKETS_PER_THREAD = BUCKETS / THREADS_PER_TG;
+constant uint VECTOR_WIDTH = 4;
 
 static bool arrive_last(device atomic_uint* count, uint expected) {
   atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
@@ -35,7 +36,7 @@ static inline void visit_partition_keys(
     uint lid,
     Visitor visit
 ) {
-  if (columns % 4u != 0) {
+  if (columns % VECTOR_WIDTH != 0) {
     const uint begin = columns * partition / partitions;
     const uint end = columns * (partition + 1u) / partitions;
     for (uint column = begin + lid; column < end; column += THREADS_PER_TG)
@@ -43,16 +44,16 @@ static inline void visit_partition_keys(
     return;
   }
   const device float4* input4 = reinterpret_cast<const device float4*>(input);
-  const uint vector_columns = columns / 4u;
+  const uint vector_columns = columns / VECTOR_WIDTH;
   const uint vector_begin = vector_columns * partition / partitions;
   const uint vector_end = vector_columns * (partition + 1u) / partitions;
   for (uint vector = vector_begin + lid; vector < vector_end; vector += THREADS_PER_TG) {
     const float4 values = input4[vector];
-    for (uint lane = 0; lane < 4; ++lane)
-      visit(top_k_ordered_key(values[lane], vector * 4 + lane, index_bits));
+    for (uint lane = 0; lane < VECTOR_WIDTH; ++lane)
+      visit(top_k_ordered_key(values[lane], vector * VECTOR_WIDTH + lane, index_bits));
   }
   if (partition + 1 == partitions) {
-    for (uint column = vector_columns * 4 + lid; column < columns; column += THREADS_PER_TG)
+    for (uint column = vector_columns * VECTOR_WIDTH + lid; column < columns; column += THREADS_PER_TG)
       visit(top_k_ordered_key(input[column], column, index_bits));
   }
 }
@@ -73,7 +74,7 @@ KERNEL(RadixTopKSmallPass)(
     threadgroup uint simd_prefixes[THREADS_PER_TG / METAL_SIMD_SIZE],
     threadgroup uint& is_last,
     const uint group GROUPS(rows* partitions),
-    const uint lid THREADS(256)
+    const uint lid THREADS(THREADS_PER_TG)
 ) {
   const uint row = group / partitions;
   const uint partition = group % partitions;
@@ -165,7 +166,7 @@ KERNEL(RadixTopKSmallCollect)(
     threadgroup ulong sorted_keys[MAX_K],
     threadgroup uint& is_last,
     const uint group GROUPS(rows* partitions),
-    const uint lid THREADS(256)
+    const uint lid THREADS(THREADS_PER_TG)
 ) {
   const uint row = group / partitions;
   const uint partition = group % partitions;

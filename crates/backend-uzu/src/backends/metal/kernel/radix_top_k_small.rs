@@ -10,8 +10,8 @@ use crate::backends::{
 };
 
 const PARTITIONS: u32 = 4;
-const RADIX_BUCKETS: usize = 1024;
 const RADIX_BITS: u32 = 10;
+const RADIX_BUCKETS: usize = 1 << RADIX_BITS;
 
 pub struct MetalRadixTopKSmall {
     pass: RadixTopKSmallPassMetalKernel,

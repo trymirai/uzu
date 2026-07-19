@@ -74,9 +74,14 @@ fn assert_output(
 
 #[uzu_test]
 fn radix_top_k_small_matches_cpu() {
-    for shape @ (rows, columns, k) in
-        [(1, 1, 1), (1, 8, 8), (3, 1025, 1), (3, 1025, 511), (3, 1025, 512), (15, TARGET_COLUMNS, TARGET_K)]
-    {
+    for shape @ (rows, columns, k) in [
+        (1, 1, 1),
+        (1, 8, 8),
+        (3, 1025, 1),
+        (3, 1025, TARGET_K - 1),
+        (3, 1025, TARGET_K),
+        (15, TARGET_COLUMNS, TARGET_K),
+    ] {
         let mut input = values(rows, columns);
         let special = [
             f32::INFINITY,
