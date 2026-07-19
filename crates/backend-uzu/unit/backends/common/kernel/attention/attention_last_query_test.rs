@@ -153,7 +153,8 @@ fn benchmark_attention_last_query() {
 
     let mut runner = Runner::<Metal>::new(8, 16, 8, 65);
     let mut run = || runner.encode(BATCH).div_f64(BATCH as f64);
-    for _ in 0..5 {
+    let warmup = std::time::Instant::now();
+    while warmup.elapsed() < std::time::Duration::from_millis(500) {
         run();
     }
     let mut samples = (0..SAMPLES).map(|_| run()).collect::<Vec<_>>();
