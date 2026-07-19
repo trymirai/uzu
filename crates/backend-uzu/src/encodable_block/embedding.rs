@@ -633,7 +633,110 @@ impl<B: Backend> Embedding<B> {
 
         Ok(output_allocation)
     }
+
+    /// Per-row candidate readout: scores only the `ids_per_row` tokens in
+    /// `token_ids` (U32) per query row. `sparse[r][j] == dense[r][token_ids[j]]`.
+    /// Full-precision weights only.
+    #[allow(dead_code)]
+    pub(crate) fn encode_readout_sparse(
+        &self,
+        input: &Allocation<B>,
+        token_ids: &Allocation<B>,
+        rows: usize,
+        ids_per_row: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        assert!(rows > 0 && ids_per_row > 0);
+        let (weights, lookup, readout) = match &self.tying {
+            EmbeddingTying::Tied {
+                ty:
+                    TiedEmbeddingType::FullPrecision {
+                        weights,
+                        lookup,
+                        readout,
+                    },
+            } => (weights, lookup, readout),
+            EmbeddingTying::Untied {
+                input_ty:
+                    UntiedEmbeddingLookupType::FullPrecision {
+                        lookup,
+                        ..
+                    },
+                output_ty:
+                    UntiedEmbeddingReadoutType::FullPrecision {
+                        weights,
+                        readout,
+                    },
+            } => (weights, lookup, readout),
+            _ => {
+                return Err(EmbeddingError::UnsupportedConfiguration(
+                    "sparse readout requires full-precision embedding weights".to_string(),
+                ));
+            },
+        };
+        let input_dim = self.model_dim as usize;
+        let mut output = encoder
+            .allocate_scratch(size_for_shape(&[rows, ids_per_row], self.data_type))
+            .map_err(EmbeddingError::BackendError)?;
+        let row_bytes = input_dim * self.data_type.size_in_bytes();
+        let ids_row_bytes = ids_per_row * DataType::U32.size_in_bytes();
+        let output_row_bytes = ids_per_row * self.data_type.size_in_bytes();
+
+        // Per-row scratch reused in encode order; matmul has no output offset, so
+        // each row's logits are copied out.
+        let mut gathered = encoder
+            .allocate_scratch(size_for_shape(&[ids_per_row, input_dim], self.data_type))
+            .map_err(EmbeddingError::BackendError)?;
+        let mut row_output = encoder
+            .allocate_scratch(size_for_shape(&[1, ids_per_row], self.data_type))
+            .map_err(EmbeddingError::BackendError)?;
+        {
+            let mut readout = readout.lock();
+            for row in 0..rows {
+                lookup.encode(
+                    (token_ids, row * ids_row_bytes),
+                    weights,
+                    &mut gathered,
+                    ids_per_row as u32,
+                    self.vocab_size,
+                    input_dim as u32,
+                    1.0,
+                    encoder,
+                );
+                readout
+                    .encode(
+                        MatmulArguments {
+                            a: input,
+                            a_offset: row * row_bytes,
+                            b: MatmulB::FullPrecision {
+                                b: &gathered,
+                            },
+                            b_leading_dimension: None,
+                            b_transpose: true,
+                            d: &mut row_output,
+                            d_transform: MatmulDOps::none(),
+                            m: 1,
+                            n: ids_per_row as u32,
+                            k: input_dim as u32,
+                        },
+                        encoder,
+                    )
+                    .map_err(EmbeddingError::BackendError)?;
+                encoder.encode_copy(&row_output, .., &mut output, row * output_row_bytes..(row + 1) * output_row_bytes);
+            }
+        }
+
+        if let Some(logit_soft_cap) = &self.logit_soft_cap {
+            logit_soft_cap.kernel.encode(&mut output, (rows * ids_per_row) as u32, logit_soft_cap.value, encoder);
+        }
+
+        Ok(output)
+    }
 }
+
+#[cfg(all(test, metal_backend))]
+#[path = "../../unit/encodable_block/embedding_sparse_readout_test.rs"]
+mod tests;
 
 fn input_quantization_from_spec<B: Backend>(
     spec: AnyWeightMatrixSpec
