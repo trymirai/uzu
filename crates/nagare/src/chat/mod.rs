@@ -302,7 +302,6 @@ impl ChatSession {
             return;
         }
 
-        let mut completed_replies: Vec<ChatReply> = Vec::new();
         let mut next_input = input;
 
         'turns: loop {
@@ -322,9 +321,7 @@ impl ChatSession {
                 match result {
                     Ok(replies) => {
                         turn_replies = replies;
-                        let mut all_replies = completed_replies.clone();
-                        all_replies.extend(turn_replies.iter().cloned());
-                        if sender.send(Ok(all_replies)).is_err() {
+                        if sender.send(Ok(turn_replies.clone())).is_err() {
                             break 'turns;
                         }
                     },
@@ -368,7 +365,6 @@ impl ChatSession {
                     };
                     if self.try_transition(ChatSessionState::ToolCalling, ChatSessionState::Generation).await {
                         if !tool_messages.is_empty() && !cancel_token.is_cancelled() {
-                            completed_replies.extend(turn_replies);
                             next_input = tool_messages;
                         } else {
                             break;
