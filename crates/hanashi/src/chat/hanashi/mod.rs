@@ -5,6 +5,8 @@ mod ordering;
 pub mod renderer;
 mod token;
 
+use std::collections::HashSet;
+
 pub use error::Error;
 use shoji::types::{
     basic::{Token, TokenId},
@@ -28,6 +30,7 @@ pub struct Encoding {
     config: HanashiResolvedConfig,
     tokenizer: Tokenizer,
     parser: TokenStreamParser,
+    framing_tokens: HashSet<String>,
     renderer: Renderer,
     validator: Validator,
 
@@ -52,6 +55,7 @@ impl EncodingTrait for Encoding {
         let resolved_config = config.resolve()?;
         let tokenizer = load_tokenizer(&context.tokenizer_location).map_err(|_| Error::UnableToLoadTokenizer)?;
         let parser = TokenStreamParser::new(resolved_config.parsing.clone())?;
+        let framing_tokens = resolved_config.parsing.framing_config().tokens.into_iter().collect();
         let renderer = Renderer::new(resolved_config.rendering.clone());
         let validator = Validator::new(resolved_config.ordering.clone());
         Ok(Self {
@@ -59,6 +63,7 @@ impl EncodingTrait for Encoding {
             config: resolved_config,
             tokenizer,
             parser,
+            framing_tokens,
             renderer,
             validator,
             state: State::default(),
@@ -98,7 +103,7 @@ impl EncodingTrait for Encoding {
         let text_encoding = self.tokenizer.encode(text, false).map_err(|_| Error::UnableToEncodeText)?;
         for token_id in text_encoding.get_ids() {
             let token = self.resolve_token(*token_id, true)?;
-            self.parser.push(&token.clone().to_parser_token())?;
+            self.push_token_to_parser(&token)?;
             self.state.tokens.push(token);
         }
 
@@ -112,7 +117,7 @@ impl EncodingTrait for Encoding {
     ) -> Result<(), Self::Error> {
         for token_id in &token_ids {
             let token = self.resolve_token(*token_id, true)?;
-            self.parser.push(&token.clone().to_parser_token())?;
+            self.push_token_to_parser(&token)?;
             self.state.tokens.push(token);
         }
 
@@ -134,6 +139,17 @@ impl EncodingTrait for Encoding {
 }
 
 impl Encoding {
+    fn push_token_to_parser(
+        &mut self,
+        token: &Token,
+    ) -> Result<(), Error> {
+        if token.is_special && !self.framing_tokens.contains(&token.value) {
+            return Ok(());
+        }
+        self.parser.push(&token.clone().to_parser_token())?;
+        Ok(())
+    }
+
     fn fill_default_content(
         &self,
         messages: &[ChatMessage],

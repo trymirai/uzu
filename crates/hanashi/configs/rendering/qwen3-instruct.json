@@ -50,6 +50,7 @@
                     ]
                 },
                 "tool_calls": {
+                    "disable_raw": true,
                     "blocks": [
                         "tool_call",
                         "tool_call_candidate"

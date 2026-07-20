@@ -5,7 +5,7 @@ use uzu::engine::{Engine, EngineConfig};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::new(EngineConfig::default()).await?;
-    let model = engine.model("meta-llama/Llama-3.2-3B-Instruct".to_string()).await?.ok_or("Model not found")?;
+    let model = engine.model("Qwen/Qwen3.5-0.8B".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
         println!("Download progress: {}", update.progress());

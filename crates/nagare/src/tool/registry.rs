@@ -1,18 +1,17 @@
-use std::collections::HashMap;
-
+use indexmap::IndexMap;
 use shoji::types::basic::{ToolDescription, ToolFunction, ToolNamespace};
 
 use crate::tool::func_def::ToolFunctionDefinition;
 
 #[derive(Clone)]
 pub struct ToolRegistry {
-    functions: HashMap<String, ToolFunctionDefinition>,
+    functions: IndexMap<String, ToolFunctionDefinition>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
-            functions: HashMap::new(),
+            functions: IndexMap::new(),
         }
     }
 
@@ -40,7 +39,16 @@ impl ToolRegistry {
                 tool_function: ToolFunction {
                     name: func_def.name().to_string(),
                     description: func_def.description().to_string(),
-                    parameters: func_def.parameters().clone(),
+                    parameters: func_def.parameters().clone().or_else(|| {
+                        Some(
+                            serde_json::json!({
+                                "type": "object",
+                                "properties": {},
+                                "required": []
+                            })
+                            .into(),
+                        )
+                    }),
                     return_definition: func_def.return_definition().clone(),
                 },
             })
