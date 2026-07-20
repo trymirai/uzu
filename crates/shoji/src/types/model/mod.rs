@@ -1,6 +1,5 @@
 mod accessibility;
 mod backend;
-mod encoding_config;
 mod family;
 mod model;
 mod properties;
@@ -12,7 +11,6 @@ mod vendor;
 
 pub use accessibility::ModelAccessibility;
 pub use backend::ModelBackend;
-pub use encoding_config::{EncodingConfig, HanashiConfig, HarmonyConfig};
 pub use family::ModelFamily;
 pub use model::Model;
 pub use properties::ModelProperties;
