@@ -150,6 +150,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
         accumulate: input.case.accumulate,
         bias: bias_allocation.as_ref(),
         rht_factors: rht_allocation.as_ref(),
+        soft_cap: None,
     };
 
     let mut encoder = Encoder::new(context).expect("encoder");
@@ -167,6 +168,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
             b_transpose: input.case.b_transpose,
             d: &mut d_allocation,
             d_transform,
+            gather_indices: None,
             m: m as u32,
             n: n as u32,
             k: k as u32,

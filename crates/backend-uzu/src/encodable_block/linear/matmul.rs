@@ -293,10 +293,9 @@ impl<B: Backend> LinearMatmul<B> {
             _ => None,
         };
         let d_transform = MatmulDOps {
-            ab_scale: 1.0,
-            accumulate: false,
             bias: self.biases.as_ref(),
             rht_factors,
+            ..MatmulDOps::none()
         };
 
         self.kernel.lock().encode(
@@ -307,6 +306,7 @@ impl<B: Backend> LinearMatmul<B> {
                 b_transpose: true,
                 d: &mut output,
                 d_transform,
+                gather_indices: None,
                 m: batch_dim as u32,
                 n: self.output_dim as u32,
                 k: self.input_dim as u32,

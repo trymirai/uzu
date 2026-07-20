@@ -199,10 +199,8 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
     let mut args = quant_arguments(&mut buffers, &input);
     args.d_transform = MatmulDOps {
-        ab_scale: 1.0,
-        accumulate: false,
         bias: Some(&bias_pp_buf),
-        rht_factors: None,
+        ..MatmulDOps::none()
     };
     matmul.gemm.encode_dispatch_path(args, GemmDispatchPath::Simdgroup, &mut encoder).expect("encode quant with bias");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -252,9 +250,8 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
     let mut args = quant_arguments(&mut buffers, &input);
     args.d_transform = MatmulDOps {
         ab_scale: scale,
-        accumulate: false,
         bias: Some(&bias_buf),
-        rht_factors: None,
+        ..MatmulDOps::none()
     };
     matmul.encode(args, &mut encoder).expect("encode quant gemv with scale+bias");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -330,10 +327,9 @@ fn parity_bf16_gemv_quant_rht_with_bias() {
     let mut cpu_encoder = Encoder::<Cpu>::new(&cpu_context).expect("cpu encoder");
     let mut cpu_args = quant_arguments(&mut cpu_buffers, &input);
     cpu_args.d_transform = MatmulDOps {
-        ab_scale: 1.0,
-        accumulate: false,
         bias: Some(&cpu_bias),
         rht_factors: Some(&cpu_rht),
+        ..MatmulDOps::none()
     };
     cpu_matmul.encode(cpu_args, &mut cpu_encoder).expect("cpu encode quant+rht+bias");
     cpu_encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -352,10 +348,9 @@ fn parity_bf16_gemv_quant_rht_with_bias() {
     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
     let mut args = quant_arguments(&mut buffers, &input);
     args.d_transform = MatmulDOps {
-        ab_scale: 1.0,
-        accumulate: false,
         bias: Some(&metal_bias),
         rht_factors: Some(&metal_rht),
+        ..MatmulDOps::none()
     };
     matmul.encode(args, &mut encoder).expect("encode quant gemv with rht+bias");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -393,10 +388,8 @@ fn parity_bf16_gemv_quant_rht() {
     let mut cpu_encoder = Encoder::<Cpu>::new(&cpu_context).expect("cpu encoder");
     let mut cpu_args = quant_arguments(&mut cpu_buffers, &input);
     cpu_args.d_transform = MatmulDOps {
-        ab_scale: 1.0,
-        accumulate: false,
-        bias: None,
         rht_factors: Some(&cpu_rht),
+        ..MatmulDOps::none()
     };
     cpu_matmul.encode(cpu_args, &mut cpu_encoder).expect("cpu encode quant+rht");
     cpu_encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -415,10 +408,8 @@ fn parity_bf16_gemv_quant_rht() {
     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
     let mut args = quant_arguments(&mut buffers, &input);
     args.d_transform = MatmulDOps {
-        ab_scale: 1.0,
-        accumulate: false,
-        bias: None,
         rht_factors: Some(&metal_rht),
+        ..MatmulDOps::none()
     };
     matmul.encode(args, &mut encoder).expect("encode quant gemv with rht");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -443,10 +434,8 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
     let mut args = quant_arguments(&mut buffers, &input);
     args.d_transform = MatmulDOps {
-        ab_scale: 1.0,
         accumulate: true,
-        bias: None,
-        rht_factors: None,
+        ..MatmulDOps::none()
     };
     let result = matmul.encode(args, &mut encoder);
 

@@ -67,6 +67,7 @@ fn bench_gemm(c: &mut Criterion) {
                                 b_transpose: true,
                                 d: &mut d,
                                 d_transform: MatmulDOps::none(),
+                                gather_indices: None,
                                 m: m as u32,
                                 n: n as u32,
                                 k: k as u32,

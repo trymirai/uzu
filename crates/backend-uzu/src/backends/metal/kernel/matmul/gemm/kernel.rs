@@ -152,6 +152,10 @@ impl GemmKernel {
         &self,
         arguments: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
     ) -> bool {
+        if arguments.gather_indices.is_some() {
+            // TODO: gathered GEMM
+            return false;
+        }
         match (
             arguments.m,
             arguments.n == arguments.k,

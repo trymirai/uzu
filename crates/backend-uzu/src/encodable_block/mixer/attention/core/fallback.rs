@@ -103,10 +103,9 @@ impl<B: Backend> AttentionFallbackCore<B> {
                     d: &mut group_scores,
                     d_transform: MatmulDOps {
                         ab_scale: scale,
-                        accumulate: false,
-                        bias: None,
-                        rht_factors: None,
+                        ..MatmulDOps::none()
                     },
+                    gather_indices: None,
                     m: (gqa_factor * arguments.suffix_length) as u32,
                     n: sequence_length as u32,
                     k: self.head_dim as u32,
@@ -154,6 +153,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
                     b_transpose: false,
                     d: &mut group_output,
                     d_transform: MatmulDOps::none(),
+                    gather_indices: None,
                     m: (gqa_factor * arguments.suffix_length) as u32,
                     n: self.head_dim as u32,
                     k: sequence_length as u32,
