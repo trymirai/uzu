@@ -337,8 +337,12 @@ impl ChatSession {
                 && last_reply.finish_reason == Some(ChatReplyFinishReason::ToolCalls)
                 && !cancel_token.is_cancelled()
             {
+                let mut tool_calls = last_reply.message.tool_calls();
+                if !self.has_registered_tool_functions(&tool_calls).await {
+                    break;
+                }
+
                 if self.try_transition(ChatSessionState::Generation, ChatSessionState::ToolCalling).await {
-                    let mut tool_calls = last_reply.message.tool_calls();
                     let supports_multiple_tool_calls = self.instance.lock().await.supports_multiple_tool_calls();
                     if !supports_multiple_tool_calls && tool_calls.len() > 1 {
                         tool_calls.drain(1..);
@@ -381,6 +385,17 @@ impl ChatSession {
         }
 
         *self.state.lock().await = ChatSessionState::Idle;
+    }
+
+    async fn has_registered_tool_functions(
+        &self,
+        tool_calls: &[ToolCall],
+    ) -> bool {
+        let Some(ref registry) = self.tool_registry else {
+            return false;
+        };
+        let registry_guard = registry.lock().await;
+        !tool_calls.is_empty() && tool_calls.iter().all(|call| registry_guard.get_function(&call.name).is_some())
     }
 
     async fn execute_tool_calls(
