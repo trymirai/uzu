@@ -229,6 +229,7 @@ impl ChatSession {
 
         let mut outputs: IndexMap<u32, ChatReply> = IndexMap::new();
         let mut error_value: Option<serde_json::Value> = None;
+        let mut generated_tool_call_identifiers: Vec<Option<String>> = Vec::new();
 
         let mut instance = self.instance.lock().await;
         let mut stream = match &mut *instance {
@@ -239,7 +240,7 @@ impl ChatSession {
             match partial_output {
                 Ok(backend_output) => {
                     // prepare reply
-                    let message = build_message(&backend_output);
+                    let message = build_message(&backend_output, &mut generated_tool_call_identifiers);
                     let finish_reason = backend_output.finish_reason;
                     let output = ChatReply {
                         message: message.clone(),
@@ -360,7 +361,11 @@ impl ChatSession {
                             });
                         }
                     }
-                    let tool_messages = self.execute_tool_calls(tool_calls).await;
+
+                    let tool_messages = tokio::select! {
+                        tool_messages = self.execute_tool_calls(tool_calls) => tool_messages,
+                        _ = cancel_token.cancelled() => break,
+                    };
                     if self.try_transition(ChatSessionState::ToolCalling, ChatSessionState::Generation).await {
                         if !tool_messages.is_empty() && !cancel_token.is_cancelled() {
                             completed_replies.extend(turn_replies);
@@ -516,7 +521,10 @@ impl ChatSession {
     }
 }
 
-fn build_message(output: &BackendOutput) -> ChatMessage {
+fn build_message(
+    output: &BackendOutput,
+    generated_tool_call_identifiers: &mut Vec<Option<String>>,
+) -> ChatMessage {
     let mut message = ChatMessage::assistant();
     if let Some(reasoning) = &output.reasoning {
         message = message.with_reasoning(reasoning.clone());
@@ -524,18 +532,24 @@ fn build_message(output: &BackendOutput) -> ChatMessage {
     if let Some(text) = &output.text {
         message = message.with_text(text.clone());
     }
-    for tool_call in &output.tool_calls {
+    for (index, tool_call) in output.tool_calls.iter().enumerate() {
         message = match tool_call {
             ToolCallState::Candidate(candidate) => {
                 message.with_tool_call_candidate(Value::from(serde_json::Value::String(candidate.clone())))
             },
             ToolCallState::Finished(tool_call) => {
-                let mut id = tool_call.identifier.clone();
-                if id.is_none() {
-                    id = Some(Uuid::new_v4().to_string())
-                }
+                let identifier = tool_call.identifier.clone().or_else(|| {
+                    if generated_tool_call_identifiers.len() <= index {
+                        generated_tool_call_identifiers.resize(index + 1, None);
+                    }
+                    Some(
+                        generated_tool_call_identifiers[index]
+                            .get_or_insert_with(|| Uuid::new_v4().to_string())
+                            .clone(),
+                    )
+                });
                 message.with_tool_call(ToolCall {
-                    identifier: id,
+                    identifier,
                     name: tool_call.name.clone(),
                     arguments: tool_call.arguments.clone(),
                 })
