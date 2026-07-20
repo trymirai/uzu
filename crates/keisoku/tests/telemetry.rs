@@ -3,6 +3,7 @@ fn available_telemetry() {
     use keisoku::Device;
 
     let mut device = Device::new();
+    let os_version = device.os_version();
     let chip = device.chip();
     let efficiency_cores = device.efficiency_cores();
     let performance_cores = device.performance_cores();
@@ -17,6 +18,7 @@ fn available_telemetry() {
     let rail_power = device.rail_power();
 
     println!("--- keisoku available telemetry ---");
+    println!("os        {os_version}");
     println!("device     {}  {}E+{}P  {} GPU", chip, efficiency_cores, performance_cores, gpu_cores);
     println!("fans       {}", fans.as_ref().map(|fans| fans.fans.len()).unwrap_or(0));
     println!(

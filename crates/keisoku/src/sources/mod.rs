@@ -41,6 +41,23 @@ impl Sources {
         }
     }
 
+    pub(crate) fn os_version(&self) -> String {
+        let version = objc2_foundation::NSProcessInfo::processInfo().operatingSystemVersion();
+        let numbers = if version.patchVersion == 0 {
+            format!("{}.{}", version.majorVersion, version.minorVersion)
+        } else {
+            format!("{}.{}.{}", version.majorVersion, version.minorVersion, version.patchVersion)
+        };
+        #[cfg(target_os = "macos")]
+        {
+            format!("macOS {numbers}")
+        }
+        #[cfg(target_os = "ios")]
+        {
+            format!("iOS {numbers}")
+        }
+    }
+
     pub(crate) fn chip(&self) -> String {
         #[cfg(target_os = "macos")]
         {

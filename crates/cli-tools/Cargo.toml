@@ -26,6 +26,30 @@ minijinja.workspace = true
 anyhow.workspace = true
 indexmap.workspace = true
 colored.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+backend-uzu = { workspace = true, optional = true }
+uzu = { workspace = true, default-features = false, features = ["backend-metal", "capability-grammar"], optional = true }
+keisoku = { workspace = true, optional = true }
+kiban = { workspace = true, optional = true }
+shoji = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+csv = { workspace = true, optional = true }
+tokio-stream = { workspace = true, optional = true }
+
+[features]
+collect-metrics = [
+    "dep:backend-uzu",
+    "dep:uzu",
+    "dep:keisoku",
+    "dep:kiban",
+    "dep:shoji",
+    "dep:reqwest",
+    "dep:csv",
+    "dep:tokio-stream",
+    "tokio/time",
+    "tokio/fs",
+]
 
 [lints]
 workspace = true
