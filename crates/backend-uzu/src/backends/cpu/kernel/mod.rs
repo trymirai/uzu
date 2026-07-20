@@ -14,6 +14,7 @@ mod matmul;
 mod moe;
 mod normalization;
 mod pooling;
+mod radix_top_k_small;
 mod sampling;
 mod short_conv;
 mod softmax;
@@ -22,7 +23,6 @@ mod tensor_add_bias;
 mod tensor_add_scale;
 mod tensor_add_swap;
 mod tensor_copy;
-mod token_copy;
 
 include!(concat!(env!("OUT_DIR"), "/cpu/dsl.rs"));
 
@@ -36,4 +36,5 @@ impl Kernels for CpuKernels {
     type DeltaNetChunkedPrefill = Infallible;
     type DeltaNetTreeVerify = Infallible;
     type MatmulKernel = matmul::MatmulCpuKernel;
+    type RadixTopKSmall = radix_top_k_small::CpuRadixTopKSmall;
 }

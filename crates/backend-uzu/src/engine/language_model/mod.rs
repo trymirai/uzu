@@ -3,10 +3,7 @@ use std::{fs::File, io, io::BufReader, path::Path, sync::Arc};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{
-        Backend, Context, Kernels,
-        kernel::{ContextRingUpdateKernel, TokenCopySampledKernel},
-    },
+    backends::common::{Backend, Context, Kernels, kernel::ContextRingUpdateKernel},
     config::model::{generation::GenerationConfig, language_model::LanguageModelConfig},
     data_type::DataType,
     encodable_block::{
@@ -25,7 +22,6 @@ pub struct LanguageModel<B: Backend> {
     context: Arc<B::Context>,
     decoder: Decoder<B>,
     sampling: Sampling<B>,
-    token_copy: <B::Kernels as Kernels>::TokenCopySampledKernel,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
     vocab_size: usize,
@@ -93,8 +89,6 @@ impl<B: Backend> Engine<B> {
 
         let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);
 
-        let token_copy = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context)
-            .map_err(EngineLoadLanguageModelError::Backend)?;
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
@@ -108,7 +102,6 @@ impl<B: Backend> Engine<B> {
             context,
             decoder,
             sampling,
-            token_copy,
             context_ring_update,
             generation_config,
             vocab_size,

@@ -12,7 +12,7 @@ use crate::{
 };
 
 struct Input<T: ArrayElement + Float> {
-    token_ids: Box<[u64]>,
+    token_ids: Box<[u32]>,
     weights: Box<[T]>,
     batch_size: usize,
     vocab_size: usize,
@@ -26,7 +26,7 @@ fn get_test_data<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
     let batch_size = 7;
     let input_scale = 2.0_f32;
 
-    let token_ids: Box<[u64]> = Box::new([3, 7, 1, 10, 0, 5, 8]);
+    let token_ids: Box<[u32]> = Box::new([3, 7, 1, 10, 0, 5, 8]);
     let weights: Vec<T> =
         (0..vocab_size * model_dim).map(|i| T::from((i as f32).sin() * 30.0f32).unwrap()).collect::<Vec<_>>();
     let mut expected: Vec<T> = Vec::with_capacity(batch_size * model_dim);
@@ -56,7 +56,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         <<B as Backend>::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(&context, T::data_type())
             .expect("Failed to create FullPrecisionEmbeddingLookupKernel");
 
-    let token_ids_allocation = alloc_allocation_with_data::<B, u64>(&context, &input.token_ids);
+    let token_ids_allocation = alloc_allocation_with_data::<B, u32>(&context, &input.token_ids);
     let weights_allocation = alloc_allocation_with_data::<B, T>(&context, &input.weights);
     let mut output = alloc_allocation::<B, T>(&context, input.batch_size * input.model_dim);
 

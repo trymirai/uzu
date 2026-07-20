@@ -9,6 +9,7 @@ use crate::backends::{
 pub mod attention;
 pub mod gdn;
 pub mod matmul;
+mod radix_top_k_small;
 
 pub const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
 
@@ -24,6 +25,7 @@ impl Kernels for MetalKernels {
     type DeltaNetChunkedPrefill = gdn::chunked::MetalDeltaNetChunkedPrefill;
     type DeltaNetTreeVerify = gdn::tree_verify::MetalDeltaNetTreeVerify;
     type MatmulKernel = matmul::MatmulMetalKernel;
+    type RadixTopKSmall = radix_top_k_small::MetalRadixTopKSmall;
 }
 
 #[cfg(test)]

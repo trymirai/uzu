@@ -1,4 +1,5 @@
 pub mod attention_fallback;
+pub mod attention_last_query;
 pub mod attention_prepare;
 pub mod attention_single_pass;
 pub mod attention_two_pass;
