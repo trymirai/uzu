@@ -2,12 +2,13 @@ use half::{bf16, f16};
 use num_traits::{Float, NumCast};
 use proc_macros::kernel;
 
+use super::{min_max_symmetric_divisor, quantize_symmetric_i8};
 use crate::{
     array::ArrayElement,
-    backends::common::gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, ActivationPrepareOps, HADAMARD_TRANSFORM_BLOCK_SIZE},
+    backends::common::gpu_types::{
+        ACTIVATION_QUANTIZATION_GROUP_SIZE, ActivationPrepareOps, HADAMARD_TRANSFORM_BLOCK_SIZE,
+    },
 };
-
-use super::{min_max_symmetric_divisor, quantize_symmetric_i8};
 
 fn input_rht(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE]) {
     let mut stride = 1;
