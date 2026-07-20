@@ -29,7 +29,7 @@ mod mode;
 mod qkv_norm;
 mod state;
 
-pub(crate) use state::AttentionState;
+pub(crate) use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState};
 
 pub mod rope;
 

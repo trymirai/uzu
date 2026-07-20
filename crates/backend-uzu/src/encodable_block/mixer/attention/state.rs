@@ -10,6 +10,11 @@ use crate::{
     encodable_block::mixer::{MixerState, attention::Attention},
 };
 
+/// Hard-coded capacity of the KV-cache suffix region reserved per attention
+/// state. Any suffix (draft block, verification tree) written into the cache
+/// must not exceed this. TODO: remove hardcoded suffix capacity.
+pub(crate) const ATTENTION_SUFFIX_CAPACITY: usize = 1024;
+
 pub enum AttentionStateType {
     Full {
         length: usize,
@@ -102,8 +107,7 @@ impl<B: Backend> AttentionState<B> {
             }
         };
 
-        let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
-        let max_elements = max_prefix_elements + suffix_capacity;
+        let max_elements = max_prefix_elements + ATTENTION_SUFFIX_CAPACITY;
         let element_size = attention.num_kv_heads.unwrap() * attention.head_dim;
         let kv_buffer_bytes = max_elements * element_size * data_type.size_in_bytes();
 
@@ -161,8 +165,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
             return Ok(());
         }
 
-        let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
-        assert!(suffix_length <= suffix_capacity, "attention suffix length exceeds hardcoded capacity");
+        assert!(suffix_length <= ATTENTION_SUFFIX_CAPACITY, "attention suffix length exceeds hardcoded capacity");
         let elements_required = context_length + suffix_length;
         let bytes_required = elements_required * self.element_dim * self.data_type.size_in_bytes();
         let bytes_prepared = self.elements_prepared * self.element_dim * self.data_type.size_in_bytes();
