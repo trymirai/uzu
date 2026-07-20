@@ -7,8 +7,8 @@ using namespace metal;
 namespace uzu {
 namespace matmul {
 
-METAL_CONST int SIMDGROUP_MMA_ROWS = 8;
-METAL_CONST int SIMDGROUP_MMA_COLS = 8;
+UZU_CONST int SIMDGROUP_MMA_ROWS = 8;
+UZU_CONST int SIMDGROUP_MMA_COLS = 8;
 
 ///////////////////////////////////////////////////////////////////////////////
 // SimdgroupMMA - stateless traits/ops for 8x8 simdgroup_matrix
@@ -22,11 +22,11 @@ struct SimdgroupMMA {
 
 template <typename AccumulatorT, typename LeftT, typename RightT>
 struct SimdgroupMMA<AccumulatorT, SIMDGROUP_MMA_ROWS, SIMDGROUP_MMA_COLS, LeftT, RightT> {
-  METAL_CONST int ROWS = SIMDGROUP_MMA_ROWS;
-  METAL_CONST int COLS = SIMDGROUP_MMA_COLS;
-  METAL_CONST int THREAD_ELEMENT_COUNT = (ROWS * COLS) / METAL_SIMD_SIZE;
-  METAL_CONST int THREAD_ELEMENT_ROWS = 1;
-  METAL_CONST int THREAD_ELEMENT_COLS = 2;
+  UZU_CONST int ROWS = SIMDGROUP_MMA_ROWS;
+  UZU_CONST int COLS = SIMDGROUP_MMA_COLS;
+  UZU_CONST int THREAD_ELEMENT_COUNT = (ROWS * COLS) / METAL_SIMD_SIZE;
+  UZU_CONST int THREAD_ELEMENT_ROWS = 1;
+  UZU_CONST int THREAD_ELEMENT_COLS = 2;
 
   static_assert(
       THREAD_ELEMENT_ROWS * THREAD_ELEMENT_COLS == THREAD_ELEMENT_COUNT,

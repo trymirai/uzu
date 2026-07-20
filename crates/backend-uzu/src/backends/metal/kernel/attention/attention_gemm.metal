@@ -27,13 +27,13 @@ template <typename T, uint BK, uint BD, bool USE_MXU>
 struct AttentionGemmLayout {
   using Ops = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
 
-  METAL_CONST int FRAGMENT_ROWS = Ops::FRAGMENT_ROWS;
-  METAL_CONST int SIMDGROUPS_PER_THREADGROUP = 4;
-  METAL_CONST int BLOCK_QUERY_ROWS = SIMDGROUPS_PER_THREADGROUP * FRAGMENT_ROWS;
-  METAL_CONST int ROW_ALIGNMENT_BYTES = 16;
-  METAL_CONST int ROW_PADDING_ELEMENTS = ROW_ALIGNMENT_BYTES / int(sizeof(T));
-  METAL_CONST int Q_SMEM_SIZE = USE_MXU ? 1 : (BLOCK_QUERY_ROWS * (int(BD) + ROW_PADDING_ELEMENTS));
-  METAL_CONST int KV_SMEM_SIZE = USE_MXU ? 1 : (int(BK) * (int(BD) + ROW_PADDING_ELEMENTS));
+  UZU_CONST int FRAGMENT_ROWS = Ops::FRAGMENT_ROWS;
+  UZU_CONST int SIMDGROUPS_PER_THREADGROUP = 4;
+  UZU_CONST int BLOCK_QUERY_ROWS = SIMDGROUPS_PER_THREADGROUP * FRAGMENT_ROWS;
+  UZU_CONST int ROW_ALIGNMENT_BYTES = 16;
+  UZU_CONST int ROW_PADDING_ELEMENTS = ROW_ALIGNMENT_BYTES / int(sizeof(T));
+  UZU_CONST int Q_SMEM_SIZE = USE_MXU ? 1 : (BLOCK_QUERY_ROWS * (int(BD) + ROW_PADDING_ELEMENTS));
+  UZU_CONST int KV_SMEM_SIZE = USE_MXU ? 1 : (int(BK) * (int(BD) + ROW_PADDING_ELEMENTS));
 };
 
 template <typename T, uint BK, uint BD, bool USE_MXU>
@@ -129,7 +129,7 @@ KERNEL(AttentionGemm)(
   const short simdgroup_row_base = FRAGMENT_ROWS * QUERY_ROW_FRAGMENTS * short(thread_context.simdgroup_index);
   constexpr short head_dim_fragment_stride = FRAGMENT_ROWS;
 
-  const bool ragged_q = (!align_q && int(q_tile_idx) == params.nq_aligned);
+  const bool ragged_q = (!align_q && q_tile_idx == params.nq_aligned);
   constexpr short query_leading_dimension = BD + ROW_PADDING_ELEMENTS;
   threadgroup T* query_shared = q_smem;
   const short query_shared_offset = simdgroup_row_base * query_leading_dimension;
@@ -177,10 +177,10 @@ KERNEL(AttentionGemm)(
     sum_score[r] = init_sum;
   }
 
-  uint32_t kb_lim = params.nk;
+  int kb_lim = int(params.nk);
   if (is_causal) {
     const int q_max = (int(q_tile_idx) + 1) * BLOCK_QUERY_ROWS + params.q_off;
-    kb_lim = min(params.nk, uint32_t((q_max + BK - 1) / BK));
+    kb_lim = min(int(params.nk), (q_max + int(BK) - 1) / int(BK));
   }
 
   const int q_base = int(q_tile_idx) * BLOCK_QUERY_ROWS + int(simdgroup_row_base);
@@ -196,7 +196,7 @@ KERNEL(AttentionGemm)(
   threadgroup T* kv_shared = kv_smem;
 
   for (int kb = 0; kb < kb_lim; kb++) {
-    const bool tail_k = (!align_k && kb == params.nk_aligned);
+    const bool tail_k = (!align_k && kb == int(params.nk_aligned));
     const short valid_k_rows = tail_k ? short(params.k_rem) : short(BK);
     const device T* k_block = k + int64_t(kb) * int(BK) * key_source_stride;
     score_fragment.clear();
@@ -328,7 +328,7 @@ KERNEL(AttentionGemm)(
 
   o += int64_t(simdgroup_row_base) * params.o_strides[2];
 
-  if (ragged_q && params.q_rem <= int(simdgroup_row_base)) {
+  if (ragged_q && int(params.q_rem) <= int(simdgroup_row_base)) {
     return;
   }
   METAL_PRAGMA_UNROLL
