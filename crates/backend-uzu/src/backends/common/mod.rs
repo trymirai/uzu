@@ -7,7 +7,6 @@ mod encoder;
 pub mod gpu_types;
 mod hazard_tracker;
 pub mod kernel;
-mod metal_simd;
 
 pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
 pub use backend::Backend;
@@ -26,4 +25,3 @@ pub use context::Context;
 pub use encoder::{Completed, Encoder, Executable, Pending};
 pub use hazard_tracker::Access;
 pub use kernel::Kernels;
-pub use metal_simd::METAL_SIMD_SIZE;

@@ -8,9 +8,7 @@ pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{
-        Allocation, Backend, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE, kernel::ActivationPrepareConfig,
-    },
+    backends::common::{Allocation, Backend, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE},
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
         full_precision_spec::FullPrecisionSpec,
@@ -100,7 +98,6 @@ impl<B: Backend> dyn Linear<B> {
                 input_data_type,
                 output_data_type,
                 parameter_tree,
-                ActivationPrepareConfig::default(),
             )?)),
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
@@ -222,10 +219,7 @@ impl<B: Backend> dyn Linear<B> {
             ..
         }) = &spec
         {
-            let activation_prepare = ActivationPrepareConfig::default();
-            if rht_wrapper::activation_prepare_group_size(activation_prepare, input_dimension, quantization_spec)
-                .is_some()
-            {
+            if rht_wrapper::activation_prepare_group_size(input_dimension, quantization_spec).is_some() {
                 let linear = RHTLinearWrapper::new(
                     context,
                     input_dimension,
@@ -235,7 +229,6 @@ impl<B: Backend> dyn Linear<B> {
                     input_data_type,
                     output_data_type,
                     parameter_tree,
-                    activation_prepare,
                 )?;
                 return Ok((Box::new(linear), None));
             }

@@ -47,6 +47,8 @@ pub struct LinearMatmul<B: Backend> {
     biases: Option<Allocation<B>>,
     input_dim: usize,
     output_dim: usize,
+    weights_data_type: DataType,
+    input_data_type: DataType,
     output_data_type: DataType,
     mode: Mode<B>,
 }
@@ -85,6 +87,8 @@ impl<B: Backend> LinearMatmul<B> {
             biases,
             input_dim,
             output_dim,
+            weights_data_type,
+            input_data_type,
             output_data_type,
             mode: Mode::FullPrecision,
         })
@@ -179,6 +183,8 @@ impl<B: Backend> LinearMatmul<B> {
             biases,
             input_dim,
             output_dim,
+            weights_data_type,
+            input_data_type,
             output_data_type,
             mode: Mode::Quantized {
                 method: quantization_method,
@@ -226,6 +232,9 @@ impl<B: Backend> LinearMatmul<B> {
 
         compatible_weights
             && context.supports_mxu()
+            && self.weights_data_type == DataType::BF16
+            && self.input_data_type == DataType::BF16
+            && self.output_data_type == DataType::BF16
             && group_size != 0
             && group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
             && (self.input_dim as u32).is_multiple_of(group_size)
@@ -237,22 +246,12 @@ impl<B: Backend> LinearMatmul<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        self.encode_with_a_b(a, &self.weights, batch_dim, encoder)
-    }
-
-    pub(crate) fn encode_with_a_b(
-        &self,
-        a: MatmulA<'_, B>,
-        b_weights: &Allocation<B>,
-        batch_dim: usize,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
         let b = match &self.mode {
             Mode::FullPrecision => MatmulB::FullPrecision {
-                b: b_weights,
+                b: &self.weights,
             },
             Mode::Quantized {
                 method,
@@ -263,14 +262,14 @@ impl<B: Backend> LinearMatmul<B> {
                 ..
             } => match method {
                 QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
-                    b: b_weights,
+                    b: &self.weights,
                     scales,
                     biases: zero_points_or_biases.as_ref().expect("ScaleBias quantization requires biases"),
                     mode: *mode,
                     group_size: *group_size,
                 },
                 QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
-                    b: b_weights,
+                    b: &self.weights,
                     scales,
                     zero_points: zero_points_or_biases
                         .as_ref()
@@ -279,7 +278,7 @@ impl<B: Backend> LinearMatmul<B> {
                     group_size: *group_size,
                 },
                 QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
-                    b: b_weights,
+                    b: &self.weights,
                     scales,
                     mode: *mode,
                     group_size: *group_size,

@@ -25,5 +25,5 @@ pub struct TreeVerifyEncodeArguments<'a, B: Backend> {
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/unit/encodable_block/delta_net_tree_verify_bench.rs"]
+#[path = "../../../../unit/encodable_block/delta_net_tree_verify_bench.rs"]
 mod tests;

@@ -467,6 +467,30 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
     );
 }
 
+#[uzu_test]
+fn cpu_a8w8_rejects_scale_bias_weights() {
+    let context = <Cpu as Backend>::Context::new().expect("CPU context");
+    let input = QuantInput::<bf16>::new(8, 256, 64, 32, 8, QuantizationMethod::ScaleBias, 0).with_prepared_a();
+    let mut buffers = QuantBuffers::<Cpu, bf16>::allocate(&context, &input);
+    let mut matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("CPU matmul kernel");
+    let mut encoder = Encoder::<Cpu>::new(&context).expect("CPU encoder");
+
+    let err = matmul
+        .encode(quant_arguments(&mut buffers, &input), &mut encoder)
+        .expect_err("A8W8 must reject scale-bias weights");
+    let matmul: &MatmulError<Cpu> = (&err as &dyn StdError)
+        .source()
+        .and_then(|source| source.downcast_ref::<MatmulError<Cpu>>())
+        .expect("expected MatmulError source");
+    assert!(matches!(matmul, MatmulError::IncompatibleA { .. }), "got {matmul:?}");
+}
+
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::gs32_4bit_mlx(128, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]

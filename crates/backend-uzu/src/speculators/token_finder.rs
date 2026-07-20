@@ -34,5 +34,5 @@ impl TokenFinder {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/speculators/token_finder_speculator.rs"]
+#[path = "../../unit/speculators/token_finder_speculator.rs"]
 mod tests;

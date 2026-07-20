@@ -182,5 +182,5 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
 }
 
 #[cfg(test)]
-#[path = "../../../../../../tests/unit/backends/metal/kernel/gdn/chunked_test.rs"]
+#[path = "../../../../../../unit/backends/metal/kernel/gdn/chunked_test.rs"]
 mod tests;

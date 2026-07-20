@@ -1,18 +1,4 @@
-use crate::backends::common::gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, INT8_SYMMETRIC_QUANTIZATION_MAXIMUM};
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct ActivationPrepareConfig {
-    pub enabled: bool,
-}
-
-impl ActivationPrepareConfig {
-    pub const fn supports_group_size(
-        self,
-        group_size: usize,
-    ) -> bool {
-        self.enabled && group_size == ACTIVATION_QUANTIZATION_GROUP_SIZE as usize
-    }
-}
+use crate::backends::common::gpu_types::INT8_SYMMETRIC_QUANTIZATION_MAXIMUM;
 
 pub fn min_max_symmetric_divisor(values: &[f32]) -> f32 {
     let (min, max) =
@@ -30,8 +16,4 @@ pub fn quantize_symmetric_i8(
     divisor: f32,
 ) -> i8 {
     (value / divisor).round().clamp(-INT8_SYMMETRIC_QUANTIZATION_MAXIMUM, INT8_SYMMETRIC_QUANTIZATION_MAXIMUM) as i8
-}
-
-pub fn pack_signed_weight_codes(weights: &[u8]) -> Vec<u8> {
-    weights.iter().map(|code| code ^ 0x80).collect()
 }

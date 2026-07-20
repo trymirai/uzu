@@ -1,12 +1,8 @@
 use bitflags::bitflags;
 use derive_more::Display;
 
-use super::super::METAL_SIMD_SIZE;
-
 pub const INT8_SYMMETRIC_QUANTIZATION_MAXIMUM: f32 = 127.0;
 pub const ACTIVATION_QUANTIZATION_GROUP_SIZE: u32 = 32;
-
-const _: () = assert!(ACTIVATION_QUANTIZATION_GROUP_SIZE == METAL_SIMD_SIZE);
 
 bitflags! {
     #[repr(transparent)]

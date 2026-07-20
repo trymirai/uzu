@@ -3,12 +3,9 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, AllocationType, Backend, Context, Encoder,
+        Allocation, Backend, Context, Encoder,
         gpu_types::{ActivationPrepareOps, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
-        kernel::{
-            ActivationPrepareConfig, ActivationsPrepareKernel, HadamardTransformKernel, Kernels, matmul::MatmulA,
-            pack_signed_weight_codes,
-        },
+        kernel::{ActivationsPrepareKernel, HadamardTransformKernel, Kernels, matmul::MatmulA},
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
@@ -35,7 +32,6 @@ pub enum RHTLinearWrapperError<B: Backend> {
 struct Int8Preparation<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationsPrepareKernel,
     group_size: u32,
-    signed_weights: Allocation<B>,
     needs_row_sums: bool,
 }
 
@@ -48,7 +44,6 @@ pub struct RHTLinearWrapper<B: Backend> {
 }
 
 pub(super) fn activation_prepare_group_size(
-    config: ActivationPrepareConfig,
     input_dimension: usize,
     quantization_spec: &AnyWeightMatrixSpec,
 ) -> Option<u32> {
@@ -62,7 +57,9 @@ pub(super) fn activation_prepare_group_size(
         return None;
     };
 
-    if input_dimension.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) && config.supports_group_size(*group_size) {
+    if input_dimension.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
+        && *group_size == crate::backends::common::gpu_types::ACTIVATION_QUANTIZATION_GROUP_SIZE as usize
+    {
         u32::try_from(*group_size).ok()
     } else {
         None
@@ -79,7 +76,6 @@ impl<B: Backend> RHTLinearWrapper<B> {
         input_data_type: DataType,
         output_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
-        activation_prepare: ActivationPrepareConfig,
     ) -> Result<Self, RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights")?;
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
@@ -111,8 +107,11 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )
         .map_err(RHTLinearWrapperError::BackendError)?;
 
-        let int8_preparation = if let Some(group_size) =
-            activation_prepare_group_size(activation_prepare, input_dimension, &quantization_spec)
+        let int8_preparation = if context.supports_mxu()
+            && weights_data_type == DataType::BF16
+            && input_data_type == DataType::BF16
+            && output_data_type == DataType::BF16
+            && let Some(group_size) = activation_prepare_group_size(input_dimension, &quantization_spec)
         {
             let AnyWeightMatrixSpec::IntSpec(IntSpec {
                 is_symmetric: weights_symmetric,
@@ -123,17 +122,6 @@ impl<B: Backend> RHTLinearWrapper<B> {
             };
             let needs_row_sums = !*weights_symmetric;
 
-            let weights = quantized_weights_tree
-                .leaf("weights")?
-                .validate(&[output_dimension, input_dimension], DataType::U8)?
-                .read_allocation()?;
-            let host = weights.copyout::<u8>();
-            let signed = pack_signed_weight_codes(&host);
-            let mut signed_weights = context
-                .create_allocation(signed.len(), AllocationType::Global)
-                .map_err(RHTLinearWrapperError::BackendError)?;
-            signed_weights.copyin(&signed);
-
             let mut ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
             if needs_row_sums {
                 ops |= ActivationPrepareOps::ROW_SUMS;
@@ -143,7 +131,6 @@ impl<B: Backend> RHTLinearWrapper<B> {
             Some(Int8Preparation {
                 kernel,
                 group_size,
-                signed_weights,
                 needs_row_sums,
             })
         } else {
@@ -204,14 +191,13 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 preparation.group_size,
                 encoder,
             );
-            return self.inner_linear.encode_with_a_b(
+            return self.inner_linear.encode_with_a(
                 MatmulA::Int8Symmetric {
                     values: &values,
                     scales: &scales,
                     row_sums: row_sums.as_ref(),
                     group_size: preparation.group_size,
                 },
-                &preparation.signed_weights,
                 batch_dim,
                 encoder,
             );

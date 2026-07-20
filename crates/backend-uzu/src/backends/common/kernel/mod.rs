@@ -7,9 +7,7 @@ pub mod delta_net_tree_verify;
 pub mod matmul;
 pub mod radix_top_k_small;
 
-pub use activation_prepare::{
-    ActivationPrepareConfig, min_max_symmetric_divisor, pack_signed_weight_codes, quantize_symmetric_i8,
-};
+pub use activation_prepare::{min_max_symmetric_divisor, quantize_symmetric_i8};
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 
@@ -25,5 +23,5 @@ pub trait Kernels: Sized {
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/unit/backends/common/kernel/mod.rs"]
+#[path = "../../../../unit/backends/common/kernel/mod.rs"]
 mod tests;

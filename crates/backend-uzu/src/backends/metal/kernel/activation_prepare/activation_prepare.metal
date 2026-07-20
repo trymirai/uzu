@@ -36,7 +36,7 @@ METAL_FUNC float load_activation(
 }
 
 template <typename InputT>
-VARIANTS(InputT, float, half, bfloat)
+VARIANTS(InputT, float, bfloat)
 PUBLIC KERNEL(ActivationsPrepare)(
     const device InputT* input,
     device int8_t* q_out OPTIONAL(ops.contains(ActivationPrepareOps::QUANTIZE)),

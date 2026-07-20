@@ -188,5 +188,5 @@ impl<B: Backend> Sampling<B> {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/encodable_block/sampling_test.rs"]
+#[path = "../../../unit/encodable_block/sampling_test.rs"]
 mod tests;

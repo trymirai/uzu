@@ -165,17 +165,8 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         context: &B::Context,
         input: &QuantInput<T>,
     ) -> Self {
-        let w_packed = if input.prepared_a.is_some() {
-            let mut packed = input.w_packed.clone();
-            for word in &mut packed {
-                *word ^= 0x8080_8080;
-            }
-            packed
-        } else {
-            input.w_packed.clone()
-        };
         Self {
-            w: alloc_allocation_with_data::<B, u32>(context, &w_packed),
+            w: alloc_allocation_with_data::<B, u32>(context, &input.w_packed),
             scales: alloc_allocation_with_data::<B, T>(context, &input.scales),
             zp: input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(context, zp)),
             bias: input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(context, b)),

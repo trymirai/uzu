@@ -3,7 +3,7 @@ use crate::{
     backends::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
-            gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, HadamardTransformOrder},
+            gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, HadamardTransformOrder, gemm::GemmBPrologueKind},
             kernel::{
                 HadamardTransformKernel,
                 matmul::{MatmulA, MatmulArguments, MatmulError, MatmulKernel},
@@ -105,6 +105,10 @@ impl MatmulKernel for MatmulCpuKernel {
                 if group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE
                     || b.group_size() != Some(group_size)
                     || b.bits_per_b() != Some(8)
+                    || !matches!(
+                        b.b_prologue(),
+                        GemmBPrologueKind::ScaleSymmetricDequant | GemmBPrologueKind::ScaleZeroPointDequant
+                    )
                 {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
@@ -162,7 +166,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 } => None,
             };
 
-            // A8W8 stores W8 codes pre-signed (XOR 0x80); match Metal and decode as i8.
+            // A8W8 converts the unsigned W8 code to signed form before the integer multiply.
             let signed_u8_weights = matches!(a_data, AData::Int8 { .. });
 
             unsafe {
@@ -216,7 +220,8 @@ impl MatmulKernel for MatmulCpuKernel {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 8;
                                         let w = weights.as_ptr() as *const u32;
-                                        ((w.add(word_index).read_unaligned() >> bit_offset) as u8) as i8 as f32
+                                        let code = ((w.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as u8;
+                                        (code ^ 0x80) as i8 as f32
                                     } else {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 8;
