@@ -174,15 +174,19 @@ impl ChatSession {
         }
 
         let mut messages_guard = self.messages.lock().await;
-        if !messages_guard.is_empty() {
+        let empty_messages = messages_guard.is_empty();
+        if !empty_messages {
             messages_guard.retain(|msg| !contains_tools_definitions(msg));
+        }
+        drop(messages_guard);
+
+        if !empty_messages {
             let mut instance_guard = self.instance.lock().await;
             match &mut *instance_guard {
                 Instance::Token(session) => session.reset().await?,
                 Instance::Message(session) => session.reset().await?,
             };
         }
-        drop(messages_guard);
 
         if let Some(registry) = self.tool_registry.as_mut() {
             let mut registry_guard = registry.lock().await;
