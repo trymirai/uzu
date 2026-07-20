@@ -44,11 +44,10 @@ fn reference(
     rows: usize,
     columns: usize,
     group_size: usize,
-) -> (Vec<i8>, Vec<f32>, Vec<i32>) {
+) -> (Vec<i8>, Vec<f32>) {
     let groups = columns.div_ceil(group_size);
     let mut values = vec![0i8; rows * columns];
     let mut scales = vec![0.0f32; rows * groups];
-    let mut row_sums = vec![0i32; rows * groups];
     let mut prepared = vec![0.0f32; columns];
 
     for row in 0..rows {
@@ -66,19 +65,15 @@ fn reference(
             let start = group * group_size;
             let end = (start + group_size).min(columns);
             let slice = &prepared[start..end];
-            let mut sum = 0i32;
             let divisor = min_max_symmetric_divisor(slice);
             scales[row * groups + group] = divisor;
             for column in start..end {
-                let q = quantize_symmetric_i8(prepared[column], divisor);
-                values[row * columns + column] = q;
-                sum += q as i32;
+                values[row * columns + column] = quantize_symmetric_i8(prepared[column], divisor);
             }
-            row_sums[row * groups + group] = sum;
         }
     }
 
-    (values, scales, row_sums)
+    (values, scales)
 }
 
 fn run_metal(
@@ -88,14 +83,13 @@ fn run_metal(
     rows: usize,
     columns: usize,
     group_size: usize,
-) -> (Vec<i8>, Vec<f32>, Vec<i32>) {
+) -> (Vec<i8>, Vec<f32>) {
     let groups = columns.div_ceil(group_size);
     let input = alloc_allocation_with_data::<Metal, f32>(context, input);
     let factors = alloc_allocation_with_data::<Metal, i32>(context, factors);
     let mut values = alloc_allocation::<Metal, i8>(context, rows * columns);
     let mut scales = alloc_allocation::<Metal, f32>(context, rows * groups);
-    let mut row_sums = alloc_allocation::<Metal, i32>(context, rows * groups);
-    let ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE | ActivationPrepareOps::ROW_SUMS;
+    let ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
     let kernel = ActivationsPrepareMetalKernel::new(context, DataType::F32, ops).expect("prepare kernel");
     let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
 
@@ -103,7 +97,6 @@ fn run_metal(
         &input,
         Some(&mut values),
         Some(&mut scales),
-        Some(&mut row_sums),
         Some(&factors),
         rows as u32,
         columns as u32,
@@ -112,11 +105,7 @@ fn run_metal(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (
-        allocation_to_vec::<Metal, i8>(&values),
-        allocation_to_vec::<Metal, f32>(&scales),
-        allocation_to_vec::<Metal, i32>(&row_sums),
-    )
+    (allocation_to_vec::<Metal, i8>(&values), allocation_to_vec::<Metal, f32>(&scales))
 }
 
 #[rstest]
@@ -138,15 +127,13 @@ fn rht_and_min_max_symmetric_group_32_quantization_match_cpu() {
         })
         .collect::<Vec<_>>();
 
-    let (actual_values, actual_scales, actual_row_sums) =
-        run_metal(&context, &input, &factors, rows, columns, group_size);
-    let (expected_values, expected_scales, expected_row_sums) = reference(&input, &factors, rows, columns, group_size);
+    let (actual_values, actual_scales) = run_metal(&context, &input, &factors, rows, columns, group_size);
+    let (expected_values, expected_scales) = reference(&input, &factors, rows, columns, group_size);
 
     for (index, (actual, expected)) in actual_scales.iter().zip(&expected_scales).enumerate() {
         let relative_error = (actual - expected).abs() / expected.abs().max(1e-6);
         assert!(relative_error < 1e-3, "scale {index}: {actual} != {expected}");
     }
-    assert_eq!(actual_row_sums, expected_row_sums);
     assert!(
         actual_values
             .iter()
@@ -166,8 +153,8 @@ fn min_max_symmetric_quantization_uses_each_group_of_32() {
     let input = [vec![1.0f32; group_size], vec![0.1f32; group_size]].concat();
     let factors = vec![1; columns];
 
-    let (actual_values, actual_scales, _) = run_metal(&context, &input, &factors, rows, columns, group_size);
-    let (expected_values, expected_scales, _) = reference(&input, &factors, rows, columns, group_size);
+    let (actual_values, actual_scales) = run_metal(&context, &input, &factors, rows, columns, group_size);
+    let (expected_values, expected_scales) = reference(&input, &factors, rows, columns, group_size);
 
     assert_eq!(actual_scales.len(), 2);
     assert!(actual_scales[0] > actual_scales[1] * 9.0);

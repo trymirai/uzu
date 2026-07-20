@@ -4,7 +4,10 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Context, Encoder,
-        gpu_types::{ActivationPrepareOps, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
+        gpu_types::{
+            ACTIVATION_QUANTIZATION_GROUP_SIZE, ActivationPrepareOps, HADAMARD_TRANSFORM_BLOCK_SIZE,
+            HadamardTransformOrder,
+        },
         kernel::{ActivationsPrepareKernel, HadamardTransformKernel, Kernels, matmul::MatmulA},
     },
     config::weight_matrix::{
@@ -32,7 +35,6 @@ pub enum RHTLinearWrapperError<B: Backend> {
 struct Int8Preparation<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationsPrepareKernel,
     group_size: u32,
-    needs_row_sums: bool,
 }
 
 pub struct RHTLinearWrapper<B: Backend> {
@@ -51,6 +53,7 @@ pub(super) fn activation_prepare_group_size(
         bits: 8,
         group_size,
         layout: Layout::OutputInput,
+        is_symmetric: true,
         ..
     }) = quantization_spec
     else {
@@ -58,7 +61,7 @@ pub(super) fn activation_prepare_group_size(
     };
 
     if input_dimension.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
-        && *group_size == crate::backends::common::gpu_types::ACTIVATION_QUANTIZATION_GROUP_SIZE as usize
+        && *group_size == ACTIVATION_QUANTIZATION_GROUP_SIZE as usize
     {
         u32::try_from(*group_size).ok()
     } else {
@@ -113,25 +116,12 @@ impl<B: Backend> RHTLinearWrapper<B> {
             && output_data_type == DataType::BF16
             && let Some(group_size) = activation_prepare_group_size(input_dimension, &quantization_spec)
         {
-            let AnyWeightMatrixSpec::IntSpec(IntSpec {
-                is_symmetric: weights_symmetric,
-                ..
-            }) = &quantization_spec
-            else {
-                return Err(RHTLinearWrapperError::UnsupportedConfiguration(format!("{quantization_spec:?}")));
-            };
-            let needs_row_sums = !*weights_symmetric;
-
-            let mut ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
-            if needs_row_sums {
-                ops |= ActivationPrepareOps::ROW_SUMS;
-            }
+            let ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
             let kernel = <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type, ops)
                 .map_err(RHTLinearWrapperError::BackendError)?;
             Some(Int8Preparation {
                 kernel,
                 group_size,
-                needs_row_sums,
             })
         } else {
             None
@@ -174,17 +164,11 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::F32))?;
-            let mut row_sums = if preparation.needs_row_sums {
-                Some(encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::I32))?)
-            } else {
-                None
-            };
 
             preparation.kernel.encode(
                 &input,
                 Some(&mut values),
                 Some(&mut scales),
-                row_sums.as_mut(),
                 Some(&self.input_factors),
                 batch_dim as u32,
                 self.input_dimension as u32,
@@ -195,7 +179,6 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 MatmulA::Int8Symmetric {
                     values: &values,
                     scales: &scales,
-                    row_sums: row_sums.as_ref(),
                     group_size: preparation.group_size,
                 },
                 batch_dim,

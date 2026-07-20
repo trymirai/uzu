@@ -95,9 +95,7 @@ CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || BITS == 8)
 CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
-    (TRANSPOSE_B &&
-     (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant ||
-      B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant)))
+    (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
@@ -115,8 +113,6 @@ KERNEL(Gemm)(
         OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
     const device int8_t* a_int8 OPTIONAL(A_IS_INT8),
     const device float* a_scales OPTIONAL(A_IS_INT8),
-    const device int32_t* a_row_sums
-        OPTIONAL(A_IS_INT8 && B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
@@ -155,7 +151,6 @@ KERNEL(Gemm)(
         rht_factors,
         a_int8,
         a_scales,
-        a_row_sums,
         b_shared,
         thread_context
     );

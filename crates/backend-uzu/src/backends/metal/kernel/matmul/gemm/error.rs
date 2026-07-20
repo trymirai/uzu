@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::backends::common::gpu_types::gemm::GemmTiling;
+use crate::backends::common::gpu_types::gemm::{GemmBPrologueKind, GemmTiling};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum GemmSpecializationError {
@@ -29,7 +29,7 @@ pub enum GemmSpecializationError {
     Int8ActivationUnsupported {
         use_mxu: bool,
         bits: Option<u32>,
-        b_prologue: crate::backends::common::gpu_types::gemm::GemmBPrologueKind,
+        b_prologue: GemmBPrologueKind,
         transpose_b: bool,
     },
 }

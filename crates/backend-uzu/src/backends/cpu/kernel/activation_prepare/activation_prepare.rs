@@ -35,7 +35,6 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     input: *const InputT,
     #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] q_out: Option<*mut i8>,
     #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] scales_out: Option<*mut f32>,
-    #[optional(ops.contains(ActivationPrepareOps::ROW_SUMS))] row_sums_out: Option<*mut i32>,
     #[optional(ops.contains(ActivationPrepareOps::INPUT_RHT))] rht_factors: Option<*const i32>,
     batch_size: u32,
     element_count: u32,
@@ -50,11 +49,6 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     assert_eq!(rht_factors.is_some(), ops.contains(ActivationPrepareOps::INPUT_RHT));
     assert_eq!(q_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
     assert_eq!(scales_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
-    let emit_row_sums = ops.contains(ActivationPrepareOps::ROW_SUMS);
-    assert_eq!(row_sums_out.is_some(), emit_row_sums);
-    if emit_row_sums {
-        assert!(ops.contains(ActivationPrepareOps::QUANTIZE));
-    }
 
     let (Some(q_out), Some(scales_out)) = (q_out, scales_out) else {
         return;
@@ -83,14 +77,9 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
             let slice = &prepared[start..end];
             let divisor = min_max_symmetric_divisor(slice);
             unsafe { *scales_out.add(row * groups + group) = divisor };
-            let mut row_sum = 0i32;
             for index in start..end {
                 let q = quantize_symmetric_i8(prepared[index], divisor);
                 unsafe { *q_out.add(row * columns + index) = q };
-                row_sum += q as i32;
-            }
-            if emit_row_sums {
-                unsafe { *row_sums_out.unwrap().add(row * groups + group) = row_sum };
             }
         }
     }

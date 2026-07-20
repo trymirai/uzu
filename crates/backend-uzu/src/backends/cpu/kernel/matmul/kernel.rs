@@ -100,19 +100,15 @@ impl MatmulKernel for MatmulCpuKernel {
                 values,
                 scales,
                 group_size,
-                ..
             } => {
                 if group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE
                     || b.group_size() != Some(group_size)
                     || b.bits_per_b() != Some(8)
-                    || !matches!(
-                        b.b_prologue(),
-                        GemmBPrologueKind::ScaleSymmetricDequant | GemmBPrologueKind::ScaleZeroPointDequant
-                    )
+                    || !matches!(b.b_prologue(), GemmBPrologueKind::ScaleSymmetricDequant)
                 {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
-                        reason: "int8 activations require group size 32 and matching 8-bit weights",
+                        reason: "int8 activations require group size 32 and matching 8-bit symmetric weights",
                     }
                     .into());
                 }

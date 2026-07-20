@@ -527,7 +527,6 @@ fn mxu_quant_parity_bf16(
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::symmetric_weights(128, 256, 128, QuantizationMethod::ScaleSymmetric)]
-#[case::zero_point_weights(64, 256, 64, QuantizationMethod::ScaleZeroPoint)]
 fn a8w8_mxu_parity_bf16(
     #[case] m: usize,
     #[case] k: usize,

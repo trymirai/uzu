@@ -10,7 +10,6 @@ bitflags! {
     pub struct ActivationPrepareOps: u32 {
         const INPUT_RHT = 1 << 0;
         const QUANTIZE = 1 << 1;
-        const ROW_SUMS = 1 << 3;
     }
 }
 

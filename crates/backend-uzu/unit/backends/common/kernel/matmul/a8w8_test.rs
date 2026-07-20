@@ -21,13 +21,12 @@ fn relative_l2(
 #[test_attr(uzu_test)]
 fn a8w8_cpu_min_max_symmetric_group_32_matches_full_precision_activations() {
     let group_size = 32;
-    for method in [QuantizationMethod::ScaleSymmetric, QuantizationMethod::ScaleZeroPoint] {
-        for (m, k, n) in [(16usize, 128usize, 32usize), (8, 256, 64)] {
-            let baseline = run_quant_cpu(&QuantInput::<f32>::new(m, k, n, group_size, 8, method, SEED));
-            let a8w8 = run_quant_cpu(&QuantInput::<f32>::new(m, k, n, group_size, 8, method, SEED).with_prepared_a());
-            let rel = relative_l2(&baseline, &a8w8);
-            assert!(rel < 0.08, "{method:?} rel-L2 {rel} too high for shape {m}x{k}x{n}");
-            assert!(a8w8.iter().all(|value| value.is_finite()));
-        }
+    let method = QuantizationMethod::ScaleSymmetric;
+    for (m, k, n) in [(16usize, 128usize, 32usize), (8, 256, 64)] {
+        let baseline = run_quant_cpu(&QuantInput::<f32>::new(m, k, n, group_size, 8, method, SEED));
+        let a8w8 = run_quant_cpu(&QuantInput::<f32>::new(m, k, n, group_size, 8, method, SEED).with_prepared_a());
+        let rel = relative_l2(&baseline, &a8w8);
+        assert!(rel < 0.08, "{method:?} rel-L2 {rel} too high for shape {m}x{k}x{n}");
+        assert!(a8w8.iter().all(|value| value.is_finite()));
     }
 }

@@ -159,8 +159,6 @@ struct MxuMmaCore {
       const device int8_t* b_unsigned_simdgroup,
       const device float* a_scales,
       const device BT* b_scales,
-      const device int32_t* a_row_sums,
-      const device uint8_t* b_zero_points,
       const int leading_dimension_a,
       const int leading_dimension_b,
       const int group_iterations,
@@ -178,7 +176,6 @@ struct MxuMmaCore {
 
     const short2 position = Ops::get_position(thread_context.simd_lane_id);
     thread float* accumulator_data = accumulator.elements();
-    constexpr bool b_asymmetric = B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant;
 
     METAL_PRAGMA_NO_UNROLL
     for (int group = 0; group < group_iterations; ++group) {
@@ -213,7 +210,6 @@ struct MxuMmaCore {
       thread int* group_data = group_accumulator.elements();
 
       float a_scale_cache[TILES_M * Ops::THREAD_ELEMENT_ROWS];
-      float a_row_sum_cache[TILES_M * Ops::THREAD_ELEMENT_ROWS];
       METAL_PRAGMA_UNROLL
       for (ushort tile_row = 0; tile_row < TILES_M; ++tile_row) {
         METAL_PRAGMA_UNROLL
@@ -223,13 +219,11 @@ struct MxuMmaCore {
           if (ALIGNED_M || row < simdgroup_limit_m) {
             const uint scale_index_a = (abs_row_base + uint(row)) * groups_per_row + group_index;
             a_scale_cache[cache_index] = a_scales[scale_index_a];
-            a_row_sum_cache[cache_index] = b_asymmetric ? static_cast<float>(a_row_sums[scale_index_a]) : 0.0f;
           }
         }
       }
 
       float b_scale_cache[TILES_N * Ops::THREAD_ELEMENT_COLS];
-      float z_b_cache[TILES_N * Ops::THREAD_ELEMENT_COLS];
       METAL_PRAGMA_UNROLL
       for (ushort tile_col = 0; tile_col < TILES_N; ++tile_col) {
         METAL_PRAGMA_UNROLL
@@ -239,8 +233,6 @@ struct MxuMmaCore {
           if (ALIGNED_N || col < simdgroup_limit_n) {
             const uint scale_index_b = (abs_col_base + uint(col)) * groups_per_row + group_index;
             b_scale_cache[cache_index] = static_cast<float>(b_scales[scale_index_b]);
-            z_b_cache[cache_index] =
-                b_asymmetric ? static_cast<float>(static_cast<int>(b_zero_points[scale_index_b]) - 128) : 0.0f;
           }
         }
       }
@@ -265,11 +257,7 @@ struct MxuMmaCore {
               const ushort b_cache = tile_col * Ops::THREAD_ELEMENT_COLS + ushort(element_offset.x);
               const float a_scale = a_scale_cache[a_cache];
               const float b_scale = b_scale_cache[b_cache];
-              float corrected = static_cast<float>(group_data[frag_base + element]);
-              const float z_b = z_b_cache[b_cache];
-              if (b_asymmetric) {
-                corrected -= z_b * a_row_sum_cache[a_cache];
-              }
+              const float corrected = static_cast<float>(group_data[frag_base + element]);
               accumulator_data[frag_base + element] += a_scale * b_scale * corrected;
             }
           }
@@ -297,7 +285,6 @@ struct MxuMmaCore {
       const device int32_t* rht_factors,
       const device int8_t* a_int8,
       const device float* a_scales,
-      const device int32_t* a_row_sums,
       threadgroup BT* b_shared,
       const thread ThreadContext& thread_context
   ) {
@@ -386,8 +373,6 @@ struct MxuMmaCore {
                           b_unsigned_simdgroup,
                           a_scales,
                           scales,
-                          a_row_sums,
-                          zero_points,
                           int(params->leading_dimension_a),
                           weight_row_stride,
                           int(params->aligned_inner_iterations),

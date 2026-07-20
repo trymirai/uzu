@@ -54,10 +54,7 @@ impl GemmSpecialization {
             return Err(GemmSpecializationError::QuantizedRequiresTransposedB);
         }
         let a_is_int8 = self.a_prologue == GemmAPrologueKind::Int8Symmetric;
-        let b_ok_for_int8 = matches!(
-            self.b_prologue,
-            GemmBPrologueKind::ScaleSymmetricDequant | GemmBPrologueKind::ScaleZeroPointDequant
-        );
+        let b_ok_for_int8 = matches!(self.b_prologue, GemmBPrologueKind::ScaleSymmetricDequant);
         if a_is_int8 && !(self.use_mxu && self.bits_per_b == Some(8) && b_ok_for_int8 && self.transpose_b) {
             return Err(GemmSpecializationError::Int8ActivationUnsupported {
                 use_mxu: self.use_mxu,

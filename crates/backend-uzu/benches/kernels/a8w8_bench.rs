@@ -143,7 +143,6 @@ fn encode_a8w8(
         &buffers.activations,
         Some(&mut buffers.a_int8),
         Some(&mut buffers.a_scales),
-        None::<&mut Allocation<Metal>>,
         Some(&buffers.rht_factors),
         buffers.m,
         buffers.k,
@@ -154,7 +153,6 @@ fn encode_a8w8(
         a: MatmulA::Int8Symmetric {
             values: &buffers.a_int8,
             scales: &buffers.a_scales,
-            row_sums: None,
             group_size: buffers.group_size,
         },
         b: MatmulB::ScaleSymmetricDequant {

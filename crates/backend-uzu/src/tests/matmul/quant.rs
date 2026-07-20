@@ -25,7 +25,6 @@ use crate::{
 pub struct PreparedInt8A {
     pub values: Vec<i8>,
     pub scales: Vec<f32>,
-    pub row_sums: Vec<i32>,
     pub group_size: u32,
 }
 
@@ -110,7 +109,6 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let groups = columns.div_ceil(group_size);
         let mut values = vec![0i8; rows * columns];
         let mut scales = vec![0.0f32; rows * groups];
-        let mut row_sums = vec![0i32; rows * groups];
 
         for row in 0..rows {
             for group in 0..groups {
@@ -118,22 +116,17 @@ impl<T: ArrayElement + Float> QuantInput<T> {
                 let end = (start + group_size).min(columns);
                 let prepared =
                     (start..end).map(|column| self.x[row * columns + column].to_f32().unwrap()).collect::<Vec<_>>();
-                let mut sum = 0i32;
                 let divisor = min_max_symmetric_divisor(&prepared);
                 scales[row * groups + group] = divisor;
                 for (column, value) in (start..end).zip(prepared) {
-                    let q = quantize_symmetric_i8(value, divisor);
-                    values[row * columns + column] = q;
-                    sum += i32::from(q);
+                    values[row * columns + column] = quantize_symmetric_i8(value, divisor);
                 }
-                row_sums[row * groups + group] = sum;
             }
         }
 
         self.prepared_a = Some(PreparedInt8A {
             values,
             scales,
-            row_sums,
             group_size: self.group_size,
         });
         self
@@ -155,7 +148,6 @@ pub struct QuantBuffers<B: Backend, T: ArrayElement + Float> {
     pub x: Allocation<B>,
     pub prepared_a: Option<Allocation<B>>,
     pub prepared_a_scales: Option<Allocation<B>>,
-    pub prepared_a_row_sums: Option<Allocation<B>>,
     pub y: Allocation<B>,
     _t: std::marker::PhantomData<T>,
 }
@@ -179,10 +171,6 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
                 .prepared_a
                 .as_ref()
                 .map(|prepared| alloc_allocation_with_data::<B, f32>(context, &prepared.scales)),
-            prepared_a_row_sums: input.prepared_a.as_ref().and_then(|prepared| {
-                (input.quant_method == QuantizationMethod::ScaleZeroPoint)
-                    .then(|| alloc_allocation_with_data::<B, i32>(context, &prepared.row_sums))
-            }),
             y: alloc_allocation::<B, T>(context, (input.m as usize) * (input.n as usize)),
             _t: std::marker::PhantomData,
         }
@@ -219,7 +207,6 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         Some(prepared) => MatmulA::Int8Symmetric {
             values: buffers.prepared_a.as_ref().expect("prepared activation buffer"),
             scales: buffers.prepared_a_scales.as_ref().expect("prepared activation scales"),
-            row_sums: buffers.prepared_a_row_sums.as_ref(),
             group_size: prepared.group_size,
         },
         None => MatmulA::FullPrecision {

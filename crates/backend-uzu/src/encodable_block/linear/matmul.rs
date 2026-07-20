@@ -5,7 +5,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Context, Encoder,
-        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
+        gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, QuantizationMethod, QuantizationMode},
         kernel::{
             Kernels,
             matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -223,7 +223,7 @@ impl<B: Backend> LinearMatmul<B> {
         let compatible_weights = matches!(
             &self.mode,
             Mode::Quantized {
-                method: QuantizationMethod::ScaleSymmetric | QuantizationMethod::ScaleZeroPoint,
+                method: QuantizationMethod::ScaleSymmetric,
                 mode: QuantizationMode::U8,
                 group_size: weight_group_size,
                 ..
@@ -235,8 +235,7 @@ impl<B: Backend> LinearMatmul<B> {
             && self.weights_data_type == DataType::BF16
             && self.input_data_type == DataType::BF16
             && self.output_data_type == DataType::BF16
-            && group_size != 0
-            && group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
+            && group_size == ACTIVATION_QUANTIZATION_GROUP_SIZE
             && (self.input_dim as u32).is_multiple_of(group_size)
     }
 
