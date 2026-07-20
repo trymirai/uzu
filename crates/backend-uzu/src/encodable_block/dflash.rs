@@ -36,7 +36,6 @@ pub struct DFlashState<B: Backend> {
     layer_states: Box<[AttentionState<B>]>,
     context_length: usize,
     context_capacity: usize,
-    // Final target hidden (reference `output_norm`); consumed as Weaver's target hidden state.
     last_target_hidden: Option<Allocation<B>>,
 }
 
@@ -229,10 +228,18 @@ impl<B: Backend> DFlashDraft<B> {
         let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, encoder)?;
 
-        for (layer, state_layer) in self.layers.iter().zip(state.layer_states.iter_mut()) {
+        let layer_count = self.layers.len();
+        let mut projected = Some(projected);
+        for (index, (layer, state_layer)) in self.layers.iter().zip(state.layer_states.iter_mut()).enumerate() {
             state_layer.prepare(state.context_length, num_tokens, encoder.context())?;
-            let mut layer_input = encoder.allocate_scratch(projected.size())?;
-            encoder.encode_copy(&projected, .., &mut layer_input, ..);
+            let layer_input = if index + 1 == layer_count {
+                projected.take().expect("projected available for last layer")
+            } else {
+                let source = projected.as_ref().expect("projected available");
+                let mut layer_input = encoder.allocate_scratch(source.size())?;
+                encoder.encode_copy(source, .., &mut layer_input, ..);
+                layer_input
+            };
             layer.attention.append_kv(layer_input, Some(&rope), num_tokens, state_layer, encoder)?;
         }
 
