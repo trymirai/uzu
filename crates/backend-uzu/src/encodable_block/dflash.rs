@@ -21,7 +21,9 @@ use crate::{
         linear::{Linear, LinearBlockError},
         mixer::{
             Mixer, MixerState,
-            attention::{Attention, AttentionNewError, AttentionState, rope::PrecalculatedRoPE},
+            attention::{
+                ATTENTION_SUFFIX_CAPACITY, Attention, AttentionNewError, AttentionState, rope::PrecalculatedRoPE,
+            },
         },
         mlp::{Mlp, MlpBlockError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar},
@@ -104,6 +106,11 @@ impl<B: Backend> DFlashDraft<B> {
     ) -> Result<Self, DFlashDraftNewError<B>> {
         if config.layer_configs.is_empty() {
             return Err(DFlashDraftNewError::InvalidAttentionConfig("at least one DFlash layer is required"));
+        }
+        if config.block_size == 0 || config.block_size > ATTENTION_SUFFIX_CAPACITY {
+            return Err(DFlashDraftNewError::InvalidAttentionConfig(
+                "DFlash block_size must be in 1..=attention suffix capacity",
+            ));
         }
 
         let context_projection = <dyn Linear<B>>::new(
@@ -254,6 +261,10 @@ impl<B: Backend> DFlashDraft<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let batch_dim = self.block_size;
+        assert!(
+            state.context_length + batch_dim <= self.max_context_length,
+            "DFlash block positions exceed configured RoPE capacity"
+        );
         let nodes = (0..batch_dim)
             .map(|index| TrieNode {
                 trie_start: index as u32,
@@ -327,6 +338,9 @@ impl<B: Backend> DFlashDraftLayer<B> {
     ) -> Result<Self, DFlashDraftNewError<B>> {
         if config.attention_config.is_causal {
             return Err(DFlashDraftNewError::InvalidAttentionConfig("DFlash attention must be non-causal"));
+        }
+        if config.attention_config.is_kv_sharing {
+            return Err(DFlashDraftNewError::InvalidAttentionConfig("DFlash attention must not use KV sharing"));
         }
         let (attention, _) = Attention::new(
             model_dim,
