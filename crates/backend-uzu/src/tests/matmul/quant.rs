@@ -14,10 +14,9 @@ use crate::{
             kernel::{
                 Kernels,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
-                min_max_symmetric_divisor, quantize_symmetric_i8,
             },
         },
-        cpu::Cpu,
+        cpu::{Cpu, kernel::activation_prepare::{min_max_symmetric_divisor, quantize_symmetric_i8}},
     },
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };

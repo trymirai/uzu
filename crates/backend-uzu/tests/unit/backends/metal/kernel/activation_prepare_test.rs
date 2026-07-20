@@ -10,8 +10,9 @@ use crate::{
         common::{
             Context, Encoder,
             gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, ActivationPrepareOps, HADAMARD_TRANSFORM_BLOCK_SIZE},
-            kernel::{ActivationsPrepareKernel, min_max_symmetric_divisor, quantize_symmetric_i8},
+            kernel::ActivationsPrepareKernel,
         },
+        cpu::kernel::activation_prepare::{min_max_symmetric_divisor, quantize_symmetric_i8},
         metal::{Metal, MetalContext},
     },
     data_type::DataType,

@@ -3,7 +3,7 @@ use std::convert::Infallible;
 use crate::backends::{common::Kernels, cpu::Cpu};
 
 mod activation;
-mod activation_prepare;
+pub(crate) mod activation_prepare;
 mod attention;
 mod embedding;
 mod gated_act_mul;

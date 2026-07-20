@@ -4,11 +4,10 @@ use proc_macros::kernel;
 
 use crate::{
     array::ArrayElement,
-    backends::common::{
-        gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, ActivationPrepareOps, HADAMARD_TRANSFORM_BLOCK_SIZE},
-        kernel::{min_max_symmetric_divisor, quantize_symmetric_i8},
-    },
+    backends::common::gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, ActivationPrepareOps, HADAMARD_TRANSFORM_BLOCK_SIZE},
 };
+
+use super::{min_max_symmetric_divisor, quantize_symmetric_i8};
 
 fn input_rht(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE]) {
     let mut stride = 1;
