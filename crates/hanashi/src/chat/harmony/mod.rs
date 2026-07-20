@@ -123,6 +123,10 @@ impl EncodingTrait for Encoding {
     fn supports_tool_calls(&self) -> bool {
         self.capabilities.supports_tools
     }
+
+    fn supports_multiple_tool_calls(&self) -> bool {
+        self.capabilities.supports_multiple_tool_calls
+    }
 }
 
 impl Encoding {

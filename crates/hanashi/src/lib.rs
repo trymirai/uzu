@@ -36,4 +36,6 @@ pub trait Encoding {
     fn tokenizer(&self) -> Option<&Tokenizer>;
 
     fn supports_tool_calls(&self) -> bool;
+
+    fn supports_multiple_tool_calls(&self) -> bool;
 }

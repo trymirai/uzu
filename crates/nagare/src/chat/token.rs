@@ -275,6 +275,10 @@ impl Session {
     pub fn supports_tool_calls(&self) -> bool {
         self.encoding.supports_tool_calls()
     }
+
+    pub fn supports_multiple_tool_calls(&self) -> bool {
+        self.encoding.supports_multiple_tool_calls()
+    }
 }
 
 struct StreamingState<'a> {

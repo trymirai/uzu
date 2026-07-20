@@ -97,6 +97,13 @@ impl Instance {
             Instance::Message(session) => session.supports_tool_calls(),
         }
     }
+
+    pub fn supports_multiple_tool_calls(&self) -> bool {
+        match self {
+            Instance::Token(session) => session.supports_multiple_tool_calls(),
+            Instance::Message(session) => session.supports_multiple_tool_calls(),
+        }
+    }
 }
 
 #[bindings::export(Class)]
@@ -329,9 +336,12 @@ impl ChatSession {
                 && !cancel_token.is_cancelled()
             {
                 if self.try_transition(ChatSessionState::Generation, ChatSessionState::ToolCalling).await {
-                    let tool_calls = last_reply.message.tool_calls();
+                    let mut tool_calls = last_reply.message.tool_calls();
+                    let supports_multiple_tool_calls = self.instance.lock().await.supports_multiple_tool_calls();
+                    if !supports_multiple_tool_calls && !tool_calls.is_empty() {
+                        tool_calls.drain(1..);
+                    }
                     let tool_messages = self.execute_tool_calls(tool_calls).await;
-
                     if self.try_transition(ChatSessionState::ToolCalling, ChatSessionState::Generation).await {
                         if !tool_messages.is_empty() && !cancel_token.is_cancelled() {
                             completed_replies.extend(turn_replies);

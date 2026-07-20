@@ -89,4 +89,8 @@ impl EncodingTrait for Encoding {
     fn supports_tool_calls(&self) -> bool {
         dispatch!(infallible self, supports_tool_calls)
     }
+
+    fn supports_multiple_tool_calls(&self) -> bool {
+        dispatch!(infallible self, supports_multiple_tool_calls)
+    }
 }

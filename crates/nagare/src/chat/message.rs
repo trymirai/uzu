@@ -65,4 +65,8 @@ impl Session {
     pub fn supports_tool_calls(&self) -> bool {
         true
     }
+
+    pub fn supports_multiple_tool_calls(&self) -> bool {
+        true
+    }
 }
