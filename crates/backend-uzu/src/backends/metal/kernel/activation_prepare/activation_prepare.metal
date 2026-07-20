@@ -9,6 +9,11 @@
 using namespace metal;
 using namespace uzu::activation_prepare;
 
+static_assert(
+    ACTIVATION_QUANTIZATION_GROUP_SIZE == METAL_SIMD_SIZE,
+    "Activation quantization group size must match the Metal SIMD width"
+);
+
 #define ACTIVATION_PREPARE_BLOCK_SIZE 256
 METAL_CONST uint BLOCK_SIZE = ACTIVATION_PREPARE_BLOCK_SIZE;
 METAL_CONST float SYM_QMAX = INT8_SYMMETRIC_QUANTIZATION_MAXIMUM;
