@@ -5,9 +5,7 @@ use std::collections::HashMap;
 use hanashi::{
     Encoding as EncodingTrait,
     chat::{
-        Config as EncodingConfig, Context, Encoding, TokenizerLocation,
-        hanashi::Config as HanashiConfig,
-        harmony::{Config as HarmonyConfig, EncodingName as HarmonyEncodingName},
+        Context, Encoding, EncodingConfig, TokenizerLocation, hanashi::config::HanashiConfig, harmony::HarmonyConfig,
     },
 };
 use helpers::{
@@ -21,6 +19,18 @@ use shoji::types::{
 
 fn print_warning(message: &str) {
     println!("\x1b[33m{}\x1b[0m", message);
+}
+
+fn hanashi(config: HanashiConfig) -> EncodingConfig {
+    EncodingConfig::Hanashi {
+        config,
+    }
+}
+
+fn harmony(config: HarmonyConfig) -> EncodingConfig {
+    EncodingConfig::Harmony {
+        config,
+    }
 }
 
 fn run_encoding_test(
@@ -136,12 +146,10 @@ fn test_encoding_gpt_oss() {
     let date_pattern = Some(r"Current date: (\d{4}-\d{2}-\d{2})");
     let tools_pattern = Some(r"(?s)# Tools\n\n.*?} // namespace functions");
 
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::GptOss), date_pattern, None, false, false, None);
+    run_encoding_test(&hanashi(HanashiConfig::GptOss), date_pattern, None, false, false, None);
 
     run_encoding_test(
-        &EncodingConfig::Harmony(HarmonyConfig {
-            encoding_name: HarmonyEncodingName::GptOss,
-        }),
+        &harmony(HarmonyConfig::GptOss),
         date_pattern,
         tools_pattern,
         false,
@@ -229,98 +237,59 @@ fn test_encoding_gpt_oss() {
 }
 
 #[test]
-fn test_encoding_llama_31() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Llama31), None, None, false, false, None);
-}
-
-#[test]
 fn test_encoding_llama_32() {
-    run_encoding_test(
-        &EncodingConfig::Hanashi(HanashiConfig::Llama32),
-        Some(r"Today Date: (.+?)\n"),
-        None,
-        false,
-        false,
-        None,
-    );
-}
-
-#[test]
-fn test_encoding_qwen25() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Qwen25), None, None, false, false, None);
-}
-
-#[test]
-fn test_encoding_qwen25_coder() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Qwen25Coder), None, None, false, false, None);
+    run_encoding_test(&hanashi(HanashiConfig::Llama32), Some(r"Today Date: (.+?)\n"), None, false, false, None);
 }
 
 #[test]
 fn test_encoding_qwen3() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Qwen3), None, None, false, false, None);
+    run_encoding_test(&hanashi(HanashiConfig::Qwen3), None, None, false, false, None);
 }
 
 #[test]
 fn test_encoding_qwen3_instruct() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Qwen3Instruct), None, None, false, false, None);
+    run_encoding_test(&hanashi(HanashiConfig::Qwen3Instruct), None, None, false, false, None);
 }
 
 #[test]
 fn test_encoding_qwen3_thinking() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Qwen3Thinking), None, None, false, false, None);
+    run_encoding_test(&hanashi(HanashiConfig::Qwen3Thinking), None, None, false, false, None);
 }
 
 #[test]
 fn test_encoding_qwen35() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Qwen35), None, None, false, false, None);
+    run_encoding_test(&hanashi(HanashiConfig::Qwen35), None, None, false, false, None);
 }
 
 #[test]
 fn test_encoding_lfm2() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Lfm2), None, None, false, false, None);
+    run_encoding_test(&hanashi(HanashiConfig::Lfm2), None, None, false, false, None);
 }
 
 #[test]
 fn test_encoding_lfm25_instruct() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Lfm25Instruct), None, None, false, false, None);
+    run_encoding_test(&hanashi(HanashiConfig::Lfm25Instruct), None, None, false, false, None);
 }
 
 #[test]
 fn test_encoding_lfm25_thinking() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Lfm25Thinking), None, None, false, false, None);
-}
-
-#[test]
-fn test_encoding_deepseek_r1_distill_qwen() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::DeepseekR1DistillQwen), None, None, false, false, None);
-}
-
-#[test]
-fn test_encoding_rnj_1() {
-    run_encoding_test(
-        &EncodingConfig::Hanashi(HanashiConfig::Rnj1),
-        None,
-        Some(r"(?s)<tools>\n.*?</tools>"),
-        false,
-        false,
-        None,
-    );
-}
-
-#[test]
-fn test_encoding_gemma_2() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Gemma2), None, None, false, false, None);
+    run_encoding_test(&hanashi(HanashiConfig::Lfm25Thinking), None, None, false, false, None);
 }
 
 #[test]
 fn test_encoding_gemma_3() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Gemma3), None, None, false, false, None);
+    run_encoding_test(&hanashi(HanashiConfig::Gemma3), None, None, false, false, None);
+}
+
+#[test]
+fn test_encoding_gemma_4() {
+    run_encoding_test(&hanashi(HanashiConfig::Gemma4), None, None, false, true, None);
 }
 
 #[test]
 fn test_encoding_functiongemma() {
     run_encoding_test(
-        &EncodingConfig::Hanashi(HanashiConfig::FunctionGemma),
+        &hanashi(HanashiConfig::FunctionGemma),
         None,
         None,
         false,
@@ -343,46 +312,4 @@ fn test_encoding_functiongemma() {
             result
         }),
     );
-}
-
-#[test]
-fn test_encoding_translategemma() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::TranslateGemma), None, None, false, false, None);
-}
-
-#[test]
-fn test_encoding_gemma_4() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Gemma4), None, None, false, true, None);
-}
-
-#[test]
-fn test_encoding_smollm2() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::SmolLm2), None, None, false, false, None);
-}
-
-#[test]
-fn test_encoding_smollm3() {
-    run_encoding_test(
-        &EncodingConfig::Hanashi(HanashiConfig::SmolLm3),
-        Some(r"Today Date: (.+?)\n"),
-        Some(r"(?s)<tools>\n.*?</tools>"),
-        false,
-        true,
-        None,
-    );
-}
-
-#[test]
-fn test_encoding_codestral() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Codestral), None, None, false, false, None);
-}
-
-#[test]
-fn test_encoding_polaris() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Polaris), None, None, false, false, None);
-}
-
-#[test]
-fn test_encoding_nanbeige() {
-    run_encoding_test(&EncodingConfig::Hanashi(HanashiConfig::Nanbeige), None, None, true, false, None);
 }

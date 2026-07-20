@@ -5,7 +5,6 @@ mod ordering;
 pub mod renderer;
 mod token;
 
-pub use config::Config;
 pub use error::Error;
 use shoji::types::{
     basic::{Token, TokenId},
@@ -14,18 +13,18 @@ use shoji::types::{
 use token_stream_parser::{Parser as _, token_stream::TokenStreamParser};
 use tokenizers::{Tokenizer, step_decode_stream};
 
-use self::{config::ResolvedConfig, messages::streamed::Message as StreamedMessage, ordering::Validator};
+use self::{config::HanashiResolvedConfig, messages::streamed::Message as StreamedMessage, ordering::Validator};
 use crate::{
     Encoding as EncodingTrait,
     chat::{
         Context, State, SynchronizationError, SynchronizationResult,
-        hanashi::{messages::rendered::FieldConfig, renderer::Renderer, token::ToParserToken},
+        hanashi::{config::HanashiConfig, messages::rendered::FieldConfig, renderer::Renderer, token::ToParserToken},
     },
     util::tokenizer::load_tokenizer,
 };
 
 pub struct Encoding {
-    config: ResolvedConfig,
+    config: HanashiResolvedConfig,
     tokenizer: Tokenizer,
     parser: TokenStreamParser,
     renderer: Renderer,
@@ -38,7 +37,7 @@ pub struct Encoding {
 }
 
 impl EncodingTrait for Encoding {
-    type Config = Config;
+    type Config = HanashiConfig;
     type Context = Context;
     type Input = Vec<ChatMessage>;
     type Output = Vec<TokenId>;
@@ -49,13 +48,13 @@ impl EncodingTrait for Encoding {
         config: Self::Config,
         context: Self::Context,
     ) -> Result<Self, Self::Error> {
-        let config = config.resolve()?;
+        let resolved_config = config.resolve()?;
         let tokenizer = load_tokenizer(&context.tokenizer_location).map_err(|_| Error::UnableToLoadTokenizer)?;
-        let parser = TokenStreamParser::new(config.parsing.clone())?;
-        let renderer = Renderer::new(config.rendering.clone());
-        let validator = Validator::new(config.ordering.clone());
+        let parser = TokenStreamParser::new(resolved_config.parsing.clone())?;
+        let renderer = Renderer::new(resolved_config.rendering.clone());
+        let validator = Validator::new(resolved_config.ordering.clone());
         Ok(Self {
-            config,
+            config: resolved_config,
             tokenizer,
             parser,
             renderer,
