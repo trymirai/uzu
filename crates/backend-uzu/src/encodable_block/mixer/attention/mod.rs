@@ -17,7 +17,6 @@ use crate::{
                 mode::{LinearProjection, QkvProjection},
                 qkv_norm::{QKVNorm, QKVNormError},
                 rope::PrecalculatedRoPE,
-                state::AttentionState,
             },
         },
     },
@@ -29,6 +28,8 @@ pub(crate) mod core;
 mod mode;
 mod qkv_norm;
 mod state;
+
+pub(crate) use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState};
 
 pub mod rope;
 
@@ -170,8 +171,7 @@ impl<B: Backend> Attention<B> {
             .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_allocation())
             .transpose()?;
 
-        // TODO: remove when wiring with DFlash: split non-causal attention needs full KV storage and a window mask.
-        let is_kv_cache_ring = sliding_window_size.is_some();
+        let is_kv_cache_ring = is_causal && sliding_window_size.is_some();
 
         let flat_core = AttentionCores::new(
             AttentionCoreNewArguments {
