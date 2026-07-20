@@ -99,6 +99,7 @@ impl Registry {
                     path: path.to_string_lossy().to_string(),
                 },
             },
+            vec![],
         )
     }
 }
