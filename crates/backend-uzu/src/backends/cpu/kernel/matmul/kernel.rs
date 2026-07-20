@@ -58,6 +58,7 @@ impl MatmulKernel for MatmulCpuKernel {
         let accumulate = arguments.d_transform.accumulate;
         let bias_alloc = arguments.d_transform.bias;
         let post_rht = arguments.d_transform.rht_factors;
+        let soft_cap = arguments.d_transform.soft_cap;
 
         let MatmulArguments {
             a,
@@ -69,6 +70,7 @@ impl MatmulKernel for MatmulCpuKernel {
             m,
             n,
             k,
+            gather_indices,
             ..
         } = arguments;
 
@@ -85,6 +87,10 @@ impl MatmulKernel for MatmulCpuKernel {
         let bias_ptr = bias_alloc.map(|bias| {
             let r = bias.as_buffer_range_ref();
             SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
+        });
+        let gather_ptr = gather_indices.map(|indices| {
+            let r = indices.as_buffer_range_ref();
+            SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start) as *const u32)
         });
         let d_buffer_range = d.as_buffer_range_mut();
         let d_ptr = SendPtrMut(unsafe {
@@ -122,6 +128,11 @@ impl MatmulKernel for MatmulCpuKernel {
             unsafe {
                 for row in 0..m_u {
                     for col in 0..n_u {
+                        // Gather remaps output column `col` to B-row `gather_indices[row * n + col]`.
+                        let b_col = match gather_ptr {
+                            Some(g) => *g.as_ptr().add(row * n_u + col) as usize,
+                            None => col,
+                        };
                         let mut accumulator = 0.0f32;
                         for inner in 0..k_u {
                             let a_value = read_f32(a_ptr.as_ptr(), input_data_type, row * k_u + inner);
@@ -132,9 +143,9 @@ impl MatmulKernel for MatmulCpuKernel {
                                     transpose,
                                 } => {
                                     let index = if *transpose {
-                                        col * leading_dimension + inner
+                                        b_col * leading_dimension + inner
                                     } else {
-                                        inner * leading_dimension + col
+                                        inner * leading_dimension + b_col
                                     };
                                     read_f32(ptr.as_ptr(), weights_data_type, index)
                                 },
@@ -147,7 +158,7 @@ impl MatmulKernel for MatmulCpuKernel {
                                     group_size,
                                 } => {
                                     let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
-                                    let weight_linear_index = col * k_u + inner;
+                                    let weight_linear_index = b_col * k_u + inner;
                                     let quantized_value = if *bits == 4 {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 4;
@@ -160,11 +171,14 @@ impl MatmulKernel for MatmulCpuKernel {
                                         ((w.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as f32
                                     };
                                     let group_index = inner / group_size;
-                                    let scale =
-                                        read_f32(scales.as_ptr(), weights_data_type, col * num_groups_k + group_index);
+                                    let scale = read_f32(
+                                        scales.as_ptr(),
+                                        weights_data_type,
+                                        b_col * num_groups_k + group_index,
+                                    );
                                     let bias_term = if let Some(zp) = zero_points {
                                         let zero_point = if *bits == 4 {
-                                            let byte_index = col * zero_point_stride + (group_index >> 1);
+                                            let byte_index = b_col * zero_point_stride + (group_index >> 1);
                                             let byte_value = *zp.as_ptr().add(byte_index);
                                             if (group_index & 1) == 0 {
                                                 (byte_value & 0x0F) as f32
@@ -172,11 +186,11 @@ impl MatmulKernel for MatmulCpuKernel {
                                                 ((byte_value >> 4) & 0x0F) as f32
                                             }
                                         } else {
-                                            *zp.as_ptr().add(col * zero_point_stride + group_index) as f32
+                                            *zp.as_ptr().add(b_col * zero_point_stride + group_index) as f32
                                         };
                                         -scale * zero_point
                                     } else if let Some(b) = biases {
-                                        read_f32(b.as_ptr(), weights_data_type, col * num_groups_k + group_index)
+                                        read_f32(b.as_ptr(), weights_data_type, b_col * num_groups_k + group_index)
                                     } else {
                                         let midpoint = (1u32 << (bits - 1)) as f32;
                                         -scale * midpoint
@@ -194,6 +208,9 @@ impl MatmulKernel for MatmulCpuKernel {
                         }
                         if let Some(bias) = bias_ptr {
                             value += read_f32(bias.as_ptr(), weights_data_type, col);
+                        }
+                        if let Some(cap) = soft_cap {
+                            value = cap * (value / cap).tanh();
                         }
                         write_f32(d_ptr.as_ptr(), output_data_type, output_index, value);
                     }

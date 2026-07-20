@@ -9,6 +9,7 @@ pub struct MatmulArguments<'a, 'b, 'd, B: Backend, TB: BufferArg<'b, B> = &'b Al
     pub b_transpose: bool,
     pub d: &'d mut Allocation<B>,
     pub d_transform: MatmulDOps<'d, B>,
+    pub gather_indices: Option<&'a Allocation<B>>,
     pub m: u32,
     pub n: u32,
     pub k: u32,
