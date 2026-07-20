@@ -6,8 +6,8 @@ use crate::{
         common::{
             Allocation, Backend, BufferArg, Encoder,
             gpu_types::{
-                ACTIVATION_QUANTIZATION_GROUP_SIZE, GemmAPrologueKind, GemmParams, HadamardTransformOrder,
-                gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
+                ACTIVATION_QUANTIZATION_GROUP_SIZE, GemmParams, HadamardTransformOrder,
+                gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
             },
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,

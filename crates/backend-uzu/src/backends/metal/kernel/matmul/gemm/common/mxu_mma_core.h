@@ -9,7 +9,6 @@
 #include "../../common/mxu_gemm_loop.h"
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
-#include "../../../generated/activation_prepare.h"
 #include "block_geometry.h"
 #include "gemm_tiling.h"
 #include "quant_pack.h"
@@ -20,8 +19,6 @@ using namespace metal;
 
 namespace uzu {
 namespace gemm {
-
-using uzu::activation_prepare::GemmAPrologueKind;
 
 template <
     typename AT,

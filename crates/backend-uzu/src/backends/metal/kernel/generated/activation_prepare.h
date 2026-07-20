@@ -20,9 +20,4 @@ struct ActivationPrepareOps {
   constexpr uint bits() const thread { return raw_value; }
   constexpr uint bits() const constant { return raw_value; }
 };
-
-enum class GemmAPrologueKind : uint32_t {
-  FullPrecision = 0,
-  Int8Symmetric = 1,
-};
 } // namespace uzu::activation_prepare
