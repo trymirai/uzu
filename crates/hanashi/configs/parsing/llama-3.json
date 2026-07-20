@@ -81,8 +81,8 @@
                                         "key": "value"
                                     },
                                     {
-                                        "type": "regex_find_all",
-                                        "pattern": "([^;]+)"
+                                        "type": "split_top_level",
+                                        "separator": ";"
                                     },
                                     {
                                         "type": "each",
@@ -163,8 +163,8 @@
                                 },
                                 "then": [
                                     {
-                                        "type": "regex_find_all",
-                                        "pattern": "([^;]+)"
+                                        "type": "split_top_level",
+                                        "separator": ";"
                                     },
                                     {
                                         "type": "each",

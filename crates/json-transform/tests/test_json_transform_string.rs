@@ -216,6 +216,33 @@ fn test_regex_find_all_with_each_parse_json() {
     assert_eq!(result, json!([{"city": "London"}, {"city": "Tokyo"}]));
 }
 
+// SplitTopLevel
+
+#[test]
+fn test_split_top_level_ignores_separators_in_json_strings() {
+    let result = execute_root(
+        vec![
+            Operation::SplitTopLevel {
+                separator: ';',
+            },
+            Operation::Each {
+                apply: vec![Operation::ParseJson {
+                    repair: false,
+                }],
+            },
+        ],
+        json!(r#"{"query":"a;b"}; {"query":"c\";d","nested":{"value":"e;f"}}"#),
+    )
+    .unwrap();
+    assert_eq!(
+        result,
+        json!([
+            {"query": "a;b"},
+            {"query": "c\";d", "nested": {"value": "e;f"}}
+        ])
+    );
+}
+
 // ParseJson
 
 #[test]
