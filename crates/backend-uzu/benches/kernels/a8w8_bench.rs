@@ -76,7 +76,6 @@ impl HostInputs {
 
 struct DeviceBuffers {
     weights_u8: Allocation<Metal>,
-    weights_signed: Allocation<Metal>,
     weight_scales: Allocation<Metal>,
     activations: Allocation<Metal>,
     rht_factors: Allocation<Metal>,
@@ -95,11 +94,8 @@ fn upload(
     host: &HostInputs,
 ) -> DeviceBuffers {
     let groups = host.k.div_ceil(host.group_size as usize);
-    let signed: Vec<u8> = host.weights_u8.iter().map(|code| code ^ 0x80).collect();
     let mut weights_u8 = context.create_allocation(host.weights_u8.len(), AllocationType::Global).expect("u8 w");
     weights_u8.copyin(&host.weights_u8);
-    let mut weights_signed = context.create_allocation(signed.len(), AllocationType::Global).expect("signed w");
-    weights_signed.copyin(&signed);
     let mut weight_scales = context
         .create_allocation(host.weight_scales.len() * size_of::<bf16>(), AllocationType::Global)
         .expect("weight scales");
@@ -114,7 +110,6 @@ fn upload(
 
     DeviceBuffers {
         weights_u8,
-        weights_signed,
         weight_scales,
         activations,
         rht_factors,
@@ -156,7 +151,7 @@ fn encode_a8w8(
             group_size: buffers.group_size,
         },
         b: MatmulB::ScaleSymmetricDequant {
-            b: &buffers.weights_signed,
+            b: &buffers.weights_u8,
             scales: &buffers.weight_scales,
             mode: QuantizationMode::U8,
             group_size: buffers.group_size,

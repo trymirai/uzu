@@ -513,27 +513,15 @@ fn mxu_quant_parity_bf16(
     );
 }
 
-#[rstest]
-#[test_attr(uzu_test)]
-#[case::symmetric_weights(128, 256, 128, QuantizationMethod::ScaleSymmetric)]
-fn a8w8_mxu_parity_bf16(
-    #[case] m: usize,
-    #[case] k: usize,
-    #[case] n: usize,
-    #[case] method: QuantizationMethod,
-) {
+#[uzu_test]
+fn a8w8_mxu_parity_bf16() {
     let context = MetalContext::new().expect("Metal context");
     if !context.supports_mxu() {
         return;
     }
-    let input = QuantInput::<bf16>::new(m, k, n, 32, 8, method, 0).with_prepared_a();
+    let (m, k, n) = (128usize, 256usize, 128usize);
+    let input = QuantInput::<bf16>::new(m, k, n, 32, 8, QuantizationMethod::ScaleSymmetric, 0).with_prepared_a();
     let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
-    assert_parity::<bf16>(
-        &format!("A8W8 min/max symmetric group-32 {method:?} m={m} k={k} n={n}"),
-        &reference,
-        &actual,
-        0.08,
-        0.8,
-    );
+    assert_parity::<bf16>("A8W8 MXU", &reference, &actual, 0.08, 0.8);
 }

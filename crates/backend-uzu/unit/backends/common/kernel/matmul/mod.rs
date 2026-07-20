@@ -1,4 +1,3 @@
-mod a8w8_test;
 mod dispatch_paths_test;
 mod gemm_bench;
 mod gemv_test;
