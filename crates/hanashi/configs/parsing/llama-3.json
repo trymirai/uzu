@@ -12,8 +12,7 @@
                 "groups": [
                     {
                         "type": "greedy",
-                        "name": "role",
-                        "capturing_limit": 1
+                        "name": "role"
                     },
                     {
                         "type": "open",
@@ -32,6 +31,98 @@
         ]
     },
     "transformation": {
+        "content": [
+            {
+                "type": "on",
+                "field": "$finished",
+                "with": "$value",
+                "do": [
+                    {
+                        "type": "switch",
+                        "key": [
+                            {
+                                "type": "first"
+                            },
+                            {
+                                "type": "get",
+                                "key": "value"
+                            },
+                            {
+                                "type": "regex_replace",
+                                "pattern": "^\\s+",
+                                "template": ""
+                            }
+                        ],
+                        "cases": [
+                            {
+                                "when": {
+                                    "type": "and",
+                                    "conditions": [
+                                        {
+                                            "type": "starts_with",
+                                            "value": "{"
+                                        },
+                                        {
+                                            "type": "contains",
+                                            "value": "\"name\""
+                                        },
+                                        {
+                                            "type": "contains",
+                                            "value": "\"parameters\""
+                                        }
+                                    ]
+                                },
+                                "then": [
+                                    {
+                                        "type": "first"
+                                    },
+                                    {
+                                        "type": "get",
+                                        "key": "value"
+                                    },
+                                    {
+                                        "type": "regex_find_all",
+                                        "pattern": "([^;]+)"
+                                    },
+                                    {
+                                        "type": "each",
+                                        "apply": [
+                                            {
+                                                "type": "regex_replace",
+                                                "pattern": "\"type\"\\s*:\\s*\"function\"\\s*,\\s*\"function\"\\s*:\\s*(?:\\{\\s*\"name\"\\s*:)?",
+                                                "template": "\"name\":"
+                                            },
+                                            {
+                                                "type": "regex_replace",
+                                                "pattern": "\"parameters\"",
+                                                "template": "\"arguments\""
+                                            },
+                                            {
+                                                "type": "parse_json",
+                                                "repair": true
+                                            },
+                                            {
+                                                "type": "object",
+                                                "fields": {
+                                                    "type": [
+                                                        {
+                                                            "type": "literal",
+                                                            "value": "tool_call"
+                                                        }
+                                                    ],
+                                                    "value": []
+                                                }
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ],
+                        "default": []
+                    }
+                ]
+            }
+        ],
         "tool_call": [
             {
                 "type": "on",

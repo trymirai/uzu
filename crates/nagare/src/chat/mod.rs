@@ -338,8 +338,23 @@ impl ChatSession {
                 if self.try_transition(ChatSessionState::Generation, ChatSessionState::ToolCalling).await {
                     let mut tool_calls = last_reply.message.tool_calls();
                     let supports_multiple_tool_calls = self.instance.lock().await.supports_multiple_tool_calls();
-                    if !supports_multiple_tool_calls && !tool_calls.is_empty() {
+                    if !supports_multiple_tool_calls && tool_calls.len() > 1 {
                         tool_calls.drain(1..);
+                        // keep the history renderable: templates with a single-call limit
+                        // cannot re-encode an assistant message holding extra calls
+                        let mut messages_guard = self.messages.lock().await;
+                        if let Some(last_message) = messages_guard.last_mut() {
+                            let mut tool_call_seen = false;
+                            last_message.content.retain(|block| match block {
+                                ChatContentBlock::ToolCall {
+                                    ..
+                                }
+                                | ChatContentBlock::ToolCallCandidate {
+                                    ..
+                                } => !std::mem::replace(&mut tool_call_seen, true),
+                                _ => true,
+                            });
+                        }
                     }
                     let tool_messages = self.execute_tool_calls(tool_calls).await;
                     if self.try_transition(ChatSessionState::ToolCalling, ChatSessionState::Generation).await {
