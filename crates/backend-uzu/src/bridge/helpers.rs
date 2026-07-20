@@ -1,25 +1,23 @@
 use std::pin::Pin;
 
 use futures::{Stream, stream};
+#[cfg(grammar)]
+use shoji::types::basic::Grammar as ShojiGrammar;
 use shoji::{
     traits::backend::{Error as BackendError, chat_token::StreamOutput as ChatTokenStreamOutput},
     types::{
-        basic::{
-            ContextLength, Grammar as ShojiGrammar, SamplingMethod as ShojiSamplingMethod,
-            SamplingPolicy as ShojiSamplingPolicy,
-        },
+        basic::{ContextLength, SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy},
         session::chat::ChatSpeculationPreset,
     },
 };
 use tokenizers::Tokenizer;
 
+#[cfg(grammar)]
+use crate::engine::language_model::grammar::{Grammar as UzuGrammar, GrammarConfig, GrammarError};
 use crate::{
     backends::common::Backend,
     encodable_block::sampling::SamplingMethod as UzuSamplingMethod,
-    engine::language_model::{
-        LanguageModel,
-        grammar::{Grammar as UzuGrammar, GrammarConfig, GrammarError},
-    },
+    engine::language_model::LanguageModel,
     speculators::{
         fixed_token_speculator::FixedTokensSpeculator, prompt_lookup_speculator::PromptLookupSpeculator,
         speculator::Speculator,
@@ -34,11 +32,12 @@ pub fn error_stream<'a>(
     }))
 }
 
+#[cfg(grammar)]
 pub fn get_grammar(
     grammar: ShojiGrammar,
     tokenizer: &Tokenizer,
     stop_token_ids: &[i32],
-) -> Result<Box<dyn UzuGrammar>, GrammarError> {
+) -> Result<UzuGrammar, GrammarError> {
     let config = match grammar {
         ShojiGrammar::JsonAny {
             ..
@@ -50,7 +49,7 @@ pub fn get_grammar(
             pattern,
         } => GrammarConfig::regex(pattern, false),
     };
-    <dyn UzuGrammar>::new(&config, tokenizer, None, Some(stop_token_ids))
+    UzuGrammar::new(&config, tokenizer, None, Some(stop_token_ids))
 }
 
 pub fn get_max_context_length<B: Backend>(
