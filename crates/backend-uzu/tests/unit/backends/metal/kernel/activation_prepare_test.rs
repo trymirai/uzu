@@ -96,8 +96,8 @@ fn run_metal(
 
     kernel.encode(
         &input,
-        Some(&mut values),
-        Some(&mut scales),
+        &mut values,
+        &mut scales,
         Some(&factors),
         rows as u32,
         columns as u32,

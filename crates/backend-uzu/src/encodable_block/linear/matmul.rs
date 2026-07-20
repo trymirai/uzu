@@ -215,7 +215,7 @@ fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
-    pub(crate) fn supports_int8_a(
+    pub(super) fn supports_int8_a(
         &self,
         context: &B::Context,
         group_size: u32,
@@ -239,7 +239,7 @@ impl<B: Backend> LinearMatmul<B> {
             && (self.input_dim as u32).is_multiple_of(group_size)
     }
 
-    pub(crate) fn encode_with_a(
+    pub(super) fn encode_with_a(
         &self,
         a: MatmulA<'_, B>,
         batch_dim: usize,

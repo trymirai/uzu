@@ -32,9 +32,9 @@ pub enum GemmDispatchPath {
 }
 
 pub struct GemmKernel {
-    pub(crate) weights_data_type: DataType,
+    weights_data_type: DataType,
     input_data_type: DataType,
-    pub(crate) output_data_type: DataType,
+    output_data_type: DataType,
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
     pub bias_add: TensorAddBiasMetalKernel,
     pub hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
@@ -106,7 +106,7 @@ impl GemmKernel {
         Ok(kernel)
     }
 
-    pub(crate) fn get_or_create(
+    fn get_or_create(
         &mut self,
         context: &MetalContext,
         specialization: GemmSpecialization,
@@ -134,7 +134,7 @@ impl GemmKernel {
         }
     }
 
-    pub(crate) fn get_or_create_split_k_reduce(
+    fn get_or_create_split_k_reduce(
         &mut self,
         context: &MetalContext,
         output_transform: GemmDTransform,

@@ -2,7 +2,6 @@
 #include "../../common/defines.h"
 #include "../../common/thread_context.h"
 #include "../generated/gemm.h"
-#include "../generated/activation_prepare.h"
 
 #include "common/gemm_tiling.h"
 #include "common/mxu_mma_core.h"

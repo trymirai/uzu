@@ -18,8 +18,8 @@ template <typename InputT>
 VARIANTS(InputT, float, bfloat)
 PUBLIC KERNEL(ActivationsPrepare)(
     const device InputT* input,
-    device int8_t* q_out OPTIONAL(ops.contains(ActivationPrepareOps::QUANTIZE)),
-    device float* scales_out OPTIONAL(ops.contains(ActivationPrepareOps::QUANTIZE)),
+    device int8_t* q_out,
+    device float* scales_out,
     const device int32_t* rht_factors OPTIONAL(ops.contains(ActivationPrepareOps::INPUT_RHT)),
     constant uint& batch_size,
     constant uint& element_count,
@@ -29,10 +29,7 @@ PUBLIC KERNEL(ActivationsPrepare)(
     uint batch_index GROUPS(batch_size),
     uint lane_index THREADS(METAL_SIMD_SIZE)
 ) {
-  if (
-      !ops.contains(ActivationPrepareOps::QUANTIZE) || group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE ||
-      element_count % group_size != 0
-  ) {
+  if (group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE || element_count % group_size != 0) {
     return;
   }
 

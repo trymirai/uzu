@@ -32,8 +32,8 @@ fn input_rht(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE]) {
 #[variants(InputT, f32, f16, bf16)]
 pub fn activations_prepare<InputT: ArrayElement + Float>(
     input: *const InputT,
-    #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] q_out: Option<*mut i8>,
-    #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] scales_out: Option<*mut f32>,
+    q_out: *mut i8,
+    scales_out: *mut f32,
     #[optional(ops.contains(ActivationPrepareOps::INPUT_RHT))] rht_factors: Option<*const i32>,
     batch_size: u32,
     element_count: u32,
@@ -43,15 +43,10 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     let rows = batch_size as usize;
     let columns = element_count as usize;
     let group_size = group_size as usize;
+    assert!(ops.contains(ActivationPrepareOps::QUANTIZE));
     assert_eq!(group_size, ACTIVATION_QUANTIZATION_GROUP_SIZE as usize);
     assert!(columns.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
     assert_eq!(rht_factors.is_some(), ops.contains(ActivationPrepareOps::INPUT_RHT));
-    assert_eq!(q_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
-    assert_eq!(scales_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
-
-    let (Some(q_out), Some(scales_out)) = (q_out, scales_out) else {
-        return;
-    };
 
     let groups = columns.div_ceil(group_size);
     let mut prepared = vec![0.0f32; columns];

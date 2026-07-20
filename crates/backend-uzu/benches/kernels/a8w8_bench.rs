@@ -141,8 +141,8 @@ fn encode_a8w8(
 ) {
     prepare.encode(
         &buffers.activations,
-        Some(&mut buffers.a_int8),
-        Some(&mut buffers.a_scales),
+        &mut buffers.a_int8,
+        &mut buffers.a_scales,
         Some(&buffers.rht_factors),
         buffers.m,
         buffers.k,

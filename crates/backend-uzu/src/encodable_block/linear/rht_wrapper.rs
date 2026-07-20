@@ -167,8 +167,8 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
 
             preparation.kernel.encode(
                 &input,
-                Some(&mut values),
-                Some(&mut scales),
+                &mut values,
+                &mut scales,
                 Some(&self.input_factors),
                 batch_dim as u32,
                 self.input_dimension as u32,
