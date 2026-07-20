@@ -10,10 +10,7 @@ use crate::{
     encodable_block::mixer::{MixerState, attention::Attention},
 };
 
-/// Hard-coded capacity of the KV-cache suffix region reserved per attention
-/// state. Any suffix (draft block, verification tree) written into the cache
-/// must not exceed this. TODO: remove hardcoded suffix capacity.
-pub(crate) const ATTENTION_SUFFIX_CAPACITY: usize = 1024;
+pub(crate) const ATTENTION_SUFFIX_CAPACITY: usize = 1024; // TODO: remove hardcoded suffix capacity
 
 pub enum AttentionStateType {
     Full {
