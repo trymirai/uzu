@@ -513,15 +513,26 @@ fn mxu_quant_parity_bf16(
     );
 }
 
-#[uzu_test]
-fn a8w8_mxu_parity_bf16() {
+#[rstest]
+#[test_attr(uzu_test)]
+#[case::m16_w8(16usize, 8u32)]
+#[case::m16_w4(16usize, 4u32)]
+#[case::m32_w8(32usize, 8u32)]
+#[case::m32_w4(32usize, 4u32)]
+#[case::m64_w8(64usize, 8u32)]
+#[case::m64_w4(64usize, 4u32)]
+fn a8w_mxu_parity_bf16(
+    #[case] m: usize,
+    #[case] bits: u32,
+) {
     let context = MetalContext::new().expect("Metal context");
     if !context.supports_mxu() {
         return;
     }
-    let (m, k, n) = (128usize, 256usize, 128usize);
-    let input = QuantInput::<bf16>::new(m, k, n, 32, 8, QuantizationMethod::ScaleSymmetric, 0).with_prepared_a();
+    let (k, n) = (256usize, 128usize);
+    let input =
+        QuantInput::<bf16>::new(m, k, n, 32, bits, QuantizationMethod::ScaleSymmetric, 0).with_prepared_a();
     let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
-    assert_parity::<bf16>("A8W8 MXU", &reference, &actual, 0.08, 0.8);
+    assert_parity::<bf16>(&format!("A8W{bits} MXU m={m}"), &reference, &actual, 0.08, 0.8);
 }

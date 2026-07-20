@@ -152,11 +152,11 @@ struct MxuMmaCore {
   template <bool ALIGNED_M, bool ALIGNED_N>
   static METAL_FUNC AccumFragment quant_k_loop_int8(
       const device int8_t* a_int8_simdgroup,
-      const device int8_t* b_unsigned_simdgroup,
+      const device uint8_t* b_packed_simdgroup,
       const device float* a_scales,
       const device BT* b_scales,
       const int leading_dimension_a,
-      const int leading_dimension_b,
+      const int b_row_stride_bytes,
       const int group_iterations,
       const short simdgroup_limit_m,
       const short simdgroup_limit_n,
@@ -172,6 +172,7 @@ struct MxuMmaCore {
 
     const short2 position = Ops::get_position(thread_context.simd_lane_id);
     thread float* accumulator_data = accumulator.elements();
+    constexpr int k_bytes_per_group = (BITS == 4) ? (int(GROUP_SIZE) / 2) : int(GROUP_SIZE);
 
     METAL_PRAGMA_NO_UNROLL
     for (int group = 0; group < group_iterations; ++group) {
@@ -189,15 +190,46 @@ struct MxuMmaCore {
         }
         left_tile.load_from(thread_context.simd_lane_id, left_src);
 
-        auto right_src = uzu::matmul::fragment_source(b_unsigned_simdgroup + inner_k, leading_dimension_b);
-        if constexpr (!ALIGNED_N) {
-          right_src = right_src.bounded(simdgroup_limit_n, SIMDGROUP_BLOCK_K);
+        if constexpr (BITS == 8) {
+          auto right_src = uzu::matmul::fragment_source(
+              reinterpret_cast<const device int8_t*>(b_packed_simdgroup) + inner_k, b_row_stride_bytes
+          );
+          if constexpr (!ALIGNED_N) {
+            right_src = right_src.bounded(simdgroup_limit_n, SIMDGROUP_BLOCK_K);
+          }
+          right_tile.load_from(thread_context.simd_lane_id, right_src);
+          right_tile.map([](int8_t code) {
+            const uchar bits = as_type<uchar>(code);
+            return as_type<int8_t>(uchar(bits ^ uchar(0x80)));
+          });
+        } else {
+          static_assert(BITS == 4, "A8 path only supports W4/W8");
+          right_tile.clear();
+          const short2 lane_pos = Ops::get_position(thread_context.simd_lane_id);
+          METAL_PRAGMA_UNROLL
+          for (ushort tile_n = 0; tile_n < TILES_N; ++tile_n) {
+            METAL_PRAGMA_UNROLL
+            for (ushort tile_k = 0; tile_k < TILES_K; ++tile_k) {
+              thread auto& frag = right_tile.fragment_at(tile_n, tile_k);
+              METAL_PRAGMA_UNROLL
+              for (ushort element = 0; element < Ops::ELEMENTS_PER_THREAD; ++element) {
+                const short2 element_offset = Ops::get_element_offset(element);
+                const short row = short(tile_n * Ops::FRAGMENT_ROWS) + lane_pos.y + element_offset.y;
+                const short col = short(tile_k * Ops::FRAGMENT_COLS) + lane_pos.x + element_offset.x;
+                const bool row_ok = ALIGNED_N || (row < simdgroup_limit_n);
+                const bool col_ok = col < short(SIMDGROUP_BLOCK_K);
+                if (row_ok && col_ok) {
+                  const int k_index = inner_k + int(col);
+                  const uint8_t packed = b_packed_simdgroup[int(row) * b_row_stride_bytes + (k_index >> 1)];
+                  const uint8_t nibble = (k_index & 1) ? (packed >> 4) : (packed & 0x0fu);
+                  frag[element] = int8_t(int(nibble) - 8);
+                } else {
+                  frag[element] = int8_t(0);
+                }
+              }
+            }
+          }
         }
-        right_tile.load_from(thread_context.simd_lane_id, right_src);
-        right_tile.map([](int8_t code) {
-          const uchar bits = as_type<uchar>(code);
-          return as_type<int8_t>(uchar(bits ^ uchar(0x80)));
-        });
 
         Ops::template fragment_mma<false, true>(group_accumulator, left_tile, right_tile);
       }
@@ -261,7 +293,7 @@ struct MxuMmaCore {
       }
 
       a_int8_simdgroup += GROUP_SIZE;
-      b_unsigned_simdgroup += GROUP_SIZE;
+      b_packed_simdgroup += k_bytes_per_group;
     }
 
     return accumulator;
@@ -353,24 +385,25 @@ struct MxuMmaCore {
                 [&](auto aligned_n) {
                   auto accumulator_tile = [&]() {
                     if constexpr (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric) {
-                      const int weight_row_stride = int(params->K);
+                      constexpr int b_elems_per_byte = (BITS == 4) ? 2 : 1;
+                      const int weight_row_stride_bytes = int(params->K) / b_elems_per_byte;
                       const device int8_t* a_int8_block = a_int8 + block_row * params->leading_dimension_a + k_offset;
                       const device int8_t* a_int8_simdgroup =
                           a_int8_block + size_t(tile_row_offset) * params->leading_dimension_a;
-                      const device int8_t* b_unsigned_weights = reinterpret_cast<const device int8_t*>(b);
-                      const device int8_t* b_unsigned_block =
-                          b_unsigned_weights + block_col * weight_row_stride + int(k_offset);
-                      const device int8_t* b_unsigned_simdgroup =
-                          b_unsigned_block + size_t(tile_col_offset) * weight_row_stride;
+                      const device uint8_t* b_packed_weights = reinterpret_cast<const device uint8_t*>(b);
+                      const device uint8_t* b_packed_block =
+                          b_packed_weights + block_col * weight_row_stride_bytes + int(k_offset) / b_elems_per_byte;
+                      const device uint8_t* b_packed_simdgroup =
+                          b_packed_block + size_t(tile_col_offset) * weight_row_stride_bytes;
                       const uint groups_per_row = (uint(params->K) + uint(GROUP_SIZE) - 1u) / uint(GROUP_SIZE);
                       const uint k_offset_groups = k_offset / uint(GROUP_SIZE);
                       return quant_k_loop_int8<aligned_m.value, aligned_n.value>(
                           a_int8_simdgroup,
-                          b_unsigned_simdgroup,
+                          b_packed_simdgroup,
                           a_scales,
                           scales,
                           int(params->leading_dimension_a),
-                          weight_row_stride,
+                          weight_row_stride_bytes,
                           int(params->aligned_inner_iterations),
                           simdgroup_limit_m,
                           simdgroup_limit_n,

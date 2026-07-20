@@ -90,7 +90,7 @@ CONSTRAINT(
      (B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
       A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
-CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || BITS == 8)
+CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || BITS == 4 || BITS == 8)
 CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
     (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant))

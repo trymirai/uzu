@@ -442,17 +442,23 @@ fn validate_int8_a(
     b_mode: Option<QuantizationMode>,
 ) -> Result<(), MetalError> {
     let b_ok_for_int8 = matches!(b_prologue, GemmBPrologueKind::ScaleSymmetricDequant);
+    let bits_ok = matches!(bits_per_b, Some(4) | Some(8));
+    let mode_ok = match bits_per_b {
+        Some(4) => b_mode == Some(QuantizationMode::U4),
+        Some(8) => b_mode == Some(QuantizationMode::U8),
+        _ => false,
+    };
     if !use_mxu
         || a_group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE
         || !k.is_multiple_of(a_group_size)
         || !b_ok_for_int8
-        || bits_per_b != Some(8)
-        || b_mode != Some(QuantizationMode::U8)
+        || !bits_ok
+        || !mode_ok
         || group_size != Some(a_group_size)
     {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
-            reason: "int8 activations require MXU, group size 32, and matching unsigned 8-bit symmetric weights",
+            reason: "int8 activations require MXU, group size 32, and matching unsigned 4/8-bit symmetric weights",
         }
         .into());
     }
@@ -495,7 +501,7 @@ fn resolve_full_precision<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
     else {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
-            reason: "int8 activations require symmetric 8-bit weights",
+            reason: "int8 activations require matching unsigned 4/8-bit symmetric weights",
         }
         .into());
     };

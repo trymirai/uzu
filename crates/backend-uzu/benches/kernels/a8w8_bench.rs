@@ -4,13 +4,8 @@ use backend_uzu::{
     backends::{
         common::{
             Allocation, AllocationType, Backend, Context, Encoder,
-            gpu_types::{
-                ACTIVATION_QUANTIZATION_GROUP_SIZE, ActivationPrepareOps, HadamardTransformOrder, QuantizationMode,
-            },
-            kernel::{
-                ActivationsPrepareKernel, HadamardTransformKernel, Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
-            },
+            gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, ActivationPrepareOps, QuantizationMode},
+            kernel::{ActivationsPrepareKernel, Kernels, matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel}},
         },
         metal::{GemmDispatchPath, Metal, MetalContext},
     },
@@ -23,14 +18,8 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 type MetalPrepare = <<Metal as Backend>::Kernels as Kernels>::ActivationsPrepareKernel;
-type MetalHadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel;
 
-const SHAPES: &[(usize, usize, usize, u32)] = &[
-    (1, 2048, 2048, ACTIVATION_QUANTIZATION_GROUP_SIZE),
-    (8, 2048, 2048, ACTIVATION_QUANTIZATION_GROUP_SIZE),
-    (128, 2048, 2048, ACTIVATION_QUANTIZATION_GROUP_SIZE),
-    (256, 4096, 2048, ACTIVATION_QUANTIZATION_GROUP_SIZE),
-];
+const SHAPES: &[(usize, usize, usize)] = &[(16, 2048, 2048), (32, 2048, 2048), (64, 2048, 2048)];
 
 struct HostInputs {
     weights_u8: Vec<u8>,
@@ -41,6 +30,7 @@ struct HostInputs {
     k: usize,
     n: usize,
     group_size: u32,
+    bits: u32,
 }
 
 impl HostInputs {
@@ -49,12 +39,16 @@ impl HostInputs {
         k: usize,
         n: usize,
         group_size: u32,
+        bits: u32,
         seed: u64,
     ) -> Self {
-        let groups = k.div_ceil(group_size as usize);
+        assert!(bits == 4 || bits == 8);
+        assert!(k.is_multiple_of(group_size as usize));
+        let groups = k / group_size as usize;
+        let weight_bytes = n * k * (bits as usize) / 8;
         let mut rng = SmallRng::seed_from_u64(seed);
         Self {
-            weights_u8: (0..n * k).map(|_| rng.random_range(0u32..256) as u8).collect(),
+            weights_u8: (0..weight_bytes).map(|_| rng.random_range(0u32..256) as u8).collect(),
             weight_scales: (0..n * groups).map(|_| bf16::from_f32(rng.random_range(0.01f32..0.3f32))).collect(),
             activations: (0..m * k).map(|_| bf16::from_f32(rng.random_range(-1.0f32..1.0f32))).collect(),
             rht_factors: (0..k)
@@ -70,6 +64,7 @@ impl HostInputs {
             k,
             n,
             group_size,
+            bits,
         }
     }
 }
@@ -79,7 +74,6 @@ struct DeviceBuffers {
     weight_scales: Allocation<Metal>,
     activations: Allocation<Metal>,
     rht_factors: Allocation<Metal>,
-    a_working: Allocation<Metal>,
     a_int8: Allocation<Metal>,
     a_scales: Allocation<Metal>,
     output: Allocation<Metal>,
@@ -87,14 +81,15 @@ struct DeviceBuffers {
     k: u32,
     n: u32,
     group_size: u32,
+    bits: u32,
 }
 
 fn upload(
     context: &MetalContext,
     host: &HostInputs,
 ) -> DeviceBuffers {
-    let groups = host.k.div_ceil(host.group_size as usize);
-    let mut weights_u8 = context.create_allocation(host.weights_u8.len(), AllocationType::Global).expect("u8 w");
+    let groups = host.k / host.group_size as usize;
+    let mut weights_u8 = context.create_allocation(host.weights_u8.len(), AllocationType::Global).expect("weights");
     weights_u8.copyin(&host.weights_u8);
     let mut weight_scales = context
         .create_allocation(host.weight_scales.len() * size_of::<bf16>(), AllocationType::Global)
@@ -113,9 +108,6 @@ fn upload(
         weight_scales,
         activations,
         rht_factors,
-        a_working: context
-            .create_allocation(host.m * host.k * size_of::<bf16>(), AllocationType::Global)
-            .expect("a working"),
         a_int8: context.create_allocation(host.m * host.k, AllocationType::Global).expect("a int8"),
         a_scales: context
             .create_allocation(host.m * groups * size_of::<f32>(), AllocationType::Global)
@@ -125,10 +117,11 @@ fn upload(
         k: host.k as u32,
         n: host.n as u32,
         group_size: host.group_size,
+        bits: host.bits,
     }
 }
 
-fn encode_a8w8(
+fn encode_a8w(
     prepare: &MetalPrepare,
     matmul: &mut MetalMatmul,
     buffers: &mut DeviceBuffers,
@@ -144,6 +137,11 @@ fn encode_a8w8(
         buffers.group_size,
         encoder,
     );
+    let mode = if buffers.bits == 4 {
+        QuantizationMode::U4
+    } else {
+        QuantizationMode::U8
+    };
     let arguments: MatmulArguments<'_, '_, '_, Metal> = MatmulArguments {
         a: MatmulA::Int8Symmetric {
             values: &buffers.a_int8,
@@ -153,7 +151,7 @@ fn encode_a8w8(
         b: MatmulB::ScaleSymmetricDequant {
             b: &buffers.weights_u8,
             scales: &buffers.weight_scales,
-            mode: QuantizationMode::U8,
+            mode,
             group_size: buffers.group_size,
         },
         b_leading_dimension: None,
@@ -165,44 +163,10 @@ fn encode_a8w8(
         n: buffers.n,
         k: buffers.k,
     };
-    matmul.gemm.encode_dispatch_path(arguments, GemmDispatchPath::Mxu, encoder).expect("a8w8 GEMM");
-}
-
-fn encode_abf16_w8(
-    hadamard: &MetalHadamard,
-    matmul: &mut MetalMatmul,
-    buffers: &mut DeviceBuffers,
-    encoder: &mut Encoder<Metal>,
-) {
-    encoder.encode_copy(&buffers.activations, .., &mut buffers.a_working, ..);
-    hadamard.encode(&mut buffers.a_working, &buffers.rht_factors, buffers.k, buffers.m, encoder);
-    let arguments: MatmulArguments<'_, '_, '_, Metal> = MatmulArguments {
-        a: MatmulA::FullPrecision {
-            values: &buffers.a_working,
-            offset: 0,
-        },
-        b: MatmulB::ScaleSymmetricDequant {
-            b: &buffers.weights_u8,
-            scales: &buffers.weight_scales,
-            mode: QuantizationMode::U8,
-            group_size: buffers.group_size,
-        },
-        b_leading_dimension: None,
-        b_transpose: true,
-        d: &mut buffers.output,
-        d_transform: MatmulDOps::none(),
-        gather_indices: None,
-        m: buffers.m,
-        n: buffers.n,
-        k: buffers.k,
-    };
-    matmul.gemm.encode_dispatch_path(arguments, GemmDispatchPath::Mxu, encoder).expect("abf16w8 GEMM");
-}
-
-#[derive(Clone, Copy)]
-enum Mode {
-    LinearA8W8,
-    LinearABf16W8,
+    matmul
+        .gemm
+        .encode_dispatch_path(arguments, GemmDispatchPath::Mxu, encoder)
+        .unwrap_or_else(|error| panic!("a8w{} GEMM: {error}", buffers.bits));
 }
 
 #[uzu_bench]
@@ -220,30 +184,24 @@ fn bench_a8w8(c: &mut Criterion) {
         ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE,
     )
     .expect("prepare kernel");
-    let hadamard =
-        <MetalHadamard as HadamardTransformKernel>::new(&context, DataType::BF16, HadamardTransformOrder::Input)
-            .expect("RHT kernel");
 
-    let mut group = c.benchmark_group("Metal/Kernel/A8W8");
+    let mut group = c.benchmark_group("Metal/Kernel/A8W");
     group.sample_size(10);
     group.warm_up_time(Duration::from_millis(300));
     group.measurement_time(Duration::from_secs(2));
 
-    for &(m, k, n, group_size) in SHAPES {
-        let label = format!("m{m}_k{k}_n{n}_gs{group_size}");
-        let host = HostInputs::generate(m, k, n, group_size, 0xB8_00 ^ k as u64);
-        let mut buffers = upload(&context, &host);
-        group.throughput(Throughput::Elements((m * k * n) as u64));
-
-        for (name, mode) in [("linear_a8w8", Mode::LinearA8W8), ("linear_abf16w8", Mode::LinearABf16W8)] {
-            group.bench_with_input(BenchmarkId::new(name, &label), &mode, |b, &mode| {
+    for &(m, k, n) in SHAPES {
+        for bits in [8u32, 4u32] {
+            let group_size = ACTIVATION_QUANTIZATION_GROUP_SIZE;
+            let label = format!("m{m}_k{k}_n{n}_w{bits}_gs{group_size}");
+            let host = HostInputs::generate(m, k, n, group_size, bits, 0xA8_00 ^ (bits as u64) ^ k as u64);
+            let mut buffers = upload(&context, &host);
+            group.throughput(Throughput::Elements((m * k * n) as u64));
+            group.bench_with_input(BenchmarkId::new(format!("linear_a8w{bits}"), &label), &bits, |b, _| {
                 b.iter_custom(|iterations| {
                     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
                     for _ in 0..iterations {
-                        match mode {
-                            Mode::LinearA8W8 => encode_a8w8(&prepare, &mut matmul, &mut buffers, &mut encoder),
-                            Mode::LinearABf16W8 => encode_abf16_w8(&hadamard, &mut matmul, &mut buffers, &mut encoder),
-                        }
+                        encode_a8w(&prepare, &mut matmul, &mut buffers, &mut encoder);
                     }
                     encoder.end_encoding().submit().wait_until_completed().expect("submit").gpu_execution_time()
                 });

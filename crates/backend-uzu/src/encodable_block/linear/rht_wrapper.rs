@@ -63,7 +63,7 @@ pub(super) fn a8w8_rht_group_size(
         return None;
     }
     let AnyWeightMatrixSpec::IntSpec(IntSpec {
-        bits: 8,
+        bits,
         group_size,
         layout: Layout::OutputInput,
         is_symmetric: true,
@@ -72,6 +72,9 @@ pub(super) fn a8w8_rht_group_size(
     else {
         return None;
     };
+    if !matches!(*bits, 4 | 8) {
+        return None;
+    }
     if input_dimension.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
         && *group_size == ACTIVATION_QUANTIZATION_GROUP_SIZE as usize
     {
