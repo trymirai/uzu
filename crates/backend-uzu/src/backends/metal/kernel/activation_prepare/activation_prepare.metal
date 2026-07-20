@@ -2,7 +2,6 @@
 #include "../common/defines.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
-#include "../common/threadgroup_reduce.h"
 #include "../generated/activation_prepare.h"
 #include "../hadamard_transform/hadamard_transform.h"
 
@@ -15,7 +14,7 @@ static_assert(
 );
 
 #define ACTIVATION_PREPARE_BLOCK_SIZE 256
-METAL_CONST uint BLOCK_SIZE = ACTIVATION_PREPARE_BLOCK_SIZE;
+#define ACTIVATION_PREPARE_SIMDGROUPS (ACTIVATION_PREPARE_BLOCK_SIZE / METAL_SIMD_SIZE)
 METAL_CONST float SYM_QMAX = INT8_SYMMETRIC_QUANTIZATION_MAXIMUM;
 
 template <typename InputT>
@@ -48,70 +47,40 @@ PUBLIC KERNEL(ActivationsPrepare)(
     constant uint& element_count,
     constant uint& group_size,
     const ActivationPrepareOps ops SPECIALIZE,
-    threadgroup float shared_reduce[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
     const uint thread_in_row THREADS(ACTIVATION_PREPARE_BLOCK_SIZE)
 ) {
-  if (!ops.contains(ActivationPrepareOps::QUANTIZE) || group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE) {
+  if (
+      !ops.contains(ActivationPrepareOps::QUANTIZE) || group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE ||
+      element_count % group_size != 0
+  ) {
     return;
   }
 
+  const uint groups = element_count / group_size;
   const uint row_offset = batch_idx * element_count;
   const device InputT* row_input = input + row_offset;
   device int8_t* row_q = q_out + row_offset;
-  const uint groups = div_ceil(element_count, group_size);
   device float* row_scales = scales_out + batch_idx * groups;
 
-  for (uint group = 0; group < groups; ++group) {
-    const uint start = group * group_size;
-    const uint end = min(start + group_size, element_count);
-    float thread_min = INFINITY;
-    float thread_max = -INFINITY;
-    METAL_PRAGMA_UNROLL
-    for (uint i = start + thread_in_row; i < end; i += BLOCK_SIZE) {
-      const float value = load_activation(row_input, i, rht_factors, ops);
-      thread_min = min(thread_min, value);
-      thread_max = max(thread_max, value);
-    }
+  for (uint group = thread_context.simdgroup_index; group < groups; group += ACTIVATION_PREPARE_SIMDGROUPS) {
+    const uint index = group * group_size + thread_context.simd_lane_id;
+    const float value = load_activation(row_input, index, rht_factors, ops);
 
-    const float min_v = threadgroup_cooperative_reduce<SimdReduceMin<float>, ACTIVATION_PREPARE_BLOCK_SIZE>(
-        thread_min,
-        shared_reduce,
-        thread_context
-    );
-    const float max_v = threadgroup_cooperative_reduce<SimdReduceMax<float>, ACTIVATION_PREPARE_BLOCK_SIZE>(
-        thread_max,
-        shared_reduce,
-        thread_context
-    );
+    const float min_v = simd_min(value);
+    const float max_v = simd_max(value);
     const float magnitude = max(fabs(min_v), fabs(max_v));
     const float scale = isfinite(magnitude) && magnitude > 0.0f ? magnitude / SYM_QMAX : 1.0f;
-    if (thread_in_row == 0) {
+    if (thread_context.simd_lane_id == 0) {
       row_scales[group] = scale;
     }
 
-    // All threads already hold the same scale after the cooperative reduce broadcast.
-    const float inv_scale = 1.0f / scale;
-    int thread_row_sum = 0;
-    METAL_PRAGMA_UNROLL
-    for (uint i = start + thread_in_row; i < end; i += BLOCK_SIZE) {
-      const float value = load_activation(row_input, i, rht_factors, ops);
-      const int8_t q = static_cast<int8_t>(clamp(round(value * inv_scale), -SYM_QMAX, SYM_QMAX));
-      row_q[i] = q;
-      if (ops.contains(ActivationPrepareOps::ROW_SUMS)) {
-        thread_row_sum += static_cast<int>(q);
-      }
-    }
-
+    const int8_t q = static_cast<int8_t>(clamp(round(value / scale), -SYM_QMAX, SYM_QMAX));
+    row_q[index] = q;
     if (ops.contains(ActivationPrepareOps::ROW_SUMS)) {
-      const int group_sum =
-          static_cast<int>(threadgroup_cooperative_reduce<SimdReduceSum<float>, ACTIVATION_PREPARE_BLOCK_SIZE>(
-              static_cast<float>(thread_row_sum),
-              shared_reduce,
-              thread_context
-          ));
-      if (thread_in_row == 0) {
+      const int group_sum = static_cast<int>(simd_sum(static_cast<float>(q)));
+      if (thread_context.simd_lane_id == 0) {
         row_sums_out[batch_idx * groups + group] = group_sum;
       }
     }

@@ -155,3 +155,24 @@ fn rht_and_min_max_symmetric_group_32_quantization_match_cpu() {
         "prepared int8 values differ by more than one level",
     );
 }
+
+#[rstest]
+#[test_attr(uzu_test)]
+fn min_max_symmetric_quantization_uses_each_group_of_32() {
+    let rows = 1;
+    let columns = 2 * ACTIVATION_QUANTIZATION_GROUP_SIZE as usize;
+    let group_size = ACTIVATION_QUANTIZATION_GROUP_SIZE as usize;
+    let context = MetalContext::new().expect("Metal context");
+    let input = [vec![1.0f32; group_size], vec![0.1f32; group_size]].concat();
+    let factors = vec![1; columns];
+
+    let (actual_values, actual_scales, _) = run_metal(&context, &input, &factors, rows, columns, group_size);
+    let (expected_values, expected_scales, _) = reference(&input, &factors, rows, columns, group_size);
+
+    assert_eq!(actual_scales.len(), 2);
+    assert!(actual_scales[0] > actual_scales[1] * 9.0);
+    for (actual, expected) in actual_scales.iter().zip(expected_scales) {
+        assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}");
+    }
+    assert_eq!(actual_values, expected_values);
+}
