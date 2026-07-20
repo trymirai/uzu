@@ -2020,10 +2020,11 @@ public struct Model: Equatable, Hashable, Codable {
     public var quantization: ModelQuantization?
     public var specializations: [ModelSpecialization]
     public var accessibility: ModelAccessibility
+    public var encodings: [Value]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(identifier: String, registry: ModelRegistry, backends: [ModelBackend], family: ModelFamily?, properties: ModelProperties?, quantization: ModelQuantization?, specializations: [ModelSpecialization], accessibility: ModelAccessibility) {
+    public init(identifier: String, registry: ModelRegistry, backends: [ModelBackend], family: ModelFamily?, properties: ModelProperties?, quantization: ModelQuantization?, specializations: [ModelSpecialization], accessibility: ModelAccessibility, encodings: [Value]) {
         self.identifier = identifier
         self.registry = registry
         self.backends = backends
@@ -2032,6 +2033,7 @@ public struct Model: Equatable, Hashable, Codable {
         self.quantization = quantization
         self.specializations = specializations
         self.accessibility = accessibility
+        self.encodings = encodings
     }
 
     
@@ -2177,7 +2179,8 @@ public struct FfiConverterTypeModel: FfiConverterRustBuffer {
                 properties: FfiConverterOptionTypeModelProperties.read(from: &buf), 
                 quantization: FfiConverterOptionTypeModelQuantization.read(from: &buf), 
                 specializations: FfiConverterSequenceTypeModelSpecialization.read(from: &buf), 
-                accessibility: FfiConverterTypeModelAccessibility.read(from: &buf)
+                accessibility: FfiConverterTypeModelAccessibility.read(from: &buf), 
+                encodings: FfiConverterSequenceTypeValue.read(from: &buf)
         )
     }
 
@@ -2190,6 +2193,7 @@ public struct FfiConverterTypeModel: FfiConverterRustBuffer {
         FfiConverterOptionTypeModelQuantization.write(value.quantization, into: &buf)
         FfiConverterSequenceTypeModelSpecialization.write(value.specializations, into: &buf)
         FfiConverterTypeModelAccessibility.write(value.accessibility, into: &buf)
+        FfiConverterSequenceTypeValue.write(value.encodings, into: &buf)
     }
 }
 
@@ -5635,6 +5639,31 @@ fileprivate struct FfiConverterSequenceTypeToolNamespace: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeValue: FfiConverterRustBuffer {
+    typealias SwiftType = [Value]
+
+    public static func write(_ value: [Value], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeValue.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Value] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Value]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeValue.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeChatContentBlock: FfiConverterRustBuffer {
     typealias SwiftType = [ChatContentBlock]
 
@@ -5771,7 +5800,7 @@ public func metadataExternal(name: String) -> Metadata  {
     )
 })
 }
-public func modelExternal(identifier: String, registryIdentifier: String, registryName: String, backendIdentifier: String, backendName: String, backendVersion: String, specializations: [ModelSpecialization], accessibility: ModelAccessibility) -> Model  {
+public func modelExternal(identifier: String, registryIdentifier: String, registryName: String, backendIdentifier: String, backendName: String, backendVersion: String, specializations: [ModelSpecialization], accessibility: ModelAccessibility, encodings: [Value]) -> Model  {
     return try!  FfiConverterTypeModel_lift(try! rustCall() {
     uniffi_shoji_fn_func_model_external(
         FfiConverterString.lower(identifier),
@@ -5781,7 +5810,8 @@ public func modelExternal(identifier: String, registryIdentifier: String, regist
         FfiConverterString.lower(backendName),
         FfiConverterString.lower(backendVersion),
         FfiConverterSequenceTypeModelSpecialization.lower(specializations),
-        FfiConverterTypeModelAccessibility_lower(accessibility),$0
+        FfiConverterTypeModelAccessibility_lower(accessibility),
+        FfiConverterSequenceTypeValue.lower(encodings),$0
     )
 })
 }
@@ -5870,7 +5900,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_shoji_checksum_func_metadata_external() != 17881) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_shoji_checksum_func_model_external() != 53960) {
+    if (uniffi_shoji_checksum_func_model_external() != 25859) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_shoji_checksum_func_chat_config_create() != 48867) {
