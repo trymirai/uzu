@@ -161,6 +161,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         b_transpose: true,
         d: &mut buffers.y,
         d_transform: MatmulDOps::none(),
+        gather_indices: None,
         m: input.m,
         n: input.n,
         k: input.k,

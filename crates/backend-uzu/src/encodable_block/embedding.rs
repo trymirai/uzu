@@ -545,6 +545,7 @@ impl<B: Backend> Embedding<B> {
                             b_transpose: true,
                             d: &mut output_allocation,
                             d_transform: MatmulDOps::none(),
+                            gather_indices: None,
                             m: batch_dim as u32,
                             n: self.vocab_size,
                             k: self.model_dim,
@@ -612,6 +613,7 @@ impl<B: Backend> Embedding<B> {
                             b_transpose: true,
                             d: &mut output_allocation,
                             d_transform: MatmulDOps::none(),
+                            gather_indices: None,
                             m: batch_dim as u32,
                             n: self.vocab_size,
                             k: self.model_dim,
@@ -632,6 +634,75 @@ impl<B: Backend> Embedding<B> {
         }
 
         Ok(output_allocation)
+    }
+
+    /// Per-row candidate readout via the GEMV B-row gather: `out[r][j] == dense[r][token_ids[r][j]]`,
+    /// soft-capped when configured, one dispatch. Full-precision weights; caller guarantees `token_ids < vocab_size`.
+    #[allow(dead_code)]
+    pub(crate) fn encode_readout_sparse(
+        &self,
+        input: &Allocation<B>,
+        token_ids: &Allocation<B>,
+        rows: usize,
+        ids_per_row: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        assert!(rows > 0 && ids_per_row > 0);
+        let (weights, readout) = match &self.tying {
+            EmbeddingTying::Tied {
+                ty:
+                    TiedEmbeddingType::FullPrecision {
+                        weights,
+                        readout,
+                        ..
+                    },
+            } => (weights, readout),
+            EmbeddingTying::Untied {
+                output_ty:
+                    UntiedEmbeddingReadoutType::FullPrecision {
+                        weights,
+                        readout,
+                    },
+                ..
+            } => (weights, readout),
+            _ => {
+                return Err(EmbeddingError::UnsupportedConfiguration(
+                    "fused sparse readout requires full-precision embedding weights".to_string(),
+                ));
+            },
+        };
+
+        let mut output = encoder
+            .allocate_scratch(size_for_shape(&[rows, ids_per_row], self.data_type))
+            .map_err(EmbeddingError::BackendError)?;
+
+        let soft_cap = self.logit_soft_cap.as_ref().map(|cap| cap.value);
+        readout
+            .lock()
+            .encode(
+                MatmulArguments {
+                    a: input,
+                    a_offset: 0,
+                    b: MatmulB::FullPrecision {
+                        b: weights,
+                    },
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    d: &mut output,
+                    d_transform: MatmulDOps {
+                        soft_cap,
+                        ..MatmulDOps::none()
+                    },
+                    gather_indices: Some(token_ids),
+                    m: rows as u32,
+                    n: ids_per_row as u32,
+                    k: self.model_dim,
+                },
+                encoder,
+            )
+            .map_err(EmbeddingError::BackendError)?;
+
+        Ok(output)
     }
 }
 

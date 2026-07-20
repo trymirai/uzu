@@ -142,10 +142,9 @@ fn pipeline_output<B: Backend>(
                     d: &mut grp_s,
                     d_transform: MatmulDOps {
                         ab_scale: scale,
-                        accumulate: false,
-                        bias: None,
-                        rht_factors: None,
+                        ..MatmulDOps::none()
                     },
+                    gather_indices: None,
                     m: GQA * SUFFIX,
                     n: SEQ,
                     k: HEAD_DIM,
@@ -181,6 +180,7 @@ fn pipeline_output<B: Backend>(
                     b_transpose: false,
                     d: &mut grp_o,
                     d_transform: MatmulDOps::none(),
+                    gather_indices: None,
                     m: GQA * SUFFIX,
                     n: HEAD_DIM,
                     k: SEQ,

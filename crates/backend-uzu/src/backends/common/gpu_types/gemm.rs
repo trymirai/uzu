@@ -18,6 +18,7 @@ bitflags! {
         const ACCUMULATE = 1 << 1;
         const BIAS       = 1 << 2;
         const RHT        = 1 << 3;
+        const SOFT_CAP   = 1 << 4;
     }
 }
 

@@ -20,6 +20,7 @@ struct GemmDTransform {
   static constant constexpr uint ACCUMULATE = 1 << 1;
   static constant constexpr uint BIAS = 1 << 2;
   static constant constexpr uint RHT = 1 << 3;
+  static constant constexpr uint SOFT_CAP = 1 << 4;
   constexpr bool contains(uint flag) const thread { return (raw_value & flag) != 0; }
   constexpr bool contains(uint flag) const constant { return (raw_value & flag) != 0; }
   constexpr uint bits() const thread { return raw_value; }

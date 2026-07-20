@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../../common/soft_cap.h"
 #include "../../../hadamard_transform/hadamard_transform.h"
 
 namespace uzu {
@@ -14,6 +15,7 @@ struct Epilogue {
       const device int32_t* hadamard_factors,
       threadgroup U* shared_results,
       float ab_scale,
+      float soft_cap,
       GemmDTransform output_transform,
       uint out_row,
       uint out_vec_size,
@@ -25,6 +27,7 @@ struct Epilogue {
     const bool is_scale = output_transform.contains(GemmDTransform::SCALE);
     const bool is_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool is_bias = output_transform.contains(GemmDTransform::BIAS);
+    const bool is_soft_cap = output_transform.contains(GemmDTransform::SOFT_CAP);
     const bool use_hadamard = output_transform.contains(GemmDTransform::RHT);
 
     if (writer && simd_lane == 0) {
@@ -40,6 +43,9 @@ struct Epilogue {
         }
         if (is_bias && global_row < out_vec_size) {
           value += static_cast<U>(output_bias[global_row]);
+        }
+        if (is_soft_cap) {
+          value = apply_soft_cap(value, soft_cap);
         }
         result[row] = value;
       }
