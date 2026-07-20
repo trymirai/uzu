@@ -35,6 +35,7 @@ pub(crate) struct GemvSpecialization {
     k_split: u32,
     results_per_simdgroup: u32,
     num_simdgroups: u32,
+    gathered: bool,
 }
 
 impl GemvSpecialization {
@@ -49,6 +50,7 @@ impl GemvSpecialization {
             return None;
         }
         let is_quant = !matches!(args.b, MatmulB::FullPrecision { .. });
+        let gathered = args.gather_indices.is_some();
         let bad_leading_dimension = if is_quant {
             args.b_leading_dimension.is_some()
         } else {
@@ -104,6 +106,7 @@ impl GemvSpecialization {
             k_split: tile.k_split,
             results_per_simdgroup: tile.results_per_simdgroup,
             num_simdgroups: tile.num_simdgroups,
+            gathered,
         })
     }
 }
@@ -158,6 +161,7 @@ impl GemvDispatch {
                     specialization.results_per_simdgroup,
                     specialization.num_simdgroups,
                     specialization.output_transform,
+                    specialization.gathered,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -174,6 +178,7 @@ impl GemvDispatch {
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
         let rht_factors = arguments.d_transform.rht_factors;
+        let soft_cap = arguments.d_transform.soft_cap;
 
         let MatmulArguments {
             a,
@@ -183,6 +188,7 @@ impl GemvDispatch {
             m,
             n,
             k,
+            gather_indices,
             ..
         } = arguments;
 
@@ -208,11 +214,13 @@ impl GemvDispatch {
                     &mut *d,
                     output_bias,
                     rht_factors,
+                    gather_indices,
                     k,
                     n,
                     m,
                     ab_scale,
                     group_count_x,
+                    soft_cap,
                     encoder,
                 );
             },
@@ -256,11 +264,13 @@ impl GemvDispatch {
                     &mut *d,
                     output_bias,
                     rht_factors,
+                    gather_indices,
                     k,
                     n,
                     m,
                     ab_scale,
                     group_count_x,
+                    soft_cap,
                     encoder,
                 );
             },
