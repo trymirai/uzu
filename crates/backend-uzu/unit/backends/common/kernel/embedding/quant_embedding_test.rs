@@ -23,7 +23,7 @@ use crate::{
 };
 
 struct Input<T: ArrayElement + Float> {
-    token_ids: Box<[u64]>,
+    token_ids: Box<[u32]>,
     weights: Box<[u8]>,
     scales: Box<[T]>,
     zero_points: Option<Box<[u8]>>,
@@ -44,7 +44,7 @@ fn get_test_data<T: ArrayElement + Float>(quant_mode: QuantizationMode) -> (Inpu
     let group_size = 32u32;
     let input_scale = 1.5f32;
 
-    let token_ids: Box<[u64]> = Box::new([2, 5, 0]);
+    let token_ids: Box<[u32]> = Box::new([2, 5, 0]);
 
     let packing_divisor = quant_mode.packing_divisor() as u32;
     let weights_stride = model_dim / packing_divisor;
@@ -87,7 +87,7 @@ fn get_test_data_zero_point_group16<T: ArrayElement + Float>() -> (Input<T>, Vec
     let input_scale = 1.5f32;
     let quant_mode = QuantizationMode::U4;
 
-    let token_ids: Box<[u64]> = Box::new([2, 5, 0]);
+    let token_ids: Box<[u32]> = Box::new([2, 5, 0]);
 
     let packing_divisor = quant_mode.packing_divisor() as u32;
     let weights_stride = model_dim / packing_divisor;
@@ -131,7 +131,7 @@ fn get_test_data_symmetric_u8<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
     let input_scale = 1.5f32;
     let quant_mode = QuantizationMode::U8;
 
-    let token_ids: Box<[u64]> = Box::new([2, 5, 0]);
+    let token_ids: Box<[u32]> = Box::new([2, 5, 0]);
 
     let weights: Vec<u8> =
         (0..vocab_size as usize * model_dim as usize).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
@@ -168,7 +168,7 @@ fn get_test_data_oob<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
     let input_scale = 1.0f32;
 
     // token_id 1 is valid, token_id 10 is out of bounds
-    let token_ids: Box<[u64]> = Box::new([1, 10]);
+    let token_ids: Box<[u32]> = Box::new([1, 10]);
 
     let weights: Vec<u8> = (0..vocab_size as usize * model_dim as usize).map(|i| (i % 200) as u8).collect();
 
@@ -210,7 +210,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     )
     .expect("Failed to create QuantizedEmbeddingLookupKernel");
 
-    let token_ids_allocation = alloc_allocation_with_data::<B, u64>(&context, &input.token_ids);
+    let token_ids_allocation = alloc_allocation_with_data::<B, u32>(&context, &input.token_ids);
     let weights_allocation = alloc_allocation_with_data::<B, u8>(&context, &input.weights);
     let scales_allocation = alloc_allocation_with_data::<B, T>(&context, &input.scales);
     let zero_points_allocation =

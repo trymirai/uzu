@@ -11,7 +11,7 @@ use crate::{
 #[kernel(QuantizedEmbeddingLookup)]
 #[variants(T, f32, f16, bf16)]
 pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
-    #[allow(unused)] token_ids: *const u64,
+    #[allow(unused)] token_ids: *const u32,
     #[allow(unused)] weights: *const u8,
     #[allow(unused)] scales: *const T,
     #[allow(unused)]
@@ -60,17 +60,17 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
             for dim_idx in 0..model_dim {
                 let out_idx = (batch_idx * model_dim + dim_idx) as usize;
 
-                if token_id >= vocab_size as u64 {
+                if token_id >= vocab_size {
                     *output.add(out_idx) = T::zero();
                     continue;
                 }
 
                 let group_idx = dim_idx / group_size;
-                let scale = *scales.add((token_id as u32 * num_groups + group_idx) as usize);
+                let scale = *scales.add((token_id * num_groups + group_idx) as usize);
 
                 let quantized_value: i32 = match quantization_mode {
                     QuantizationMode::U4 => {
-                        let byte_idx = (token_id as u32 * weights_stride + dim_idx / 2) as usize;
+                        let byte_idx = (token_id * weights_stride + dim_idx / 2) as usize;
                         let packed = *weights.add(byte_idx);
                         if (dim_idx & 1) == 0 {
                             (packed & 0x0F) as i32
@@ -79,12 +79,12 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                         }
                     },
                     QuantizationMode::I8 => {
-                        let elem_idx = (token_id as u32 * weights_stride + dim_idx) as usize;
+                        let elem_idx = (token_id * weights_stride + dim_idx) as usize;
                         let weights_i8 = weights as *const i8;
                         *weights_i8.add(elem_idx) as i32
                     },
                     QuantizationMode::U8 => {
-                        let elem_idx = (token_id as u32 * weights_stride + dim_idx) as usize;
+                        let elem_idx = (token_id * weights_stride + dim_idx) as usize;
                         *weights.add(elem_idx) as i32
                     },
                 };
@@ -92,7 +92,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                 let bias = match quantization_method {
                     QuantizationMethod::ScaleBias => biases
                         .expect("ScaleBias quantized embedding requires biases")
-                        .add((token_id as u32 * num_groups + group_idx) as usize)
+                        .add((token_id * num_groups + group_idx) as usize)
                         .read()
                         .to_f32()
                         .unwrap(),
@@ -100,7 +100,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                         let zero_points = zero_points.expect("ScaleZeroPoint quantized embedding requires zero_points");
                         let zero_point = match quantization_mode {
                             QuantizationMode::U4 => {
-                                let byte_idx = (token_id as u32 * zero_points_stride + group_idx / 2) as usize;
+                                let byte_idx = (token_id * zero_points_stride + group_idx / 2) as usize;
                                 let packed = *zero_points.add(byte_idx);
                                 if (group_idx & 1) == 0 {
                                     packed & 0x0F
@@ -109,7 +109,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                                 }
                             },
                             QuantizationMode::I8 | QuantizationMode::U8 => {
-                                *zero_points.add((token_id as u32 * zero_points_stride + group_idx) as usize)
+                                *zero_points.add((token_id * zero_points_stride + group_idx) as usize)
                             },
                         };
                         -scale.to_f32().unwrap() * zero_point as f32

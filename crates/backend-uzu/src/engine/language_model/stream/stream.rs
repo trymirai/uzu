@@ -9,8 +9,7 @@ use shoji::traits::backend::chat_token::TokenStreamMetrics;
 use crate::{
     backends::common::{
         Allocation, AllocationPool, AllocationType, Backend, Context, Encoder, Pending,
-        gpu_types::trie::TrieNode as GpuTrieNode,
-        kernel::{ContextRingUpdateKernel, TokenCopySampledKernel},
+        gpu_types::trie::TrieNode as GpuTrieNode, kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
     encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
@@ -185,9 +184,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 let input_flat_trie = input_trie.linearize();
 
                 let mut token_ids = encoder
-                    .allocate_constant(input_chunk.len() * DataType::U64.size_in_bytes())
+                    .allocate_constant(input_chunk.len() * DataType::U32.size_in_bytes())
                     .map_err(LanguageModelStreamError::Backend)?;
-                token_ids.copyin(input_chunk);
+                token_ids.copyin(&input_chunk.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 
                 let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
                 let batch_dim = BatchTopology::new(&input_flat_trie_nodes, true);
@@ -369,9 +368,14 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length()
                         {
                             let mut accepted_input_token_ids_const = encoder
-                                .allocate_constant(full.len() * DataType::U64.size_in_bytes())
+                                .allocate_constant(full.len() * DataType::U32.size_in_bytes())
                                 .map_err(LanguageModelStreamError::Backend)?;
-                            accepted_input_token_ids_const.copyin(&accepted_input_token_ids);
+                            accepted_input_token_ids_const.copyin(
+                                &accepted_input_token_ids
+                                    .iter()
+                                    .map(|token_id| *token_id as u32)
+                                    .collect::<Box<[u32]>>(),
+                            );
                             self.model.context_ring_update.encode(
                                 &accepted_input_token_ids_const,
                                 self.context_ring.as_mut().unwrap(),
@@ -429,14 +433,14 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         let token_ids = if let Some(chain_copy) = chain_copy {
             let mut token_ids =
-                encoder.allocate_scratch(DataType::U64.size_in_bytes()).map_err(LanguageModelStreamError::Backend)?;
-            self.model.token_copy.encode(chain_copy, &mut token_ids, &mut encoder);
+                encoder.allocate_scratch(DataType::U32.size_in_bytes()).map_err(LanguageModelStreamError::Backend)?;
+            encoder.encode_copy(chain_copy, .., &mut token_ids, ..);
             token_ids
         } else {
             let mut token_ids = encoder
-                .allocate_constant(input_flat_trie.len() * DataType::U64.size_in_bytes())
+                .allocate_constant(input_flat_trie.len() * DataType::U32.size_in_bytes())
                 .map_err(LanguageModelStreamError::Backend)?;
-            token_ids.copyin(&input_flat_trie.token_ids().collect::<Box<[u64]>>());
+            token_ids.copyin(&input_flat_trie.token_ids().map(|token_id| token_id as u32).collect::<Box<[u32]>>());
             token_ids
         };
 

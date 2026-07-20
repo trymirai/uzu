@@ -10,7 +10,7 @@ using namespace uzu::quantization;
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(QuantizedEmbeddingLookup) (
-    const device uint64_t* token_ids,   // [batch_size]
+    const device uint32_t* token_ids,   // [batch_size]
     const device uint8_t* weights,      // [vocab_size, model_dim/packing_divisor] packed
     const device T* scales,             // [vocab_size, num_groups]
     const device uint8_t* zero_points OPTIONAL(quantization_method == QuantizationMethod::ScaleZeroPoint),
@@ -29,7 +29,7 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
     const uint batch_idx AXIS(batch_size, 1)
 ) {
   const uint thread_position_in_grid = batch_idx * model_dim + dim_idx;
-  const uint64_t token_id = token_ids[batch_idx];
+  const uint32_t token_id = token_ids[batch_idx];
   if (token_id >= vocab_size) {
     output[thread_position_in_grid] = T(0);
     return;

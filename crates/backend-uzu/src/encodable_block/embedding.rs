@@ -112,8 +112,6 @@ struct LogitSoftCap<B: Backend> {
     kernel: <B::Kernels as Kernels>::LogitSoftCapKernel,
 }
 
-// TODO: embedding lookup dtype (u64) should match sampling (u32)
-
 impl<B: Backend> Embedding<B> {
     pub fn new(
         context: &B::Context,
