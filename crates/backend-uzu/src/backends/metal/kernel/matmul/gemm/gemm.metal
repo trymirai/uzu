@@ -10,7 +10,6 @@
 
 using namespace metal;
 using namespace uzu::gemm;
-using namespace uzu::activation_prepare;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
