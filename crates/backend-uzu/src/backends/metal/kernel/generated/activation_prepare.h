@@ -7,9 +7,7 @@ using namespace metal;
 namespace uzu::activation_prepare {
 static constant constexpr float INT8_SYMMETRIC_QUANTIZATION_MAXIMUM = 127.0;
 
-static constant constexpr float INT8_ASYMMETRIC_QUANTIZATION_MINIMUM_MAGNITUDE = 128.0;
-
-static constant constexpr float INT8_ASYMMETRIC_QUANTIZATION_MAXIMUM = 127.0;
+static constant constexpr uint32_t ACTIVATION_QUANTIZATION_GROUP_SIZE = 32;
 
 struct ActivationPrepareOps {
   uint raw_value;
@@ -17,7 +15,6 @@ struct ActivationPrepareOps {
   constexpr ActivationPrepareOps(uint __dsl_v) thread : raw_value(__dsl_v) {}
   static constant constexpr uint INPUT_RHT = 1 << 0;
   static constant constexpr uint QUANTIZE = 1 << 1;
-  static constant constexpr uint ASYMMETRIC = 1 << 2;
   static constant constexpr uint ROW_SUMS = 1 << 3;
   constexpr bool contains(uint flag) const thread { return (raw_value & flag) != 0; }
   constexpr bool contains(uint flag) const constant { return (raw_value & flag) != 0; }
@@ -28,16 +25,5 @@ struct ActivationPrepareOps {
 enum class GemmAPrologueKind : uint32_t {
   FullPrecision = 0,
   Int8Symmetric = 1,
-  Int8Asymmetric = 2,
-};
-
-enum class ActivationScaleStatistic : uint32_t {
-  AbsMax = 0,
-  Rms = 1,
-};
-
-enum class ActivationQuantScheme : uint32_t {
-  Symmetric = 0,
-  Asymmetric = 1,
 };
 } // namespace uzu::activation_prepare

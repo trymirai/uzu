@@ -158,9 +158,7 @@ struct MxuMmaCore {
       const device int8_t* b_signed_simdgroup,
       const device float* a_scales,
       const device BT* b_scales,
-      const device int8_t* a_zero_points,
       const device int32_t* a_row_sums,
-      const device int32_t* b_col_sums,
       const device uint8_t* b_zero_points,
       const int leading_dimension_a,
       const int leading_dimension_b,
@@ -179,7 +177,6 @@ struct MxuMmaCore {
 
     const short2 position = Ops::get_position(thread_context.simd_lane_id);
     thread float* accumulator_data = accumulator.elements();
-    constexpr bool a_asymmetric = A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric;
     constexpr bool b_asymmetric = B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant;
 
     METAL_PRAGMA_NO_UNROLL
@@ -211,7 +208,6 @@ struct MxuMmaCore {
       thread int* group_data = group_accumulator.elements();
 
       float a_scale_cache[TILES_M * Ops::FRAGMENT_ROWS];
-      float z_a_cache[TILES_M * Ops::FRAGMENT_ROWS];
       float a_row_sum_cache[TILES_M * Ops::FRAGMENT_ROWS];
       METAL_PRAGMA_UNROLL
       for (ushort tile_row = 0; tile_row < TILES_M; ++tile_row) {
@@ -222,7 +218,6 @@ struct MxuMmaCore {
           if (ALIGNED_M || row < simdgroup_limit_m) {
             const uint scale_index_a = (abs_row_base + uint(row)) * groups_per_row + group_index;
             a_scale_cache[cache_index] = a_scales[scale_index_a];
-            z_a_cache[cache_index] = a_asymmetric ? static_cast<float>(a_zero_points[scale_index_a]) : 0.0f;
             a_row_sum_cache[cache_index] = b_asymmetric ? static_cast<float>(a_row_sums[scale_index_a]) : 0.0f;
           }
         }
@@ -230,7 +225,6 @@ struct MxuMmaCore {
 
       float b_scale_cache[TILES_N * Ops::FRAGMENT_COLS];
       float z_b_cache[TILES_N * Ops::FRAGMENT_COLS];
-      float b_col_sum_cache[TILES_N * Ops::FRAGMENT_COLS];
       METAL_PRAGMA_UNROLL
       for (ushort tile_col = 0; tile_col < TILES_N; ++tile_col) {
         METAL_PRAGMA_UNROLL
@@ -242,7 +236,6 @@ struct MxuMmaCore {
             b_scale_cache[cache_index] = static_cast<float>(b_scales[scale_index_b]);
             z_b_cache[cache_index] =
                 b_asymmetric ? static_cast<float>(static_cast<int>(b_zero_points[scale_index_b]) - 128) : 0.0f;
-            b_col_sum_cache[cache_index] = a_asymmetric ? static_cast<float>(b_col_sums[scale_index_b]) : 0.0f;
           }
         }
       }
@@ -267,16 +260,9 @@ struct MxuMmaCore {
               const float a_scale = a_scale_cache[a_cache];
               const float b_scale = b_scale_cache[b_cache];
               float corrected = static_cast<float>(group_data[frag_base + element]);
-              const float z_a = z_a_cache[a_cache];
               const float z_b = z_b_cache[b_cache];
-              if (a_asymmetric) {
-                corrected -= z_a * b_col_sum_cache[b_cache];
-              }
               if (b_asymmetric) {
                 corrected -= z_b * a_row_sum_cache[a_cache];
-              }
-              if (a_asymmetric && b_asymmetric) {
-                corrected += static_cast<float>(GROUP_SIZE) * z_a * z_b;
               }
               accumulator_data[frag_base + element] += a_scale * b_scale * corrected;
             }
@@ -305,9 +291,7 @@ struct MxuMmaCore {
       const device int32_t* rht_factors,
       const device int8_t* a_int8,
       const device float* a_scales,
-      const device int8_t* a_zero_points,
       const device int32_t* a_row_sums,
-      const device int32_t* b_col_sums,
       threadgroup BT* b_shared,
       const thread ThreadContext& thread_context
   ) {
@@ -379,10 +363,7 @@ struct MxuMmaCore {
                 alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
                 [&](auto aligned_n) {
                   auto accumulator_tile = [&]() {
-                    if constexpr (
-                        A_PROLOGUE == GemmAPrologueKind::Int8Symmetric ||
-                        A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric
-                    ) {
+                    if constexpr (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric) {
                       const int weight_row_stride = int(params->K);
                       const device int8_t* a_int8_block = a_int8 + block_row * params->leading_dimension_a + k_offset;
                       const device int8_t* a_int8_simdgroup =
@@ -398,9 +379,7 @@ struct MxuMmaCore {
                           b_signed_simdgroup,
                           a_scales,
                           scales,
-                          a_zero_points,
                           a_row_sums,
-                          b_col_sums,
                           zero_points,
                           int(params->leading_dimension_a),
                           weight_row_stride,

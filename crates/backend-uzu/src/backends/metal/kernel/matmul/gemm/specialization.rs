@@ -53,7 +53,7 @@ impl GemmSpecialization {
         if self.b_prologue != GemmBPrologueKind::FullPrecision && !self.transpose_b {
             return Err(GemmSpecializationError::QuantizedRequiresTransposedB);
         }
-        let a_is_int8 = matches!(self.a_prologue, GemmAPrologueKind::Int8Symmetric | GemmAPrologueKind::Int8Asymmetric);
+        let a_is_int8 = self.a_prologue == GemmAPrologueKind::Int8Symmetric;
         let b_ok_for_int8 = matches!(
             self.b_prologue,
             GemmBPrologueKind::ScaleSymmetricDequant | GemmBPrologueKind::ScaleZeroPointDequant

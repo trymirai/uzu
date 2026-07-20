@@ -12,7 +12,7 @@ using namespace metal;
 using namespace uzu::gemm;
 using namespace uzu::activation_prepare;
 
-#define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric || A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric)
+#define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
@@ -61,8 +61,7 @@ VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 VARIANTS(
     A_PROLOGUE,
     GemmAPrologueKind::FullPrecision,
-    GemmAPrologueKind::Int8Symmetric,
-    GemmAPrologueKind::Int8Asymmetric)
+    GemmAPrologueKind::Int8Symmetric)
 CONSTRAINT(
     USE_MXU ==
     (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
@@ -91,8 +90,7 @@ CONSTRAINT(
       GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4) ||
     (TRANSPOSE_B &&
      (B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
-      A_PROLOGUE == GemmAPrologueKind::Int8Symmetric ||
-      A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric)))
+      A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || BITS == 8)
 CONSTRAINT(
@@ -117,12 +115,8 @@ KERNEL(Gemm)(
         OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
     const device int8_t* a_int8 OPTIONAL(A_IS_INT8),
     const device float* a_scales OPTIONAL(A_IS_INT8),
-    const device int8_t* a_zero_points
-        OPTIONAL(A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric),
     const device int32_t* a_row_sums
         OPTIONAL(A_IS_INT8 && B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
-    const device int32_t* b_col_sums
-        OPTIONAL(A_PROLOGUE == GemmAPrologueKind::Int8Asymmetric),
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
@@ -161,9 +155,7 @@ KERNEL(Gemm)(
         rht_factors,
         a_int8,
         a_scales,
-        a_zero_points,
         a_row_sums,
-        b_col_sums,
         b_shared,
         thread_context
     );

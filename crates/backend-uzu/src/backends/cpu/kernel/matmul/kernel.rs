@@ -3,7 +3,7 @@ use crate::{
     backends::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
-            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
+            gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, HadamardTransformOrder},
             kernel::{
                 HadamardTransformKernel,
                 matmul::{MatmulA, MatmulArguments, MatmulError, MatmulKernel},
@@ -84,7 +84,6 @@ impl MatmulKernel for MatmulCpuKernel {
             Int8 {
                 values: SendPtr<u8>,
                 scales: SendPtr<u8>,
-                zero_points: Option<SendPtr<u8>>,
                 group_size: usize,
             },
         }
@@ -103,14 +102,13 @@ impl MatmulKernel for MatmulCpuKernel {
                 group_size,
                 ..
             } => {
-                if group_size == 0
-                    || !group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
+                if group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE
                     || b.group_size() != Some(group_size)
                     || b.bits_per_b() != Some(8)
                 {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
-                        reason: "int8 activation groups must be non-zero RHT-block multiples and match 8-bit weights",
+                        reason: "int8 activations require group size 32 and matching 8-bit weights",
                     }
                     .into());
                 }
@@ -123,41 +121,6 @@ impl MatmulKernel for MatmulCpuKernel {
                     scales: SendPtr(
                         unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
                     ),
-                    zero_points: None,
-                    group_size: group_size as usize,
-                }
-            },
-            MatmulA::Int8Asymmetric {
-                values,
-                scales,
-                zero_points,
-                group_size,
-                ..
-            } => {
-                if group_size == 0
-                    || !group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
-                    || b.group_size() != Some(group_size)
-                    || b.bits_per_b() != Some(8)
-                {
-                    return Err(MatmulError::IncompatibleA {
-                        path: "CpuMatmul",
-                        reason: "int8 activation groups must be non-zero RHT-block multiples and match 8-bit weights",
-                    }
-                    .into());
-                }
-                let values_range = values.as_buffer_range_ref();
-                let scales_range = scales.as_buffer_range_ref();
-                let zp_range = zero_points.as_buffer_range_ref();
-                AData::Int8 {
-                    values: SendPtr(
-                        unsafe { &*values_range.buffer().get() }.as_ptr().wrapping_byte_add(values_range.range().start),
-                    ),
-                    scales: SendPtr(
-                        unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
-                    ),
-                    zero_points: Some(SendPtr(
-                        unsafe { &*zp_range.buffer().get() }.as_ptr().wrapping_byte_add(zp_range.range().start),
-                    )),
                     group_size: group_size as usize,
                 }
             },
@@ -212,17 +175,13 @@ impl MatmulKernel for MatmulCpuKernel {
                                 AData::Int8 {
                                     values,
                                     scales,
-                                    zero_points,
                                     group_size,
                                 } => {
                                     let groups = k_u.div_ceil(group_size);
                                     let group = inner / group_size;
                                     let q = *(values.as_ptr() as *const i8).add(row * k_u + inner) as f32;
                                     let scale = *(scales.as_ptr() as *const f32).add(row * groups + group);
-                                    let zp = zero_points
-                                        .map(|zp| *(zp.as_ptr() as *const i8).add(row * groups + group) as f32)
-                                        .unwrap_or(0.0);
-                                    (q - zp) * scale
+                                    q * scale
                                 },
                             };
                             let b_value = match &weight_data {

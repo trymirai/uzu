@@ -5,10 +5,8 @@ use proc_macros::kernel;
 use crate::{
     array::ArrayElement,
     backends::common::{
-        gpu_types::{ActivationPrepareOps, ActivationScaleStatistic, HADAMARD_TRANSFORM_BLOCK_SIZE},
-        kernel::{
-            asymmetric_scale_zero_point, group_stat, quantize_asymmetric_i8, quantize_symmetric_i8, symmetric_divisor,
-        },
+        gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, ActivationPrepareOps, HADAMARD_TRANSFORM_BLOCK_SIZE},
+        kernel::{min_max_symmetric_divisor, quantize_symmetric_i8},
     },
 };
 
@@ -38,27 +36,23 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] q_out: Option<*mut i8>,
     #[optional(ops.contains(ActivationPrepareOps::QUANTIZE))] scales_out: Option<*mut f32>,
     #[optional(ops.contains(ActivationPrepareOps::ROW_SUMS))] row_sums_out: Option<*mut i32>,
-    #[optional(ops.contains(ActivationPrepareOps::ASYMMETRIC))] zero_points_out: Option<*mut i8>,
     #[optional(ops.contains(ActivationPrepareOps::INPUT_RHT))] rht_factors: Option<*const i32>,
     batch_size: u32,
     element_count: u32,
     group_size: u32,
     #[specialize] ops: ActivationPrepareOps,
-    #[specialize] stat: ActivationScaleStatistic,
 ) {
     let rows = batch_size as usize;
     let columns = element_count as usize;
     let group_size = group_size as usize;
-    assert!(group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
+    assert_eq!(group_size, ACTIVATION_QUANTIZATION_GROUP_SIZE as usize);
     assert!(columns.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
     assert_eq!(rht_factors.is_some(), ops.contains(ActivationPrepareOps::INPUT_RHT));
     assert_eq!(q_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
     assert_eq!(scales_out.is_some(), ops.contains(ActivationPrepareOps::QUANTIZE));
     let emit_row_sums = ops.contains(ActivationPrepareOps::ROW_SUMS);
     assert_eq!(row_sums_out.is_some(), emit_row_sums);
-    let asymmetric = ops.contains(ActivationPrepareOps::ASYMMETRIC);
-    assert_eq!(zero_points_out.is_some(), asymmetric);
-    if asymmetric || emit_row_sums {
+    if emit_row_sums {
         assert!(ops.contains(ActivationPrepareOps::QUANTIZE));
     }
 
@@ -87,31 +81,16 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
             let start = group * group_size;
             let end = (start + group_size).min(columns);
             let slice = &prepared[start..end];
-            if asymmetric {
-                let (scale, zero_point) = asymmetric_scale_zero_point(slice, stat);
-                unsafe { *scales_out.add(row * groups + group) = scale };
-                unsafe { *zero_points_out.unwrap().add(row * groups + group) = zero_point };
-                let mut row_sum = 0i32;
-                for index in start..end {
-                    let q = quantize_asymmetric_i8(prepared[index], scale, zero_point);
-                    unsafe { *q_out.add(row * columns + index) = q };
-                    row_sum += q as i32;
-                }
-                if emit_row_sums {
-                    unsafe { *row_sums_out.unwrap().add(row * groups + group) = row_sum };
-                }
-            } else {
-                let divisor = symmetric_divisor(group_stat(slice, stat));
-                unsafe { *scales_out.add(row * groups + group) = divisor };
-                let mut row_sum = 0i32;
-                for index in start..end {
-                    let q = quantize_symmetric_i8(prepared[index], divisor);
-                    unsafe { *q_out.add(row * columns + index) = q };
-                    row_sum += q as i32;
-                }
-                if emit_row_sums {
-                    unsafe { *row_sums_out.unwrap().add(row * groups + group) = row_sum };
-                }
+            let divisor = min_max_symmetric_divisor(slice);
+            unsafe { *scales_out.add(row * groups + group) = divisor };
+            let mut row_sum = 0i32;
+            for index in start..end {
+                let q = quantize_symmetric_i8(prepared[index], divisor);
+                unsafe { *q_out.add(row * columns + index) = q };
+                row_sum += q as i32;
+            }
+            if emit_row_sums {
+                unsafe { *row_sums_out.unwrap().add(row * groups + group) = row_sum };
             }
         }
     }

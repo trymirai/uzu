@@ -2,7 +2,7 @@ use proc_macros::uzu_test;
 use rstest::rstest;
 
 use crate::{
-    backends::common::gpu_types::{ActivationQuantScheme, ActivationScaleStatistic, QuantizationMethod},
+    backends::common::gpu_types::QuantizationMethod,
     tests::matmul::{QuantInput, run_quant_cpu},
 };
 
@@ -19,33 +19,15 @@ fn relative_l2(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::sym_a_sym_b(ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleSymmetric)]
-#[case::sym_a_zp_b(ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleZeroPoint)]
-#[case::asym_a_sym_b(ActivationQuantScheme::Asymmetric, QuantizationMethod::ScaleSymmetric)]
-#[case::asym_a_zp_b(ActivationQuantScheme::Asymmetric, QuantizationMethod::ScaleZeroPoint)]
-fn a8w8_cpu_matches_full_precision_activations(
-    #[case] scheme: ActivationQuantScheme,
-    #[case] method: QuantizationMethod,
-) {
+fn a8w8_cpu_min_max_symmetric_group_32_matches_full_precision_activations() {
     let group_size = 32;
-    for (m, k, n) in [(16usize, 128usize, 32usize), (8, 256, 64)] {
-        let baseline = run_quant_cpu(&QuantInput::<f32>::new(m, k, n, group_size, 8, method, SEED));
-        let a8w8 = run_quant_cpu(
-            &QuantInput::<f32>::new(m, k, n, group_size, 8, method, SEED)
-                .with_prepared_a_scheme(ActivationScaleStatistic::AbsMax, scheme),
-        );
-        let rel = relative_l2(&baseline, &a8w8);
-        assert!(rel < 0.08, "{scheme:?} x {method:?} rel-L2 {rel} too high for shape {m}x{k}x{n}");
+    for method in [QuantizationMethod::ScaleSymmetric, QuantizationMethod::ScaleZeroPoint] {
+        for (m, k, n) in [(16usize, 128usize, 32usize), (8, 256, 64)] {
+            let baseline = run_quant_cpu(&QuantInput::<f32>::new(m, k, n, group_size, 8, method, SEED));
+            let a8w8 = run_quant_cpu(&QuantInput::<f32>::new(m, k, n, group_size, 8, method, SEED).with_prepared_a());
+            let rel = relative_l2(&baseline, &a8w8);
+            assert!(rel < 0.08, "{method:?} rel-L2 {rel} too high for shape {m}x{k}x{n}");
+            assert!(a8w8.iter().all(|value| value.is_finite()));
+        }
     }
-}
-
-#[rstest]
-#[test_attr(uzu_test)]
-#[case::absmax(ActivationScaleStatistic::AbsMax)]
-#[case::rms(ActivationScaleStatistic::Rms)]
-fn a8w8_cpu_rms_and_absmax_finite(#[case] stat: ActivationScaleStatistic) {
-    let a8w8 = run_quant_cpu(
-        &QuantInput::<f32>::new(16, 128, 32, 32, 8, QuantizationMethod::ScaleSymmetric, SEED).with_prepared_a(stat),
-    );
-    assert!(a8w8.iter().all(|v| v.is_finite()));
 }

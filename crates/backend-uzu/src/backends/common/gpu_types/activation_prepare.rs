@@ -2,9 +2,7 @@ use bitflags::bitflags;
 use derive_more::Display;
 
 pub const INT8_SYMMETRIC_QUANTIZATION_MAXIMUM: f32 = 127.0;
-
-pub const INT8_ASYMMETRIC_QUANTIZATION_MINIMUM_MAGNITUDE: f32 = 128.0;
-pub const INT8_ASYMMETRIC_QUANTIZATION_MAXIMUM: f32 = 127.0;
+pub const ACTIVATION_QUANTIZATION_GROUP_SIZE: u32 = 32;
 
 bitflags! {
     #[repr(transparent)]
@@ -12,7 +10,6 @@ bitflags! {
     pub struct ActivationPrepareOps: u32 {
         const INPUT_RHT = 1 << 0;
         const QUANTIZE = 1 << 1;
-        const ASYMMETRIC = 1 << 2;
         const ROW_SUMS = 1 << 3;
     }
 }
@@ -22,19 +19,4 @@ bitflags! {
 pub enum GemmAPrologueKind {
     FullPrecision,
     Int8Symmetric,
-    Int8Asymmetric,
-}
-
-#[repr(C)]
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ActivationScaleStatistic {
-    AbsMax,
-    Rms,
-}
-
-#[repr(C)]
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ActivationQuantScheme {
-    Symmetric,
-    Asymmetric,
 }

@@ -15,7 +15,7 @@ use crate::{
     backends::{
         common::{
             Backend, Context, Encoder,
-            gpu_types::{ActivationQuantScheme, ActivationScaleStatistic, QuantizationMethod, gemm::GemmDTransform},
+            gpu_types::{QuantizationMethod, gemm::GemmDTransform},
             kernel::{
                 Kernels,
                 matmul::{MatmulDOps, MatmulError, MatmulKernel},
@@ -502,31 +502,23 @@ fn mxu_quant_parity_bf16(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::sym_sym_gs32(128, 256, 128, 32, ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleSymmetric)]
-#[case::sym_sym_gs64(64, 512, 64, 64, ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleSymmetric)]
-#[case::asym_sym_gs32(96, 256, 100, 32, ActivationQuantScheme::Asymmetric, QuantizationMethod::ScaleSymmetric)]
-#[case::asym_zp_gs32(64, 256, 64, 32, ActivationQuantScheme::Asymmetric, QuantizationMethod::ScaleZeroPoint)]
-#[case::sym_zp_gs64(64, 256, 64, 64, ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleZeroPoint)]
-#[case::small_m1_sym(1, 2048, 2048, 64, ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleSymmetric)]
-#[case::small_m8_sym(8, 2048, 2048, 64, ActivationQuantScheme::Symmetric, QuantizationMethod::ScaleSymmetric)]
+#[case::symmetric_weights(128, 256, 128, QuantizationMethod::ScaleSymmetric)]
+#[case::zero_point_weights(64, 256, 64, QuantizationMethod::ScaleZeroPoint)]
 fn a8w8_mxu_parity_bf16(
     #[case] m: usize,
     #[case] k: usize,
     #[case] n: usize,
-    #[case] gs: u32,
-    #[case] scheme: ActivationQuantScheme,
     #[case] method: QuantizationMethod,
 ) {
     let context = MetalContext::new().expect("Metal context");
     if !context.supports_mxu() {
         return;
     }
-    let input = QuantInput::<bf16>::new(m, k, n, gs, 8, method, 0)
-        .with_prepared_a_scheme(ActivationScaleStatistic::AbsMax, scheme);
+    let input = QuantInput::<bf16>::new(m, k, n, 32, 8, method, 0).with_prepared_a();
     let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>(
-        &format!("A8W8 {scheme:?}/{method:?} m={m} k={k} n={n} gs={gs}"),
+        &format!("A8W8 min/max symmetric group-32 {method:?} m={m} k={k} n={n}"),
         &reference,
         &actual,
         0.08,

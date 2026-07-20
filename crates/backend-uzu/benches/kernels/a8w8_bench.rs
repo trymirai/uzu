@@ -5,8 +5,7 @@ use backend_uzu::{
         common::{
             Allocation, AllocationType, Backend, Context, Encoder,
             gpu_types::{
-                ActivationPrepareOps, ActivationScaleStatistic, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder,
-                QuantizationMode,
+                ACTIVATION_QUANTIZATION_GROUP_SIZE, ActivationPrepareOps, HadamardTransformOrder, QuantizationMode,
             },
             kernel::{
                 ActivationsPrepareKernel, HadamardTransformKernel, Kernels,
@@ -26,8 +25,12 @@ type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 type MetalPrepare = <<Metal as Backend>::Kernels as Kernels>::ActivationsPrepareKernel;
 type MetalHadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel;
 
-const SHAPES: &[(usize, usize, usize, u32)] =
-    &[(1, 2048, 2048, 64), (8, 2048, 2048, 64), (128, 2048, 2048, 64), (256, 4096, 2048, 128)];
+const SHAPES: &[(usize, usize, usize, u32)] = &[
+    (1, 2048, 2048, ACTIVATION_QUANTIZATION_GROUP_SIZE),
+    (8, 2048, 2048, ACTIVATION_QUANTIZATION_GROUP_SIZE),
+    (128, 2048, 2048, ACTIVATION_QUANTIZATION_GROUP_SIZE),
+    (256, 4096, 2048, ACTIVATION_QUANTIZATION_GROUP_SIZE),
+];
 
 struct HostInputs {
     weights_u8: Vec<u8>,
@@ -141,7 +144,6 @@ fn encode_a8w8(
         Some(&mut buffers.a_int8),
         Some(&mut buffers.a_scales),
         None::<&mut Allocation<Metal>>,
-        None::<&mut Allocation<Metal>>,
         Some(&buffers.rht_factors),
         buffers.m,
         buffers.k,
@@ -221,7 +223,6 @@ fn bench_a8w8(c: &mut Criterion) {
         &context,
         DataType::BF16,
         ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE,
-        ActivationScaleStatistic::AbsMax,
     )
     .expect("prepare kernel");
     let hadamard =
@@ -234,7 +235,6 @@ fn bench_a8w8(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(2));
 
     for &(m, k, n, group_size) in SHAPES {
-        assert!(group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32));
         let label = format!("m{m}_k{k}_n{n}_gs{group_size}");
         let host = HostInputs::generate(m, k, n, group_size, 0xB8_00 ^ k as u64);
         let mut buffers = upload(&context, &host);

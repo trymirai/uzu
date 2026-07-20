@@ -7,7 +7,7 @@ use crate::{
         common::{
             Allocation, BufferArg,
             gpu_types::{
-                GemmAPrologueKind, GemmParams, HADAMARD_TRANSFORM_BLOCK_SIZE,
+                ACTIVATION_QUANTIZATION_GROUP_SIZE, GemmAPrologueKind, GemmParams,
                 gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
             },
             kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
@@ -23,9 +23,7 @@ pub(crate) struct GemmEncodeArgs<'a, 'b, 'd, WB> {
     pub a_offset: usize,
     pub a_int8: Option<&'a Allocation<Metal>>,
     pub a_scales: Option<&'a Allocation<Metal>>,
-    pub a_zero_points: Option<&'a Allocation<Metal>>,
     pub a_row_sums: Option<&'a Allocation<Metal>>,
-    pub b_col_sums: Option<&'a Allocation<Metal>>,
     pub a_prologue: GemmAPrologueKind,
 
     pub weights: WB,
@@ -100,8 +98,7 @@ fn validate_int8_a(
     let b_ok_for_int8 =
         matches!(b_prologue, GemmBPrologueKind::ScaleSymmetricDequant | GemmBPrologueKind::ScaleZeroPointDequant);
     if !use_mxu
-        || a_group_size == 0
-        || !a_group_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
+        || a_group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE
         || !k.is_multiple_of(a_group_size)
         || !b_ok_for_int8
         || bits_per_b != Some(8)
@@ -109,7 +106,7 @@ fn validate_int8_a(
     {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
-            reason: "int8 activations require MXU, complete RHT-block-aligned groups, and matching 8-bit symmetric/ZP weights",
+            reason: "int8 activations require MXU, group size 32, and matching 8-bit symmetric/ZP weights",
         }
         .into());
     }
@@ -125,7 +122,7 @@ fn validate_int8_a(
 
 impl<'a, 'b, 'd, WB> GemmEncodeArgs<'a, 'b, 'd, WB> {
     pub(crate) fn a_is_int8(&self) -> bool {
-        matches!(self.a_prologue, GemmAPrologueKind::Int8Symmetric | GemmAPrologueKind::Int8Asymmetric)
+        self.a_prologue == GemmAPrologueKind::Int8Symmetric
     }
 }
 
@@ -175,9 +172,7 @@ pub(crate) fn resolve_full_precision<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         a_offset,
         a_int8: None,
         a_scales: None,
-        a_zero_points: None,
         a_row_sums: None,
-        b_col_sums: None,
         a_prologue: GemmAPrologueKind::FullPrecision,
         weights,
         scales: None,
@@ -246,11 +241,11 @@ pub(crate) fn resolve_quant<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         } => unreachable!("resolve_quant requires quantized B"),
     };
 
-    let (a, a_offset, a_int8, a_scales, a_zero_points, a_row_sums, b_col_sums, a_prologue) = match a {
+    let (a, a_offset, a_int8, a_scales, a_row_sums, a_prologue) = match a {
         MatmulA::FullPrecision {
             values,
             offset,
-        } => (Some(values), offset, None, None, None, None, None, GemmAPrologueKind::FullPrecision),
+        } => (Some(values), offset, None, None, None, GemmAPrologueKind::FullPrecision),
         MatmulA::Int8Symmetric {
             values,
             scales: a_scales,
@@ -258,27 +253,7 @@ pub(crate) fn resolve_quant<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
             group_size: a_group_size,
         } => {
             validate_int8_a(use_mxu, a_group_size, k, b_prologue, bits_per_b, group_size, row_sums)?;
-            (None, 0, Some(values), Some(a_scales), None, row_sums, None, GemmAPrologueKind::Int8Symmetric)
-        },
-        MatmulA::Int8Asymmetric {
-            values,
-            scales: a_scales,
-            zero_points: a_zero_points,
-            row_sums,
-            b_col_sums,
-            group_size: a_group_size,
-        } => {
-            validate_int8_a(use_mxu, a_group_size, k, b_prologue, bits_per_b, group_size, row_sums)?;
-            (
-                None,
-                0,
-                Some(values),
-                Some(a_scales),
-                Some(a_zero_points),
-                row_sums,
-                Some(b_col_sums),
-                GemmAPrologueKind::Int8Asymmetric,
-            )
+            (None, 0, Some(values), Some(a_scales), row_sums, GemmAPrologueKind::Int8Symmetric)
         },
     };
 
@@ -287,9 +262,7 @@ pub(crate) fn resolve_quant<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         a_offset,
         a_int8,
         a_scales,
-        a_zero_points,
         a_row_sums,
-        b_col_sums,
         a_prologue,
         weights,
         scales,
