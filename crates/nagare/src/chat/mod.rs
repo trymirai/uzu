@@ -413,7 +413,7 @@ impl ChatSession {
             let tool_message = ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
                 identifier: call.identifier.clone(),
                 name: Some(call.name.clone()),
-                value: Value::from(serde_json::Value::String(value.json)),
+                value,
             });
             tool_messages.push(tool_message);
         }

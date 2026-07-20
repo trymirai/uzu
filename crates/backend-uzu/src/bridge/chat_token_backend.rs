@@ -131,7 +131,9 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                     },
                 }
             } else {
-                None
+                return Box::pin(NoMetricsStream::new(error_stream(
+                    "Grammar is not supported without a tokenizer".to_string(),
+                )));
             }
         } else {
             None
