@@ -8,7 +8,7 @@ mod token;
 pub use error::Error;
 use shoji::types::{
     basic::{Token, TokenId},
-    session::chat::{ChatContentBlock, ChatMessage, ChatRole},
+    session::chat::{ChatContentBlock, ChatMessage, ChatModelCapabilities, ChatRole},
 };
 use token_stream_parser::{Parser as _, token_stream::TokenStreamParser};
 use tokenizers::{Tokenizer, step_decode_stream};
@@ -24,6 +24,7 @@ use crate::{
 };
 
 pub struct Encoding {
+    capabilities: ChatModelCapabilities,
     config: HanashiResolvedConfig,
     tokenizer: Tokenizer,
     parser: TokenStreamParser,
@@ -54,6 +55,7 @@ impl EncodingTrait for Encoding {
         let renderer = Renderer::new(resolved_config.rendering.clone());
         let validator = Validator::new(resolved_config.ordering.clone());
         Ok(Self {
+            capabilities: config.capabilities()?,
             config: resolved_config,
             tokenizer,
             parser,
@@ -123,7 +125,7 @@ impl EncodingTrait for Encoding {
     }
 
     fn supports_tool_calls(&self) -> bool {
-        self.config.rendering.rendering.contains_key(&ChatRole::Tool {})
+        self.capabilities.supports_tools
     }
 }
 

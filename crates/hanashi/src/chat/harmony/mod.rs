@@ -1,6 +1,5 @@
 mod bridging;
 mod config;
-mod encoding_name;
 mod error;
 
 use bridging::{bridge_messages_from_harmony, bridge_messages_to_harmony};
@@ -16,7 +15,7 @@ use openai_harmony::{
 };
 use shoji::types::{
     basic::{Token, TokenId},
-    session::chat::ChatMessage,
+    session::chat::{ChatMessage, ChatModelCapabilities},
 };
 use tokenizers::Tokenizer;
 
@@ -26,6 +25,7 @@ use crate::{
 };
 
 pub struct Encoding {
+    capabilities: ChatModelCapabilities,
     encoding: HarmonyEncoding,
     parser: StreamableParser,
     state: State,
@@ -60,6 +60,7 @@ impl EncodingTrait for Encoding {
         let encoding = load_harmony_encoding(encoding_name).map_err(|_| Error::UnableToLoadEncoding)?;
         let parser = StreamableParser::new(encoding.clone(), None).map_err(|_| Error::UnableToLoadEncoding)?;
         Ok(Self {
+            capabilities: config.capabilities(),
             encoding,
             parser,
             state: State::default(),
@@ -120,7 +121,7 @@ impl EncodingTrait for Encoding {
     }
 
     fn supports_tool_calls(&self) -> bool {
-        true
+        self.capabilities.supports_tools
     }
 }
 

@@ -90,6 +90,13 @@ impl Instance {
             Instance::Message(session) => session.peak_memory_usage(),
         }
     }
+
+    pub fn supports_tool_calls(&self) -> bool {
+        match self {
+            Instance::Token(session) => session.supports_tool_calls(),
+            Instance::Message(session) => session.supports_tool_calls(),
+        }
+    }
 }
 
 #[bindings::export(Class)]
@@ -131,11 +138,7 @@ impl ChatSession {
             message: error.to_string(),
         })??;
 
-        let supports_tool_calls = match &instance {
-            Instance::Token(session) => session.supports_tool_calls(),
-            Instance::Message(_) => true,
-        };
-
+        let supports_tool_calls = instance.supports_tool_calls();
         Ok(Self {
             instance: Arc::new(Mutex::new(instance)),
             state: Arc::new(Mutex::new(ChatSessionState::Idle)),
@@ -157,7 +160,7 @@ impl ChatSession {
         if definitions.is_empty() {
             return Ok(());
         }
-        if !self.instance.lock().await.supports_tool_calls() {
+        if self.tool_registry.is_none() {
             return Err(ChatSessionError::Backend {
                 message: "Tool calls are not supported by this model".to_string(),
             });

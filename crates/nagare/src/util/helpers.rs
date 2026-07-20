@@ -47,5 +47,5 @@ pub fn build_encoding(
             name: Some("tokenizer.json".to_string()),
         },
     };
-    Encoding::new(encoding_config, encoding_context).map_err(io::Error::other)
+    Encoding::new(config, encoding_context).map_err(io::Error::other)
 }
