@@ -1,4 +1,4 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::{Float, NumCast};
 use proc_macros::kernel;
 
@@ -30,7 +30,7 @@ fn input_rht(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE]) {
 }
 
 #[kernel(ActivationsPrepare)]
-#[variants(InputT, f32, f16, bf16)]
+#[variants(InputT, f32, bf16)]
 pub fn activations_prepare<InputT: ArrayElement + Float>(
     input: *const InputT,
     q_out: *mut i8,

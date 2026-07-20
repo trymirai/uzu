@@ -3,10 +3,10 @@ use crate::{
     backends::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
-            gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, HadamardTransformOrder, gemm::GemmBPrologueKind},
+            gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, HadamardTransformOrder, QuantizationMode},
             kernel::{
                 HadamardTransformKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulError, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
         cpu::{Cpu, context::CpuContext, error::CpuError},
@@ -105,12 +105,17 @@ impl MatmulKernel for MatmulCpuKernel {
             } => {
                 if group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE
                     || b.group_size() != Some(group_size)
-                    || b.bits_per_b() != Some(8)
-                    || !matches!(b.b_prologue(), GemmBPrologueKind::ScaleSymmetricDequant)
+                    || !matches!(
+                        b,
+                        MatmulB::ScaleSymmetricDequant {
+                            mode: QuantizationMode::U8,
+                            ..
+                        }
+                    )
                 {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
-                        reason: "int8 activations require group size 32 and matching 8-bit symmetric weights",
+                        reason: "int8 activations require group size 32 and matching unsigned 8-bit symmetric weights",
                     }
                     .into());
                 }
@@ -168,7 +173,6 @@ impl MatmulKernel for MatmulCpuKernel {
                 } => None,
             };
 
-            // A8W8 converts the unsigned W8 code to signed form before the integer multiply.
             let signed_u8_weights = matches!(a_data, AData::Int8 { .. });
 
             unsafe {
@@ -253,7 +257,6 @@ impl MatmulKernel for MatmulCpuKernel {
                                         } else {
                                             let zp_u8 = *zp.as_ptr().add(b_col * zero_point_stride + group_index);
                                             if signed_u8_weights {
-                                                // Match Metal: signed ZP = unsigned ZP - 128.
                                                 zp_u8 as f32 - 128.0
                                             } else {
                                                 zp_u8 as f32

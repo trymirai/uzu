@@ -219,7 +219,17 @@ impl<B: Backend> dyn Linear<B> {
             ..
         }) = &spec
         {
-            if rht_wrapper::activation_prepare_group_size(input_dimension, quantization_spec).is_some() {
+            if rht_wrapper::a8w8_rht_group_size(
+                context,
+                input_dimension,
+                has_biases,
+                weights_data_type,
+                input_data_type,
+                output_data_type,
+                quantization_spec,
+            )
+            .is_some()
+            {
                 let linear = RHTLinearWrapper::new(
                     context,
                     input_dimension,

@@ -6,7 +6,7 @@ use crate::{
         common::{
             Allocation, Backend, BufferArg, Encoder,
             gpu_types::{
-                ACTIVATION_QUANTIZATION_GROUP_SIZE, GemmParams, HadamardTransformOrder,
+                ACTIVATION_QUANTIZATION_GROUP_SIZE, GemmParams, HadamardTransformOrder, QuantizationMode,
                 gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
             },
             kernel::{
@@ -41,7 +41,6 @@ pub struct GemmKernel {
     split_k_reduce: HashMap<GemmDTransform, GemmSplitKReduceMetalKernel>,
 }
 
-/// Resolved bind set for GEMM encode — distinct from public [`MatmulArguments`].
 struct GemmEncodeArgs<'a, 'b, 'd, WB> {
     a: Option<&'a Allocation<Metal>>,
     a_offset: usize,
@@ -440,6 +439,7 @@ fn validate_int8_a(
     b_prologue: GemmBPrologueKind,
     bits_per_b: Option<u32>,
     group_size: Option<u32>,
+    b_mode: Option<QuantizationMode>,
 ) -> Result<(), MetalError> {
     let b_ok_for_int8 = matches!(b_prologue, GemmBPrologueKind::ScaleSymmetricDequant);
     if !use_mxu
@@ -447,11 +447,12 @@ fn validate_int8_a(
         || !k.is_multiple_of(a_group_size)
         || !b_ok_for_int8
         || bits_per_b != Some(8)
+        || b_mode != Some(QuantizationMode::U8)
         || group_size != Some(a_group_size)
     {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
-            reason: "int8 activations require MXU, group size 32, and matching 8-bit symmetric weights",
+            reason: "int8 activations require MXU, group size 32, and matching unsigned 8-bit symmetric weights",
         }
         .into());
     }
@@ -549,24 +550,25 @@ fn resolve_quant<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         ..
     } = arguments;
 
-    let (weights, scales, biases, zero_points) = match b {
+    let (weights, scales, biases, zero_points, b_mode) = match b {
         MatmulB::ScaleBiasDequant {
             b: w,
             scales,
             biases,
             ..
-        } => (w, Some(scales), Some(biases), None),
+        } => (w, Some(scales), Some(biases), None, None),
         MatmulB::ScaleZeroPointDequant {
             b: w,
             scales,
             zero_points,
             ..
-        } => (w, Some(scales), None, Some(zero_points)),
+        } => (w, Some(scales), None, Some(zero_points), None),
         MatmulB::ScaleSymmetricDequant {
             b: w,
             scales,
+            mode,
             ..
-        } => (w, Some(scales), None, None),
+        } => (w, Some(scales), None, None, Some(mode)),
         MatmulB::FullPrecision {
             ..
         } => unreachable!("resolve_quant requires quantized B"),
@@ -582,7 +584,7 @@ fn resolve_quant<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
             scales: a_scales,
             group_size: a_group_size,
         } => {
-            validate_int8_a(use_mxu, a_group_size, k, b_prologue, bits_per_b, group_size)?;
+            validate_int8_a(use_mxu, a_group_size, k, b_prologue, bits_per_b, group_size, b_mode)?;
             (None, 0, Some(values), Some(a_scales), GemmAPrologueKind::Int8Symmetric)
         },
     };
@@ -725,7 +727,6 @@ impl GemmPlan {
         let group_count_y = args.m.div_ceil(tiling.block_m());
 
         let zero_point_4bit = args.zero_points.is_some() && args.bits_per_b == Some(4);
-        // A8W8 kernels are cheaper per tile; a lower target avoids oversplitting MN-heavy shapes.
         let split_k_target = if args.a_is_int8() {
             128
         } else {

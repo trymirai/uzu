@@ -48,7 +48,6 @@ struct MxuMmaCore {
   METAL_CONST ushort TILES_K = SIMDGROUP_BLOCK_K / uzu::matmul::MxuFragmentOps<>::FRAGMENT_ROWS;
 
   METAL_CONST ushort QUANT_BK = (B_PROLOGUE == GemmBPrologueKind::FullPrecision) ? 0 : GROUP_SIZE;
-  // Add 16 bytes to each threadgroup-memory row so adjacent rows do not share an aligned stride.
   METAL_CONST ushort SHARED_STRIDE_PADDING_B = 16 / sizeof(BT);
   METAL_CONST ushort SHARED_STRIDE_B = (QUANT_BK > 0) ? (QUANT_BK + SHARED_STRIDE_PADDING_B) : 1;
   METAL_CONST ushort THREADGROUP_THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;

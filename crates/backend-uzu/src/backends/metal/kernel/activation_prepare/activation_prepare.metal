@@ -29,10 +29,6 @@ PUBLIC KERNEL(ActivationsPrepare)(
     uint batch_index GROUPS(batch_size),
     uint lane_index THREADS(METAL_SIMD_SIZE)
 ) {
-  if (group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE || element_count % group_size != 0) {
-    return;
-  }
-
   const uint factor_index = block_index * METAL_SIMD_SIZE + lane_index;
   const uint element_index = batch_index * element_count + factor_index;
 

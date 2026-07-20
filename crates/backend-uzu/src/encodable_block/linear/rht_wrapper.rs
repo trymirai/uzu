@@ -45,10 +45,23 @@ pub struct RHTLinearWrapper<B: Backend> {
     input_dimension: usize,
 }
 
-pub(super) fn activation_prepare_group_size(
+pub(super) fn a8w8_rht_group_size(
+    context: &impl Context,
     input_dimension: usize,
+    has_biases: bool,
+    weights_data_type: DataType,
+    input_data_type: DataType,
+    output_data_type: DataType,
     quantization_spec: &AnyWeightMatrixSpec,
 ) -> Option<u32> {
+    if has_biases
+        || !context.supports_mxu()
+        || weights_data_type != DataType::BF16
+        || input_data_type != DataType::BF16
+        || output_data_type != DataType::BF16
+    {
+        return None;
+    }
     let AnyWeightMatrixSpec::IntSpec(IntSpec {
         bits: 8,
         group_size,
@@ -59,7 +72,6 @@ pub(super) fn activation_prepare_group_size(
     else {
         return None;
     };
-
     if input_dimension.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
         && *group_size == ACTIVATION_QUANTIZATION_GROUP_SIZE as usize
     {
@@ -110,22 +122,26 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )
         .map_err(RHTLinearWrapperError::BackendError)?;
 
-        let int8_preparation = if context.supports_mxu()
-            && weights_data_type == DataType::BF16
-            && input_data_type == DataType::BF16
-            && output_data_type == DataType::BF16
-            && let Some(group_size) = activation_prepare_group_size(input_dimension, &quantization_spec)
-        {
+        let int8_preparation = a8w8_rht_group_size(
+            context,
+            input_dimension,
+            has_biases,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
+            &quantization_spec,
+        )
+        .map(|group_size| {
             let ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
-            let kernel = <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type, ops)
-                .map_err(RHTLinearWrapperError::BackendError)?;
-            Some(Int8Preparation {
-                kernel,
-                group_size,
+            <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type, ops).map(|kernel| {
+                Int8Preparation {
+                    kernel,
+                    group_size,
+                }
             })
-        } else {
-            None
-        };
+        })
+        .transpose()
+        .map_err(RHTLinearWrapperError::BackendError)?;
 
         let inner_linear = LinearMatmul::quantized(
             context,
