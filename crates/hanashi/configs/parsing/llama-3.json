@@ -81,6 +81,11 @@
                                         "key": "value"
                                     },
                                     {
+                                        "type": "regex_replace",
+                                        "pattern": "\\{\\s*\"\\s*\\}",
+                                        "template": "{}"
+                                    },
+                                    {
                                         "type": "split_top_level",
                                         "separator": ";"
                                     },
@@ -162,6 +167,11 @@
                                     "value": "{"
                                 },
                                 "then": [
+                                    {
+                                        "type": "regex_replace",
+                                        "pattern": "\\{\\s*\"\\s*\\}",
+                                        "template": "{}"
+                                    },
                                     {
                                         "type": "split_top_level",
                                         "separator": ";"
