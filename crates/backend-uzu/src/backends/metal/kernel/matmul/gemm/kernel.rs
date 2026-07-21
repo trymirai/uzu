@@ -48,7 +48,7 @@ impl GemmKernel {
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> Result<Self, MetalError> {
-        let bias_add = TensorAddBiasMetalKernel::new(context, output_data_type, weights_data_type, true)?;
+        let bias_add = TensorAddBiasMetalKernel::new(context, output_data_type, weights_data_type, true, false)?;
         let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
             context,
             output_data_type,

@@ -60,11 +60,9 @@ struct WeaverStepInputs<B: Backend> {
     candidate_ids: Allocation<B>,
     candidate_scores: Allocation<B>,
     ancestor_indices: Allocation<B>,
-    ancestor_counts: Allocation<B>,
-    node_indices: Allocation<B>,
+    metadata: Allocation<B>,
     ancestor_stride: usize,
-    _token_ids: Allocation<B>,
-    _token_embedding: Allocation<B>,
+    _retained: [Allocation<B>; 2],
 }
 
 pub(crate) struct Weaver<B: Backend> {
@@ -77,6 +75,7 @@ pub(crate) struct Weaver<B: Backend> {
     query_projection: Box<dyn Linear<B>>,
     position_embeddings: Allocation<B>,
     position_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
+    indexed_position_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
     top_children: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
     model_dim: usize,
     target_model_dim: usize,
@@ -172,7 +171,7 @@ impl<B: Backend> WeaverNorm<B> {
             .transpose()?;
         let bias_kernel = biases
             .as_ref()
-            .map(|_| <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, DataType::F32, true))
+            .map(|_| <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, DataType::F32, true, false))
             .transpose()
             .map_err(WeaverNewError::Backend)?;
         Ok(Self {
@@ -194,6 +193,7 @@ impl<B: Backend> WeaverNorm<B> {
             kernel.encode(
                 None::<&Allocation<B>>,
                 biases,
+                None::<&Allocation<B>>,
                 &mut output,
                 self.dimension as u32,
                 (row_count * self.dimension) as u32,
@@ -227,6 +227,7 @@ impl<B: Backend> Weaver<B> {
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, WeaverNewError<B>> {
+        assert_eq!(data_type, DataType::BF16, "Weaver only supports BF16");
         if config.num_heads == 0 || !config.model_dim.is_multiple_of(config.num_heads) {
             return Err(WeaverNewError::InvalidHeadConfig);
         }
@@ -296,8 +297,12 @@ impl<B: Backend> Weaver<B> {
             .leaf("position_embeddings")?
             .validate(&[config.max_depth, config.model_dim], DataType::F32)?
             .read_allocation()?;
-        let position_add = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, DataType::F32, true)
-            .map_err(WeaverNewError::Backend)?;
+        let position_add =
+            <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, DataType::F32, true, false)
+                .map_err(WeaverNewError::Backend)?;
+        let indexed_position_add =
+            <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, DataType::F32, true, true)
+                .map_err(WeaverNewError::Backend)?;
         let top_children =
             <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context).map_err(WeaverNewError::Backend)?;
         Ok(Self {
@@ -310,6 +315,7 @@ impl<B: Backend> Weaver<B> {
             query_projection,
             position_embeddings,
             position_add,
+            indexed_position_add,
             top_children,
             model_dim: config.model_dim,
             target_model_dim: config.target_model_dim,
@@ -349,7 +355,16 @@ impl<B: Backend> Weaver<B> {
             .hidden_state_projection
             .encode(normalized, length, &mut encoder)
             .map_err(WeaverEncodeError::Backend)?;
-        self.add_positions(&mut hidden, lookahead_count, 0, 1, &mut encoder);
+        let position_elements = lookahead_count * self.model_dim;
+        self.position_add.encode(
+            None::<&Allocation<B>>,
+            &self.position_embeddings,
+            None::<&Allocation<B>>,
+            (&mut hidden, self.model_dim * self.data_type.size_in_bytes()),
+            position_elements as u32,
+            position_elements as u32,
+            &mut encoder,
+        );
 
         let mut layer_qkv = Vec::with_capacity(self.blocks.len());
         for block in &self.blocks {
@@ -433,7 +448,7 @@ impl<B: Backend> Weaver<B> {
         let mut layer_qkv = Vec::with_capacity(self.blocks.len());
         for (layer_index, block) in self.blocks.iter().enumerate() {
             let (next_current, current_qkv) = block.encode_step(
-                &current,
+                current,
                 &prefix.layer_qkv[layer_index],
                 &mut state.layer_qkv[layer_index],
                 &step,
@@ -486,9 +501,24 @@ impl<B: Backend> Weaver<B> {
             .embedding_projection
             .encode(embedding_normalized, rows, encoder)
             .map_err(WeaverEncodeError::Backend)?;
-        for (row, input) in inputs.iter().enumerate() {
-            self.add_positions(&mut current, 1, input.depth, row, encoder);
-        }
+        // [depths, ancestor counts, node indices]
+        let mut metadata_values = Vec::with_capacity(3 * rows);
+        metadata_values.extend(inputs.iter().map(|input| input.depth as u32));
+        metadata_values.extend(inputs.iter().map(|input| input.ancestors.len() as u32));
+        metadata_values.extend(inputs.iter().map(|input| input.node_index as u32));
+        let mut metadata = encoder
+            .allocate_constant(size_for_shape(&[3 * rows], DataType::U32))
+            .map_err(WeaverEncodeError::Backend)?;
+        metadata.copyin(&metadata_values);
+        self.indexed_position_add.encode(
+            None::<&Allocation<B>>,
+            &self.position_embeddings,
+            Some(&metadata),
+            &mut current,
+            self.model_dim as u32,
+            (rows * self.model_dim) as u32,
+            encoder,
+        );
 
         let ancestor_stride = inputs.iter().map(|input| input.ancestors.len()).max().unwrap().max(1);
         let mut ancestor_indices = encoder
@@ -501,24 +531,15 @@ impl<B: Backend> Weaver<B> {
             }
         }
         ancestor_indices.copyin(&ancestors);
-        let mut ancestor_counts =
-            encoder.allocate_constant(size_for_shape(&[rows], DataType::U32)).map_err(WeaverEncodeError::Backend)?;
-        ancestor_counts.copyin(&inputs.iter().map(|input| input.ancestors.len() as u32).collect::<Vec<_>>());
-        let mut node_indices =
-            encoder.allocate_constant(size_for_shape(&[rows], DataType::U32)).map_err(WeaverEncodeError::Backend)?;
-        node_indices.copyin(&inputs.iter().map(|input| input.node_index as u32).collect::<Vec<_>>());
-
         Ok((
             current,
             WeaverStepInputs {
                 candidate_ids,
                 candidate_scores,
                 ancestor_indices,
-                ancestor_counts,
-                node_indices,
+                metadata,
                 ancestor_stride,
-                _token_ids: token_ids,
-                _token_embedding: token_embedding,
+                _retained: [token_ids, token_embedding],
             },
         ))
     }
@@ -557,30 +578,6 @@ impl<B: Backend> Weaver<B> {
             encoder,
         );
         Ok((child_ids, child_logprobs, [candidate_logits, query]))
-    }
-
-    fn add_positions(
-        &self,
-        hidden: &mut Allocation<B>,
-        rows: usize,
-        start_depth: usize,
-        row_offset: usize,
-        encoder: &mut Encoder<B>,
-    ) {
-        let row_bytes = self.model_dim * self.data_type.size_in_bytes();
-        let position_bytes = self.model_dim * DataType::F32.size_in_bytes();
-        for row in 0..rows {
-            let depth = start_depth + row;
-            assert!(depth < self.max_depth);
-            self.position_add.encode(
-                None::<&Allocation<B>>,
-                (&self.position_embeddings, depth * position_bytes),
-                (&mut *hidden, (row + row_offset) * row_bytes),
-                self.model_dim as u32,
-                self.model_dim as u32,
-                encoder,
-            );
-        }
     }
 }
 
@@ -661,7 +658,7 @@ impl<B: Backend> WeaverBlock<B> {
     /// One block over the batched step; returns (next hidden, QKV to retain).
     fn encode_step(
         &self,
-        current: &Allocation<B>,
+        current: Allocation<B>,
         prefix_qkv: &Allocation<B>,
         state_qkv: &mut Allocation<B>,
         step: &WeaverStepInputs<B>,
@@ -669,8 +666,11 @@ impl<B: Backend> WeaverBlock<B> {
         rows: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), WeaverEncodeError<B>> {
-        let normalized = self.pre_attention_norm.encode(current, rows, encoder).map_err(WeaverEncodeError::Backend)?;
+        let normalized = self.pre_attention_norm.encode(&current, rows, encoder).map_err(WeaverEncodeError::Backend)?;
         let current_qkv = self.qkv_projection.encode(normalized, rows, encoder).map_err(WeaverEncodeError::Backend)?;
+        let metadata_row_bytes = rows * DataType::U32.size_in_bytes();
+        let ancestor_counts = (&step.metadata, metadata_row_bytes);
+        let node_indices = (&step.metadata, 2 * metadata_row_bytes);
         let mut attention_rows = encoder
             .allocate_scratch(size_for_shape(&[rows, self.model_dim], self.data_type))
             .map_err(WeaverEncodeError::Backend)?;
@@ -679,8 +679,8 @@ impl<B: Backend> WeaverBlock<B> {
             state_qkv,
             &current_qkv,
             &step.ancestor_indices,
-            &step.ancestor_counts,
-            &step.node_indices,
+            ancestor_counts,
+            node_indices,
             &mut attention_rows,
             rows as u32,
             prefix_length as u32,
@@ -690,8 +690,7 @@ impl<B: Backend> WeaverBlock<B> {
         );
         attention_rows =
             self.out_projection.encode(attention_rows, rows, encoder).map_err(WeaverEncodeError::Backend)?;
-        let mut residual = encoder.allocate_scratch(current.size()).map_err(WeaverEncodeError::Backend)?;
-        encoder.encode_copy(current, .., &mut residual, ..);
+        let mut residual = current;
         self.residual_add.encode(&mut residual, &mut attention_rows, (rows * self.model_dim) as u32, encoder);
         let normalized = self.pre_mlp_norm.encode(&residual, rows, encoder).map_err(WeaverEncodeError::Backend)?;
         let mut mlp = self.up_projection.encode(normalized, rows, encoder).map_err(WeaverEncodeError::Backend)?;
@@ -750,8 +749,7 @@ impl<B: Backend> WeaverBlock<B> {
             encoder,
         )?;
         let mut attention = self.out_projection.encode(attention, rows, encoder)?;
-        let mut residual = encoder.allocate_scratch(hidden.size())?;
-        encoder.encode_copy(&hidden, .., &mut residual, ..);
+        let mut residual = hidden;
         self.residual_add.encode(&mut residual, &mut attention, (rows * self.model_dim) as u32, encoder);
         let normalized = self.pre_mlp_norm.encode(&residual, rows, encoder)?;
         let mut mlp = self.up_projection.encode(normalized, rows, encoder)?;
