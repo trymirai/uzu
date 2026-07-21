@@ -8,7 +8,7 @@ use crate::{
         Allocation, AllocationType, Backend, Context, Encoder, Kernels,
         kernel::{
             ActivationKernel, AttentionLastQueryKernel, AttentionPrepareKernel, TensorAddBiasKernel,
-            TensorAddSwapKernel, WeaverTopChildrenKernel, weaver::MAX_CANDIDATES,
+            TensorAddSwapKernel, WeaverNodeCacheWriteKernel, WeaverTopChildrenKernel, weaver::MAX_CANDIDATES,
         },
     },
     config::{normalization::NormalizationConfig, weaver::WeaverConfig},
@@ -41,7 +41,6 @@ pub(crate) struct WeaverBatchStepInput<'a> {
 
 pub(crate) struct WeaverNodeState<B: Backend> {
     layer_qkv: Box<[Allocation<B>]>,
-    initialized: Box<[bool]>,
     capacity: usize,
 }
 
@@ -90,6 +89,7 @@ struct WeaverBlock<B: Backend> {
     activation: <B::Kernels as Kernels>::ActivationKernel,
     residual_add: <B::Kernels as Kernels>::TensorAddSwapKernel,
     last_query_attention: <B::Kernels as Kernels>::AttentionLastQueryKernel,
+    node_cache_write: <B::Kernels as Kernels>::WeaverNodeCacheWriteKernel,
     attention_scale: f32,
     model_dim: usize,
     hidden_dim: usize,
@@ -205,7 +205,6 @@ impl<B: Backend> Weaver<B> {
             .collect::<Result<Box<[_]>, _>>()?;
         Ok(WeaverNodeState {
             layer_qkv,
-            initialized: vec![false; capacity].into_boxed_slice(),
             capacity,
         })
     }
@@ -376,9 +375,6 @@ impl<B: Backend> Weaver<B> {
         let (child_ids, child_logprobs) =
             self.encode_step_batch(prefix, inputs, state, children, target_embedding, &mut encoder)?;
         let completed = encoder.end_encoding().submit().wait_until_completed().map_err(WeaverEncodeError::Backend)?;
-        for input in inputs {
-            state.initialized[input.node_index] = true;
-        }
         let child_ids_output = child_ids.copyout::<u32>();
         let child_logprobs_output = child_logprobs.copyout::<f32>();
         let outputs = (0..inputs.len())
@@ -410,22 +406,19 @@ impl<B: Backend> Weaver<B> {
         let candidates = inputs[0].candidates.len();
         assert!(candidates > 0 && candidates <= MAX_CANDIDATES);
         assert!(children > 0 && children <= candidates);
+        // Indices reach the GPU unchecked, so they must stay inside the arena.
+        // Batch nodes are expected to be mutually independent: a child only
+        // enters the frontier once its parent's step has been read back, so a
+        // parent and child can never share a batch.
         assert!(
             inputs.iter().all(|input| {
                 input.candidates.len() == candidates
                     && input.candidate_scores.len() == candidates
                     && input.depth < self.max_depth
                     && input.node_index < state.capacity
-                    && input.ancestors.iter().all(|&ancestor| ancestor < state.capacity && state.initialized[ancestor])
+                    && input.ancestors.iter().all(|&ancestor| ancestor < state.capacity)
             }),
-            "inputs must reference initialized ancestors within the node-state capacity"
-        );
-        assert!(
-            inputs.iter().enumerate().all(|(index, input)| {
-                inputs[..index].iter().all(|other| other.node_index != input.node_index)
-                    && inputs.iter().all(|other| !other.ancestors.contains(&input.node_index))
-            }),
-            "batch nodes must be distinct and independent"
+            "inputs must reference node indices within the node-state capacity"
         );
 
         let (mut current, step) = self.encode_step_inputs(inputs, target_embedding, encoder)?;
@@ -596,6 +589,8 @@ impl<B: Backend> WeaverBlock<B> {
         let last_query_attention =
             <B::Kernels as Kernels>::AttentionLastQueryKernel::new(context, head_dim as u32, num_heads as u32)
                 .map_err(WeaverNewError::Backend)?;
+        let node_cache_write = <B::Kernels as Kernels>::WeaverNodeCacheWriteKernel::new(context, data_type)
+            .map_err(WeaverNewError::Backend)?;
         Ok(Self {
             qkv_projection,
             out_projection,
@@ -608,6 +603,7 @@ impl<B: Backend> WeaverBlock<B> {
             activation,
             residual_add,
             last_query_attention,
+            node_cache_write,
             attention_scale,
             model_dim,
             hidden_dim,
@@ -635,16 +631,25 @@ impl<B: Backend> WeaverBlock<B> {
         let mut attention = encoder.allocate_scratch(size_for_shape(&[rows, self.model_dim], self.data_type))?;
         self.last_query_attention.encode(
             prefix_qkv,
-            state_qkv,
+            &*state_qkv,
             &current_qkv,
             &step.ancestor_indices,
             ancestor_counts,
-            node_indices,
             &mut attention,
             rows as u32,
             prefix_length as u32,
             step.ancestor_stride as u32,
             self.attention_scale,
+            encoder,
+        );
+        // Separate dispatch so the node arena is read-only above; the encoder
+        // serializes it after the attention that reads the ancestor slots.
+        self.node_cache_write.encode(
+            &current_qkv,
+            state_qkv,
+            node_indices,
+            self.model_dim as u32,
+            (rows * 2 * self.model_dim) as u32,
             encoder,
         );
         attention = self.out_projection.encode(attention, rows, encoder)?;

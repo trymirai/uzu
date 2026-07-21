@@ -28,7 +28,6 @@ struct Runner<B: Backend> {
     current_qkv: Allocation<B>,
     ancestor_indices: Allocation<B>,
     ancestor_counts: Allocation<B>,
-    node_indices: Allocation<B>,
     output: Allocation<B>,
     rows: u32,
     prefix_length: u32,
@@ -69,10 +68,6 @@ impl<B: Backend> Runner<B> {
             current_qkv: alloc_allocation_with_data::<B, bf16>(&context, &values(rows * packed_width, 29)),
             ancestor_indices: alloc_allocation_with_data::<B, u32>(&context, &ancestor_indices),
             ancestor_counts: alloc_allocation_with_data::<B, u32>(&context, &ancestor_counts),
-            node_indices: alloc_allocation_with_data::<B, u32>(
-                &context,
-                &(first_output_node as u32..nodes as u32).collect::<Vec<_>>(),
-            ),
             output: alloc_allocation::<B, bf16>(&context, rows * NUM_HEADS as usize * HEAD_DIM),
             context,
             kernel,
@@ -90,11 +85,10 @@ impl<B: Backend> Runner<B> {
         for _ in 0..repetitions {
             self.kernel.encode(
                 &self.prefix_qkv,
-                &mut self.node_qkv,
+                &self.node_qkv,
                 &self.current_qkv,
                 &self.ancestor_indices,
                 &self.ancestor_counts,
-                &self.node_indices,
                 &mut self.output,
                 self.rows,
                 self.prefix_length,
@@ -111,38 +105,17 @@ impl<B: Backend> Runner<B> {
 fn attention_last_query_matches_cpu() {
     let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16);
     let initial_nodes = allocation_to_vec::<Cpu, bf16>(&cpu.node_qkv);
-    let current_qkv = allocation_to_vec::<Cpu, bf16>(&cpu.current_qkv);
-    let node_indices = allocation_to_vec::<Cpu, u32>(&cpu.node_indices);
     cpu.encode(1);
     let expected_output = allocation_to_vec::<Cpu, bf16>(&cpu.output);
-    let expected_nodes = allocation_to_vec::<Cpu, bf16>(&cpu.node_qkv);
 
-    let packed_width = 3 * NUM_HEADS as usize * HEAD_DIM;
-    let q_width = NUM_HEADS as usize * HEAD_DIM;
-    for node in 0..expected_nodes.len() / packed_width {
-        let range = node * packed_width..(node + 1) * packed_width;
-        if let Some(row) = node_indices.iter().position(|&index| index as usize == node) {
-            let current = row * packed_width;
-            assert_eq!(
-                expected_nodes[range.start..range.start + q_width],
-                initial_nodes[range.start..range.start + q_width]
-            );
-            assert_eq!(
-                expected_nodes[range.start + q_width..range.end],
-                current_qkv[current + q_width..current + packed_width],
-            );
-        } else {
-            assert_eq!(expected_nodes[range.clone()], initial_nodes[range]);
-        }
-    }
+    assert_eq!(allocation_to_vec::<Cpu, bf16>(&cpu.node_qkv), initial_nodes);
 
     let mut metal = Runner::<Metal>::new(4, 5, 3, 16);
     metal.encode(1);
     let actual_output = allocation_to_vec::<Metal, bf16>(&metal.output);
-    let actual_nodes = allocation_to_vec::<Metal, bf16>(&metal.node_qkv);
 
     assert_eq_float(&expected_output, &actual_output, 0.02, "AttentionLastQuery output");
-    assert_eq!(expected_nodes, actual_nodes);
+    assert_eq!(allocation_to_vec::<Metal, bf16>(&metal.node_qkv), initial_nodes);
 }
 
 #[uzu_test]

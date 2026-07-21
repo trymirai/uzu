@@ -1,7 +1,7 @@
 #include <metal_stdlib>
-#include "common/dsl.h"
-#include "common/thread_context.h"
-#include "common/top_k.h"
+#include "../common/dsl.h"
+#include "../common/thread_context.h"
+#include "../common/top_k.h"
 
 using namespace metal;
 
