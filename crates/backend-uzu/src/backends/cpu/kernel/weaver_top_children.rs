@@ -1,6 +1,8 @@
 use half::bf16;
 use proc_macros::kernel;
 
+use crate::backends::common::kernel::weaver::MAX_CANDIDATES;
+
 #[kernel(WeaverTopChildren)]
 pub fn weaver_top_children(
     residual_logits: *const bf16,
@@ -12,7 +14,6 @@ pub fn weaver_top_children(
     candidates: u32,
     children: u32,
 ) {
-    const MAX_CANDIDATES: usize = 512;
     let rows = rows as usize;
     let candidates = candidates as usize;
     let children = children as usize;
