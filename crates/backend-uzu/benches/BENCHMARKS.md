@@ -64,12 +64,13 @@ If dinghy’s launch step fails after install, launch the installed app with
 ## RHT A8W8 / A8W4 (`Metal/Kernel/A8W`)
 
 [`benches/kernels/a8w8_bench.rs`](kernels/a8w8_bench.rs) is the **primary KPI**: RHT + act
-prepare + int8×W{4,8} MXU GEMM. Batch sizes are **16 / 32 / 64** only.
+prepare + int8×W{4,8} MXU, vs BF16×W{4,8} GEMV. Batch sizes **1 / 2 / 4 / 8 / 16 / 32 / 64**.
+GEMV is skipped when M exceeds the GEMV batch limit (default 8).
 
 | Function id | Timed work |
 |-------------|------------|
-| `linear_a8w8` | Dyn act prepare (`RHT + quant`) + int8×W8 MXU GEMM |
-| `linear_a8w4` | Dyn act prepare (`RHT + quant`) + int8×W4 MXU GEMM |
+| `a8w8_mxu` / `a8w4_mxu` | Dyn act prepare (`RHT + quant`) + int8×W MXU GEMM |
+| `bf16w8_gemv` / `bf16w4_gemv` | Input RHT + BF16×W GEMV (when eligible) |
 
 Activation quantization is **runtime-only**. Weights, scales, and RHT signs are preloaded.
 
