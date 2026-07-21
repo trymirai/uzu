@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use thiserror::Error;
 
 use crate::{
@@ -38,12 +36,12 @@ pub struct DFlashState<B: Backend> {
     layer_states: Box<[AttentionState<B>]>,
     context_length: usize,
     context_capacity: usize,
-    last_target_hidden: Option<Allocation<B>>,
+    target_output_norm: Option<Allocation<B>>,
 }
 
 impl<B: Backend> DFlashState<B> {
-    pub(crate) fn last_target_hidden(&self) -> Option<&Allocation<B>> {
-        self.last_target_hidden.as_ref()
+    pub(crate) fn target_output_norm(&self) -> Option<&Allocation<B>> {
+        self.target_output_norm.as_ref()
     }
 }
 
@@ -185,7 +183,7 @@ impl<B: Backend> DFlashDraft<B> {
             layer_states,
             context_length: 0,
             context_capacity,
-            last_target_hidden: None,
+            target_output_norm: None,
         })
     }
 
@@ -194,7 +192,7 @@ impl<B: Backend> DFlashDraft<B> {
         state: &mut DFlashState<B>,
         target_features: &[Allocation<B>],
         num_tokens: usize,
-        last_target_hidden: &Allocation<B>,
+        target_output_norm: &Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         if num_tokens == 0 {
@@ -206,7 +204,7 @@ impl<B: Backend> DFlashDraft<B> {
         let row_size = self.model_dim * self.data_type.size_in_bytes();
         let layer_feature_size = num_tokens * self.model_dim * self.data_type.size_in_bytes();
         assert!(target_features.iter().all(|features| features.size() == layer_feature_size));
-        assert_eq!(last_target_hidden.size(), row_size);
+        assert_eq!(target_output_norm.size(), row_size);
         let context_length = state.context_length + num_tokens;
         assert!(context_length <= state.context_capacity, "DFlash state capacity exceeded");
         assert!(context_length <= self.max_context_length, "DFlash context exceeds configured RoPE capacity");
@@ -227,8 +225,8 @@ impl<B: Backend> DFlashDraft<B> {
             }
         }
         let mut stored_hidden = encoder.context().create_allocation(row_size, AllocationType::Global)?;
-        encoder.encode_copy(last_target_hidden, .., &mut stored_hidden, ..);
-        state.last_target_hidden = Some(stored_hidden);
+        encoder.encode_copy(target_output_norm, .., &mut stored_hidden, ..);
+        state.target_output_norm = Some(stored_hidden);
 
         let projected = self.context_projection.encode(projection_input, num_tokens, encoder)?;
         let projected = self.context_norm.encode(&projected, 0, num_tokens, None, encoder)?;
