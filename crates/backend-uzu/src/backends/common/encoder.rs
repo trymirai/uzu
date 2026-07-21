@@ -1,8 +1,11 @@
 use std::{
+    mem::size_of_val,
     ops::{Bound, Range, RangeBounds},
     sync::Arc,
     time::Duration,
 };
+
+use bytemuck::{AnyBitPattern, NoUninit};
 
 use crate::backends::common::{
     AccessFlags, Allocation, AllocationPool, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer,
@@ -70,6 +73,15 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
                 cpu_available: true,
             },
         )
+    }
+
+    pub fn allocate_constant_from_slice<T: NoUninit + AnyBitPattern>(
+        &mut self,
+        data: &[T],
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut allocation = self.allocate_constant(size_of_val(data))?;
+        allocation.copyin(data);
+        Ok(allocation)
     }
 
     // This is valid on gpu timeline only
