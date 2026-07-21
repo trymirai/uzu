@@ -289,8 +289,10 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
 }
 
 fn developer_message(instructions: String) -> ExternalMessage {
-    let mut developer_content = ExternalDeveloperContent::default();
-    developer_content.instructions = Some(instructions);
+    let developer_content = ExternalDeveloperContent {
+        instructions: Some(instructions),
+        ..Default::default()
+    };
     ExternalMessage {
         author: ExternalAuthor::from(ExternalRole::Developer),
         recipient: None,

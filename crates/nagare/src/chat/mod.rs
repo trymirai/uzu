@@ -177,13 +177,13 @@ impl ChatSession {
         let messages_empty = messages_guard.is_empty();
         if !messages_empty {
             messages_guard.retain_mut(|message| {
-                return if message.role == (ChatRole::Developer {}) {
+                if message.role == (ChatRole::Developer {}) {
                     let original_len = message.content.len();
                     message.content.retain(|content| !matches!(content, ChatContentBlock::Tools { .. }));
                     original_len == message.content.len() || !message.content.is_empty()
                 } else {
                     true
-                };
+                }
             });
         }
         drop(messages_guard);
