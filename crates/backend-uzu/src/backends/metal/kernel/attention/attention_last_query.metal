@@ -61,6 +61,7 @@ PUBLIC KERNEL(AttentionLastQuery)(
     constant uint& rows,
     constant uint& prefix_length,
     constant uint& ancestor_stride,
+    constant uint& node_capacity,
     constant float& scale,
     const uint num_heads SPECIALIZE,
     const ThreadContext thread_context,
@@ -105,15 +106,16 @@ PUBLIC KERNEL(AttentionLastQuery)(
 
   const uint ancestor_count = ancestor_counts[row];
   const device uint* row_ancestors = ancestor_indices + row * ancestor_stride;
+  const uint last_node = node_capacity == 0 ? 0u : node_capacity - 1u;
   uint offset = 0;
   for (; offset + unroll_count - 1 < ancestor_count; offset += unroll_count) {
     attend_qkv<unroll_count>(query, key_offset, value_offset, values, max_score, sum, [&](int step) {
-      return node_vectors + row_ancestors[offset + step] * qkv_vectors;
+      return node_vectors + min(row_ancestors[offset + step], last_node) * qkv_vectors;
     });
   }
   for (; offset < ancestor_count; ++offset) {
     attend_qkv<1>(query, key_offset, value_offset, values, max_score, sum, [&](int) {
-      return node_vectors + row_ancestors[offset] * qkv_vectors;
+      return node_vectors + min(row_ancestors[offset], last_node) * qkv_vectors;
     });
   }
 
