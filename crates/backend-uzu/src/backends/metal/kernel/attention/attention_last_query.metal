@@ -53,11 +53,10 @@ template <uint HEAD_DIM>
 VARIANTS(HEAD_DIM, 128)
 PUBLIC KERNEL(AttentionLastQuery)(
     const device bfloat* prefix_qkv,
-    device bfloat* node_qkv,
+    const device bfloat* node_qkv,
     const device bfloat* current_qkv,
     const device uint* ancestor_indices,
     const device uint* ancestor_counts,
-    const device uint* node_indices,
     device bfloat* output,
     constant uint& rows,
     constant uint& prefix_length,
@@ -84,7 +83,6 @@ PUBLIC KERNEL(AttentionLastQuery)(
   const device bfloat4* prefix_vectors = (const device bfloat4*)prefix_qkv;
   const device bfloat4* node_vectors = (const device bfloat4*)node_qkv;
   const device bfloat4* current_row = (const device bfloat4*)current_qkv + row * qkv_vectors;
-  device bfloat4* dest_node = (device bfloat4*)node_qkv + node_indices[row] * qkv_vectors;
 
   const float4 query = float4(current_row[head * vectors_per_head + lane]) * scale;
 
@@ -121,7 +119,5 @@ PUBLIC KERNEL(AttentionLastQuery)(
 
   attend_qkv<1>(query, key_offset, value_offset, values, max_score, sum, [&](int) { return current_row; });
 
-  dest_node[key_offset] = current_row[key_offset];
-  dest_node[value_offset] = current_row[value_offset];
   ((device bfloat4*)output)[(row * num_heads + head) * vectors_per_head + lane] = bfloat4(values / sum);
 }

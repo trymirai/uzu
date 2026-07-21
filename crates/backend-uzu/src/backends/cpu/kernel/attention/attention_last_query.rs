@@ -7,11 +7,10 @@ use super::attention_single_pass::attention_single_pass;
 #[variants(HEAD_DIM, 128)]
 fn attention_last_query<const HEAD_DIM: u32>(
     prefix_qkv: *const bf16,
-    node_qkv: *mut bf16,
+    node_qkv: *const bf16,
     current_qkv: *const bf16,
     ancestor_indices: *const u32,
     ancestor_counts: *const u32,
-    node_indices: *const u32,
     output: *mut bf16,
     rows: u32,
     prefix_length: u32,
@@ -32,7 +31,6 @@ fn attention_last_query<const HEAD_DIM: u32>(
     for row in 0..rows as usize {
         unsafe {
             let current_row = current_qkv.add(row * qkv_width);
-            let dest_node = node_qkv.add(*node_indices.add(row) as usize * qkv_width);
 
             let ancestor_count = *ancestor_counts.add(row) as usize;
             let length = prefix_length as usize + ancestor_count + 1;
@@ -75,7 +73,6 @@ fn attention_last_query<const HEAD_DIM: u32>(
                 false,
                 false,
             );
-            std::ptr::copy_nonoverlapping(current_row.add(kv_offset), dest_node.add(kv_offset), kv_width);
         }
     }
 }
