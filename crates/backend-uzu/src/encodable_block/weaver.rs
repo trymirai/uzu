@@ -110,6 +110,8 @@ pub enum WeaverNewError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("model_dim must be divisible by num_heads")]
     InvalidHeadConfig,
+    #[error("candidate_pool_size must be in 1..={MAX_CANDIDATES}, got {0}")]
+    InvalidCandidatePoolSize(usize),
 }
 
 #[derive(Debug, Error)]
@@ -218,6 +220,9 @@ impl<B: Backend> Weaver<B> {
         assert_eq!(data_type, DataType::BF16, "Weaver only supports BF16");
         if config.num_heads == 0 || !config.model_dim.is_multiple_of(config.num_heads) {
             return Err(WeaverNewError::InvalidHeadConfig);
+        }
+        if config.candidate_pool_size == 0 || config.candidate_pool_size > MAX_CANDIDATES {
+            return Err(WeaverNewError::InvalidCandidatePoolSize(config.candidate_pool_size));
         }
         let norm = |dim, name: &str| -> Result<_, WeaverNewError<B>> {
             WeaverNorm::new(context, dim, &config.norm_config, &parameter_tree.subtree(name)?, data_type)
