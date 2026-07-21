@@ -41,6 +41,7 @@ pub(crate) struct WeaverBatchStepInput<'a> {
 
 pub(crate) struct WeaverNodeState<B: Backend> {
     layer_qkv: Box<[Allocation<B>]>,
+    initialized: Box<[bool]>,
     capacity: usize,
 }
 
@@ -204,6 +205,7 @@ impl<B: Backend> Weaver<B> {
             .collect::<Result<Box<[_]>, _>>()?;
         Ok(WeaverNodeState {
             layer_qkv,
+            initialized: vec![false; capacity].into_boxed_slice(),
             capacity,
         })
     }
@@ -315,12 +317,14 @@ impl<B: Backend> Weaver<B> {
             .allocate_scratch(size_for_shape(&[length, self.target_model_dim], self.data_type))
             .map_err(WeaverEncodeError::Backend)?;
         encoder.encode_copy(target_hidden, 0..row_bytes, &mut input, 0..row_bytes);
-        encoder.encode_copy(
-            lookaheads,
-            lookahead_offset * row_bytes..(lookahead_offset + lookahead_count) * row_bytes,
-            &mut input,
-            row_bytes..length * row_bytes,
-        );
+        if lookahead_count > 0 {
+            encoder.encode_copy(
+                lookaheads,
+                lookahead_offset * row_bytes..(lookahead_offset + lookahead_count) * row_bytes,
+                &mut input,
+                row_bytes..length * row_bytes,
+            );
+        }
         let normalized =
             self.hidden_state_norm.encode(&input, length, &mut encoder).map_err(WeaverEncodeError::Backend)?;
         let mut hidden = self
@@ -372,6 +376,9 @@ impl<B: Backend> Weaver<B> {
         let (child_ids, child_logprobs) =
             self.encode_step_batch(prefix, inputs, state, children, target_embedding, &mut encoder)?;
         let completed = encoder.end_encoding().submit().wait_until_completed().map_err(WeaverEncodeError::Backend)?;
+        for input in inputs {
+            state.initialized[input.node_index] = true;
+        }
         let child_ids_output = child_ids.copyout::<u32>();
         let child_logprobs_output = child_logprobs.copyout::<f32>();
         let outputs = (0..inputs.len())
@@ -403,17 +410,23 @@ impl<B: Backend> Weaver<B> {
         let candidates = inputs[0].candidates.len();
         assert!(candidates > 0 && candidates <= MAX_CANDIDATES);
         assert!(children > 0 && children <= candidates);
-        assert!(inputs.iter().all(|input| {
-            input.candidates.len() == candidates
-                && input.candidate_scores.len() == candidates
-                && input.depth < self.max_depth
-                && input.node_index < state.capacity
-                && input.ancestors.iter().all(|&ancestor| ancestor < state.capacity)
-        }));
-        debug_assert!(inputs.iter().enumerate().all(|(index, input)| {
-            inputs[..index].iter().all(|other| other.node_index != input.node_index)
-                && inputs.iter().all(|other| !other.ancestors.contains(&input.node_index))
-        }));
+        assert!(
+            inputs.iter().all(|input| {
+                input.candidates.len() == candidates
+                    && input.candidate_scores.len() == candidates
+                    && input.depth < self.max_depth
+                    && input.node_index < state.capacity
+                    && input.ancestors.iter().all(|&ancestor| ancestor < state.capacity && state.initialized[ancestor])
+            }),
+            "inputs must reference initialized ancestors within the node-state capacity"
+        );
+        assert!(
+            inputs.iter().enumerate().all(|(index, input)| {
+                inputs[..index].iter().all(|other| other.node_index != input.node_index)
+                    && inputs.iter().all(|other| !other.ancestors.contains(&input.node_index))
+            }),
+            "batch nodes must be distinct and independent"
+        );
 
         let (mut current, step) = self.encode_step_inputs(inputs, target_embedding, encoder)?;
 
