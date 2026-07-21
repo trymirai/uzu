@@ -281,11 +281,15 @@ async fn qwen3_1_7b() {
 #[ignore]
 #[tokio::test]
 async fn qwen3_5_0_8b() {
+    // Greedy sampling keeps this test deterministic; with the default stochastic sampling
+    // the model occasionally skips a tool call and hallucinates that part of the answer.
     run_tool_calls_test(
         "Qwen/Qwen3.5-0.8B",
         true,
         false,
-        SamplingPolicy::Default {},
+        SamplingPolicy::Custom {
+            method: SamplingMethod::Greedy {},
+        },
         "What time is it now and what is the temperature at my current location?",
         &["get_current_time", "get_current_location", "get_current_temperature"],
     )
