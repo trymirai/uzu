@@ -13,112 +13,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut session = engine.chat(model, ChatConfig::default()).await?;
     session
-        .add_tool_functions(vec![
-            ToolFunctionDefinition::new(
-                "get_current_location".to_string(),
-                "Get the user's current geographic location as latitude and longitude coordinates.".to_string(),
-                None,
-                Some(
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "latitude": {
-                                "type": "number",
-                                "description": "Latitude in decimal degrees."
-                            },
-                            "longitude": {
-                                "type": "number",
-                                "description": "Longitude in decimal degrees."
-                            }
-                        },
-                        "required": ["latitude", "longitude"]
-                    })
-                    .into(),
-                ),
-                Box::new(|_args| {
-                    Box::pin(async {
-                        Ok(serde_json::json!({
-                            "latitude": 59.938784,
-                            "longitude": 30.314997,
-                        })
-                        .into())
-                    })
-                }),
+        .add_tool_functions(vec![ToolFunctionDefinition::new(
+            "get_current_time".to_string(),
+            "Get the current time.".to_string(),
+            None,
+            Some(
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "time": {
+                            "type": "string",
+                            "description": "Current time."
+                        }
+                    },
+                    "required": ["time"]
+                })
+                .into(),
             ),
-            ToolFunctionDefinition::new(
-                "get_current_temperature".to_string(),
-                "Get the current temperature at the given geographic coordinates.".to_string(),
-                Some(
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "latitude": {
-                                "type": "number",
-                                "description": "Latitude in decimal degrees."
-                            },
-                            "longitude": {
-                                "type": "number",
-                                "description": "Longitude in decimal degrees."
-                            }
-                        },
-                        "required": ["latitude", "longitude"]
+            Box::new(|_args| {
+                Box::pin(async {
+                    Ok(serde_json::json!({
+                        "time": "17:03",
                     })
-                    .into(),
-                ),
-                Some(
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "temperature": {
-                                "type": "number",
-                                "description": "Current temperature in degrees Celsius."
-                            }
-                        },
-                        "required": ["temperature"]
-                    })
-                    .into(),
-                ),
-                Box::new(|_args| {
-                    Box::pin(async {
-                        Ok(serde_json::json!({
-                            "temperature": 25.9,
-                        })
-                        .into())
-                    })
-                }),
-            ),
-            ToolFunctionDefinition::new(
-                "get_current_time".to_string(),
-                "Get the current time.".to_string(),
-                None,
-                Some(
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "time": {
-                                "type": "string",
-                                "description": "Current time."
-                            }
-                        },
-                        "required": ["time"]
-                    })
-                    .into(),
-                ),
-                Box::new(|_args| {
-                    Box::pin(async {
-                        Ok(serde_json::json!({
-                            "time": "17:03",
-                        })
-                        .into())
-                    })
-                }),
-            ),
-        ])
+                    .into())
+                })
+            }),
+        )])
         .await?;
 
     let messages = vec![
         ChatMessage::system().with_text("You are a helpful assistant".to_string()),
-        ChatMessage::user().with_text("What is the time and the weather now?".to_string()),
+        ChatMessage::user().with_text("What time is it now?".to_string()),
     ];
     let replies = session.reply(messages.clone(), ChatReplyConfig::default()).await?;
     if let Some(reply) = replies.last() {
