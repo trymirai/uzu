@@ -29,6 +29,7 @@ pub struct Encoding {
     encoding: HarmonyEncoding,
     parser: StreamableParser,
     state: State,
+    completion_message_start: usize,
 }
 
 impl EncodingTrait for Encoding {
@@ -64,6 +65,7 @@ impl EncodingTrait for Encoding {
             encoding,
             parser,
             state: State::default(),
+            completion_message_start: 0,
         })
     }
 
@@ -74,6 +76,7 @@ impl EncodingTrait for Encoding {
     fn reset(&mut self) -> Result<(), Self::Error> {
         self.parser = StreamableParser::new(self.encoding.clone(), None).map_err(|_| Error::UnableToLoadEncoding)?;
         self.state = State::default();
+        self.completion_message_start = 0;
         Ok(())
     }
 
@@ -82,6 +85,10 @@ impl EncodingTrait for Encoding {
         messages: Self::Input,
     ) -> Result<(), Self::Error> {
         self.state.messages.extend(messages.clone());
+        self.completion_message_start = self.state.messages.len();
+        // The rendered prompt ends with `<|start|>assistant`; parse only the generated continuation of that header.
+        self.parser = StreamableParser::new(self.encoding.clone(), Some(HarmonyRole::Assistant))
+            .map_err(|_| Error::UnableToLoadEncoding)?;
 
         let conversation = HarmonyConversation::from_messages(bridge_messages_to_harmony(&messages)?);
         let token_ids = self
@@ -90,13 +97,9 @@ impl EncodingTrait for Encoding {
             .map_err(|_| Error::UnableToRenderConversation)?;
         for token_id in token_ids {
             let token = resolve_token(&self.encoding, token_id)?;
-            self.parser.process(token_id).map_err(|error| Error::ParserError {
-                reason: error.to_string(),
-            })?;
             self.state.tokens.push(token);
         }
 
-        self.update_messages_from_parser_state()?;
         Ok(())
     }
 
@@ -150,7 +153,8 @@ impl Encoding {
         }
 
         let streamed_messages = bridge_messages_from_harmony(&streamed_harmony_messages)?;
-        self.state.synchronize_messages(&streamed_messages)?;
+        self.state.messages.truncate(self.completion_message_start);
+        self.state.messages.extend(streamed_messages);
 
         Ok(())
     }

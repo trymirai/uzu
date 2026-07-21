@@ -3,7 +3,10 @@
 use uzu::{
     engine::{Engine, EngineConfig},
     session::tool::func_def::ToolFunctionDefinition,
-    types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatRole},
+    types::{
+        basic::{SamplingMethod, SamplingPolicy},
+        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatRole},
+    },
 };
 
 fn get_tool_functions() -> Vec<ToolFunctionDefinition> {
@@ -114,6 +117,7 @@ async fn run_tool_calls_test(
     model_id: &str,
     with_system_message: bool,
     single_tool_call_per_turn: bool,
+    sampling_policy: SamplingPolicy,
     prompt: &str,
     expected_tools: &[&str],
 ) {
@@ -133,7 +137,11 @@ async fn run_tool_calls_test(
     }
     messages.push(ChatMessage::user().with_text(prompt.to_string()));
 
-    let replies = session.reply(messages, ChatReplyConfig::default()).await.unwrap();
+    let reply_config = ChatReplyConfig {
+        sampling_policy,
+        ..ChatReplyConfig::default()
+    };
+    let replies = session.reply(messages, reply_config).await.unwrap();
     let final_reply = replies.last().expect("Expected at least one reply");
     // println!("Reasoning: {}", final_reply.message.reasoning().unwrap_or_default());
     // println!("Text: {}", final_reply.message.text().unwrap_or_default());
@@ -185,17 +193,29 @@ async fn run_tool_calls_test(
 #[ignore]
 #[tokio::test]
 async fn functiongemma_270m_it() {
-    run_tool_calls_test("google/functiongemma-270m-it", false, true, "What is the time now?", &["get_current_time"])
-        .await;
+    run_tool_calls_test(
+        "google/functiongemma-270m-it",
+        false,
+        true,
+        SamplingPolicy::Default {},
+        "What is the time now?",
+        &["get_current_time"],
+    )
+    .await;
 }
 
 #[ignore]
 #[tokio::test]
 async fn gpt_oss_20b() {
+    // Greedy sampling keeps this test deterministic; with the default stochastic sampling
+    // the model occasionally skips a tool call and hallucinates that part of the answer.
     run_tool_calls_test(
         "openai/gpt-oss-20b",
         true,
         false,
+        SamplingPolicy::Custom {
+            method: SamplingMethod::Greedy {},
+        },
         "What time is it now and what is the temperature at my current location?",
         &["get_current_time", "get_current_location", "get_current_temperature"],
     )
@@ -205,13 +225,29 @@ async fn gpt_oss_20b() {
 #[ignore]
 #[tokio::test]
 async fn lfm2_350m() {
-    run_tool_calls_test("LiquidAI/LFM2-350M", true, false, "What is the time now?", &["get_current_time"]).await;
+    run_tool_calls_test(
+        "LiquidAI/LFM2-350M",
+        true,
+        false,
+        SamplingPolicy::Default {},
+        "What is the time now?",
+        &["get_current_time"],
+    )
+    .await;
 }
 
 #[ignore]
 #[tokio::test]
 async fn lfm2_5_350m() {
-    run_tool_calls_test("LiquidAI/LFM2.5-350M", true, false, "What is the time now?", &["get_current_time"]).await;
+    run_tool_calls_test(
+        "LiquidAI/LFM2.5-350M",
+        true,
+        false,
+        SamplingPolicy::Default {},
+        "What is the time now?",
+        &["get_current_time"],
+    )
+    .await;
 }
 
 #[ignore]
@@ -221,6 +257,7 @@ async fn llama_3_2_1b_instruct() {
         "meta-llama/Llama-3.2-1B-Instruct",
         true,
         false,
+        SamplingPolicy::Default {},
         "What time is it now and what is the temperature at my current location?",
         &["get_current_time", "get_current_location", "get_current_temperature"],
     )
@@ -230,7 +267,15 @@ async fn llama_3_2_1b_instruct() {
 #[ignore]
 #[tokio::test]
 async fn qwen3_1_7b() {
-    run_tool_calls_test("Qwen/Qwen3-1.7B", true, false, "What is the time now?", &["get_current_time"]).await;
+    run_tool_calls_test(
+        "Qwen/Qwen3-1.7B",
+        true,
+        false,
+        SamplingPolicy::Default {},
+        "What is the time now?",
+        &["get_current_time"],
+    )
+    .await;
 }
 
 #[ignore]
@@ -240,6 +285,7 @@ async fn qwen3_5_0_8b() {
         "Qwen/Qwen3.5-0.8B",
         true,
         false,
+        SamplingPolicy::Default {},
         "What time is it now and what is the temperature at my current location?",
         &["get_current_time", "get_current_location", "get_current_temperature"],
     )
