@@ -12,6 +12,7 @@ use crate::{
         embedding::{Embedding, EmbeddingError},
         weaver::{Weaver, WeaverBatchStepInput, WeaverEncodeError, WeaverNodeState, WeaverPrefix},
     },
+    engine::language_model::LanguageModel,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -42,37 +43,6 @@ pub struct TreeProposal<B: Backend> {
     pub depths: Allocation<B>,
     pub draft_logprobs: Allocation<B>,
     pub length: usize,
-}
-
-/// Follows the target model's greedy token through a verifier-ready DFS tree.
-///
-/// `target_next_tokens[node]` is the target argmax after the token in `node`
-/// has been consumed. The returned slots include the root. The caller must
-/// pass the rows that are not already committed to `update_state`; the exact
-/// DFlash bonus-root flow passes the root as well.
-#[cfg(test)]
-pub(crate) fn greedy_accept_indices(
-    tokens: &[u32],
-    parents: &[i32],
-    target_next_tokens: &[u32],
-) -> Box<[usize]> {
-    assert!(!tokens.is_empty());
-    assert_eq!(tokens.len(), parents.len());
-    assert_eq!(tokens.len(), target_next_tokens.len());
-    assert_eq!(parents[0], -1);
-    for (node, &parent) in parents.iter().enumerate().skip(1) {
-        assert!(parent >= 0 && (parent as usize) < node);
-    }
-
-    let mut accepted = vec![0usize];
-    let mut parent = 0usize;
-    while let Some(child) = parents.iter().enumerate().skip(1).find_map(|(index, &candidate_parent)| {
-        (candidate_parent == parent as i32 && tokens[index] == target_next_tokens[parent]).then_some(index)
-    }) {
-        accepted.push(child);
-        parent = child;
-    }
-    accepted.into_boxed_slice()
 }
 
 #[derive(Debug, Error)]
@@ -299,16 +269,6 @@ impl<B: Backend> DFlashSpeculator<B> {
         }
     }
 
-    pub(crate) fn bind_target_embedding<'a>(
-        &'a self,
-        target_embedding: &'a Embedding<B>,
-    ) -> DFlashTfm<'a, B> {
-        DFlashTfm {
-            speculator: self,
-            target_embedding,
-        }
-    }
-
     fn propose_tree_with_embedding(
         &self,
         state: &mut DFlashState<B>,
@@ -385,7 +345,7 @@ impl<B: Backend> DFlashSpeculator<B> {
 
         let max_depth = self.config.weaver_config.as_ref().unwrap().max_depth;
         let lookahead_count = max_depth.min(block_size.saturating_sub(1));
-        let target_hidden = state.last_target_hidden().ok_or(DFlashTreeError::MissingTargetHidden)?;
+        let target_hidden = state.target_output_norm().ok_or(DFlashTreeError::MissingTargetHidden)?;
         let prefix = weaver.build_prefix(target_hidden, &draft_hidden, 1, lookahead_count, &self.context)?;
         drop(draft_hidden);
         drop(completed);
@@ -428,7 +388,7 @@ impl<B: Backend> DFlashSpeculator<B> {
         target_model_dim: usize,
         pool_size: usize,
     ) -> Result<DFlashChainOutput<B>, DFlashTreeError<B>> {
-        let target_hidden_size = state.last_target_hidden().ok_or(DFlashTreeError::MissingTargetHidden)?.size();
+        let target_hidden_size = state.target_output_norm().ok_or(DFlashTreeError::MissingTargetHidden)?.size();
         if target_hidden_size != target_model_dim * DataType::BF16.size_in_bytes() {
             return Err(DFlashTreeError::InvalidOptions);
         }
@@ -519,6 +479,18 @@ impl<B: Backend> DFlashSpeculator<B> {
     }
 }
 
+impl<'a, B: Backend> DFlashTfm<'a, B> {
+    pub fn new(
+        speculator: &'a DFlashSpeculator<B>,
+        target: &'a LanguageModel<B>,
+    ) -> Self {
+        Self {
+            speculator,
+            target_embedding: target.embedding(),
+        }
+    }
+}
+
 impl<B: Backend> DFlashTfm<'_, B> {
     pub fn empty_state(
         &self,
@@ -536,10 +508,10 @@ impl<B: Backend> DFlashTfm<'_, B> {
         state: &mut DFlashState<B>,
         target_features: &[Allocation<B>],
         num_tokens: usize,
-        last_target_hidden: &Allocation<B>,
+        target_output_norm: &Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        self.speculator.model.append_state(state, target_features, num_tokens, last_target_hidden, encoder)
+        self.speculator.model.append_state(state, target_features, num_tokens, target_output_norm, encoder)
     }
 
     /// Proposes a tree rooted at `bonus_token`.

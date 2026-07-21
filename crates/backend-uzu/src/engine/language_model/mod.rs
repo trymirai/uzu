@@ -12,7 +12,6 @@ use crate::{
     },
     engine::Engine,
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
-    speculators::dflash_speculator::{DFlashSpeculator, DFlashTfm},
 };
 
 pub mod grammar;
@@ -111,6 +110,10 @@ impl<B: Backend> Engine<B> {
 }
 
 impl<B: Backend> LanguageModel<B> {
+    pub(crate) fn embedding(&self) -> &crate::encodable_block::embedding::Embedding<B> {
+        self.decoder.embedding()
+    }
+
     pub fn max_context_length(&self) -> Option<usize> {
         self.decoder.max_context_length()
     }
@@ -161,6 +164,3 @@ impl<B: Backend> LanguageModel<B> {
         &self.generation_config
     }
 }
-
-#[cfg(all(test, metal_backend))]
-mod dflash_test;
