@@ -174,13 +174,21 @@ impl ChatSession {
         }
 
         let mut messages_guard = self.messages.lock().await;
-        let empty_messages = messages_guard.is_empty();
-        if !empty_messages {
-            messages_guard.retain(|msg| !contains_tools_definitions(msg));
+        let messages_empty = messages_guard.is_empty();
+        if !messages_empty {
+            messages_guard.retain_mut(|message| {
+                return if message.role == (ChatRole::Developer {}) {
+                    let original_len = message.content.len();
+                    message.content.retain(|content| !matches!(content, ChatContentBlock::Tools { .. }));
+                    original_len == message.content.len() || !message.content.is_empty()
+                } else {
+                    true
+                };
+            });
         }
         drop(messages_guard);
 
-        if !empty_messages {
+        if !messages_empty {
             let mut instance_guard = self.instance.lock().await;
             match &mut *instance_guard {
                 Instance::Token(session) => session.reset().await?,
@@ -409,11 +417,13 @@ impl ChatSession {
             return vec![];
         };
 
-        let registry_guard = registry.lock().await;
         let mut tool_messages: Vec<ChatMessage> = Vec::with_capacity(tool_calls.len());
         for call in tool_calls {
-            let function: Option<&ToolFunctionDefinition> = (*registry_guard).get_function(&call.name);
-            let value = if let Some(func) = function {
+            let func = {
+                let registry_guard = registry.lock().await;
+                registry_guard.get_function(&call.name).cloned()
+            };
+            let value = if let Some(func) = func {
                 func.execute(call.arguments).await.unwrap_or_else(|err| {
                     Value::from(serde_json::json!({
                         "error": err.to_string(),
