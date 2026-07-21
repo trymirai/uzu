@@ -30,6 +30,8 @@ mod mode;
 mod qkv_norm;
 mod state;
 
+pub(crate) use state::AttentionStateType;
+
 pub mod rope;
 
 pub struct Attention<B: Backend> {

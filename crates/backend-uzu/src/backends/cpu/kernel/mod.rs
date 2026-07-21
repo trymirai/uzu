@@ -22,6 +22,7 @@ mod tensor_add_bias;
 mod tensor_add_scale;
 mod tensor_add_swap;
 mod tensor_copy;
+mod weaver_top_children;
 
 include!(concat!(env!("OUT_DIR"), "/cpu/dsl.rs"));
 
