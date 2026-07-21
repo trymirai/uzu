@@ -12,6 +12,7 @@ use crate::{
     },
     engine::Engine,
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
+    speculators::dflash_speculator::{DFlashSpeculator, DFlashTfm},
 };
 
 pub mod grammar;
@@ -160,3 +161,6 @@ impl<B: Backend> LanguageModel<B> {
         &self.generation_config
     }
 }
+
+#[cfg(all(test, metal_backend))]
+mod dflash_test;

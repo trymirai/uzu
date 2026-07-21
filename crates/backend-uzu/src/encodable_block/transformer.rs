@@ -3,7 +3,7 @@ use std::ops::Range;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::TensorAddScaleKernel},
     config::{rope::AnyRoPEConfig, transformer::TransformerConfig},
     data_type::DataType,
     encodable_block::{
@@ -88,6 +88,8 @@ pub struct Transformer<B: Backend> {
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
     output_norm: Normalization<B>,
+    model_dim: usize,
+    residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
 }
 
 impl<B: Backend> Transformer<B> {
@@ -139,11 +141,29 @@ impl<B: Backend> Transformer<B> {
             context,
         )?;
 
+        let residual_add = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, false)
+            .map_err(TransformerNewError::Backend)?;
+
         Ok(Self {
             ropes: ropes.into_boxed_slice(),
             layers,
             output_norm,
+            model_dim: transformer_config.model_dim,
+            residual_add,
         })
+    }
+
+    fn capture_residual(
+        &self,
+        shortcut: &Allocation<B>,
+        hidden: &Allocation<B>,
+        batch_size: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut output = encoder.allocate_scratch(hidden.size())?;
+        let elements = (batch_size * self.model_dim) as u32;
+        self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, encoder);
+        Ok(output)
     }
 
     pub fn speculation_supported(&self) -> bool {
@@ -259,8 +279,7 @@ impl<B: Backend> Transformer<B> {
 
             for (feature_index, &layer_index) in hidden_feature_layer_indices.iter().enumerate() {
                 if layer_index == layer.layer_index {
-                    let mut feature = encoder.allocate_scratch(hidden.size())?;
-                    encoder.encode_copy(&hidden, .., &mut feature, ..);
+                    let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
                     hidden_features[feature_index] = Some(feature);
                 }
             }

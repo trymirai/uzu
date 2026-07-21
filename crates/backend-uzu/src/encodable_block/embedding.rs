@@ -113,6 +113,18 @@ struct LogitSoftCap<B: Backend> {
 }
 
 impl<B: Backend> Embedding<B> {
+    pub(crate) fn data_type(&self) -> DataType {
+        self.data_type
+    }
+
+    pub(crate) fn vocab_size(&self) -> usize {
+        self.vocab_size as usize
+    }
+
+    pub(crate) fn model_dim(&self) -> usize {
+        self.model_dim as usize
+    }
+
     pub fn new(
         context: &B::Context,
         vocab_size: u32,
@@ -508,11 +520,13 @@ impl<B: Backend> Embedding<B> {
         &self,
         batch_dim: usize,
         input_allocation: &Allocation<B>,
+        output_data_type: DataType,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
         assert!(batch_dim > 0, "Embedding readout requires at least one row");
+        let native_output = output_data_type == self.data_type;
         let mut output_allocation = encoder
-            .allocate_scratch(size_for_shape(&[batch_dim, self.vocab_size as usize], self.data_type))
+            .allocate_scratch(size_for_shape(&[batch_dim, self.vocab_size as usize], output_data_type))
             .map_err(EmbeddingError::BackendError)?;
 
         match &self.tying {
@@ -532,27 +546,33 @@ impl<B: Backend> Embedding<B> {
                         readout,
                     },
             } => {
-                readout
-                    .lock()
-                    .encode(
-                        MatmulArguments {
-                            a: input_allocation,
-                            a_offset: 0,
-                            b: MatmulB::FullPrecision {
-                                b: weights,
-                            },
-                            b_leading_dimension: None,
-                            b_transpose: true,
-                            d: &mut output_allocation,
-                            d_transform: MatmulDOps::none(),
-                            gather_indices: None,
-                            m: batch_dim as u32,
-                            n: self.vocab_size,
-                            k: self.model_dim,
-                        },
-                        encoder,
+                let arguments = MatmulArguments {
+                    a: input_allocation,
+                    a_offset: 0,
+                    b: MatmulB::FullPrecision {
+                        b: weights,
+                    },
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    d: &mut output_allocation,
+                    d_transform: MatmulDOps::none(),
+                    gather_indices: None,
+                    m: batch_dim as u32,
+                    n: self.vocab_size,
+                    k: self.model_dim,
+                };
+                if native_output {
+                    readout.lock().encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
+                } else {
+                    let mut widened = <B::Kernels as Kernels>::MatmulKernel::new(
+                        encoder.context(),
+                        self.data_type,
+                        self.data_type,
+                        output_data_type,
                     )
                     .map_err(EmbeddingError::BackendError)?;
+                    widened.encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
+                }
             },
             EmbeddingTying::Tied {
                 ty:
@@ -602,6 +622,11 @@ impl<B: Backend> Embedding<B> {
                         group_size: readout_config.group_size,
                     },
                 };
+                if !native_output {
+                    return Err(EmbeddingError::UnsupportedConfiguration(
+                        "widened readout requires full-precision LM-head weights".to_string(),
+                    ));
+                }
                 readout
                     .lock()
                     .encode(
@@ -625,12 +650,14 @@ impl<B: Backend> Embedding<B> {
         };
 
         if let Some(logit_soft_cap) = &self.logit_soft_cap {
-            logit_soft_cap.kernel.encode(
-                &mut output_allocation,
-                (batch_dim * self.vocab_size as usize) as u32,
-                logit_soft_cap.value,
-                encoder,
-            );
+            let length = (batch_dim * self.vocab_size as usize) as u32;
+            if native_output {
+                logit_soft_cap.kernel.encode(&mut output_allocation, length, logit_soft_cap.value, encoder);
+            } else {
+                let kernel = <B::Kernels as Kernels>::LogitSoftCapKernel::new(encoder.context(), output_data_type)
+                    .map_err(EmbeddingError::BackendError)?;
+                kernel.encode(&mut output_allocation, length, logit_soft_cap.value, encoder);
+            }
         }
 
         Ok(output_allocation)
@@ -638,7 +665,6 @@ impl<B: Backend> Embedding<B> {
 
     /// Per-row candidate readout via the GEMV B-row gather: `out[r][j] == dense[r][token_ids[r][j]]`,
     /// soft-capped when configured, one dispatch. Full-precision weights; caller guarantees `token_ids < vocab_size`.
-    #[allow(dead_code)]
     pub(crate) fn encode_readout_sparse(
         &self,
         input: &Allocation<B>,
