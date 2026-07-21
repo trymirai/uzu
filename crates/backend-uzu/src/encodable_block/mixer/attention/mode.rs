@@ -214,35 +214,53 @@ impl<B: Backend> Attention<B> {
         self.out_projection.encode(attention_output, batch_dim.size(), encoder)
     }
 
-    #[allow(dead_code)] // TODO: remove when wiring with DFlash.
-    pub(super) fn append_kv(
+    #[allow(dead_code)]
+    pub(crate) fn append_kv(
         &self,
         hidden: Allocation<B>,
-        precalculated_rope: &PrecalculatedRoPE<B>,
+        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: usize,
         state: &mut AttentionState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let QkvProjection::Split {
-            kv,
-            kv_prepare,
-            ..
-        } = &self.projection
-        else {
-            panic!("append-only attention requires split Q/KV projection");
-        };
-        let key_value = kv.project(hidden, batch_dim, encoder)?;
-        self.prepare_kv_and_queries(
-            kv_prepare,
-            &key_value,
-            state.keys.as_mut(),
-            state.values.as_mut(),
-            state.state_type.physical_prefix_length(),
-            0,
-            Some(precalculated_rope),
-            batch_dim,
-            encoder,
-        )?;
+        match &self.projection {
+            QkvProjection::Split {
+                kv,
+                kv_prepare,
+                ..
+            } => {
+                let precalculated_rope = precalculated_rope.expect("split attention requires RoPE");
+                let key_value = kv.project(hidden, batch_dim, encoder)?;
+                self.prepare_kv_and_queries(
+                    kv_prepare,
+                    &key_value,
+                    state.keys.as_mut(),
+                    state.values.as_mut(),
+                    state.state_type.physical_prefix_length(),
+                    0,
+                    Some(precalculated_rope),
+                    batch_dim,
+                    encoder,
+                )?;
+            },
+            QkvProjection::Packed {
+                qkv,
+                prepare,
+            } => {
+                let projected = qkv.project(hidden, batch_dim, encoder)?;
+                self.prepare_kv_and_queries(
+                    prepare,
+                    &projected,
+                    state.keys.as_mut(),
+                    state.values.as_mut(),
+                    state.state_type.physical_prefix_length(),
+                    self.num_q_heads as u32,
+                    precalculated_rope,
+                    batch_dim,
+                    encoder,
+                )?;
+            },
+        }
         state.append_full(batch_dim);
         Ok(())
     }

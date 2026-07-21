@@ -115,14 +115,7 @@ impl MetalToolchain {
             _ => [OsString::from("-O2")].into(), // treat levels 2,3,s,z as O2 for metal
         };
 
-        let extra_options = Box::new([
-            OsString::from(format!("-m{}-version-min={}", sdk.os(), std.min_os())),
-            // NOTE: Previous build.rs script didn't forward metal compiler warnings to cargo warnings, the new one does.
-            // This is temporary to avoid warning spam without modifying unrelated things in the same pull request as introducing the dsl and converting kernels
-            OsString::from("-Wno-sign-compare"),
-            OsString::from("-Wno-macro-redefined"),
-            OsString::from("-Wno-unused-variable"),
-        ]);
+        let extra_options = Box::new([OsString::from(format!("-m{}-version-min={}", sdk.os(), std.min_os()))]);
 
         let include_dirs = include_dir.into_iter().collect();
 

@@ -263,5 +263,5 @@ impl<B: Backend> Allocator<B> {
 }
 
 #[cfg(all(test, metal_backend))]
-#[path = "../../../../unit/backends/common/allocator/allocator.rs"]
+#[path = "../../../../tests/unit/backends/common/allocator/allocator.rs"]
 mod tests;
