@@ -15,7 +15,11 @@ use shoji::types::{
 use token_stream_parser::{Parser as _, token_stream::TokenStreamParser};
 use tokenizers::{Tokenizer, step_decode_stream};
 
-use self::{config::HanashiResolvedConfig, messages::streamed::Message as StreamedMessage, ordering::Validator};
+use self::{
+    config::HanashiResolvedConfig,
+    messages::streamed::{Content as StreamedContent, Message as StreamedMessage, Section as StreamedSection},
+    ordering::Validator,
+};
 use crate::{
     Encoding as EncodingTrait,
     chat::{
@@ -191,26 +195,76 @@ impl Encoding {
         Ok(modified_messages)
     }
 
+    fn message_from_sections(
+        sections: Vec<StreamedSection>,
+        role: ChatRole,
+    ) -> ChatMessage {
+        ChatMessage::from(StreamedMessage {
+            role,
+            content: Some(StreamedContent::Sections(sections)),
+        })
+    }
+
     fn update_messages_from_parser_state(&mut self) -> Result<(), Error> {
         let value = self.parser.state().value.clone();
+        let messages =
+            serde_json::from_value::<Vec<StreamedMessage>>(value).map_err(|_| Error::InvalidStreamedContent)?;
         let rendering_config = &self.config.rendering;
-        let streamed_messages: Vec<ChatMessage> = serde_json::from_value::<Vec<StreamedMessage>>(value)
-            .map_err(|_| Error::InvalidStreamedContent)?
-            .into_iter()
-            .map(|streamed_message| {
-                let role = rendering_config.get_role_by_name(&streamed_message.role.to_string());
-                let mut message = ChatMessage::from(streamed_message);
-                message.role = role;
-                // templates may render tool results inside another role's turn
-                // (e.g. qwen renders them as `<|im_start|>user\n<tool_response>...`)
-                if !message.content.is_empty()
-                    && message.content.iter().all(|block| matches!(block, ChatContentBlock::ToolCallResult { .. }))
+
+        let mut streamed_messages: Vec<ChatMessage> = Vec::new();
+        for streamed_message in messages {
+            let role = rendering_config.get_role_by_name(&streamed_message.role.to_string());
+            // templates may render tool results inside another role's turn
+            // (e.g. qwen renders them as `<|im_start|>user\n<tool_response>...`,
+            // functiongemma keeps calls, responses and the follow-up reply in one model turn),
+            // so tool result sections are split into standalone tool messages in stream order
+            match streamed_message.content {
+                Some(StreamedContent::Sections(sections))
+                    if sections.iter().any(|section| {
+                        matches!(
+                            section,
+                            StreamedSection::ToolCallResult {
+                                value: Some(serde_json::Value::Object(_))
+                            }
+                        )
+                    }) =>
                 {
-                    message.role = ChatRole::Tool {};
-                }
-                message
-            })
-            .collect();
+                    let mut pending: Vec<StreamedSection> = Vec::new();
+                    for section in sections {
+                        if matches!(
+                            section,
+                            StreamedSection::ToolCallResult {
+                                value: Some(serde_json::Value::Object(_))
+                            }
+                        ) {
+                            let message = Self::message_from_sections(std::mem::take(&mut pending), role.clone());
+                            if !message.content.is_empty() {
+                                streamed_messages.push(message);
+                            }
+                            streamed_messages.push(Self::message_from_sections(vec![section], ChatRole::Tool {}));
+                        } else {
+                            pending.push(section);
+                        }
+                    }
+                    let message = Self::message_from_sections(pending, role.clone());
+                    if !message.content.is_empty() {
+                        streamed_messages.push(message);
+                    }
+                },
+                content => {
+                    let mut message = ChatMessage::from(StreamedMessage {
+                        role: role.clone(),
+                        content,
+                    });
+                    if !message.content.is_empty()
+                        && message.content.iter().all(|block| matches!(block, ChatContentBlock::ToolCallResult { .. }))
+                    {
+                        message.role = ChatRole::Tool {};
+                    }
+                    streamed_messages.push(message);
+                },
+            }
+        }
 
         let result = self.state.synchronize_messages(&streamed_messages)?;
         if result == SynchronizationResult::Inserted {
