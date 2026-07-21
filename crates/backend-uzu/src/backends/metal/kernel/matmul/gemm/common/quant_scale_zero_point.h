@@ -27,14 +27,14 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   static_assert(GROUP_SIZE % THREADGROUP_TILE_COLS == 0, "Group size should be divisible by columns");
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 supported");
 
-  METAL_CONST short pack_factor = get_pack_factor<BITS, 8>();
-  METAL_CONST short bytes_per_pack = get_bytes_per_pack<BITS>();
-  METAL_CONST short THREADGROUP_TILE_COLS_PACKED = THREADGROUP_TILE_COLS / pack_factor;
-  METAL_CONST short READS_PER_THREAD = (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE)
-                                           ? 1
-                                           : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) / THREADGROUP_SIZE;
-  METAL_CONST short GROUP_STEPS_PER_BLOCK = GROUP_SIZE / THREADGROUP_TILE_COLS;
-  METAL_CONST bool TILE_HAS_IDLE_THREADS = THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
+  UZU_CONST short pack_factor = get_pack_factor<BITS, 8>();
+  UZU_CONST short bytes_per_pack = get_bytes_per_pack<BITS>();
+  UZU_CONST short THREADGROUP_TILE_COLS_PACKED = THREADGROUP_TILE_COLS / pack_factor;
+  UZU_CONST short READS_PER_THREAD = (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE)
+                                         ? 1
+                                         : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) / THREADGROUP_SIZE;
+  UZU_CONST short GROUP_STEPS_PER_BLOCK = GROUP_SIZE / THREADGROUP_TILE_COLS;
+  UZU_CONST bool TILE_HAS_IDLE_THREADS = THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
 
   const int src_leading_dim;
   const int groups_per_row;
