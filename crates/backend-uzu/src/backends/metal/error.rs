@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::backends::{
     common::kernel::matmul::MatmulError,
-    metal::{Metal, kernel::matmul::gemm::GemmSpecializationError},
+    metal::{Metal, kernel::InvalidKernelKey},
 };
 
 #[derive(Debug, Error)]
@@ -50,8 +50,8 @@ impl From<MatmulError<Metal>> for MetalError {
     }
 }
 
-impl From<GemmSpecializationError> for MetalError {
-    fn from(value: GemmSpecializationError) -> Self {
+impl From<InvalidKernelKey> for MetalError {
+    fn from(value: InvalidKernelKey) -> Self {
         MetalError::KernelDispatchFailed(Box::new(value))
     }
 }

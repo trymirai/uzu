@@ -13,6 +13,8 @@ use super::gpu_types::{
 #[derive(Clone, Debug)]
 pub struct Helper {
     pub parameter: Box<str>,
+    /// The Rust method with the same meaning, for the generated runtime check.
+    pub rust_method: Box<str>,
     pub values: BTreeMap<Box<str>, u32>,
 }
 
@@ -38,6 +40,7 @@ pub struct EnumPaths {
     short_name_to_entry: HashMap<GpuTypeName, GpuTypeEntry>,
     variant_groups: Box<[GpuTypeVariantGroup]>,
     helpers: BTreeMap<Box<str>, Helper>,
+    variant_group_paths: BTreeMap<Box<str>, Box<str>>,
 }
 
 impl EnumPaths {
@@ -45,6 +48,7 @@ impl EnumPaths {
         let mut short_name_to_entry = HashMap::new();
         let mut variant_groups = Vec::new();
         let mut helpers = BTreeMap::new();
+        let mut variant_group_paths = BTreeMap::new();
         for file in gpu_types.files.iter() {
             for ty in file.types.iter() {
                 let (name_str, kind, variants) = match ty {
@@ -52,11 +56,12 @@ impl EnumPaths {
                         {
                             if let Some(tiles) = geometries(enum_type) {
                                 let prefix = metal_prefix(&enum_type.name);
-                                for (_, metal_suffix, value_of) in ACCESSORS {
+                                for (rust_method, metal_suffix, value_of) in ACCESSORS {
                                     helpers.insert(
                                         format!("{prefix}_{metal_suffix}").into_boxed_str(),
                                         Helper {
                                             parameter: enum_type.name.clone(),
+                                            rust_method: rust_method.into(),
                                             values: tiles
                                                 .iter()
                                                 .map(|(variant, geometry)| ((*variant).into(), value_of(geometry)))
@@ -75,6 +80,11 @@ impl EnumPaths {
                     },
                     GpuType::Struct(_) => continue,
                     GpuType::VariantGroup(group) => {
+                        variant_group_paths.insert(
+                            group.name.clone(),
+                            format!("crate::backends::common::gpu_types::{}::{}", file.name, group.name)
+                                .into_boxed_str(),
+                        );
                         variant_groups.push(group.clone());
                         continue;
                     },
@@ -100,6 +110,7 @@ impl EnumPaths {
             short_name_to_entry,
             variant_groups: variant_groups.into(),
             helpers,
+            variant_group_paths,
         })
     }
 
@@ -125,6 +136,21 @@ impl EnumPaths {
     /// Generated accessors that shader CONSTRAINTs may call.
     pub fn helpers(&self) -> &BTreeMap<Box<str>, Helper> {
         &self.helpers
+    }
+
+    /// Short name -> full Rust path, for every enum gpu type.
+    pub fn rust_paths(&self) -> BTreeMap<Box<str>, Box<str>> {
+        self.short_name_to_entry
+            .iter()
+            .map(|(name, entry)| (name.as_ref().into(), entry.path.as_ref().into()))
+            .collect()
+    }
+
+    pub fn variant_group_path(
+        &self,
+        name: &str,
+    ) -> Option<&str> {
+        self.variant_group_paths.get(name).map(|path| &**path)
     }
 
     #[allow(dead_code)]

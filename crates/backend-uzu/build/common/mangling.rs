@@ -6,6 +6,23 @@ use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::quote;
 
+/// `GEMM_TILING` -> `gemm_tiling`, `AT` -> `at`: the field holding an axis's value.
+pub fn field_name(axis: &str) -> String {
+    axis.to_ascii_lowercase()
+}
+
+/// `WeightsKey` -> `weights_key`.
+pub fn snake_case(type_name: &str) -> String {
+    let mut out = String::new();
+    for (index, character) in type_name.char_indices() {
+        if character.is_uppercase() && index != 0 {
+            out.push('_');
+        }
+        out.extend(character.to_lowercase());
+    }
+    out
+}
+
 pub fn unqualify_variant(value: &str) -> &str {
     value.rsplit("::").next().unwrap_or(value)
 }

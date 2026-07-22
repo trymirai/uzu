@@ -13,6 +13,15 @@ mod radix_top_k_small;
 
 pub const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
 
+/// A kernel variant that was never instantiated, named together with the shader rule
+/// that excluded it. Raised by the generated `validate()` on each kernel's key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{kernel} was not instantiated for this key: it violates CONSTRAINT({rule})")]
+pub struct InvalidKernelKey {
+    pub kernel: &'static str,
+    pub rule: &'static str,
+}
+
 include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
 
 pub struct MetalKernels;

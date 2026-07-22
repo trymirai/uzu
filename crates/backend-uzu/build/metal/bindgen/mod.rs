@@ -1,6 +1,7 @@
 mod arguments;
 mod dispatch;
 mod host_expression_rewriter;
+mod key;
 mod specialize;
 mod trait_wiring;
 mod variants;
@@ -76,7 +77,12 @@ pub fn bindgen(
         encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::metal::Metal>
     });
 
+    let key_emission = key::build(kernel, enum_paths)?;
+    let key_tokens = key_emission.as_ref().map(|emission| &emission.tokens);
+
     let kernel_tokens = quote! {
+        #key_tokens
+
         pub struct #struct_name {
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
             #(#conditional_buffer_fields,)*

@@ -8,10 +8,15 @@ use crate::{
     backends::{
         common::{
             Allocation, BufferArg, Encoder,
-            gpu_types::gemm::{GemmDTransform, WeightsKey},
+            gpu_types::gemm::GemmDTransform,
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
-        metal::{Metal, context::MetalContext, device_tier::DeviceTier, kernel::GemvMetalKernel},
+        metal::{
+            Metal,
+            context::MetalContext,
+            device_tier::DeviceTier,
+            kernel::{GemvKey, GemvMetalKernel},
+        },
     },
     data_type::DataType,
 };
@@ -25,14 +30,12 @@ fn max_gemv_batch_threshold() -> u32 {
     })
 }
 
+/// Identifies one GEMV pipeline: the template variant, plus the function constants that
+/// are specialized into it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GemvSpecialization {
-    weights: WeightsKey,
+    key: GemvKey,
     output_transform: GemmDTransform,
-    input_aligned: bool,
-    k_split: u32,
-    results_per_simdgroup: u32,
-    num_simdgroups: u32,
     gathered: bool,
 }
 
@@ -96,13 +99,25 @@ impl GemvSpecialization {
         } else {
             policy::fp_tile(args.m, args.n, args.k, input_aligned, device_tier)
         };
-        Some(Self {
-            weights,
-            output_transform: args.d_transform.mask(),
-            input_aligned,
+        let key = GemvKey {
+            at: input_data_type,
+            bt: weights_data_type,
+            dt: output_data_type,
+            weights_key: weights,
             k_split: tile.k_split,
+            input_aligned,
             results_per_simdgroup: tile.results_per_simdgroup,
             num_simdgroups: tile.num_simdgroups,
+        };
+
+        // The tile tables are fleet-tuned data, so a bad row would otherwise surface as a
+        // missing pipeline at dispatch. Ask the generated check instead: it is the shader's
+        // own CONSTRAINTs, and falling back to GEMM is always correct.
+        key.validate().ok()?;
+
+        Some(Self {
+            key,
+            output_transform: args.d_transform.mask(),
             gathered,
         })
     }
@@ -116,23 +131,15 @@ fn rows_per_threadgroup(
     (num_simdgroups / k_split) * results_per_simdgroup
 }
 
+/// The data types used to live here as well, but they are part of the key the selector
+/// already builds, so the cache no longer needs its own copy.
 pub(crate) struct GemvDispatch {
-    weights_data_type: DataType,
-    input_data_type: DataType,
-    output_data_type: DataType,
     pipelines: HashMap<GemvSpecialization, GemvMetalKernel>,
 }
 
 impl GemvDispatch {
-    pub(crate) fn new(
-        weights_data_type: DataType,
-        input_data_type: DataType,
-        output_data_type: DataType,
-    ) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            weights_data_type,
-            input_data_type,
-            output_data_type,
             pipelines: HashMap::new(),
         }
     }
@@ -145,19 +152,20 @@ impl GemvDispatch {
         match self.pipelines.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let (b_prologue, bits, group_size) = specialization.weights.to_template_args();
+                let key = specialization.key;
+                let (b_prologue, bits, group_size) = key.weights_key.to_template_args();
                 let kernel = GemvMetalKernel::new(
                     context,
-                    self.input_data_type,
-                    self.weights_data_type,
-                    self.output_data_type,
+                    key.at,
+                    key.bt,
+                    key.dt,
                     b_prologue,
                     group_size,
                     bits,
-                    specialization.k_split,
-                    specialization.input_aligned,
-                    specialization.results_per_simdgroup,
-                    specialization.num_simdgroups,
+                    key.k_split,
+                    key.input_aligned,
+                    key.results_per_simdgroup,
+                    key.num_simdgroups,
                     specialization.output_transform,
                     specialization.gathered,
                 )
@@ -191,9 +199,9 @@ impl GemvDispatch {
         } = arguments;
 
         let group_count_x = n.div_ceil(rows_per_threadgroup(
-            specialization.k_split,
-            specialization.results_per_simdgroup,
-            specialization.num_simdgroups,
+            specialization.key.k_split,
+            specialization.key.results_per_simdgroup,
+            specialization.key.num_simdgroups,
         ));
 
         let context = encoder.context();

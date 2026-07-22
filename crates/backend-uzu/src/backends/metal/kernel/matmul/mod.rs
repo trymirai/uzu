@@ -38,7 +38,7 @@ impl MatmulKernel for MatmulMetalKernel {
         }
 
         let gemm = GemmKernel::new(context, weights_data_type, input_data_type, output_data_type)?;
-        let gemv = GemvDispatch::new(weights_data_type, input_data_type, output_data_type);
+        let gemv = GemvDispatch::new();
 
         Ok(Self {
             gemv,

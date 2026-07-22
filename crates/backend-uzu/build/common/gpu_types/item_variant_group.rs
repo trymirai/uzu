@@ -12,8 +12,9 @@ pub enum VariantGroupArm {
         name: Box<str>,
     },
     Product {
-        /// Field enum type names, one per axis, in axis order.
-        field_types: Box<[Box<str>]>,
+        name: Box<str>,
+        /// Field names and enum type names, one per axis, in axis order.
+        fields: Box<[(Box<str>, Box<str>)]>,
     },
 }
 
@@ -76,26 +77,23 @@ impl GpuTypeVariantGroup {
                             axes.len(),
                         );
 
-                        let field_types = named
+                        let fields = named
                             .named
                             .into_iter()
                             .map(|field| {
                                 let syn::Type::Path(path) = &field.ty else {
                                     bail!("field `{:?}` of `{variant_name}` must be an enum type", field.ident);
                                 };
-                                Ok(path
-                                    .path
-                                    .segments
-                                    .last()
-                                    .context("empty field type path")?
-                                    .ident
-                                    .to_string()
-                                    .into_boxed_str())
+                                let field_name = field.ident.context("variant group fields must be named")?.to_string();
+                                let field_type =
+                                    path.path.segments.last().context("empty field type path")?.ident.to_string();
+                                Ok((field_name.into_boxed_str(), field_type.into_boxed_str()))
                             })
-                            .collect::<anyhow::Result<Box<[Box<str>]>>>()?;
+                            .collect::<anyhow::Result<Box<[(Box<str>, Box<str>)]>>>()?;
 
                         Ok(VariantGroupArm::Product {
-                            field_types,
+                            name: variant_name.into(),
+                            fields,
                         })
                     },
                     Fields::Unnamed(_) => bail!("variant `{variant_name}` must use named fields"),

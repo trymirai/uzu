@@ -149,7 +149,7 @@ fn axis_type(parameter: &MetalTemplateParameter) -> anyhow::Result<constraint_ex
     })
 }
 
-fn constraint_set(
+pub fn constraint_set(
     kernel: &MetalKernelInfo,
     enum_paths: &EnumPaths,
 ) -> anyhow::Result<ConstraintSet> {
@@ -199,6 +199,45 @@ fn constraint_set(
 struct Dimension {
     axes: Vec<Box<str>>,
     tuples: Vec<Vec<Box<str>>>,
+}
+
+/// How a kernel's axes map onto fields of its runtime key: grouped axes collapse into
+/// the one sum type that represents them, the rest keep a field each.
+pub enum KeyField<'a> {
+    Axis(&'a MetalTemplateParameter),
+    Group {
+        type_name: &'a str,
+        axes: &'a [Box<str>],
+    },
+}
+
+/// The key fields for a kernel, in template parameter order.
+pub fn key_layout<'a>(
+    kernel: &'a MetalKernelInfo,
+    enum_paths: &'a EnumPaths,
+) -> Vec<KeyField<'a>> {
+    let Some(parameters) = &kernel.variants else {
+        return Vec::new();
+    };
+
+    let declares = |axis: &str| parameters.iter().any(|p| p.name.as_ref() == axis);
+    let groups = enum_paths
+        .variant_groups()
+        .iter()
+        .filter(|group| group.axes.iter().all(|axis| declares(axis)))
+        .collect::<Vec<_>>();
+
+    parameters
+        .iter()
+        .filter_map(|parameter| match groups.iter().find(|group| group.axes.contains(&parameter.name)) {
+            Some(group) if group.axes.first() == Some(&parameter.name) => Some(KeyField::Group {
+                type_name: &group.name,
+                axes: &group.axes,
+            }),
+            Some(_) => None,
+            None => Some(KeyField::Axis(parameter)),
+        })
+        .collect()
 }
 
 /// Splits a kernel's axes into dimensions, collapsing any variant group whose axes the
@@ -270,14 +309,16 @@ fn group_tuples(
 
     for arm in group.arms.iter() {
         let VariantGroupArm::Product {
-            field_types,
+            fields,
+            ..
         } = arm
         else {
             continue;
         };
 
-        let per_axis = field_types
+        let per_axis = fields
             .iter()
+            .map(|(_, field_type)| field_type)
             .zip(group.axes.iter())
             .zip(declared.iter())
             .map(|((field_type, axis), axis_values)| {

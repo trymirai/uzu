@@ -18,7 +18,7 @@ use crate::{
             Metal,
             context::MetalContext,
             error::MetalError,
-            kernel::{GemmMetalKernel, GemmSplitKReduceMetalKernel, TensorAddBiasMetalKernel},
+            kernel::{GemmKey, GemmMetalKernel, GemmSplitKReduceMetalKernel, TensorAddBiasMetalKernel},
             metal_extensions::DeviceExt,
         },
     },
@@ -74,14 +74,15 @@ impl GemmKernel {
         match self.kernels.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let (b_prologue, bits_per_b, group_size) = specialization.weights.to_template_args();
+                let key = specialization.key;
+                let (b_prologue, bits_per_b, group_size) = key.weights_key.to_template_args();
                 let kernel = GemmMetalKernel::new(
                     context,
-                    self.input_data_type,
-                    self.weights_data_type,
-                    self.output_data_type,
-                    specialization.tiling,
-                    specialization.transpose_b,
+                    key.at,
+                    key.bt,
+                    key.dt,
+                    key.gemm_tiling,
+                    key.transpose_b,
                     b_prologue,
                     bits_per_b,
                     group_size,
@@ -346,14 +347,18 @@ impl GemmKernel {
                 };
 
                 let specialization = GemmSpecialization {
-                    weights_data_type: self.weights_data_type,
-                    tiling,
+                    key: GemmKey {
+                        at: self.input_data_type,
+                        bt: self.weights_data_type,
+                        dt: self.output_data_type,
+                        gemm_tiling: tiling,
+                        transpose_b: b_transpose,
+                        weights_key,
+                    },
                     output_transform,
                     alignment,
-                    transpose_b: b_transpose,
-                    weights: weights_key,
                 };
-                specialization.validate()?;
+                specialization.key.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
                     (a, a_offset),
@@ -442,14 +447,18 @@ impl GemmKernel {
                 }
 
                 let specialization = GemmSpecialization {
-                    weights_data_type: self.weights_data_type,
-                    tiling,
+                    key: GemmKey {
+                        at: self.input_data_type,
+                        bt: self.weights_data_type,
+                        dt: self.output_data_type,
+                        gemm_tiling: tiling,
+                        transpose_b: true,
+                        weights_key,
+                    },
                     output_transform,
                     alignment,
-                    transpose_b: true,
-                    weights: weights_key,
                 };
-                specialization.validate()?;
+                specialization.key.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
                     (a, a_offset),
@@ -503,14 +512,18 @@ impl GemmKernel {
         let alignment =
             GemmAlignment::new(m.is_multiple_of(tiling.block_m()), n.is_multiple_of(tiling.block_n()), true);
         let part_spec = GemmSpecialization {
-            weights_data_type: self.weights_data_type,
-            tiling,
+            key: GemmKey {
+                at: self.input_data_type,
+                bt: self.weights_data_type,
+                dt: self.output_data_type,
+                gemm_tiling: tiling,
+                transpose_b: true,
+                weights_key,
+            },
             output_transform: GemmDTransform::empty(),
             alignment,
-            transpose_b: true,
-            weights: weights_key,
         };
-        part_spec.validate()?;
+        part_spec.key.validate()?;
 
         let elem = (m as usize) * (n as usize);
         let slice_bytes = elem * self.output_data_type.size_in_bytes();
