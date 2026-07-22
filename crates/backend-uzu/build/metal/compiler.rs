@@ -261,7 +261,7 @@ impl MetalCompiler {
         objects: impl IntoIterator<Item = &'a ObjectInfo>,
     ) -> anyhow::Result<()> {
         let manifest =
-            super::manifest::render(objects.into_iter().flat_map(|o| o.kernels.iter().map(|k| (&*o.src_rel_path, k))));
+            super::manifest::render(objects.into_iter().flat_map(|o| o.kernels.iter().map(|k| (&*o.src_rel_path, k))))?;
 
         super::manifest::write(&manifest, &self.out_dir.join("variant_manifest.txt"))?;
         if let Some(path) = envs::variant_manifest() {

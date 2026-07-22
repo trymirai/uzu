@@ -119,7 +119,6 @@ quote = "1.0"
 proc-macro2 = "1.0"
 syn = { version = "2.0", features = ["full", "fold"] }
 prettyplease = "0.2"
-rhai = "1.24.0"
 cbindgen = "0.29"
 indicatif = "0.18"
 rocket = { version = "0.5", features = ["json"] }

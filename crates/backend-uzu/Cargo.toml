@@ -87,7 +87,6 @@ syn.workspace = true
 prettyplease.workspace = true
 itertools.workspace = true
 cbindgen.workspace = true
-rhai.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.build-dependencies]
 clang-ast = { workspace = true, optional = true }

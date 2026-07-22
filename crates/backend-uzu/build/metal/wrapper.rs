@@ -1,13 +1,21 @@
 use std::{collections::HashMap, iter::once};
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use itertools::Itertools;
 
 use super::{
-    ast::{MetalArgument, MetalArgumentType, MetalKernelInfo, shared_element_type},
+    ast::{
+        MetalArgument, MetalArgumentType, MetalKernelInfo, MetalTemplateParameter, MetalTemplateParameterType,
+        shared_element_type,
+    },
     enum_path_rewrite::is_enum_c_type,
 };
-use crate::common::{enum_paths::EnumPaths, identifiers::KernelName, mangling::static_mangle};
+use crate::common::{
+    constraint_expr::{self, ConstraintSet},
+    enum_paths::EnumPaths,
+    identifiers::KernelName,
+    mangling::static_mangle,
+};
 
 pub type SpecializeBaseIndices = HashMap<KernelName, usize>;
 
@@ -125,20 +133,60 @@ fn kernel_footer(bindings: &[SpecializeBinding<'_>]) -> String {
     bindings.iter().map(|b| format!("#undef {}\n", b.argument.name)).collect()
 }
 
+/// The axis type a constraint expression sees for a template parameter.
+fn axis_type(parameter: &MetalTemplateParameter) -> anyhow::Result<constraint_expr::Type> {
+    Ok(match &parameter.ty {
+        MetalTemplateParameterType::Type => constraint_expr::Type::DType,
+        MetalTemplateParameterType::Value(rust_type) => match rust_type.as_ref() {
+            "bool" => constraint_expr::Type::Bool,
+            "u32" | "i32" => constraint_expr::Type::Int,
+            path => match path.rsplit_once("::") {
+                Some((_, short_name)) => constraint_expr::Type::Enum(short_name.into()),
+                None => bail!("template parameter `{}` has unsupported type `{path}`", parameter.name),
+            },
+        },
+    })
+}
+
+fn constraint_set(kernel: &MetalKernelInfo) -> anyhow::Result<ConstraintSet> {
+    let axes = kernel
+        .variants
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|parameter| {
+            let ty = axis_type(parameter)?;
+            let values = parameter
+                .variants
+                .iter()
+                .map(|text| {
+                    constraint_expr::AxisDecl::parse_value(&ty, text)
+                        .with_context(|| format!("in VARIANTS({}, ...) of kernel `{}`", parameter.name, kernel.name))
+                })
+                .collect::<anyhow::Result<Box<[_]>>>()?;
+            Ok(constraint_expr::AxisDecl {
+                name: parameter.name.clone(),
+                ty,
+                values,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    ConstraintSet::compile(kernel.name.as_ref(), axes, kernel.constraints.iter())
+}
+
 /// Template-argument tuples this kernel is instantiated for: the declared cross-product
 /// minus everything its CONSTRAINTs reject. Non-templated kernels yield a single `None`.
 ///
 /// The single source of truth for the shipped kernel set — both the wrapper emission
 /// below and the build manifest enumerate variants through here, so the manifest cannot
 /// drift from what actually gets compiled.
-pub fn accepted_variants(kernel: &MetalKernelInfo) -> Vec<Option<Vec<(String, String)>>> {
+pub fn accepted_variants(kernel: &MetalKernelInfo) -> anyhow::Result<Vec<Option<Vec<(String, String)>>>> {
     let Some(variants) = &kernel.variants else {
-        return vec![None];
+        return Ok(vec![None]);
     };
 
-    let evaluator = crate::common::constraints::Evaluator::new(
-        variants.iter().flat_map(|tp| tp.variants.iter().map(|v| v.as_ref())),
-    );
+    let constraints = constraint_set(kernel)?;
 
     variants
         .iter()
@@ -147,8 +195,11 @@ pub fn accepted_variants(kernel: &MetalKernelInfo) -> Vec<Option<Vec<(String, St
         .map(|values| {
             variants.iter().map(|tp| tp.name.to_string()).zip(values.iter().map(|v| v.to_string())).collect::<Vec<_>>()
         })
-        .filter(|type_variant| evaluator.satisfied(type_variant, &kernel.constraints))
-        .map(Some)
+        .filter_map(|type_variant| match constraints.satisfied(&type_variant) {
+            Ok(true) => Some(Ok(Some(type_variant))),
+            Ok(false) => None,
+            Err(error) => Some(Err(error.context(format!("in kernel `{}`", kernel.name)))),
+        })
         .collect()
 }
 
@@ -164,7 +215,7 @@ fn kernel_wrappers(
         kernel_wrappers.push(kernel_header(&bindings, base).into_boxed_str());
     }
 
-    for type_variant in accepted_variants(kernel) {
+    for type_variant in accepted_variants(kernel)? {
         let (wrapper_name, underlying_name) = if let Some(type_variant) = &type_variant {
             (
                 static_mangle(kernel.name.as_ref(), type_variant.iter().map(|(_k, v)| v.as_str())),

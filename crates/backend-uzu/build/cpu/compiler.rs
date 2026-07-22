@@ -180,7 +180,6 @@ impl CpuCompiler {
     ) -> anyhow::Result<Kernel> {
         let mut kernel_ident = None;
         let mut function_variants = Vec::new();
-        let mut function_constraints: Vec<Expr> = Vec::new();
 
         for attr in ifn.attrs {
             match attr.path().get_ident().map(|i| i.to_string()).as_ref().map(|s| s.as_ref()) {
@@ -202,10 +201,6 @@ impl CpuCompiler {
                             .unwrap(),
                         args.collect::<Box<[_]>>(),
                     ));
-                },
-                Some("constraint") => {
-                    let expr = attr.parse_args::<Expr>().context("cannot parse constraint attribute")?;
-                    function_constraints.push(expr);
                 },
                 _ => {},
             }
@@ -496,15 +491,6 @@ impl CpuCompiler {
                 parameter_idents = quote! { (#parameter_idents) };
             }
 
-            let variant_value_strs: Vec<String> = function_variants
-                .iter()
-                .flat_map(|(_, variants)| variants.iter().map(|v| v.to_token_stream().to_string()))
-                .collect();
-            let evaluator = (!function_constraints.is_empty())
-                .then(|| crate::common::constraints::Evaluator::new(variant_value_strs.iter().map(|s| s.as_str())));
-            let constraint_strs: Vec<String> =
-                function_constraints.iter().map(|c| c.to_token_stream().to_string()).collect();
-
             let match_arms = function_parameters
                 .iter()
                 .zip(function_variants.iter())
@@ -524,17 +510,6 @@ impl CpuCompiler {
                     })
                 })
                 .multi_cartesian_product()
-                .filter(|variants| {
-                    let Some(evaluator) = &evaluator else {
-                        return true;
-                    };
-                    let bindings: Vec<(String, String)> = function_parameters
-                        .iter()
-                        .enumerate()
-                        .map(|(i, p)| (p.name.to_string(), variants[i].1.to_string()))
-                        .collect();
-                    evaluator.satisfied(&bindings, &constraint_strs)
-                })
                 .map(|variants| {
                     let (match_variants, generic_variants): (Vec<TokenStream>, Vec<TokenStream>) =
                         variants.into_iter().unzip();

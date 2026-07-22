@@ -1,7 +1,7 @@
 pub mod caching;
 pub mod codegen;
 pub mod compiler;
-pub mod constraints;
+pub mod constraint_expr;
 pub mod enum_paths;
 pub mod envs;
 #[cfg(all(feature = "metal", target_os = "macos"))]

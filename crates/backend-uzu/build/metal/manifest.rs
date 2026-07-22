@@ -13,11 +13,11 @@ use super::{ast::MetalKernelInfo, wrapper::accepted_variants};
 
 /// Renders the sorted manifest for every kernel, keyed by source path so identically
 /// named kernels in different files stay distinguishable.
-pub fn render<'a>(kernels: impl IntoIterator<Item = (&'a Path, &'a MetalKernelInfo)>) -> String {
+pub fn render<'a>(kernels: impl IntoIterator<Item = (&'a Path, &'a MetalKernelInfo)>) -> anyhow::Result<String> {
     let mut lines: Vec<String> = Vec::new();
 
     for (source, kernel) in kernels {
-        for type_variant in accepted_variants(kernel) {
+        for type_variant in accepted_variants(kernel)? {
             let bindings = type_variant.iter().flatten().map(|(name, value)| format!("{name}={value}")).join(" ");
             let mut line = format!("{}\t{}", source.display(), kernel.name);
             if !bindings.is_empty() {
@@ -28,7 +28,7 @@ pub fn render<'a>(kernels: impl IntoIterator<Item = (&'a Path, &'a MetalKernelIn
     }
 
     lines.sort();
-    lines.join("\n") + "\n"
+    Ok(lines.join("\n") + "\n")
 }
 
 pub fn write(
