@@ -11,12 +11,15 @@ using namespace metal;
 using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
+#define GEMM_A8W4 (A_IS_INT8 && BITS == 4)
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_TGB_ELEMENTS                                                                                              \
   ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT)))) : 1)    \
              : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
+// Unaligned A8W4 stages one 32-wide activation chunk (16 packed bytes/row).
+#define GEMM_A8W4_TG_BYTES (GEMM_A8W4 ? (gemm_tiling_block_n(GEMM_TILING) * 16) : 1)
 
 template <
     typename AT,
@@ -93,7 +96,10 @@ CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || BITS == 4 || BITS == 8)
 CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
-    (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant))
+    (GROUP_SIZE % METAL_SIMD_SIZE == 0 && GROUP_SIZE != 0))
+CONSTRAINT(
+    A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
+    (TRANSPOSE_B && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
@@ -119,6 +125,7 @@ KERNEL(Gemm)(
     const GemmAlignment alignment SPECIALIZE,
     threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
     threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
+    threadgroup uint8_t b_int4_signed[GEMM_A8W4_TG_BYTES],
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint group_z GROUPS(group_count_z),
@@ -150,9 +157,11 @@ KERNEL(Gemm)(
         a_int8,
         a_scales,
         b_shared,
+        b_int4_signed,
         thread_context
     );
   } else {
+    (void)b_int4_signed;
     SimdgroupMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
         a,
         b,

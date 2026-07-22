@@ -70,6 +70,54 @@ struct MxuFragmentOps {
     }
   }
 
+  // MPP pairs two 16x16 fragments per cooperative tensor; these helpers
+  // marshal such a pair into / out of a cooperative tensor.
+  template <typename CooperativeTensor, typename U>
+  METAL_FUNC static void load_paired_vectors(
+      thread CooperativeTensor& cooperative,
+      const thread ThreadVector<U>& vector_0,
+      const thread ThreadVector<U>& vector_1
+  ) {
+    if constexpr (RELAXED) {
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
+        cooperative[i] = vector_0[i];
+        cooperative[ELEMENTS_PER_THREAD + i] = vector_1[i];
+      }
+    } else {
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < 4; i++) {
+        cooperative[i] = vector_0[i];
+        cooperative[4 + i] = vector_1[i];
+        cooperative[8 + i] = vector_0[4 + i];
+        cooperative[12 + i] = vector_1[4 + i];
+      }
+    }
+  }
+
+  template <typename CooperativeTensor, typename U>
+  METAL_FUNC static void store_paired_vectors(
+      thread CooperativeTensor& cooperative,
+      thread ThreadVector<U>& vector_0,
+      thread ThreadVector<U>& vector_1
+  ) {
+    if constexpr (RELAXED) {
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
+        vector_0[i] = cooperative[i];
+        vector_1[i] = cooperative[ELEMENTS_PER_THREAD + i];
+      }
+    } else {
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < 4; i++) {
+        vector_0[i] = cooperative[i];
+        vector_1[i] = cooperative[4 + i];
+        vector_0[4 + i] = cooperative[8 + i];
+        vector_1[4 + i] = cooperative[12 + i];
+      }
+    }
+  }
+
   // MPP has no valid 16x16x16 op; fragment_mma pairs fragments into 16x32.
   template <
       bool ACCUMULATE,
@@ -107,40 +155,12 @@ struct MxuFragmentOps {
     marshal_inputs(cooperative_left, cooperative_right);
 
     if constexpr (ACCUMULATE) {
-      if constexpr (RELAXED) {
-        METAL_PRAGMA_UNROLL
-        for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
-          cooperative_output[i] = output_0[i];
-          cooperative_output[ELEMENTS_PER_THREAD + i] = output_1[i];
-        }
-      } else {
-        METAL_PRAGMA_UNROLL
-        for (ushort i = 0; i < 4; i++) {
-          cooperative_output[i] = output_0[i];
-          cooperative_output[4 + i] = output_1[i];
-          cooperative_output[8 + i] = output_0[4 + i];
-          cooperative_output[12 + i] = output_1[4 + i];
-        }
-      }
+      load_paired_vectors(cooperative_output, output_0, output_1);
     }
 
     matmul_op.run(cooperative_left, cooperative_right, cooperative_output);
 
-    if constexpr (RELAXED) {
-      METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
-        output_0[i] = cooperative_output[i];
-        output_1[i] = cooperative_output[ELEMENTS_PER_THREAD + i];
-      }
-    } else {
-      METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < 4; i++) {
-        output_0[i] = cooperative_output[i];
-        output_1[i] = cooperative_output[4 + i];
-        output_0[4 + i] = cooperative_output[8 + i];
-        output_1[4 + i] = cooperative_output[12 + i];
-      }
-    }
+    store_paired_vectors(cooperative_output, output_0, output_1);
   }
 
   template <
@@ -167,21 +187,7 @@ struct MxuFragmentOps {
           for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
             cooperative_left[i] = left[i];
           }
-          if constexpr (RELAXED) {
-            METAL_PRAGMA_UNROLL
-            for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
-              cooperative_right[i] = right_col_0[i];
-              cooperative_right[ELEMENTS_PER_THREAD + i] = right_col_1[i];
-            }
-          } else {
-            METAL_PRAGMA_UNROLL
-            for (ushort i = 0; i < 4; i++) {
-              cooperative_right[i] = right_col_0[i];
-              cooperative_right[4 + i] = right_col_1[i];
-              cooperative_right[8 + i] = right_col_0[4 + i];
-              cooperative_right[12 + i] = right_col_1[4 + i];
-            }
-          }
+          load_paired_vectors(cooperative_right, right_col_0, right_col_1);
         }
     );
   }
@@ -207,10 +213,9 @@ struct MxuFragmentOps {
         output_row_0,
         output_row_1,
         [&](thread auto& cooperative_left, thread auto& cooperative_right) {
+          load_paired_vectors(cooperative_left, left_row_0, left_row_1);
           METAL_PRAGMA_UNROLL
           for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
-            cooperative_left[i] = left_row_0[i];
-            cooperative_left[ELEMENTS_PER_THREAD + i] = left_row_1[i];
             cooperative_right[i] = right[i];
           }
         }
@@ -353,6 +358,94 @@ struct MxuFragmentOps {
   ) {
     // MXU relaxed multiply is slightly faster than multiply_accumulate for pure matmul.
     fragment_matmul<false, transpose_a, transpose_b>(output, left, right);
+  }
+
+  // Native int8 x int4b: right is a packed int4b tensor read in place (format
+  // types cannot live in cooperative tensors), with signed codes stored in
+  // memory. Descriptor uses K = 2 * FRAGMENT_COLS so extent(0) stays a
+  // multiple of 32 for int4b alignment.
+  template <bool ACCUMULATE, typename RightTensor, typename RightPointer, class OutputFragment, class LeftFragment>
+  METAL_FUNC static void fragment_mma_int8_int4b_impl(
+      thread OutputFragment& output,
+      thread LeftFragment& left,
+      RightPointer right_int4_signed,
+      const int right_row_stride_elements
+  ) {
+    static_assert(RELAXED, "native int8 x int4b requires relaxed MXU layout");
+    static_assert(LeftFragment::COL_FRAGMENTS == 2, "native int8 x int4b expects K tiled as two fragments");
+    static_assert(OutputFragment::COL_FRAGMENTS % 2 == 0, "native int8 x int4b requires even N fragments");
+    static_assert(LeftFragment::ROW_FRAGMENTS == OutputFragment::ROW_FRAGMENTS, "M tiles must match");
+
+    constexpr ushort rows = OutputFragment::ROW_FRAGMENTS;
+    constexpr ushort cols = OutputFragment::COL_FRAGMENTS;
+    constexpr int tile_k = int(2 * FRAGMENT_COLS);
+    constexpr int tile_n = int(2 * FRAGMENT_COLS);
+
+    constexpr auto descriptor = mpp::tensor_ops::matmul2d_descriptor(
+        FRAGMENT_ROWS,
+        tile_n,
+        tile_k,
+        false,
+        true,
+        RELAXED,
+        ACCUMULATE ? mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate
+                   : mpp::tensor_ops::matmul2d_descriptor::mode::multiply
+    );
+    mpp::tensor_ops::matmul2d<descriptor, metal::execution_simdgroup> matmul_op;
+
+    const array<int, 2> right_strides = {1, right_row_stride_elements};
+
+    METAL_PRAGMA_UNROLL
+    for (ushort row = 0; row < rows; ++row) {
+      METAL_PRAGMA_UNROLL
+      for (ushort col = 0; col < cols; col += 2) {
+        auto cooperative_left =
+            matmul_op.template get_left_input_cooperative_tensor<int8_t, metal::int4b_format, int>();
+        load_paired_vectors(cooperative_left, left.fragment_at(row, 0), left.fragment_at(row, 1));
+
+        constexpr int packed_elements_per_byte = 2;
+        const int bytes_per_row = right_row_stride_elements / packed_elements_per_byte;
+        RightPointer right_tile = right_int4_signed + int(col * FRAGMENT_COLS) * bytes_per_row;
+        RightTensor right_tensor(right_tile, extents<int, tile_k, tile_n>{}, right_strides);
+
+        auto cooperative_output = matmul_op.template get_destination_cooperative_tensor<
+            decltype(cooperative_left),
+            RightTensor,
+            int>();
+
+        if constexpr (ACCUMULATE) {
+          load_paired_vectors(cooperative_output, output.fragment_at(row, col), output.fragment_at(row, col + 1));
+        }
+
+        matmul_op.run(cooperative_left, right_tensor, cooperative_output);
+
+        store_paired_vectors(cooperative_output, output.fragment_at(row, col), output.fragment_at(row, col + 1));
+      }
+    }
+  }
+
+  template <bool ACCUMULATE, class OutputFragment, class LeftFragment>
+  METAL_FUNC static void fragment_mma_int8_int4b(
+      thread OutputFragment& output,
+      thread LeftFragment& left,
+      device uchar* right_int4_signed,
+      const int right_row_stride_elements
+  ) {
+    constexpr int tile_extent = int(2 * FRAGMENT_COLS);
+    using RightTensor = tensor<device metal::int4b_format, extents<int, tile_extent, tile_extent>, tensor_inline>;
+    fragment_mma_int8_int4b_impl<ACCUMULATE, RightTensor>(output, left, right_int4_signed, right_row_stride_elements);
+  }
+
+  template <bool ACCUMULATE, class OutputFragment, class LeftFragment>
+  METAL_FUNC static void fragment_mma_int8_int4b(
+      thread OutputFragment& output,
+      thread LeftFragment& left,
+      threadgroup uchar* right_int4_signed,
+      const int right_row_stride_elements
+  ) {
+    constexpr int tile_extent = int(2 * FRAGMENT_COLS);
+    using RightTensor = tensor<threadgroup metal::int4b_format, extents<int, tile_extent, tile_extent>, tensor_inline>;
+    fragment_mma_int8_int4b_impl<ACCUMULATE, RightTensor>(output, left, right_int4_signed, right_row_stride_elements);
   }
 };
 
