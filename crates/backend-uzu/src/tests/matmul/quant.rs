@@ -10,13 +10,10 @@ use crate::{
     backends::{
         common::{
             Allocation, Backend, Context, Encoder,
-            gpu_types::{QuantizationMethod, QuantizationMode},
+            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
             kernel::{
                 Kernels,
-                matmul::{
-                    MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel,
-                    symmetric_int8_activations::ACTIVATION_QUANTIZATION_GROUP_SIZE,
-                },
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::{
@@ -106,7 +103,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
     }
 
     pub fn with_prepared_a(mut self) -> Self {
-        let group_size = ACTIVATION_QUANTIZATION_GROUP_SIZE as usize;
+        let group_size = HADAMARD_TRANSFORM_BLOCK_SIZE;
         let rows = self.m as usize;
         let columns = self.k as usize;
         let groups = columns.div_ceil(group_size);

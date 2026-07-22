@@ -10,7 +10,7 @@ use crate::{
     backends::{
         common::{
             Allocation, Backend, Encoder,
-            gpu_types::{HadamardTransformOrder, QuantizationMethod, QuantizationMode},
+            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder, QuantizationMethod, QuantizationMode},
             kernel::{
                 ActivationsPrepareKernel, HadamardTransformKernel, Kernels,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -29,10 +29,6 @@ use crate::{
 type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 type MetalPrepare = <<Metal as Backend>::Kernels as Kernels>::ActivationsPrepareKernel;
 type MetalHadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel;
-
-// Symmetric int8 activations always quantize with this group size, independent
-// of the weight group size (see the ActivationsPrepare kernel).
-const ACTIVATION_GROUP_SIZE: u32 = 32;
 
 const SHAPES: &[(usize, usize, usize)] = &[
     (1, 2048, 2048),
@@ -90,7 +86,7 @@ impl BenchmarkData {
         bits: u32,
         seed: u64,
     ) -> Self {
-        let group_size = ACTIVATION_GROUP_SIZE;
+        let group_size = HADAMARD_TRANSFORM_BLOCK_SIZE as u32;
         let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed);
 
         let weights_u8 = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
@@ -181,7 +177,7 @@ fn encode_step(
                 &data.rht_factors,
                 data.m,
                 data.k,
-                ACTIVATION_GROUP_SIZE,
+                HADAMARD_TRANSFORM_BLOCK_SIZE as u32,
                 encoder,
             );
             let args: MatmulArguments<'_, '_, '_, Metal, &Allocation<Metal>> = MatmulArguments {

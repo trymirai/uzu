@@ -6,15 +6,12 @@ use crate::{
         common::{
             Allocation, Backend, BufferArg, Encoder,
             gpu_types::{
-                GemmParams, HadamardTransformOrder,
+                GemmParams, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder,
                 gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
             },
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{
-                    MatmulA, MatmulArguments, MatmulB, MatmulError,
-                    symmetric_int8_activations::ACTIVATION_QUANTIZATION_GROUP_SIZE,
-                },
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
             },
         },
         metal::{
@@ -682,7 +679,7 @@ fn validate_int8_activation_arguments(
         )
         && matches!(bits_per_b, Some(4 | 8))
         && weight_gs_ok
-        && k.is_multiple_of(ACTIVATION_QUANTIZATION_GROUP_SIZE)
+        && (k as usize).is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
         && weight_group_size.is_some_and(|gs| k.is_multiple_of(gs));
     if !compatible {
         return Err(MatmulError::IncompatibleA {

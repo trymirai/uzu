@@ -3,13 +3,10 @@ use crate::{
     backends::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
-            gpu_types::{HadamardTransformOrder, QuantizationMode},
+            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder, QuantizationMode},
             kernel::{
                 HadamardTransformKernel,
-                matmul::{
-                    MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel,
-                    symmetric_int8_activations::ACTIVATION_QUANTIZATION_GROUP_SIZE,
-                },
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
         cpu::{Cpu, context::CpuContext, error::CpuError},
@@ -135,7 +132,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     scales: SendPtr(
                         unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
                     ),
-                    group_size: ACTIVATION_QUANTIZATION_GROUP_SIZE as usize,
+                    group_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
                 }
             },
         };

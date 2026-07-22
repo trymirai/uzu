@@ -5,10 +5,7 @@ use crate::{
     backends::common::{
         Allocation, Backend, Context, DeviceCapabilities, Encoder,
         gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
-        kernel::{
-            ActivationsPrepareKernel, HadamardTransformKernel, Kernels,
-            matmul::{MatmulA, symmetric_int8_activations::ACTIVATION_QUANTIZATION_GROUP_SIZE},
-        },
+        kernel::{ActivationsPrepareKernel, HadamardTransformKernel, Kernels, matmul::MatmulA},
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
@@ -130,7 +127,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         if let Some(preparation) = &self.symmetric_int8_preparation {
-            let groups_per_row = self.input_dimension.div_ceil(ACTIVATION_QUANTIZATION_GROUP_SIZE as usize);
+            let groups_per_row = self.input_dimension.div_ceil(HADAMARD_TRANSFORM_BLOCK_SIZE);
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::F32))?;
@@ -142,7 +139,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 &self.input_factors,
                 batch_dim as u32,
                 self.input_dimension as u32,
-                ACTIVATION_QUANTIZATION_GROUP_SIZE,
+                HADAMARD_TRANSFORM_BLOCK_SIZE as u32,
                 encoder,
             );
             return self.inner_linear.encode_with_a(
