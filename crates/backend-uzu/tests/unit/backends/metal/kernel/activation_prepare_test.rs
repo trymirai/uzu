@@ -6,11 +6,7 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use super::ActivationsPrepareMetalKernel;
 use crate::{
     backends::{
-        common::{
-            Backend, Context, Encoder,
-            gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, ActivationPrepareOps},
-            kernel::{ActivationsPrepareKernel, Kernels},
-        },
+        common::{Backend, Context, Encoder, kernel::{ActivationsPrepareKernel, Kernels}},
         cpu::Cpu,
         metal::{Metal, MetalContext},
     },
@@ -22,9 +18,8 @@ use crate::{
 fn rht_quantize_matches_cpu() {
     let rows = 5usize;
     let columns = 96usize;
-    let group_size = ACTIVATION_QUANTIZATION_GROUP_SIZE;
+    let group_size = 32u32;
     let groups = columns.div_ceil(group_size as usize);
-    let ops = ActivationPrepareOps::INPUT_RHT | ActivationPrepareOps::QUANTIZE;
 
     let mut rng = SmallRng::seed_from_u64(0x5EED_0001);
     let input_data: Vec<f32> = (0..rows * columns).map(|_| rng.random_range(-1.0f32..1.0f32)).collect();
@@ -50,16 +45,16 @@ fn rht_quantize_matches_cpu() {
     let cpu_input = alloc_allocation_with_data::<Cpu, f32>(&cpu, &input_data);
     let cpu_factors = alloc_allocation_with_data::<Cpu, i32>(&cpu, &factors_data);
 
-    let metal_kernel = ActivationsPrepareMetalKernel::new(&metal, DataType::F32, ops).expect("metal prepare");
-    let cpu_kernel = <<Cpu as Backend>::Kernels as Kernels>::ActivationsPrepareKernel::new(&cpu, DataType::F32, ops)
-        .expect("cpu prepare");
+    let metal_kernel = ActivationsPrepareMetalKernel::new(&metal, DataType::F32).expect("metal prepare");
+    let cpu_kernel =
+        <<Cpu as Backend>::Kernels as Kernels>::ActivationsPrepareKernel::new(&cpu, DataType::F32).expect("cpu prepare");
 
     let mut metal_enc = Encoder::<Metal>::new(&metal).expect("metal encoder");
     metal_kernel.encode(
         &metal_input,
         &mut metal_values,
         &mut metal_scales,
-        Some(&metal_factors),
+        &metal_factors,
         rows as u32,
         columns as u32,
         group_size,
@@ -72,7 +67,7 @@ fn rht_quantize_matches_cpu() {
         &cpu_input,
         &mut cpu_values,
         &mut cpu_scales,
-        Some(&cpu_factors),
+        &cpu_factors,
         rows as u32,
         columns as u32,
         group_size,
