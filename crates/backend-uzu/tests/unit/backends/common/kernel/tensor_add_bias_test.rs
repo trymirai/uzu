@@ -7,7 +7,7 @@ use test_runner::for_each_backend;
 
 use crate::{
     array::ArrayElement,
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddBiasKernel},
+    backends::common::{Allocation, Backend, Context, Encoder, Kernels, kernel::TensorAddBiasKernel},
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
 
@@ -64,6 +64,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         T::data_type(),
         T::data_type(),
         in_place,
+        false,
     )
     .expect("Failed to create TensorAddBiasKernel");
 
@@ -79,6 +80,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     kernel.encode(
         input_allocation.as_ref(),
         &bias_allocation,
+        None::<&Allocation<B>>,
         &mut output_allocation,
         input.num_cols,
         input.length,
@@ -125,4 +127,31 @@ fn test_bf16() {
 #[uzu_test]
 fn test_bf16_in_place() {
     test::<bf16>(true);
+}
+
+#[uzu_test]
+fn test_bf16_indexed_rows() {
+    let values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0].map(bf16::from_f32);
+    let bias = [10.0f32, 20.0, 30.0, 40.0, 50.0, 60.0];
+    let bias_row_indices = [1u32, 0];
+    let expected = [41.0, 52.0, 63.0, 14.0, 25.0, 36.0].map(bf16::from_f32);
+
+    for_each_backend!(|B| {
+        let context = <B as Backend>::Context::new().unwrap();
+        let kernel = <<B as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(
+            &context,
+            bf16::data_type(),
+            f32::data_type(),
+            true,
+            true,
+        )
+        .unwrap();
+        let mut output = alloc_allocation_with_data::<B, bf16>(&context, &values);
+        let bias = alloc_allocation_with_data::<B, f32>(&context, &bias);
+        let bias_row_indices = alloc_allocation_with_data::<B, u32>(&context, &bias_row_indices);
+        let mut encoder = Encoder::new(context.as_ref()).unwrap();
+        kernel.encode(None::<&Allocation<B>>, &bias, Some(&bias_row_indices), &mut output, 3, 6, &mut encoder);
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        assert_eq!(allocation_to_vec::<B, bf16>(&output), expected);
+    });
 }

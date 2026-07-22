@@ -110,6 +110,10 @@ impl<B: Backend> Engine<B> {
 }
 
 impl<B: Backend> LanguageModel<B> {
+    pub(crate) fn embedding(&self) -> &crate::encodable_block::embedding::Embedding<B> {
+        self.decoder.embedding()
+    }
+
     pub fn max_context_length(&self) -> Option<usize> {
         self.decoder.max_context_length()
     }

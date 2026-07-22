@@ -9,14 +9,24 @@ use crate::backends::{
     metal::{Metal, context::MetalContext, error::MetalError},
 };
 
-const PARTITIONS: u32 = 4;
+const DEFAULT_PARTITIONS: u32 = 4;
+const LARGE_COLUMNS_MIN: u32 = 131_072;
 const RADIX_BITS: u32 = 10;
 const RADIX_BUCKETS: usize = 1 << RADIX_BITS;
+
+const fn partitions(columns: u32) -> u32 {
+    if columns >= LARGE_COLUMNS_MIN {
+        8
+    } else {
+        DEFAULT_PARTITIONS
+    }
+}
 
 pub struct MetalRadixTopKSmall {
     pass: RadixTopKSmallPassMetalKernel,
     collect: RadixTopKSmallCollectMetalKernel,
     columns: u32,
+    partitions: u32,
     passes: u32,
 }
 
@@ -31,10 +41,12 @@ impl RadixTopKSmall<Metal> for MetalRadixTopKSmall {
         } else {
             u32::BITS - (columns - 1).leading_zeros()
         };
+        let partitions = partitions(columns);
         Ok(Self {
-            pass: RadixTopKSmallPassMetalKernel::new(context, columns, PARTITIONS)?,
-            collect: RadixTopKSmallCollectMetalKernel::new(context, columns, PARTITIONS)?,
+            pass: RadixTopKSmallPassMetalKernel::new(context, columns, partitions)?,
+            collect: RadixTopKSmallCollectMetalKernel::new(context, columns, partitions)?,
             columns,
+            partitions,
             passes: (u32::BITS + index_bits).div_ceil(RADIX_BITS),
         })
     }
@@ -50,7 +62,8 @@ impl RadixTopKSmall<Metal> for MetalRadixTopKSmall {
     ) -> Result<(), MetalError> {
         assert!(rows > 0 && k > 0 && k <= MAX_K && k <= self.columns);
         let rows = rows as usize;
-        let mut histograms = encoder.allocate_scratch(rows * PARTITIONS as usize * RADIX_BUCKETS * size_of::<u32>())?;
+        let mut histograms =
+            encoder.allocate_scratch(rows * self.partitions as usize * RADIX_BUCKETS * size_of::<u32>())?;
         let mut prefixes = encoder.allocate_scratch(rows * size_of::<u64>())?;
         let mut masks = encoder.allocate_scratch(rows * size_of::<u64>())?;
         let mut ranks = encoder.allocate_scratch(rows * size_of::<u32>())?;

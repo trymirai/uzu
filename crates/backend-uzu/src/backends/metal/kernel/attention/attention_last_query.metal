@@ -53,15 +53,15 @@ template <uint HEAD_DIM>
 VARIANTS(HEAD_DIM, 128)
 PUBLIC KERNEL(AttentionLastQuery)(
     const device bfloat* prefix_qkv,
-    device bfloat* node_qkv,
+    const device bfloat* node_qkv,
     const device bfloat* current_qkv,
     const device uint* ancestor_indices,
     const device uint* ancestor_counts,
-    const device uint* node_indices,
     device bfloat* output,
     constant uint& rows,
     constant uint& prefix_length,
     constant uint& ancestor_stride,
+    constant uint& node_capacity,
     constant float& scale,
     const uint num_heads SPECIALIZE,
     const ThreadContext thread_context,
@@ -84,7 +84,6 @@ PUBLIC KERNEL(AttentionLastQuery)(
   const device bfloat4* prefix_vectors = (const device bfloat4*)prefix_qkv;
   const device bfloat4* node_vectors = (const device bfloat4*)node_qkv;
   const device bfloat4* current_row = (const device bfloat4*)current_qkv + row * qkv_vectors;
-  device bfloat4* dest_node = (device bfloat4*)node_qkv + node_indices[row] * qkv_vectors;
 
   const float4 query = float4(current_row[head * vectors_per_head + lane]) * scale;
 
@@ -107,21 +106,20 @@ PUBLIC KERNEL(AttentionLastQuery)(
 
   const uint ancestor_count = ancestor_counts[row];
   const device uint* row_ancestors = ancestor_indices + row * ancestor_stride;
+  const uint last_node = node_capacity == 0 ? 0u : node_capacity - 1u;
   uint offset = 0;
   for (; offset + unroll_count - 1 < ancestor_count; offset += unroll_count) {
     attend_qkv<unroll_count>(query, key_offset, value_offset, values, max_score, sum, [&](int step) {
-      return node_vectors + row_ancestors[offset + step] * qkv_vectors;
+      return node_vectors + min(row_ancestors[offset + step], last_node) * qkv_vectors;
     });
   }
   for (; offset < ancestor_count; ++offset) {
     attend_qkv<1>(query, key_offset, value_offset, values, max_score, sum, [&](int) {
-      return node_vectors + row_ancestors[offset] * qkv_vectors;
+      return node_vectors + min(row_ancestors[offset], last_node) * qkv_vectors;
     });
   }
 
   attend_qkv<1>(query, key_offset, value_offset, values, max_score, sum, [&](int) { return current_row; });
 
-  dest_node[key_offset] = current_row[key_offset];
-  dest_node[value_offset] = current_row[value_offset];
   ((device bfloat4*)output)[(row * num_heads + head) * vectors_per_head + lane] = bfloat4(values / sum);
 }
