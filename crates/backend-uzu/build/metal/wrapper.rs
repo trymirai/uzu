@@ -1,13 +1,17 @@
-use std::{collections::HashMap, iter::once};
+use std::{
+    collections::{BTreeMap, HashMap, btree_map},
+    iter::once,
+};
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use igata::{
     constraint_expr,
     enum_paths::EnumPaths,
     mangling::static_mangle,
-    variants::{AxisSpec, KernelSpace},
+    variants::{AxisSpec, KernelSpace, flattening_impl},
 };
 use itertools::Itertools;
+use proc_macro2::TokenStream;
 
 use super::{
     ast::{
@@ -200,6 +204,47 @@ pub fn accepted_variants(
     enum_paths: &EnumPaths,
 ) -> anyhow::Result<Vec<Option<Vec<(String, String)>>>> {
     KernelAxes::of(kernel)?.space().accepted_variants(enum_paths)
+}
+
+/// One `to_template_args()` per variant group, emitted once for the whole library.
+///
+/// A group's arms only name field enums; which template axis a field flattens to, and
+/// what type that axis has, is the shader's half of the story, so the flattening is
+/// generated here rather than beside the type. Every kernel that declares the group must
+/// agree on it -- they are the same axes.
+pub fn group_flattenings<'a>(
+    kernels: impl IntoIterator<Item = &'a MetalKernelInfo>,
+    enum_paths: &EnumPaths,
+) -> anyhow::Result<Vec<TokenStream>> {
+    let mut flattenings: BTreeMap<&str, (String, TokenStream)> = BTreeMap::new();
+
+    for kernel in kernels {
+        let kernel_axes = KernelAxes::of(kernel)?;
+        let Some(axes) = kernel_axes.axes.as_deref() else {
+            continue;
+        };
+
+        for group in enum_paths.variant_groups() {
+            if !group.axes.iter().all(|axis| axes.iter().any(|a| a.name == *axis)) {
+                continue;
+            }
+            let tokens = flattening_impl(group, axes, enum_paths)
+                .with_context(|| format!("in variant group `{}` of kernel `{}`", group.name, kernel.name))?;
+            let rendered = tokens.to_string();
+            match flattenings.entry(&group.name) {
+                btree_map::Entry::Occupied(previous) => anyhow::ensure!(
+                    previous.get().0 == rendered,
+                    "kernels disagree about how `{}` flattens onto their axes",
+                    group.name,
+                ),
+                btree_map::Entry::Vacant(slot) => {
+                    slot.insert((rendered, tokens));
+                },
+            }
+        }
+    }
+
+    Ok(flattenings.into_values().map(|(_, tokens)| tokens).collect())
 }
 
 fn kernel_wrappers(

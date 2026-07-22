@@ -13,7 +13,7 @@ use walkdir::WalkDir;
 use super::{
     ast::MetalKernelInfo,
     toolchain::MetalToolchain,
-    wrapper::{SpecializeBaseIndices, wrappers},
+    wrapper::{SpecializeBaseIndices, group_flattenings, wrappers},
 };
 use crate::{
     common::{caching, codegen::write_tokens, compiler::Compiler, envs, identifiers::KernelPath, kernel::Kernel},
@@ -304,6 +304,9 @@ impl MetalCompiler {
 
         debug_log!("bindgen start");
 
+        let flattenings = group_flattenings(objects.clone().into_iter().flat_map(|o| o.kernels.iter()), enum_paths)
+            .context("cannot generate variant group flattenings")?;
+
         let (bindings, associated_types) = objects
             .into_iter()
             .flat_map(|o| o.kernels.iter().map(|k| (k, &o.specialize_indices)))
@@ -327,6 +330,8 @@ impl MetalCompiler {
                     ComputeEncoderSetValue, FunctionConstantValuesSetValue, MetalDataTypeExt,
                 },
             };
+
+            #(#flattenings)*
 
             #(#bindings)*
 

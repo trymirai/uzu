@@ -74,7 +74,9 @@ impl GemmKernel {
         match self.kernels.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
+                // A hit is proof the variant exists; only a miss has to ask.
                 let key = specialization.key;
+                key.validate()?;
                 let (b_prologue, bits_per_b, group_size) = key.weights_key.to_template_args();
                 let kernel = GemmMetalKernel::new(
                     context,
@@ -358,7 +360,6 @@ impl GemmKernel {
                     output_transform,
                     alignment,
                 };
-                specialization.key.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
                     (a, a_offset),
@@ -458,7 +459,6 @@ impl GemmKernel {
                     output_transform,
                     alignment,
                 };
-                specialization.key.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
                     (a, a_offset),
@@ -523,8 +523,6 @@ impl GemmKernel {
             output_transform: GemmDTransform::empty(),
             alignment,
         };
-        part_spec.key.validate()?;
-
         let elem = (m as usize) * (n as usize);
         let slice_bytes = elem * self.output_data_type.size_in_bytes();
         let mut temp = encoder.allocate_scratch(split_k as usize * slice_bytes)?;

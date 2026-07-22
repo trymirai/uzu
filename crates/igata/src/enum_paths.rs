@@ -16,8 +16,6 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct Helper {
     pub parameter: Box<str>,
-    /// The Rust method with the same meaning, for the generated runtime check.
-    pub rust_method: Box<str>,
     pub values: BTreeMap<Box<str>, u32>,
 }
 
@@ -67,12 +65,11 @@ impl EnumPaths {
                         {
                             if let Some(tiles) = geometries(enum_type) {
                                 let prefix = metal_prefix(&enum_type.name);
-                                for (rust_method, metal_suffix, value_of) in ACCESSORS {
+                                for (_, metal_suffix, value_of) in ACCESSORS {
                                     helpers.insert(
                                         format!("{prefix}_{metal_suffix}").into_boxed_str(),
                                         Helper {
                                             parameter: enum_type.name.clone(),
-                                            rust_method: rust_method.into(),
                                             values: tiles
                                                 .iter()
                                                 .map(|(variant, geometry)| ((*variant).into(), value_of(geometry)))
@@ -186,7 +183,6 @@ impl EnumPaths {
         for (name, helper) in self.helpers.iter() {
             hash_str(&mut hasher, name);
             hash_str(&mut hasher, &helper.parameter);
-            hash_str(&mut hasher, &helper.rust_method);
             for (variant, value) in helper.values.iter() {
                 hash_str(&mut hasher, variant);
                 hasher.update(&value.to_le_bytes());
@@ -243,14 +239,6 @@ impl EnumPaths {
                     },
                 )
             })
-            .collect()
-    }
-
-    /// Short name -> full Rust path, for every enum gpu type.
-    pub fn rust_paths(&self) -> BTreeMap<Box<str>, Box<str>> {
-        self.short_name_to_entry
-            .iter()
-            .map(|(name, entry)| (name.as_ref().into(), entry.path.as_ref().into()))
             .collect()
     }
 

@@ -1,12 +1,14 @@
 //! The point of the crate: the variant-space logic is a build script everywhere else,
 //! so nothing here would otherwise be executable by `cargo test`.
 
+use quote::quote;
+
 use crate::{
     constraint_expr::Type,
     enum_paths::EnumPaths,
     gpu_types::{GpuTypeFile, GpuTypes, tile_geometry::TileGeometry},
     mangling::{snake_case, static_mangle},
-    variants::{AxisSpec, KernelSpace},
+    variants::{AxisSpec, KernelSpace, axis_literal, flattening_impl},
 };
 
 /// The shape of the real `gemm` gpu types, cut down to what the tests need.
@@ -361,4 +363,35 @@ fn the_fingerprint_moves_only_when_the_definitions_do() {
 
     let renamed = parse(&GPU_TYPES.replace("b_prologue", "prologue").replace("B_PROLOGUE", "PROLOGUE")).unwrap();
     assert_ne!(enum_paths().semantic_fingerprint(), renamed.semantic_fingerprint());
+}
+
+#[test]
+fn the_generated_flattening_is_the_enumeration_run_backwards() {
+    let paths = enum_paths();
+    let axes = weights_axes();
+    let group = paths.variant_groups().iter().find(|group| group.name.as_ref() == "WeightsKey").unwrap();
+    let flattening = flattening_impl(group, &axes, &paths).unwrap().to_string();
+
+    // The unit arm has to hand back exactly the tuple the enumeration left over for it,
+    // or `FullPrecision` would name a kernel the build never compiled.
+    let unit = space(&axes, &[])
+        .accepted_variants(&paths)
+        .unwrap()
+        .into_iter()
+        .flatten()
+        .find(|variant| variant[0].1.ends_with("FullPrecision"))
+        .expect("the unit arm is one of the accepted variants");
+    let values = unit
+        .iter()
+        .zip(axes.iter())
+        .map(|((_, value), axis)| axis_literal(axis, value, &paths).unwrap())
+        .collect::<Vec<_>>();
+    assert!(flattening.contains(&quote! { Self::FullPrecision => (#(#values),*) }.to_string()), "{flattening}");
+
+    // And a struct arm hands back the value its member selects, not its discriminant by
+    // luck: `QuantBits::B4` is the axis value `4`.
+    assert!(
+        flattening.contains(&quote! { crate::backends::common::gpu_types::gemm::QuantBits::B4 => 4u32 }.to_string()),
+        "{flattening}"
+    );
 }

@@ -212,10 +212,4 @@ impl WeightsKey {
     pub fn is_quantized(self) -> bool {
         !matches!(self, Self::FullPrecision)
     }
-
-    /// Flattens back to the shader's three template arguments. This is the only place
-    /// the flat encoding is produced, at the kernel construction boundary.
-    pub fn to_template_args(self) -> (GemmBPrologueKind, u32, u32) {
-        (self.b_prologue(), self.bits().unwrap_or(0), self.group_size().unwrap_or(0))
-    }
 }

@@ -62,7 +62,9 @@ impl AttentionGemmMetalCore {
     ) -> Result<MappedMutexGuard<'_, AttentionGemmMetalKernel>, MetalError> {
         let mut kernels = self.kernels.lock();
         if let Entry::Vacant(entry) = kernels.entry(specialization) {
+            // A hit is proof the variant exists; only a miss has to ask.
             let key = specialization.key;
+            key.validate()?;
             let kernel = AttentionGemmMetalKernel::new(
                 context,
                 key.t,
@@ -166,8 +168,6 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
             bd: self.head_dim as u32,
             use_mxu,
         };
-        key.validate()?;
-
         let specialization = AttentionGemmSpecialization {
             key,
             align_q: params.q_rem == 0,

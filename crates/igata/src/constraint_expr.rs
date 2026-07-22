@@ -18,8 +18,6 @@ use std::{
 
 use anyhow::{Context, bail};
 use itertools::Itertools;
-use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
 use syn::{BinOp, Expr, Lit, UnOp};
 
 /// The type of an axis, or of a resolved sub-expression.
@@ -532,111 +530,5 @@ fn value_of(
                 }
             },
         }),
-    })
-}
-
-/// How axis names, dtype literals and helper calls are spelled in generated Rust.
-///
-/// The interpreter above and this emitter walk the same [`ResolvedExpr`], so the pruning
-/// that decides which kernels exist and the runtime check that guards dispatch are
-/// projections of one tree. They cannot disagree about what a constraint means.
-pub struct RustBindings {
-    /// Axis name -> the expression holding its value, e.g. `self.gemm_tiling`.
-    pub axes: BTreeMap<Box<str>, TokenStream>,
-    /// Generated accessor name -> the Rust method with the same meaning.
-    pub helpers: BTreeMap<Box<str>, Box<str>>,
-    /// Enum short name -> its full Rust path.
-    pub enum_paths: BTreeMap<Box<str>, Box<str>>,
-}
-
-impl ConstraintSet {
-    /// The constraints as Rust predicates, paired with their shader source text.
-    pub fn to_rust(
-        &self,
-        bindings: &RustBindings,
-    ) -> anyhow::Result<Vec<(Box<str>, TokenStream)>> {
-        self.constraints.iter().map(|c| Ok((c.source.clone(), to_rust(&c.expr, bindings)?))).collect()
-    }
-}
-
-fn to_rust(
-    expr: &ResolvedExpr,
-    bindings: &RustBindings,
-) -> anyhow::Result<TokenStream> {
-    Ok(match expr {
-        ResolvedExpr::Axis {
-            name,
-            ..
-        } => bindings.axes.get(name).cloned().with_context(|| format!("no Rust binding for axis `{name}`"))?,
-
-        ResolvedExpr::Literal(value) => value_to_rust(value, bindings)?,
-
-        ResolvedExpr::Not(operand) => {
-            let operand = to_rust(operand, bindings)?;
-            quote! { !(#operand) }
-        },
-
-        ResolvedExpr::Call {
-            name,
-            argument,
-        } => {
-            let method = bindings.helpers.get(name).with_context(|| format!("no Rust method for helper `{name}`"))?;
-            let method = format_ident!("{method}");
-            let argument = to_rust(argument, bindings)?;
-            quote! { (#argument).#method() }
-        },
-
-        ResolvedExpr::Binary {
-            op,
-            lhs,
-            rhs,
-        } => {
-            let lhs = to_rust(lhs, bindings)?;
-            let rhs = to_rust(rhs, bindings)?;
-            match op {
-                Op::Eq => quote! { (#lhs) == (#rhs) },
-                Op::Ne => quote! { (#lhs) != (#rhs) },
-                Op::Lt => quote! { (#lhs) < (#rhs) },
-                Op::Le => quote! { (#lhs) <= (#rhs) },
-                Op::And => quote! { (#lhs) && (#rhs) },
-                Op::Or => quote! { (#lhs) || (#rhs) },
-            }
-        },
-    })
-}
-
-fn value_to_rust(
-    value: &Value,
-    bindings: &RustBindings,
-) -> anyhow::Result<TokenStream> {
-    Ok(match value {
-        Value::Bool(b) => quote! { #b },
-        Value::Int(i) => {
-            let i = *i as u32;
-            quote! { #i }
-        },
-        Value::DType(name) => {
-            let variant = format_ident!("{}", metal_type_to_data_type(name)?);
-            quote! { crate::data_type::DataType::#variant }
-        },
-        Value::EnumVariant {
-            enum_name,
-            variant,
-        } => {
-            let path =
-                bindings.enum_paths.get(enum_name).with_context(|| format!("no Rust path for enum `{enum_name}`"))?;
-            let path: syn::Path = syn::parse_str(path)?;
-            let variant = format_ident!("{variant}");
-            quote! { #path::#variant }
-        },
-    })
-}
-
-fn metal_type_to_data_type(metal_type: &str) -> anyhow::Result<&'static str> {
-    Ok(match metal_type {
-        "float" => "F32",
-        "half" => "F16",
-        "bfloat" => "BF16",
-        other => bail!("no DataType corresponds to the Metal type `{other}`"),
     })
 }
