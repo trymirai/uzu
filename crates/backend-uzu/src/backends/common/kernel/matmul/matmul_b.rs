@@ -1,7 +1,10 @@
 use crate::{
     backends::common::{
         Allocation, Backend, BufferArg,
-        gpu_types::{QuantizationMode, gemm::GemmBPrologueKind},
+        gpu_types::{
+            QuantizationMode,
+            gemm::{QuantBits, QuantGroupSize, QuantPrologue, WeightsKey},
+        },
     },
     data_type::DataType,
 };
@@ -33,41 +36,34 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
 }
 
 impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
-    pub fn b_prologue(&self) -> GemmBPrologueKind {
-        match self {
+    /// `None` when the operand's bit width or group size is outside the set the kernels
+    /// are instantiated for, i.e. no GEMM/GEMV variant can serve this B at all.
+    pub fn weights_key(&self) -> Option<WeightsKey> {
+        let (prologue, mode, group_size) = match self {
             Self::FullPrecision {
                 ..
-            } => GemmBPrologueKind::FullPrecision,
+            } => return Some(WeightsKey::FullPrecision),
             Self::ScaleBiasDequant {
+                mode,
+                group_size,
                 ..
-            } => GemmBPrologueKind::ScaleBiasDequant,
+            } => (QuantPrologue::ScaleBiasDequant, mode, group_size),
             Self::ScaleZeroPointDequant {
+                mode,
+                group_size,
                 ..
-            } => GemmBPrologueKind::ScaleZeroPointDequant,
+            } => (QuantPrologue::ScaleZeroPointDequant, mode, group_size),
             Self::ScaleSymmetricDequant {
-                ..
-            } => GemmBPrologueKind::ScaleSymmetricDequant,
-        }
-    }
-
-    pub fn bits_per_b(&self) -> Option<u32> {
-        match self {
-            Self::FullPrecision {
-                ..
-            } => None,
-            Self::ScaleBiasDequant {
                 mode,
+                group_size,
                 ..
-            }
-            | Self::ScaleZeroPointDequant {
-                mode,
-                ..
-            }
-            | Self::ScaleSymmetricDequant {
-                mode,
-                ..
-            } => Some(DataType::from(*mode).size_in_bits() as u32),
-        }
+            } => (QuantPrologue::ScaleSymmetricDequant, mode, group_size),
+        };
+        Some(WeightsKey::Quant {
+            prologue,
+            bits: QuantBits::new(DataType::from(*mode).size_in_bits() as u32)?,
+            group_size: QuantGroupSize::new(*group_size)?,
+        })
     }
 
     pub fn group_size(&self) -> Option<u32> {

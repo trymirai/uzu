@@ -9,8 +9,14 @@ pub enum GemmSpecializationError {
         simdgroup_k: u32,
         group_size: u32,
     },
-    #[error("quantized B requires transposed layout")]
-    QuantizedRequiresTransposedB,
+    #[error(
+        "quantized B requires transposed layout, and tile {tiling} is only instantiated for group_size 16 (got transpose_b={transpose_b}, group_size={group_size})"
+    )]
+    QuantizedVariantNotInstantiated {
+        tiling: GemmTiling,
+        group_size: u32,
+        transpose_b: bool,
+    },
     #[error("tiling {tiling} does not match use_mxu={use_mxu}")]
     TilingUseMxuMismatch {
         tiling: GemmTiling,

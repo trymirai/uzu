@@ -41,8 +41,6 @@ CONSTRAINT(
      GEMM_TILING == GemmTiling::Tile64x32x256_Simdgroups4x1 ||
      GEMM_TILING == GemmTiling::Tile64x64x256_Simdgroups2x2 ||
      GEMM_TILING == GemmTiling::Tile128x128x256_Simdgroups4x4))
-CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
-CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(
     GROUP_SIZE != 16 ||

@@ -7,7 +7,7 @@ use crate::{
             Allocation, Backend, BufferArg, Encoder,
             gpu_types::{
                 GemmParams, HadamardTransformOrder,
-                gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
+                gemm::{GemmAlignment, GemmDTransform, GemmTiling, WeightsKey},
             },
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
@@ -74,6 +74,7 @@ impl GemmKernel {
         match self.kernels.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
+                let (b_prologue, bits_per_b, group_size) = specialization.weights.to_template_args();
                 let kernel = GemmMetalKernel::new(
                     context,
                     self.input_data_type,
@@ -82,9 +83,9 @@ impl GemmKernel {
                     specialization.tiling,
                     specialization.transpose_b,
                     specialization.use_mxu,
-                    specialization.b_prologue,
-                    specialization.bits_per_b.unwrap_or(0),
-                    specialization.group_size.unwrap_or(0),
+                    b_prologue,
+                    bits_per_b,
+                    group_size,
                     specialization.output_transform,
                     specialization.alignment,
                 )?;
@@ -241,9 +242,10 @@ impl GemmKernel {
         let rht_factors = arguments.d_transform.rht_factors;
         let output_transform = arguments.d_transform.mask();
 
-        let b_prologue = arguments.b.b_prologue();
-        let bits_per_b = arguments.b.bits_per_b();
-        let group_size = arguments.b.group_size();
+        let weights_key = arguments
+            .b
+            .weights_key()
+            .ok_or(MatmulError::<Metal>::UnsupportedGroupSize(arguments.b.group_size().unwrap_or(0) as usize))?;
 
         let MatmulArguments {
             a,
@@ -315,9 +317,7 @@ impl GemmKernel {
                             ab_scale,
                             use_mxu,
                             tiling,
-                            b_prologue,
-                            bits_per_b,
-                            group_size,
+                            weights_key,
                             split_k,
                             output_transform,
                             output_bias,
@@ -353,9 +353,7 @@ impl GemmKernel {
                     output_transform,
                     alignment,
                     transpose_b: b_transpose,
-                    b_prologue,
-                    bits_per_b,
-                    group_size,
+                    weights: weights_key,
                 };
                 specialization.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -405,19 +403,20 @@ impl GemmKernel {
                     _ => unreachable!(),
                 };
 
+                let group_size = weights_key.group_size().unwrap_or(0);
                 let tiling = if use_mxu {
-                    select_mxu_quant_tiling(m, n, group_size.unwrap_or(0))
+                    select_mxu_quant_tiling(m, n, group_size)
                 } else {
-                    select_quant_tiling(m, n, group_size.unwrap_or(0))
+                    select_quant_tiling(m, n, group_size)
                 };
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
-                let params = quant_params(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), ab_scale);
+                let params = quant_params(m, n, k, tiling, use_mxu, group_size, ab_scale);
                 let group_count_x = n.div_ceil(tiling.block_n());
                 let group_count_y = m.div_ceil(tiling.block_m());
 
-                let zero_point_4bit = zero_points.is_some() && bits_per_b == Some(4);
-                let split_k = select_split_k(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), false, zero_point_4bit);
+                let zero_point_4bit = zero_points.is_some() && weights_key.bits() == Some(4);
+                let split_k = select_split_k(m, n, k, tiling, use_mxu, group_size, false, zero_point_4bit);
                 if split_k > 1
                     && split_k_output_supported(output_transform, n, self.weights_data_type, self.output_data_type)
                 {
@@ -435,9 +434,7 @@ impl GemmKernel {
                         ab_scale,
                         use_mxu,
                         tiling,
-                        b_prologue,
-                        bits_per_b,
-                        group_size,
+                        weights_key,
                         split_k,
                         output_transform,
                         output_bias,
@@ -453,9 +450,7 @@ impl GemmKernel {
                     output_transform,
                     alignment,
                     transpose_b: true,
-                    b_prologue,
-                    bits_per_b,
-                    group_size,
+                    weights: weights_key,
                 };
                 specialization.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -496,18 +491,16 @@ impl GemmKernel {
         ab_scale: f32,
         use_mxu: bool,
         tiling: GemmTiling,
-        b_prologue: GemmBPrologueKind,
-        bits_per_b: Option<u32>,
-        group_size: Option<u32>,
+        weights_key: WeightsKey,
         split_k: u32,
         output_transform: GemmDTransform,
         output_bias: Option<&Allocation<Metal>>,
         rht_factors: Option<&Allocation<Metal>>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        let full_precision = matches!(b_prologue, GemmBPrologueKind::FullPrecision);
+        let full_precision = !weights_key.is_quantized();
         let kp = k / split_k;
-        let k_step = split_k_step(tiling, use_mxu, group_size.unwrap_or(0), full_precision).unwrap_or(1);
+        let k_step = split_k_step(tiling, use_mxu, weights_key.group_size().unwrap_or(0), full_precision).unwrap_or(1);
         let base_gx = n.div_ceil(tiling.block_n());
         let base_gy = m.div_ceil(tiling.block_m());
         let alignment =
@@ -519,9 +512,7 @@ impl GemmKernel {
             output_transform: GemmDTransform::empty(),
             alignment,
             transpose_b: true,
-            b_prologue,
-            bits_per_b,
-            group_size,
+            weights: weights_key,
         };
         part_spec.validate()?;
 

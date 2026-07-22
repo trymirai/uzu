@@ -13,10 +13,12 @@ use walkdir::WalkDir;
 mod item_enum;
 mod item_option_set;
 mod item_struct;
+mod item_variant_group;
 
 pub use item_enum::GpuTypeEnum;
 pub use item_option_set::{GpuTypeOptionSet, GpuTypeOptionSetVariant};
 pub use item_struct::{GpuTypeStruct, GpuTypeStructFieldType};
+pub use item_variant_group::{GpuTypeVariantGroup, VariantGroupArm};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, AsRef, Deref, Display)]
 #[as_ref(str)]
@@ -50,6 +52,8 @@ pub enum GpuType {
     Enum(GpuTypeEnum),
     Struct(GpuTypeStruct),
     OptionSet(GpuTypeOptionSet),
+    /// A Rust-side key type, not emitted into the Metal header.
+    VariantGroup(GpuTypeVariantGroup),
 }
 
 #[derive(Debug)]
@@ -69,7 +73,11 @@ impl GpuTypeFile {
             .items
             .into_iter()
             .filter_map(|item| match item {
-                Item::Enum(item) => Some(GpuTypeEnum::parse(item).map(GpuType::Enum)),
+                Item::Enum(item) => Some(match GpuTypeVariantGroup::axes_of(&item.attrs) {
+                    Ok(Some(axes)) => GpuTypeVariantGroup::parse(item, axes).map(GpuType::VariantGroup),
+                    Ok(None) => GpuTypeEnum::parse(item).map(GpuType::Enum),
+                    Err(error) => Err(error),
+                }),
                 Item::Struct(item) => Some(GpuTypeStruct::parse(item).map(GpuType::Struct)),
                 Item::Macro(item) if item.mac.path.is_ident("bitflags") => {
                     Some(GpuTypeOptionSet::parse(item.mac.tokens).map(GpuType::OptionSet))

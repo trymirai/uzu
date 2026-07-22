@@ -42,7 +42,11 @@ async fn gpu_type_gen_file(
                 .with_context(|| format!("Failed to generate bindings for {gpu_type_struct:?}")),
             GpuType::OptionSet(gpu_type_option_set) => gpu_type_gen_option_set(gpu_type_option_set)
                 .with_context(|| format!("Failed to generate bindings for {gpu_type_option_set:?}")),
+            // Variant groups describe how template axes combine, which is a build-time
+            // concern; the shader only ever sees the flattened axes themselves.
+            GpuType::VariantGroup(_) => Ok(String::new()),
         })
+        .filter_ok(|generated| !generated.is_empty())
         .process_results(|mut it| it.join("\n\n"))?;
 
     let new_contents = format!(include_str!("template.ht"), module_name = module_name, generated = generated);

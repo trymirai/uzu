@@ -13,6 +13,20 @@ pub fn kernel(
     dsl::kernel(args, input)
 }
 
+/// Marks an enum as the Rust-side sum type for a group of shader template axes, named
+/// in declaration order: `#[variant_group(B_PROLOGUE, BITS, GROUP_SIZE)]`.
+///
+/// The backend-uzu build script enumerates the enum's legal field combinations instead
+/// of the raw cross-product of those axes, so combinations the type cannot represent are
+/// never instantiated. Expands to the item unchanged.
+#[proc_macro_attribute]
+pub fn variant_group(
+    _args: TokenStream,
+    input: TokenStream,
+) -> TokenStream {
+    input
+}
+
 // Config DSL
 #[proc_macro_attribute]
 pub fn uzu_config_abstract(

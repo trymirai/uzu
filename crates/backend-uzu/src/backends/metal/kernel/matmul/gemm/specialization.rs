@@ -1,6 +1,6 @@
 use super::error::GemmSpecializationError;
 use crate::{
-    backends::common::gpu_types::gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
+    backends::common::gpu_types::gemm::{GemmAlignment, GemmDTransform, GemmTiling, WeightsKey},
     data_type::DataType,
 };
 
@@ -12,9 +12,7 @@ pub(crate) struct GemmSpecialization {
     pub(crate) output_transform: GemmDTransform,
     pub(crate) alignment: GemmAlignment,
     pub(crate) transpose_b: bool,
-    pub(crate) b_prologue: GemmBPrologueKind,
-    pub(crate) bits_per_b: Option<u32>,
-    pub(crate) group_size: Option<u32>,
+    pub(crate) weights: WeightsKey,
 }
 
 impl GemmSpecialization {
@@ -26,8 +24,7 @@ impl GemmSpecialization {
             });
         }
         if self.use_mxu
-            && self.b_prologue != GemmBPrologueKind::FullPrecision
-            && let Some(group_size) = self.group_size
+            && let Some(group_size) = self.weights.group_size()
             && !self.tiling.fits_quant_group_size(group_size)
         {
             return Err(GemmSpecializationError::MxuQuantTileTooLarge {
@@ -36,7 +33,7 @@ impl GemmSpecialization {
             });
         }
         if !self.use_mxu
-            && let Some(group_size) = self.group_size
+            && let Some(group_size) = self.weights.group_size()
         {
             let simdgroup_block_k = self.tiling.simdgroup_block_k();
             if simdgroup_block_k > group_size {
@@ -46,8 +43,17 @@ impl GemmSpecialization {
                 });
             }
         }
-        if self.b_prologue != GemmBPrologueKind::FullPrecision && !self.transpose_b {
-            return Err(GemmSpecializationError::QuantizedRequiresTransposedB);
+        // Mirrors the gemm.metal CONSTRAINT gating which quantized variants exist:
+        // quantized => TRANSPOSE_B && (tiling != Tile64x64x16 || GROUP_SIZE == 16).
+        if let Some(group_size) = self.weights.group_size() {
+            let tiling_instantiated = self.tiling != GemmTiling::Tile64x64x16_Simdgroups2x2 || group_size == 16;
+            if !self.transpose_b || !tiling_instantiated {
+                return Err(GemmSpecializationError::QuantizedVariantNotInstantiated {
+                    tiling: self.tiling,
+                    group_size,
+                    transpose_b: self.transpose_b,
+                });
+            }
         }
         Ok(())
     }

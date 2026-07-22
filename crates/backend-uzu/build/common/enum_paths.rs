@@ -3,7 +3,7 @@ use std::collections::{HashMap, hash_map::Entry};
 use anyhow::bail;
 use syn::{Type, TypePath, visit_mut::VisitMut};
 
-use super::gpu_types::{GpuType, GpuTypeName, GpuTypePath, GpuTypes};
+use super::gpu_types::{GpuType, GpuTypeName, GpuTypePath, GpuTypeVariantGroup, GpuTypes};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum GpuTypeKind {
@@ -16,31 +16,38 @@ struct GpuTypeEntry {
     path: GpuTypePath,
     #[allow(dead_code)]
     kind: GpuTypeKind,
-    /// Variant names in declaration order, so a shader can omit a `VARIANTS` list for an
-    /// enum axis and have the members single-sourced from the Rust definition.
-    variants: Box<[Box<str>]>,
+    /// Variant names and discriminants in declaration order, so a shader can omit a
+    /// `VARIANTS` list for an enum axis and have the members single-sourced from the
+    /// Rust definition.
+    variants: Box<[(Box<str>, u32)]>,
 }
 
 #[derive(Clone)]
 pub struct EnumPaths {
     short_name_to_entry: HashMap<GpuTypeName, GpuTypeEntry>,
+    variant_groups: Box<[GpuTypeVariantGroup]>,
 }
 
 impl EnumPaths {
     pub fn from_gpu_types(gpu_types: &GpuTypes) -> anyhow::Result<Self> {
         let mut short_name_to_entry = HashMap::new();
+        let mut variant_groups = Vec::new();
         for file in gpu_types.files.iter() {
             for ty in file.types.iter() {
                 let (name_str, kind, variants) = match ty {
                     GpuType::Enum(enum_type) => (
                         enum_type.name.as_ref(),
                         GpuTypeKind::Enum,
-                        enum_type.variants.iter().map(|v| v.name.clone()).collect(),
+                        enum_type.variants.iter().map(|v| (v.name.clone(), v.discriminant)).collect(),
                     ),
                     GpuType::OptionSet(option_set) => {
                         (option_set.name.as_ref(), GpuTypeKind::OptionSet, Box::default())
                     },
                     GpuType::Struct(_) => continue,
+                    GpuType::VariantGroup(group) => {
+                        variant_groups.push(group.clone());
+                        continue;
+                    },
                 };
                 let name = GpuTypeName::from(name_str);
                 let path =
@@ -61,6 +68,7 @@ impl EnumPaths {
         }
         Ok(Self {
             short_name_to_entry,
+            variant_groups: variant_groups.into(),
         })
     }
 
@@ -71,12 +79,16 @@ impl EnumPaths {
         self.short_name_to_entry.get(short_name).map(|entry| &*entry.path)
     }
 
-    /// Variant names of an enum gpu type, in declaration order.
+    /// Variant names and discriminants of an enum gpu type, in declaration order.
     pub fn variants_for(
         &self,
         short_name: &str,
-    ) -> Option<&[Box<str>]> {
+    ) -> Option<&[(Box<str>, u32)]> {
         self.short_name_to_entry.get(short_name).map(|entry| &*entry.variants)
+    }
+
+    pub fn variant_groups(&self) -> &[GpuTypeVariantGroup] {
+        &self.variant_groups
     }
 
     #[allow(dead_code)]

@@ -433,7 +433,7 @@ fn default_variants(
     let short_name = rust_type.rsplit("::").next().unwrap_or(rust_type);
     match enum_paths.variants_for(short_name) {
         Some(variants) if !variants.is_empty() => {
-            Ok(variants.iter().map(|variant| format!("{short_name}::{variant}").into()).collect())
+            Ok(variants.iter().map(|(variant, _)| format!("{short_name}::{variant}").into()).collect())
         },
         _ => bail!("template parameter `{name}` has no derivable value set, so it needs an explicit VARIANTS list"),
     }

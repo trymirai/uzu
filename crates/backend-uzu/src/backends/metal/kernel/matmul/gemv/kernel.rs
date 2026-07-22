@@ -8,7 +8,7 @@ use crate::{
     backends::{
         common::{
             Allocation, BufferArg, Encoder,
-            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+            gpu_types::gemm::{GemmDTransform, WeightsKey},
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
         metal::{Metal, context::MetalContext, device_tier::DeviceTier, kernel::GemvMetalKernel},
@@ -27,9 +27,7 @@ fn max_gemv_batch_threshold() -> u32 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GemvSpecialization {
-    b_prologue: GemmBPrologueKind,
-    group_size: u32,
-    bits: u32,
+    weights: WeightsKey,
     output_transform: GemmDTransform,
     input_aligned: bool,
     k_split: u32,
@@ -77,7 +75,8 @@ impl GemvSpecialization {
             }
         }
 
-        let bits = args.b.bits_per_b().unwrap_or(0);
+        let weights = args.b.weights_key()?;
+        let bits = weights.bits().unwrap_or(0);
         let block_size = if !is_quant {
             FP_K_BLOCK
         } else if bits == 4 {
@@ -98,9 +97,7 @@ impl GemvSpecialization {
             policy::fp_tile(args.m, args.n, args.k, input_aligned, device_tier)
         };
         Some(Self {
-            b_prologue: args.b.b_prologue(),
-            group_size: args.b.group_size().unwrap_or(0),
-            bits,
+            weights,
             output_transform: args.d_transform.mask(),
             input_aligned,
             k_split: tile.k_split,
@@ -148,14 +145,15 @@ impl GemvDispatch {
         match self.pipelines.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
+                let (b_prologue, bits, group_size) = specialization.weights.to_template_args();
                 let kernel = GemvMetalKernel::new(
                     context,
                     self.input_data_type,
                     self.weights_data_type,
                     self.output_data_type,
-                    specialization.b_prologue,
-                    specialization.group_size,
-                    specialization.bits,
+                    b_prologue,
+                    group_size,
+                    bits,
                     specialization.k_split,
                     specialization.input_aligned,
                     specialization.results_per_simdgroup,

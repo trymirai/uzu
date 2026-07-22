@@ -53,4 +53,22 @@ struct GemmAlignment {
   constexpr uint bits() const thread { return raw_value; }
   constexpr uint bits() const constant { return raw_value; }
 };
+
+enum class QuantBits : uint32_t {
+  B4 = 4,
+  B8 = 8,
+};
+
+enum class QuantGroupSize : uint32_t {
+  G16 = 16,
+  G32 = 32,
+  G64 = 64,
+  G128 = 128,
+};
+
+enum class QuantPrologue : uint32_t {
+  ScaleBiasDequant = 1,
+  ScaleZeroPointDequant = 2,
+  ScaleSymmetricDequant = 3,
+};
 } // namespace uzu::gemm

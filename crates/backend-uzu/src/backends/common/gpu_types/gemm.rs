@@ -183,3 +183,122 @@ impl GemmAlignment {
         bits
     }
 }
+
+/// Bit width of a quantized B operand. There is deliberately no zero variant: an
+/// unquantized B is [`WeightsKey::FullPrecision`], which carries no width at all.
+#[repr(C)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum QuantBits {
+    B4 = 4,
+    B8 = 8,
+}
+
+/// Quantization group size. As with [`QuantBits`], zero is not a value.
+#[repr(C)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum QuantGroupSize {
+    G16 = 16,
+    G32 = 32,
+    G64 = 64,
+    G128 = 128,
+}
+
+/// The dequantizing B prologues: [`GemmBPrologueKind`] minus `FullPrecision`. Variant
+/// names match that enum's, which is how the build script maps them onto the shader's
+/// `B_PROLOGUE` axis.
+#[repr(C)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum QuantPrologue {
+    ScaleBiasDequant = 1,
+    ScaleZeroPointDequant = 2,
+    ScaleSymmetricDequant = 3,
+}
+
+/// How a GEMM/GEMV reads its B operand.
+///
+/// The shader spells this as three independent template axes, which lets a caller
+/// describe weights that are quantized to zero bits, or full precision with a group
+/// size. Those combinations exist in neither the kernels nor reality; keeping the
+/// concept a sum type is what stops them being expressible on either side.
+#[proc_macros::variant_group(B_PROLOGUE, BITS, GROUP_SIZE)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WeightsKey {
+    FullPrecision,
+    Quant {
+        prologue: QuantPrologue,
+        bits: QuantBits,
+        group_size: QuantGroupSize,
+    },
+}
+
+impl QuantBits {
+    pub fn new(bits: u32) -> Option<Self> {
+        match bits {
+            4 => Some(Self::B4),
+            8 => Some(Self::B8),
+            _ => None,
+        }
+    }
+}
+
+impl QuantGroupSize {
+    pub fn new(group_size: u32) -> Option<Self> {
+        match group_size {
+            16 => Some(Self::G16),
+            32 => Some(Self::G32),
+            64 => Some(Self::G64),
+            128 => Some(Self::G128),
+            _ => None,
+        }
+    }
+}
+
+impl WeightsKey {
+    pub fn b_prologue(self) -> GemmBPrologueKind {
+        match self {
+            Self::FullPrecision => GemmBPrologueKind::FullPrecision,
+            Self::Quant {
+                prologue: QuantPrologue::ScaleBiasDequant,
+                ..
+            } => GemmBPrologueKind::ScaleBiasDequant,
+            Self::Quant {
+                prologue: QuantPrologue::ScaleZeroPointDequant,
+                ..
+            } => GemmBPrologueKind::ScaleZeroPointDequant,
+            Self::Quant {
+                prologue: QuantPrologue::ScaleSymmetricDequant,
+                ..
+            } => GemmBPrologueKind::ScaleSymmetricDequant,
+        }
+    }
+
+    pub fn bits(self) -> Option<u32> {
+        match self {
+            Self::FullPrecision => None,
+            Self::Quant {
+                bits,
+                ..
+            } => Some(bits as u32),
+        }
+    }
+
+    pub fn group_size(self) -> Option<u32> {
+        match self {
+            Self::FullPrecision => None,
+            Self::Quant {
+                group_size,
+                ..
+            } => Some(group_size as u32),
+        }
+    }
+
+    pub fn is_quantized(self) -> bool {
+        !matches!(self, Self::FullPrecision)
+    }
+
+    /// Flattens back to the shader's three template arguments. This is the only place
+    /// the flat encoding is produced, at the kernel construction boundary.
+    pub fn to_template_args(self) -> (GemmBPrologueKind, u32, u32) {
+        (self.b_prologue(), self.bits().unwrap_or(0), self.group_size().unwrap_or(0))
+    }
+}
