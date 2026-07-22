@@ -75,7 +75,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             engine: Arc::new(Mutex::new(engine)),
             model: Arc::new(Mutex::new(model)),
             config,
-            tokenizer: tokenizer.map(|tok| tok.clone()),
+            tokenizer: tokenizer.cloned(),
             stop_token_ids,
             speculator,
             max_context_length,
