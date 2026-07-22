@@ -161,7 +161,7 @@ impl MetalCompiler {
 
         let (metal_kernel_infos, dependencies) = self
             .toolchain
-            .analyze(&source_path)
+            .analyze(&source_path, enum_paths)
             .await
             .with_context(|| format!("cannot analyze {}", source_path_display))?;
 

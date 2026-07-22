@@ -37,7 +37,6 @@ VARIANTS(O, float, bfloat)
 VARIANTS(ScratchT, float, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 VARIANTS(VT, 32)
-VARIANTS(USE_MXU, false, true)
 KERNEL(DeltaNetChunkedOutputAndState)(
     device const float* q_norm,
     device const float* k_norm,

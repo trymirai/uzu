@@ -27,8 +27,6 @@ using namespace uzu::matmul;
 template <typename QKT, typename OutputT, bool use_mxu, bool transposed_h0>
 VARIANTS(QKT, float, bfloat)
 VARIANTS(OutputT, float, bfloat)
-VARIANTS(use_mxu, false, true)
-VARIANTS(transposed_h0, false, true)
 CONSTRAINT(!(use_mxu && transposed_h0))
 PUBLIC KERNEL(BuildTreeOut)(
     const device QKT* q,

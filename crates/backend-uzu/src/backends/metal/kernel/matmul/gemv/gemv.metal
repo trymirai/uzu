@@ -23,16 +23,9 @@ VARIANTS(AT, bfloat, float)
 VARIANTS(BT, bfloat, float)
 VARIANTS(DT, bfloat, float)
 CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
-VARIANTS(
-    B_PROLOGUE,
-    GemmBPrologueKind::FullPrecision,
-    GemmBPrologueKind::ScaleBiasDequant,
-    GemmBPrologueKind::ScaleZeroPointDequant,
-    GemmBPrologueKind::ScaleSymmetricDequant)
 VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
-VARIANTS(INPUT_ALIGNED, false, true)
 VARIANTS(RESULTS_PER_SIMDGROUP, 1, 2, 4, 8)
 VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))

@@ -12,6 +12,7 @@ use tempfile::NamedTempFile;
 use tokio::{io::AsyncWriteExt, process::Command};
 
 use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo};
+use crate::common::enum_paths::EnumPaths;
 
 #[derive(Debug)]
 pub enum MetalSdk {
@@ -146,6 +147,7 @@ impl MetalToolchain {
     pub async fn analyze(
         &self,
         path: impl AsRef<Path>,
+        enum_paths: &EnumPaths,
     ) -> anyhow::Result<(impl Iterator<Item = MetalKernelInfo>, impl Iterator<Item = Box<str>>)> {
         let path = path.as_ref();
 
@@ -192,7 +194,9 @@ impl MetalToolchain {
         let kernel_infos = ast_root
             .inner
             .into_iter()
-            .filter_map(|node| MetalKernelInfo::from_ast_node_and_source(node, &source_contents).transpose())
+            .filter_map(|node| {
+                MetalKernelInfo::from_ast_node_and_source(node, &source_contents, enum_paths).transpose()
+            })
             .collect::<anyhow::Result<Vec<_>>>()
             .context("cannot parse kernel infos from AST")?
             .into_iter();

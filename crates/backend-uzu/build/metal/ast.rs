@@ -1,8 +1,11 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, bail};
 use quote::quote;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
+    enum_paths::EnumPaths,
     expr_rewrite::rewrite_paths_with,
     identifiers::{ArgumentName, KernelName},
     kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
@@ -409,6 +412,33 @@ pub struct MetalTemplateParameter {
     pub variants: Box<[Box<str>]>,
 }
 
+/// The value set for an axis whose `VARIANTS` list the shader left out: a bool ranges
+/// over both values, an enum over every member of its Rust definition. Restating either
+/// in the shader only creates a second place for them to be wrong.
+///
+/// Type and numeric parameters have no derivable set and must be declared.
+fn default_variants(
+    name: &str,
+    ty: &MetalTemplateParameterType,
+    enum_paths: &EnumPaths,
+) -> anyhow::Result<Box<[Box<str>]>> {
+    let MetalTemplateParameterType::Value(rust_type) = ty else {
+        bail!("template parameter `{name}` is a type, so it needs an explicit VARIANTS list");
+    };
+
+    if rust_type.as_ref() == "bool" {
+        return Ok(Box::new(["false".into(), "true".into()]));
+    }
+
+    let short_name = rust_type.rsplit("::").next().unwrap_or(rust_type);
+    match enum_paths.variants_for(short_name) {
+        Some(variants) if !variants.is_empty() => {
+            Ok(variants.iter().map(|variant| format!("{short_name}::{variant}").into()).collect())
+        },
+        _ => bail!("template parameter `{name}` has no derivable value set, so it needs an explicit VARIANTS list"),
+    }
+}
+
 impl MetalTemplateParameter {
     fn to_parameter(&self) -> KernelParameter {
         KernelParameter {
@@ -518,6 +548,7 @@ impl MetalKernelInfo {
     pub fn from_ast_node_and_source(
         node: MetalAstNode,
         source: &str,
+        enum_paths: &EnumPaths,
     ) -> anyhow::Result<Option<Self>> {
         let (is_template, template_parameters, node) = if matches!(node.kind, MetalAstKind::FunctionTemplateDecl) {
             let mut template_parameters = Vec::new();
@@ -596,7 +627,7 @@ impl MetalKernelInfo {
 
         let public = annotations.iter().any(|(k, _)| k.as_ref() == "dsl.public");
 
-        let variants: Box<[_]> = annotations
+        let declared: Vec<(Box<str>, Box<[Box<str>]>)> = annotations
             .iter()
             .filter(|(k, _)| k.as_ref() == "dsl.variants")
             .map(|(_, v)| {
@@ -604,39 +635,59 @@ impl MetalKernelInfo {
                     bail!("malformed dsl.variants annotation");
                 };
 
-                let variant_values = variant_values.split(',').map(|v| v.trim().into()).collect::<Box<[Box<str>]>>();
+                let variant_values = variant_values
+                    .split(',')
+                    .map(|v| v.trim())
+                    .filter(|v| !v.is_empty())
+                    .map(Box::<str>::from)
+                    .collect::<Box<[Box<str>]>>();
 
                 Ok((variant_name.clone(), variant_values))
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let has_variants = !variants.is_empty();
-        if has_variants != is_template {
-            bail!("mismatch between AST nodes and variants annotation");
+        if !is_template && !declared.is_empty() {
+            bail!("VARIANTS annotation on a kernel that is not a template");
         }
 
         let variants = if is_template {
             let template_names = template_parameters.iter().map(|(name, _)| name.as_ref()).collect::<Vec<_>>();
-            let variant_names = variants.iter().map(|(name, _)| name.as_ref()).collect::<Vec<_>>();
-            if template_names != variant_names {
-                bail!("template parameters {:?} do not match dsl.variants order {:?}", template_names, variant_names);
+            let declared_names = declared.iter().map(|(name, _)| name.as_ref()).collect::<Vec<_>>();
+
+            if let Some(unknown) = declared_names.iter().find(|name| !template_names.contains(name)) {
+                bail!("VARIANTS({unknown}, ...) does not name a template parameter; declared: {template_names:?}");
             }
+
+            // Annotations may cover only some parameters now, but the ones present must
+            // still read in declaration order — that ordering is what makes a VARIANTS
+            // list next to its parameter obviously the list for that parameter.
+            let expected_order =
+                template_names.iter().copied().filter(|name| declared_names.contains(name)).collect::<Vec<_>>();
+            if declared_names != expected_order {
+                bail!("VARIANTS annotations {declared_names:?} are not in template parameter order {expected_order:?}");
+            }
+
+            let mut declared: HashMap<Box<str>, Box<[Box<str>]>> = declared.into_iter().collect();
 
             Some(
                 template_parameters
                     .into_iter()
-                    .zip(variants)
-                    .map(|((name, ty), (v_name, variants))| {
-                        assert_eq!(name, v_name);
+                    .map(|(name, ty)| {
+                        let ty = match ty {
+                            None => MetalTemplateParameterType::Type,
+                            Some(ntt) => MetalTemplateParameterType::Value(MetalArgument::scalar_type_to_rust(
+                                ntt.desugared_qual_type.unwrap_or(ntt.qual_type).as_ref(),
+                            )?),
+                        };
+
+                        let variants = match declared.remove(&name).filter(|values| !values.is_empty()) {
+                            Some(values) => values,
+                            None => default_variants(&name, &ty, enum_paths)?,
+                        };
 
                         Ok(MetalTemplateParameter {
                             name,
-                            ty: match ty {
-                                None => MetalTemplateParameterType::Type,
-                                Some(ntt) => MetalTemplateParameterType::Value(MetalArgument::scalar_type_to_rust(
-                                    ntt.desugared_qual_type.unwrap_or(ntt.qual_type).as_ref(),
-                                )?),
-                            },
+                            ty,
                             variants,
                         })
                     })

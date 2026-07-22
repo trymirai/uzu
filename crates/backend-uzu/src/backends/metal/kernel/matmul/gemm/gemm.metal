@@ -31,27 +31,6 @@ VARIANTS(AT, bfloat, float)
 VARIANTS(BT, bfloat, float)
 VARIANTS(DT, bfloat, float)
 CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
-VARIANTS(
-    GEMM_TILING,
-    GemmTiling::Tile8x32x32_Simdgroups1x1,
-    GemmTiling::Tile64x32x32_Simdgroups2x2,
-    GemmTiling::Tile64x64x16_Simdgroups2x2,
-    GemmTiling::Tile64x64x32_Simdgroups2x2,
-    GemmTiling::Tile32x32x32_Simdgroups2x2,
-    GemmTiling::Tile16x32x256_Simdgroups1x1,
-    GemmTiling::Tile16x128x256_Simdgroups1x4,
-    GemmTiling::Tile32x64x256_Simdgroups2x2,
-    GemmTiling::Tile64x32x256_Simdgroups4x1,
-    GemmTiling::Tile64x64x256_Simdgroups2x2,
-    GemmTiling::Tile128x128x256_Simdgroups4x4)
-VARIANTS(TRANSPOSE_B, false, true)
-VARIANTS(USE_MXU, false, true)
-VARIANTS(
-    B_PROLOGUE,
-    GemmBPrologueKind::FullPrecision,
-    GemmBPrologueKind::ScaleBiasDequant,
-    GemmBPrologueKind::ScaleZeroPointDequant,
-    GemmBPrologueKind::ScaleSymmetricDequant)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 CONSTRAINT(

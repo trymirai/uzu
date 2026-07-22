@@ -16,6 +16,9 @@ struct GpuTypeEntry {
     path: GpuTypePath,
     #[allow(dead_code)]
     kind: GpuTypeKind,
+    /// Variant names in declaration order, so a shader can omit a `VARIANTS` list for an
+    /// enum axis and have the members single-sourced from the Rust definition.
+    variants: Box<[Box<str>]>,
 }
 
 #[derive(Clone)]
@@ -28,9 +31,15 @@ impl EnumPaths {
         let mut short_name_to_entry = HashMap::new();
         for file in gpu_types.files.iter() {
             for ty in file.types.iter() {
-                let (name_str, kind) = match ty {
-                    GpuType::Enum(enum_type) => (enum_type.name.as_ref(), GpuTypeKind::Enum),
-                    GpuType::OptionSet(option_set) => (option_set.name.as_ref(), GpuTypeKind::OptionSet),
+                let (name_str, kind, variants) = match ty {
+                    GpuType::Enum(enum_type) => (
+                        enum_type.name.as_ref(),
+                        GpuTypeKind::Enum,
+                        enum_type.variants.iter().map(|v| v.name.clone()).collect(),
+                    ),
+                    GpuType::OptionSet(option_set) => {
+                        (option_set.name.as_ref(), GpuTypeKind::OptionSet, Box::default())
+                    },
                     GpuType::Struct(_) => continue,
                 };
                 let name = GpuTypeName::from(name_str);
@@ -44,6 +53,7 @@ impl EnumPaths {
                         vacant.insert(GpuTypeEntry {
                             path,
                             kind,
+                            variants,
                         });
                     },
                 }
@@ -59,6 +69,14 @@ impl EnumPaths {
         short_name: &str,
     ) -> Option<&str> {
         self.short_name_to_entry.get(short_name).map(|entry| &*entry.path)
+    }
+
+    /// Variant names of an enum gpu type, in declaration order.
+    pub fn variants_for(
+        &self,
+        short_name: &str,
+    ) -> Option<&[Box<str>]> {
+        self.short_name_to_entry.get(short_name).map(|entry| &*entry.variants)
     }
 
     #[allow(dead_code)]
