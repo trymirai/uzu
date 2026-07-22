@@ -6,14 +6,19 @@ use crate::{
     array::size_for_shape,
     backends::{
         common::{Allocation, BufferArg, Encoder, gpu_types::AttnParams, kernel::attention_gemm::AttentionGemmCore},
-        metal::{Metal, context::MetalContext, error::MetalError, kernel::AttentionGemmMetalKernel},
+        metal::{
+            Metal,
+            context::MetalContext,
+            error::MetalError,
+            kernel::{AttentionGemmKey, AttentionGemmMetalKernel},
+        },
     },
     data_type::DataType,
     encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
 };
 
 pub struct AttentionGemmMetalCore {
-    kernels: Mutex<HashMap<AttentionGemmKey, AttentionGemmMetalKernel>>,
+    kernels: Mutex<HashMap<AttentionGemmSpecialization, AttentionGemmMetalKernel>>,
     head_dim: usize,
     num_groups: usize,
     num_q_heads: usize,
@@ -28,9 +33,10 @@ pub struct AttentionGemmMetalCore {
     has_sinks: bool,
 }
 
+/// The template variant, plus the function constants specialized into it.
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct AttentionGemmKey {
-    use_mxu: bool,
+struct AttentionGemmSpecialization {
+    key: AttentionGemmKey,
     align_q: bool,
     align_k: bool,
 }
@@ -52,23 +58,19 @@ impl AttentionGemmMetalCore {
     fn get_or_create(
         &self,
         context: &MetalContext,
-        key: AttentionGemmKey,
+        specialization: AttentionGemmSpecialization,
     ) -> Result<MappedMutexGuard<'_, AttentionGemmMetalKernel>, MetalError> {
         let mut kernels = self.kernels.lock();
-        if let Entry::Vacant(entry) = kernels.entry(key) {
-            let bk = if key.use_mxu {
-                32
-            } else {
-                self.simd_bk
-            };
+        if let Entry::Vacant(entry) = kernels.entry(specialization) {
+            let key = specialization.key;
             let kernel = AttentionGemmMetalKernel::new(
                 context,
-                self.data_type,
-                bk,
-                self.head_dim as u32,
+                key.t,
+                key.bk,
+                key.bd,
                 key.use_mxu,
-                key.align_q,
-                key.align_k,
+                specialization.align_q,
+                specialization.align_k,
                 self.is_kv_cache_ring,
                 self.is_causal,
                 self.is_trie,
@@ -77,7 +79,7 @@ impl AttentionGemmMetalCore {
             )?;
             entry.insert(kernel);
         }
-        Ok(MutexGuard::map(kernels, |kernels| kernels.get_mut(&key).expect("kernel was just initialized")))
+        Ok(MutexGuard::map(kernels, |kernels| kernels.get_mut(&specialization).expect("kernel was just initialized")))
     }
 }
 
@@ -126,10 +128,13 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
             self.data_type,
         ))?;
 
-        let use_mxu = arguments.suffix_length >= 64
-            && encoder.context().supports_mxu()
-            && matches!(self.data_type, DataType::BF16 | DataType::F16)
-            && matches!(self.head_dim, 64 | 128);
+        let mxu_key = AttentionGemmKey {
+            t: self.data_type,
+            bk: 32,
+            bd: self.head_dim as u32,
+            use_mxu: true,
+        };
+        let use_mxu = arguments.suffix_length >= 64 && encoder.context().supports_mxu() && mxu_key.validate().is_ok();
         let (bq, bk) = if use_mxu {
             (64, 32)
         } else {
@@ -156,11 +161,19 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
             bk,
         );
         let key = AttentionGemmKey {
+            t: self.data_type,
+            bk,
+            bd: self.head_dim as u32,
             use_mxu,
+        };
+        key.validate()?;
+
+        let specialization = AttentionGemmSpecialization {
+            key,
             align_q: params.q_rem == 0,
             align_k: params.k_rem == 0,
         };
-        let kernel = self.get_or_create(encoder.context(), key)?;
+        let kernel = self.get_or_create(encoder.context(), specialization)?;
 
         kernel.encode(
             arguments.queries,

@@ -175,6 +175,33 @@ fn validate(
     };
 
     let kernel_name = kernel.name.as_ref();
+
+    // A constraint only says which combinations are legal; it cannot catch a value that
+    // was never declared at all, such as a head dimension no kernel was built for.
+    // Grouped axes need no check -- their sum type has no illegal value to hold.
+    let declared = fields
+        .iter()
+        .filter_map(|field| match field {
+            KeyField::Axis(parameter) => Some(parameter),
+            KeyField::Group {
+                ..
+            } => None,
+        })
+        .map(|parameter| {
+            let name = format_ident!("{}", field_name(&parameter.name));
+            let literals = axis_literals(parameter, enum_paths)?;
+            let rule = format!("{} is one of {}", parameter.name, parameter.variants.join(", "));
+            Ok(quote! {
+                if ![#(#literals),*].contains(&self.#name) {
+                    return Err(crate::backends::metal::kernel::InvalidKernelKey {
+                        kernel: #kernel_name,
+                        rule: #rule,
+                    });
+                }
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
     let checks = constraints.to_rust(&bindings)?.into_iter().map(|(rule, predicate)| {
         let rule = rule.as_ref();
         quote! {
@@ -192,6 +219,7 @@ fn validate(
         /// own CONSTRAINT expressions, so it cannot drift from what the build compiled.
         pub fn validate(&self) -> Result<(), crate::backends::metal::kernel::InvalidKernelKey> {
             #(#group_prelude)*
+            #(#declared)*
             #(#checks)*
             Ok(())
         }
