@@ -125,6 +125,33 @@ fn kernel_footer(bindings: &[SpecializeBinding<'_>]) -> String {
     bindings.iter().map(|b| format!("#undef {}\n", b.argument.name)).collect()
 }
 
+/// Template-argument tuples this kernel is instantiated for: the declared cross-product
+/// minus everything its CONSTRAINTs reject. Non-templated kernels yield a single `None`.
+///
+/// The single source of truth for the shipped kernel set — both the wrapper emission
+/// below and the build manifest enumerate variants through here, so the manifest cannot
+/// drift from what actually gets compiled.
+pub fn accepted_variants(kernel: &MetalKernelInfo) -> Vec<Option<Vec<(String, String)>>> {
+    let Some(variants) = &kernel.variants else {
+        return vec![None];
+    };
+
+    let evaluator = crate::common::constraints::Evaluator::new(
+        variants.iter().flat_map(|tp| tp.variants.iter().map(|v| v.as_ref())),
+    );
+
+    variants
+        .iter()
+        .map(|type_parameter| type_parameter.variants.iter())
+        .multi_cartesian_product()
+        .map(|values| {
+            variants.iter().map(|tp| tp.name.to_string()).zip(values.iter().map(|v| v.to_string())).collect::<Vec<_>>()
+        })
+        .filter(|type_variant| evaluator.satisfied(type_variant, &kernel.constraints))
+        .map(Some)
+        .collect()
+}
+
 fn kernel_wrappers(
     kernel: &MetalKernelInfo,
     base_index: Option<&usize>,
@@ -137,33 +164,7 @@ fn kernel_wrappers(
         kernel_wrappers.push(kernel_header(&bindings, base).into_boxed_str());
     }
 
-    let evaluator = crate::common::constraints::Evaluator::new(
-        kernel.variants.as_deref().into_iter().flatten().flat_map(|tp| tp.variants.iter().map(|v| v.as_ref())),
-    );
-    for type_variant in if let Some(variants) = &kernel.variants {
-        variants
-            .iter()
-            .map(|type_parameter| type_parameter.variants.iter())
-            .multi_cartesian_product()
-            .map(|values| {
-                Some(
-                    variants
-                        .iter()
-                        .map(|tp| tp.name.to_string())
-                        .zip(values.iter().map(|v| v.to_string()))
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect()
-    } else {
-        vec![None]
-    } {
-        if let Some(ref tv) = type_variant
-            && !evaluator.satisfied(tv, &kernel.constraints)
-        {
-            continue;
-        }
-
+    for type_variant in accepted_variants(kernel) {
         let (wrapper_name, underlying_name) = if let Some(type_variant) = &type_variant {
             (
                 static_mangle(kernel.name.as_ref(), type_variant.iter().map(|(_k, v)| v.as_str())),

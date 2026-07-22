@@ -256,6 +256,21 @@ impl MetalCompiler {
         Ok(library_path)
     }
 
+    fn manifest<'a>(
+        &self,
+        objects: impl IntoIterator<Item = &'a ObjectInfo>,
+    ) -> anyhow::Result<()> {
+        let manifest =
+            super::manifest::render(objects.into_iter().flat_map(|o| o.kernels.iter().map(|k| (&*o.src_rel_path, k))));
+
+        super::manifest::write(&manifest, &self.out_dir.join("variant_manifest.txt"))?;
+        if let Some(path) = envs::variant_manifest() {
+            super::manifest::write(&manifest, path)?;
+        }
+
+        Ok(())
+    }
+
     fn bindgen<'a>(
         &self,
         objects: impl IntoIterator<Item = &'a ObjectInfo> + Clone,
@@ -344,6 +359,7 @@ impl Compiler for MetalCompiler {
             .await
             .context("cannot compile metal sources")?;
 
+        self.manifest(&objects).context("cannot write variant manifest")?;
         self.link(&objects).await.context("cannot link objects")?;
         self.bindgen(&objects, enum_paths).context("cannot generate bindings")?;
 
