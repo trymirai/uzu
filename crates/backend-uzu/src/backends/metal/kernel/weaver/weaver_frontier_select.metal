@@ -63,15 +63,15 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (thread_context.simdgroup_index == 0) {
-      const uint4 group =
+      const uint4 partial =
           thread_context.simd_lane_id < WEAVER_FRONTIER_SELECT_SIMDGROUPS
               ? reduce[thread_context.simd_lane_id]
               : uint4(0u, WEAVER_FRONTIER_NO_WINNER, WEAVER_FRONTIER_NO_WINNER, WEAVER_FRONTIER_NO_WINNER);
       uint4 selected;
-      selected.x = simd_max(group.x);
-      selected.y = simd_min(group.x == selected.x ? group.y : WEAVER_FRONTIER_NO_WINNER);
-      selected.z = simd_min(all(group.xy == selected.xy) ? group.z : WEAVER_FRONTIER_NO_WINNER);
-      selected.w = simd_min(all(group.xyz == selected.xyz) ? group.w : WEAVER_FRONTIER_NO_WINNER);
+      selected.x = simd_max(partial.x);
+      selected.y = simd_min(partial.x == selected.x ? partial.y : WEAVER_FRONTIER_NO_WINNER);
+      selected.z = simd_min(all(partial.xy == selected.xy) ? partial.z : WEAVER_FRONTIER_NO_WINNER);
+      selected.w = simd_min(all(partial.xyz == selected.xyz) ? partial.w : WEAVER_FRONTIER_NO_WINNER);
       if (thread_context.simd_lane_id == 0) {
         winner_slot[child] = selected.w;
       }

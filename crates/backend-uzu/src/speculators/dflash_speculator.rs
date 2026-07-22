@@ -32,7 +32,7 @@ pub struct DFlashTreeOptions {
 }
 
 const MAX_TREE_BUDGET: usize = 4096;
-const MAX_FRONTIER_WIDTH: usize = 8;
+const MAX_TREE_FRONTIER_WIDTH: usize = 8;
 const MAX_CHILDREN_PER_NODE: usize = 8;
 
 impl Default for DFlashTreeOptions {
@@ -157,9 +157,6 @@ struct DFlashChainOutput<B: Backend> {
     draft_hidden: Allocation<B>,
 }
 
-/// Per-round driver for the best-first frontier loop: assembles one Weaver
-/// batch from the round's winners, runs it, and pushes the resulting child
-/// edges onto the frontier.
 struct WeaverExpansion<'a, B: Backend> {
     speculator: &'a DFlashSpeculator<B>,
     weaver: &'a Weaver<B>,
@@ -176,7 +173,7 @@ impl<B: Backend> WeaverExpansion<'_, B> {
     fn expand_round(
         &mut self,
         parent_indices: &[usize],
-        nodes: &mut [HostTreeNode],
+        nodes: &[HostTreeNode],
         frontier: &mut BinaryHeap<FrontierEntry>,
     ) -> Result<(), DFlashTreeError<B>> {
         let parent_indices = parent_indices
@@ -252,7 +249,6 @@ pub struct DFlashSpeculator<B: Backend> {
     pub(crate) config: DFlashSpeculatorConfig,
 }
 
-/// DFlash-TfM bound to target embedding weights.
 #[derive(Clone, Copy)]
 pub struct DFlashTfm<'a, B: Backend> {
     speculator: &'a DFlashSpeculator<B>,
@@ -281,14 +277,10 @@ impl<B: Backend> DFlashSpeculator<B> {
         target_embedding: &Embedding<B>,
         options: DFlashTreeOptions,
     ) -> Result<TreeProposal<B>, DFlashTreeError<B>> {
-        // `append_state` queues work on the caller's encoder.  Its target
-        // feature allocation must be complete before this host-side copyout;
-        // the decoder seam therefore submits/waits that encoder between the
-        // append and this method.
         if options.budget == 0
             || options.budget > MAX_TREE_BUDGET
             || options.frontier_width == 0
-            || options.frontier_width > MAX_FRONTIER_WIDTH
+            || options.frontier_width > MAX_TREE_FRONTIER_WIDTH
             || options.children_per_node == 0
             || options.children_per_node > MAX_CHILDREN_PER_NODE
         {
@@ -309,17 +301,6 @@ impl<B: Backend> DFlashSpeculator<B> {
             return Err(DFlashTreeError::InvalidOptions);
         }
 
-        let weaver_depths = self.weaver.as_ref().map(|_| {
-            let max_depth = self.config.weaver_config.as_ref().expect("a Weaver implies a Weaver config").max_depth;
-            (max_depth, max_depth.min(block_size.saturating_sub(1)))
-        });
-        let gpu = std::env::var("UZU_DFLASH_GPU_TREE").is_ok_and(|value| value == "1")
-            && weaver_depths.is_some_and(|(_, lookahead_count)| {
-                (options.budget + 1) * options.children_per_node <= MAX_FRONTIER_SLOTS
-                    && options.children_per_node.is_multiple_of(options.frontier_width)
-                    && lookahead_count > 0
-            });
-
         let mut encoder = Encoder::new(&*self.context).map_err(DFlashTreeError::Backend)?;
         let DFlashChainOutput {
             pool_ids,
@@ -336,31 +317,37 @@ impl<B: Backend> DFlashSpeculator<B> {
             pool_size,
         )?;
 
-        let prefix = if let Some(weaver) = self.weaver.as_ref() {
-            let (_, lookahead_count) = weaver_depths.expect("a Weaver implies its depths");
+        let weaver = if let Some(weaver) = self.weaver.as_ref() {
+            let max_depth = self.config.weaver_config.as_ref().expect("a Weaver implies a Weaver config").max_depth;
+            let lookahead_count = max_depth.min(block_size.saturating_sub(1));
             let target_hidden = state.target_output_norm().ok_or(DFlashTreeError::MissingTargetHidden)?;
-            Some(weaver.build_prefix(target_hidden, &draft_hidden, 1, lookahead_count, &mut encoder)?)
+            let prefix = weaver.build_prefix(target_hidden, &draft_hidden, 1, lookahead_count, &mut encoder)?;
+            Some((weaver, prefix, max_depth, lookahead_count))
         } else {
             None
         };
 
-        if gpu {
-            let weaver = self.weaver.as_ref().expect("`gpu` implies a Weaver");
-            let (max_depth, lookahead_count) = weaver_depths.expect("`gpu` implies a Weaver");
+        if let Some((weaver, prefix, max_depth, lookahead_count)) = weaver.as_ref()
+            && std::env::var("UZU_DFLASH_GPU_TREE").is_ok_and(|value| value == "1")
+            && (options.budget + 1) * options.children_per_node <= MAX_FRONTIER_SLOTS
+            // Fixed-width rounds may only pad the terminal round.
+            && options.children_per_node.is_multiple_of(options.frontier_width)
+            && *lookahead_count > 0
+        {
             drop(draft_hidden);
             drop(draft_logits);
             let mut weaver_state = weaver.create_node_state(options.budget + 1, &self.context)?;
             let params = GpuTreeParams {
                 weaver,
-                prefix: prefix.as_ref().expect("`gpu` implies a Weaver prefix"),
+                prefix,
                 target_embedding,
                 pool_ids: &pool_ids,
                 pool_scores: &pool_scores,
                 pool_rows: block_size - 1,
                 pool_size,
                 options,
-                max_depth,
-                lookahead_count,
+                max_depth: *max_depth,
+                lookahead_count: *lookahead_count,
                 bonus_token,
             };
             let tree = self.encode_gpu_tree(&mut encoder, &params, &mut weaver_state)?;
@@ -396,7 +383,7 @@ impl<B: Backend> DFlashSpeculator<B> {
             score: 0.0,
             children: Vec::new(),
         }];
-        let Some(weaver) = self.weaver.as_ref() else {
+        let Some((weaver, prefix, max_depth, lookahead_count)) = weaver.as_ref() else {
             let logits = host_logits.as_ref().unwrap();
             for depth in 0..options.budget.min(block_size.saturating_sub(1)) {
                 let (token, _) = candidate_pools[depth][0];
@@ -417,14 +404,7 @@ impl<B: Backend> DFlashSpeculator<B> {
             return Self::finish_tree(&self.context, nodes);
         };
 
-        let (max_depth, lookahead_count) = weaver_depths.expect("a Weaver implies its depths");
-        let prefix = prefix.as_ref().expect("a Weaver path builds its prefix");
-
         let mut weaver_state = weaver.create_node_state(options.budget + 1, &self.context)?;
-        // Expand the root once to seed the frontier.  Thereafter the heap
-        // contains candidate edges, not already-materialized tree nodes: each
-        // iteration pops the globally best `frontier_width` edges, materializes
-        // those nodes, and expands only those winners.
         let mut expansion = WeaverExpansion {
             speculator: self,
             weaver,
@@ -433,8 +413,8 @@ impl<B: Backend> DFlashSpeculator<B> {
             target_embedding,
             candidate_pools: &candidate_pools,
             children_per_node: options.children_per_node,
-            lookahead_count,
-            max_depth,
+            lookahead_count: *lookahead_count,
+            max_depth: *max_depth,
         };
 
         let nodes = build_host_tree(nodes, options.budget, options.frontier_width, |parents, nodes, frontier| {
@@ -532,13 +512,13 @@ impl<B: Backend> DFlashSpeculator<B> {
         params: &GpuTreeParams<'_, B>,
         state: &mut WeaverNodeState<B>,
     ) -> Result<Allocation<B>, DFlashTreeError<B>> {
+        // A round only expands nodes materialized by earlier rounds.
         let context = &*self.context;
         let slots = params.options.budget + 1;
         let fanout = params.options.children_per_node;
         let capacity = slots * fanout;
         let width = params.options.frontier_width;
         let stride = params.max_depth;
-        let pool_rows = params.pool_rows;
         let pool_size = params.pool_size;
 
         let select =
@@ -611,7 +591,7 @@ impl<B: Backend> DFlashSpeculator<B> {
                     &mut round_candidate_ids,
                     &mut round_candidate_scores,
                     rows as u32,
-                    pool_rows as u32,
+                    params.pool_rows as u32,
                     pool_size as u32,
                     encoder,
                 );
