@@ -10,7 +10,6 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Allocation, Backend, Context, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
-        kernel::matmul::symmetric_int8_activations::activation_quantization_group_size_for_rht_linear,
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
@@ -215,23 +214,13 @@ impl<B: Backend> dyn Linear<B> {
         let weights_tree = parameter_tree.subtree("weights")?;
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         if let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-            quantization_spec,
             adapter_spec: None,
             incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
             incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
             ..
         }) = &spec
         {
-            if activation_quantization_group_size_for_rht_linear(
-                context.supports_symmetric_int8_activations(),
-                input_dimension,
-                weights_data_type,
-                input_data_type,
-                output_data_type,
-                quantization_spec,
-            )
-            .is_some()
-            {
+            if context.supports_symmetric_int8_activations() {
                 let linear = RHTLinearWrapper::new(
                     context,
                     input_dimension,

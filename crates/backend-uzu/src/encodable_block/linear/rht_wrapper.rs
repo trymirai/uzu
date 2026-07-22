@@ -7,12 +7,7 @@ use crate::{
         gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
         kernel::{
             ActivationsPrepareKernel, HadamardTransformKernel, Kernels,
-            matmul::{
-                MatmulA,
-                symmetric_int8_activations::{
-                    ACTIVATION_QUANTIZATION_GROUP_SIZE, activation_quantization_group_size_for_rht_linear,
-                },
-            },
+            matmul::{MatmulA, symmetric_int8_activations::ACTIVATION_QUANTIZATION_GROUP_SIZE},
         },
     },
     config::weight_matrix::{
@@ -89,22 +84,17 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )
         .map_err(RHTLinearWrapperError::BackendError)?;
 
-        let symmetric_int8_preparation = activation_quantization_group_size_for_rht_linear(
-            context.supports_symmetric_int8_activations(),
-            input_dimension,
-            weights_data_type,
-            input_data_type,
-            output_data_type,
-            &quantization_spec,
-        )
-        .map(|_| {
-            <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type)
-                .map(|kernel| SymmetricInt8Preparation {
-                    kernel,
-                })
-        })
-        .transpose()
-        .map_err(RHTLinearWrapperError::BackendError)?;
+        let symmetric_int8_preparation = if context.supports_symmetric_int8_activations() {
+            Some(
+                <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type)
+                    .map(|kernel| SymmetricInt8Preparation {
+                        kernel,
+                    })
+                    .map_err(RHTLinearWrapperError::BackendError)?,
+            )
+        } else {
+            None
+        };
 
         let inner_linear = LinearMatmul::quantized(
             context,
