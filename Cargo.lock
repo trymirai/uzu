@@ -3802,6 +3802,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "proc-macros",
  "pyo3",
  "pyo3-async-runtimes",
  "pyo3-build-config",

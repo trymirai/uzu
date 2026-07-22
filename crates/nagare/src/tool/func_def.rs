@@ -1,6 +1,6 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
-use shoji::types::basic::Value;
+pub use shoji::types::basic::Value;
 
 pub type FutureError = Box<dyn std::error::Error + Send + Sync>;
 pub type FutureFunction =

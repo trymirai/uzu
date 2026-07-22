@@ -128,7 +128,7 @@ async fn run_tool_calls_test(
     while download.next().await.is_some() {}
 
     let mut session = engine.chat(model, ChatConfig::default()).await.unwrap();
-    session.add_tool_functions(get_tool_functions()).await.unwrap();
+    session.add_tool_function_definitions(get_tool_functions()).await.unwrap();
 
     let mut messages = Vec::new();
     if with_system_message {
