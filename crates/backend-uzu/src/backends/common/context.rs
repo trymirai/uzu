@@ -45,7 +45,7 @@ pub trait Context: Sized + Send + Sync {
 
     fn sparse_buffers_supported(&self) -> bool;
 
-    fn supports_mxu(&self) -> bool {
+    fn supports_symmetric_int8_activations(&self) -> bool {
         false
     }
 }

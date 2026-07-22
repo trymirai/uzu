@@ -238,7 +238,7 @@ impl Context for MetalContext {
         self.device.supports_placement_sparse_resources()
     }
 
-    fn supports_mxu(&self) -> bool {
+    fn supports_symmetric_int8_activations(&self) -> bool {
         self.device.supports_mxu()
     }
 }

@@ -4,6 +4,7 @@ mod error;
 mod kernel;
 mod matmul_a;
 mod matmul_b;
+pub mod symmetric_int8_activations;
 
 pub use arguments::MatmulArguments;
 pub use d_ops::MatmulDOps;
