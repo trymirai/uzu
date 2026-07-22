@@ -1,5 +1,3 @@
-#![cfg(all(feature = "metal", target_os = "macos"))]
-
 use std::iter::repeat_n;
 
 use itertools::Itertools;

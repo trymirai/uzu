@@ -39,7 +39,7 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
     /// `None` when the operand's bit width or group size is outside the set the kernels
     /// are instantiated for, i.e. no GEMM/GEMV variant can serve this B at all.
     pub fn weights_key(&self) -> Option<WeightsKey> {
-        let (prologue, mode, group_size) = match self {
+        let (b_prologue, mode, group_size) = match self {
             Self::FullPrecision {
                 ..
             } => return Some(WeightsKey::FullPrecision),
@@ -60,7 +60,7 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
             } => (QuantPrologue::ScaleSymmetricDequant, mode, group_size),
         };
         Some(WeightsKey::Quant {
-            prologue,
+            b_prologue,
             bits: QuantBits::new(DataType::from(*mode).size_in_bits() as u32)?,
             group_size: QuantGroupSize::new(*group_size)?,
         })

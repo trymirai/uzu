@@ -142,7 +142,7 @@ pub enum QuantPrologue {
 pub enum WeightsKey {
     FullPrecision,
     Quant {
-        prologue: QuantPrologue,
+        b_prologue: QuantPrologue,
         bits: QuantBits,
         group_size: QuantGroupSize,
     },
@@ -175,15 +175,15 @@ impl WeightsKey {
         match self {
             Self::FullPrecision => GemmBPrologueKind::FullPrecision,
             Self::Quant {
-                prologue: QuantPrologue::ScaleBiasDequant,
+                b_prologue: QuantPrologue::ScaleBiasDequant,
                 ..
             } => GemmBPrologueKind::ScaleBiasDequant,
             Self::Quant {
-                prologue: QuantPrologue::ScaleZeroPointDequant,
+                b_prologue: QuantPrologue::ScaleZeroPointDequant,
                 ..
             } => GemmBPrologueKind::ScaleZeroPointDequant,
             Self::Quant {
-                prologue: QuantPrologue::ScaleSymmetricDequant,
+                b_prologue: QuantPrologue::ScaleSymmetricDequant,
                 ..
             } => GemmBPrologueKind::ScaleSymmetricDequant,
         }

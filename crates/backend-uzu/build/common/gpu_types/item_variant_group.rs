@@ -1,11 +1,13 @@
 use anyhow::{Context, bail, ensure};
+use itertools::Itertools;
 use syn::{Attribute, Fields, ItemEnum, Meta, Path, punctuated::Punctuated, token::Comma};
+
+use crate::common::mangling::field_name;
 
 /// One arm of a `#[variant_group]` enum.
 ///
-/// A unit variant pins the first axis to the value its own name matches and leaves the
-/// rest at their absent value; a struct variant contributes the product of its field
-/// enums, one field per axis.
+/// A unit variant takes each axis's leftover value; a struct variant contributes the
+/// product of its field enums, one field per axis, matched to the axis by name.
 #[derive(Debug, Clone)]
 pub enum VariantGroupArm {
     Unit {
@@ -70,14 +72,7 @@ impl GpuTypeVariantGroup {
                         name: variant_name.into(),
                     }),
                     Fields::Named(named) => {
-                        ensure!(
-                            named.named.len() == axes.len(),
-                            "variant `{variant_name}` has {} fields but {name} groups {} axes",
-                            named.named.len(),
-                            axes.len(),
-                        );
-
-                        let fields = named
+                        let mut declared = named
                             .named
                             .into_iter()
                             .map(|field| {
@@ -89,7 +84,32 @@ impl GpuTypeVariantGroup {
                                     path.path.segments.last().context("empty field type path")?.ident.to_string();
                                 Ok((field_name.into_boxed_str(), field_type.into_boxed_str()))
                             })
+                            .collect::<anyhow::Result<Vec<(Box<str>, Box<str>)>>>()?;
+
+                        // Fields are matched to axes by name, not by position, so
+                        // reordering the struct cannot silently rebind the axes.
+                        let fields = axes
+                            .iter()
+                            .map(|axis| {
+                                let expected = field_name(axis);
+                                let index =
+                                    declared.iter().position(|(field, _)| **field == *expected).with_context(|| {
+                                        format!(
+                                            "variant `{variant_name}` of `{name}` has no field `{expected}` for axis \
+                                             `{axis}` (its fields are: {})",
+                                            declared.iter().map(|(field, _)| field.as_ref()).join(", ")
+                                        )
+                                    })?;
+                                Ok(declared.remove(index))
+                            })
                             .collect::<anyhow::Result<Box<[(Box<str>, Box<str>)]>>>()?;
+
+                        ensure!(
+                            declared.is_empty(),
+                            "variant `{variant_name}` of `{name}` has field(s) {} naming no axis (it groups: {})",
+                            declared.iter().map(|(field, _)| format!("`{field}`")).join(", "),
+                            axes.iter().map(|axis| axis.as_ref()).join(", "),
+                        );
 
                         Ok(VariantGroupArm::Product {
                             name: variant_name.into(),
@@ -100,6 +120,20 @@ impl GpuTypeVariantGroup {
                 }
             })
             .collect::<anyhow::Result<Box<[VariantGroupArm]>>>()?;
+
+        // A unit arm means "whatever the struct arms leave over", which is only
+        // well defined for one of them.
+        let mut units = arms.iter().filter_map(|arm| match arm {
+            VariantGroupArm::Unit {
+                name,
+            } => Some(name),
+            VariantGroupArm::Product {
+                ..
+            } => None,
+        });
+        if let (Some(first), Some(second)) = (units.next(), units.next()) {
+            bail!("`{name}` has more than one unit variant (`{first}` and `{second}`)");
+        }
 
         Ok(Self {
             name,

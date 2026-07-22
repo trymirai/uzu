@@ -13,12 +13,17 @@ pub fn kernel(
     dsl::kernel(args, input)
 }
 
-/// Marks an enum as the Rust-side sum type for a group of shader template axes, named
-/// in declaration order: `#[variant_group(B_PROLOGUE, BITS, GROUP_SIZE)]`.
+/// Marks an enum as the Rust-side sum type for a group of shader template axes:
+/// `#[variant_group(B_PROLOGUE, BITS, GROUP_SIZE)]`.
 ///
 /// The backend-uzu build script enumerates the enum's legal field combinations instead
 /// of the raw cross-product of those axes, so combinations the type cannot represent are
 /// never instantiated. Expands to the item unchanged.
+///
+/// Each struct arm carries one field per axis, named after it in lowercase
+/// (`B_PROLOGUE` -> `b_prologue`); the field's enum selects values of that axis by
+/// variant name for an enum axis and by discriminant for a numeric one. At most one arm
+/// may be a unit variant, and it stands for each axis's one leftover value.
 #[proc_macro_attribute]
 pub fn variant_group(
     _args: TokenStream,

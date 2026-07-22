@@ -244,7 +244,7 @@ fn axis_literals(
                     let value: bool = value.parse()?;
                     Ok(quote! { #value })
                 },
-                "u32" | "i32" => {
+                "u32" => {
                     let value: u32 = value.parse()?;
                     Ok(quote! { #value })
                 },

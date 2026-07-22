@@ -140,7 +140,10 @@ fn axis_type(parameter: &MetalTemplateParameter) -> anyhow::Result<constraint_ex
         MetalTemplateParameterType::Type => constraint_expr::Type::DType,
         MetalTemplateParameterType::Value(rust_type) => match rust_type.as_ref() {
             "bool" => constraint_expr::Type::Bool,
-            "u32" | "i32" => constraint_expr::Type::Int,
+            "u32" => constraint_expr::Type::Int,
+            // A negative template argument would be mangled and emitted as a `u32`
+            // anyway; absence is the honest answer until a kernel needs one.
+            "i32" => bail!("template parameter `{}` is `i32`: signed template axes are not supported", parameter.name),
             path => match path.rsplit_once("::") {
                 Some((_, short_name)) => constraint_expr::Type::Enum(short_name.into()),
                 None => bail!("template parameter `{}` has unsupported type `{path}`", parameter.name),
@@ -399,7 +402,7 @@ pub fn accepted_variants(
     let constraints = constraint_set(kernel, enum_paths)?;
     let dimensions = dimensions(kernel, parameters, enum_paths)?;
 
-    dimensions
+    let variants = dimensions
         .iter()
         .map(|dimension| dimension.tuples.iter())
         .multi_cartesian_product()
@@ -420,7 +423,28 @@ pub fn accepted_variants(
             Ok(false) => None,
             Err(error) => Some(Err(error.context(format!("in kernel `{}`", kernel.name)))),
         })
-        .collect()
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    // Two tuples that mangle alike would emit the same entry point twice: an overlapping
+    // pair of variant-group arms, say. The Metal compiler reports that as a redefinition
+    // deep in generated code, so name the tuples instead.
+    let mut seen: HashMap<String, &Vec<(String, String)>> = HashMap::new();
+    for type_variant in variants.iter().flatten() {
+        let name = static_mangle(kernel.name.as_ref(), type_variant.iter().map(|(_, value)| value.as_str()));
+        if let Some(previous) = seen.insert(name, type_variant) {
+            let render = |variant: &Vec<(String, String)>| {
+                variant.iter().map(|(axis, value)| format!("{axis}={value}")).join(" ")
+            };
+            bail!(
+                "kernel `{}` instantiates the same entry point twice: `{}` and `{}`",
+                kernel.name,
+                render(previous),
+                render(type_variant),
+            );
+        }
+    }
+
+    Ok(variants)
 }
 
 fn kernel_wrappers(
