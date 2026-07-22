@@ -209,10 +209,6 @@ fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
-    /// Rewrites the packed weight codes as signed values (XOR of the unsigned
-    /// midpoint) so the symmetric int8 activation GEMM can feed them to the
-    /// MXU without any per-dispatch conversion. Only valid when every matmul
-    /// of this layer runs with `MatmulA::Int8Symmetric`.
     pub(super) fn sign_convert_quantized_weights_for_int8_activations(&mut self) {
         let Mode::Quantized {
             mode,

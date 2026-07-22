@@ -449,8 +449,6 @@ impl GemmKernel {
                 };
                 let a_is_int8 = a_prologue == GemmAPrologueKind::Int8Symmetric;
 
-                // The kernel epilogue applies bias before the output RHT would
-                // transform it again; apply the bias in a separate pass instead.
                 let (output_bias, bias_after_rht, output_transform) =
                     if rht_factors.is_some() && output_bias.is_some() {
                         (None, output_bias, output_transform.difference(GemmDTransform::BIAS))

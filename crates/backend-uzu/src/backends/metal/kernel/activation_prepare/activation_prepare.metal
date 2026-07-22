@@ -7,8 +7,6 @@ using namespace metal;
 
 METAL_CONST float SYM_QMAX = 127.0;
 
-// Fused input RHT + groupwise symmetric int8 quantization for RHT linear
-// layers with quantized weights.
 template <typename InputT>
 VARIANTS(InputT, float, bfloat)
 PUBLIC KERNEL(ActivationsPrepare)(

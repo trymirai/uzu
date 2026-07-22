@@ -34,9 +34,7 @@ const SHAPES: &[(usize, usize, usize)] = &[
 ];
 
 struct DeviceInputs {
-    /// Unsigned packed codes for the BF16 quantized baseline.
     weights_u8: Allocation<Metal>,
-    /// Midpoint-signed codes for the A8 MXU path.
     weights_signed: Allocation<Metal>,
     weight_scales: Allocation<Metal>,
     activations: Allocation<Metal>,

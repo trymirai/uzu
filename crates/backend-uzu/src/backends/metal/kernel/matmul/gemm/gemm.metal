@@ -18,7 +18,6 @@ using namespace uzu::gemm;
 #define GEMM_TGB_ELEMENTS                                                                                              \
   ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT)))) : 1)    \
              : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
-// Unaligned A8W4 stages one 32-wide activation chunk (16 packed bytes/row).
 #define GEMM_A8W4_TG_BYTES (GEMM_A8W4 ? (gemm_tiling_block_n(GEMM_TILING) * 16) : 1)
 
 template <

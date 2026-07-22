@@ -489,7 +489,6 @@ fn mxu_quant_parity_bf16(
     );
 }
 
-/// Act gs is always 32; `weight_gs` is independent.
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::sym_w4_gs32(16usize, 32u32, 4u32, QuantizationMethod::ScaleSymmetric)]

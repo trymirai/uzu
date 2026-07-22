@@ -7,8 +7,6 @@ use super::{
 };
 use crate::{array::ArrayElement, backends::common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE};
 
-// Fused input RHT + groupwise symmetric int8 quantization, reference
-// counterpart of the Metal `ActivationsPrepare` kernel.
 #[kernel(ActivationsPrepare)]
 #[variants(InputT, f32, bf16)]
 pub fn activations_prepare<InputT: ArrayElement + Float>(

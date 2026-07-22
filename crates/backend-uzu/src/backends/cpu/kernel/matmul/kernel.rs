@@ -230,8 +230,6 @@ impl MatmulKernel for MatmulCpuKernel {
                                 } => {
                                     let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
                                     let weight_linear_index = b_col * k_u + inner;
-                                    // With int8 activations the weight buffer holds sign-converted
-                                    // codes (unsigned code XOR midpoint), matching the Metal path.
                                     let quantized_value = if *bits == 4 {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 4;
@@ -275,8 +273,6 @@ impl MatmulKernel for MatmulCpuKernel {
                                         }
                                     });
                                     let bias_term = if signed_u8_weights {
-                                        // Codes are midpoint-signed: w = s·q + c, with
-                                        // c = 0 (sym), b+s·mid (bias), or s·(mid−zp) (zp).
                                         if let Some(zp) = zero_point {
                                             scale * (midpoint - zp)
                                         } else if let Some(b) = biases {

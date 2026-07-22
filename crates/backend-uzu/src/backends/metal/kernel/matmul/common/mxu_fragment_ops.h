@@ -70,8 +70,6 @@ struct MxuFragmentOps {
     }
   }
 
-  // MPP pairs two 16x16 fragments per cooperative tensor; these helpers
-  // marshal such a pair into / out of a cooperative tensor.
   template <typename CooperativeTensor, typename U>
   METAL_FUNC static void load_paired_vectors(
       thread CooperativeTensor& cooperative,
@@ -360,10 +358,6 @@ struct MxuFragmentOps {
     fragment_matmul<false, transpose_a, transpose_b>(output, left, right);
   }
 
-  // Native int8 x int4b: right is a packed int4b tensor read in place (format
-  // types cannot live in cooperative tensors), with signed codes stored in
-  // memory. Descriptor uses K = 2 * FRAGMENT_COLS so extent(0) stays a
-  // multiple of 32 for int4b alignment.
   template <bool ACCUMULATE, typename RightTensor, typename RightPointer, class OutputFragment, class LeftFragment>
   METAL_FUNC static void fragment_mma_int8_int4b_impl(
       thread OutputFragment& output,

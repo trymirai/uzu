@@ -136,8 +136,6 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         self
     }
 
-    /// Weight codes as uploaded to the backend: sign-converted (XOR midpoint)
-    /// when the int8 activation path is exercised, raw unsigned otherwise.
     fn weights_for_upload(&self) -> Vec<u32> {
         if self.prepared_a.is_none() {
             return self.w_packed.clone();

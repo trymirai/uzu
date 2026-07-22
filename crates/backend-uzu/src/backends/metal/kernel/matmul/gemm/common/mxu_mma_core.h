@@ -93,7 +93,6 @@ struct MxuMmaCore {
 
   using AccumFragment = uzu::matmul::Fragment<AccumulatorType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps<>>;
 
-  // Packed-weight addressing shared by the quantized K loops.
   struct QuantBAddressing {
     int row_stride_bytes;
     int groups_per_row;
@@ -191,7 +190,6 @@ struct MxuMmaCore {
     return left_tile;
   }
 
-  // Fills one cached scale per accumulator row this thread owns.
   template <bool ALIGNED_M, typename Ops>
   static METAL_FUNC void fill_row_group_cache(
       thread float* cache,
@@ -215,8 +213,6 @@ struct MxuMmaCore {
     }
   }
 
-  // Fills one cached value per accumulator column this thread owns;
-  // `value_for_group` maps a flat (column, group) scale index to the value.
   template <bool ALIGNED_N, typename Ops, typename ValueForGroup>
   static METAL_FUNC void fill_column_group_cache(
       thread float* cache,
@@ -240,8 +236,6 @@ struct MxuMmaCore {
     }
   }
 
-  // Activation quantization is always symmetric int8 with gs=32. Weight GROUP_SIZE
-  // may be 32/64/128; each weight group is processed as GROUP_SIZE/32 act chunks.
   static_assert(
       A_PROLOGUE != GemmAPrologueKind::Int8Symmetric || GROUP_SIZE % int(SIMDGROUP_BLOCK_K) == 0,
       "A8 weight group size must be a multiple of the 32-wide activation chunk"

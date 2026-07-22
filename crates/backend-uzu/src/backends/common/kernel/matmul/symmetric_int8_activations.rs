@@ -4,8 +4,6 @@ use crate::{
     data_type::DataType,
 };
 
-/// Symmetric int8 activations always use this fixed group size, independent of
-/// the weight group size.
 pub const ACTIVATION_QUANTIZATION_GROUP_SIZE: u32 = 32;
 
 fn supported_weight_group_size(group_size: u32) -> bool {
@@ -30,9 +28,6 @@ fn weight_bits_and_group_size(spec: &AnyWeightMatrixSpec) -> Option<(u32, u32)> 
     }
 }
 
-/// Returns `ACTIVATION_QUANTIZATION_GROUP_SIZE` when an RHT linear layer can run
-/// with symmetric int8 activations: MXU, BF16 tensors, and U4/U8 groupwise
-/// quantized weights (any method, weight gs in {32,64,128}).
 pub fn activation_quantization_group_size_for_rht_linear(
     supports_symmetric_int8_activations: bool,
     input_dimension: usize,
