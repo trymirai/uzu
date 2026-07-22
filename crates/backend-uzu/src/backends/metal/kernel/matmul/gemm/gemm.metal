@@ -9,13 +9,15 @@
 using namespace metal;
 using namespace uzu::gemm;
 
-#define USE_MXU (gemm_tiling_block_k(GEMM_TILING) == 256)
-#define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision)
+#define GEMM_MXU_QUANT (gemm_tiling_use_mxu(GEMM_TILING) && B_PROLOGUE != GemmBPrologueKind::FullPrecision)
 #define GEMM_TGA_ELEMENTS                                                                                              \
-  ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
+  (gemm_tiling_use_mxu(GEMM_TILING)                                                                                    \
+       ? 1                                                                                                             \
+       : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_TGB_ELEMENTS                                                                                              \
-  ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT)))) : 1)    \
-             : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
+  (gemm_tiling_use_mxu(GEMM_TILING)                                                                                    \
+       ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT)))) : 1)          \
+       : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
 
 template <
     typename AT,
@@ -86,7 +88,7 @@ KERNEL(Gemm)(
   (void)thread_y;
   (void)thread_z;
 
-  if constexpr (USE_MXU) {
+  if constexpr (gemm_tiling_use_mxu(GEMM_TILING)) {
     MxuMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
         a,
         b,

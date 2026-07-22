@@ -171,6 +171,32 @@ constexpr uint gemm_tiling_simdgroups_per_column(GemmTiling t) {
     : 0;
 }
 
+constexpr bool gemm_tiling_use_mxu(GemmTiling t) {
+  return
+      t == GemmTiling::Tile8x32x32_Simdgroups1x1 ? false
+    :
+      t == GemmTiling::Tile64x32x32_Simdgroups2x2 ? false
+    :
+      t == GemmTiling::Tile64x64x16_Simdgroups2x2 ? false
+    :
+      t == GemmTiling::Tile64x64x32_Simdgroups2x2 ? false
+    :
+      t == GemmTiling::Tile32x32x32_Simdgroups2x2 ? false
+    :
+      t == GemmTiling::Tile16x32x256_Simdgroups1x1 ? true
+    :
+      t == GemmTiling::Tile16x128x256_Simdgroups1x4 ? true
+    :
+      t == GemmTiling::Tile32x64x256_Simdgroups2x2 ? true
+    :
+      t == GemmTiling::Tile64x32x256_Simdgroups4x1 ? true
+    :
+      t == GemmTiling::Tile64x64x256_Simdgroups2x2 ? true
+    :
+      t == GemmTiling::Tile128x128x256_Simdgroups4x4 ? true
+    : false;
+}
+
 struct GemmAlignment {
   uint raw_value;
   constexpr GemmAlignment() thread : raw_value(0) {}

@@ -6,7 +6,7 @@ use quote::{format_ident, quote};
 
 use super::{
     GpuType, GpuTypes,
-    tile_geometry::{ACCESSORS, geometries},
+    tile_geometry::{ACCESSORS, PREDICATES, geometries},
 };
 
 /// Inherent accessors for every tile enum, for the include the gpu_types module pulls in.
@@ -51,9 +51,27 @@ fn tile_impl(
         }
     });
 
+    let predicates = PREDICATES.iter().map(|(name, holds)| {
+        let method = format_ident!("{name}");
+        let arms = geometries.iter().map(|(variant, geometry)| {
+            let variant = format_ident!("{variant}");
+            let value = holds(geometry);
+            quote! { Self::#variant => #value }
+        });
+
+        quote! {
+            pub const fn #method(self) -> bool {
+                match self {
+                    #(#arms,)*
+                }
+            }
+        }
+    });
+
     quote! {
         impl #type_ident {
             #(#accessors)*
+            #(#predicates)*
         }
     }
 }

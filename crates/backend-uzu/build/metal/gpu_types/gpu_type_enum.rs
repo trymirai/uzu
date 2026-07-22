@@ -2,7 +2,7 @@ use std::iter::once;
 
 use igata::gpu_types::{
     GpuTypeEnum,
-    tile_geometry::{self, ACCESSORS},
+    tile_geometry::{self, ACCESSORS, PREDICATES},
 };
 use itertools::Itertools;
 
@@ -26,15 +26,25 @@ fn tile_accessors(
     let type_name = gpu_type_enum.name.as_ref();
     let prefix = tile_geometry::metal_prefix(type_name);
 
+    let chain = |arms: Vec<String>| arms.join("\n");
+
     ACCESSORS
         .iter()
         .map(|(_, metal_suffix, value_of)| {
             let arms = geometries
                 .iter()
                 .map(|(variant, geometry)| format!("      t == {type_name}::{variant} ? {}\n    :", value_of(geometry)))
-                .join("\n");
+                .collect();
 
-            format!("constexpr uint {prefix}_{metal_suffix}({type_name} t) {{\n  return\n{arms} 0;\n}}")
+            format!("constexpr uint {prefix}_{metal_suffix}({type_name} t) {{\n  return\n{} 0;\n}}", chain(arms))
         })
+        .chain(PREDICATES.iter().map(|(name, holds)| {
+            let arms = geometries
+                .iter()
+                .map(|(variant, geometry)| format!("      t == {type_name}::{variant} ? {}\n    :", holds(geometry)))
+                .collect();
+
+            format!("constexpr bool {prefix}_{name}({type_name} t) {{\n  return\n{} false;\n}}", chain(arms))
+        }))
         .join("\n\n")
 }

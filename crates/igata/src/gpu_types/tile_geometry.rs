@@ -26,6 +26,14 @@ pub const ACCESSORS: [(&str, &str, fn(&TileGeometry) -> u32); 5] = [
     ("simdgroups_n", "simdgroups_per_column", |g| g.simdgroups_n),
 ];
 
+/// Predicates a tile's geometry decides, generated for both languages beside the
+/// accessors: name, and how to read the answer.
+///
+/// The tiles that run on the matrix units are exactly the ones staging a 256-deep K
+/// block, which is why they need no separate flag to identify them -- but that rule then
+/// has to live somewhere, and here it is stated once for the shader and the host both.
+pub const PREDICATES: [(&str, fn(&TileGeometry) -> bool); 1] = [("use_mxu", |g| g.block_k == 256)];
+
 impl TileGeometry {
     pub fn parse(variant: &str) -> Option<Self> {
         let (blocks, simdgroups) = variant.strip_prefix("Tile")?.split_once("_Simdgroups")?;
