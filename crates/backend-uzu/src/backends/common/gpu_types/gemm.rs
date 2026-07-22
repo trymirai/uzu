@@ -41,101 +41,18 @@ pub enum GemmTiling {
 
 const MXU_SIMDGROUP_BLOCK_K: u32 = 32;
 
+/// The tiles that run on the matrix units are exactly the ones staging a 256-deep K
+/// block, which is why they need no separate flag to identify them.
+pub const MXU_BLOCK_K: u32 = 256;
+
+// Every tile's block and simdgroup dimensions are generated from its variant name --
+// see the build script's `tile_geometry` module, which emits the same numbers for Metal.
+include!(concat!(env!("OUT_DIR"), "/tile_geometry.rs"));
+
 impl GemmTiling {
-    pub const fn block_m(self) -> u32 {
-        match self {
-            Self::Tile8x32x32_Simdgroups1x1 => 8,
-            Self::Tile64x32x32_Simdgroups2x2 => 64,
-            Self::Tile64x64x16_Simdgroups2x2 => 64,
-            Self::Tile64x64x32_Simdgroups2x2 => 64,
-            Self::Tile32x32x32_Simdgroups2x2 => 32,
-            Self::Tile16x32x256_Simdgroups1x1 => 16,
-            Self::Tile16x128x256_Simdgroups1x4 => 16,
-            Self::Tile32x64x256_Simdgroups2x2 => 32,
-            Self::Tile64x32x256_Simdgroups4x1 => 64,
-            Self::Tile64x64x256_Simdgroups2x2 => 64,
-            Self::Tile128x128x256_Simdgroups4x4 => 128,
-        }
-    }
-
-    pub const fn block_n(self) -> u32 {
-        match self {
-            Self::Tile8x32x32_Simdgroups1x1 => 32,
-            Self::Tile64x32x32_Simdgroups2x2 => 32,
-            Self::Tile64x64x16_Simdgroups2x2 => 64,
-            Self::Tile64x64x32_Simdgroups2x2 => 64,
-            Self::Tile32x32x32_Simdgroups2x2 => 32,
-            Self::Tile16x32x256_Simdgroups1x1 => 32,
-            Self::Tile16x128x256_Simdgroups1x4 => 128,
-            Self::Tile32x64x256_Simdgroups2x2 => 64,
-            Self::Tile64x32x256_Simdgroups4x1 => 32,
-            Self::Tile64x64x256_Simdgroups2x2 => 64,
-            Self::Tile128x128x256_Simdgroups4x4 => 128,
-        }
-    }
-
-    pub const fn block_k(self) -> u32 {
-        match self {
-            Self::Tile8x32x32_Simdgroups1x1 => 32,
-            Self::Tile64x32x32_Simdgroups2x2 => 32,
-            Self::Tile64x64x16_Simdgroups2x2 => 16,
-            Self::Tile64x64x32_Simdgroups2x2 => 32,
-            Self::Tile32x32x32_Simdgroups2x2 => 32,
-            Self::Tile16x32x256_Simdgroups1x1 => 256,
-            Self::Tile16x128x256_Simdgroups1x4 => 256,
-            Self::Tile32x64x256_Simdgroups2x2 => 256,
-            Self::Tile64x32x256_Simdgroups4x1 => 256,
-            Self::Tile64x64x256_Simdgroups2x2 => 256,
-            Self::Tile128x128x256_Simdgroups4x4 => 256,
-        }
-    }
-
-    pub const fn simdgroups_m(self) -> u32 {
-        match self {
-            Self::Tile8x32x32_Simdgroups1x1 => 1,
-            Self::Tile64x32x32_Simdgroups2x2 => 2,
-            Self::Tile64x64x16_Simdgroups2x2 => 2,
-            Self::Tile64x64x32_Simdgroups2x2 => 2,
-            Self::Tile32x32x32_Simdgroups2x2 => 2,
-            Self::Tile16x32x256_Simdgroups1x1 => 1,
-            Self::Tile16x128x256_Simdgroups1x4 => 1,
-            Self::Tile32x64x256_Simdgroups2x2 => 2,
-            Self::Tile64x32x256_Simdgroups4x1 => 4,
-            Self::Tile64x64x256_Simdgroups2x2 => 2,
-            Self::Tile128x128x256_Simdgroups4x4 => 4,
-        }
-    }
-
-    pub const fn simdgroups_n(self) -> u32 {
-        match self {
-            Self::Tile8x32x32_Simdgroups1x1 => 1,
-            Self::Tile64x32x32_Simdgroups2x2 => 2,
-            Self::Tile64x64x16_Simdgroups2x2 => 2,
-            Self::Tile64x64x32_Simdgroups2x2 => 2,
-            Self::Tile32x32x32_Simdgroups2x2 => 2,
-            Self::Tile16x32x256_Simdgroups1x1 => 1,
-            Self::Tile16x128x256_Simdgroups1x4 => 4,
-            Self::Tile32x64x256_Simdgroups2x2 => 2,
-            Self::Tile64x32x256_Simdgroups4x1 => 1,
-            Self::Tile64x64x256_Simdgroups2x2 => 2,
-            Self::Tile128x128x256_Simdgroups4x4 => 4,
-        }
-    }
-
-    pub const fn is_mxu_variant(self) -> bool {
-        matches!(
-            self,
-            Self::Tile16x32x256_Simdgroups1x1
-                | Self::Tile16x128x256_Simdgroups1x4
-                | Self::Tile32x64x256_Simdgroups2x2
-                | Self::Tile64x32x256_Simdgroups4x1
-                | Self::Tile64x64x256_Simdgroups2x2
-                | Self::Tile128x128x256_Simdgroups4x4
-        )
-    }
-
+    /// MXU tiles stage a fixed slice of K per simdgroup rather than the whole block.
     pub const fn simdgroup_block_k(self) -> u32 {
-        if self.is_mxu_variant() {
+        if self.block_k() == MXU_BLOCK_K {
             MXU_SIMDGROUP_BLOCK_K
         } else {
             self.block_k()

@@ -4,7 +4,13 @@ use anyhow::Context;
 use futures::future::try_join_all;
 
 mod common;
-use common::{compiler::Compiler, enum_paths::EnumPaths, envs, gpu_types::GpuTypes, traitgen::traitgen_all};
+use common::{
+    compiler::Compiler,
+    enum_paths::EnumPaths,
+    envs,
+    gpu_types::{GpuTypes, tile_geometry_gen},
+    traitgen::traitgen_all,
+};
 
 mod cpu;
 
@@ -52,6 +58,8 @@ async fn main() -> anyhow::Result<()> {
     debug_log!("gpu_types scan done");
 
     let enum_paths = EnumPaths::from_gpu_types(&gpu_types).context("Failed to build enum path map")?;
+
+    tile_geometry_gen(&gpu_types).context("Failed to generate tile geometry")?;
 
     let compilers: Vec<Box<dyn Compiler>> = vec![
         Box::new(cpu::CpuCompiler::new()?),

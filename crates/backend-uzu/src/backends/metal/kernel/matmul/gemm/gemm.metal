@@ -3,13 +3,13 @@
 #include "../../common/thread_context.h"
 #include "../generated/gemm.h"
 
-#include "common/gemm_tiling.h"
 #include "common/mxu_mma_core.h"
 #include "common/simdgroup_mma_core.h"
 
 using namespace metal;
 using namespace uzu::gemm;
 
+#define USE_MXU (gemm_tiling_block_k(GEMM_TILING) == 256)
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
@@ -23,7 +23,6 @@ template <
     typename DT,
     GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
-    bool USE_MXU,
     GemmBPrologueKind B_PROLOGUE,
     uint BITS,
     uint GROUP_SIZE>
@@ -33,14 +32,6 @@ VARIANTS(DT, bfloat, float)
 CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
-CONSTRAINT(
-    USE_MXU ==
-    (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
-     GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4 ||
-     GEMM_TILING == GemmTiling::Tile32x64x256_Simdgroups2x2 ||
-     GEMM_TILING == GemmTiling::Tile64x32x256_Simdgroups4x1 ||
-     GEMM_TILING == GemmTiling::Tile64x64x256_Simdgroups2x2 ||
-     GEMM_TILING == GemmTiling::Tile128x128x256_Simdgroups4x4))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(
     GROUP_SIZE != 16 ||
@@ -50,13 +41,13 @@ CONSTRAINT(
     (TRANSPOSE_B &&
      (GEMM_TILING != GemmTiling::Tile64x64x16_Simdgroups2x2 ||
       GROUP_SIZE == 16)))
+// A 128-wide N block cannot also stage a 128-element quant group in threadgroup memory.
 CONSTRAINT(
     B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
-    GEMM_TILING != GemmTiling::Tile128x128x256_Simdgroups4x4 ||
-    GROUP_SIZE <= 64)
+    gemm_tiling_block_n(GEMM_TILING) != 128 || GROUP_SIZE <= 64)
+// Short-M tiles are only instantiated for the transposed full-precision path.
 CONSTRAINT(
-    !(GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
-      GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4) ||
+    gemm_tiling_block_m(GEMM_TILING) != 16 ||
     (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::FullPrecision))
 KERNEL(Gemm)(
     const device AT* a,

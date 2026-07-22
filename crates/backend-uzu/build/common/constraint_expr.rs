@@ -127,6 +127,17 @@ impl AxisDecl {
     }
 }
 
+/// A generated accessor a constraint may call: it maps each variant of one enum to an
+/// integer, so `gemm_tiling_block_m(GEMM_TILING) != 16` says what it means without
+/// naming the two tilings that happen to be 16 rows tall today.
+#[derive(Clone, Debug)]
+pub struct Helper {
+    pub parameter: Type,
+    pub values: BTreeMap<Box<str>, i64>,
+}
+
+pub type Helpers = BTreeMap<Box<str>, Helper>;
+
 /// A constraint after resolution: every leaf carries the type it was checked at, so the
 /// interpreter never has to re-resolve a name. Both backends walk this one tree, which
 /// is what keeps build-time pruning and any generated runtime check from disagreeing.
@@ -138,6 +149,10 @@ pub enum ResolvedExpr {
     },
     Literal(Value),
     Not(Box<ResolvedExpr>),
+    Call {
+        name: Box<str>,
+        argument: Box<ResolvedExpr>,
+    },
     Binary {
         op: Op,
         lhs: Box<ResolvedExpr>,
@@ -168,6 +183,7 @@ impl Op {
 /// A kernel's axes plus its type-checked constraints.
 pub struct ConstraintSet {
     axes: BTreeMap<Box<str>, AxisDecl>,
+    helpers: Helpers,
     constraints: Box<[Constraint]>,
 }
 
@@ -182,6 +198,7 @@ impl ConstraintSet {
     pub fn compile(
         kernel: &str,
         axes: impl IntoIterator<Item = AxisDecl>,
+        helpers: Helpers,
         constraints: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> anyhow::Result<Self> {
         let axes: BTreeMap<Box<str>, AxisDecl> = axes.into_iter().map(|a| (a.name.clone(), a)).collect();
@@ -190,7 +207,7 @@ impl ConstraintSet {
             .into_iter()
             .map(|source| {
                 let source = source.as_ref();
-                let expr = compile_expr(&axes, source)
+                let expr = compile_expr(&axes, &helpers, source)
                     .with_context(|| format!("in CONSTRAINT({source}) of kernel `{kernel}`"))?;
                 Ok(Constraint {
                     source: source.into(),
@@ -201,6 +218,7 @@ impl ConstraintSet {
 
         Ok(Self {
             axes,
+            helpers,
             constraints,
         })
     }
@@ -227,7 +245,7 @@ impl ConstraintSet {
             .collect::<anyhow::Result<BTreeMap<String, Value>>>()?;
 
         for constraint in self.constraints.iter() {
-            let holds = eval(&constraint.expr, &bindings)
+            let holds = eval(&constraint.expr, &bindings, &self.helpers)
                 .with_context(|| format!("evaluating CONSTRAINT({})", constraint.source))?;
             if !holds {
                 return Ok(false);
@@ -240,10 +258,11 @@ impl ConstraintSet {
 
 fn compile_expr(
     axes: &BTreeMap<Box<str>, AxisDecl>,
+    helpers: &Helpers,
     source: &str,
 ) -> anyhow::Result<ResolvedExpr> {
     let expr: Expr = syn::parse_str(source).with_context(|| format!("cannot parse `{source}`"))?;
-    let resolved = resolve(axes, &expr)?;
+    let resolved = resolve(axes, helpers, &expr)?;
 
     let ty = type_of(&resolved);
     if ty != Type::Bool {
@@ -261,6 +280,10 @@ fn type_of(expr: &ResolvedExpr) -> Type {
         } => ty.clone(),
         ResolvedExpr::Literal(value) => value.ty(),
         ResolvedExpr::Not(_) => Type::Bool,
+        // Every generated accessor returns an integer.
+        ResolvedExpr::Call {
+            ..
+        } => Type::Int,
         ResolvedExpr::Binary {
             op,
             ..
@@ -270,16 +293,17 @@ fn type_of(expr: &ResolvedExpr) -> Type {
 
 fn resolve(
     axes: &BTreeMap<Box<str>, AxisDecl>,
+    helpers: &Helpers,
     expr: &Expr,
 ) -> anyhow::Result<ResolvedExpr> {
     match expr {
-        Expr::Paren(paren) => resolve(axes, &paren.expr),
+        Expr::Paren(paren) => resolve(axes, helpers, &paren.expr),
 
         Expr::Unary(unary) => {
             let UnOp::Not(_) = unary.op else {
                 bail!("only `!` is allowed as a unary operator");
             };
-            let operand = resolve(axes, &unary.expr)?;
+            let operand = resolve(axes, helpers, &unary.expr)?;
             let ty = type_of(&operand);
             if ty != Type::Bool {
                 bail!("`!` needs a bool operand, found {ty}");
@@ -298,8 +322,8 @@ fn resolve(
                 _ => bail!("operator `{}` is not allowed in a constraint", quote::quote!(#binary.op)),
             };
 
-            let lhs = resolve(axes, &binary.left)?;
-            let rhs = resolve(axes, &binary.right)?;
+            let lhs = resolve(axes, helpers, &binary.left)?;
+            let rhs = resolve(axes, helpers, &binary.right)?;
             let (lhs_type, rhs_type) = (type_of(&lhs), type_of(&rhs));
 
             if lhs_type != rhs_type {
@@ -320,14 +344,44 @@ fn resolve(
             // value it can never hold, so the comparison is a constant. Ordering
             // comparisons are exempt — a bound need not itself be a declared value.
             if matches!(op, Op::Eq | Op::Ne) {
-                check_membership(axes, &lhs, &rhs)?;
-                check_membership(axes, &rhs, &lhs)?;
+                check_membership(axes, helpers, &lhs, &rhs)?;
+                check_membership(axes, helpers, &rhs, &lhs)?;
             }
 
             Ok(ResolvedExpr::Binary {
                 op,
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
+            })
+        },
+
+        Expr::Call(call) => {
+            let Expr::Path(function) = &*call.func else {
+                bail!("only a plain function name may be called in a constraint");
+            };
+            let name = function
+                .path
+                .get_ident()
+                .with_context(|| format!("`{}` is not a helper name", quote::quote!(#function)))?
+                .to_string();
+
+            let helper = helpers.get(name.as_str()).with_context(|| {
+                format!("`{name}` is not a generated helper (available: {})", helpers.keys().join(", "))
+            })?;
+
+            let [argument] = call.args.iter().collect::<Vec<_>>()[..] else {
+                bail!("`{name}` takes exactly one argument, got {}", call.args.len());
+            };
+
+            let argument = resolve(axes, helpers, argument)?;
+            let argument_type = type_of(&argument);
+            if argument_type != helper.parameter {
+                bail!("`{name}` takes {}, found {argument_type}", helper.parameter);
+            }
+
+            Ok(ResolvedExpr::Call {
+                name: name.into(),
+                argument: Box::new(argument),
             })
         },
 
@@ -372,26 +426,40 @@ fn resolve_path(
 /// of the axis's declared values.
 fn check_membership(
     axes: &BTreeMap<Box<str>, AxisDecl>,
+    helpers: &Helpers,
     subject: &ResolvedExpr,
     literal: &ResolvedExpr,
 ) -> anyhow::Result<()> {
-    let (
-        ResolvedExpr::Axis {
-            name,
-            ..
-        },
-        ResolvedExpr::Literal(value),
-    ) = (subject, literal)
-    else {
+    let ResolvedExpr::Literal(value) = literal else {
         return Ok(());
     };
 
-    let axis = &axes[name];
-    if !axis.values.contains(value) {
-        bail!(
-            "`{value}` is not a declared value of axis `{name}` (declared: {})",
-            axis.values.iter().map(|v| v.to_string()).join(", ")
-        );
+    match subject {
+        ResolvedExpr::Axis {
+            name,
+            ..
+        } => {
+            let axis = &axes[name];
+            if !axis.values.contains(value) {
+                bail!(
+                    "`{value}` is not a declared value of axis `{name}` (declared: {})",
+                    axis.values.iter().map(|v| v.to_string()).join(", ")
+                );
+            }
+        },
+        ResolvedExpr::Call {
+            name,
+            ..
+        } => {
+            let results = &helpers[name].values;
+            if !matches!(value, Value::Int(int) if results.values().any(|result| result == int)) {
+                bail!(
+                    "`{name}` never returns `{value}` (it returns one of: {})",
+                    results.values().sorted().dedup().join(", ")
+                );
+            }
+        },
+        _ => (),
     }
 
     Ok(())
@@ -400,8 +468,9 @@ fn check_membership(
 fn eval(
     expr: &ResolvedExpr,
     bindings: &BTreeMap<String, Value>,
+    helpers: &Helpers,
 ) -> anyhow::Result<bool> {
-    Ok(match value_of(expr, bindings)? {
+    Ok(match value_of(expr, bindings, helpers)? {
         Value::Bool(b) => b,
         other => bail!("expected a bool, found `{other}`"),
     })
@@ -410,6 +479,7 @@ fn eval(
 fn value_of(
     expr: &ResolvedExpr,
     bindings: &BTreeMap<String, Value>,
+    helpers: &Helpers,
 ) -> anyhow::Result<Value> {
     Ok(match expr {
         ResolvedExpr::Axis {
@@ -419,7 +489,23 @@ fn value_of(
 
         ResolvedExpr::Literal(value) => value.clone(),
 
-        ResolvedExpr::Not(operand) => Value::Bool(!eval(operand, bindings)?),
+        ResolvedExpr::Not(operand) => Value::Bool(!eval(operand, bindings, helpers)?),
+
+        ResolvedExpr::Call {
+            name,
+            argument,
+        } => {
+            let Value::EnumVariant {
+                variant,
+                ..
+            } = value_of(argument, bindings, helpers)?
+            else {
+                bail!("`{name}` needs an enum argument");
+            };
+            let value =
+                helpers[name].values.get(&variant).with_context(|| format!("`{name}` has no value for `{variant}`"))?;
+            Value::Int(*value)
+        },
 
         ResolvedExpr::Binary {
             op,
@@ -427,12 +513,14 @@ fn value_of(
             rhs,
             ..
         } => Value::Bool(match op {
-            Op::And => eval(lhs, bindings)? && eval(rhs, bindings)?,
-            Op::Or => eval(lhs, bindings)? || eval(rhs, bindings)?,
-            Op::Eq => value_of(lhs, bindings)? == value_of(rhs, bindings)?,
-            Op::Ne => value_of(lhs, bindings)? != value_of(rhs, bindings)?,
+            Op::And => eval(lhs, bindings, helpers)? && eval(rhs, bindings, helpers)?,
+            Op::Or => eval(lhs, bindings, helpers)? || eval(rhs, bindings, helpers)?,
+            Op::Eq => value_of(lhs, bindings, helpers)? == value_of(rhs, bindings, helpers)?,
+            Op::Ne => value_of(lhs, bindings, helpers)? != value_of(rhs, bindings, helpers)?,
             Op::Lt | Op::Le => {
-                let (Value::Int(l), Value::Int(r)) = (value_of(lhs, bindings)?, value_of(rhs, bindings)?) else {
+                let (Value::Int(l), Value::Int(r)) =
+                    (value_of(lhs, bindings, helpers)?, value_of(rhs, bindings, helpers)?)
+                else {
                     bail!("ordering comparison on non-integers");
                 };
                 if matches!(op, Op::Lt) {

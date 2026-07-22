@@ -1,9 +1,20 @@
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::{BTreeMap, HashMap, hash_map::Entry};
 
 use anyhow::bail;
 use syn::{Type, TypePath, visit_mut::VisitMut};
 
-use super::gpu_types::{GpuType, GpuTypeName, GpuTypePath, GpuTypeVariantGroup, GpuTypes};
+use super::gpu_types::{
+    GpuType, GpuTypeName, GpuTypePath, GpuTypeVariantGroup, GpuTypes,
+    tile_geometry::{ACCESSORS, geometries, metal_prefix},
+};
+
+/// A generated accessor a CONSTRAINT may call: which enum it takes, and its value for
+/// each variant of that enum.
+#[derive(Clone, Debug)]
+pub struct Helper {
+    pub parameter: Box<str>,
+    pub values: BTreeMap<Box<str>, u32>,
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum GpuTypeKind {
@@ -26,17 +37,36 @@ struct GpuTypeEntry {
 pub struct EnumPaths {
     short_name_to_entry: HashMap<GpuTypeName, GpuTypeEntry>,
     variant_groups: Box<[GpuTypeVariantGroup]>,
+    helpers: BTreeMap<Box<str>, Helper>,
 }
 
 impl EnumPaths {
     pub fn from_gpu_types(gpu_types: &GpuTypes) -> anyhow::Result<Self> {
         let mut short_name_to_entry = HashMap::new();
         let mut variant_groups = Vec::new();
+        let mut helpers = BTreeMap::new();
         for file in gpu_types.files.iter() {
             for ty in file.types.iter() {
                 let (name_str, kind, variants) = match ty {
                     GpuType::Enum(enum_type) => (
-                        enum_type.name.as_ref(),
+                        {
+                            if let Some(tiles) = geometries(enum_type) {
+                                let prefix = metal_prefix(&enum_type.name);
+                                for (_, metal_suffix, value_of) in ACCESSORS {
+                                    helpers.insert(
+                                        format!("{prefix}_{metal_suffix}").into_boxed_str(),
+                                        Helper {
+                                            parameter: enum_type.name.clone(),
+                                            values: tiles
+                                                .iter()
+                                                .map(|(variant, geometry)| ((*variant).into(), value_of(geometry)))
+                                                .collect(),
+                                        },
+                                    );
+                                }
+                            }
+                            enum_type.name.as_ref()
+                        },
                         GpuTypeKind::Enum,
                         enum_type.variants.iter().map(|v| (v.name.clone(), v.discriminant)).collect(),
                     ),
@@ -69,6 +99,7 @@ impl EnumPaths {
         Ok(Self {
             short_name_to_entry,
             variant_groups: variant_groups.into(),
+            helpers,
         })
     }
 
@@ -89,6 +120,11 @@ impl EnumPaths {
 
     pub fn variant_groups(&self) -> &[GpuTypeVariantGroup] {
         &self.variant_groups
+    }
+
+    /// Generated accessors that shader CONSTRAINTs may call.
+    pub fn helpers(&self) -> &BTreeMap<Box<str>, Helper> {
+        &self.helpers
     }
 
     #[allow(dead_code)]

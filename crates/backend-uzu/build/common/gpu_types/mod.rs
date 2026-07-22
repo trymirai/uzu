@@ -14,11 +14,14 @@ mod item_enum;
 mod item_option_set;
 mod item_struct;
 mod item_variant_group;
+pub mod tile_geometry;
+mod tile_geometry_gen;
 
 pub use item_enum::GpuTypeEnum;
 pub use item_option_set::{GpuTypeOptionSet, GpuTypeOptionSetVariant};
 pub use item_struct::{GpuTypeStruct, GpuTypeStructFieldType};
 pub use item_variant_group::{GpuTypeVariantGroup, VariantGroupArm};
+pub use tile_geometry_gen::tile_geometry_gen;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, AsRef, Deref, Display)]
 #[as_ref(str)]

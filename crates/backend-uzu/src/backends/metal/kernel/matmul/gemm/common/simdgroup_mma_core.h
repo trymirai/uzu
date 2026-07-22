@@ -11,7 +11,7 @@
 #include "block_geometry.h"
 #include "gemm_rht.h"
 #include "gemm_alignment.h"
-#include "gemm_tiling.h"
+#include "../../../generated/gemm.h"
 #include "quant_scale_bias.h"
 #include "quant_scale_zero_point.h"
 

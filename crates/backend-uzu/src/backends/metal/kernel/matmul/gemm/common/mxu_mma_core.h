@@ -10,7 +10,7 @@
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
 #include "block_geometry.h"
-#include "gemm_tiling.h"
+#include "../../../generated/gemm.h"
 #include "quant_pack.h"
 #include "quant_scale_bias.h"
 #include "quant_scale_zero_point.h"

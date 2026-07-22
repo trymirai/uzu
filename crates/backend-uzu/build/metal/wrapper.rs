@@ -149,7 +149,10 @@ fn axis_type(parameter: &MetalTemplateParameter) -> anyhow::Result<constraint_ex
     })
 }
 
-fn constraint_set(kernel: &MetalKernelInfo) -> anyhow::Result<ConstraintSet> {
+fn constraint_set(
+    kernel: &MetalKernelInfo,
+    enum_paths: &EnumPaths,
+) -> anyhow::Result<ConstraintSet> {
     let axes = kernel
         .variants
         .as_deref()
@@ -173,7 +176,21 @@ fn constraint_set(kernel: &MetalKernelInfo) -> anyhow::Result<ConstraintSet> {
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
-    ConstraintSet::compile(kernel.name.as_ref(), axes, kernel.constraints.iter())
+    let helpers = enum_paths
+        .helpers()
+        .iter()
+        .map(|(name, helper)| {
+            (
+                name.clone(),
+                constraint_expr::Helper {
+                    parameter: constraint_expr::Type::Enum(helper.parameter.clone()),
+                    values: helper.values.iter().map(|(variant, value)| (variant.clone(), i64::from(*value))).collect(),
+                },
+            )
+        })
+        .collect();
+
+    ConstraintSet::compile(kernel.name.as_ref(), axes, helpers, kernel.constraints.iter())
 }
 
 /// One independently varying dimension of a kernel's variant space: usually a single
@@ -338,7 +355,7 @@ pub fn accepted_variants(
         return Ok(vec![None]);
     };
 
-    let constraints = constraint_set(kernel)?;
+    let constraints = constraint_set(kernel, enum_paths)?;
     let dimensions = dimensions(kernel, parameters, enum_paths)?;
 
     dimensions
