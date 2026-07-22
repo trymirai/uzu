@@ -1,8 +1,4 @@
-use nagare::tool::{
-    func_def::FutureError,
-    schema::{ToolSchema, UzuToolSchema},
-    uzu_tool_function,
-};
+use nagare::tool::{func_def::FutureError, schema::UzuToolSchema, uzu_tool_function};
 use serde::{Deserialize, Serialize};
 use shoji::types::{
     basic::{SamplingMethod, SamplingPolicy},
