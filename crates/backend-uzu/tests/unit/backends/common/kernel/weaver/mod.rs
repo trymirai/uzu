@@ -1,2 +1,3 @@
+mod weaver_frontier_test;
 mod weaver_node_cache_write_test;
 mod weaver_top_children_test;

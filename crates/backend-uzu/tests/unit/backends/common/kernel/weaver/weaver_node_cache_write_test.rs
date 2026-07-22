@@ -58,6 +58,7 @@ impl<B: Backend> Runner<B> {
             &mut self.node_qkv,
             &self.node_indices,
             MODEL_DIM as u32,
+            NODES as u32,
             (ROWS * 2 * MODEL_DIM) as u32,
             &mut encoder,
         );

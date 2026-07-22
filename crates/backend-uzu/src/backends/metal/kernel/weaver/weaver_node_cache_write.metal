@@ -11,11 +11,16 @@ PUBLIC KERNEL(WeaverNodeCacheWrite)(
     device T* node_qkv,
     const device uint* node_indices,
     constant uint& model_dim,
+    constant uint& node_capacity,
     constant uint& total,
     const uint position AXIS(total, 256)
 ) {
+  if (node_capacity == 0) {
+    return;
+  }
   const uint row = position / (2 * model_dim);
   const uint offset = position - row * 2 * model_dim;
   const uint qkv_width = 3 * model_dim;
-  node_qkv[node_indices[row] * qkv_width + model_dim + offset] = current_qkv[row * qkv_width + model_dim + offset];
+  const uint node = min(node_indices[row], node_capacity - 1u);
+  node_qkv[node * qkv_width + model_dim + offset] = current_qkv[row * qkv_width + model_dim + offset];
 }

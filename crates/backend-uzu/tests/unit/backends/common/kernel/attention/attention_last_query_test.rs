@@ -32,6 +32,7 @@ struct Runner<B: Backend> {
     rows: u32,
     prefix_length: u32,
     ancestor_stride: u32,
+    node_capacity: u32,
 }
 
 impl<B: Backend> Runner<B> {
@@ -74,6 +75,7 @@ impl<B: Backend> Runner<B> {
             rows: rows as u32,
             prefix_length: prefix_length as u32,
             ancestor_stride: ancestor_stride as u32,
+            node_capacity: nodes as u32,
         }
     }
 
@@ -93,6 +95,7 @@ impl<B: Backend> Runner<B> {
                 self.rows,
                 self.prefix_length,
                 self.ancestor_stride,
+                self.node_capacity,
                 1.0 / (HEAD_DIM as f32).sqrt(),
                 &mut encoder,
             );
