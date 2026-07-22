@@ -1,16 +1,25 @@
-use std::{cmp::Ordering, collections::BinaryHeap, sync::Arc};
+use std::sync::Arc;
 
 use thiserror::Error;
 
 pub use crate::encodable_block::dflash::DFlashState;
 use crate::{
-    backends::common::{Allocation, AllocationType, Backend, Completed, Context, Encoder},
+    backends::common::{
+        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+        kernel::{
+            WeaverFrontierScatterKernel, WeaverFrontierSelectKernel,
+            weaver::{
+                FRONTIER_LANE_COUNT, MAX_FRONTIER_SLOTS, METADATA_LANE_COUNT, NO_WINNER, TREE_LANE_COUNT,
+                TREE_LANE_DEPTH, TREE_LANE_LOGPROB, TREE_LANE_MASK, TREE_LANE_PARENT, TREE_LANE_TOKEN,
+            },
+        },
+    },
     config::speculator::dflash::DFlashSpeculatorConfig,
     data_type::DataType,
     encodable_block::{
         dflash::DFlashDraft,
         embedding::{Embedding, EmbeddingError},
-        weaver::{Weaver, WeaverBatchStepInput, WeaverEncodeError, WeaverNodeState, WeaverPrefix},
+        weaver::{Weaver, WeaverEncodeError, WeaverNodeState, WeaverPrefix, WeaverStepBatch},
     },
     engine::language_model::LanguageModel,
 };
@@ -23,7 +32,7 @@ pub struct DFlashTreeOptions {
 }
 
 const MAX_TREE_BUDGET: usize = 4096;
-const MAX_FRONTIER_WIDTH: usize = 8;
+const MAX_TREE_FRONTIER_WIDTH: usize = 8;
 const MAX_CHILDREN_PER_NODE: usize = 8;
 
 impl Default for DFlashTreeOptions {
@@ -64,180 +73,14 @@ struct HostTreeNode {
     parent: Option<usize>,
     depth: usize,
     logprob: f32,
-    score: f32,
     children: Vec<usize>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct FrontierEntry {
-    score: f32,
-    parent: usize,
-    token: u32,
-    logprob: f32,
-}
-
-impl PartialEq for FrontierEntry {
-    fn eq(
-        &self,
-        other: &Self,
-    ) -> bool {
-        self.score == other.score && self.parent == other.parent && self.token == other.token
-    }
-}
-
-impl Eq for FrontierEntry {}
-
-impl PartialOrd for FrontierEntry {
-    fn partial_cmp(
-        &self,
-        other: &Self,
-    ) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for FrontierEntry {
-    fn cmp(
-        &self,
-        other: &Self,
-    ) -> Ordering {
-        self.score
-            .total_cmp(&other.score)
-            .then_with(|| other.parent.cmp(&self.parent))
-            .then_with(|| other.token.cmp(&self.token))
-    }
-}
-
-fn build_host_tree<E>(
-    mut nodes: Vec<HostTreeNode>,
-    budget: usize,
-    frontier_width: usize,
-    mut expand: impl FnMut(&[usize], &mut [HostTreeNode], &mut BinaryHeap<FrontierEntry>) -> Result<(), E>,
-) -> Result<Vec<HostTreeNode>, E> {
-    let mut frontier = BinaryHeap::new();
-    expand(&[0], &mut nodes, &mut frontier)?;
-    while nodes.len() < budget + 1 && !frontier.is_empty() {
-        let remaining = budget + 1 - nodes.len();
-        let mut expanded = Vec::with_capacity(frontier_width.min(remaining));
-        for _ in 0..frontier_width.min(remaining) {
-            let Some(entry) = frontier.pop() else {
-                break;
-            };
-            let parent_index = entry.parent;
-            let index = nodes.len();
-            nodes.push(HostTreeNode {
-                token: entry.token,
-                parent: Some(parent_index),
-                depth: nodes[parent_index].depth + 1,
-                logprob: entry.logprob,
-                score: entry.score,
-                children: Vec::new(),
-            });
-            nodes[parent_index].children.push(index);
-            expanded.push(index);
-        }
-        expand(&expanded, &mut nodes, &mut frontier)?;
-    }
-    Ok(nodes)
-}
-
-/// GPU-produced draft data pulled back to the host by the DFlash chain: one
-/// candidate `(token, score)` pool per lookahead row, the full logits (only
-/// materialized when Weaver is absent), and the draft-hidden / completion
-/// handles the caller keeps alive until Weaver's prefix build is done.
 struct DFlashChainOutput<B: Backend> {
-    candidate_pools: Vec<Vec<(u32, f32)>>,
-    host_logits: Option<Vec<f32>>,
+    pool_ids: Allocation<B>,
+    pool_scores: Allocation<B>,
+    draft_logits: Allocation<B>,
     draft_hidden: Allocation<B>,
-    completed: Completed<B>,
-}
-
-/// Per-round driver for the best-first frontier loop: assembles one Weaver
-/// batch from the round's winners, runs it, and pushes the resulting child
-/// edges onto the frontier.
-struct WeaverExpansion<'a, B: Backend> {
-    speculator: &'a DFlashSpeculator<B>,
-    weaver: &'a Weaver<B>,
-    prefix: &'a WeaverPrefix<B>,
-    weaver_state: &'a mut WeaverNodeState<B>,
-    target_embedding: &'a Embedding<B>,
-    candidate_pools: &'a [Vec<(u32, f32)>],
-    children_per_node: usize,
-    lookahead_count: usize,
-    max_depth: usize,
-}
-
-impl<B: Backend> WeaverExpansion<'_, B> {
-    fn expand_round(
-        &mut self,
-        parent_indices: &[usize],
-        nodes: &mut [HostTreeNode],
-        frontier: &mut BinaryHeap<FrontierEntry>,
-    ) -> Result<(), DFlashTreeError<B>> {
-        let parent_indices = parent_indices
-            .iter()
-            .copied()
-            .filter(|&index| nodes[index].depth < self.lookahead_count && nodes[index].depth < self.max_depth)
-            .collect::<Vec<_>>();
-        if parent_indices.is_empty() {
-            return Ok(());
-        }
-        let candidate_ids = parent_indices
-            .iter()
-            .map(|&index| self.candidate_pools[nodes[index].depth].iter().map(|&(token, _)| token).collect::<Vec<_>>())
-            .collect::<Vec<_>>();
-        let candidate_scores = parent_indices
-            .iter()
-            .map(|&index| self.candidate_pools[nodes[index].depth].iter().map(|&(_, score)| score).collect::<Vec<_>>())
-            .collect::<Vec<_>>();
-        let ancestor_indices = parent_indices
-            .iter()
-            .map(|&parent_index| {
-                let mut indices = Vec::new();
-                let mut ancestor = nodes[parent_index].parent;
-                while let Some(index) = ancestor {
-                    indices.push(index);
-                    ancestor = nodes[index].parent;
-                }
-                indices.reverse();
-                indices
-            })
-            .collect::<Vec<_>>();
-        let steps = {
-            let inputs = parent_indices
-                .iter()
-                .enumerate()
-                .map(|(batch_index, &parent_index)| WeaverBatchStepInput {
-                    node_index: parent_index,
-                    parent_token: nodes[parent_index].token,
-                    candidates: &candidate_ids[batch_index],
-                    candidate_scores: &candidate_scores[batch_index],
-                    ancestors: &ancestor_indices[batch_index],
-                    depth: nodes[parent_index].depth,
-                })
-                .collect::<Vec<_>>();
-            self.weaver.step_batch(
-                self.prefix,
-                &inputs,
-                self.weaver_state,
-                self.children_per_node,
-                self.target_embedding,
-                &self.speculator.context,
-            )?
-        };
-        for (parent_index, children) in parent_indices.into_iter().zip(steps) {
-            for (token, logprob) in children {
-                let score = nodes[parent_index].score + logprob;
-                frontier.push(FrontierEntry {
-                    score,
-                    parent: parent_index,
-                    token,
-                    logprob,
-                });
-            }
-        }
-        Ok(())
-    }
 }
 
 pub struct DFlashSpeculator<B: Backend> {
@@ -247,7 +90,6 @@ pub struct DFlashSpeculator<B: Backend> {
     pub(crate) config: DFlashSpeculatorConfig,
 }
 
-/// DFlash-TfM bound to target embedding weights.
 #[derive(Clone, Copy)]
 pub struct DFlashTfm<'a, B: Backend> {
     speculator: &'a DFlashSpeculator<B>,
@@ -269,21 +111,17 @@ impl<B: Backend> DFlashSpeculator<B> {
         }
     }
 
-    fn propose_tree_with_embedding(
+    fn propose_tree(
         &self,
         state: &mut DFlashState<B>,
         bonus_token: u32,
         target_embedding: &Embedding<B>,
         options: DFlashTreeOptions,
     ) -> Result<TreeProposal<B>, DFlashTreeError<B>> {
-        // `append_state` queues work on the caller's encoder.  Its target
-        // feature allocation must be complete before this host-side copyout;
-        // the decoder seam therefore submits/waits that encoder between the
-        // append and this method.
         if options.budget == 0
             || options.budget > MAX_TREE_BUDGET
             || options.frontier_width == 0
-            || options.frontier_width > MAX_FRONTIER_WIDTH
+            || options.frontier_width > MAX_TREE_FRONTIER_WIDTH
             || options.children_per_node == 0
             || options.children_per_node > MAX_CHILDREN_PER_NODE
         {
@@ -304,83 +142,95 @@ impl<B: Backend> DFlashSpeculator<B> {
             return Err(DFlashTreeError::InvalidOptions);
         }
 
+        let mut encoder = Encoder::new(&*self.context).map_err(DFlashTreeError::Backend)?;
         let DFlashChainOutput {
-            candidate_pools,
-            host_logits,
+            pool_ids,
+            pool_scores,
+            draft_logits,
             draft_hidden,
-            completed,
-        } = self.encode_dflash_chain(state, bonus_token, target_embedding, block_size, target_model_dim, pool_size)?;
+        } = self.encode_dflash_chain(
+            &mut encoder,
+            state,
+            bonus_token,
+            target_embedding,
+            block_size,
+            target_model_dim,
+            pool_size,
+        )?;
+
+        if let Some(weaver) = self.weaver.as_ref() {
+            let max_depth = self.config.weaver_config.as_ref().expect("a Weaver implies a Weaver config").max_depth;
+            let lookahead_count = max_depth.min(block_size.saturating_sub(1));
+            // The frontier holds one slot per (tree slot, child) pair; the select
+            // kernel silently no-ops past its capacity.
+            if (options.budget + 1) * options.children_per_node > MAX_FRONTIER_SLOTS || lookahead_count == 0 {
+                return Err(DFlashTreeError::InvalidOptions);
+            }
+            let target_hidden = state.target_output_norm().ok_or(DFlashTreeError::MissingTargetHidden)?;
+            let prefix = weaver.build_prefix(target_hidden, &draft_hidden, 1, lookahead_count, &mut encoder)?;
+            drop(draft_hidden);
+            drop(draft_logits);
+            let mut weaver_state = weaver.create_node_state(options.budget + 1, &self.context)?;
+            let arguments = TreeEncodingArguments {
+                weaver,
+                prefix: &prefix,
+                target_embedding,
+                pool_ids: &pool_ids,
+                pool_scores: &pool_scores,
+                pool_rows: block_size - 1,
+                pool_size,
+                options,
+                max_depth,
+                lookahead_count,
+                bonus_token,
+            };
+            let tree = self.encode_tree(&mut encoder, &arguments, &mut weaver_state)?;
+            let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
+            let slots = tree.copyout::<u32>();
+            drop(tree);
+            drop(pool_ids);
+            drop(pool_scores);
+            drop(completed);
+            return Self::finish_tree(&self.context, tree_from_slots(&slots));
+        }
+
+        let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
+        let pool_id_values = pool_ids.copyout::<u32>();
+        let host_logits = draft_logits.copyout::<f32>();
+        drop(pool_ids);
+        drop(pool_scores);
+        drop(draft_logits);
+        drop(draft_hidden);
+        drop(completed);
 
         let mut nodes = vec![HostTreeNode {
             token: bonus_token,
             parent: None,
             depth: 0,
             logprob: 0.0,
-            score: 0.0,
             children: Vec::new(),
         }];
-        let Some(weaver) = self.weaver.as_ref() else {
-            let logits = host_logits.as_ref().unwrap();
-            for depth in 0..options.budget.min(block_size.saturating_sub(1)) {
-                let (token, _) = candidate_pools[depth][0];
-                let row_start = depth * vocab_size;
-                let logprob = log_softmax(&logits[row_start..row_start + vocab_size])[token as usize];
-                let parent = nodes.len() - 1;
-                let index = nodes.len();
-                nodes.push(HostTreeNode {
-                    token,
-                    parent: Some(parent),
-                    depth: depth + 1,
-                    logprob,
-                    score: nodes[parent].score + logprob,
-                    children: Vec::new(),
-                });
-                nodes[parent].children.push(index);
-            }
-            let tree = Self::finish_tree(&self.context, nodes)?;
-            drop(draft_hidden);
-            drop(completed);
-            return Ok(tree);
-        };
-
-        let max_depth = self.config.weaver_config.as_ref().unwrap().max_depth;
-        let lookahead_count = max_depth.min(block_size.saturating_sub(1));
-        let target_hidden = state.target_output_norm().ok_or(DFlashTreeError::MissingTargetHidden)?;
-        let prefix = weaver.build_prefix(target_hidden, &draft_hidden, 1, lookahead_count, &self.context)?;
-        drop(draft_hidden);
-        drop(completed);
-        let mut weaver_state = weaver.create_node_state(options.budget + 1, &self.context)?;
-        // Expand the root once to seed the frontier.  Thereafter the heap
-        // contains candidate edges, not already-materialized tree nodes: each
-        // iteration pops the globally best `frontier_width` edges, materializes
-        // those nodes, and expands only those winners.
-        let mut expansion = WeaverExpansion {
-            speculator: self,
-            weaver,
-            prefix: &prefix,
-            weaver_state: &mut weaver_state,
-            target_embedding,
-            candidate_pools: &candidate_pools,
-            children_per_node: options.children_per_node,
-            lookahead_count,
-            max_depth,
-        };
-
-        let nodes = build_host_tree(nodes, options.budget, options.frontier_width, |parents, nodes, frontier| {
-            expansion.expand_round(parents, nodes, frontier)
-        })?;
-
-        let tree = Self::finish_tree(&self.context, nodes)?;
-        Ok(tree)
+        for depth in 0..options.budget.min(block_size.saturating_sub(1)) {
+            let token = pool_id_values[depth * pool_size];
+            let row_start = depth * vocab_size;
+            let logprob = log_softmax(&host_logits[row_start..row_start + vocab_size])[token as usize];
+            let parent = nodes.len() - 1;
+            let index = nodes.len();
+            nodes.push(HostTreeNode {
+                token,
+                parent: Some(parent),
+                depth: depth + 1,
+                logprob,
+                children: Vec::new(),
+            });
+            nodes[parent].children.push(index);
+        }
+        Self::finish_tree(&self.context, nodes)
     }
 
-    /// Runs the DFlash draft chain on the GPU and pulls its results back to the
-    /// host: builds the noise block, encodes lookup -> draft transformer ->
-    /// readout -> top-k in one command buffer, waits, copies out the candidate
-    /// ids/scores (and full logits when Weaver is absent), and reshapes them
-    /// into per-row candidate pools.  Records every timing this stage owns.
     fn encode_dflash_chain(
         &self,
+        encoder: &mut Encoder<B>,
         state: &mut DFlashState<B>,
         bonus_token: u32,
         target_embedding: &Embedding<B>,
@@ -393,49 +243,32 @@ impl<B: Backend> DFlashSpeculator<B> {
             return Err(DFlashTreeError::InvalidOptions);
         }
 
-        let mut encoder = Encoder::new(&*self.context).map_err(DFlashTreeError::Backend)?;
         let mut noise_ids =
             encoder.allocate_constant(block_size * DataType::U32.size_in_bytes()).map_err(DFlashTreeError::Backend)?;
         let mut noise = vec![self.config.draft_config.mask_token_id as u32; block_size];
         noise[0] = bonus_token;
         noise_ids.copyin(&noise);
-        let token_embeddings = target_embedding.encode_lookup(&noise_ids, block_size, &mut encoder)?;
+        let token_embeddings = target_embedding.encode_lookup(&noise_ids, block_size, encoder)?;
         let draft_hidden =
-            self.model.encode_block(state, token_embeddings, &mut encoder).map_err(DFlashTreeError::Backend)?;
+            self.model.encode_block(state, token_embeddings, encoder).map_err(DFlashTreeError::Backend)?;
         // The first block row is the bonus token; only the lookahead rows are ranked.
         let row_bytes = target_embedding.model_dim() * DataType::BF16.size_in_bytes();
         let mut lookahead_hidden =
             encoder.allocate_scratch((block_size - 1) * row_bytes).map_err(DFlashTreeError::Backend)?;
         encoder.encode_copy(&draft_hidden, row_bytes..block_size * row_bytes, &mut lookahead_hidden, ..);
         let draft_logits =
-            target_embedding.encode_readout(block_size - 1, &lookahead_hidden, DataType::F32, &mut encoder)?;
-        let (candidate_ids_allocation, candidate_scores_allocation) = self
+            target_embedding.encode_readout(block_size - 1, &lookahead_hidden, DataType::F32, encoder)?;
+        let (pool_ids, pool_scores) = self
             .model
-            .encode_top_k(&draft_logits, block_size - 1, pool_size, &mut encoder)
+            .encode_top_k(&draft_logits, block_size - 1, pool_size, encoder)
             .map_err(DFlashTreeError::Backend)?;
-        let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
-        let candidate_ids = candidate_ids_allocation.copyout::<u32>();
-        let candidate_scores = candidate_scores_allocation.copyout::<f32>();
-        drop(candidate_ids_allocation);
-        drop(candidate_scores_allocation);
-        let host_logits = self.weaver.is_none().then(|| draft_logits.copyout::<f32>());
-        drop(draft_logits);
         drop(noise_ids);
-        let candidate_pools = (0..block_size - 1)
-            .map(|row| {
-                (0..pool_size)
-                    .map(|rank| {
-                        let index = row * pool_size + rank;
-                        (candidate_ids[index], candidate_scores[index])
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
+        drop(lookahead_hidden);
         Ok(DFlashChainOutput {
-            candidate_pools,
-            host_logits,
+            pool_ids,
+            pool_scores,
+            draft_logits,
             draft_hidden,
-            completed,
         })
     }
 
@@ -465,10 +298,10 @@ impl<B: Backend> DFlashSpeculator<B> {
             depths[dfs] = nodes[index].depth as u32;
             draft_logprobs[dfs] = nodes[index].logprob;
         }
-        let tokens = global_allocation(context, &tokens).map_err(DFlashTreeError::Backend)?;
-        let parents = global_allocation(context, &parents).map_err(DFlashTreeError::Backend)?;
-        let depths = global_allocation(context, &depths).map_err(DFlashTreeError::Backend)?;
-        let draft_logprobs = global_allocation(context, &draft_logprobs).map_err(DFlashTreeError::Backend)?;
+        let tokens = global_allocation::<B, _>(context, &tokens).map_err(DFlashTreeError::Backend)?;
+        let parents = global_allocation::<B, _>(context, &parents).map_err(DFlashTreeError::Backend)?;
+        let depths = global_allocation::<B, _>(context, &depths).map_err(DFlashTreeError::Backend)?;
+        let draft_logprobs = global_allocation::<B, _>(context, &draft_logprobs).map_err(DFlashTreeError::Backend)?;
         Ok(TreeProposal {
             token_ids: tokens,
             parents,
@@ -477,6 +310,178 @@ impl<B: Backend> DFlashSpeculator<B> {
             length: order.len(),
         })
     }
+
+    fn encode_tree(
+        &self,
+        encoder: &mut Encoder<B>,
+        params: &TreeEncodingArguments<'_, B>,
+        state: &mut WeaverNodeState<B>,
+    ) -> Result<Allocation<B>, DFlashTreeError<B>> {
+        let context = &*self.context;
+        let slots = params.options.budget + 1;
+        let fanout = params.options.children_per_node;
+        let capacity = slots * fanout;
+        let width = params.options.frontier_width;
+        let stride = params.max_depth;
+        let pool_size = params.pool_size;
+
+        let select =
+            <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(context).map_err(DFlashTreeError::Backend)?;
+        let scatter =
+            <B::Kernels as Kernels>::WeaverFrontierScatterKernel::new(context).map_err(DFlashTreeError::Backend)?;
+
+        let mut tree_values = vec![0u32; TREE_LANE_COUNT * slots];
+        for slot in 0..slots {
+            tree_values[TREE_LANE_PARENT * slots + slot] = NO_WINNER;
+        }
+        tree_values[TREE_LANE_TOKEN * slots] = params.bonus_token;
+        tree_values[TREE_LANE_MASK * slots] = 1;
+
+        let mut tree = encoder.allocate_constant_from_slice(&tree_values).map_err(DFlashTreeError::Backend)?;
+        let mut frontier = encoder
+            .allocate_constant_from_slice(&vec![0u32; FRONTIER_LANE_COUNT * capacity])
+            .map_err(DFlashTreeError::Backend)?;
+        let mut slot_ancestors =
+            encoder.allocate_constant_from_slice(&vec![0u32; slots * stride]).map_err(DFlashTreeError::Backend)?;
+
+        let mut round_token_id_values = vec![0u32; width];
+        round_token_id_values[0] = params.bonus_token;
+        let mut round_valid_values = vec![0u32; width];
+        round_valid_values[0] = 1;
+        let mut round_token_ids =
+            encoder.allocate_constant_from_slice(&round_token_id_values).map_err(DFlashTreeError::Backend)?;
+        let mut round_metadata = encoder
+            .allocate_constant_from_slice(&vec![0u32; METADATA_LANE_COUNT * width])
+            .map_err(DFlashTreeError::Backend)?;
+        let mut round_ancestors =
+            encoder.allocate_constant_from_slice(&vec![0u32; width * stride]).map_err(DFlashTreeError::Backend)?;
+        let mut round_valid =
+            encoder.allocate_constant_from_slice(&round_valid_values).map_err(DFlashTreeError::Backend)?;
+        let mut round_candidate_ids =
+            encoder.allocate_constant_from_slice(&vec![0u32; width * pool_size]).map_err(DFlashTreeError::Backend)?;
+        let mut round_candidate_scores =
+            encoder.allocate_constant_from_slice(&vec![0.0f32; width * pool_size]).map_err(DFlashTreeError::Backend)?;
+
+        let mut slot_start = 0;
+        while slot_start < slots {
+            let rows = if slot_start == 0 {
+                1
+            } else {
+                width.min(slots - slot_start)
+            };
+            if slot_start > 0 {
+                select.encode(
+                    &mut frontier,
+                    &mut tree,
+                    &mut slot_ancestors,
+                    &mut round_token_ids,
+                    &mut round_metadata,
+                    &mut round_ancestors,
+                    &mut round_valid,
+                    params.pool_ids,
+                    params.pool_scores,
+                    &mut round_candidate_ids,
+                    &mut round_candidate_scores,
+                    capacity as u32,
+                    slots as u32,
+                    rows as u32,
+                    slot_start as u32,
+                    stride as u32,
+                    params.max_depth as u32,
+                    params.lookahead_count as u32,
+                    params.pool_rows as u32,
+                    pool_size as u32,
+                    encoder,
+                );
+            }
+            let (candidate_ids, candidate_scores) = if slot_start == 0 {
+                (params.pool_ids, params.pool_scores)
+            } else {
+                (&round_candidate_ids, &round_candidate_scores)
+            };
+            let input = WeaverStepBatch {
+                row_count: rows,
+                candidate_count: pool_size,
+                ancestor_stride: stride,
+                parent_token_ids: &round_token_ids,
+                candidate_ids,
+                candidate_scores,
+                ancestor_indices: &round_ancestors,
+                node_metadata: &round_metadata,
+            };
+            let (child_ids, child_logprobs) = params.weaver.encode_step_batch(
+                params.prefix,
+                &input,
+                state,
+                fanout,
+                params.target_embedding,
+                encoder,
+            )?;
+            scatter.encode(
+                &tree,
+                &round_metadata,
+                &round_valid,
+                &child_ids,
+                &child_logprobs,
+                &mut frontier,
+                capacity as u32,
+                slots as u32,
+                rows as u32,
+                fanout as u32,
+                encoder,
+            );
+            drop(child_ids);
+            drop(child_logprobs);
+            slot_start += rows;
+        }
+        Ok(tree)
+    }
+}
+
+fn tree_from_slots(tree: &[u32]) -> Vec<HostTreeNode> {
+    assert!(tree.len().is_multiple_of(TREE_LANE_COUNT), "tree array must contain {TREE_LANE_COUNT} equal-length lanes");
+    let slots = tree.len() / TREE_LANE_COUNT;
+    let lane = |lane: usize, slot: usize| tree[lane * slots + slot];
+    let mut slot_to_node = vec![usize::MAX; slots];
+    let mut nodes: Vec<HostTreeNode> = Vec::with_capacity(slots);
+    for slot in 0..slots {
+        if lane(TREE_LANE_MASK, slot) == 0 {
+            continue;
+        }
+        let parent_slot = lane(TREE_LANE_PARENT, slot) as i32;
+        let parent = (parent_slot >= 0).then(|| {
+            let parent = slot_to_node[parent_slot as usize];
+            assert_ne!(parent, usize::MAX, "tree slot {slot} names padding slot {parent_slot} as its parent");
+            parent
+        });
+        let index = nodes.len();
+        slot_to_node[slot] = index;
+        if let Some(parent) = parent {
+            nodes[parent].children.push(index);
+        }
+        nodes.push(HostTreeNode {
+            token: lane(TREE_LANE_TOKEN, slot),
+            parent,
+            depth: lane(TREE_LANE_DEPTH, slot) as usize,
+            logprob: f32::from_bits(lane(TREE_LANE_LOGPROB, slot)),
+            children: Vec::new(),
+        });
+    }
+    nodes
+}
+
+struct TreeEncodingArguments<'a, B: Backend> {
+    weaver: &'a Weaver<B>,
+    prefix: &'a WeaverPrefix<B>,
+    target_embedding: &'a Embedding<B>,
+    pool_ids: &'a Allocation<B>,
+    pool_scores: &'a Allocation<B>,
+    pool_rows: usize,
+    pool_size: usize,
+    options: DFlashTreeOptions,
+    max_depth: usize,
+    lookahead_count: usize,
+    bonus_token: u32,
 }
 
 impl<'a, B: Backend> DFlashTfm<'a, B> {
@@ -522,7 +527,7 @@ impl<B: Backend> DFlashTfm<'_, B> {
         bonus_token: u32,
         options: DFlashTreeOptions,
     ) -> Result<TreeProposal<B>, DFlashTreeError<B>> {
-        self.speculator.propose_tree_with_embedding(state, bonus_token, self.target_embedding, options)
+        self.speculator.propose_tree(state, bonus_token, self.target_embedding, options)
     }
 }
 
