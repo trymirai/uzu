@@ -157,24 +157,6 @@ impl QuantGroupSize {
 }
 
 impl WeightsKey {
-    pub fn b_prologue(self) -> GemmBPrologueKind {
-        match self {
-            Self::FullPrecision => GemmBPrologueKind::FullPrecision,
-            Self::Quant {
-                b_prologue: QuantPrologue::ScaleBiasDequant,
-                ..
-            } => GemmBPrologueKind::ScaleBiasDequant,
-            Self::Quant {
-                b_prologue: QuantPrologue::ScaleZeroPointDequant,
-                ..
-            } => GemmBPrologueKind::ScaleZeroPointDequant,
-            Self::Quant {
-                b_prologue: QuantPrologue::ScaleSymmetricDequant,
-                ..
-            } => GemmBPrologueKind::ScaleSymmetricDequant,
-        }
-    }
-
     pub fn bits(self) -> Option<u32> {
         match self {
             Self::FullPrecision => None,

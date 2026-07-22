@@ -1,14 +1,14 @@
 use std::{
-    collections::{BTreeMap, HashMap, btree_map},
+    collections::{BTreeMap, HashMap},
     iter::once,
 };
 
 use anyhow::{Context, bail};
 use igata::{
-    constraint_expr,
+    constraint_expr::AxisType,
     enum_paths::EnumPaths,
     mangling::static_mangle,
-    variants::{AxisSpec, KernelSpace, flattening_impl},
+    variants::{AcceptedVariants, AxisSpec, KernelSpace, flattening_impl},
 };
 use itertools::Itertools;
 use proc_macro2::TokenStream;
@@ -139,62 +139,48 @@ fn kernel_footer(bindings: &[SpecializeBinding<'_>]) -> String {
 }
 
 /// The axis type a constraint expression sees for a template parameter.
-fn axis_type(parameter: &MetalTemplateParameter) -> anyhow::Result<constraint_expr::Type> {
+fn axis_type(parameter: &MetalTemplateParameter) -> anyhow::Result<AxisType> {
     Ok(match &parameter.ty {
-        MetalTemplateParameterType::Type => constraint_expr::Type::DType,
+        MetalTemplateParameterType::Type => AxisType::DType,
         MetalTemplateParameterType::Value(rust_type) => match rust_type.as_ref() {
-            "bool" => constraint_expr::Type::Bool,
-            "u32" => constraint_expr::Type::Int,
+            "bool" => AxisType::Bool,
+            "u32" => AxisType::Int,
             // A negative template argument would be mangled and emitted as a `u32`
             // anyway; absence is the honest answer until a kernel needs one.
             "i32" => bail!("template parameter `{}` is `i32`: signed template axes are not supported", parameter.name),
             path => match path.rsplit_once("::") {
-                Some((_, short_name)) => constraint_expr::Type::Enum(short_name.into()),
+                Some((_, short_name)) => AxisType::Enum(short_name.into()),
                 None => bail!("template parameter `{}` has unsupported type `{path}`", parameter.name),
             },
         },
     })
 }
 
-/// A kernel's declared axes, owned so that a [`KernelSpace`] borrowing them can be handed
-/// out. This is the whole adapter between the Metal AST and igata.
-pub struct KernelAxes<'a> {
-    kernel: &'a MetalKernelInfo,
-    axes: Option<Box<[AxisSpec]>>,
-}
-
-impl<'a> KernelAxes<'a> {
-    pub fn of(kernel: &'a MetalKernelInfo) -> anyhow::Result<Self> {
-        let axes = kernel
-            .variants
-            .as_deref()
-            .map(|parameters| {
-                parameters
-                    .iter()
-                    .map(|parameter| {
-                        Ok(AxisSpec {
-                            name: parameter.name.clone(),
-                            ty: axis_type(parameter)?,
-                            values: parameter.variants.clone(),
-                        })
+/// The kernel's variant space in igata's terms: the whole adapter between the Metal AST
+/// and the enumeration.
+pub fn kernel_space(kernel: &MetalKernelInfo) -> anyhow::Result<KernelSpace<'_>> {
+    let axes = kernel
+        .variants
+        .as_deref()
+        .map(|parameters| {
+            parameters
+                .iter()
+                .map(|parameter| {
+                    Ok(AxisSpec {
+                        name: parameter.name.clone(),
+                        ty: axis_type(parameter)?,
+                        values: parameter.variants.clone(),
                     })
-                    .collect::<anyhow::Result<Box<[AxisSpec]>>>()
-            })
-            .transpose()?;
-
-        Ok(Self {
-            kernel,
-            axes,
+                })
+                .collect::<anyhow::Result<Box<[AxisSpec]>>>()
         })
-    }
+        .transpose()?;
 
-    pub fn space(&self) -> KernelSpace<'_> {
-        KernelSpace {
-            name: self.kernel.name.as_ref(),
-            axes: self.axes.as_deref(),
-            constraints: &self.kernel.constraints,
-        }
-    }
+    Ok(KernelSpace {
+        name: kernel.name.as_ref(),
+        axes,
+        constraints: &kernel.constraints,
+    })
 }
 
 /// Template-argument tuples this kernel is instantiated for; see
@@ -202,8 +188,8 @@ impl<'a> KernelAxes<'a> {
 pub fn accepted_variants(
     kernel: &MetalKernelInfo,
     enum_paths: &EnumPaths,
-) -> anyhow::Result<Vec<Option<Vec<(String, String)>>>> {
-    KernelAxes::of(kernel)?.space().accepted_variants(enum_paths)
+) -> anyhow::Result<AcceptedVariants> {
+    kernel_space(kernel)?.accepted_variants(enum_paths)
 }
 
 /// One `to_template_args()` per variant group, emitted once for the whole library.
@@ -216,35 +202,28 @@ pub fn group_flattenings<'a>(
     kernels: impl IntoIterator<Item = &'a MetalKernelInfo>,
     enum_paths: &EnumPaths,
 ) -> anyhow::Result<Vec<TokenStream>> {
-    let mut flattenings: BTreeMap<&str, (String, TokenStream)> = BTreeMap::new();
+    let mut flattenings: BTreeMap<Box<str>, (&KernelName, String, TokenStream)> = BTreeMap::new();
 
     for kernel in kernels {
-        let kernel_axes = KernelAxes::of(kernel)?;
-        let Some(axes) = kernel_axes.axes.as_deref() else {
-            continue;
-        };
-
-        for group in enum_paths.variant_groups() {
-            if !group.axes.iter().all(|axis| axes.iter().any(|a| a.name == *axis)) {
-                continue;
-            }
-            let tokens = flattening_impl(group, axes, enum_paths)
+        let space = kernel_space(kernel)?;
+        for group in space.groups(enum_paths) {
+            let tokens = flattening_impl(group, space.axes(), enum_paths)
                 .with_context(|| format!("in variant group `{}` of kernel `{}`", group.name, kernel.name))?;
             let rendered = tokens.to_string();
-            match flattenings.entry(&group.name) {
-                btree_map::Entry::Occupied(previous) => anyhow::ensure!(
-                    previous.get().0 == rendered,
-                    "kernels disagree about how `{}` flattens onto their axes",
+            if let Some((first, previous, _)) = flattenings.get(&group.name) {
+                anyhow::ensure!(
+                    *previous == rendered,
+                    "kernels `{first}` and `{}` disagree about how `{}` flattens onto their axes",
+                    kernel.name,
                     group.name,
-                ),
-                btree_map::Entry::Vacant(slot) => {
-                    slot.insert((rendered, tokens));
-                },
+                );
+            } else {
+                flattenings.insert(group.name.clone(), (&kernel.name, rendered, tokens));
             }
         }
     }
 
-    Ok(flattenings.into_values().map(|(_, tokens)| tokens).collect())
+    Ok(flattenings.into_values().map(|(_, _, tokens)| tokens).collect())
 }
 
 fn kernel_wrappers(

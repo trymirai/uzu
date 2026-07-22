@@ -308,7 +308,6 @@ impl GemmKernel {
                             n,
                             k,
                             ab_scale,
-                            use_mxu,
                             tiling,
                             weights_key,
                             split_k,
@@ -406,7 +405,7 @@ impl GemmKernel {
                 };
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
-                let params = quant_params(m, n, k, tiling, use_mxu, group_size, ab_scale);
+                let params = quant_params(m, n, k, tiling, group_size, ab_scale);
                 let group_count_x = n.div_ceil(tiling.block_n());
                 let group_count_y = m.div_ceil(tiling.block_m());
 
@@ -427,7 +426,6 @@ impl GemmKernel {
                         n,
                         k,
                         ab_scale,
-                        use_mxu,
                         tiling,
                         weights_key,
                         split_k,
@@ -486,7 +484,6 @@ impl GemmKernel {
         n: u32,
         k: u32,
         ab_scale: f32,
-        use_mxu: bool,
         tiling: GemmTiling,
         weights_key: WeightsKey,
         split_k: u32,
@@ -497,7 +494,7 @@ impl GemmKernel {
     ) -> Result<(), MetalError> {
         let full_precision = !weights_key.is_quantized();
         let kp = k / split_k;
-        let k_step = split_k_step(tiling, use_mxu, weights_key.group_size().unwrap_or(0), full_precision).unwrap_or(1);
+        let k_step = split_k_step(tiling, weights_key.group_size().unwrap_or(0), full_precision).unwrap_or(1);
         let base_gx = n.div_ceil(tiling.block_n());
         let base_gy = m.div_ceil(tiling.block_m());
         let alignment =
@@ -579,7 +576,6 @@ fn quant_params(
     n: u32,
     k: u32,
     tiling: GemmTiling,
-    use_mxu: bool,
     group_size: u32,
     ab_scale: f32,
 ) -> GemmParams {
@@ -592,7 +588,7 @@ fn quant_params(
         leading_dimension_d: n,
         threadgroups_per_row: n.div_ceil(tiling.block_n()),
         threadgroups_per_column: m.div_ceil(tiling.block_m()),
-        aligned_inner_iterations: split_k_step(tiling, use_mxu, group_size, false).map_or(0, |step| k / step),
+        aligned_inner_iterations: split_k_step(tiling, group_size, false).map_or(0, |step| k / step),
         use_morton: false,
         ab_scale,
     }
@@ -600,11 +596,10 @@ fn quant_params(
 
 fn split_k_step(
     tiling: GemmTiling,
-    use_mxu: bool,
     group_size: u32,
     full_precision: bool,
 ) -> Option<u32> {
-    let step = if use_mxu && !full_precision {
+    let step = if tiling.use_mxu() && !full_precision {
         group_size
     } else {
         tiling.block_k()
@@ -642,7 +637,7 @@ fn select_split_k(
         return 1;
     }
     let mut split_k = (512 / base_tiles).max(1);
-    let step = match split_k_step(tiling, use_mxu, group_size, full_precision) {
+    let step = match split_k_step(tiling, group_size, full_precision) {
         Some(s) => s,
         None => return 1,
     };

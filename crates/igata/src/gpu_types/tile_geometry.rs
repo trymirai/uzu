@@ -16,9 +16,15 @@ pub struct TileGeometry {
     pub simdgroups_n: u32,
 }
 
-/// The accessors generated for every tile enum: Rust method name, Metal function suffix,
-/// and how to read the value.
-pub const ACCESSORS: [(&str, &str, fn(&TileGeometry) -> u32); 5] = [
+/// One generated accessor: Rust method name, Metal function suffix, and how to read the
+/// value out of the geometry.
+pub type Accessor = (&'static str, &'static str, fn(&TileGeometry) -> u32);
+
+/// One generated predicate: name, and how to decide it.
+pub type Predicate = (&'static str, fn(&TileGeometry) -> bool);
+
+/// The accessors generated for every tile enum.
+pub const ACCESSORS: [Accessor; 5] = [
     ("block_m", "block_m", |g| g.block_m),
     ("block_n", "block_n", |g| g.block_n),
     ("block_k", "block_k", |g| g.block_k),
@@ -32,7 +38,7 @@ pub const ACCESSORS: [(&str, &str, fn(&TileGeometry) -> u32); 5] = [
 /// The tiles that run on the matrix units are exactly the ones staging a 256-deep K
 /// block, which is why they need no separate flag to identify them -- but that rule then
 /// has to live somewhere, and here it is stated once for the shader and the host both.
-pub const PREDICATES: [(&str, fn(&TileGeometry) -> bool); 1] = [("use_mxu", |g| g.block_k == 256)];
+pub const PREDICATES: [Predicate; 1] = [("use_mxu", |g| g.block_k == 256)];
 
 impl TileGeometry {
     pub fn parse(variant: &str) -> Option<Self> {

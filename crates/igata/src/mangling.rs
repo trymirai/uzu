@@ -2,7 +2,7 @@ use std::iter::repeat_n;
 
 use itertools::Itertools;
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 
 /// `GEMM_TILING` -> `gemm_tiling`, `AT` -> `at`: the field holding an axis's value.
 pub fn field_name(axis: &str) -> String {
@@ -36,7 +36,7 @@ pub fn static_mangle(
         variant
             .into_iter()
             .map(|v| {
-                let v = unqualify_variant(v.as_ref()).replace('-', "n");
+                let v = unqualify_variant(v.as_ref());
                 format!("S{}V{}", v.len(), v)
             })
             .join("")
@@ -56,5 +56,14 @@ pub fn dynamic_mangle(
         repeat_n("S{}V{}", variant.len()).join("")
     );
 
-    quote! { format!(#format_string #(, #variant.len(), #variant.replace('-', "n"))*) }
+    // Each value is rendered once and then measured, rather than interpolated twice:
+    // `entry_name()` sits on the GEMV selection path, which runs per dispatch.
+    let bindings = (0..variant.len()).map(|index| format_ident!("value{index}")).collect::<Vec<_>>();
+
+    quote! {
+        {
+            #(let #bindings = #variant;)*
+            format!(#format_string #(, #bindings.len(), #bindings)*)
+        }
+    }
 }

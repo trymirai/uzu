@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use igata::{
-    constraint_expr::Type as AxisType,
+    constraint_expr::AxisType,
     enum_paths::EnumPaths,
     mangling::{dynamic_mangle, field_name, snake_case, static_mangle},
     variants::{KernelSpace, KeyField, axis_rust_type},
@@ -16,12 +16,11 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Type;
 
-use super::super::{ast::MetalKernelInfo, wrapper::KernelAxes};
+use super::super::{ast::MetalKernelInfo, wrapper::kernel_space};
 
 pub struct KeyEmission {
     pub tokens: TokenStream,
-    pub name: proc_macro2::Ident,
-    /// Flattens any grouped axes of `key` into locals, for a body that then reads every
+    /// Flattens the grouped axes of `key` into locals, for a body that then reads every
     /// axis by name.
     pub prelude: Vec<TokenStream>,
     /// Every axis's value, in template parameter order, as `new()` takes them.
@@ -32,8 +31,7 @@ pub fn build(
     kernel: &MetalKernelInfo,
     enum_paths: &EnumPaths,
 ) -> Result<Option<KeyEmission>> {
-    let kernel_axes = KernelAxes::of(kernel)?;
-    let space = kernel_axes.space();
+    let space = kernel_space(kernel)?;
     let fields = space.key_layout(enum_paths);
     if fields.is_empty() {
         return Ok(None);
@@ -65,29 +63,11 @@ pub fn build(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    // Grouped axes are flattened once at the top of every method that needs them, so a
-    // constraint can go on referring to the shader's axis names.
-    let group_prelude = fields
-        .iter()
-        .filter_map(|field| match field {
-            KeyField::Group {
-                type_name,
-                axes,
-            } => {
-                let field = format_ident!("{}", snake_case(type_name));
-                let names = axes.iter().map(|axis| format_ident!("{}", field_name(axis)));
-                Some(quote! { let (#(#names),*) = self.#field.to_template_args(); })
-            },
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    let axes = space.axes.unwrap_or_default();
-    let entry_name = entry_name(kernel_name, &space, &fields);
+    let this = quote! { self };
+    let prelude = group_prelude(&fields, &this);
+    let entry_name = entry_name(kernel_name, &space, &fields, &this);
     let built_name = format_ident!("{}_BUILT", snake_case(kernel_name).to_uppercase());
 
-    // Sorted, so the membership test is a binary search over `&'static str`s the linker
-    // deduplicates against the mangled names the wrappers were emitted under.
     let mut built = space
         .accepted_variants(enum_paths)?
         .into_iter()
@@ -96,35 +76,15 @@ pub fn build(
         .collect::<Vec<_>>();
     built.sort();
 
+    // `from_key` reads the same axes off a `key` binding rather than off `self`.
+    let key = quote! { key };
+
     Ok(Some(KeyEmission {
-        name: key_name.clone(),
-        prelude: fields
-            .iter()
-            .filter_map(|field| match field {
-                KeyField::Group {
-                    type_name,
-                    axes,
-                } => {
-                    let field = format_ident!("{}", snake_case(type_name));
-                    let names = axes.iter().map(|axis| format_ident!("{}", field_name(axis)));
-                    Some(quote! { let (#(#names),*) = key.#field.to_template_args(); })
-                },
-                _ => None,
-            })
-            .collect(),
-        arguments: axes
-            .iter()
-            .map(|axis| {
-                let name = format_ident!("{}", field_name(&axis.name));
-                if is_grouped(&fields, &axis.name) {
-                    quote! { #name }
-                } else {
-                    quote! { key.#name }
-                }
-            })
-            .collect(),
+        prelude: group_prelude(&fields, &key),
+        arguments: space.axes().iter().map(|axis| axis_access(&fields, &axis.name, &key)).collect(),
         tokens: quote! {
-            /// Every variant of this kernel the build compiled, sorted.
+            /// Every variant of this kernel the build compiled, sorted for the binary
+            /// search in `validate()`.
             static #built_name: &[&str] = &[#(#built),*];
 
             #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -137,7 +97,7 @@ pub fn build(
             impl #key_name {
                 /// The mangled entry point name of the instantiated kernel.
                 pub fn entry_name(&self) -> String {
-                    #(#group_prelude)*
+                    #(#prelude)*
                     #entry_name
                 }
 
@@ -157,12 +117,26 @@ pub fn build(
     }))
 }
 
-/// Whether this axis is one the key holds flattened out of a variant group.
-fn is_grouped(
+/// Flattens `key`'s grouped axes into locals, so the body below can go on referring to
+/// every axis by the shader's own name.
+fn group_prelude(
     fields: &[KeyField<'_>],
-    axis: &str,
-) -> bool {
-    fields.iter().any(|field| matches!(field, KeyField::Group { axes, .. } if axes.iter().any(|a| a.as_ref() == axis)))
+    key: &TokenStream,
+) -> Vec<TokenStream> {
+    fields
+        .iter()
+        .filter_map(|field| match field {
+            KeyField::Group {
+                type_name,
+                axes,
+            } => {
+                let field = format_ident!("{}", snake_case(type_name));
+                let names = axes.iter().map(|axis| format_ident!("{}", field_name(axis)));
+                Some(quote! { let (#(#names),*) = #key.#field.to_template_args(); })
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 /// The expression holding an axis's value: a local from the group prelude if it was
@@ -170,12 +144,16 @@ fn is_grouped(
 fn axis_access(
     fields: &[KeyField<'_>],
     axis: &str,
+    key: &TokenStream,
 ) -> TokenStream {
     let name = format_ident!("{}", field_name(axis));
-    if is_grouped(fields, axis) {
+    let grouped = fields
+        .iter()
+        .any(|field| matches!(field, KeyField::Group { axes, .. } if axes.iter().any(|a| a.as_ref() == axis)));
+    if grouped {
         quote! { #name }
     } else {
-        quote! { self.#name }
+        quote! { #key.#name }
     }
 }
 
@@ -184,11 +162,13 @@ fn entry_name(
     kernel_name: &str,
     space: &KernelSpace<'_>,
     fields: &[KeyField<'_>],
+    key: &TokenStream,
 ) -> TokenStream {
-    let values = space.axes.unwrap_or_default().iter().map(|axis| {
-        let access = axis_access(fields, &axis.name);
+    let values = space.axes().iter().map(|axis| {
+        let access = axis_access(fields, &axis.name, key);
         match axis.ty {
-            AxisType::DType => quote! { #access.metal_type() },
+            // An undeclared data type simply names nothing in the built set.
+            AxisType::DType => quote! { #access.try_metal_type().unwrap_or_default() },
             _ => quote! { #access.to_string() },
         }
     });

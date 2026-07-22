@@ -22,7 +22,7 @@ use syn::{BinOp, Expr, Lit, UnOp};
 
 /// The type of an axis, or of a resolved sub-expression.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Type {
+pub enum AxisType {
     Bool,
     Int,
     /// A `typename` template parameter, whose values are Metal type names.
@@ -31,16 +31,16 @@ pub enum Type {
     Enum(Box<str>),
 }
 
-impl Display for Type {
+impl Display for AxisType {
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
         match self {
-            Type::Bool => f.write_str("bool"),
-            Type::Int => f.write_str("integer"),
-            Type::DType => f.write_str("data type"),
-            Type::Enum(name) => write!(f, "{name}"),
+            AxisType::Bool => f.write_str("bool"),
+            AxisType::Int => f.write_str("integer"),
+            AxisType::DType => f.write_str("data type"),
+            AxisType::Enum(name) => write!(f, "{name}"),
         }
     }
 }
@@ -57,15 +57,15 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn ty(&self) -> Type {
+    pub fn ty(&self) -> AxisType {
         match self {
-            Value::Bool(_) => Type::Bool,
-            Value::Int(_) => Type::Int,
-            Value::DType(_) => Type::DType,
+            Value::Bool(_) => AxisType::Bool,
+            Value::Int(_) => AxisType::Int,
+            Value::DType(_) => AxisType::DType,
             Value::EnumVariant {
                 enum_name,
                 ..
-            } => Type::Enum(enum_name.clone()),
+            } => AxisType::Enum(enum_name.clone()),
         }
     }
 }
@@ -92,26 +92,35 @@ impl Display for Value {
 #[derive(Clone, Debug)]
 pub struct AxisDecl {
     pub name: Box<str>,
-    pub ty: Type,
+    pub ty: AxisType,
     pub values: Box<[Value]>,
 }
 
 impl AxisDecl {
     /// Parses a `VARIANTS` entry as written in the shader against this axis's type.
     pub fn parse_value(
-        ty: &Type,
+        ty: &AxisType,
         text: &str,
     ) -> anyhow::Result<Value> {
         let text = text.trim();
         Ok(match ty {
-            Type::Bool => match text {
+            AxisType::Bool => match text {
                 "true" => Value::Bool(true),
                 "false" => Value::Bool(false),
                 _ => bail!("expected `true` or `false`, found `{text}`"),
             },
-            Type::Int => Value::Int(text.parse().with_context(|| format!("`{text}` is not an integer"))?),
-            Type::DType => Value::DType(text.into()),
-            Type::Enum(enum_name) => {
+            AxisType::Int => {
+                // This text is what gets mangled into the entry point name, while the host
+                // renders the same axis with `u32::to_string`. Anything but a canonical
+                // unsigned literal names a kernel nothing can ever ask for.
+                let value: u32 = text.parse().with_context(|| format!("`{text}` is not an unsigned integer"))?;
+                if value.to_string() != text {
+                    bail!("`{text}` is not spelled the way `{value}` renders at runtime");
+                }
+                Value::Int(value.into())
+            },
+            AxisType::DType => Value::DType(text.into()),
+            AxisType::Enum(enum_name) => {
                 let Some((namespace, variant)) = text.rsplit_once("::") else {
                     bail!("expected `{enum_name}::<variant>`, found `{text}`");
                 };
@@ -132,7 +141,7 @@ impl AxisDecl {
 /// naming the two tilings that happen to be 16 rows tall today.
 #[derive(Clone, Debug)]
 pub struct Helper {
-    pub parameter: Type,
+    pub parameter: AxisType,
     pub values: BTreeMap<Box<str>, i64>,
 }
 
@@ -145,7 +154,7 @@ pub type Helpers = BTreeMap<Box<str>, Helper>;
 pub enum ResolvedExpr {
     Axis {
         name: Box<str>,
-        ty: Type,
+        ty: AxisType,
     },
     Literal(Value),
     Not(Box<ResolvedExpr>),
@@ -171,8 +180,8 @@ pub enum Op {
 }
 
 impl Op {
-    fn result_type(&self) -> Type {
-        Type::Bool
+    fn result_type(&self) -> AxisType {
+        AxisType::Bool
     }
 
     fn is_ordering(&self) -> bool {
@@ -265,25 +274,25 @@ fn compile_expr(
     let resolved = resolve(axes, helpers, &expr)?;
 
     let ty = type_of(&resolved);
-    if ty != Type::Bool {
+    if ty != AxisType::Bool {
         bail!("a constraint must be a bool expression, this one is {ty}");
     }
 
     Ok(resolved)
 }
 
-fn type_of(expr: &ResolvedExpr) -> Type {
+fn type_of(expr: &ResolvedExpr) -> AxisType {
     match expr {
         ResolvedExpr::Axis {
             ty,
             ..
         } => ty.clone(),
         ResolvedExpr::Literal(value) => value.ty(),
-        ResolvedExpr::Not(_) => Type::Bool,
+        ResolvedExpr::Not(_) => AxisType::Bool,
         // Every generated accessor returns an integer.
         ResolvedExpr::Call {
             ..
-        } => Type::Int,
+        } => AxisType::Int,
         ResolvedExpr::Binary {
             op,
             ..
@@ -305,7 +314,7 @@ fn resolve(
             };
             let operand = resolve(axes, helpers, &unary.expr)?;
             let ty = type_of(&operand);
-            if ty != Type::Bool {
+            if ty != AxisType::Bool {
                 bail!("`!` needs a bool operand, found {ty}");
             }
             Ok(ResolvedExpr::Not(Box::new(operand)))
@@ -331,10 +340,10 @@ fn resolve(
             }
 
             match op {
-                Op::And | Op::Or if lhs_type != Type::Bool => {
+                Op::And | Op::Or if lhs_type != AxisType::Bool => {
                     bail!("`&&` and `||` need bool operands, found {lhs_type}")
                 },
-                _ if op.is_ordering() && lhs_type != Type::Int => {
+                _ if op.is_ordering() && lhs_type != AxisType::Int => {
                     bail!("`<` and `<=` need integer operands, found {lhs_type}")
                 },
                 _ => (),

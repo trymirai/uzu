@@ -24,15 +24,20 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct AxisSpec {
     pub name: Box<str>,
-    pub ty: constraint_expr::Type,
+    pub ty: constraint_expr::AxisType,
     pub values: Box<[Box<str>]>,
 }
+
+/// Every accepted template-argument tuple of a kernel: `(axis, value)` pairs in template
+/// parameter order, or a single `None` for a kernel that is not a template.
+pub type AcceptedVariants = Vec<Option<Vec<(String, String)>>>;
 
 /// A kernel's variant space: the axes it declares and the constraints pruning them.
 pub struct KernelSpace<'a> {
     pub name: &'a str,
-    /// `None` for a kernel that is not a template at all.
-    pub axes: Option<&'a [AxisSpec]>,
+    /// `None` for a kernel that is not a template at all, which is not the same as a
+    /// template with no axes.
+    pub axes: Option<Box<[AxisSpec]>>,
     pub constraints: &'a [Box<str>],
 }
 
@@ -54,9 +59,22 @@ pub enum KeyField<'a> {
     },
 }
 
-impl<'a> KernelSpace<'a> {
-    fn axes(&self) -> &'a [AxisSpec] {
-        self.axes.unwrap_or_default()
+impl KernelSpace<'_> {
+    pub fn axes(&self) -> &[AxisSpec] {
+        self.axes.as_deref().unwrap_or_default()
+    }
+
+    /// The variant groups every one of whose axes this kernel declares -- the ones that
+    /// collapse into a single dimension of its variant space.
+    pub fn groups<'e>(
+        &self,
+        enum_paths: &'e EnumPaths,
+    ) -> Vec<&'e GpuTypeVariantGroup> {
+        enum_paths
+            .variant_groups()
+            .iter()
+            .filter(|group| group.axes.iter().all(|axis| self.axes().iter().any(|a| a.name == *axis)))
+            .collect()
     }
 
     /// The kernel's constraints, type-checked against its axes.
@@ -88,14 +106,14 @@ impl<'a> KernelSpace<'a> {
     }
 
     /// The key fields for this kernel, in template parameter order.
-    pub fn key_layout(
-        &self,
-        enum_paths: &'a EnumPaths,
-    ) -> Vec<KeyField<'a>> {
-        let Some(axes) = self.axes else {
+    pub fn key_layout<'s>(
+        &'s self,
+        enum_paths: &'s EnumPaths,
+    ) -> Vec<KeyField<'s>> {
+        let Some(axes) = self.axes.as_deref() else {
             return Vec::new();
         };
-        let groups = groups_of(axes, enum_paths);
+        let groups = self.groups(enum_paths);
 
         axes.iter()
             .filter_map(|axis| match groups.iter().find(|group| group.axes.contains(&axis.name)) {
@@ -118,38 +136,39 @@ impl<'a> KernelSpace<'a> {
     pub fn accepted_variants(
         &self,
         enum_paths: &EnumPaths,
-    ) -> anyhow::Result<Vec<Option<Vec<(String, String)>>>> {
-        let Some(axes) = self.axes else {
+    ) -> anyhow::Result<AcceptedVariants> {
+        let Some(axes) = self.axes.as_deref() else {
             return Ok(vec![None]);
         };
 
         let constraints = self.constraint_set(enum_paths)?;
         let dimensions = self.dimensions(axes, enum_paths)?;
 
-        let variants = dimensions
-            .iter()
-            .map(|dimension| dimension.tuples.iter())
-            .multi_cartesian_product()
-            .map(|choice| {
-                // Back to template parameter order: mangled entry point names depend on it.
-                let bound: HashMap<&str, &str> = dimensions
-                    .iter()
-                    .zip(choice)
-                    .flat_map(|(dimension, tuple)| {
-                        dimension.axes.iter().zip(tuple).map(|(axis, value)| (axis.as_ref(), value.as_ref()))
-                    })
-                    .collect();
+        let mut variants: AcceptedVariants = Vec::new();
+        for choice in dimensions.iter().map(|dimension| dimension.tuples.iter()).multi_cartesian_product() {
+            // Back to template parameter order: mangled entry point names depend on it.
+            let bound: HashMap<&str, &str> = dimensions
+                .iter()
+                .zip(choice)
+                .flat_map(|(dimension, tuple)| {
+                    dimension.axes.iter().zip(tuple).map(|(axis, value)| (axis.as_ref(), value.as_ref()))
+                })
+                .collect();
 
-                axes.iter()
-                    .map(|axis| (axis.name.to_string(), bound[axis.name.as_ref()].to_string()))
-                    .collect::<Vec<_>>()
-            })
-            .filter_map(|type_variant| match constraints.satisfied(&type_variant) {
-                Ok(true) => Some(Ok(Some(type_variant))),
-                Ok(false) => None,
-                Err(error) => Some(Err(error.context(format!("in kernel `{}`", self.name)))),
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            let type_variant = axes
+                .iter()
+                .map(|axis| {
+                    let value = bound
+                        .get(axis.name.as_ref())
+                        .with_context(|| format!("axis `{}` is in no dimension", axis.name))?;
+                    Ok((axis.name.to_string(), (*value).to_string()))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+
+            if constraints.satisfied(&type_variant).with_context(|| format!("in kernel `{}`", self.name))? {
+                variants.push(Some(type_variant));
+            }
+        }
 
         // Two tuples that mangle alike would emit the same entry point twice: an
         // overlapping pair of variant-group arms, say. The Metal compiler reports that as
@@ -179,7 +198,7 @@ impl<'a> KernelSpace<'a> {
         axes: &[AxisSpec],
         enum_paths: &EnumPaths,
     ) -> anyhow::Result<Vec<Dimension>> {
-        let groups = groups_of(axes, enum_paths);
+        let groups = self.groups(enum_paths);
 
         if let Some((first, second)) =
             groups.iter().tuple_combinations().find(|(a, b)| a.axes.iter().any(|axis| b.axes.contains(axis)))
@@ -211,22 +230,13 @@ impl<'a> KernelSpace<'a> {
     }
 }
 
-/// The variant groups every one of whose axes this kernel declares.
-fn groups_of<'a>(
-    axes: &[AxisSpec],
-    enum_paths: &'a EnumPaths,
-) -> Vec<&'a GpuTypeVariantGroup> {
-    let declares = |axis: &str| axes.iter().any(|a| a.name.as_ref() == axis);
-    enum_paths.variant_groups().iter().filter(|group| group.axes.iter().all(|axis| declares(axis))).collect()
-}
-
 /// What a variant group's arms say about the axes, resolved once: every struct arm's
 /// fields, and for each of them the axis value that each member of the field's enum
 /// selects — by variant name for an enum axis, by discriminant for a numeric one.
 struct GroupSelections<'a> {
     arms: Vec<ArmSelection<'a>>,
     /// The unit arm's name and the value it leaves each axis at, if the group has one.
-    unit: Option<(&'a str, Vec<&'a Box<str>>)>,
+    unit: Option<(&'a str, Vec<&'a str>)>,
 }
 
 struct ArmSelection<'a> {
@@ -239,7 +249,7 @@ struct FieldSelection<'a> {
     field: &'a str,
     field_type: &'a str,
     /// `(member, axis value)` for every member of the field's enum.
-    members: Vec<(&'a str, &'a Box<str>)>,
+    members: Vec<(&'a str, &'a str)>,
 }
 
 fn selections<'a>(
@@ -322,7 +332,8 @@ fn selections<'a>(
                         .iter()
                         .flat_map(|arm| arm.fields[axis_index].members.iter().map(|(_, value)| *value))
                         .collect::<Vec<_>>();
-                    let mut remaining = axis_values.iter().filter(|value| !covered.contains(value));
+                    let mut remaining =
+                        axis_values.iter().map(|value| value.as_ref()).filter(|value| !covered.contains(value));
                     let (Some(value), None) = (remaining.next(), remaining.next()) else {
                         bail!(
                             "axis `{axis}` must have exactly one value left over for the unit variant, but its \
@@ -357,13 +368,13 @@ fn group_tuples(
         .flat_map(|arm| {
             arm.fields
                 .iter()
-                .map(|field| field.members.iter().map(|(_, value)| (*value).clone()))
+                .map(|field| field.members.iter().map(|(_, value)| Box::<str>::from(*value)))
                 .multi_cartesian_product()
         })
         .collect();
 
     if let Some((_, values)) = &selections.unit {
-        tuples.push(values.iter().map(|value| (*value).clone()).collect());
+        tuples.push(values.iter().map(|value| Box::<str>::from(*value)).collect());
     }
 
     Ok(tuples)
@@ -455,10 +466,10 @@ pub fn axis_rust_type(
     enum_paths: &EnumPaths,
 ) -> anyhow::Result<syn::Type> {
     Ok(match &axis.ty {
-        constraint_expr::Type::DType => syn::parse_str("crate::data_type::DataType")?,
-        constraint_expr::Type::Bool => syn::parse_str("bool")?,
-        constraint_expr::Type::Int => syn::parse_str("u32")?,
-        constraint_expr::Type::Enum(name) => {
+        constraint_expr::AxisType::DType => syn::parse_str("crate::data_type::DataType")?,
+        constraint_expr::AxisType::Bool => syn::parse_str("bool")?,
+        constraint_expr::AxisType::Int => syn::parse_str("u32")?,
+        constraint_expr::AxisType::Enum(name) => {
             syn::parse_str(enum_paths.full_path_for(name).with_context(|| format!("no Rust path for enum `{name}`"))?)?
         },
     })
@@ -471,19 +482,19 @@ pub fn axis_literal(
     enum_paths: &EnumPaths,
 ) -> anyhow::Result<TokenStream> {
     Ok(match &axis.ty {
-        constraint_expr::Type::DType => {
+        constraint_expr::AxisType::DType => {
             let variant = format_ident!("{}", data_type_variant(value)?);
             quote! { crate::data_type::DataType::#variant }
         },
-        constraint_expr::Type::Bool => {
+        constraint_expr::AxisType::Bool => {
             let value: bool = value.parse()?;
             quote! { #value }
         },
-        constraint_expr::Type::Int => {
+        constraint_expr::AxisType::Int => {
             let value: u32 = value.parse()?;
             quote! { #value }
         },
-        constraint_expr::Type::Enum(_) => {
+        constraint_expr::AxisType::Enum(_) => {
             let (enum_name, variant) =
                 value.rsplit_once("::").with_context(|| format!("`{value}` is not an enum variant"))?;
             let path: syn::Path = syn::parse_str(
@@ -510,8 +521,8 @@ fn axis_value_for<'a>(
     axis_values: &'a [Box<str>],
     member: &str,
     discriminant: u32,
-) -> Option<&'a Box<str>> {
-    axis_values.iter().find(|value| match value.rsplit_once("::") {
+) -> Option<&'a str> {
+    axis_values.iter().map(|value| value.as_ref()).find(|value| match value.rsplit_once("::") {
         Some((_, variant)) => variant == member,
         None => value.parse::<u32>() == Ok(discriminant),
     })

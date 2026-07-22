@@ -4,7 +4,7 @@
 use quote::quote;
 
 use crate::{
-    constraint_expr::Type,
+    constraint_expr::AxisType,
     enum_paths::EnumPaths,
     gpu_types::{GpuTypeFile, GpuTypes, tile_geometry::TileGeometry},
     mangling::{snake_case, static_mangle},
@@ -61,7 +61,7 @@ fn enum_paths() -> EnumPaths {
 
 fn axis(
     name: &str,
-    ty: Type,
+    ty: AxisType,
     values: &[&str],
 ) -> AxisSpec {
     AxisSpec {
@@ -76,7 +76,7 @@ fn weights_axes() -> Vec<AxisSpec> {
     vec![
         axis(
             "B_PROLOGUE",
-            Type::Enum("GemmBPrologueKind".into()),
+            AxisType::Enum("GemmBPrologueKind".into()),
             &[
                 "GemmBPrologueKind::FullPrecision",
                 "GemmBPrologueKind::ScaleBiasDequant",
@@ -84,18 +84,18 @@ fn weights_axes() -> Vec<AxisSpec> {
                 "GemmBPrologueKind::ScaleSymmetricDequant",
             ],
         ),
-        axis("BITS", Type::Int, &["0", "4", "8"]),
-        axis("GROUP_SIZE", Type::Int, &["0", "16", "32", "64", "128"]),
+        axis("BITS", AxisType::Int, &["0", "4", "8"]),
+        axis("GROUP_SIZE", AxisType::Int, &["0", "16", "32", "64", "128"]),
     ]
 }
 
 fn space<'a>(
-    axes: &'a [AxisSpec],
+    axes: &[AxisSpec],
     constraints: &'a [Box<str>],
 ) -> KernelSpace<'a> {
     KernelSpace {
         name: "Kernel",
-        axes: Some(axes),
+        axes: Some(axes.into()),
         constraints,
     }
 }
@@ -129,7 +129,7 @@ fn accepted(
 
 #[test]
 fn a_misspelled_dtype_is_not_a_silently_false_comparison() {
-    let axes = vec![axis("BT", Type::DType, &["bfloat", "float"])];
+    let axes = vec![axis("BT", AxisType::DType, &["bfloat", "float"])];
     let message = compile_error(&axes, r#"BT != "flaot""#);
     assert!(message.contains("`flaot` is not a declared value of axis `BT`"), "{message}");
     assert!(message.contains("(declared: bfloat, float)"), "{message}");
@@ -161,13 +161,14 @@ fn types_may_not_be_mixed() {
 
 #[test]
 fn ordering_needs_integers() {
-    let axes = vec![axis("BT", Type::DType, &["bfloat", "float"])];
+    let axes = vec![axis("BT", AxisType::DType, &["bfloat", "float"])];
     assert!(compile_error(&axes, r#"BT < "float""#).contains("`<` and `<=` need integer operands"));
 }
 
 #[test]
 fn only_generated_helpers_may_be_called() {
-    let axes = vec![axis("GEMM_TILING", Type::Enum("GemmTiling".into()), &["GemmTiling::Tile8x32x32_Simdgroups1x1"])];
+    let axes =
+        vec![axis("GEMM_TILING", AxisType::Enum("GemmTiling".into()), &["GemmTiling::Tile8x32x32_Simdgroups1x1"])];
     let message = compile_error(&axes, "block_m(GEMM_TILING) == 8");
     assert!(message.contains("`block_m` is not a generated helper"), "{message}");
     assert!(message.contains("gemm_tiling_block_m"), "{message}");
@@ -191,7 +192,7 @@ fn the_grammar_is_a_whitelist() {
 
 #[test]
 fn operators_evaluate_as_written() {
-    let axes = vec![axis("A", Type::Int, &["0", "1"]), axis("B", Type::Int, &["0", "1"])];
+    let axes = vec![axis("A", AxisType::Int, &["0", "1"]), axis("B", AxisType::Int, &["0", "1"])];
 
     // Of the four (A, B) assignments, how many survive.
     assert_eq!(accepted(&axes, &["A == B"]), 2);
@@ -252,7 +253,7 @@ fn arms_must_name_their_fields() {
 #[test]
 fn a_member_must_match_a_declared_axis_value() {
     let mut axes = weights_axes();
-    axes[1] = axis("BITS", Type::Int, &["0", "4"]);
+    axes[1] = axis("BITS", AxisType::Int, &["0", "4"]);
     let message = error(space(&axes, &[]).accepted_variants(&enum_paths()));
     assert!(message.contains("`QuantBits::B8` does not match any declared value of axis `BITS`"), "{message}");
 }
@@ -260,9 +261,18 @@ fn a_member_must_match_a_declared_axis_value() {
 #[test]
 fn the_unit_arm_needs_exactly_one_leftover_value() {
     let mut axes = weights_axes();
-    axes[1] = axis("BITS", Type::Int, &["0", "2", "4", "8"]);
+    axes[1] = axis("BITS", AxisType::Int, &["0", "2", "4", "8"]);
     let message = error(space(&axes, &[]).accepted_variants(&enum_paths()));
     assert!(message.contains("axis `BITS` must have exactly one value left over"), "{message}");
+}
+
+#[test]
+fn two_groups_may_not_share_a_name() {
+    let message = group_error(
+        "#[variant_group(BITS)]
+         pub enum WeightsKey { None, Quant { bits: QuantBits } }",
+    );
+    assert!(message.contains("variant group `WeightsKey` is duplicated"), "{message}");
 }
 
 #[test]
@@ -351,7 +361,10 @@ fn names_are_mangled_the_way_the_wrappers_spell_them() {
         "_D4GemmS6VbfloatS25VTile8x32x32_Simdgroups1x1S1V0"
     });
     assert_eq!(static_mangle("Gemm", [] as [&str; 0]), "_D4Gemm");
-    assert_eq!(static_mangle("Gemm", ["-1"]), "_D4GemmS2Vn1");
+    assert_eq!(
+        static_mangle("Gemm", ["GemmTiling::Tile8x32x32_Simdgroups1x1"]),
+        "_D4GemmS25VTile8x32x32_Simdgroups1x1"
+    );
     assert_eq!(snake_case("WeightsKey"), "weights_key");
     assert_eq!(snake_case("Gemv"), "gemv");
 }
@@ -394,4 +407,15 @@ fn the_generated_flattening_is_the_enumeration_run_backwards() {
         flattening.contains(&quote! { crate::backends::common::gpu_types::gemm::QuantBits::B4 => 4u32 }.to_string()),
         "{flattening}"
     );
+}
+
+#[test]
+fn an_integer_axis_value_must_render_the_way_the_host_renders_it() {
+    let axes = vec![axis("BITS", AxisType::Int, &["0", "04"])];
+    let message = error(space(&axes, &constraints(&["BITS != 0"])).constraint_set(&enum_paths()));
+    assert!(message.contains("`04` is not spelled the way `4` renders at runtime"), "{message}");
+
+    let axes = vec![axis("BITS", AxisType::Int, &["0", "-4"])];
+    let message = error(space(&axes, &constraints(&["BITS != 0"])).constraint_set(&enum_paths()));
+    assert!(message.contains("`-4` is not an unsigned integer"), "{message}");
 }

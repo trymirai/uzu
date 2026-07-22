@@ -84,8 +84,8 @@ pub fn bindgen(
     // spelled out, so no call site has to know which of them a variant group holds.
     let specialize_names = specialize_emission.argument_names().into_iter().map(|name| format_ident!("{name}"));
     let new_path = &trait_wiring.new_path;
+    let key_name = format_ident!("{kernel_name}Key");
     let from_key = key_emission.as_ref().map(|emission| {
-        let key_name = &emission.name;
         let prelude = &emission.prelude;
         let arguments = &emission.arguments;
         quote! {
