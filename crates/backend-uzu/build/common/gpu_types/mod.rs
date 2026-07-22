@@ -72,9 +72,7 @@ impl GpuTypeFile {
             .items
             .into_iter()
             .filter_map(|item| match item {
-                Item::Const(item) if matches!(&item.vis, syn::Visibility::Public(_)) => {
-                    Some(GpuTypeConstant::parse(item).map(GpuType::Constant))
-                },
+                Item::Const(item) => Some(GpuTypeConstant::parse(item).map(GpuType::Constant)),
                 Item::Enum(item) => Some(GpuTypeEnum::parse(item).map(GpuType::Enum)),
                 Item::Struct(item) => Some(GpuTypeStruct::parse(item).map(GpuType::Struct)),
                 Item::Macro(item) if item.mac.path.is_ident("bitflags") => {

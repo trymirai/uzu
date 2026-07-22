@@ -65,9 +65,7 @@ impl GemvSpecialization {
         if args.d_transform.accumulate && !args.n.is_multiple_of(32) {
             return None;
         }
-        if args.d_transform.rht_factors.is_some()
-            && !args.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
-        {
+        if args.d_transform.rht_factors.is_some() && !args.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32) {
             return None;
         }
         if is_quant {
