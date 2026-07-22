@@ -3,10 +3,13 @@ use crate::{
     backends::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
-            gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, HadamardTransformOrder, QuantizationMode},
+            gpu_types::{HadamardTransformOrder, QuantizationMode},
             kernel::{
                 HadamardTransformKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
+                matmul::{
+                    MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel,
+                    symmetric_int8_activations::ACTIVATION_QUANTIZATION_GROUP_SIZE,
+                },
             },
         },
         cpu::{Cpu, context::CpuContext, error::CpuError},
@@ -103,19 +106,24 @@ impl MatmulKernel for MatmulCpuKernel {
                 scales,
                 group_size,
             } => {
-                if group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE
-                    || b.group_size() != Some(group_size)
-                    || !matches!(
-                        b,
-                        MatmulB::ScaleSymmetricDequant {
-                            mode: QuantizationMode::U8,
-                            ..
-                        }
-                    )
-                {
+                let weight_gs_ok = matches!(b.group_size(), Some(32 | 64 | 128));
+                let weights_ok = matches!(
+                    b,
+                    MatmulB::ScaleSymmetricDequant {
+                        mode: QuantizationMode::U4 | QuantizationMode::U8,
+                        ..
+                    } | MatmulB::ScaleBiasDequant {
+                        mode: QuantizationMode::U4 | QuantizationMode::U8,
+                        ..
+                    } | MatmulB::ScaleZeroPointDequant {
+                        mode: QuantizationMode::U4 | QuantizationMode::U8,
+                        ..
+                    }
+                );
+                if group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE || !weight_gs_ok || !weights_ok {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
-                        reason: "int8 activations require group size 32 and matching unsigned 8-bit symmetric weights",
+                        reason: "symmetric int8 activations require unsigned 4/8-bit quantized weights with group size 32/64/128",
                     }
                     .into());
                 }
@@ -222,17 +230,24 @@ impl MatmulKernel for MatmulCpuKernel {
                                 } => {
                                     let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
                                     let weight_linear_index = b_col * k_u + inner;
+                                    // With int8 activations the weight buffer holds sign-converted
+                                    // codes (unsigned code XOR midpoint), matching the Metal path.
                                     let quantized_value = if *bits == 4 {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 4;
                                         let w = weights.as_ptr() as *const u32;
-                                        ((w.add(word_index).read_unaligned() >> bit_offset) & 0xF) as f32
+                                        let nibble = ((w.add(word_index).read_unaligned() >> bit_offset) & 0xF) as u8;
+                                        if signed_u8_weights {
+                                            (i32::from(nibble ^ 0x8) - 8) as f32
+                                        } else {
+                                            f32::from(nibble)
+                                        }
                                     } else if signed_u8_weights {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 8;
                                         let w = weights.as_ptr() as *const u32;
                                         let code = ((w.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as u8;
-                                        (code ^ 0x80) as i8 as f32
+                                        code as i8 as f32
                                     } else {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 8;
@@ -245,8 +260,9 @@ impl MatmulKernel for MatmulCpuKernel {
                                         weights_data_type,
                                         b_col * num_groups_k + group_index,
                                     );
-                                    let bias_term = if let Some(zp) = zero_points {
-                                        let zero_point = if *bits == 4 {
+                                    let midpoint = (1u32 << (bits - 1)) as f32;
+                                    let zero_point = zero_points.map(|zp| {
+                                        if *bits == 4 {
                                             let byte_index = b_col * zero_point_stride + (group_index >> 1);
                                             let byte_value = *zp.as_ptr().add(byte_index);
                                             if (group_index & 1) == 0 {
@@ -255,20 +271,25 @@ impl MatmulKernel for MatmulCpuKernel {
                                                 ((byte_value >> 4) & 0x0F) as f32
                                             }
                                         } else {
-                                            let zp_u8 = *zp.as_ptr().add(b_col * zero_point_stride + group_index);
-                                            if signed_u8_weights {
-                                                zp_u8 as f32 - 128.0
-                                            } else {
-                                                zp_u8 as f32
-                                            }
-                                        };
-                                        -scale * zero_point
+                                            *zp.as_ptr().add(b_col * zero_point_stride + group_index) as f32
+                                        }
+                                    });
+                                    let bias_term = if signed_u8_weights {
+                                        // Codes are midpoint-signed: w = s·q + c, with
+                                        // c = 0 (sym), b+s·mid (bias), or s·(mid−zp) (zp).
+                                        if let Some(zp) = zero_point {
+                                            scale * (midpoint - zp)
+                                        } else if let Some(b) = biases {
+                                            read_f32(b.as_ptr(), weights_data_type, b_col * num_groups_k + group_index)
+                                                + scale * midpoint
+                                        } else {
+                                            0.0
+                                        }
+                                    } else if let Some(zp) = zero_point {
+                                        -scale * zp
                                     } else if let Some(b) = biases {
                                         read_f32(b.as_ptr(), weights_data_type, b_col * num_groups_k + group_index)
-                                    } else if signed_u8_weights {
-                                        0.0
                                     } else {
-                                        let midpoint = (1u32 << (bits - 1)) as f32;
                                         -scale * midpoint
                                     };
                                     scale * quantized_value + bias_term
