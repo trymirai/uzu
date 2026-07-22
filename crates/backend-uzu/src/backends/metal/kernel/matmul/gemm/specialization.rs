@@ -1,8 +1,6 @@
 use super::error::GemmSpecializationError;
 use crate::{
-    backends::common::gpu_types::gemm::{
-        GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling,
-    },
+    backends::common::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
     data_type::DataType,
 };
 
@@ -51,17 +49,6 @@ impl GemmSpecialization {
         }
         if self.b_prologue != GemmBPrologueKind::FullPrecision && !self.transpose_b {
             return Err(GemmSpecializationError::QuantizedRequiresTransposedB);
-        }
-        let a_is_int8 = self.a_prologue == GemmAPrologueKind::Int8Symmetric;
-        let b_ok_for_int8 = matches!(self.b_prologue, GemmBPrologueKind::ScaleSymmetricDequant);
-        let bits_ok = matches!(self.bits_per_b, Some(4) | Some(8));
-        if a_is_int8 && !(self.use_mxu && bits_ok && b_ok_for_int8 && self.transpose_b) {
-            return Err(GemmSpecializationError::Int8ActivationUnsupported {
-                use_mxu: self.use_mxu,
-                bits: self.bits_per_b,
-                b_prologue: self.b_prologue,
-                transpose_b: self.transpose_b,
-            });
         }
         Ok(())
     }

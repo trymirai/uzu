@@ -2,7 +2,7 @@ pub mod gemm;
 pub mod gemv;
 
 pub use self::gemm::{GemmDispatchPath, GemmKernel};
-use self::gemv::{GemvDispatch, GemvSpecialization, max_gemv_batch_threshold};
+use self::gemv::{GemvDispatch, GemvSpecialization};
 use crate::{
     backends::{
         common::{
@@ -78,26 +78,5 @@ impl MatmulKernel for MatmulMetalKernel {
             ));
         }
         self.gemm.encode(arguments, encoder)
-    }
-}
-
-impl MatmulMetalKernel {
-    pub fn try_encode_gemv<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
-        &mut self,
-        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
-        encoder: &mut Encoder<Metal>,
-    ) -> Result<bool, MetalError> {
-        let Some(gemv) = GemvSpecialization::select_with_max_m(
-            &arguments,
-            self.weights_data_type,
-            self.input_data_type,
-            self.output_data_type,
-            encoder.context().device_tier(),
-            max_gemv_batch_threshold(),
-        ) else {
-            return Ok(false);
-        };
-        self.gemv.encode(arguments, gemv, encoder).map_err(MetalError::from)?;
-        Ok(true)
     }
 }
