@@ -22,17 +22,6 @@ pub(crate) const METADATA_LANE_ANCESTOR_COUNT: usize = 1;
 pub(crate) const METADATA_LANE_NODE_INDEX: usize = 2;
 pub(crate) const METADATA_LANE_COUNT: usize = METADATA_LANE_NODE_INDEX + 1;
 
-const F32_SIGN_BIT: u32 = 1 << (u32::BITS - 1);
-
-pub(crate) fn top_k_score_key(score: f32) -> u32 {
-    let bits = score.to_bits();
-    if bits & F32_SIGN_BIT == 0 {
-        bits ^ F32_SIGN_BIT
-    } else {
-        !bits
-    }
-}
-
 pub(crate) const NO_WINNER: u32 = u32::MAX;
 pub(crate) const MAX_FRONTIER_SLOTS: usize = 2048;
 pub(crate) const MAX_FRONTIER_WIDTH: usize = 32;

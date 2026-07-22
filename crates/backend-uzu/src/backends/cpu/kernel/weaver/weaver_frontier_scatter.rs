@@ -2,6 +2,17 @@ use proc_macros::kernel;
 
 use crate::backends::common::kernel::weaver::*;
 
+const F32_SIGN_BIT: u32 = 1 << (u32::BITS - 1);
+
+fn top_k_score_key(score: f32) -> u32 {
+    let bits = score.to_bits();
+    if bits & F32_SIGN_BIT == 0 {
+        bits ^ F32_SIGN_BIT
+    } else {
+        !bits
+    }
+}
+
 #[kernel(WeaverFrontierScatter)]
 pub fn weaver_frontier_scatter(
     tree: *const u32,
