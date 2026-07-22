@@ -5,6 +5,7 @@ pub mod delta_net_chunked_prefill;
 pub mod delta_net_tree_verify;
 pub mod matmul;
 pub mod radix_top_k_small;
+pub(crate) mod weaver;
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 
@@ -20,5 +21,5 @@ pub trait Kernels: Sized {
 }
 
 #[cfg(test)]
-#[path = "../../../../unit/backends/common/kernel/mod.rs"]
+#[path = "../../../../tests/unit/backends/common/kernel/mod.rs"]
 mod tests;

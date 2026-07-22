@@ -70,17 +70,17 @@ struct Fragment {
       "(elements() relies on it)"
   );
 
-  METAL_CONST ushort ROW_FRAGMENTS = ROW_FRAGMENTS_;
-  METAL_CONST ushort COL_FRAGMENTS = COL_FRAGMENTS_;
+  UZU_CONST ushort ROW_FRAGMENTS = ROW_FRAGMENTS_;
+  UZU_CONST ushort COL_FRAGMENTS = COL_FRAGMENTS_;
 
-  METAL_CONST ushort FRAGMENT_ROWS = Ops::FRAGMENT_ROWS;
-  METAL_CONST ushort FRAGMENT_COLS = Ops::FRAGMENT_COLS;
+  UZU_CONST ushort FRAGMENT_ROWS = Ops::FRAGMENT_ROWS;
+  UZU_CONST ushort FRAGMENT_COLS = Ops::FRAGMENT_COLS;
 
-  METAL_CONST ushort NUM_FRAGS = ROW_FRAGMENTS * COL_FRAGMENTS;
-  METAL_CONST ushort ELEMENTS_PER_FRAGMENT = NUM_FRAGS * Ops::ELEMENTS_PER_THREAD;
-  METAL_CONST ushort ROW_REDUCE_LANE_XOR_0 = 1;
-  METAL_CONST ushort ROW_REDUCE_LANE_XOR_1 = 8;
-  METAL_CONST bool MMA_TRANSPOSE = MMA_TRANSPOSE_;
+  UZU_CONST ushort NUM_FRAGS = ROW_FRAGMENTS * COL_FRAGMENTS;
+  UZU_CONST ushort ELEMENTS_PER_FRAGMENT = NUM_FRAGS * Ops::ELEMENTS_PER_THREAD;
+  UZU_CONST ushort ROW_REDUCE_LANE_XOR_0 = 1;
+  UZU_CONST ushort ROW_REDUCE_LANE_XOR_1 = 8;
+  UZU_CONST bool MMA_TRANSPOSE = MMA_TRANSPOSE_;
 
   ThreadVectorType fragment_data[NUM_FRAGS];
 
@@ -326,10 +326,10 @@ struct Fragment {
   }
 
 private:
-  METAL_CONST bool LOAD = true;
-  METAL_CONST bool STORE = false;
-  METAL_CONST bool SAFE = true;
-  METAL_CONST bool UNSAFE = false;
+  UZU_CONST bool LOAD = true;
+  UZU_CONST bool STORE = false;
+  UZU_CONST bool SAFE = true;
+  UZU_CONST bool UNSAFE = false;
 
   template <class Fn>
   METAL_FUNC static void for_each_fragment(Fn fn) {
@@ -400,8 +400,8 @@ private:
 
 template <class Ops, class Read>
 struct OperandFragmentTraits {
-  METAL_CONST bool READ_TRANSPOSE = metal::is_same_v<Read, ReadTranspose>;
-  METAL_CONST bool MMA_TRANSPOSE = READ_TRANSPOSE && !Ops::READ_TRANSPOSE_SWAPS_SOURCE_STRIDES;
+  UZU_CONST bool READ_TRANSPOSE = metal::is_same_v<Read, ReadTranspose>;
+  UZU_CONST bool MMA_TRANSPOSE = READ_TRANSPOSE && !Ops::READ_TRANSPOSE_SWAPS_SOURCE_STRIDES;
 };
 
 template <typename T, ushort ROW_FRAGMENTS, ushort COL_FRAGMENTS, class Ops, class Read = ReadDirect>

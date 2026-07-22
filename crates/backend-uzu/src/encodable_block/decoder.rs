@@ -37,12 +37,17 @@ pub struct Decoder<B: Backend> {
 
 pub struct DecoderEncodeOutput<B: Backend> {
     pub logits: Option<Allocation<B>>,
-    // TODO: remove after DFlash wiring
     #[allow(dead_code)]
     pub hidden_features: Box<[Allocation<B>]>,
+    #[allow(dead_code)]
+    pub final_hidden: Option<Allocation<B>>,
 }
 
 impl<B: Backend> Decoder<B> {
+    pub(crate) fn embedding(&self) -> &Embedding<B> {
+        &self.embedding
+    }
+
     pub fn new(
         context: &B::Context,
         config: &DecoderConfig,
@@ -145,14 +150,21 @@ impl<B: Backend> Decoder<B> {
             .map_err(DecoderError::Backend)?;
 
         let logits = if let Some(output_range) = output_range {
-            Some(self.embedding.encode_readout(output_range.len(), &transformer_output.output.unwrap(), encoder)?)
+            let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");
+            Some(self.embedding.encode_readout(output_range.len(), output, self.embedding.data_type(), encoder)?)
         } else {
             None
+        };
+        let final_hidden = if hidden_feature_layer_indices.is_empty() {
+            None
+        } else {
+            transformer_output.output
         };
 
         Ok(DecoderEncodeOutput {
             logits,
             hidden_features: transformer_output.hidden_features,
+            final_hidden,
         })
     }
 }

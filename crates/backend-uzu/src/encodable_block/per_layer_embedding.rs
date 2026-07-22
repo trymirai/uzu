@@ -211,8 +211,9 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
 
         let gate_act_mul = <B::Kernels as Kernels>::GatedActMulKernel::new(context, data_type, false, false)
             .map_err(PerLayerEmbeddingError::BackendError)?;
-        let residual_finalize = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true)
-            .map_err(PerLayerEmbeddingError::BackendError)?;
+        let residual_finalize =
+            <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true, false)
+                .map_err(PerLayerEmbeddingError::BackendError)?;
         let residual_combine = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, true)
             .map_err(PerLayerEmbeddingError::BackendError)?;
 
@@ -246,6 +247,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         self.residual_finalize.encode(
             None::<&Allocation<B>>,
             hidden,
+            None::<&Allocation<B>>,
             &mut *outputs,
             length as u32,
             length as u32,
