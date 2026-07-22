@@ -544,7 +544,15 @@ impl GemmKernel {
 
                 if let Some(bias) = bias_after_rht {
                     let output_length = m.checked_mul(n).expect("GEMM output length must fit in u32");
-                    self.bias_add.encode(None::<&Allocation<Metal>>, bias, &mut *d, n, output_length, encoder);
+                    self.bias_add.encode(
+                        None::<&Allocation<Metal>>,
+                        bias,
+                        None::<&Allocation<Metal>>,
+                        &mut *d,
+                        n,
+                        output_length,
+                        encoder,
+                    );
                 }
             },
         }
