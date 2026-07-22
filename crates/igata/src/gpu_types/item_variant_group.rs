@@ -2,7 +2,7 @@ use anyhow::{Context, bail, ensure};
 use itertools::Itertools;
 use syn::{Attribute, Fields, ItemEnum, Meta, Path, punctuated::Punctuated, token::Comma};
 
-use crate::common::mangling::field_name;
+use crate::mangling::field_name;
 
 /// One arm of a `#[variant_group]` enum.
 ///
@@ -88,6 +88,7 @@ impl GpuTypeVariantGroup {
 
                         // Fields are matched to axes by name, not by position, so
                         // reordering the struct cannot silently rebind the axes.
+                        let all_fields = declared.iter().map(|(field, _)| field.as_ref()).join(", ");
                         let fields = axes
                             .iter()
                             .map(|axis| {
@@ -96,8 +97,7 @@ impl GpuTypeVariantGroup {
                                     declared.iter().position(|(field, _)| **field == *expected).with_context(|| {
                                         format!(
                                             "variant `{variant_name}` of `{name}` has no field `{expected}` for axis \
-                                             `{axis}` (its fields are: {})",
-                                            declared.iter().map(|(field, _)| field.as_ref()).join(", ")
+                                             `{axis}` (its fields are: {all_fields})"
                                         )
                                     })?;
                                 Ok(declared.remove(index))

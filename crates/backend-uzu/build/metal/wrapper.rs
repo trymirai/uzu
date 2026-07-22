@@ -1,6 +1,12 @@
 use std::{collections::HashMap, iter::once};
 
-use anyhow::{Context, bail};
+use anyhow::bail;
+use igata::{
+    constraint_expr,
+    enum_paths::EnumPaths,
+    mangling::static_mangle,
+    variants::{AxisSpec, KernelSpace},
+};
 use itertools::Itertools;
 
 use super::{
@@ -10,13 +16,7 @@ use super::{
     },
     enum_path_rewrite::is_enum_c_type,
 };
-use crate::common::{
-    constraint_expr::{self, ConstraintSet},
-    enum_paths::EnumPaths,
-    gpu_types::{GpuTypeVariantGroup, VariantGroupArm},
-    identifiers::KernelName,
-    mangling::static_mangle,
-};
+use crate::common::identifiers::KernelName;
 
 pub type SpecializeBaseIndices = HashMap<KernelName, usize>;
 
@@ -152,299 +152,54 @@ fn axis_type(parameter: &MetalTemplateParameter) -> anyhow::Result<constraint_ex
     })
 }
 
-pub fn constraint_set(
-    kernel: &MetalKernelInfo,
-    enum_paths: &EnumPaths,
-) -> anyhow::Result<ConstraintSet> {
-    let axes = kernel
-        .variants
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .map(|parameter| {
-            let ty = axis_type(parameter)?;
-            let values = parameter
-                .variants
-                .iter()
-                .map(|text| {
-                    constraint_expr::AxisDecl::parse_value(&ty, text)
-                        .with_context(|| format!("in VARIANTS({}, ...) of kernel `{}`", parameter.name, kernel.name))
-                })
-                .collect::<anyhow::Result<Box<[_]>>>()?;
-            Ok(constraint_expr::AxisDecl {
-                name: parameter.name.clone(),
-                ty,
-                values,
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let helpers = enum_paths
-        .helpers()
-        .iter()
-        .map(|(name, helper)| {
-            (
-                name.clone(),
-                constraint_expr::Helper {
-                    parameter: constraint_expr::Type::Enum(helper.parameter.clone()),
-                    values: helper.values.iter().map(|(variant, value)| (variant.clone(), i64::from(*value))).collect(),
-                },
-            )
-        })
-        .collect();
-
-    ConstraintSet::compile(kernel.name.as_ref(), axes, helpers, kernel.constraints.iter())
-}
-
-/// One independently varying dimension of a kernel's variant space: usually a single
-/// axis, but a `#[variant_group]` binds several axes into one dimension whose values are
-/// whole tuples, so combinations its Rust sum type cannot represent are never generated.
-struct Dimension {
-    axes: Vec<Box<str>>,
-    tuples: Vec<Vec<Box<str>>>,
-}
-
-/// How a kernel's axes map onto fields of its runtime key: grouped axes collapse into
-/// the one sum type that represents them, the rest keep a field each.
-pub enum KeyField<'a> {
-    Axis(&'a MetalTemplateParameter),
-    Group {
-        type_name: &'a str,
-        axes: &'a [Box<str>],
-    },
-}
-
-/// The key fields for a kernel, in template parameter order.
-pub fn key_layout<'a>(
+/// A kernel's declared axes, owned so that a [`KernelSpace`] borrowing them can be handed
+/// out. This is the whole adapter between the Metal AST and igata.
+pub struct KernelAxes<'a> {
     kernel: &'a MetalKernelInfo,
-    enum_paths: &'a EnumPaths,
-) -> Vec<KeyField<'a>> {
-    let Some(parameters) = &kernel.variants else {
-        return Vec::new();
-    };
-
-    let declares = |axis: &str| parameters.iter().any(|p| p.name.as_ref() == axis);
-    let groups = enum_paths
-        .variant_groups()
-        .iter()
-        .filter(|group| group.axes.iter().all(|axis| declares(axis)))
-        .collect::<Vec<_>>();
-
-    parameters
-        .iter()
-        .filter_map(|parameter| match groups.iter().find(|group| group.axes.contains(&parameter.name)) {
-            Some(group) if group.axes.first() == Some(&parameter.name) => Some(KeyField::Group {
-                type_name: &group.name,
-                axes: &group.axes,
-            }),
-            Some(_) => None,
-            None => Some(KeyField::Axis(parameter)),
-        })
-        .collect()
+    axes: Option<Box<[AxisSpec]>>,
 }
 
-/// Splits a kernel's axes into dimensions, collapsing any variant group whose axes the
-/// kernel declares in full.
-fn dimensions(
-    kernel: &MetalKernelInfo,
-    parameters: &[MetalTemplateParameter],
-    enum_paths: &EnumPaths,
-) -> anyhow::Result<Vec<Dimension>> {
-    let declares = |axis: &str| parameters.iter().any(|p| p.name.as_ref() == axis);
-
-    let groups = enum_paths
-        .variant_groups()
-        .iter()
-        .filter(|group| group.axes.iter().all(|axis| declares(axis)))
-        .collect::<Vec<_>>();
-
-    if let Some((first, second)) =
-        groups.iter().tuple_combinations().find(|(a, b)| a.axes.iter().any(|axis| b.axes.contains(axis)))
-    {
-        bail!("variant groups `{}` and `{}` share an axis of kernel `{}`", first.name, second.name, kernel.name);
-    }
-
-    let mut dimensions: Vec<Dimension> = Vec::new();
-    for parameter in parameters {
-        match groups.iter().find(|group| group.axes.contains(&parameter.name)) {
-            // A group is emitted once, at its first axis.
-            Some(group) if group.axes.first() == Some(&parameter.name) => {
-                let tuples = group_tuples(group, parameters, enum_paths)
-                    .with_context(|| format!("in variant group `{}` of kernel `{}`", group.name, kernel.name))?;
-                dimensions.push(Dimension {
-                    axes: group.axes.to_vec(),
-                    tuples,
-                });
-            },
-            Some(_) => (),
-            None => dimensions.push(Dimension {
-                axes: vec![parameter.name.clone()],
-                tuples: parameter.variants.iter().map(|value| vec![value.clone()]).collect(),
-            }),
-        }
-    }
-
-    Ok(dimensions)
-}
-
-/// The axis-value tuples a variant group's Rust definition admits.
-///
-/// Each field of a struct arm names an enum whose members select values of the
-/// corresponding axis — by variant name for an enum axis, by discriminant for a numeric
-/// one. A unit arm takes each axis's remaining value, which is what makes
-/// `FullPrecision` mean "zero bits, zero group size" without anyone writing that down.
-fn group_tuples(
-    group: &GpuTypeVariantGroup,
-    parameters: &[MetalTemplateParameter],
-    enum_paths: &EnumPaths,
-) -> anyhow::Result<Vec<Vec<Box<str>>>> {
-    let declared = group
-        .axes
-        .iter()
-        .map(|axis| {
-            let parameter = parameters.iter().find(|p| &p.name == axis).context("axis is not declared")?;
-            Ok(&*parameter.variants)
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let mut tuples: Vec<Vec<Box<str>>> = Vec::new();
-    let mut covered: Vec<Vec<Box<str>>> = vec![Vec::new(); group.axes.len()];
-
-    for arm in group.arms.iter() {
-        let VariantGroupArm::Product {
-            fields,
-            ..
-        } = arm
-        else {
-            continue;
-        };
-
-        let per_axis = fields
-            .iter()
-            .map(|(_, field_type)| field_type)
-            .zip(group.axes.iter())
-            .zip(declared.iter())
-            .map(|((field_type, axis), axis_values)| {
-                let members = enum_paths
-                    .variants_for(field_type)
-                    .with_context(|| format!("`{field_type}` is not an enum gpu type"))?;
-
-                members
+impl<'a> KernelAxes<'a> {
+    pub fn of(kernel: &'a MetalKernelInfo) -> anyhow::Result<Self> {
+        let axes = kernel
+            .variants
+            .as_deref()
+            .map(|parameters| {
+                parameters
                     .iter()
-                    .map(|(member, discriminant)| {
-                        axis_value_for(axis_values, member, *discriminant).cloned().with_context(|| {
-                            format!("`{field_type}::{member}` does not match any declared value of axis `{axis}`")
+                    .map(|parameter| {
+                        Ok(AxisSpec {
+                            name: parameter.name.clone(),
+                            ty: axis_type(parameter)?,
+                            values: parameter.variants.clone(),
                         })
                     })
-                    .collect::<anyhow::Result<Vec<_>>>()
+                    .collect::<anyhow::Result<Box<[AxisSpec]>>>()
             })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .transpose()?;
 
-        for (axis_index, values) in per_axis.iter().enumerate() {
-            covered[axis_index].extend(values.iter().cloned());
+        Ok(Self {
+            kernel,
+            axes,
+        })
+    }
+
+    pub fn space(&self) -> KernelSpace<'_> {
+        KernelSpace {
+            name: self.kernel.name.as_ref(),
+            axes: self.axes.as_deref(),
+            constraints: &self.kernel.constraints,
         }
-
-        tuples.extend(per_axis.into_iter().multi_cartesian_product());
     }
-
-    if group.arms.iter().any(|arm| matches!(arm, VariantGroupArm::Unit { .. })) {
-        let unit_tuple = group
-            .axes
-            .iter()
-            .zip(declared.iter())
-            .zip(covered.iter())
-            .map(|((axis, axis_values), covered)| {
-                let mut remaining = axis_values.iter().filter(|value| !covered.contains(value));
-                let (Some(value), None) = (remaining.next(), remaining.next()) else {
-                    bail!(
-                        "axis `{axis}` must have exactly one value left over for the unit variant, but its declared \
-                         values are {:?} and the struct variants cover {covered:?}",
-                        axis_values,
-                    );
-                };
-                Ok(value.clone())
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        tuples.push(unit_tuple);
-    }
-
-    Ok(tuples)
 }
 
-/// Matches an enum member against an axis's declared values: by variant name when the
-/// axis is enum-typed, by discriminant when it is numeric.
-fn axis_value_for<'a>(
-    axis_values: &'a [Box<str>],
-    member: &str,
-    discriminant: u32,
-) -> Option<&'a Box<str>> {
-    axis_values.iter().find(|value| match value.rsplit_once("::") {
-        Some((_, variant)) => variant == member,
-        None => value.parse::<u32>() == Ok(discriminant),
-    })
-}
-
-/// Template-argument tuples this kernel is instantiated for: the declared cross-product
-/// minus everything its CONSTRAINTs reject. Non-templated kernels yield a single `None`.
-///
-/// The single source of truth for the shipped kernel set — both the wrapper emission
-/// below and the build manifest enumerate variants through here, so the manifest cannot
-/// drift from what actually gets compiled.
+/// Template-argument tuples this kernel is instantiated for; see
+/// [`KernelSpace::accepted_variants`].
 pub fn accepted_variants(
     kernel: &MetalKernelInfo,
     enum_paths: &EnumPaths,
 ) -> anyhow::Result<Vec<Option<Vec<(String, String)>>>> {
-    let Some(parameters) = &kernel.variants else {
-        return Ok(vec![None]);
-    };
-
-    let constraints = constraint_set(kernel, enum_paths)?;
-    let dimensions = dimensions(kernel, parameters, enum_paths)?;
-
-    let variants = dimensions
-        .iter()
-        .map(|dimension| dimension.tuples.iter())
-        .multi_cartesian_product()
-        .map(|choice| {
-            // Back to template parameter order: mangled entry point names depend on it.
-            let bound: HashMap<&str, &str> = dimensions
-                .iter()
-                .zip(choice)
-                .flat_map(|(dimension, tuple)| {
-                    dimension.axes.iter().zip(tuple).map(|(axis, value)| (axis.as_ref(), value.as_ref()))
-                })
-                .collect();
-
-            parameters.iter().map(|p| (p.name.to_string(), bound[p.name.as_ref()].to_string())).collect::<Vec<_>>()
-        })
-        .filter_map(|type_variant| match constraints.satisfied(&type_variant) {
-            Ok(true) => Some(Ok(Some(type_variant))),
-            Ok(false) => None,
-            Err(error) => Some(Err(error.context(format!("in kernel `{}`", kernel.name)))),
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    // Two tuples that mangle alike would emit the same entry point twice: an overlapping
-    // pair of variant-group arms, say. The Metal compiler reports that as a redefinition
-    // deep in generated code, so name the tuples instead.
-    let mut seen: HashMap<String, &Vec<(String, String)>> = HashMap::new();
-    for type_variant in variants.iter().flatten() {
-        let name = static_mangle(kernel.name.as_ref(), type_variant.iter().map(|(_, value)| value.as_str()));
-        if let Some(previous) = seen.insert(name, type_variant) {
-            let render = |variant: &Vec<(String, String)>| {
-                variant.iter().map(|(axis, value)| format!("{axis}={value}")).join(" ")
-            };
-            bail!(
-                "kernel `{}` instantiates the same entry point twice: `{}` and `{}`",
-                kernel.name,
-                render(previous),
-                render(type_variant),
-            );
-        }
-    }
-
-    Ok(variants)
+    KernelAxes::of(kernel)?.space().accepted_variants(enum_paths)
 }
 
 fn kernel_wrappers(

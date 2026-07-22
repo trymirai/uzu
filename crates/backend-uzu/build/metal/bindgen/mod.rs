@@ -7,12 +7,12 @@ mod trait_wiring;
 mod variants;
 
 use anyhow::Result;
+use igata::{enum_paths::EnumPaths, mangling::dynamic_mangle};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use self::host_expression_rewriter::HostExpressionRewriter;
 use super::{ast::MetalKernelInfo, wrapper::SpecializeBaseIndices};
-use crate::common::{enum_paths::EnumPaths, mangling::dynamic_mangle};
 
 pub fn bindgen(
     kernel: &MetalKernelInfo,

@@ -7,10 +7,10 @@
 use std::{fmt::Write as _, fs, path::Path};
 
 use anyhow::Context;
+use igata::enum_paths::EnumPaths;
 use itertools::Itertools;
 
 use super::{ast::MetalKernelInfo, wrapper::accepted_variants};
-use crate::common::enum_paths::EnumPaths;
 
 /// Renders the sorted manifest for every kernel, keyed by source path so identically
 /// named kernels in different files stay distinguishable.

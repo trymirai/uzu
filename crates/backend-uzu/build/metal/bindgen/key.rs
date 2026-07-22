@@ -6,21 +6,19 @@
 //! the shader rule that excluded it rather than as a missing-pipeline failure later on.
 
 use anyhow::{Context, Result};
+use igata::{
+    constraint_expr::{RustBindings, Type as AxisType},
+    enum_paths::EnumPaths,
+    gpu_types::VariantGroupArm,
+    mangling::{dynamic_mangle, field_name, snake_case, static_mangle},
+    variants::{AxisSpec, KernelSpace, KeyField},
+};
 use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Type;
 
-use super::super::{
-    ast::{MetalKernelInfo, MetalTemplateParameter, MetalTemplateParameterType},
-    wrapper::{KeyField, constraint_set, key_layout},
-};
-use crate::common::{
-    constraint_expr::RustBindings,
-    enum_paths::EnumPaths,
-    gpu_types::VariantGroupArm,
-    mangling::{dynamic_mangle, field_name, snake_case, static_mangle},
-};
+use super::super::{ast::MetalKernelInfo, wrapper::KernelAxes};
 
 pub struct KeyEmission {
     pub tokens: TokenStream,
@@ -30,7 +28,9 @@ pub fn build(
     kernel: &MetalKernelInfo,
     enum_paths: &EnumPaths,
 ) -> Result<Option<KeyEmission>> {
-    let fields = key_layout(kernel, enum_paths);
+    let kernel_axes = KernelAxes::of(kernel)?;
+    let space = kernel_axes.space();
+    let fields = space.key_layout(enum_paths);
     if fields.is_empty() {
         return Ok(None);
     }
@@ -41,9 +41,9 @@ pub fn build(
     let struct_fields = fields
         .iter()
         .map(|field| match field {
-            KeyField::Axis(parameter) => {
-                let name = format_ident!("{}", field_name(&parameter.name));
-                let ty = axis_rust_type(parameter)?;
+            KeyField::Axis(axis) => {
+                let name = format_ident!("{}", field_name(&axis.name));
+                let ty = axis_rust_type(axis, enum_paths)?;
                 Ok(quote! { pub #name: #ty })
             },
             KeyField::Group {
@@ -78,9 +78,9 @@ pub fn build(
         })
         .collect::<Vec<_>>();
 
-    let entry_name = entry_name(kernel, &fields);
-    let validate = validate(kernel, enum_paths, &fields, &group_prelude)?;
-    let agreement_test = agreement_test(kernel, enum_paths, &fields, &quote! { #key_name })?;
+    let entry_name = entry_name(kernel_name, &space, &fields);
+    let validate = validate(&space, enum_paths, &fields, &group_prelude)?;
+    let agreement_test = agreement_test(&space, enum_paths, &fields, &quote! { #key_name })?;
 
     Ok(Some(KeyEmission {
         tokens: quote! {
@@ -106,66 +106,73 @@ pub fn build(
     }))
 }
 
-fn axis_rust_type(parameter: &MetalTemplateParameter) -> Result<Type> {
-    Ok(match &parameter.ty {
-        MetalTemplateParameterType::Type => syn::parse_str("crate::data_type::DataType")?,
-        MetalTemplateParameterType::Value(text) => syn::parse_str(text.as_ref())?,
+/// The Rust type of a key field holding this axis's value.
+fn axis_rust_type(
+    axis: &AxisSpec,
+    enum_paths: &EnumPaths,
+) -> Result<Type> {
+    Ok(match &axis.ty {
+        AxisType::DType => syn::parse_str("crate::data_type::DataType")?,
+        AxisType::Bool => syn::parse_str("bool")?,
+        AxisType::Int => syn::parse_str("u32")?,
+        AxisType::Enum(name) => {
+            syn::parse_str(enum_paths.full_path_for(name).with_context(|| format!("no Rust path for enum `{name}`"))?)?
+        },
     })
+}
+
+/// Whether this axis is one the key holds flattened out of a variant group.
+fn is_grouped(
+    fields: &[KeyField<'_>],
+    axis: &str,
+) -> bool {
+    fields.iter().any(|field| matches!(field, KeyField::Group { axes, .. } if axes.iter().any(|a| a.as_ref() == axis)))
+}
+
+/// The expression holding an axis's value: a local from the group prelude if it was
+/// flattened out of a variant group, a field of the key otherwise.
+fn axis_access(
+    fields: &[KeyField<'_>],
+    axis: &str,
+) -> TokenStream {
+    let name = format_ident!("{}", field_name(axis));
+    if is_grouped(fields, axis) {
+        quote! { #name }
+    } else {
+        quote! { self.#name }
+    }
 }
 
 /// Rebuilds the mangled name from the key's fields, in template parameter order.
 fn entry_name(
-    kernel: &MetalKernelInfo,
+    kernel_name: &str,
+    space: &KernelSpace<'_>,
     fields: &[KeyField<'_>],
 ) -> TokenStream {
-    let parameters = kernel.variants.as_deref().unwrap_or_default();
-
-    let values = parameters.iter().map(|parameter| {
-        let name = format_ident!("{}", field_name(&parameter.name));
-        // Grouped axes are locals from the prelude; everything else is a field.
-        let grouped = fields.iter().any(
-            |field| matches!(field, KeyField::Group { axes, .. } if axes.iter().any(|axis| axis == &parameter.name)),
-        );
-        let access = if grouped {
-            quote! { #name }
-        } else {
-            quote! { self.#name }
-        };
-
-        match &parameter.ty {
-            MetalTemplateParameterType::Type => quote! { #access.metal_type() },
-            MetalTemplateParameterType::Value(_) => quote! { #access.to_string() },
+    let values = space.axes.unwrap_or_default().iter().map(|axis| {
+        let access = axis_access(fields, &axis.name);
+        match axis.ty {
+            AxisType::DType => quote! { #access.metal_type() },
+            _ => quote! { #access.to_string() },
         }
     });
 
-    dynamic_mangle(kernel.name.as_ref(), values)
+    dynamic_mangle(kernel_name, values)
 }
 
 fn validate(
-    kernel: &MetalKernelInfo,
+    space: &KernelSpace<'_>,
     enum_paths: &EnumPaths,
     fields: &[KeyField<'_>],
     group_prelude: &[TokenStream],
 ) -> Result<TokenStream> {
-    let constraints = constraint_set(kernel, enum_paths)?;
+    let constraints = space.constraint_set(enum_paths)?;
 
-    let axes = kernel
-        .variants
-        .as_deref()
+    let axes = space
+        .axes
         .unwrap_or_default()
         .iter()
-        .map(|parameter| {
-            let name = format_ident!("{}", field_name(&parameter.name));
-            let grouped = fields.iter().any(|field| {
-                matches!(field, KeyField::Group { axes, .. } if axes.iter().any(|axis| axis == &parameter.name))
-            });
-            let access = if grouped {
-                quote! { #name }
-            } else {
-                quote! { self.#name }
-            };
-            (parameter.name.clone(), access)
-        })
+        .map(|axis| (axis.name.clone(), axis_access(fields, &axis.name)))
         .collect();
 
     let bindings = RustBindings {
@@ -174,7 +181,7 @@ fn validate(
         enum_paths: enum_paths.rust_paths(),
     };
 
-    let kernel_name = kernel.name.as_ref();
+    let kernel_name = space.name;
 
     // A constraint only says which combinations are legal; it cannot catch a value that
     // was never declared at all, such as a head dimension no kernel was built for.
@@ -182,15 +189,15 @@ fn validate(
     let declared = fields
         .iter()
         .filter_map(|field| match field {
-            KeyField::Axis(parameter) => Some(parameter),
+            KeyField::Axis(axis) => Some(axis),
             KeyField::Group {
                 ..
             } => None,
         })
-        .map(|parameter| {
-            let name = format_ident!("{}", field_name(&parameter.name));
-            let literals = axis_literals(parameter, enum_paths)?;
-            let rule = format!("{} is one of {}", parameter.name, parameter.variants.join(", "));
+        .map(|axis| {
+            let name = format_ident!("{}", field_name(&axis.name));
+            let literals = axis_literals(axis, enum_paths)?;
+            let rule = format!("{} is one of {}", axis.name, axis.values.join(", "));
             Ok(quote! {
                 if ![#(#literals),*].contains(&self.#name) {
                     return Err(crate::backends::metal::kernel::InvalidKernelKey {
@@ -228,37 +235,34 @@ fn validate(
 
 /// Rust literals for every value an axis can take, in declared order.
 fn axis_literals(
-    parameter: &MetalTemplateParameter,
+    axis: &AxisSpec,
     enum_paths: &EnumPaths,
 ) -> Result<Vec<TokenStream>> {
-    parameter
-        .variants
+    axis.values
         .iter()
-        .map(|value| match &parameter.ty {
-            MetalTemplateParameterType::Type => {
+        .map(|value| match &axis.ty {
+            AxisType::DType => {
                 let variant = format_ident!("{}", data_type_variant(value)?);
                 Ok(quote! { crate::data_type::DataType::#variant })
             },
-            MetalTemplateParameterType::Value(rust_type) => match rust_type.as_ref() {
-                "bool" => {
-                    let value: bool = value.parse()?;
-                    Ok(quote! { #value })
-                },
-                "u32" => {
-                    let value: u32 = value.parse()?;
-                    Ok(quote! { #value })
-                },
-                _ => {
-                    let (enum_name, variant) =
-                        value.rsplit_once("::").with_context(|| format!("`{value}` is not an enum variant"))?;
-                    let path: Type = syn::parse_str(
-                        enum_paths
-                            .full_path_for(enum_name)
-                            .with_context(|| format!("no Rust path for enum `{enum_name}`"))?,
-                    )?;
-                    let variant = format_ident!("{variant}");
-                    Ok(quote! { #path::#variant })
-                },
+            AxisType::Bool => {
+                let value: bool = value.parse()?;
+                Ok(quote! { #value })
+            },
+            AxisType::Int => {
+                let value: u32 = value.parse()?;
+                Ok(quote! { #value })
+            },
+            AxisType::Enum(_) => {
+                let (enum_name, variant) =
+                    value.rsplit_once("::").with_context(|| format!("`{value}` is not an enum variant"))?;
+                let path: Type = syn::parse_str(
+                    enum_paths
+                        .full_path_for(enum_name)
+                        .with_context(|| format!("no Rust path for enum `{enum_name}`"))?,
+                )?;
+                let variant = format_ident!("{variant}");
+                Ok(quote! { #path::#variant })
             },
         })
         .collect()
@@ -338,7 +342,7 @@ fn data_type_variant(metal_type: &str) -> Result<&'static str> {
 /// down end to end -- including that `entry_name()` reproduces the mangling the wrapper
 /// emitted, which is easy to get wrong when a variant group reorders axes.
 fn agreement_test(
-    kernel: &MetalKernelInfo,
+    space: &KernelSpace<'_>,
     enum_paths: &EnumPaths,
     fields: &[KeyField<'_>],
     key_name: &TokenStream,
@@ -348,9 +352,7 @@ fn agreement_test(
 
     for field in fields {
         let (binding, literals) = match field {
-            KeyField::Axis(parameter) => {
-                (format_ident!("{}", field_name(&parameter.name)), axis_literals(parameter, enum_paths)?)
-            },
+            KeyField::Axis(axis) => (format_ident!("{}", field_name(&axis.name)), axis_literals(axis, enum_paths)?),
             KeyField::Group {
                 type_name,
                 ..
@@ -369,14 +371,15 @@ fn agreement_test(
         };
     }
 
-    let accepted = super::super::wrapper::accepted_variants(kernel, enum_paths)?
+    let accepted = space
+        .accepted_variants(enum_paths)?
         .into_iter()
         .flatten()
-        .map(|variant| static_mangle(kernel.name.as_ref(), variant.iter().map(|(_, value)| value.as_str())))
+        .map(|variant| static_mangle(space.name, variant.iter().map(|(_, value)| value.as_str())))
         .collect::<Vec<_>>();
 
-    let test_name = format_ident!("{}_key_validate_matches_build", snake_case(kernel.name.as_ref()));
-    let kernel_name = kernel.name.as_ref();
+    let test_name = format_ident!("{}_key_validate_matches_build", snake_case(space.name));
+    let kernel_name = space.name;
 
     Ok(quote! {
         #[cfg(test)]

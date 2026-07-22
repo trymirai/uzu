@@ -321,7 +321,7 @@ fn resolve(
                 BinOp::Le(_) => Op::Le,
                 BinOp::And(_) => Op::And,
                 BinOp::Or(_) => Op::Or,
-                _ => bail!("operator `{}` is not allowed in a constraint", quote::quote!(#binary.op)),
+                other => bail!("operator `{}` is not allowed in a constraint", quote::quote!(#other)),
             };
 
             let lhs = resolve(axes, helpers, &binary.left)?;

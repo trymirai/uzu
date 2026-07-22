@@ -1,12 +1,13 @@
 use std::collections::BTreeSet;
 
 use anyhow::{Context, Result};
+use igata::enum_paths::EnumPaths;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Expr;
 
 use crate::{
-    common::{enum_paths::EnumPaths, expr_rewrite::rewrite_paths_with},
+    common::expr_rewrite::rewrite_paths_with,
     metal::{bindgen::variants::VariantBind, enum_path_rewrite::qualify_enum_path},
 };
 

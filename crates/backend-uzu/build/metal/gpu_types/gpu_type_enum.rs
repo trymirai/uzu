@@ -1,11 +1,10 @@
 use std::iter::once;
 
-use itertools::Itertools;
-
-use crate::common::gpu_types::{
+use igata::gpu_types::{
     GpuTypeEnum,
     tile_geometry::{self, ACCESSORS},
 };
+use itertools::Itertools;
 
 pub fn gpu_type_gen_enum(gpu_type_enum: &GpuTypeEnum) -> anyhow::Result<String> {
     let declaration = once(format!("enum class {} : uint32_t {{", gpu_type_enum.name.as_ref()))

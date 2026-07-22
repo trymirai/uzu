@@ -1,9 +1,8 @@
 use std::path::Path;
 
 use anyhow::Context;
+use igata::gpu_types::{GpuType, GpuTypeFile, GpuTypes};
 use itertools::Itertools;
-
-use crate::common::gpu_types::{GpuType, GpuTypeFile, GpuTypes};
 
 mod gpu_type_enum;
 mod gpu_type_option_set;

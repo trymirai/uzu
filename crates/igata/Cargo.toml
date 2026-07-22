@@ -1,0 +1,19 @@
+[package]
+name = "igata"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Kernel variant-space logic shared by the uzu build scripts"
+
+[dependencies]
+anyhow.workspace = true
+blake3.workspace = true
+derive_more.workspace = true
+itertools.workspace = true
+proc-macro2.workspace = true
+quote.workspace = true
+syn = { workspace = true, features = ["visit-mut", "extra-traits"] }

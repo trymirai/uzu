@@ -1,9 +1,6 @@
 //! Rust half of the tile geometry emission — see [`super::tile_geometry`] for the Metal
 //! half. Both read the same parsed variant names, so they cannot disagree.
 
-use std::{env, path::PathBuf};
-
-use anyhow::Context;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -11,11 +8,9 @@ use super::{
     GpuType, GpuTypes,
     tile_geometry::{ACCESSORS, geometries},
 };
-use crate::common::codegen::write_tokens;
 
-/// Writes inherent accessors for every tile enum into `$OUT_DIR/tile_geometry.rs`, which
-/// the gpu_types module includes.
-pub fn tile_geometry_gen(gpu_types: &GpuTypes) -> anyhow::Result<()> {
+/// Inherent accessors for every tile enum, for the include the gpu_types module pulls in.
+pub fn tile_geometry_tokens(gpu_types: &GpuTypes) -> TokenStream {
     let impls = gpu_types
         .files
         .iter()
@@ -28,15 +23,9 @@ pub fn tile_geometry_gen(gpu_types: &GpuTypes) -> anyhow::Result<()> {
         })
         .collect::<Vec<TokenStream>>();
 
-    let out_path = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?).join("tile_geometry.rs");
-
-    write_tokens(
-        quote! {
-            #(#impls)*
-        },
-        &out_path,
-    )
-    .context("cannot write tile geometry")
+    quote! {
+        #(#impls)*
+    }
 }
 
 fn tile_impl(

@@ -1,9 +1,8 @@
 use std::iter::once;
 
 use anyhow::anyhow;
+use igata::gpu_types::{GpuTypeStruct, GpuTypeStructFieldType};
 use itertools::Itertools;
-
-use crate::common::gpu_types::{GpuTypeStruct, GpuTypeStructFieldType};
 
 fn r2c(ty: &str) -> anyhow::Result<&'static str> {
     match ty {

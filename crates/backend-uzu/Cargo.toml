@@ -69,6 +69,7 @@ criterion = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }
 
 [build-dependencies]
+igata.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 bindgen.workspace = true

@@ -2,6 +2,7 @@ use std::{collections::HashMap, env, fs, path::PathBuf};
 
 use anyhow::{Context, bail};
 use async_trait::async_trait;
+use igata::{enum_paths::EnumPaths, gpu_types::GpuTypes};
 use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, format_ident, quote};
@@ -14,8 +15,6 @@ use walkdir::WalkDir;
 use crate::common::{
     codegen::write_tokens,
     compiler::Compiler,
-    enum_paths::EnumPaths,
-    gpu_types::GpuTypes,
     identifiers::{ArgumentName, KernelName, KernelPath},
     kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
 };

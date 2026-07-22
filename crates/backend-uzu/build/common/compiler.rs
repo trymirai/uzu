@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use igata::{enum_paths::EnumPaths, gpu_types::GpuTypes};
 
-use super::{enum_paths::EnumPaths, gpu_types::GpuTypes, identifiers::KernelPath, kernel::Kernel};
+use super::{identifiers::KernelPath, kernel::Kernel};
 
 #[async_trait]
 pub trait Compiler {

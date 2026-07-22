@@ -20,6 +20,7 @@ members = [
     "crates/keisoku",
     "crates/kanka",
     "crates/kiban",
+    "crates/igata",
 ]
 resolver = "3"
 
@@ -46,6 +47,7 @@ keywords = [
 
 [workspace.dependencies]
 proc-macros = { path = "crates/proc-macros" }
+igata = { path = "crates/igata" }
 test-runner = { path = "crates/test-runner" }
 bindings-types = { path = "crates/bindings-types", default-features = false }
 bindings = { path = "crates/bindings", default-features = false }

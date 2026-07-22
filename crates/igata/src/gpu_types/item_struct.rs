@@ -2,7 +2,7 @@ use anyhow::{Context, anyhow, bail};
 use quote::ToTokens;
 use syn::{Expr, ExprLit, Fields, ItemStruct, Lit, Type, TypeArray, TypePath};
 
-use crate::common::gpu_types::ensure_repr_c;
+use super::ensure_repr_c;
 
 #[derive(Debug)]
 pub enum GpuTypeStructFieldType {

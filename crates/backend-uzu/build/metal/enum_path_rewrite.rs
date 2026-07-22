@@ -1,12 +1,10 @@
 use anyhow::Context;
+use igata::enum_paths::{EnumPaths, GpuTypeKind};
 use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::{Expr, Path, parse_quote};
 
-use crate::common::{
-    enum_paths::{EnumPaths, GpuTypeKind},
-    expr_rewrite::rewrite_paths_with,
-};
+use crate::common::expr_rewrite::rewrite_paths_with;
 
 pub fn gpu_type_kind_for_c_type(
     enum_paths: &EnumPaths,

@@ -3,6 +3,7 @@ use std::{collections::HashMap, env, fs, path::PathBuf};
 use anyhow::Context;
 use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt, future::try_join_all, stream};
+use igata::{enum_paths::EnumPaths, gpu_types::GpuTypes};
 use proc_macro2::TokenStream;
 use quote::quote;
 use serde::{Deserialize, Serialize};
@@ -15,10 +16,7 @@ use super::{
     wrapper::{SpecializeBaseIndices, wrappers},
 };
 use crate::{
-    common::{
-        caching, codegen::write_tokens, compiler::Compiler, enum_paths::EnumPaths, envs, gpu_types::GpuTypes,
-        identifiers::KernelPath, kernel::Kernel,
-    },
+    common::{caching, codegen::write_tokens, compiler::Compiler, envs, identifiers::KernelPath, kernel::Kernel},
     debug_log,
     metal::gpu_types::gpu_type_gen,
 };

@@ -1,14 +1,8 @@
-#![allow(unused)]
-use std::{
-    borrow::Borrow,
-    env, fs,
-    path::{Path, PathBuf},
-};
+use std::borrow::Borrow;
 
 use anyhow::Context;
 use derive_more::{AsRef, Deref, Display, From};
 use syn::{Attribute, Ident, Item};
-use walkdir::WalkDir;
 
 mod item_enum;
 mod item_option_set;
@@ -21,7 +15,7 @@ pub use item_enum::GpuTypeEnum;
 pub use item_option_set::{GpuTypeOptionSet, GpuTypeOptionSetVariant};
 pub use item_struct::{GpuTypeStruct, GpuTypeStructFieldType};
 pub use item_variant_group::{GpuTypeVariantGroup, VariantGroupArm};
-pub use tile_geometry_gen::tile_geometry_gen;
+pub use tile_geometry_gen::tile_geometry_tokens;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, AsRef, Deref, Display)]
 #[as_ref(str)]
@@ -66,11 +60,13 @@ pub struct GpuTypeFile {
 }
 
 impl GpuTypeFile {
-    fn scan(path: &Path) -> anyhow::Result<Self> {
-        let name = path.file_stem().context("No file stem")?.to_string_lossy().into();
-
-        let source = fs::read_to_string(path).context("Cannot read source")?;
-        let ast = syn::parse_file(&source).context("Cannot parse ast")?;
+    /// Parses one `gpu_types` module: `name` is its file stem, which the generated Rust
+    /// and Metal paths are built from.
+    pub fn parse(
+        name: &str,
+        source: &str,
+    ) -> anyhow::Result<Self> {
+        let ast = syn::parse_file(source).context("Cannot parse ast")?;
 
         let tys = ast
             .items
@@ -90,7 +86,7 @@ impl GpuTypeFile {
             .collect::<anyhow::Result<Box<[GpuType]>>>()?;
 
         Ok(Self {
-            name,
+            name: name.into(),
             types: tys,
         })
     }
@@ -102,27 +98,9 @@ pub struct GpuTypes {
 }
 
 impl GpuTypes {
-    pub fn scan() -> anyhow::Result<Self> {
-        let src_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("Missing CARGO_MANIFEST_DIR")?)
-            .join("src/backends/common/gpu_types");
-
-        let mut sources: Vec<PathBuf> = WalkDir::new(&src_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter_map(|e| e.file_type().is_file().then(|| e.into_path()))
-            .filter(|e| e.extension().and_then(|s| s.to_str()) == Some("rs") && e.file_stem() != Some("mod".as_ref()))
-            .collect();
-
-        sources.sort();
-
-        Ok(Self {
-            files: sources
-                .into_iter()
-                .map(|source| {
-                    GpuTypeFile::scan(&source)
-                        .with_context(|| format!("Failed to scan {}", source.as_os_str().to_str().unwrap()))
-                })
-                .collect::<anyhow::Result<Box<[GpuTypeFile]>>>()?,
-        })
+    pub fn new(files: impl IntoIterator<Item = GpuTypeFile>) -> Self {
+        Self {
+            files: files.into_iter().collect(),
+        }
     }
 }

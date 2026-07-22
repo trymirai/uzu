@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, bail};
+use igata::enum_paths::EnumPaths;
 use quote::quote;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
-    enum_paths::EnumPaths,
     expr_rewrite::rewrite_paths_with,
     identifiers::{ArgumentName, KernelName},
     kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},

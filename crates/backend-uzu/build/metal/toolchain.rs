@@ -7,12 +7,12 @@ use std::{
 };
 
 use anyhow::{Context, bail};
+use igata::enum_paths::EnumPaths;
 use serde::Deserialize;
 use tempfile::NamedTempFile;
 use tokio::{io::AsyncWriteExt, process::Command};
 
 use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo};
-use crate::common::enum_paths::EnumPaths;
 
 #[derive(Debug)]
 pub enum MetalSdk {

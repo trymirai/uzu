@@ -1,7 +1,7 @@
 use anyhow::{Context, bail, ensure};
 use syn::{Expr, ExprLit, ItemEnum, Lit, Variant};
 
-use crate::common::gpu_types::ensure_repr_c;
+use super::ensure_repr_c;
 
 #[derive(Debug)]
 pub struct GpuTypeEnumVariant {

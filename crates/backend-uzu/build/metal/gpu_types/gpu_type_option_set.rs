@@ -1,4 +1,4 @@
-use crate::common::gpu_types::GpuTypeOptionSet;
+use igata::gpu_types::GpuTypeOptionSet;
 
 fn r2c(ty: &str) -> anyhow::Result<&'static str> {
     Ok(match ty {

@@ -482,6 +482,7 @@ dependencies = [
  "derive_more",
  "futures",
  "half",
+ "igata",
  "indicatif",
  "is_close",
  "itertools 0.14.0",
@@ -2830,6 +2831,19 @@ checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
+]
+
+[[package]]
+name = "igata"
+version = "0.5.12"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "derive_more",
+ "itertools 0.14.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]

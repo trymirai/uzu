@@ -4,13 +4,8 @@ use anyhow::Context;
 use futures::future::try_join_all;
 
 mod common;
-use common::{
-    compiler::Compiler,
-    enum_paths::EnumPaths,
-    envs,
-    gpu_types::{GpuTypes, tile_geometry_gen},
-    traitgen::traitgen_all,
-};
+use common::{codegen::write_tokens, compiler::Compiler, envs, gpu_types, traitgen::traitgen_all};
+use igata::{enum_paths::EnumPaths, gpu_types::tile_geometry_tokens};
 
 mod cpu;
 
@@ -54,12 +49,13 @@ async fn main() -> anyhow::Result<()> {
         debug_log!("cleaned caches");
     }
 
-    let gpu_types = GpuTypes::scan().context("Failed to scan gpu types")?;
+    let gpu_types = gpu_types::scan().context("Failed to scan gpu types")?;
     debug_log!("gpu_types scan done");
 
     let enum_paths = EnumPaths::from_gpu_types(&gpu_types).context("Failed to build enum path map")?;
 
-    tile_geometry_gen(&gpu_types).context("Failed to generate tile geometry")?;
+    let tile_geometry_path = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?).join("tile_geometry.rs");
+    write_tokens(tile_geometry_tokens(&gpu_types), &tile_geometry_path).context("cannot write tile geometry")?;
 
     let compilers: Vec<Box<dyn Compiler>> = vec![
         Box::new(cpu::CpuCompiler::new()?),

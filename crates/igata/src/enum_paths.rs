@@ -3,9 +3,12 @@ use std::collections::{BTreeMap, HashMap, hash_map::Entry};
 use anyhow::bail;
 use syn::{Type, TypePath, visit_mut::VisitMut};
 
-use super::gpu_types::{
-    GpuType, GpuTypeName, GpuTypePath, GpuTypeVariantGroup, GpuTypes, VariantGroupArm,
-    tile_geometry::{ACCESSORS, geometries, metal_prefix},
+use crate::{
+    constraint_expr,
+    gpu_types::{
+        GpuType, GpuTypeName, GpuTypePath, GpuTypeVariantGroup, GpuTypes, VariantGroupArm,
+        tile_geometry::{ACCESSORS, geometries, metal_prefix},
+    },
 };
 
 /// A generated accessor a CONSTRAINT may call: which enum it takes, and its value for
@@ -221,6 +224,26 @@ impl EnumPaths {
     /// Generated accessors that shader CONSTRAINTs may call.
     pub fn helpers(&self) -> &BTreeMap<Box<str>, Helper> {
         &self.helpers
+    }
+
+    /// The same accessors, as the constraint checker declares them.
+    pub fn constraint_helpers(&self) -> constraint_expr::Helpers {
+        self.helpers
+            .iter()
+            .map(|(name, helper)| {
+                (
+                    name.clone(),
+                    constraint_expr::Helper {
+                        parameter: constraint_expr::Type::Enum(helper.parameter.clone()),
+                        values: helper
+                            .values
+                            .iter()
+                            .map(|(variant, value)| (variant.clone(), i64::from(*value)))
+                            .collect(),
+                    },
+                )
+            })
+            .collect()
     }
 
     /// Short name -> full Rust path, for every enum gpu type.

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use igata::enum_paths::EnumPaths;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Expr, Ident, Lifetime, Type};
@@ -13,7 +14,6 @@ use super::{
     },
     host_expression_rewriter::HostExpressionRewriter,
 };
-use crate::common::enum_paths::EnumPaths;
 
 pub enum ArgumentEmission {
     Buffer(BufferArgument),
