@@ -8,7 +8,11 @@ pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE},
+    backends::common::{
+        Allocation, Backend, Context, Encoder,
+        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        kernel::matmul::symmetric_int8_activations::activation_quantization_group_size_for_rht_linear,
+    },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
         full_precision_spec::FullPrecisionSpec,
@@ -219,10 +223,9 @@ impl<B: Backend> dyn Linear<B> {
             ..
         }) = &spec
         {
-            if rht_wrapper::a8w8_rht_group_size(
-                context,
+            if activation_quantization_group_size_for_rht_linear(
+                context.supports_symmetric_int8_activations(),
                 input_dimension,
-                has_biases,
                 weights_data_type,
                 input_data_type,
                 output_data_type,

@@ -4,8 +4,8 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Context, Encoder,
-        gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, QuantizationMethod, QuantizationMode},
+        Allocation, Backend, Encoder,
+        gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             Kernels,
             matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -47,8 +47,6 @@ pub struct LinearMatmul<B: Backend> {
     biases: Option<Allocation<B>>,
     input_dim: usize,
     output_dim: usize,
-    weights_data_type: DataType,
-    input_data_type: DataType,
     output_data_type: DataType,
     mode: Mode<B>,
 }
@@ -87,8 +85,6 @@ impl<B: Backend> LinearMatmul<B> {
             biases,
             input_dim,
             output_dim,
-            weights_data_type,
-            input_data_type,
             output_data_type,
             mode: Mode::FullPrecision,
         })
@@ -183,8 +179,6 @@ impl<B: Backend> LinearMatmul<B> {
             biases,
             input_dim,
             output_dim,
-            weights_data_type,
-            input_data_type,
             output_data_type,
             mode: Mode::Quantized {
                 method: quantization_method,
@@ -215,28 +209,28 @@ fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
-    pub(super) fn supports_int8_a(
-        &self,
-        context: &B::Context,
-        group_size: u32,
-    ) -> bool {
-        let compatible_weights = matches!(
-            &self.mode,
-            Mode::Quantized {
-                method: QuantizationMethod::ScaleSymmetric,
-                mode: QuantizationMode::U8,
-                group_size: weight_group_size,
-                ..
-            } if *weight_group_size == group_size
-        );
-
-        compatible_weights
-            && context.supports_mxu()
-            && self.weights_data_type == DataType::BF16
-            && self.input_data_type == DataType::BF16
-            && self.output_data_type == DataType::BF16
-            && group_size == ACTIVATION_QUANTIZATION_GROUP_SIZE
-            && (self.input_dim as u32).is_multiple_of(group_size)
+    /// Rewrites the packed weight codes as signed values (XOR of the unsigned
+    /// midpoint) so the symmetric int8 activation GEMM can feed them to the
+    /// MXU without any per-dispatch conversion. Only valid when every matmul
+    /// of this layer runs with `MatmulA::Int8Symmetric`.
+    pub(super) fn sign_convert_quantized_weights_for_int8_activations(&mut self) {
+        let Mode::Quantized {
+            mode,
+            ..
+        } = &self.mode
+        else {
+            return;
+        };
+        let midpoint_mask: u8 = match mode {
+            QuantizationMode::U4 => 0x88,
+            QuantizationMode::U8 => 0x80,
+            QuantizationMode::I8 => return,
+        };
+        let mut codes: Vec<u8> = self.weights.copyout();
+        for code in &mut codes {
+            *code ^= midpoint_mask;
+        }
+        self.weights.copyin(&codes);
     }
 
     pub(super) fn encode_with_a(
