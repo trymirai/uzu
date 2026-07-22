@@ -20,6 +20,12 @@ use super::super::{ast::MetalKernelInfo, wrapper::KernelAxes};
 
 pub struct KeyEmission {
     pub tokens: TokenStream,
+    pub name: proc_macro2::Ident,
+    /// Flattens any grouped axes of `key` into locals, for a body that then reads every
+    /// axis by name.
+    pub prelude: Vec<TokenStream>,
+    /// Every axis's value, in template parameter order, as `new()` takes them.
+    pub arguments: Vec<TokenStream>,
 }
 
 pub fn build(
@@ -76,6 +82,7 @@ pub fn build(
         })
         .collect::<Vec<_>>();
 
+    let axes = space.axes.unwrap_or_default();
     let entry_name = entry_name(kernel_name, &space, &fields);
     let built_name = format_ident!("{}_BUILT", snake_case(kernel_name).to_uppercase());
 
@@ -90,6 +97,32 @@ pub fn build(
     built.sort();
 
     Ok(Some(KeyEmission {
+        name: key_name.clone(),
+        prelude: fields
+            .iter()
+            .filter_map(|field| match field {
+                KeyField::Group {
+                    type_name,
+                    axes,
+                } => {
+                    let field = format_ident!("{}", snake_case(type_name));
+                    let names = axes.iter().map(|axis| format_ident!("{}", field_name(axis)));
+                    Some(quote! { let (#(#names),*) = key.#field.to_template_args(); })
+                },
+                _ => None,
+            })
+            .collect(),
+        arguments: axes
+            .iter()
+            .map(|axis| {
+                let name = format_ident!("{}", field_name(&axis.name));
+                if is_grouped(&fields, &axis.name) {
+                    quote! { #name }
+                } else {
+                    quote! { key.#name }
+                }
+            })
+            .collect(),
         tokens: quote! {
             /// Every variant of this kernel the build compiled, sorted.
             static #built_name: &[&str] = &[#(#built),*];

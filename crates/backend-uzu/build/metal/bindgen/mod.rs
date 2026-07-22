@@ -80,6 +80,29 @@ pub fn bindgen(
     let key_emission = key::build(kernel, enum_paths)?;
     let key_tokens = key_emission.as_ref().map(|emission| &emission.tokens);
 
+    // Constructing a kernel from its key is the only way the flattened axes are ever
+    // spelled out, so no call site has to know which of them a variant group holds.
+    let specialize_names = specialize_emission.argument_names().into_iter().map(|name| format_ident!("{name}"));
+    let new_path = &trait_wiring.new_path;
+    let from_key = key_emission.as_ref().map(|emission| {
+        let key_name = &emission.name;
+        let prelude = &emission.prelude;
+        let arguments = &emission.arguments;
+        quote! {
+            #[allow(clippy::style, clippy::complexity, clippy::perf, dead_code)]
+            impl #struct_name {
+                pub(crate) fn from_key(
+                    context: &MetalContext,
+                    key: #key_name
+                    #(, #specialize_arguments)*
+                ) -> Result<Self, MetalError> {
+                    #(#prelude)*
+                    #new_path(context #(, #arguments)* #(, #specialize_names)*)
+                }
+            }
+        }
+    });
+
     let kernel_tokens = quote! {
         #key_tokens
 
@@ -123,6 +146,8 @@ pub fn bindgen(
                 #dispatch_code
             }
         }
+
+        #from_key
     };
 
     Ok((kernel_tokens, trait_wiring.associated_type))

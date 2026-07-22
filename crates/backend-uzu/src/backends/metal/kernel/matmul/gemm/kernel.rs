@@ -75,19 +75,10 @@ impl GemmKernel {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
                 // A hit is proof the variant exists; only a miss has to ask.
-                let key = specialization.key;
-                key.validate()?;
-                let (b_prologue, bits_per_b, group_size) = key.weights_key.to_template_args();
-                let kernel = GemmMetalKernel::new(
+                specialization.key.validate()?;
+                let kernel = GemmMetalKernel::from_key(
                     context,
-                    key.at,
-                    key.bt,
-                    key.dt,
-                    key.gemm_tiling,
-                    key.transpose_b,
-                    b_prologue,
-                    bits_per_b,
-                    group_size,
+                    specialization.key,
                     specialization.output_transform,
                     specialization.alignment,
                 )?;

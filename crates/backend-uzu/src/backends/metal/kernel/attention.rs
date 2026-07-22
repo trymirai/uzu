@@ -63,14 +63,10 @@ impl AttentionGemmMetalCore {
         let mut kernels = self.kernels.lock();
         if let Entry::Vacant(entry) = kernels.entry(specialization) {
             // A hit is proof the variant exists; only a miss has to ask.
-            let key = specialization.key;
-            key.validate()?;
-            let kernel = AttentionGemmMetalKernel::new(
+            specialization.key.validate()?;
+            let kernel = AttentionGemmMetalKernel::from_key(
                 context,
-                key.t,
-                key.bk,
-                key.bd,
-                key.use_mxu,
+                specialization.key,
                 specialization.align_q,
                 specialization.align_k,
                 self.is_kv_cache_ring,

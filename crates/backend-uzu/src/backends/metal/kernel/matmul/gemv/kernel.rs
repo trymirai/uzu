@@ -152,20 +152,9 @@ impl GemvDispatch {
         match self.pipelines.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let key = specialization.key;
-                let (b_prologue, bits, group_size) = key.weights_key.to_template_args();
-                let kernel = GemvMetalKernel::new(
+                let kernel = GemvMetalKernel::from_key(
                     context,
-                    key.at,
-                    key.bt,
-                    key.dt,
-                    b_prologue,
-                    group_size,
-                    bits,
-                    key.k_split,
-                    key.input_aligned,
-                    key.results_per_simdgroup,
-                    key.num_simdgroups,
+                    specialization.key,
                     specialization.output_transform,
                     specialization.gathered,
                 )
