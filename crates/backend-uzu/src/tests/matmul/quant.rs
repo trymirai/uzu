@@ -10,10 +10,13 @@ use crate::{
     backends::{
         common::{
             Allocation, Backend, Context, Encoder,
-            gpu_types::{ACTIVATION_QUANTIZATION_GROUP_SIZE, QuantizationMethod, QuantizationMode},
+            gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{
+                    MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel,
+                    symmetric_int8_activations::ACTIVATION_QUANTIZATION_GROUP_SIZE,
+                },
             },
         },
         cpu::{
@@ -104,8 +107,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
     }
 
     pub fn with_prepared_a(mut self) -> Self {
-        let group_size = self.group_size as usize;
-        assert_eq!(group_size, ACTIVATION_QUANTIZATION_GROUP_SIZE as usize);
+        let group_size = ACTIVATION_QUANTIZATION_GROUP_SIZE as usize;
         let rows = self.m as usize;
         let columns = self.k as usize;
         let groups = columns.div_ceil(group_size);
@@ -129,9 +131,22 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         self.prepared_a = Some(PreparedInt8A {
             values,
             scales,
-            group_size: self.group_size,
+            group_size: ACTIVATION_QUANTIZATION_GROUP_SIZE,
         });
         self
+    }
+
+    /// Weight codes as uploaded to the backend: sign-converted (XOR midpoint)
+    /// when the int8 activation path is exercised, raw unsigned otherwise.
+    fn weights_for_upload(&self) -> Vec<u32> {
+        if self.prepared_a.is_none() {
+            return self.w_packed.clone();
+        }
+        let midpoint_mask: u32 = match self.mode {
+            QuantizationMode::U4 => 0x8888_8888,
+            _ => 0x8080_8080,
+        };
+        self.w_packed.iter().map(|word| word ^ midpoint_mask).collect()
     }
 
     pub(crate) fn weight_buffer_bytes(&self) -> usize {
@@ -160,7 +175,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         input: &QuantInput<T>,
     ) -> Self {
         Self {
-            w: alloc_allocation_with_data::<B, u32>(context, &input.w_packed),
+            w: alloc_allocation_with_data::<B, u32>(context, &input.weights_for_upload()),
             scales: alloc_allocation_with_data::<B, T>(context, &input.scales),
             zp: input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(context, zp)),
             bias: input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(context, b)),
