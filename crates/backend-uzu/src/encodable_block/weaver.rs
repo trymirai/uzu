@@ -6,7 +6,8 @@ use crate::{
         Allocation, AllocationType, Backend, Context, Encoder, Kernels,
         kernel::{
             ActivationKernel, AttentionLastQueryKernel, AttentionPrepareKernel, TensorAddBiasKernel,
-            TensorAddSwapKernel, WeaverNodeCacheWriteKernel, WeaverTopChildrenKernel, weaver::MAX_CANDIDATES,
+            TensorAddSwapKernel, WeaverNodeCacheWriteKernel, WeaverTopChildrenKernel,
+            weaver::{MAX_CANDIDATES, METADATA_LANE_COUNT},
         },
     },
     config::{normalization::NormalizationConfig, weaver::WeaverConfig},
@@ -28,38 +29,19 @@ pub(crate) struct WeaverPrefix<B: Backend> {
     pub(crate) length: usize,
 }
 
-pub(crate) struct WeaverBatchStepInput<'a> {
-    pub node_index: usize,
-    pub parent_token: u32,
-    pub candidates: &'a [u32],
-    pub candidate_scores: &'a [f32],
-    pub ancestors: &'a [usize],
-    pub depth: usize,
-}
-
-pub(crate) struct WeaverGpuStepInput<'a, B: Backend> {
-    pub rows: usize,
-    pub candidates: usize,
+pub(crate) struct WeaverStepBatch<'a, B: Backend> {
+    pub row_count: usize,
+    pub candidate_count: usize,
     pub ancestor_stride: usize,
-    pub token_ids: &'a Allocation<B>,
+    pub parent_token_ids: &'a Allocation<B>,
     pub candidate_ids: &'a Allocation<B>,
     pub candidate_scores: &'a Allocation<B>,
     pub ancestor_indices: &'a Allocation<B>,
-    pub metadata: &'a Allocation<B>,
+    pub node_metadata: &'a Allocation<B>,
 }
 
 pub(crate) struct WeaverNodeState<B: Backend> {
     layer_qkv: Box<[Allocation<B>]>,
-    capacity: usize,
-}
-
-struct WeaverStepInputs<B: Backend> {
-    token_ids: Allocation<B>,
-    candidate_ids: Allocation<B>,
-    candidate_scores: Allocation<B>,
-    ancestor_indices: Allocation<B>,
-    metadata: Allocation<B>,
-    ancestor_stride: usize,
 }
 
 pub(crate) struct Weaver<B: Backend> {
@@ -217,7 +199,6 @@ impl<B: Backend> Weaver<B> {
             .collect::<Result<Box<[_]>, _>>()?;
         Ok(WeaverNodeState {
             layer_qkv,
-            capacity,
         })
     }
 
@@ -371,102 +352,27 @@ impl<B: Backend> Weaver<B> {
         })
     }
 
-    pub(crate) fn step_batch(
+    pub(crate) fn encode_step_batch(
         &self,
         prefix: &WeaverPrefix<B>,
-        inputs: &[WeaverBatchStepInput<'_>],
-        state: &mut WeaverNodeState<B>,
-        children: usize,
-        target_embedding: &Embedding<B>,
-        context: &B::Context,
-    ) -> Result<Vec<Vec<(u32, f32)>>, WeaverEncodeError<B>> {
-        assert!(!inputs.is_empty());
-        let mut encoder = Encoder::new(context).map_err(WeaverEncodeError::Backend)?;
-        let (child_ids, child_logprobs) =
-            self.encode_step_batch(prefix, inputs, state, children, target_embedding, &mut encoder)?;
-        let completed = encoder.end_encoding().submit().wait_until_completed().map_err(WeaverEncodeError::Backend)?;
-        let child_ids_output = child_ids.copyout::<u32>();
-        let child_logprobs_output = child_logprobs.copyout::<f32>();
-        let outputs = (0..inputs.len())
-            .map(|batch_index| {
-                (0..children)
-                    .map(|child| {
-                        let index = batch_index * children + child;
-                        (child_ids_output[index], child_logprobs_output[index])
-                    })
-                    .collect()
-            })
-            .collect();
-        drop(child_ids);
-        drop(child_logprobs);
-        drop(completed);
-        Ok(outputs)
-    }
-
-    fn encode_step_batch(
-        &self,
-        prefix: &WeaverPrefix<B>,
-        inputs: &[WeaverBatchStepInput<'_>],
+        input: &WeaverStepBatch<'_, B>,
         state: &mut WeaverNodeState<B>,
         children: usize,
         target_embedding: &Embedding<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), WeaverEncodeError<B>> {
-        let rows = inputs.len();
-        let candidates = inputs[0].candidates.len();
-        // Indices reach the GPU unchecked, so they must stay inside the arena.
-        assert!(
-            inputs.iter().all(|input| {
-                input.candidates.len() == candidates
-                    && input.candidate_scores.len() == candidates
-                    && input.depth < self.max_depth
-                    && input.node_index < state.capacity
-                    && input.ancestors.iter().all(|&ancestor| ancestor < state.capacity)
-            }),
-            "inputs must reference node indices within the node-state capacity"
-        );
-
-        let buffers = Self::encode_step_inputs(inputs, encoder)?;
-        self.encode_step_batch_gpu(
-            prefix,
-            &WeaverGpuStepInput {
-                rows,
-                candidates,
-                ancestor_stride: buffers.ancestor_stride,
-                token_ids: &buffers.token_ids,
-                candidate_ids: &buffers.candidate_ids,
-                candidate_scores: &buffers.candidate_scores,
-                ancestor_indices: &buffers.ancestor_indices,
-                metadata: &buffers.metadata,
-            },
-            state,
-            children,
-            target_embedding,
-            encoder,
-        )
-    }
-
-    pub(crate) fn encode_step_batch_gpu(
-        &self,
-        prefix: &WeaverPrefix<B>,
-        input: &WeaverGpuStepInput<'_, B>,
-        state: &mut WeaverNodeState<B>,
-        children: usize,
-        target_embedding: &Embedding<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<(Allocation<B>, Allocation<B>), WeaverEncodeError<B>> {
-        let rows = input.rows;
-        let candidates = input.candidates;
+        let rows = input.row_count;
+        let candidates = input.candidate_count;
         assert!(rows > 0);
         assert!(candidates > 0 && candidates <= MAX_CANDIDATES);
         assert!(children > 0 && children <= candidates);
         assert!(input.ancestor_stride > 0);
         let word = DataType::U32.size_in_bytes();
-        debug_assert!(input.metadata.size() >= 3 * rows * word);
-        debug_assert!(input.token_ids.size() >= rows * word);
+        debug_assert!(input.node_metadata.size() >= METADATA_LANE_COUNT * rows * word);
+        debug_assert!(input.parent_token_ids.size() >= rows * word);
         debug_assert!(input.ancestor_indices.size() >= rows * input.ancestor_stride * word);
 
-        let token_embedding = target_embedding.encode_lookup(input.token_ids, rows, encoder)?;
+        let token_embedding = target_embedding.encode_lookup(input.parent_token_ids, rows, encoder)?;
         let embedding_normalized =
             self.embedding_norm.encode(&token_embedding, rows, encoder).map_err(WeaverEncodeError::Backend)?;
         let mut current = self
@@ -476,7 +382,7 @@ impl<B: Backend> Weaver<B> {
         self.indexed_position_add.encode(
             None::<&Allocation<B>>,
             &self.position_embeddings,
-            Some(input.metadata),
+            Some(input.node_metadata),
             &mut current,
             self.model_dim as u32,
             (rows * self.model_dim) as u32,
@@ -499,59 +405,16 @@ impl<B: Backend> Weaver<B> {
         self.encode_step_output(&current, input, children, target_embedding, encoder)
     }
 
-    fn encode_step_inputs(
-        inputs: &[WeaverBatchStepInput<'_>],
-        encoder: &mut Encoder<B>,
-    ) -> Result<WeaverStepInputs<B>, WeaverEncodeError<B>> {
-        let rows = inputs.len();
-        let token_ids = encoder
-            .allocate_constant_from_slice(&inputs.iter().map(|input| input.parent_token).collect::<Vec<_>>())
-            .map_err(WeaverEncodeError::Backend)?;
-        let candidate_ids = encoder
-            .allocate_constant_from_slice(
-                &inputs.iter().flat_map(|input| input.candidates.iter().copied()).collect::<Vec<_>>(),
-            )
-            .map_err(WeaverEncodeError::Backend)?;
-        let candidate_scores = encoder
-            .allocate_constant_from_slice(
-                &inputs.iter().flat_map(|input| input.candidate_scores.iter().copied()).collect::<Vec<_>>(),
-            )
-            .map_err(WeaverEncodeError::Backend)?;
-        // [depths, ancestor counts, node indices]
-        let mut metadata_values = Vec::with_capacity(3 * rows);
-        metadata_values.extend(inputs.iter().map(|input| input.depth as u32));
-        metadata_values.extend(inputs.iter().map(|input| input.ancestors.len() as u32));
-        metadata_values.extend(inputs.iter().map(|input| input.node_index as u32));
-        let metadata = encoder.allocate_constant_from_slice(&metadata_values).map_err(WeaverEncodeError::Backend)?;
-
-        let ancestor_stride = inputs.iter().map(|input| input.ancestors.len()).max().unwrap().max(1);
-        let mut ancestors = vec![0u32; rows * ancestor_stride];
-        for (row, input) in inputs.iter().enumerate() {
-            for (offset, &ancestor) in input.ancestors.iter().enumerate() {
-                ancestors[row * ancestor_stride + offset] = ancestor as u32;
-            }
-        }
-        let ancestor_indices = encoder.allocate_constant_from_slice(&ancestors).map_err(WeaverEncodeError::Backend)?;
-        Ok(WeaverStepInputs {
-            token_ids,
-            candidate_ids,
-            candidate_scores,
-            ancestor_indices,
-            metadata,
-            ancestor_stride,
-        })
-    }
-
     /// Outputs must outlive the batch.
     fn encode_step_output(
         &self,
         current: &Allocation<B>,
-        step: &WeaverGpuStepInput<'_, B>,
+        step: &WeaverStepBatch<'_, B>,
         children: usize,
         target_embedding: &Embedding<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), WeaverEncodeError<B>> {
-        let (rows, candidates) = (step.rows, step.candidates);
+        let (rows, candidates) = (step.row_count, step.candidate_count);
         let output_normalized = self.output_norm.encode(current, rows, encoder).map_err(WeaverEncodeError::Backend)?;
         let query =
             self.query_projection.encode(output_normalized, rows, encoder).map_err(WeaverEncodeError::Backend)?;
@@ -656,16 +519,16 @@ impl<B: Backend> WeaverBlock<B> {
         current: Allocation<B>,
         prefix_qkv: &Allocation<B>,
         state_qkv: &mut Allocation<B>,
-        step: &WeaverGpuStepInput<'_, B>,
+        step: &WeaverStepBatch<'_, B>,
         prefix_length: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let rows = step.rows;
+        let rows = step.row_count;
         let normalized = self.pre_attention_norm.encode(&current, rows, encoder)?;
         let current_qkv = self.qkv_projection.encode(normalized, rows, encoder)?;
         let metadata_row_bytes = rows * DataType::U32.size_in_bytes();
-        let ancestor_counts = (step.metadata, metadata_row_bytes);
-        let node_indices = (step.metadata, 2 * metadata_row_bytes);
+        let ancestor_counts = (step.node_metadata, metadata_row_bytes);
+        let node_indices = (step.node_metadata, 2 * metadata_row_bytes);
         let mut attention = encoder.allocate_scratch(size_for_shape(&[rows, self.model_dim], self.data_type))?;
         let node_capacity = (state_qkv.size() / size_for_shape(&[3, self.model_dim], self.data_type)) as u32;
         self.last_query_attention.encode(

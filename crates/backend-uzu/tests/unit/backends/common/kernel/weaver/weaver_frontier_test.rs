@@ -6,8 +6,11 @@ use crate::{
         common::{
             Backend, Encoder, Kernels,
             kernel::{
-                WeaverCandidateGatherKernel, WeaverFrontierScatterKernel, WeaverFrontierSelectKernel,
-                weaver::{METADATA_LANE_DEPTH, METADATA_LANE_NODE_INDEX, TREE_LANE_CUM, TREE_LANE_DEPTH},
+                WeaverFrontierScatterKernel, WeaverFrontierSelectKernel,
+                weaver::{
+                    FRONTIER_LANE_COUNT, METADATA_LANE_COUNT, METADATA_LANE_NODE_INDEX, TREE_LANE_COUNT, TREE_LANE_CUM,
+                    TREE_LANE_DEPTH,
+                },
             },
         },
         cpu::Cpu,
@@ -17,7 +20,7 @@ use crate::{
 
 fn select<B: Backend>() -> Vec<u32> {
     let context = create_context::<B>();
-    let mut frontier = vec![0; 7 * 8];
+    let mut frontier = vec![0; FRONTIER_LANE_COUNT * 8];
     for (slot, (token, parent, depth, cum, key, active)) in [
         (9, 1, 1, 0x3f00_0000, 100, 1),
         (8, 0, 2, 0x3f00_0001, 100, 1),
@@ -36,12 +39,17 @@ fn select<B: Backend>() -> Vec<u32> {
         }
     }
     let mut frontier = alloc_allocation_with_data::<B, u32>(&context, &frontier);
-    let mut tree = alloc_allocation_with_data::<B, u32>(&context, &[55; 6 * 7]);
+    let mut tree = alloc_allocation_with_data::<B, u32>(&context, &[55; TREE_LANE_COUNT * 7]);
     let mut slot_ancestors = alloc_allocation_with_data::<B, u32>(&context, &(0u32..7 * 3).collect::<Vec<_>>());
     let mut token = alloc_allocation_with_data::<B, u32>(&context, &[66; 4]);
     let mut metadata = alloc_allocation_with_data::<B, u32>(&context, &[77; 3 * 4]);
     let mut ancestors = alloc_allocation_with_data::<B, u32>(&context, &[88; 4 * 3]);
     let mut valid = alloc_allocation_with_data::<B, u32>(&context, &[99; 4]);
+    let candidate_pool_ids = alloc_allocation_with_data::<B, u32>(&context, &(0..12).collect::<Vec<_>>());
+    let candidate_pool_scores =
+        alloc_allocation_with_data::<B, f32>(&context, &(0..12).map(|value| value as f32).collect::<Vec<_>>());
+    let mut candidate_ids = alloc_allocation_with_data::<B, u32>(&context, &[0; 4 * 3]);
+    let mut candidate_scores = alloc_allocation_with_data::<B, f32>(&context, &[0.0; 4 * 3]);
     let kernel = <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(&context).unwrap();
     let mut encoder = Encoder::new(context.as_ref()).unwrap();
     kernel.encode(
@@ -52,6 +60,10 @@ fn select<B: Backend>() -> Vec<u32> {
         &mut metadata,
         &mut ancestors,
         &mut valid,
+        &candidate_pool_ids,
+        &candidate_pool_scores,
+        &mut candidate_ids,
+        &mut candidate_scores,
         8,
         7,
         4,
@@ -59,25 +71,31 @@ fn select<B: Backend>() -> Vec<u32> {
         3,
         4,
         3,
+        4,
+        3,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-    [frontier, tree, slot_ancestors, token, metadata, ancestors, valid].iter().flat_map(allocation_to_vec).collect()
+    [frontier, tree, slot_ancestors, token, metadata, ancestors, valid, candidate_ids]
+        .iter()
+        .flat_map(allocation_to_vec)
+        .chain(allocation_to_vec::<B, f32>(&candidate_scores).into_iter().map(f32::to_bits))
+        .collect()
 }
 
 fn scatter<B: Backend>() -> Vec<u32> {
     let context = create_context::<B>();
-    let mut tree = vec![0; 6 * 4];
+    let mut tree = vec![0; TREE_LANE_COUNT * 4];
     tree[TREE_LANE_CUM * 4..(TREE_LANE_CUM + 1) * 4].copy_from_slice(&[0.5, -1.0, 2.0, 4.0].map(f32::to_bits));
     tree[TREE_LANE_DEPTH * 4..(TREE_LANE_DEPTH + 1) * 4].copy_from_slice(&[0, 2, 4, 6]);
     let tree = alloc_allocation_with_data::<B, u32>(&context, &tree);
-    let mut metadata = vec![0; 3 * 3];
+    let mut metadata = vec![0; METADATA_LANE_COUNT * 3];
     metadata[METADATA_LANE_NODE_INDEX * 3..(METADATA_LANE_NODE_INDEX + 1) * 3].copy_from_slice(&[1, 3, 0]);
     let metadata = alloc_allocation_with_data::<B, u32>(&context, &metadata);
     let valid = alloc_allocation_with_data::<B, u32>(&context, &[1, 0, 1]);
     let ids = alloc_allocation_with_data::<B, u32>(&context, &(10..19).collect::<Vec<_>>());
     let scores = alloc_allocation_with_data::<B, f32>(&context, &[-0.1, -0.2, -0.3, 8.0, 8.0, 8.0, 0.1, 0.2, 0.3]);
-    let mut frontier = alloc_allocation_with_data::<B, u32>(&context, &[42; 7 * 16]);
+    let mut frontier = alloc_allocation_with_data::<B, u32>(&context, &[42; FRONTIER_LANE_COUNT * 16]);
     let kernel = <B::Kernels as Kernels>::WeaverFrontierScatterKernel::new(&context).unwrap();
     let mut encoder = Encoder::new(context.as_ref()).unwrap();
     kernel.encode(&tree, &metadata, &valid, &ids, &scores, &mut frontier, 16, 4, 3, 3, &mut encoder);
@@ -85,32 +103,10 @@ fn scatter<B: Backend>() -> Vec<u32> {
     allocation_to_vec(&frontier)
 }
 
-fn gather<B: Backend>() -> Vec<u32> {
-    let context = create_context::<B>();
-    let ids = alloc_allocation_with_data::<B, u32>(&context, &(0u32..16 * 512).collect::<Vec<_>>());
-    let scores = alloc_allocation_with_data::<B, f32>(
-        &context,
-        &(0u16..16 * 512).map(|x| -f32::from(x) * 0.031_25).collect::<Vec<_>>(),
-    );
-    let mut metadata = vec![0; 3 * 8];
-    metadata[METADATA_LANE_DEPTH * 8..(METADATA_LANE_DEPTH + 1) * 8].copy_from_slice(&[0, 1, 15, 7, 0, 3, 16, 20]);
-    let metadata = alloc_allocation_with_data::<B, u32>(&context, &metadata);
-    let mut output_ids = alloc_allocation_with_data::<B, u32>(&context, &[0; 8 * 512]);
-    let mut output_scores = alloc_allocation_with_data::<B, f32>(&context, &[0.0; 8 * 512]);
-    let kernel = <B::Kernels as Kernels>::WeaverCandidateGatherKernel::new(&context).unwrap();
-    let mut encoder = Encoder::new(context.as_ref()).unwrap();
-    kernel.encode(&ids, &scores, &metadata, &mut output_ids, &mut output_scores, 8, 16, 512, &mut encoder);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    let mut output = allocation_to_vec(&output_ids);
-    output.extend(allocation_to_vec::<B, f32>(&output_scores).into_iter().map(f32::to_bits));
-    output
-}
-
 #[uzu_test]
 fn weaver_frontier_kernels_match_cpu() {
     for_each_non_cpu_backend!(|B| {
         assert_eq!(select::<B>(), select::<Cpu>());
         assert_eq!(scatter::<B>(), scatter::<Cpu>());
-        assert_eq!(gather::<B>(), gather::<Cpu>());
     });
 }
