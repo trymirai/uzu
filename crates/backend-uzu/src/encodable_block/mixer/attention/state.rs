@@ -2,7 +2,7 @@ use std::any::Any;
 
 use crate::{
     backends::common::{
-        Backend, Buffer, Context, Encoder, Kernels, SparseBuffer,
+        Backend, Buffer, Context, DeviceCapabilities, Encoder, Kernels, SparseBuffer,
         gpu_types::{Copy, ring::RingParams},
         kernel::KVCacheUpdateKernel,
     },
@@ -109,7 +109,8 @@ impl<B: Backend> AttentionState<B> {
         let kv_buffer_bytes = max_elements * element_size * data_type.size_in_bytes();
 
         let is_ring = matches!(state_type, AttentionStateType::Ring { .. });
-        let is_sparse = !is_ring && context.sparse_buffers_supported();
+        let is_sparse =
+            !is_ring && context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS);
 
         let (keys, values): (Box<dyn Buffer<Backend = B>>, Box<dyn Buffer<Backend = B>>) = if is_sparse {
             (

@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Context, Encoder,
+        Allocation, Backend, Context, DeviceCapabilities, Encoder,
         gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
         kernel::{
             ActivationsPrepareKernel, HadamardTransformKernel, Kernels,
@@ -84,7 +84,10 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )
         .map_err(RHTLinearWrapperError::BackendError)?;
 
-        let symmetric_int8_preparation = if context.supports_symmetric_int8_activations() {
+        let symmetric_int8_preparation = if context
+            .device_capabilities()
+            .contains(DeviceCapabilities::HARDWARE_INT8_MATMUL)
+        {
             Some(
                 <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type)
                     .map(|kernel| SymmetricInt8Preparation {

@@ -3,7 +3,7 @@ use std::{fs::File, io, io::BufReader, path::Path, sync::Arc};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, Context, Kernels, kernel::ContextRingUpdateKernel},
+    backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
     config::model::{generation::GenerationConfig, language_model::LanguageModelConfig},
     data_type::DataType,
     encodable_block::{
@@ -118,7 +118,7 @@ impl<B: Backend> LanguageModel<B> {
         let max_context_length = self.max_context_length();
 
         // TODO: This is not the correct way to do it, there should be a real memory model
-        if self.context.sparse_buffers_supported() {
+        if self.context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS) {
             // We just assume that all mixers use sparse if it's available to make max context free until it's actually used
             // Currenlty true for all mixers in uzu:
             // - full attention uses sparse if it's available to make max context free until it's actually used

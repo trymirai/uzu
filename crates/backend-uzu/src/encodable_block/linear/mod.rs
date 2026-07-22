@@ -9,7 +9,8 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Context, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        Allocation, Backend, Context, DeviceCapabilities, Encoder,
+        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
@@ -220,7 +221,10 @@ impl<B: Backend> dyn Linear<B> {
             ..
         }) = &spec
         {
-            if context.supports_symmetric_int8_activations() {
+            if context
+                .device_capabilities()
+                .contains(DeviceCapabilities::HARDWARE_INT8_MATMUL)
+            {
                 let linear = RHTLinearWrapper::new(
                     context,
                     input_dimension,
