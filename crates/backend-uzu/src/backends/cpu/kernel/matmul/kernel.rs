@@ -104,7 +104,6 @@ impl MatmulKernel for MatmulCpuKernel {
             MatmulA::Int8Symmetric {
                 values,
                 scales,
-                group_size,
             } => {
                 let weight_gs_ok = matches!(b.group_size(), Some(32 | 64 | 128));
                 let weights_ok = matches!(
@@ -120,7 +119,7 @@ impl MatmulKernel for MatmulCpuKernel {
                         ..
                     }
                 );
-                if group_size != ACTIVATION_QUANTIZATION_GROUP_SIZE || !weight_gs_ok || !weights_ok {
+                if !weight_gs_ok || !weights_ok {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
                         reason: "symmetric int8 activations require unsigned 4/8-bit quantized weights with group size 32/64/128",
@@ -136,7 +135,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     scales: SendPtr(
                         unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
                     ),
-                    group_size: group_size as usize,
+                    group_size: ACTIVATION_QUANTIZATION_GROUP_SIZE as usize,
                 }
             },
         };

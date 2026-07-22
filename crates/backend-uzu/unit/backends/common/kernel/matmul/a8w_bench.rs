@@ -188,7 +188,6 @@ fn encode_step(
                 a: MatmulA::Int8Symmetric {
                     values: &data.a_int8,
                     scales: &data.a_scales,
-                    group_size: ACTIVATION_GROUP_SIZE,
                 },
                 b: MatmulB::ScaleSymmetricDequant {
                     b: &data.weights_u8,

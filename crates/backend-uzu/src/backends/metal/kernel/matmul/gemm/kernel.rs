@@ -11,7 +11,10 @@ use crate::{
             },
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
+                matmul::{
+                    MatmulA, MatmulArguments, MatmulB, MatmulError,
+                    symmetric_int8_activations::ACTIVATION_QUANTIZATION_GROUP_SIZE,
+                },
             },
         },
         metal::{
@@ -434,16 +437,8 @@ impl GemmKernel {
                     MatmulA::Int8Symmetric {
                         values,
                         scales: activation_scales,
-                        group_size: activation_group_size,
                     } => {
-                        validate_int8_activation_arguments(
-                            use_mxu,
-                            activation_group_size,
-                            k,
-                            b_prologue,
-                            bits_per_b,
-                            group_size,
-                        )?;
+                        validate_int8_activation_arguments(use_mxu, k, b_prologue, bits_per_b, group_size)?;
                         (None, Some(values), Some(activation_scales), GemmAPrologueKind::Int8Symmetric)
                     },
                 };
@@ -672,7 +667,6 @@ impl GemmKernel {
 
 fn validate_int8_activation_arguments(
     use_mxu: bool,
-    activation_group_size: u32,
     k: u32,
     b_prologue: GemmBPrologueKind,
     bits_per_b: Option<u32>,
@@ -688,7 +682,7 @@ fn validate_int8_activation_arguments(
         )
         && matches!(bits_per_b, Some(4 | 8))
         && weight_gs_ok
-        && activation_group_size == 32
+        && k.is_multiple_of(ACTIVATION_QUANTIZATION_GROUP_SIZE)
         && weight_group_size.is_some_and(|gs| k.is_multiple_of(gs));
     if !compatible {
         return Err(MatmulError::IncompatibleA {

@@ -7,7 +7,12 @@ use crate::{
         gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
         kernel::{
             ActivationsPrepareKernel, HadamardTransformKernel, Kernels,
-            matmul::{MatmulA, symmetric_int8_activations::activation_quantization_group_size_for_rht_linear},
+            matmul::{
+                MatmulA,
+                symmetric_int8_activations::{
+                    ACTIVATION_QUANTIZATION_GROUP_SIZE, activation_quantization_group_size_for_rht_linear,
+                },
+            },
         },
     },
     config::weight_matrix::{
@@ -33,7 +38,6 @@ pub enum RHTLinearWrapperError<B: Backend> {
 
 struct SymmetricInt8Preparation<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationsPrepareKernel,
-    group_size: u32,
 }
 
 pub struct RHTLinearWrapper<B: Backend> {
@@ -93,13 +97,11 @@ impl<B: Backend> RHTLinearWrapper<B> {
             output_data_type,
             &quantization_spec,
         )
-        .map(|group_size| {
-            <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type).map(|kernel| {
-                SymmetricInt8Preparation {
+        .map(|_| {
+            <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type)
+                .map(|kernel| SymmetricInt8Preparation {
                     kernel,
-                    group_size,
-                }
-            })
+                })
         })
         .transpose()
         .map_err(RHTLinearWrapperError::BackendError)?;
@@ -135,7 +137,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         if let Some(preparation) = &self.symmetric_int8_preparation {
-            let groups_per_row = self.input_dimension.div_ceil(preparation.group_size as usize);
+            let groups_per_row = self.input_dimension.div_ceil(ACTIVATION_QUANTIZATION_GROUP_SIZE as usize);
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::F32))?;
@@ -147,14 +149,13 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 &self.input_factors,
                 batch_dim as u32,
                 self.input_dimension as u32,
-                preparation.group_size,
+                ACTIVATION_QUANTIZATION_GROUP_SIZE,
                 encoder,
             );
             return self.inner_linear.encode_with_a(
                 MatmulA::Int8Symmetric {
                     values: &values,
                     scales: &scales,
-                    group_size: preparation.group_size,
                 },
                 batch_dim,
                 encoder,

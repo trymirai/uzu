@@ -30,7 +30,6 @@ use crate::{
 pub struct PreparedInt8A {
     pub values: Vec<i8>,
     pub scales: Vec<f32>,
-    pub group_size: u32,
 }
 
 pub struct QuantInput<T: ArrayElement + Float> {
@@ -131,7 +130,6 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         self.prepared_a = Some(PreparedInt8A {
             values,
             scales,
-            group_size: ACTIVATION_QUANTIZATION_GROUP_SIZE,
         });
         self
     }
@@ -212,10 +210,9 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         },
     };
     let a = match &input.prepared_a {
-        Some(prepared) => MatmulA::Int8Symmetric {
+        Some(_) => MatmulA::Int8Symmetric {
             values: buffers.prepared_a.as_ref().expect("prepared activation buffer"),
             scales: buffers.prepared_a_scales.as_ref().expect("prepared activation scales"),
-            group_size: prepared.group_size,
         },
         None => MatmulA::FullPrecision {
             values: &buffers.x,
