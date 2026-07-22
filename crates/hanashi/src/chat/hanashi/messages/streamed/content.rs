@@ -38,6 +38,7 @@ impl Content {
                 let mut reasoning_parts: Vec<String> = Vec::new();
                 let mut text_parts: Vec<String> = Vec::new();
                 let mut tool_calls: Vec<ChatContentBlock> = Vec::new();
+                let mut tool_call_results: Vec<ChatContentBlock> = Vec::new();
 
                 for section in sections {
                     match section {
@@ -67,6 +68,16 @@ impl Content {
                                 value: Value::Null.into(),
                             });
                         },
+                        Section::ToolCallResult {
+                            value: Some(value),
+                        } => {
+                            let (name, value) = tool_call_result_parts(value);
+                            tool_call_results.push(ChatContentBlock::ToolCallResult {
+                                identifier: None,
+                                name,
+                                value: value.into(),
+                            });
+                        },
                         _ => {},
                     }
                 }
@@ -85,8 +96,27 @@ impl Content {
                     });
                 }
                 blocks.extend(tool_calls);
+                blocks.extend(tool_call_results);
                 blocks
             },
         }
+    }
+}
+
+// Parsers may emit tool results as `{"name": ..., "value": ...}` (e.g. functiongemma, gemma-4);
+// renderers need the function name to reproduce the `response:<name>{...}` form.
+fn tool_call_result_parts(value: Value) -> (Option<String>, Value) {
+    match value {
+        Value::Object(mut map)
+            if map.len() == 2 && map.get("name").is_some_and(Value::is_string) && map.contains_key("value") =>
+        {
+            let name = match map.remove("name") {
+                Some(Value::String(name)) => Some(name),
+                _ => None,
+            };
+            let value = map.remove("value").unwrap_or(Value::Null);
+            (name, value)
+        },
+        other => (None, other),
     }
 }

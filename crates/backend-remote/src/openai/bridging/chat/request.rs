@@ -3,7 +3,7 @@ use async_openai::types::chat::{
 };
 use shoji::types::{
     basic::{SamplingMethod, SamplingPolicy},
-    session::chat::{ChatMessage, ChatMessageList, ChatReplyConfig},
+    session::chat::{ChatContentBlock, ChatMessage, ChatMessageList, ChatReplyConfig, ChatRole},
 };
 
 use crate::openai::{
@@ -16,7 +16,11 @@ pub fn build(
     config: &ChatReplyConfig,
     messages: Vec<ChatMessage>,
 ) -> Result<CreateChatCompletionRequest, Error> {
-    let completion_messages = messages.iter().map(chat::message::build).collect::<Result<Vec<_>, _>>()?;
+    let completion_messages = messages
+        .iter()
+        .filter(|message| !is_tool_definition_message(message))
+        .map(chat::message::build)
+        .collect::<Result<Vec<_>, _>>()?;
 
     let tools = messages
         .tool_namespaces()
@@ -68,4 +72,10 @@ pub fn build(
     }
 
     Ok(request)
+}
+
+fn is_tool_definition_message(message: &ChatMessage) -> bool {
+    message.role == ChatRole::Developer {}
+        && !message.content.is_empty()
+        && message.content.iter().all(|content| matches!(content, ChatContentBlock::Tools { .. }))
 }

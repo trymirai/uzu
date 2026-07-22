@@ -60,8 +60,9 @@ impl ReductionParserStackEntry {
     fn closes_on_sibling(&self) -> bool {
         match &self.definition {
             ReductionParserGroup::Bounded {
+                closes_on_sibling,
                 ..
-            } => false,
+            } => *closes_on_sibling,
             ReductionParserGroup::Open {
                 ..
             } => true,

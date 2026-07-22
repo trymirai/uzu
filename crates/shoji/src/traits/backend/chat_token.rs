@@ -30,7 +30,7 @@ pub trait Backend: Send + Sync {
         &'a self,
         reference: String,
         config: ChatConfig,
-        tokenizer: &'a Tokenizer,
+        tokenizer: Option<&'a Tokenizer>,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn Instance>, Error>> + Send + 'a>>;
 }
 

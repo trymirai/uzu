@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use openai_harmony::chat::{
     Author as ExternalAuthor, Content as ExternalContent, DeveloperContent as ExternalDeveloperContent,
-    Message as ExternalMessage, Role as ExternalRole, SystemContent as ExternalSystemContent, TextContent,
+    Message as ExternalMessage, Role as ExternalRole, SystemContent as ExternalSystemContent,
 };
 use shoji::types::{
     basic::{ReasoningEffort, ToolCall, ToolNamespace, Value},
@@ -15,45 +15,48 @@ const FUNCTIONS_NAMESPACE: &str = "functions";
 const CHANNEL_ANALYSIS: &str = "analysis";
 const CHANNEL_COMMENTARY: &str = "commentary";
 const CHANNEL_FINAL: &str = "final";
-const CONTENT_TYPE_JSON: &str = "json";
+// The `<|constrain|>` prefix makes the encoding render the content type as the special token.
+const CONTENT_TYPE_CONSTRAINED_JSON: &str = "<|constrain|>json";
 const RECIPIENT_ASSISTANT: &str = "assistant";
 const BUILTIN_BROWSER: &str = "browser";
 const BUILTIN_PYTHON: &str = "python";
 
 pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<ExternalMessage>, Error> {
     let mut result = Vec::new();
+    // Plain system text becomes developer `# Instructions`, matching the reference gpt-oss chat
+    // template; the harmony system message always carries the meta preamble (identity, reasoning
+    // effort, valid channels) the model was trained to expect.
+    let mut pending_instructions: Vec<String> = Vec::new();
 
     for message in messages {
+        if !pending_instructions.is_empty() && !matches!(message.role, ChatRole::System {} | ChatRole::Developer {}) {
+            result.push(developer_message(std::mem::take(&mut pending_instructions).join("")));
+        }
+
         match &message.role {
             ChatRole::System {} => {
-                let mut system_filled = false;
                 let mut system_content = ExternalSystemContent::default();
-                let mut text_parts: Vec<String> = Vec::new();
 
                 for block in &message.content {
                     match block {
                         ChatContentBlock::Identity {
                             value,
                         } => {
-                            system_filled = true;
                             system_content.model_identity = Some(value.clone());
                         },
                         ChatContentBlock::ReasoningEffort {
                             value,
                         } => {
-                            system_filled = true;
                             system_content.reasoning_effort = Some((*value).to_harmony()?);
                         },
                         ChatContentBlock::ConversationStartDate {
                             value,
                         } => {
-                            system_filled = true;
                             system_content.conversation_start_date = Some(value.clone());
                         },
                         ChatContentBlock::KnowledgeCutoff {
                             value,
                         } => {
-                            system_filled = true;
                             system_content.knowledge_cutoff = Some(value.clone());
                         },
                         ChatContentBlock::BuiltinTools {
@@ -62,11 +65,9 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                             for name in names {
                                 match name.as_str() {
                                     BUILTIN_BROWSER => {
-                                        system_filled = true;
                                         system_content = system_content.with_browser_tool();
                                     },
                                     BUILTIN_PYTHON => {
-                                        system_filled = true;
                                         system_content = system_content.with_python_tool();
                                     },
                                     _ => {
@@ -80,7 +81,7 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                         ChatContentBlock::Text {
                             value,
                         } => {
-                            text_parts.push(value.clone());
+                            pending_instructions.push(value.clone());
                         },
                         other => {
                             return Err(Error::UnsupportedContentBlock {
@@ -91,27 +92,17 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                     }
                 }
 
-                let mut content: Vec<ExternalContent> = vec![];
-                if system_filled {
-                    content.push(ExternalContent::SystemContent(system_content));
-                }
-                if !text_parts.is_empty() {
-                    content.push(ExternalContent::Text(TextContent {
-                        text: text_parts.join(""),
-                    }));
-                }
-
                 result.push(ExternalMessage {
                     author: ExternalAuthor::from(ExternalRole::System),
                     recipient: None,
-                    content,
+                    content: vec![ExternalContent::SystemContent(system_content)],
                     channel: None,
                     content_type: None,
                 });
             },
             ChatRole::Developer {} => {
                 let mut developer_content = ExternalDeveloperContent::default();
-                let mut text_parts: Vec<String> = Vec::new();
+                let mut text_parts: Vec<String> = std::mem::take(&mut pending_instructions);
 
                 for block in &message.content {
                     match block {
@@ -240,7 +231,7 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                         )
                         .with_channel(CHANNEL_COMMENTARY)
                         .with_recipient(format!("{FUNCTIONS_NAMESPACE}.{}", tool_call.name))
-                        .with_content_type(CONTENT_TYPE_JSON),
+                        .with_content_type(CONTENT_TYPE_CONSTRAINED_JSON),
                     );
                 }
             },
@@ -290,7 +281,25 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
         }
     }
 
+    if !pending_instructions.is_empty() {
+        result.push(developer_message(pending_instructions.join("")));
+    }
+
     Ok(result)
+}
+
+fn developer_message(instructions: String) -> ExternalMessage {
+    let developer_content = ExternalDeveloperContent {
+        instructions: Some(instructions),
+        ..Default::default()
+    };
+    ExternalMessage {
+        author: ExternalAuthor::from(ExternalRole::Developer),
+        recipient: None,
+        content: vec![ExternalContent::DeveloperContent(developer_content)],
+        channel: None,
+        content_type: None,
+    }
 }
 
 pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<ChatMessage>, Error> {

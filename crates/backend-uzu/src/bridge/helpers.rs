@@ -105,7 +105,7 @@ pub fn get_sampling_method<B: Backend>(
 
 pub fn get_speculator(
     preset: &ChatSpeculationPreset,
-    tokenizer: &Tokenizer,
+    tokenizer: Option<&Tokenizer>,
 ) -> Result<Option<(Box<dyn Speculator>, usize)>, BackendError> {
     match preset {
         ChatSpeculationPreset::GeneralChat {
@@ -120,6 +120,9 @@ pub fn get_speculator(
         ChatSpeculationPreset::Classification {
             feature,
         } => {
+            let Some(tokenizer) = tokenizer else {
+                return Ok(None);
+            };
             let proposals = feature
                 .values
                 .iter()
