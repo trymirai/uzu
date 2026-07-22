@@ -84,7 +84,7 @@ impl<'a> KernelSpace<'a> {
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
-        ConstraintSet::compile(self.name, axes, enum_paths.constraint_helpers(), self.constraints.iter())
+        ConstraintSet::compile(self.name, axes, enum_paths.helpers().clone(), self.constraints.iter())
     }
 
     /// The key fields for this kernel, in template parameter order.

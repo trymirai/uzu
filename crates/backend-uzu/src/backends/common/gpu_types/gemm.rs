@@ -39,26 +39,12 @@ pub enum GemmTiling {
     Tile128x128x256_Simdgroups4x4,
 }
 
-const MXU_SIMDGROUP_BLOCK_K: u32 = 32;
-
-/// The tiles that run on the matrix units are exactly the ones staging a 256-deep K
-/// block, which is why they need no separate flag to identify them.
-pub const MXU_BLOCK_K: u32 = 256;
-
-// Every tile's block and simdgroup dimensions are generated from its variant name --
-// see the build script's `tile_geometry` module, which emits the same numbers for Metal.
+// Every tile's block and simdgroup dimensions, and whether it runs on the matrix units,
+// are generated from its variant name -- see igata's `tile_geometry` module, which emits
+// the same answers for Metal.
 include!(concat!(env!("OUT_DIR"), "/tile_geometry.rs"));
 
 impl GemmTiling {
-    /// MXU tiles stage a fixed slice of K per simdgroup rather than the whole block.
-    pub const fn simdgroup_block_k(self) -> u32 {
-        if self.block_k() == MXU_BLOCK_K {
-            MXU_SIMDGROUP_BLOCK_K
-        } else {
-            self.block_k()
-        }
-    }
-
     pub const fn fits_quant_group_size(
         self,
         group_size: u32,

@@ -1,8 +1,11 @@
 use std::iter::once;
 
-use igata::gpu_types::{
-    GpuTypeEnum,
-    tile_geometry::{self, ACCESSORS, PREDICATES},
+use igata::{
+    gpu_types::{
+        GpuTypeEnum,
+        tile_geometry::{self, ACCESSORS, PREDICATES},
+    },
+    mangling::snake_case,
 };
 use itertools::Itertools;
 
@@ -24,7 +27,7 @@ fn tile_accessors(
     geometries: &[(&str, tile_geometry::TileGeometry)],
 ) -> String {
     let type_name = gpu_type_enum.name.as_ref();
-    let prefix = tile_geometry::metal_prefix(type_name);
+    let prefix = snake_case(type_name);
 
     let chain = |arms: Vec<String>| arms.join("\n");
 

@@ -7,17 +7,10 @@ use crate::{
     constraint_expr,
     gpu_types::{
         GpuType, GpuTypeName, GpuTypePath, GpuTypeVariantGroup, GpuTypes, VariantGroupArm,
-        tile_geometry::{ACCESSORS, geometries, metal_prefix},
+        tile_geometry::{ACCESSORS, geometries},
     },
+    mangling::snake_case,
 };
-
-/// A generated accessor a CONSTRAINT may call: which enum it takes, and its value for
-/// each variant of that enum.
-#[derive(Clone, Debug)]
-pub struct Helper {
-    pub parameter: Box<str>,
-    pub values: BTreeMap<Box<str>, u32>,
-}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum GpuTypeKind {
@@ -48,7 +41,7 @@ struct GpuTypeEntry {
 pub struct EnumPaths {
     short_name_to_entry: HashMap<GpuTypeName, GpuTypeEntry>,
     variant_groups: Box<[GpuTypeVariantGroup]>,
-    helpers: BTreeMap<Box<str>, Helper>,
+    helpers: constraint_expr::Helpers,
     variant_group_paths: BTreeMap<Box<str>, Box<str>>,
 }
 
@@ -56,7 +49,7 @@ impl EnumPaths {
     pub fn from_gpu_types(gpu_types: &GpuTypes) -> anyhow::Result<Self> {
         let mut short_name_to_entry = HashMap::new();
         let mut variant_groups = Vec::new();
-        let mut helpers = BTreeMap::new();
+        let mut helpers = constraint_expr::Helpers::new();
         let mut variant_group_paths = BTreeMap::new();
         for file in gpu_types.files.iter() {
             for ty in file.types.iter() {
@@ -64,15 +57,17 @@ impl EnumPaths {
                     GpuType::Enum(enum_type) => (
                         {
                             if let Some(tiles) = geometries(enum_type) {
-                                let prefix = metal_prefix(&enum_type.name);
+                                let prefix = snake_case(&enum_type.name);
                                 for (_, metal_suffix, value_of) in ACCESSORS {
                                     helpers.insert(
                                         format!("{prefix}_{metal_suffix}").into_boxed_str(),
-                                        Helper {
-                                            parameter: enum_type.name.clone(),
+                                        constraint_expr::Helper {
+                                            parameter: constraint_expr::Type::Enum(enum_type.name.clone()),
                                             values: tiles
                                                 .iter()
-                                                .map(|(variant, geometry)| ((*variant).into(), value_of(geometry)))
+                                                .map(|(variant, geometry)| {
+                                                    ((*variant).into(), i64::from(value_of(geometry)))
+                                                })
                                                 .collect(),
                                         },
                                     );
@@ -182,7 +177,7 @@ impl EnumPaths {
         hash_str(&mut hasher, "helpers");
         for (name, helper) in self.helpers.iter() {
             hash_str(&mut hasher, name);
-            hash_str(&mut hasher, &helper.parameter);
+            hash_str(&mut hasher, &helper.parameter.to_string());
             for (variant, value) in helper.values.iter() {
                 hash_str(&mut hasher, variant);
                 hasher.update(&value.to_le_bytes());
@@ -218,28 +213,8 @@ impl EnumPaths {
     }
 
     /// Generated accessors that shader CONSTRAINTs may call.
-    pub fn helpers(&self) -> &BTreeMap<Box<str>, Helper> {
+    pub fn helpers(&self) -> &constraint_expr::Helpers {
         &self.helpers
-    }
-
-    /// The same accessors, as the constraint checker declares them.
-    pub fn constraint_helpers(&self) -> constraint_expr::Helpers {
-        self.helpers
-            .iter()
-            .map(|(name, helper)| {
-                (
-                    name.clone(),
-                    constraint_expr::Helper {
-                        parameter: constraint_expr::Type::Enum(helper.parameter.clone()),
-                        values: helper
-                            .values
-                            .iter()
-                            .map(|(variant, value)| (variant.clone(), i64::from(*value)))
-                            .collect(),
-                    },
-                )
-            })
-            .collect()
     }
 
     pub fn variant_group_path(

@@ -71,15 +71,3 @@ pub fn geometries(gpu_type_enum: &GpuTypeEnum) -> Option<Vec<(&str, TileGeometry
         .map(|variant| Some((variant.name.as_ref(), TileGeometry::parse(&variant.name)?)))
         .collect()
 }
-
-/// `GemmTiling` -> `gemm_tiling`, the prefix its Metal accessors already use.
-pub fn metal_prefix(type_name: &str) -> String {
-    let mut prefix = String::new();
-    for (index, character) in type_name.char_indices() {
-        if character.is_uppercase() && index != 0 {
-            prefix.push('_');
-        }
-        prefix.extend(character.to_lowercase());
-    }
-    prefix
-}
