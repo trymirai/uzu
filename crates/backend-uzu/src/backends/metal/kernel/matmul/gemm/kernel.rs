@@ -697,7 +697,7 @@ pub(crate) fn select_mxu_tiling(
                 GemmTiling::Tile32x64x256_Simdgroups2x2
             };
         }
-        return if m <= 16 {
+        return if m < 16 {
             select_small_m_mxu_tiling(n, k)
         } else {
             select_base_mxu_tiling(m, n)
