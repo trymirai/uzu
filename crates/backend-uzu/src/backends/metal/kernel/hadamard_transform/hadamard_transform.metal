@@ -19,7 +19,7 @@ PUBLIC KERNEL(HadamardTransform)(
     uint batch_index GROUPS(batch_size),
     uint lane_index THREADS(METAL_SIMD_SIZE)
 ) {
-  uint factor_index = block_index * HADAMARD_TRANSFORM_BLOCK_SIZE + lane_index;
+  uint factor_index = block_index * METAL_SIMD_SIZE + lane_index;
   uint element_index = batch_index * hidden_dim + factor_index;
 
   if (transform_order == HadamardTransformOrder::Input) {

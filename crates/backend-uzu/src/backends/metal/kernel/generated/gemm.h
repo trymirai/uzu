@@ -46,8 +46,6 @@ enum class GemmTiling : uint32_t {
   Tile128x128x256_Simdgroups4x4 = 10,
 };
 
-static constant constexpr uint32_t MXU_SIMDGROUP_BLOCK_K = 32;
-
 struct GemmAlignment {
   uint raw_value;
   constexpr GemmAlignment() thread : raw_value(0) {}

@@ -1,9 +1,8 @@
 //! GPU types shared between Rust and shader languages (Metal, HLSL, Slang).
 //!
-//! These Rust declarations, including `#[repr(C)]` types and public constants,
-//! are the source of truth for generated shader headers.
+//! These `#[repr(C)]` structs are the source of truth. The build system uses
+//! cbindgen to generate C headers for Metal shaders.
 
-pub mod activation_prepare;
 pub mod activation_type;
 pub mod argmax;
 pub mod attention;
@@ -16,7 +15,6 @@ pub mod quantization_method;
 pub mod ring;
 pub mod trie;
 
-pub use activation_prepare::*;
 pub use activation_type::*;
 pub use argmax::*;
 pub use attention::*;
