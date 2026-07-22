@@ -31,26 +31,26 @@ template <
     int GROUP_SIZE = 0,
     GemmAPrologueKind A_PROLOGUE = GemmAPrologueKind::FullPrecision>
 struct MxuMmaCore {
-  METAL_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
-  METAL_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
-  METAL_CONST ushort SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(GEMM_TILING);
-  METAL_CONST ushort SIMDGROUPS_PER_COLUMN = gemm_tiling_simdgroups_per_column(GEMM_TILING);
-  METAL_CONST ushort SIMDGROUP_BLOCK_M = THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
-  METAL_CONST ushort SIMDGROUP_BLOCK_N = THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN;
-  METAL_CONST ushort SIMDGROUP_BLOCK_K = 32;
-  METAL_CONST ushort THREADGROUP_BLOCK_K_FP = gemm_tiling_block_k(GEMM_TILING);
+  UZU_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
+  UZU_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
+  UZU_CONST ushort SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(GEMM_TILING);
+  UZU_CONST ushort SIMDGROUPS_PER_COLUMN = gemm_tiling_simdgroups_per_column(GEMM_TILING);
+  UZU_CONST ushort SIMDGROUP_BLOCK_M = THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
+  UZU_CONST ushort SIMDGROUP_BLOCK_N = THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN;
+  UZU_CONST ushort SIMDGROUP_BLOCK_K = 32;
+  UZU_CONST ushort THREADGROUP_BLOCK_K_FP = gemm_tiling_block_k(GEMM_TILING);
   static_assert(
       THREADGROUP_BLOCK_K_FP % SIMDGROUP_BLOCK_K == 0,
       "FP THREADGROUP_BLOCK_K must be a multiple of SIMDGROUP_BLOCK_K"
   );
-  METAL_CONST ushort TILES_M = SIMDGROUP_BLOCK_M / uzu::matmul::MxuFragmentOps<>::FRAGMENT_ROWS;
-  METAL_CONST ushort TILES_N = SIMDGROUP_BLOCK_N / uzu::matmul::MxuFragmentOps<>::FRAGMENT_COLS;
-  METAL_CONST ushort TILES_K = SIMDGROUP_BLOCK_K / uzu::matmul::MxuFragmentOps<>::FRAGMENT_ROWS;
+  UZU_CONST ushort TILES_M = SIMDGROUP_BLOCK_M / uzu::matmul::MxuFragmentOps<>::FRAGMENT_ROWS;
+  UZU_CONST ushort TILES_N = SIMDGROUP_BLOCK_N / uzu::matmul::MxuFragmentOps<>::FRAGMENT_COLS;
+  UZU_CONST ushort TILES_K = SIMDGROUP_BLOCK_K / uzu::matmul::MxuFragmentOps<>::FRAGMENT_ROWS;
 
-  METAL_CONST ushort QUANT_BK = (B_PROLOGUE == GemmBPrologueKind::FullPrecision) ? 0 : GROUP_SIZE;
-  METAL_CONST ushort PADDING_B = 16 / sizeof(BT);
-  METAL_CONST ushort SHARED_STRIDE_B = (QUANT_BK > 0) ? (QUANT_BK + PADDING_B) : 1;
-  METAL_CONST ushort THREADGROUP_THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
+  UZU_CONST ushort QUANT_BK = (B_PROLOGUE == GemmBPrologueKind::FullPrecision) ? 0 : GROUP_SIZE;
+  UZU_CONST ushort PADDING_B = 16 / sizeof(BT);
+  UZU_CONST ushort SHARED_STRIDE_B = (QUANT_BK > 0) ? (QUANT_BK + PADDING_B) : 1;
+  UZU_CONST ushort THREADGROUP_THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
   static_assert(
       B_PROLOGUE == GemmBPrologueKind::FullPrecision || QUANT_BK % SIMDGROUP_BLOCK_K == 0,
       "QUANT_BK must be a multiple of SIMDGROUP_BLOCK_K"
@@ -93,14 +93,14 @@ struct MxuMmaCore {
 
   using AccumFragment = uzu::matmul::Fragment<AccumulatorType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps<>>;
 
-  struct QuantBAddressing {
+  struct QuantizedWeightAddressing {
     int row_stride_bytes;
     int groups_per_row;
     int k_offset_groups;
     const device uint8_t* block;
   };
 
-  static METAL_FUNC QuantBAddressing quant_b_addressing(
+  static METAL_FUNC QuantizedWeightAddressing quantized_weight_addressing(
       const device BT* b,
       const size_t block_col,
       const uint k_offset,
@@ -109,7 +109,7 @@ struct MxuMmaCore {
     constexpr int pack_factor = get_pack_factor<(BITS > 0) ? BITS : 4, 8>();
     constexpr int bytes_per_pack = get_bytes_per_pack<(BITS > 0) ? BITS : 4>();
     const int row_stride_bytes = k_elements * bytes_per_pack / pack_factor;
-    return QuantBAddressing{
+    return QuantizedWeightAddressing{
         row_stride_bytes,
         (k_elements + int(GROUP_SIZE) - 1) / int(GROUP_SIZE),
         int(k_offset) / int(GROUP_SIZE),
@@ -240,11 +240,11 @@ struct MxuMmaCore {
       A_PROLOGUE != GemmAPrologueKind::Int8Symmetric || GROUP_SIZE % int(SIMDGROUP_BLOCK_K) == 0,
       "A8 weight group size must be a multiple of the 32-wide activation chunk"
   );
-  METAL_CONST bool A8_NEEDS_CORRECTION = A_PROLOGUE == GemmAPrologueKind::Int8Symmetric &&
-                                         B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant;
-  METAL_CONST float A8_WEIGHT_MIDPOINT = (BITS == 4) ? 8.0f : 128.0f;
+  UZU_CONST bool int8_activation_needs_weight_correction =
+      A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant;
+  UZU_CONST float int8_weight_midpoint = (BITS == 4) ? 8.0f : 128.0f;
 
-  static METAL_FUNC float a8_weight_correction_coeff(
+  static METAL_FUNC float int8_weight_correction_coefficient(
       const uint col,
       const uint weight_group,
       const uint weight_groups_per_row,
@@ -255,7 +255,7 @@ struct MxuMmaCore {
     const uint scale_index = col * weight_groups_per_row + weight_group;
     const float scale = static_cast<float>(b_scales[scale_index]);
     if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-      return static_cast<float>(biases[scale_index]) + scale * A8_WEIGHT_MIDPOINT;
+      return static_cast<float>(biases[scale_index]) + scale * int8_weight_midpoint;
     } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
       float zero_point;
       if constexpr (BITS == 4) {
@@ -265,14 +265,14 @@ struct MxuMmaCore {
       } else {
         zero_point = float(zero_points[scale_index]);
       }
-      return scale * (A8_WEIGHT_MIDPOINT - zero_point);
+      return scale * (int8_weight_midpoint - zero_point);
     } else {
       return 0.0f;
     }
   }
 
   template <bool ALIGNED_M, bool ALIGNED_N>
-  static METAL_FUNC AccumFragment quant_k_loop_int8(
+  static METAL_FUNC AccumFragment symmetric_int8_activation_k_loop(
       const device int8_t* a_int8_simdgroup,
       const device uint8_t* b_packed_simdgroup,
       const device float* a_scales,
@@ -291,7 +291,7 @@ struct MxuMmaCore {
       const uint weight_groups_per_row,
       const uint act_groups_per_row,
       const ushort tile_col_offset,
-      threadgroup uint8_t* b_int4_staging,
+      threadgroup uint8_t* staged_int4_weights,
       const thread ThreadContext& thread_context
   ) {
     using Ops = uzu::matmul::MxuFragmentOps<>;
@@ -299,13 +299,13 @@ struct MxuMmaCore {
     accumulator.clear();
 
     const short2 position = Ops::get_position(thread_context.simd_lane_id);
-    thread float* accumulator_data = accumulator.elements();
+    thread float* accumulator_elements = accumulator.elements();
     constexpr int k_bytes_per_act_chunk = (BITS == 4) ? (int(SIMDGROUP_BLOCK_K) / 2) : int(SIMDGROUP_BLOCK_K);
     constexpr int k_bytes_per_weight_group = (BITS == 4) ? (int(GROUP_SIZE) / 2) : int(GROUP_SIZE);
     constexpr int act_chunks_per_weight_group = int(GROUP_SIZE) / int(SIMDGROUP_BLOCK_K);
 
     uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> ones_tile;
-    if constexpr (A8_NEEDS_CORRECTION) {
+    if constexpr (int8_activation_needs_weight_correction) {
       thread int8_t* ones = ones_tile.elements();
       METAL_PRAGMA_UNROLL
       for (ushort i = 0; i < ones_tile.ELEMENTS_PER_FRAGMENT; ++i) {
@@ -317,9 +317,9 @@ struct MxuMmaCore {
     for (int weight_group = 0; weight_group < weight_group_iterations; ++weight_group) {
       const uint weight_group_index = k_offset_weight_groups + uint(weight_group);
 
-      float b_scale_cache[TILES_N * Ops::THREAD_ELEMENT_COLS];
+      float weight_scale_cache[TILES_N * Ops::THREAD_ELEMENT_COLS];
       fill_column_group_cache<ALIGNED_N, Ops>(
-          b_scale_cache,
+          weight_scale_cache,
           position,
           simdgroup_limit_n,
           abs_col_base,
@@ -328,10 +328,10 @@ struct MxuMmaCore {
           [&](uint scale_index) { return static_cast<float>(b_scales[scale_index]); }
       );
 
-      float b_coeff_cache[TILES_N * Ops::THREAD_ELEMENT_COLS];
-      if constexpr (A8_NEEDS_CORRECTION) {
+      float weight_correction_cache[TILES_N * Ops::THREAD_ELEMENT_COLS];
+      if constexpr (int8_activation_needs_weight_correction) {
         fill_column_group_cache<ALIGNED_N, Ops>(
-            b_coeff_cache,
+            weight_correction_cache,
             position,
             simdgroup_limit_n,
             abs_col_base,
@@ -339,7 +339,7 @@ struct MxuMmaCore {
             weight_group_index,
             [&](uint scale_index) {
               const uint col = scale_index / weight_groups_per_row;
-              return a8_weight_correction_coeff(
+              return int8_weight_correction_coefficient(
                   col, weight_group_index, weight_groups_per_row, b_scales, biases, zero_points
               );
             }
@@ -348,108 +348,98 @@ struct MxuMmaCore {
 
       METAL_PRAGMA_NO_UNROLL
       for (int act_chunk = 0; act_chunk < act_chunks_per_weight_group; ++act_chunk) {
-        const int k_elem = act_chunk * int(SIMDGROUP_BLOCK_K);
-        const int k_byte = act_chunk * k_bytes_per_act_chunk;
-        auto left_tile = load_int8_left_tile<ALIGNED_M>(
-            a_int8_simdgroup + k_elem, leading_dimension_a, simdgroup_limit_m, thread_context.simd_lane_id
+        const int k_element_offset = act_chunk * int(SIMDGROUP_BLOCK_K);
+        const int k_byte_offset = act_chunk * k_bytes_per_act_chunk;
+        auto activation_tile = load_int8_left_tile<ALIGNED_M>(
+            a_int8_simdgroup + k_element_offset,
+            leading_dimension_a,
+            simdgroup_limit_m,
+            thread_context.simd_lane_id
         );
 
-        uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> dot;
-        dot.clear();
+        uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> chunk_products;
+        chunk_products.clear();
         if constexpr (BITS == 4) {
-          // Stage one activation chunk into threadgroup memory, converting the
-          // unsigned U4 codes to signed int4b (XOR 0x88 per byte) just before the
-          // MXU MMA. The weight buffer itself stays unsigned so GEMV / BF16 GEMM
-          // can share it.
-          threadgroup uint8_t* staged = b_int4_staging + int(tile_col_offset) * k_bytes_per_act_chunk;
+          threadgroup uint8_t* staged_weights =
+              staged_int4_weights + int(tile_col_offset) * k_bytes_per_act_chunk;
           const int packed_bytes = int(SIMDGROUP_BLOCK_N) * k_bytes_per_act_chunk;
           for (int byte_index = int(thread_context.simd_lane_id); byte_index < packed_bytes;
                byte_index += int(METAL_SIMD_SIZE)) {
             const int row = byte_index / k_bytes_per_act_chunk;
             const int byte_in_row = byte_index - row * k_bytes_per_act_chunk;
-            staged[byte_index] = short(row) < simdgroup_limit_n
-                ? uchar(b_packed_simdgroup[row * b_row_stride_bytes + k_byte + byte_in_row] ^ uchar(0x88))
+            staged_weights[byte_index] = short(row) < simdgroup_limit_n
+                ? uchar(
+                      b_packed_simdgroup[row * b_row_stride_bytes + k_byte_offset + byte_in_row] ^ uchar(0x88)
+                  )
                 : uchar(0);
           }
           threadgroup_barrier(mem_flags::mem_threadgroup);
-          Ops::template fragment_mma_int8_int4b<false>(dot, left_tile, staged, int(SIMDGROUP_BLOCK_K));
+          Ops::template fragment_mma_int8_int4b<false>(
+              chunk_products, activation_tile, staged_weights, int(SIMDGROUP_BLOCK_K)
+          );
         } else {
           static_assert(BITS == 8, "symmetric int8 activations only support 4-bit or 8-bit weights");
           uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> right_tile;
           auto right_src = uzu::matmul::fragment_source(
-              reinterpret_cast<const device int8_t*>(b_packed_simdgroup) + k_elem, b_row_stride_bytes
+              reinterpret_cast<const device int8_t*>(b_packed_simdgroup) + k_element_offset, b_row_stride_bytes
           );
           if constexpr (!ALIGNED_N) {
             right_src = right_src.bounded(simdgroup_limit_n, SIMDGROUP_BLOCK_K);
           }
           right_tile.load_from(thread_context.simd_lane_id, right_src);
-          // Convert the unsigned U8 codes to signed int8 (XOR 0x80) just before
-          // the MXU MMA; the weight buffer stays unsigned for GEMV / BF16 GEMM.
           thread int8_t* right_codes = right_tile.elements();
           METAL_PRAGMA_UNROLL
           for (ushort i = 0; i < right_tile.ELEMENTS_PER_FRAGMENT; ++i) {
             right_codes[i] = as_type<int8_t>(uchar(as_type<uchar>(right_codes[i]) ^ uchar(0x80)));
           }
-          Ops::template fragment_mma<false, true>(dot, left_tile, right_tile);
+          Ops::template fragment_mma<false, true>(chunk_products, activation_tile, right_tile);
         }
 
         const uint act_group_index =
             k_offset_act_groups + uint(weight_group * act_chunks_per_weight_group + act_chunk);
-        float a_scale_cache[TILES_M * Ops::THREAD_ELEMENT_ROWS];
+        float activation_scale_cache[TILES_M * Ops::THREAD_ELEMENT_ROWS];
         fill_row_group_cache<ALIGNED_M, Ops>(
-            a_scale_cache, a_scales, position, simdgroup_limit_m, abs_row_base, act_groups_per_row, act_group_index
+            activation_scale_cache,
+            a_scales,
+            position,
+            simdgroup_limit_m,
+            abs_row_base,
+            act_groups_per_row,
+            act_group_index
         );
 
-        thread int* dot_data = dot.elements();
-        if constexpr (A8_NEEDS_CORRECTION) {
-          uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> row_sums;
-          row_sums.clear();
-          Ops::template fragment_mma<false, true>(row_sums, left_tile, ones_tile);
-          thread int* row_sum_data = row_sums.elements();
+        uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> activation_row_sums;
+        if constexpr (int8_activation_needs_weight_correction) {
+          activation_row_sums.clear();
+          Ops::template fragment_mma<false, true>(activation_row_sums, activation_tile, ones_tile);
+        }
+        thread int* chunk_products_data = chunk_products.elements();
+        thread int* activation_row_sums_data = activation_row_sums.elements();
+        METAL_PRAGMA_UNROLL
+        for (ushort tile_row = 0; tile_row < TILES_M; ++tile_row) {
           METAL_PRAGMA_UNROLL
-          for (ushort tile_row = 0; tile_row < TILES_M; ++tile_row) {
+          for (ushort tile_col = 0; tile_col < TILES_N; ++tile_col) {
+            const ushort fragment_base = (tile_row * TILES_N + tile_col) * Ops::ELEMENTS_PER_THREAD;
+            const short row_base = position.y + tile_row * Ops::FRAGMENT_ROWS;
+            const short col_base = position.x + tile_col * Ops::FRAGMENT_COLS;
             METAL_PRAGMA_UNROLL
-            for (ushort tile_col = 0; tile_col < TILES_N; ++tile_col) {
-              const ushort frag_base = (tile_row * TILES_N + tile_col) * Ops::ELEMENTS_PER_THREAD;
-              const short row_base = position.y + tile_row * Ops::FRAGMENT_ROWS;
-              const short col_base = position.x + tile_col * Ops::FRAGMENT_COLS;
-              METAL_PRAGMA_UNROLL
-              for (ushort element = 0; element < Ops::ELEMENTS_PER_THREAD; ++element) {
-                const short2 element_offset = Ops::get_element_offset(element);
-                const short row = row_base + element_offset.y;
-                const short col = col_base + element_offset.x;
-                if ((ALIGNED_M || row < simdgroup_limit_m) && (ALIGNED_N || col < simdgroup_limit_n)) {
-                  const ushort a_cache =
-                      tile_row * Ops::THREAD_ELEMENT_ROWS + ushort(element_offset.y / Ops::THREAD_ELEMENT_ROW_STRIDE);
-                  const ushort b_cache = tile_col * Ops::THREAD_ELEMENT_COLS + ushort(element_offset.x);
-                  accumulator_data[frag_base + element] +=
-                      a_scale_cache[a_cache] *
-                      (b_scale_cache[b_cache] * float(dot_data[frag_base + element]) +
-                       b_coeff_cache[b_cache] * float(row_sum_data[frag_base + element]));
+            for (ushort element = 0; element < Ops::ELEMENTS_PER_THREAD; ++element) {
+              const short2 element_offset = Ops::get_element_offset(element);
+              const short row = row_base + element_offset.y;
+              const short col = col_base + element_offset.x;
+              if ((ALIGNED_M || row < simdgroup_limit_m) && (ALIGNED_N || col < simdgroup_limit_n)) {
+                const ushort activation_scale_index = tile_row * Ops::THREAD_ELEMENT_ROWS +
+                                                      ushort(element_offset.y / Ops::THREAD_ELEMENT_ROW_STRIDE);
+                const ushort weight_scale_index =
+                    tile_col * Ops::THREAD_ELEMENT_COLS + ushort(element_offset.x);
+                float scaled_products = weight_scale_cache[weight_scale_index] *
+                                        float(chunk_products_data[fragment_base + element]);
+                if constexpr (int8_activation_needs_weight_correction) {
+                  scaled_products += weight_correction_cache[weight_scale_index] *
+                                     float(activation_row_sums_data[fragment_base + element]);
                 }
-              }
-            }
-          }
-        } else {
-          METAL_PRAGMA_UNROLL
-          for (ushort tile_row = 0; tile_row < TILES_M; ++tile_row) {
-            METAL_PRAGMA_UNROLL
-            for (ushort tile_col = 0; tile_col < TILES_N; ++tile_col) {
-              const ushort frag_base = (tile_row * TILES_N + tile_col) * Ops::ELEMENTS_PER_THREAD;
-              const short row_base = position.y + tile_row * Ops::FRAGMENT_ROWS;
-              const short col_base = position.x + tile_col * Ops::FRAGMENT_COLS;
-              METAL_PRAGMA_UNROLL
-              for (ushort element = 0; element < Ops::ELEMENTS_PER_THREAD; ++element) {
-                const short2 element_offset = Ops::get_element_offset(element);
-                const short row = row_base + element_offset.y;
-                const short col = col_base + element_offset.x;
-                if ((ALIGNED_M || row < simdgroup_limit_m) && (ALIGNED_N || col < simdgroup_limit_n)) {
-                  const ushort a_cache =
-                      tile_row * Ops::THREAD_ELEMENT_ROWS + ushort(element_offset.y / Ops::THREAD_ELEMENT_ROW_STRIDE);
-                  const ushort b_cache = tile_col * Ops::THREAD_ELEMENT_COLS + ushort(element_offset.x);
-                  accumulator_data[frag_base + element] +=
-                      a_scale_cache[a_cache] * b_scale_cache[b_cache] * float(dot_data[frag_base + element]);
-                }
+                accumulator_elements[fragment_base + element] +=
+                    activation_scale_cache[activation_scale_index] * scaled_products;
               }
             }
           }
@@ -478,7 +468,7 @@ struct MxuMmaCore {
       const device int8_t* a_int8,
       const device float* a_scales,
       threadgroup BT* b_shared,
-      threadgroup uint8_t* b_int4_staging,
+      threadgroup uint8_t* staged_int4_weights,
       const thread ThreadContext& thread_context
   ) {
     const uint partition = thread_context.threadgroup_position.z;
@@ -550,13 +540,14 @@ struct MxuMmaCore {
                 [&](auto aligned_n) {
                   auto accumulator_tile = [&]() {
                     if constexpr (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric) {
-                      const auto b_addressing = quant_b_addressing(b, block_col, k_offset, int(params->K));
+                      const auto quantized_weights =
+                          quantized_weight_addressing(b, block_col, k_offset, int(params->K));
                       const device int8_t* a_int8_simdgroup = a_int8 + block_row * params->leading_dimension_a +
                                                               k_offset +
                                                               size_t(tile_row_offset) * params->leading_dimension_a;
                       const device uint8_t* b_packed_simdgroup =
-                          b_addressing.block + size_t(tile_col_offset) * b_addressing.row_stride_bytes;
-                      return quant_k_loop_int8<aligned_m.value, aligned_n.value>(
+                          quantized_weights.block + size_t(tile_col_offset) * quantized_weights.row_stride_bytes;
+                      return symmetric_int8_activation_k_loop<aligned_m.value, aligned_n.value>(
                           a_int8_simdgroup,
                           b_packed_simdgroup,
                           a_scales,
@@ -564,18 +555,18 @@ struct MxuMmaCore {
                           biases,
                           zero_points,
                           int(params->leading_dimension_a),
-                          b_addressing.row_stride_bytes,
+                          quantized_weights.row_stride_bytes,
                           int(params->aligned_inner_iterations),
                           simdgroup_limit_m,
                           simdgroup_limit_n,
                           uint(geometry.block_row_start) + tile_row_offset,
                           uint(geometry.block_col_start) + tile_col_offset,
-                          uint(b_addressing.k_offset_groups),
+                          uint(quantized_weights.k_offset_groups),
                           k_offset / uint(SIMDGROUP_BLOCK_K),
-                          uint(b_addressing.groups_per_row),
+                          uint(quantized_weights.groups_per_row),
                           uint(params->K) / uint(SIMDGROUP_BLOCK_K),
                           tile_col_offset,
-                          b_int4_staging,
+                          staged_int4_weights,
                           thread_context
                       );
                     } else if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
@@ -606,10 +597,11 @@ struct MxuMmaCore {
                     } else {
                       const int aligned_k_iterations_q = int(params->aligned_inner_iterations);
                       const int k_elements = int(params->K);
-                      const auto b_addressing = quant_b_addressing(b, block_col, k_offset, k_elements);
-                      const int groups_per_row = b_addressing.groups_per_row;
-                      const int k_offset_groups = b_addressing.k_offset_groups;
-                      const device uint8_t* weights_block = b_addressing.block;
+                      const auto quantized_weights =
+                          quantized_weight_addressing(b, block_col, k_offset, k_elements);
+                      const int groups_per_row = quantized_weights.groups_per_row;
+                      const int k_offset_groups = quantized_weights.k_offset_groups;
+                      const device uint8_t* weights_block = quantized_weights.block;
                       const device BT* scales_offset = scales + block_col * groups_per_row + k_offset_groups;
 
                       auto loader_b = [&]() {

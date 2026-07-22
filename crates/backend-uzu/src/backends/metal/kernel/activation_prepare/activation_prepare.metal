@@ -5,7 +5,7 @@
 
 using namespace metal;
 
-METAL_CONST float SYM_QMAX = 127.0;
+UZU_CONST float SYM_QMAX = 127.0;
 
 template <typename InputT>
 VARIANTS(InputT, float, bfloat)

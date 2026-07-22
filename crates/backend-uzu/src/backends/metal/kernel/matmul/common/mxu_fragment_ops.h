@@ -18,23 +18,23 @@ using namespace metal;
 namespace uzu {
 namespace matmul {
 
-METAL_CONST ushort MXU_MMA_ROWS = 16;
-METAL_CONST ushort MXU_MMA_COLS = 16;
+UZU_CONST ushort MXU_MMA_ROWS = 16;
+UZU_CONST ushort MXU_MMA_COLS = 16;
 
 // RELAXED=false uses the strict MPP layout; it currently performs about the same as simdgroup.
 template <bool RELAXED = true>
 struct MxuFragmentOps {
-  METAL_CONST ushort FRAGMENT_ROWS = MXU_MMA_ROWS;
-  METAL_CONST ushort FRAGMENT_COLS = MXU_MMA_COLS;
-  METAL_CONST bool READ_TRANSPOSE_SWAPS_SOURCE_STRIDES = false;
+  UZU_CONST ushort FRAGMENT_ROWS = MXU_MMA_ROWS;
+  UZU_CONST ushort FRAGMENT_COLS = MXU_MMA_COLS;
+  UZU_CONST bool READ_TRANSPOSE_SWAPS_SOURCE_STRIDES = false;
   using BlockStorage = DeviceBlockStorage;
 
-  METAL_CONST ushort ELEMENTS_PER_THREAD = (FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE;
+  UZU_CONST ushort ELEMENTS_PER_THREAD = (FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE;
 
-  METAL_CONST ushort THREAD_ELEMENT_ROWS = 2;
-  METAL_CONST ushort THREAD_ELEMENT_COLS = 4;
+  UZU_CONST ushort THREAD_ELEMENT_ROWS = 2;
+  UZU_CONST ushort THREAD_ELEMENT_COLS = 4;
 
-  METAL_CONST ushort THREAD_ELEMENT_ROW_STRIDE = FRAGMENT_ROWS / THREAD_ELEMENT_ROWS;
+  UZU_CONST ushort THREAD_ELEMENT_ROW_STRIDE = FRAGMENT_ROWS / THREAD_ELEMENT_ROWS;
 
   static_assert(
       THREAD_ELEMENT_ROWS * THREAD_ELEMENT_COLS == ELEMENTS_PER_THREAD,
@@ -416,18 +416,6 @@ struct MxuFragmentOps {
         store_paired_vectors(cooperative_output, output.fragment_at(row, col), output.fragment_at(row, col + 1));
       }
     }
-  }
-
-  template <bool ACCUMULATE, class OutputFragment, class LeftFragment>
-  METAL_FUNC static void fragment_mma_int8_int4b(
-      thread OutputFragment& output,
-      thread LeftFragment& left,
-      device uchar* right_int4_signed,
-      const int right_row_stride_elements
-  ) {
-    constexpr int tile_extent = int(2 * FRAGMENT_COLS);
-    using RightTensor = tensor<device metal::int4b_format, extents<int, tile_extent, tile_extent>, tensor_inline>;
-    fragment_mma_int8_int4b_impl<ACCUMULATE, RightTensor>(output, left, right_int4_signed, right_row_stride_elements);
   }
 
   template <bool ACCUMULATE, class OutputFragment, class LeftFragment>

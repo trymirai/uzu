@@ -2,15 +2,14 @@ use half::bf16;
 use num_traits::{Float, NumCast};
 use proc_macros::kernel;
 
-use crate::{
-    array::ArrayElement,
-    backends::common::gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
-};
+use crate::{array::ArrayElement, backends::common::gpu_types::HadamardTransformOrder};
 
-pub(crate) fn hadamard_transform(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE]) {
+const SIMD_SIZE: usize = 32;
+
+pub(crate) fn hadamard_transform(values: &mut [f32; SIMD_SIZE]) {
     let mut stride = 1;
-    while stride < HADAMARD_TRANSFORM_BLOCK_SIZE {
-        for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
+    while stride < SIMD_SIZE {
+        for lane in 0..SIMD_SIZE {
             if lane & stride == 0 {
                 let a = values[lane];
                 let b = values[lane | stride];
@@ -20,7 +19,7 @@ pub(crate) fn hadamard_transform(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZ
         }
         stride <<= 1;
     }
-    let scale = 1.0 / (HADAMARD_TRANSFORM_BLOCK_SIZE as f32).sqrt();
+    let scale = 1.0 / (SIMD_SIZE as f32).sqrt();
     for v in values.iter_mut() {
         *v *= scale;
     }
@@ -37,16 +36,13 @@ pub fn hadamard_transform_mul<T: ArrayElement + Float>(
 ) {
     let hidden_dim = hidden_dim as usize;
     let batch_size = batch_size as usize;
-    assert!(
-        hidden_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE),
-        "hidden_dim must be a multiple of {HADAMARD_TRANSFORM_BLOCK_SIZE}"
-    );
+    assert_eq!(hidden_dim % SIMD_SIZE, 0, "hidden_dim must be a multiple of {SIMD_SIZE}");
 
     for batch in 0..batch_size {
         let row_offset = batch * hidden_dim;
-        for stripe_start in (0..hidden_dim).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE) {
-            let mut stripe = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE];
-            for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
+        for stripe_start in (0..hidden_dim).step_by(SIMD_SIZE) {
+            let mut stripe = [0.0f32; SIMD_SIZE];
+            for lane in 0..SIMD_SIZE {
                 let v: f32 = NumCast::from(unsafe { *data.add(row_offset + stripe_start + lane) }).unwrap();
                 let f = unsafe { *factors.add(stripe_start + lane) } as f32;
                 stripe[lane] = match transform_order {
@@ -57,7 +53,7 @@ pub fn hadamard_transform_mul<T: ArrayElement + Float>(
 
             hadamard_transform(&mut stripe);
 
-            for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
+            for lane in 0..SIMD_SIZE {
                 let f = unsafe { *factors.add(stripe_start + lane) } as f32;
                 let result = match transform_order {
                     HadamardTransformOrder::Input => stripe[lane],
