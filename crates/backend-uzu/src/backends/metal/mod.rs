@@ -11,4 +11,8 @@ mod sparse;
 
 pub use backend::Metal;
 pub use context::MetalContext;
+#[cfg(test)]
+pub(crate) use device_tier::DeviceTier;
 pub use kernel::matmul::GemmDispatchPath;
+#[cfg(test)]
+pub(crate) use kernel::matmul::gemv::{GemvDispatch, GemvSpecialization};

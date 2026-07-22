@@ -124,7 +124,7 @@ KERNEL(Gemm)(
     const GemmAlignment alignment SPECIALIZE,
     threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
     threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
-    threadgroup uint8_t b_int4_signed[GEMM_A8W4_TG_BYTES],
+    threadgroup uint8_t b_int4_staging[GEMM_A8W4_TG_BYTES],
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint group_z GROUPS(group_count_z),
@@ -156,11 +156,11 @@ KERNEL(Gemm)(
         a_int8,
         a_scales,
         b_shared,
-        b_int4_signed,
+        b_int4_staging,
         thread_context
     );
   } else {
-    (void)b_int4_signed;
+    (void)b_int4_staging;
     SimdgroupMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
         a,
         b,

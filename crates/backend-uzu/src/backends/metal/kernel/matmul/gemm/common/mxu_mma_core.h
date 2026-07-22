@@ -357,26 +357,22 @@ struct MxuMmaCore {
         uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> dot;
         dot.clear();
         if constexpr (BITS == 4) {
-          if constexpr (ALIGNED_N) {
-            Ops::template fragment_mma_int8_int4b<false>(
-                dot, left_tile, (device uchar*)(b_packed_simdgroup + k_byte), 2 * b_row_stride_bytes
-            );
-          } else {
-            threadgroup uint8_t* staged = b_int4_staging + int(tile_col_offset) * k_bytes_per_act_chunk;
-            const int packed_bytes = int(SIMDGROUP_BLOCK_N) * k_bytes_per_act_chunk;
-            for (int byte_index = int(thread_context.simd_lane_id); byte_index < packed_bytes;
-                 byte_index += int(METAL_SIMD_SIZE)) {
-              const int row = byte_index / k_bytes_per_act_chunk;
-              const int byte_in_row = byte_index - row * k_bytes_per_act_chunk;
-              staged[byte_index] = short(row) < simdgroup_limit_n
-                  ? b_packed_simdgroup[row * b_row_stride_bytes + k_byte + byte_in_row]
-                  : uchar(0);
-            }
-            threadgroup_barrier(mem_flags::mem_threadgroup);
-            Ops::template fragment_mma_int8_int4b<false>(
-                dot, left_tile, staged, int(SIMDGROUP_BLOCK_K)
-            );
+          // Stage one activation chunk into threadgroup memory, converting the
+          // unsigned U4 codes to signed int4b (XOR 0x88 per byte) just before the
+          // MXU MMA. The weight buffer itself stays unsigned so GEMV / BF16 GEMM
+          // can share it.
+          threadgroup uint8_t* staged = b_int4_staging + int(tile_col_offset) * k_bytes_per_act_chunk;
+          const int packed_bytes = int(SIMDGROUP_BLOCK_N) * k_bytes_per_act_chunk;
+          for (int byte_index = int(thread_context.simd_lane_id); byte_index < packed_bytes;
+               byte_index += int(METAL_SIMD_SIZE)) {
+            const int row = byte_index / k_bytes_per_act_chunk;
+            const int byte_in_row = byte_index - row * k_bytes_per_act_chunk;
+            staged[byte_index] = short(row) < simdgroup_limit_n
+                ? uchar(b_packed_simdgroup[row * b_row_stride_bytes + k_byte + byte_in_row] ^ uchar(0x88))
+                : uchar(0);
           }
+          threadgroup_barrier(mem_flags::mem_threadgroup);
+          Ops::template fragment_mma_int8_int4b<false>(dot, left_tile, staged, int(SIMDGROUP_BLOCK_K));
         } else {
           static_assert(BITS == 8, "symmetric int8 activations only support 4-bit or 8-bit weights");
           uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> right_tile;
@@ -387,6 +383,13 @@ struct MxuMmaCore {
             right_src = right_src.bounded(simdgroup_limit_n, SIMDGROUP_BLOCK_K);
           }
           right_tile.load_from(thread_context.simd_lane_id, right_src);
+          // Convert the unsigned U8 codes to signed int8 (XOR 0x80) just before
+          // the MXU MMA; the weight buffer stays unsigned for GEMV / BF16 GEMM.
+          thread int8_t* right_codes = right_tile.elements();
+          METAL_PRAGMA_UNROLL
+          for (ushort i = 0; i < right_tile.ELEMENTS_PER_FRAGMENT; ++i) {
+            right_codes[i] = as_type<int8_t>(uchar(as_type<uchar>(right_codes[i]) ^ uchar(0x80)));
+          }
           Ops::template fragment_mma<false, true>(dot, left_tile, right_tile);
         }
 
@@ -475,7 +478,7 @@ struct MxuMmaCore {
       const device int8_t* a_int8,
       const device float* a_scales,
       threadgroup BT* b_shared,
-      threadgroup uint8_t* b_int4_signed,
+      threadgroup uint8_t* b_int4_staging,
       const thread ThreadContext& thread_context
   ) {
     const uint partition = thread_context.threadgroup_position.z;
@@ -572,7 +575,7 @@ struct MxuMmaCore {
                           uint(b_addressing.groups_per_row),
                           uint(params->K) / uint(SIMDGROUP_BLOCK_K),
                           tile_col_offset,
-                          b_int4_signed,
+                          b_int4_staging,
                           thread_context
                       );
                     } else if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {

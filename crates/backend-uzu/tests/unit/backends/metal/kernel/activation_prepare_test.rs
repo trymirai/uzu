@@ -6,7 +6,10 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use super::ActivationsPrepareMetalKernel;
 use crate::{
     backends::{
-        common::{Backend, Context, Encoder, kernel::{ActivationsPrepareKernel, Kernels}},
+        common::{
+            Backend, Context, Encoder,
+            kernel::{ActivationsPrepareKernel, Kernels},
+        },
         cpu::Cpu,
         metal::{Metal, MetalContext},
     },
@@ -46,8 +49,8 @@ fn rht_quantize_matches_cpu() {
     let cpu_factors = alloc_allocation_with_data::<Cpu, i32>(&cpu, &factors_data);
 
     let metal_kernel = ActivationsPrepareMetalKernel::new(&metal, DataType::F32).expect("metal prepare");
-    let cpu_kernel =
-        <<Cpu as Backend>::Kernels as Kernels>::ActivationsPrepareKernel::new(&cpu, DataType::F32).expect("cpu prepare");
+    let cpu_kernel = <<Cpu as Backend>::Kernels as Kernels>::ActivationsPrepareKernel::new(&cpu, DataType::F32)
+        .expect("cpu prepare");
 
     let mut metal_enc = Encoder::<Metal>::new(&metal).expect("metal encoder");
     metal_kernel.encode(

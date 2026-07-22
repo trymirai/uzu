@@ -181,8 +181,6 @@ impl MatmulKernel for MatmulCpuKernel {
                 } => None,
             };
 
-            let signed_u8_weights = matches!(a_data, AData::Int8 { .. });
-
             unsafe {
                 for row in 0..m_u {
                     for col in 0..n_u {
@@ -235,17 +233,7 @@ impl MatmulKernel for MatmulCpuKernel {
                                         let bit_offset = (weight_linear_index % pack_factor) * 4;
                                         let w = weights.as_ptr() as *const u32;
                                         let nibble = ((w.add(word_index).read_unaligned() >> bit_offset) & 0xF) as u8;
-                                        if signed_u8_weights {
-                                            (i32::from(nibble ^ 0x8) - 8) as f32
-                                        } else {
-                                            f32::from(nibble)
-                                        }
-                                    } else if signed_u8_weights {
-                                        let word_index = weight_linear_index / pack_factor;
-                                        let bit_offset = (weight_linear_index % pack_factor) * 8;
-                                        let w = weights.as_ptr() as *const u32;
-                                        let code = ((w.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as u8;
-                                        code as i8 as f32
+                                        f32::from(nibble)
                                     } else {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 8;
@@ -272,16 +260,7 @@ impl MatmulKernel for MatmulCpuKernel {
                                             *zp.as_ptr().add(b_col * zero_point_stride + group_index) as f32
                                         }
                                     });
-                                    let bias_term = if signed_u8_weights {
-                                        if let Some(zp) = zero_point {
-                                            scale * (midpoint - zp)
-                                        } else if let Some(b) = biases {
-                                            read_f32(b.as_ptr(), weights_data_type, b_col * num_groups_k + group_index)
-                                                + scale * midpoint
-                                        } else {
-                                            0.0
-                                        }
-                                    } else if let Some(zp) = zero_point {
+                                    let bias_term = if let Some(zp) = zero_point {
                                         -scale * zp
                                     } else if let Some(b) = biases {
                                         read_f32(b.as_ptr(), weights_data_type, b_col * num_groups_k + group_index)

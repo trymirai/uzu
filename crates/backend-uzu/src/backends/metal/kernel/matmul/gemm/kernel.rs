@@ -449,12 +449,12 @@ impl GemmKernel {
                 };
                 let a_is_int8 = a_prologue == GemmAPrologueKind::Int8Symmetric;
 
-                let (output_bias, bias_after_rht, output_transform) =
-                    if rht_factors.is_some() && output_bias.is_some() {
-                        (None, output_bias, output_transform.difference(GemmDTransform::BIAS))
-                    } else {
-                        (output_bias, None, output_transform)
-                    };
+                let (output_bias, bias_after_rht, output_transform) = if rht_factors.is_some() && output_bias.is_some()
+                {
+                    (None, output_bias, output_transform.difference(GemmDTransform::BIAS))
+                } else {
+                    (output_bias, None, output_transform)
+                };
 
                 let tiling = if use_mxu {
                     if a_is_int8 {

@@ -9,8 +9,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Context, Encoder,
-        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        Allocation, Backend, Context, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::matmul::symmetric_int8_activations::activation_quantization_group_size_for_rht_linear,
     },
     config::weight_matrix::{

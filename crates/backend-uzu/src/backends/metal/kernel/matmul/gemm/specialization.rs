@@ -1,6 +1,8 @@
 use super::error::GemmSpecializationError;
 use crate::{
-    backends::common::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
+    backends::common::gpu_types::gemm::{
+        GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling,
+    },
     data_type::DataType,
 };
 
