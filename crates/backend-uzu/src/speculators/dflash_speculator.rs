@@ -161,10 +161,9 @@ impl<B: Backend> DFlashSpeculator<B> {
         if let Some(weaver) = self.weaver.as_ref() {
             let max_depth = self.config.weaver_config.as_ref().expect("a Weaver implies a Weaver config").max_depth;
             let lookahead_count = max_depth.min(block_size.saturating_sub(1));
-            if (options.budget + 1) * options.children_per_node > MAX_FRONTIER_SLOTS
-                || !options.children_per_node.is_multiple_of(options.frontier_width)
-                || lookahead_count == 0
-            {
+            // The frontier holds one slot per (tree slot, child) pair; the select
+            // kernel silently no-ops past its capacity.
+            if (options.budget + 1) * options.children_per_node > MAX_FRONTIER_SLOTS || lookahead_count == 0 {
                 return Err(DFlashTreeError::InvalidOptions);
             }
             let target_hidden = state.target_output_norm().ok_or(DFlashTreeError::MissingTargetHidden)?;
