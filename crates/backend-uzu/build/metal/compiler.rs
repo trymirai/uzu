@@ -30,6 +30,9 @@ struct ObjectInfo {
     kernels: Box<[MetalKernelInfo]>,
     specialize_indices: SpecializeBaseIndices,
     buildsystem_hash: [u8; blake3::OUT_LEN],
+    /// The gpu-type data the wrappers in this object were generated from; see
+    /// [`EnumPaths::semantic_fingerprint`].
+    semantic_hash: [u8; blake3::OUT_LEN],
     dependency_hashes: HashMap<Box<str>, [u8; blake3::OUT_LEN]>,
 }
 
@@ -67,9 +70,13 @@ async fn hash_dependencies(
     try_join_all(futures).await.map(|v| v.into_iter().collect())
 }
 
-fn objects_hash<'a>(objects: impl IntoIterator<Item = &'a ObjectInfo>) -> anyhow::Result<blake3::Hash> {
+fn objects_hash<'a>(
+    objects: impl IntoIterator<Item = &'a ObjectInfo>,
+    semantic_hash: &blake3::Hash,
+) -> anyhow::Result<blake3::Hash> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(caching::build_system_hash().context("cannot get build system hash")?.as_bytes());
+    hasher.update(semantic_hash.as_bytes());
     let mut paths: Vec<_> = objects.into_iter().map(|o| &o.object_path).collect();
     paths.sort();
     for path in paths {
@@ -120,8 +127,10 @@ impl MetalCompiler {
         &self,
         source_path: PathBuf,
         enum_paths: &EnumPaths,
+        semantic_hash: &blake3::Hash,
     ) -> anyhow::Result<ObjectInfo> {
         let buildsystem_hash = *caching::build_system_hash().context("cannot get build system cache")?.as_bytes();
+        let semantic_hash = *semantic_hash.as_bytes();
 
         let source_path_pretty = source_path.file_name().unwrap().to_str().unwrap();
         debug_log!("compile start: {source_path_pretty}");
@@ -140,6 +149,7 @@ impl MetalCompiler {
             if let Ok(contents) = tokio::fs::read(&objectinfo_path).await
                 && let Ok(cached) = serde_json::from_slice::<ObjectInfo>(&contents)
                 && buildsystem_hash == cached.buildsystem_hash
+                && semantic_hash == cached.semantic_hash
                 && let Ok(dependency_hashes) = hash_dependencies(cached.dependency_hashes.keys().cloned()).await
                 && dependency_hashes == cached.dependency_hashes
             {
@@ -197,6 +207,7 @@ impl MetalCompiler {
             kernels: kernel_infos.into_boxed_slice(),
             specialize_indices,
             buildsystem_hash,
+            semantic_hash,
             dependency_hashes,
         };
 
@@ -221,11 +232,12 @@ impl MetalCompiler {
     async fn link<'a>(
         &self,
         objects: impl IntoIterator<Item = &'a ObjectInfo> + Clone,
+        semantic_hash: &blake3::Hash,
     ) -> anyhow::Result<PathBuf> {
         let library_path = self.out_dir.join("default.metallib");
         let hash_path = self.out_dir.join("default.metallib.hash");
 
-        let hash = objects_hash(objects.clone())?;
+        let hash = objects_hash(objects.clone(), semantic_hash)?;
 
         if let Ok(cached_hash) = fs::read_to_string(&hash_path)
             && cached_hash == hash.to_string()
@@ -278,11 +290,12 @@ impl MetalCompiler {
         &self,
         objects: impl IntoIterator<Item = &'a ObjectInfo> + Clone,
         enum_paths: &EnumPaths,
+        semantic_hash: &blake3::Hash,
     ) -> anyhow::Result<()> {
         let out_path = self.out_dir.join("dsl.rs");
         let hash_path = self.out_dir.join("dsl.rs.hash");
 
-        let hash = objects_hash(objects.clone())?;
+        let hash = objects_hash(objects.clone(), semantic_hash)?;
 
         if let Ok(cached_hash) = fs::read_to_string(&hash_path)
             && cached_hash == hash.to_string()
@@ -355,16 +368,18 @@ impl Compiler for MetalCompiler {
 
         let num_concurrent_compiles = std::thread::available_parallelism().map(|x| x.get()).unwrap_or(4) * 2;
 
+        let semantic_hash = enum_paths.semantic_fingerprint();
+
         let objects: Vec<ObjectInfo> = stream::iter(metal_sources)
-            .map(|p| self.compile(p, enum_paths))
+            .map(|p| self.compile(p, enum_paths, &semantic_hash))
             .buffer_unordered(num_concurrent_compiles)
             .try_collect()
             .await
             .context("cannot compile metal sources")?;
 
         self.manifest(&objects, enum_paths).context("cannot write variant manifest")?;
-        self.link(&objects).await.context("cannot link objects")?;
-        self.bindgen(&objects, enum_paths).context("cannot generate bindings")?;
+        self.link(&objects, &semantic_hash).await.context("cannot link objects")?;
+        self.bindgen(&objects, enum_paths, &semantic_hash).context("cannot generate bindings")?;
 
         Ok(objects.iter().map(|o| o.kernels()).collect())
     }

@@ -4,7 +4,7 @@ use anyhow::bail;
 use syn::{Type, TypePath, visit_mut::VisitMut};
 
 use super::gpu_types::{
-    GpuType, GpuTypeName, GpuTypePath, GpuTypeVariantGroup, GpuTypes,
+    GpuType, GpuTypeName, GpuTypePath, GpuTypeVariantGroup, GpuTypes, VariantGroupArm,
     tile_geometry::{ACCESSORS, geometries, metal_prefix},
 };
 
@@ -24,10 +24,18 @@ pub enum GpuTypeKind {
     OptionSet,
 }
 
+/// Length-prefixed so that concatenating fields cannot alias a different field split.
+fn hash_str(
+    hasher: &mut blake3::Hasher,
+    text: &str,
+) {
+    hasher.update(&(text.len() as u64).to_le_bytes());
+    hasher.update(text.as_bytes());
+}
+
 #[derive(Clone)]
 struct GpuTypeEntry {
     path: GpuTypePath,
-    #[allow(dead_code)]
     kind: GpuTypeKind,
     /// Variant names and discriminants in declaration order, so a shader can omit a
     /// `VARIANTS` list for an enum axis and have the members single-sourced from the
@@ -112,6 +120,83 @@ impl EnumPaths {
             helpers,
             variant_group_paths,
         })
+    }
+
+    /// Everything the generators read out of the Rust `gpu_types` sources, hashed.
+    ///
+    /// Wrappers, bindings and the manifest are all derived from this data, but a variant
+    /// group emits nothing into the Metal headers whose contents the object cache hashes:
+    /// editing one leaves every other cache input identical, so the caches would serve an
+    /// `.air` and a `dsl.rs` built for a variant set that no longer exists. Mixing this
+    /// in is what makes such an edit visible to them.
+    pub fn semantic_fingerprint(&self) -> blake3::Hash {
+        let mut hasher = blake3::Hasher::new();
+
+        hash_str(&mut hasher, "enums");
+        let entries: BTreeMap<&str, &GpuTypeEntry> =
+            self.short_name_to_entry.iter().map(|(name, entry)| (name.as_ref(), entry)).collect();
+        for (name, entry) in entries {
+            hash_str(&mut hasher, name);
+            hash_str(&mut hasher, &entry.path);
+            hasher.update(&[match entry.kind {
+                GpuTypeKind::Enum => 0,
+                GpuTypeKind::OptionSet => 1,
+            }]);
+            for (variant, discriminant) in entry.variants.iter() {
+                hash_str(&mut hasher, variant);
+                hasher.update(&discriminant.to_le_bytes());
+            }
+        }
+
+        hash_str(&mut hasher, "variant groups");
+        let groups: BTreeMap<&str, &GpuTypeVariantGroup> =
+            self.variant_groups.iter().map(|group| (group.name.as_ref(), group)).collect();
+        for (name, group) in groups {
+            hash_str(&mut hasher, name);
+            for axis in group.axes.iter() {
+                hash_str(&mut hasher, axis);
+            }
+            for arm in group.arms.iter() {
+                match arm {
+                    VariantGroupArm::Unit {
+                        name,
+                    } => {
+                        hash_str(&mut hasher, "unit");
+                        hash_str(&mut hasher, name);
+                    },
+                    VariantGroupArm::Product {
+                        name,
+                        fields,
+                    } => {
+                        hash_str(&mut hasher, "product");
+                        hash_str(&mut hasher, name);
+                        for (field, field_type) in fields.iter() {
+                            hash_str(&mut hasher, field);
+                            hash_str(&mut hasher, field_type);
+                        }
+                    },
+                }
+            }
+        }
+
+        hash_str(&mut hasher, "helpers");
+        for (name, helper) in self.helpers.iter() {
+            hash_str(&mut hasher, name);
+            hash_str(&mut hasher, &helper.parameter);
+            hash_str(&mut hasher, &helper.rust_method);
+            for (variant, value) in helper.values.iter() {
+                hash_str(&mut hasher, variant);
+                hasher.update(&value.to_le_bytes());
+            }
+        }
+
+        hash_str(&mut hasher, "variant group paths");
+        for (name, path) in self.variant_group_paths.iter() {
+            hash_str(&mut hasher, name);
+            hash_str(&mut hasher, path);
+        }
+
+        hasher.finalize()
     }
 
     pub fn full_path_for(

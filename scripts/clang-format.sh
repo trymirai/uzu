@@ -10,6 +10,8 @@ set -euo pipefail
 #   - target/ (Rust build)
 #   - external/ (third-party deps)
 #   - .git/
+#   - kernel/generated/ (build-script output: reformatting it only makes the next
+#     build rewrite the file, which invalidates every Metal object that includes it)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 cd "$ROOT_DIR"
@@ -34,7 +36,7 @@ while IFS= read -r -d '' file; do
 done < <(git ls-files -z --cached --others --exclude-standard -- \
   '*.h' '*.hpp' '*.hh' \
   '*.c' '*.cc' '*.cpp' \
-  '*.metal')
+  '*.metal' ':!*/kernel/generated/*')
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
   echo "No files to format."
