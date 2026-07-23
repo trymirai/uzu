@@ -4,10 +4,10 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+        gpu_types::weaver,
         kernel::{
             ActivationKernel, AttentionLastQueryKernel, AttentionPrepareKernel, TensorAddBiasKernel,
             TensorAddSwapKernel, WeaverNodeCacheWriteKernel, WeaverTopChildrenKernel,
-            weaver::{MAX_CANDIDATES, METADATA_LANE_COUNT},
         },
     },
     config::{normalization::NormalizationConfig, weaver::WeaverConfig},
@@ -102,7 +102,7 @@ pub enum WeaverNewError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("model_dim must be divisible by num_heads")]
     InvalidHeadConfig,
-    #[error("candidate_pool_size must be in 1..={MAX_CANDIDATES}, got {0}")]
+    #[error("candidate_pool_size must be in 1..={max}, got {0}", max = weaver::CANDIDATES_MAX)]
     InvalidCandidatePoolSize(usize),
 }
 
@@ -212,7 +212,7 @@ impl<B: Backend> Weaver<B> {
         if config.num_heads == 0 || !config.model_dim.is_multiple_of(config.num_heads) {
             return Err(WeaverNewError::InvalidHeadConfig);
         }
-        if config.candidate_pool_size == 0 || config.candidate_pool_size > MAX_CANDIDATES {
+        if config.candidate_pool_size == 0 || config.candidate_pool_size > weaver::CANDIDATES_MAX {
             return Err(WeaverNewError::InvalidCandidatePoolSize(config.candidate_pool_size));
         }
         let norm = |dim, name: &str| -> Result<_, WeaverNewError<B>> {
@@ -364,11 +364,11 @@ impl<B: Backend> Weaver<B> {
         let rows = input.row_count;
         let candidates = input.candidate_count;
         assert!(rows > 0);
-        assert!(candidates > 0 && candidates <= MAX_CANDIDATES);
+        assert!(candidates > 0 && candidates <= weaver::CANDIDATES_MAX);
         assert!(children > 0 && children <= candidates);
         assert!(input.ancestor_stride > 0);
         let word = DataType::U32.size_in_bytes();
-        debug_assert!(input.node_metadata.size() >= METADATA_LANE_COUNT * rows * word);
+        debug_assert!(input.node_metadata.size() >= weaver::METADATA_LANE_COUNT * rows * word);
         debug_assert!(input.parent_token_ids.size() >= rows * word);
         debug_assert!(input.ancestor_indices.size() >= rows * input.ancestor_stride * word);
 

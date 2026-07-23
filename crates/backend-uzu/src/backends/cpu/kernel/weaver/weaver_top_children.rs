@@ -1,7 +1,7 @@
 use half::bf16;
 use proc_macros::kernel;
 
-use crate::backends::common::kernel::weaver::MAX_CANDIDATES;
+use crate::backends::common::gpu_types::weaver;
 
 #[kernel(WeaverTopChildren)]
 pub fn weaver_top_children(
@@ -17,7 +17,7 @@ pub fn weaver_top_children(
     let rows = rows as usize;
     let candidates = candidates as usize;
     let children = children as usize;
-    if candidates == 0 || candidates > MAX_CANDIDATES || children == 0 || children > candidates {
+    if candidates == 0 || candidates > weaver::CANDIDATES_MAX || children == 0 || children > candidates {
         return;
     }
     for row in 0..rows {
