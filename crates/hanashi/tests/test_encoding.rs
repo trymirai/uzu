@@ -13,7 +13,7 @@ use helpers::{
     tokenizer_directory,
 };
 use shoji::types::{
-    basic::ReasoningEffort,
+    basic::{ReasoningEffort, ToolCall, Value},
     session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
 
@@ -234,6 +234,146 @@ fn test_encoding_gpt_oss() {
             normalized_messages
         }),
     );
+}
+
+/// Multi-turn tool calling: prior tool calls re-rendered into the prompt must match the reference
+/// gpt-oss chat template byte for byte (`to=` before the channel, plain `json` content type, the
+/// message closed by `<|call|>`) — the form the model expects to see in its context. Deviations
+/// (e.g. `<|constrain|>json` rendered as a special token) push the follow-up turn out of
+/// distribution and make the model more likely to emit malformed tool-call headers.
+#[test]
+fn test_encoding_gpt_oss_tool_call_rerender() {
+    let tokenizer_directory = tokenizer_directory("openai_gpt-oss-20b");
+    if !tokenizer_directory.exists() {
+        return;
+    }
+
+    let context = Context {
+        tokenizer_location: TokenizerLocation::Directory {
+            path: tokenizer_directory.to_str().unwrap().to_string(),
+            name: None,
+        },
+    };
+    let mut encoding = Encoding::new(harmony(HarmonyConfig::GptOss), context).unwrap();
+
+    let messages = vec![
+        ChatMessage::system().with_text("You are a helpful assistant".to_string()).with_block(
+            ChatContentBlock::ConversationStartDate {
+                value: "2026-07-23".to_string(),
+            },
+        ),
+        ChatMessage::user().with_text("What time is it now?".to_string()),
+        ChatMessage::assistant().with_reasoning("Need the current time.".to_string()).with_tool_call(ToolCall {
+            identifier: None,
+            name: "get_current_time".to_string(),
+            arguments: Value::from(serde_json::json!({})),
+        }),
+        ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+            identifier: None,
+            name: Some("get_current_time".to_string()),
+            value: Value::from(serde_json::json!({"time": "17:03"})),
+        }),
+    ];
+    encoding.encode(messages).unwrap();
+
+    let expected = concat!(
+        "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\n",
+        "Knowledge cutoff: 2024-06\n",
+        "Current date: 2026-07-23\n",
+        "\n",
+        "Reasoning: medium\n",
+        "\n",
+        "# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>",
+        "<|start|>developer<|message|># Instructions\n",
+        "\n",
+        "You are a helpful assistant<|end|>",
+        "<|start|>user<|message|>What time is it now?<|end|>",
+        "<|start|>assistant<|channel|>analysis<|message|>Need the current time.<|end|>",
+        "<|start|>assistant to=functions.get_current_time<|channel|>commentary json<|message|>{}<|call|>",
+        "<|start|>functions.get_current_time to=assistant<|channel|>commentary<|message|>{\"time\":\"17:03\"}<|end|>",
+        "<|start|>assistant",
+    );
+    assert_eq!(encoding.state().text(), expected);
+}
+
+/// gpt-oss sometimes drops or misplaces the `<|channel|>` token when it opens a tool-call header
+/// right after a tool response (e.g. `commentary to=functions.x<|channel|>commentary
+/// <|constrain|>json<|message|>` straight after `<|start|>assistant`). The decoder must repair
+/// such headers instead of failing the whole turn, while keeping the parser strict for anything
+/// it cannot attribute.
+#[test]
+fn test_decoding_gpt_oss_malformed_tool_call_header() {
+    let tokenizer_directory = tokenizer_directory("openai_gpt-oss-20b");
+    if !tokenizer_directory.exists() {
+        return;
+    }
+    let tokenizer = load_tokenizer("openai_gpt-oss-20b");
+
+    let context = Context {
+        tokenizer_location: TokenizerLocation::Directory {
+            path: tokenizer_directory.to_str().unwrap().to_string(),
+            name: None,
+        },
+    };
+    let mut encoding = Encoding::new(harmony(HarmonyConfig::GptOss), context).unwrap();
+
+    let cases: &[(&str, Option<&str>)] = &[
+        // the exact quirk observed from gpt-oss-20b: channel name first, marker misplaced
+        (
+            "commentary to=functions.get_current_location<|channel|>commentary <|constrain|>json<|message|>{}<|call|>",
+            Some("get_current_location"),
+        ),
+        // channel marker missing entirely
+        ("commentary to=functions.get_current_time <|constrain|>json<|message|>{}<|call|>", Some("get_current_time")),
+        // plain-text content type, no marker
+        ("commentary to=functions.get_current_time json<|message|>{}<|call|>", Some("get_current_time")),
+        // well-formed headers must pass through untouched
+        (
+            "<|channel|>commentary to=functions.get_current_time <|constrain|>json<|message|>{}<|call|>",
+            Some("get_current_time"),
+        ),
+        (
+            "<|channel|>analysis<|message|>Need the time.<|end|>\
+             <|start|>assistant to=functions.get_current_time<|channel|>commentary <|constrain|>json<|message|>{}<|call|>",
+            Some("get_current_time"),
+        ),
+        ("<|channel|>final<|message|>It is 17:03.<|return|>", None),
+    ];
+
+    for (completion, expected_tool_call) in cases {
+        encoding.reset().unwrap();
+        encoding.encode(vec![ChatMessage::user().with_text("What time is it now?".to_string())]).unwrap();
+
+        let token_ids = tokenizer.encode(*completion, false).unwrap().get_ids().to_vec();
+        for token_id in token_ids {
+            encoding.decode(vec![token_id]).unwrap_or_else(|error| panic!("Failed to decode {completion:?}: {error}"));
+        }
+
+        let assistant_message = encoding.state().messages.last().unwrap();
+        assert_eq!(assistant_message.role, ChatRole::Assistant {}, "for completion {completion:?}");
+        let tool_call_names = assistant_message
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ChatContentBlock::ToolCall {
+                    value,
+                } => Some(value.name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        match expected_tool_call {
+            Some(name) => assert_eq!(tool_call_names, vec![*name], "for completion {completion:?}"),
+            None => assert!(tool_call_names.is_empty(), "for completion {completion:?}"),
+        }
+    }
+
+    // a header the repair cannot attribute must still fail strict parsing
+    encoding.reset().unwrap();
+    encoding.encode(vec![ChatMessage::user().with_text("What time is it now?".to_string())]).unwrap();
+    let garbled = "commentary nonsense to=functions.get_current_time<|message|>{}<|call|>";
+    let token_ids = tokenizer.encode(garbled, false).unwrap().get_ids().to_vec();
+    let result = token_ids.into_iter().try_for_each(|token_id| encoding.decode(vec![token_id]));
+    assert!(result.is_err(), "Expected garbled header {garbled:?} to fail decoding");
 }
 
 #[test]

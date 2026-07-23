@@ -9,14 +9,18 @@ use shoji::types::{
     session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
 
-use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};
+use crate::chat::{
+    harmony::bridging::{Error, FromHarmony, ToHarmony},
+    strftime_now,
+};
 
 const FUNCTIONS_NAMESPACE: &str = "functions";
 const CHANNEL_ANALYSIS: &str = "analysis";
 const CHANNEL_COMMENTARY: &str = "commentary";
 const CHANNEL_FINAL: &str = "final";
-// The `<|constrain|>` prefix makes the encoding render the content type as the special token.
-const CONTENT_TYPE_CONSTRAINED_JSON: &str = "<|constrain|>json";
+// Plain "json" matches how the reference gpt-oss chat template re-renders tool calls in the conversation history (`<|channel|>commentary json<|message|>`);
+// the `<|constrain|>json` special-token form only appears in fresh completions, not in re-rendered history.
+const CONTENT_TYPE_JSON: &str = "json";
 const RECIPIENT_ASSISTANT: &str = "assistant";
 const BUILTIN_BROWSER: &str = "browser";
 const BUILTIN_PYTHON: &str = "python";
@@ -90,6 +94,12 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                             });
                         },
                     }
+                }
+
+                // the reference gpt-oss chat template always includes the current date, so
+                // default it here the same way it does (strftime_now("%Y-%m-%d"))
+                if system_content.conversation_start_date.is_none() {
+                    system_content.conversation_start_date = Some(strftime_now("%Y-%m-%d".to_string()));
                 }
 
                 result.push(ExternalMessage {
@@ -209,9 +219,15 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                 }
 
                 if !text_parts.is_empty() {
+                    // text next to a tool call is a commentary-channel preamble, not a final reply
+                    let channel = if tool_calls.is_empty() {
+                        CHANNEL_FINAL
+                    } else {
+                        CHANNEL_COMMENTARY
+                    };
                     result.push(
                         ExternalMessage::from_role_and_content(ExternalRole::Assistant, text_parts.join(""))
-                            .with_channel(CHANNEL_FINAL),
+                            .with_channel(channel),
                     );
                 }
 
@@ -231,7 +247,7 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                         )
                         .with_channel(CHANNEL_COMMENTARY)
                         .with_recipient(format!("{FUNCTIONS_NAMESPACE}.{}", tool_call.name))
-                        .with_content_type(CONTENT_TYPE_CONSTRAINED_JSON),
+                        .with_content_type(CONTENT_TYPE_JSON),
                     );
                 }
             },
@@ -438,25 +454,32 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                             });
                         },
                         Some(CHANNEL_COMMENTARY) => {
-                            let recipient =
-                                assistant_message.recipient.as_deref().ok_or_else(|| Error::SerializationFailed {
-                                    message: "Tool call missing recipient".to_string(),
-                                })?;
-                            let name = strip_namespace_prefix(recipient);
+                            match assistant_message.recipient.as_deref() {
+                                Some(recipient) => {
+                                    let name = strip_namespace_prefix(recipient);
 
-                            match serde_json::from_str::<serde_json::Value>(&text) {
-                                Ok(json_value) => {
-                                    content.push(ChatContentBlock::ToolCall {
-                                        value: ToolCall {
-                                            identifier: None,
-                                            name: name.to_string(),
-                                            arguments: Value::from(json_value),
+                                    match serde_json::from_str::<serde_json::Value>(&text) {
+                                        Ok(json_value) => {
+                                            content.push(ChatContentBlock::ToolCall {
+                                                value: ToolCall {
+                                                    identifier: None,
+                                                    name: name.to_string(),
+                                                    arguments: Value::from(json_value),
+                                                },
+                                            });
                                         },
-                                    });
+                                        Err(_) => {
+                                            content.push(ChatContentBlock::ToolCallCandidate {
+                                                value: Value::from(serde_json::Value::String(text)),
+                                            });
+                                        },
+                                    }
                                 },
-                                Err(_) => {
-                                    content.push(ChatContentBlock::ToolCallCandidate {
-                                        value: Value::from(serde_json::Value::String(text)),
+                                // commentary without a recipient is a user-visible preamble
+                                // (e.g. an action plan announced before calling tools)
+                                None => {
+                                    content.push(ChatContentBlock::Text {
+                                        value: text,
                                     });
                                 },
                             }
