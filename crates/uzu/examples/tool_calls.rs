@@ -28,11 +28,11 @@ fn get_current_location() -> Result<Coordinate, FutureError> {
 #[uzu_tool_function]
 fn get_current_temperature(
     /// Latitude in decimal degrees.
-    latitude: f64,
+    _latitude: f64,
     /// Longitude in decimal degrees.
-    longitude: f64,
+    _longitude: f64,
 ) -> Result<f64, FutureError> {
-    Ok((latitude + longitude) % 30.0)
+    Ok(25.0)
 }
 
 #[tokio::main]
