@@ -104,7 +104,7 @@ pub fn qwen3_layer_shapes(bits: u32) -> impl Iterator<Item = (&'static str, Shap
     } else {
         256
     };
-    let ms = &[1usize, 4, 8, 32, 64];
+    let ms = &[1usize, 2, 4, 8, 16, 32, 64];
     QWEN3_LAYERS
         .iter()
         .filter(move |&&(_, k, _)| k.is_multiple_of(block_size))
