@@ -525,10 +525,20 @@ fn nagare_path() -> syn::Result<TokenStream2> {
             let ident = format_ident!("{name}");
             Ok(quote!(::#ident))
         },
-        Err(error) => Err(Error::new(
-            Span::call_site(),
-            format!("`nagare` must be a direct dependency to use its tool macros: {error}"),
-        )),
+        Err(nagare_error) => match crate_name("uzu") {
+            Ok(FoundCrate::Itself) => Ok(quote!(crate::session)),
+            Ok(FoundCrate::Name(name)) => {
+                let ident = format_ident!("{name}");
+                Ok(quote!(::#ident::session))
+            },
+            Err(uzu_error) => Err(Error::new(
+                Span::call_site(),
+                format!(
+                    "either `nagare` or `uzu` must be a direct dependency to use the tool macros: \
+                     failed to find `nagare` ({nagare_error}); failed to find `uzu` ({uzu_error})"
+                ),
+            )),
+        },
     }
 }
 
