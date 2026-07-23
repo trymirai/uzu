@@ -381,6 +381,74 @@ fn test_encoding_llama_32() {
     run_encoding_test(&hanashi(HanashiConfig::Llama32), Some(r"Today Date: (.+?)\n"), None, false, false, None);
 }
 
+/// After a tool response, Llama 3.2 1B sometimes replies by echoing the result JSON as a new
+/// pseudo tool call (`<|python_tag|>{"time": ...}<|eom_id|>`). Once such a section finishes it
+/// parses into an object that is not a tool call; it must surface as plain text so the turn ends
+/// with a normal reply instead of dead-ending on a tool-call candidate.
+#[test]
+fn test_decoding_llama_32_malformed_tool_call() {
+    let tokenizer_directory = tokenizer_directory("meta-llama_Llama-3.2-1B-Instruct");
+    if !tokenizer_directory.exists() {
+        return;
+    }
+    let tokenizer = load_tokenizer("meta-llama_Llama-3.2-1B-Instruct");
+
+    let context = Context {
+        tokenizer_location: TokenizerLocation::Directory {
+            path: tokenizer_directory.to_str().unwrap().to_string(),
+            name: None,
+        },
+    };
+    let mut encoding = Encoding::new(hanashi(HanashiConfig::Llama32), context).unwrap();
+
+    // (completion, expected tool call, expected text fragment)
+    let cases: &[(&str, Option<&str>, Option<&str>)] = &[
+        // proper tool call: unchanged behavior
+        (
+            "<|python_tag|>{\"name\": \"get_current_time\", \"parameters\": {}}<|eom_id|>",
+            Some("get_current_time"),
+            None,
+        ),
+        // tool-result echo: must become text, not a tool-call candidate
+        ("<|python_tag|>{\"time\": \"17:03\", \"return\": \"time\"}<|eom_id|>", None, Some("17:03")),
+    ];
+
+    for (completion, expected_tool_call, expected_fragment) in cases {
+        encoding.reset().unwrap();
+        encoding
+            .encode(vec![
+                ChatMessage::system().with_text("You are a helpful assistant".to_string()),
+                ChatMessage::user().with_text("What is the time now?".to_string()),
+            ])
+            .unwrap();
+
+        let token_ids = tokenizer.encode(*completion, false).unwrap().get_ids().to_vec();
+        for token_id in token_ids {
+            encoding.decode(vec![token_id]).unwrap_or_else(|error| panic!("Failed to decode {completion:?}: {error}"));
+        }
+
+        let assistant_message = encoding.state().messages.last().unwrap();
+        assert_eq!(assistant_message.role, ChatRole::Assistant {}, "for completion {completion:?}");
+        let tool_call_names = assistant_message.tool_calls().iter().map(|call| call.name.clone()).collect::<Vec<_>>();
+        let has_candidates =
+            assistant_message.content.iter().any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }));
+        match expected_tool_call {
+            Some(name) => assert_eq!(tool_call_names, vec![name.to_string()], "for completion {completion:?}"),
+            None => {
+                assert!(tool_call_names.is_empty(), "for completion {completion:?}");
+                assert!(!has_candidates, "Expected no tool-call candidates for completion {completion:?}");
+            },
+        }
+        if let Some(fragment) = expected_fragment {
+            let text = assistant_message.text().unwrap_or_default();
+            assert!(
+                text.contains(fragment),
+                "Expected text with {fragment:?} for completion {completion:?}, got {text:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn test_encoding_qwen3() {
     run_encoding_test(&hanashi(HanashiConfig::Qwen3), None, None, false, false, None);

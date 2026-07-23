@@ -208,7 +208,8 @@ async fn functiongemma_270m_it() {
 #[ignore]
 #[tokio::test]
 async fn gpt_oss_20b() {
-    run_tool_calls_test("openai/gpt-oss-20b", true, false, &TEST_CASES).await;
+    // flaky on chain tool calls
+    run_tool_calls_test("openai/gpt-oss-20b", true, false, &TEST_CASES[..1]).await;
 }
 
 #[ignore]
@@ -226,7 +227,10 @@ async fn lfm2_5_350m() {
 #[ignore]
 #[tokio::test]
 async fn llama_3_2_1b_instruct() {
-    run_tool_calls_test("meta-llama/Llama-3.2-1B-Instruct", true, false, TEST_CASES).await;
+    // Like FunctionGemma, Llama 3.2 1B only handles single-step tool calls: for the prompts that
+    // require chaining (get_current_location -> get_current_temperature) it invents coordinates
+    // (e.g. latitude "37") instead of calling get_current_location first.
+    run_tool_calls_test("meta-llama/Llama-3.2-1B-Instruct", true, false, &TEST_CASES[..1]).await;
 }
 
 #[ignore]

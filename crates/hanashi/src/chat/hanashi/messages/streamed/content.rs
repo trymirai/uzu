@@ -51,15 +51,25 @@ impl Content {
                         Section::ToolCall {
                             value: Some(value),
                         } => {
-                            let block = match serde_json::from_value::<ToolCall>(value.clone()) {
-                                Ok(tool_call) => ChatContentBlock::ToolCall {
+                            match serde_json::from_value::<ToolCall>(value.clone()) {
+                                Ok(tool_call) => tool_calls.push(ChatContentBlock::ToolCall {
                                     value: tool_call,
+                                }),
+                                // tool_call sections keep their raw string value while streaming and
+                                // are parsed into objects once finished; a finished object that still
+                                // is not a tool call is model output that only looks like one (e.g.
+                                // llama-3.2 echoing a tool result as `<|python_tag|>{"time": ...}`),
+                                // so surface it as plain text instead of a dead-end candidate
+                                Err(_) => {
+                                    if value.is_object() {
+                                        text_parts.push(value.to_string());
+                                    } else {
+                                        tool_calls.push(ChatContentBlock::ToolCallCandidate {
+                                            value: value.into(),
+                                        });
+                                    }
                                 },
-                                Err(_) => ChatContentBlock::ToolCallCandidate {
-                                    value: value.into(),
-                                },
-                            };
-                            tool_calls.push(block);
+                            }
                         },
                         Section::ToolCall {
                             value: None,
