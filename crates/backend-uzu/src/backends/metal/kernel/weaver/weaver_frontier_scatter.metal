@@ -27,7 +27,7 @@ PUBLIC KERNEL(WeaverFrontierScatter)(
     return;
   }
 
-  const uint parent = round_metadata[WEAVER_METADATA_LANE_NODE_INDEX * rows + row];
+  const uint parent = round_metadata[weaver::METADATA_LANE_NODE_INDEX * rows + row];
   if (parent >= tree_slots) {
     return;
   }
@@ -37,13 +37,13 @@ PUBLIC KERNEL(WeaverFrontierScatter)(
   }
 
   const float logprob = child_logprobs[row * fanout + child];
-  const float cumulative_logprob = as_type<float>(tree[WEAVER_TREE_LANE_CUM * tree_slots + parent]) + logprob;
+  const float cumulative_logprob = as_type<float>(tree[weaver::TREE_LANE_CUM * tree_slots + parent]) + logprob;
 
-  frontier[WEAVER_FRONTIER_LANE_TOKEN * capacity + slot] = child_ids[row * fanout + child];
-  frontier[WEAVER_FRONTIER_LANE_PARENT * capacity + slot] = parent;
-  frontier[WEAVER_FRONTIER_LANE_DEPTH * capacity + slot] = tree[WEAVER_TREE_LANE_DEPTH * tree_slots + parent] + 1u;
-  frontier[WEAVER_FRONTIER_LANE_CUM * capacity + slot] = as_type<uint>(cumulative_logprob);
-  frontier[WEAVER_FRONTIER_LANE_LOGPROB * capacity + slot] = as_type<uint>(logprob);
-  frontier[WEAVER_FRONTIER_LANE_KEY * capacity + slot] = top_k_score_key(cumulative_logprob);
-  frontier[WEAVER_FRONTIER_LANE_ACTIVE * capacity + slot] = 1u;
+  frontier[weaver::FRONTIER_LANE_TOKEN * capacity + slot] = child_ids[row * fanout + child];
+  frontier[weaver::FRONTIER_LANE_PARENT * capacity + slot] = parent;
+  frontier[weaver::FRONTIER_LANE_DEPTH * capacity + slot] = tree[weaver::TREE_LANE_DEPTH * tree_slots + parent] + 1u;
+  frontier[weaver::FRONTIER_LANE_CUM * capacity + slot] = as_type<uint>(cumulative_logprob);
+  frontier[weaver::FRONTIER_LANE_LOGPROB * capacity + slot] = as_type<uint>(logprob);
+  frontier[weaver::FRONTIER_LANE_KEY * capacity + slot] = top_k_score_key(cumulative_logprob);
+  frontier[weaver::FRONTIER_LANE_ACTIVE * capacity + slot] = 1u;
 }
