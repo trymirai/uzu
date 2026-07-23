@@ -4,27 +4,14 @@ use thiserror::Error;
 use crate::{
     backends::common::gpu_types::trie::TrieNode as GpuTrieNode,
     data_type::DataType,
-    encodable_block::sampling::{PRng, speculator_sample},
+    encodable_block::sampling::PRng,
     engine::language_model::grammar::{Grammar, GrammarError},
-    speculators::speculator::Speculator,
 };
 
 #[derive(Debug, Error)]
 pub enum TrieError {
     #[error("child with the same token id is already present")]
     DuplicateTokenId,
-}
-
-pub struct TrieCreationConfig {
-    pub width: usize,
-}
-
-impl Default for TrieCreationConfig {
-    fn default() -> Self {
-        TrieCreationConfig {
-            width: 4,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -77,103 +64,9 @@ impl TrieNode {
         self.next.iter().find(|n| n.token == token)
     }
 
-    pub fn get_mut(
-        &mut self,
-        token: u64,
-    ) -> Option<&mut TrieNode> {
-        self.next.iter_mut().find(|n| n.token == token)
-    }
-
     #[cfg(test)]
     pub fn token(&self) -> u64 {
         self.token
-    }
-
-    pub fn seed(&self) -> u64 {
-        self.seed
-    }
-
-    pub fn from_speculator<'grammar>(
-        prefix: &[u64],
-        prng: &PRng,
-        mut grammar: Option<&mut (dyn Grammar + 'grammar)>,
-        speculator: &dyn Speculator,
-        vocab_size: usize,
-        creation_config: &TrieCreationConfig,
-        max_length: usize,
-        max_height: Option<usize>,
-    ) -> Self {
-        assert!(max_length >= 1, "can't have zero sized trie");
-        assert!(max_height.is_none_or(|max_height| max_height > 0), "max height cannot be 0");
-        assert!(!prefix.is_empty(), "need seed node");
-
-        let prefix_length = prefix.len();
-        let mut speculated_suffix = prefix.to_vec();
-
-        let mut length = 1;
-        let mut height = 0;
-        let mut root = Self::new(*prefix.last().unwrap(), prng.derive((prefix_length - 1) as u64));
-
-        let mut cur_node = &mut root;
-        let mut cur_node_width = 0;
-        let mut cur_node_speculator_weights = speculator.speculate(&speculated_suffix);
-
-        let mut next_node = None;
-
-        while length < max_length && max_height.is_none_or(|max_height| height < max_height) {
-            // Guuumbel speculator trick: both speculator and llm sample via gumbel max trick using the same noise for increased acceptance rate
-            if let Some(next_speculated_token) =
-                speculator_sample(cur_node.seed(), vocab_size, &cur_node_speculator_weights)
-            {
-                // Add speculated token to the trie
-                if let Some(grammar) = grammar.as_deref_mut() {
-                    if grammar.accept_token(next_speculated_token).is_err() {
-                        cur_node_speculator_weights.remove(&next_speculated_token);
-                        continue;
-                    }
-                    grammar.rollback(1);
-                }
-
-                let leaf_node = Self::new(next_speculated_token, prng.derive((prefix_length + height) as u64));
-                cur_node.add(leaf_node).unwrap();
-
-                // If this is the first node we sampled (most likely to be selected after gumbel noise application) - set it as the next one
-                if next_node.is_none() {
-                    next_node = Some(next_speculated_token);
-                }
-
-                // Remove the token so that the next iteration samples the second most likely after gumbel noise application token
-                cur_node_speculator_weights.remove(&next_speculated_token);
-
-                length += 1;
-                cur_node_width += 1;
-                if cur_node_width >= creation_config.width {
-                    cur_node_speculator_weights.clear();
-                }
-            } else if let Some(next_node_token) = next_node.take() {
-                // Out of speculated tokens for this node, move onto the likeliest next node
-                speculated_suffix.push(next_node_token);
-                if let Some(grammar) = grammar.as_deref_mut()
-                    && grammar.accept_token(next_node_token).is_err()
-                {
-                    break;
-                }
-                height += 1;
-                cur_node = cur_node.get_mut(next_node_token).unwrap();
-                cur_node_width = 0;
-                cur_node_speculator_weights = speculator.speculate(&speculated_suffix);
-                continue;
-            } else {
-                // Dead end, exit
-                break;
-            };
-        }
-
-        if let Some(grammar) = grammar {
-            grammar.rollback(height);
-        }
-
-        root
     }
 
     pub fn flat(

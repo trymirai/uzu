@@ -60,6 +60,7 @@ pub(crate) struct WeaverStepBatch<'a, B: Backend> {
     pub candidate_logits: &'a Allocation<B>,
     pub ancestor_indices: &'a Allocation<B>,
     pub node_metadata: &'a Allocation<B>,
+    pub depth_seeds: &'a Allocation<B>,
 }
 
 pub(crate) struct Weaver<B: Backend> {
@@ -404,11 +405,14 @@ impl<B: Backend> Weaver<B> {
             &residual_logits,
             batch.candidate_logits,
             batch.candidate_ids,
+            batch.depth_seeds,
+            batch.node_metadata,
             &mut token_ids,
             &mut logprobs,
             batch.node_count as u32,
             batch.candidates_per_node as u32,
             children_per_node as u32,
+            target_embedding.vocab_size() as u32,
             encoder,
         );
         Ok(TopKChildren {

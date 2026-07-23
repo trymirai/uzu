@@ -4,7 +4,6 @@ mod content_block;
 mod message;
 mod reply;
 mod role;
-mod speculation_preset;
 
 pub use capabilities::ChatModelCapabilities;
 pub use config::ChatConfig;
@@ -14,4 +13,3 @@ pub use reply::{
     ChatReply, ChatReplyConfig, ChatReplyFinishReason, ChatReplyPowerStats, ChatReplySpeculatorStats, ChatReplyStats,
 };
 pub use role::ChatRole;
-pub use speculation_preset::ChatSpeculationPreset;

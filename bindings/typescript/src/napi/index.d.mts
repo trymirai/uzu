@@ -113,13 +113,11 @@ export declare class CancelToken {
 export declare class ChatConfig {
   contextLength: ContextLength
   samplingSeed: SamplingSeed
-  speculationPreset?: ChatSpeculationPreset
-  constructor(contextLength: ContextLength, samplingSeed: SamplingSeed, speculationPreset?: ChatSpeculationPreset)
+  constructor(contextLength: ContextLength, samplingSeed: SamplingSeed)
 
   static create(): ChatConfig
   withContextLength(contextLength: ContextLength): ChatConfig
   withSamplingSeed(samplingSeed: SamplingSeed): ChatConfig
-  withSpeculationPreset(speculationPreset?: ChatSpeculationPreset | undefined | null): ChatConfig
 }
 
 export declare class ChatContentBlockAudio {
@@ -322,21 +320,6 @@ export declare class ChatRoleTool {
 }
 
 export declare class ChatRoleUser {
-
-  constructor()
-}
-
-export declare class ChatSpeculationPresetClassification {
-  feature: Feature
-  constructor(feature: Feature)
-}
-
-export declare class ChatSpeculationPresetGeneralChat {
-
-  constructor()
-}
-
-export declare class ChatSpeculationPresetSummarization {
 
   constructor()
 }
@@ -738,9 +721,6 @@ export declare const enum ChatReplyFinishReason {
 
 export type ChatRole =
   ChatRoleUser | ChatRoleAssistant | ChatRoleSystem | ChatRoleDeveloper | ChatRoleTool | ChatRoleCustom
-
-export type ChatSpeculationPreset =
-  ChatSpeculationPresetGeneralChat | ChatSpeculationPresetSummarization | ChatSpeculationPresetClassification
 
 export interface ClassificationOutputProbabilities {
   values: Record<string, number>

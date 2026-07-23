@@ -18,7 +18,7 @@ use crate::{
 mod gumbel;
 mod prng;
 
-pub use gumbel::{gumbel_float, revidx, speculator_sample};
+pub use gumbel::{gumbel_float, revidx};
 pub use prng::PRng;
 
 pub struct Sampling<B: Backend> {
