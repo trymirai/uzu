@@ -368,22 +368,21 @@ struct MxuMmaCore {
                 const short row = short(tile_n * Ops::FRAGMENT_ROWS) + position.y +
                                   short(thread_row * Ops::THREAD_ELEMENT_ROW_STRIDE);
                 const ushort element_base = thread_row * Ops::THREAD_ELEMENT_COLS;
+                char4 codes = char4(0);
                 if (ALIGNED_N || row < simdgroup_limit_n) {
                   const int k_base = k_element_offset + int(tile_k * Ops::FRAGMENT_COLS) + int(position.x);
                   const ushort packed = *reinterpret_cast<const device ushort*>(
                       b_packed_simdgroup + int(row) * b_row_stride_bytes + (k_base >> 1)
                   );
-                  METAL_PRAGMA_UNROLL
-                  for (ushort element_col = 0; element_col < Ops::THREAD_ELEMENT_COLS; ++element_col) {
-                    const ushort nibble = (packed >> (4u * element_col)) & 0xFu;
-                    weight_vector[element_base + element_col] = int8_t(short(nibble) - short(8));
-                  }
-                } else {
-                  METAL_PRAGMA_UNROLL
-                  for (ushort element_col = 0; element_col < Ops::THREAD_ELEMENT_COLS; ++element_col) {
-                    weight_vector[element_base + element_col] = int8_t(0);
-                  }
+                  uint spread = uint(packed);
+                  spread = (spread | (spread << 8)) & 0x00FF00FFu;
+                  spread = (spread | (spread << 4)) & 0x0F0F0F0Fu;
+                  codes = as_type<char4>(spread) - char4(8);
                 }
+                weight_vector[element_base + 0] = codes.x;
+                weight_vector[element_base + 1] = codes.y;
+                weight_vector[element_base + 2] = codes.z;
+                weight_vector[element_base + 3] = codes.w;
               }
             }
           }
