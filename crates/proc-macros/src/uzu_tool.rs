@@ -7,11 +7,14 @@ use serde_derive_internals::{
     ast::{Container as SerdeContainer, Data as SerdeData},
 };
 use syn::{
-    Attribute, Data, DeriveInput, Error, Expr, ExprLit, Fields, FnArg, GenericArgument, ItemFn, Lit, Meta, Pat,
-    PathArguments, ReturnType, Type, ext::IdentExt, parse_macro_input,
+    Attribute, Data, DeriveInput, Error, Expr, ExprClosure, ExprLit, Fields, FnArg, GenericArgument, ItemFn, Lit, Meta,
+    Pat, PathArguments, ReturnType, Token, Type,
+    ext::IdentExt,
+    parse::{Parse, ParseStream},
+    parse_macro_input,
 };
 
-pub fn tool_function(
+pub fn uzu_tool_function(
     _args: TokenStream,
     input: TokenStream,
 ) -> TokenStream {
@@ -22,7 +25,15 @@ pub fn tool_function(
     }
 }
 
-pub fn derive_tool_schema(input: TokenStream) -> TokenStream {
+pub fn uzu_tool_closure(input: TokenStream) -> TokenStream {
+    let tool = parse_macro_input!(input as ToolClosure);
+    match expand_tool_closure(tool) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
+
+pub fn uzu_derive_tool_schema(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     match expand_tool_schema(input) {
         Ok(tokens) => tokens.into(),
@@ -85,54 +96,9 @@ fn expand_tool_function(mut func: ItemFn) -> syn::Result<TokenStream2> {
     call_fn.sig.ident = format_ident!("call");
     call_fn.attrs.retain(|attr| !attr.path().is_ident("doc"));
 
-    let parameters = if params.is_empty() {
-        quote!(::core::option::Option::None)
-    } else {
-        let properties = params.iter().map(|param| {
-            let name = param.ident.unraw().to_string();
-            let ty = &param.ty;
-            let schema = quote!(<#ty as #nagare::tool::schema::ToolSchema>::json_schema());
-            if param.description.is_empty() {
-                quote!((#name, #schema))
-            } else {
-                let description = &param.description;
-                quote!((#name, #schema.with_description(#description)))
-            }
-        });
-        let required = params.iter().filter(|param| param.required).map(|param| param.ident.unraw().to_string());
-        quote! {
-            ::core::option::Option::Some(
-                #nagare::tool::schema::JsonSchema::object(
-                    [#(#properties),*],
-                    ::std::vec::Vec::<&str>::from([#(#required),*]),
-                )
-                .to_value(),
-            )
-        }
-    };
-
-    let return_definition = match &ok_type {
-        Some(ty) => quote! {
-            ::core::option::Option::Some(<#ty as #nagare::tool::schema::ToolSchema>::json_schema().to_value())
-        },
-        None => quote!(::core::option::Option::None),
-    };
-
-    let arg_parsing = params.iter().map(|param| {
-        let ident = &param.ident;
-        let ty = &param.ty;
-        let arg_name = param.ident.unraw().to_string();
-        quote! {
-            let #ident: #ty = #nagare::__private::serde_json::from_value(
-                args.get(#arg_name)
-                    .cloned()
-                    .unwrap_or(#nagare::__private::serde_json::Value::Null),
-            )
-            .map_err(|error| {
-                ::std::format!("invalid value for parameter `{}` of tool `{}`: {}", #arg_name, #name_str, error)
-            })?;
-        }
-    });
+    let parameters = parameters_tokens(&params, &nagare);
+    let return_definition = return_definition_tokens(ok_type.as_ref(), &nagare);
+    let arg_parsing = arg_parsing_tokens(&params, &name_str, &nagare);
 
     let arg_idents = params.iter().map(|param| &param.ident);
     let mut call = quote!(Self::call(#(#arg_idents),*));
@@ -198,6 +164,230 @@ fn expand_tool_function(mut func: ItemFn) -> syn::Result<TokenStream2> {
             }
         }
     })
+}
+
+/// Input of `uzu_tool_closure!`: optional doc comments, a tool name, a colon, and a closure.
+struct ToolClosure {
+    attrs: Vec<Attribute>,
+    name: syn::Ident,
+    closure: ExprClosure,
+}
+
+impl Parse for ToolClosure {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let attrs = input.call(Attribute::parse_outer)?;
+        let name = input.call(syn::Ident::parse_any)?;
+        input.parse::<Token![:]>()?;
+        let closure: ExprClosure = input.parse()?;
+        if !input.is_empty() {
+            return Err(input.error("unexpected tokens after the tool closure"));
+        }
+        Ok(Self {
+            attrs,
+            name,
+            closure,
+        })
+    }
+}
+
+fn expand_tool_closure(tool: ToolClosure) -> syn::Result<TokenStream2> {
+    let nagare = nagare_path()?;
+    let ToolClosure {
+        attrs,
+        name,
+        closure,
+    } = tool;
+
+    if let Some(constness) = &closure.constness {
+        return Err(Error::new_spanned(constness, "uzu_tool_closure! does not support `const` closures"));
+    }
+    if let Some(movability) = &closure.movability {
+        return Err(Error::new_spanned(movability, "uzu_tool_closure! does not support `static` closures"));
+    }
+    if let Some(lifetimes) = &closure.lifetimes {
+        return Err(Error::new_spanned(lifetimes, "uzu_tool_closure! does not support `for<...>` binders"));
+    }
+
+    let name_str = name.unraw().to_string();
+    let description = doc_string(&attrs);
+    let is_async = closure.asyncness.is_some();
+
+    let mut params = Vec::new();
+    for input in &closure.inputs {
+        let Pat::Type(pat_type) = input else {
+            return Err(Error::new_spanned(
+                input,
+                "uzu_tool_closure! parameters must have explicit types, e.g. `city: String`",
+            ));
+        };
+        let Pat::Ident(pat_ident) = &*pat_type.pat else {
+            return Err(Error::new_spanned(&pat_type.pat, "uzu_tool_closure! parameters must be plain identifiers"));
+        };
+        if pat_ident.subpat.is_some() {
+            return Err(Error::new_spanned(pat_ident, "uzu_tool_closure! parameters must be plain identifiers"));
+        }
+        params.push(Param {
+            ident: pat_ident.ident.clone(),
+            ty: (*pat_type.ty).clone(),
+            description: doc_string(&pat_type.attrs),
+            required: !is_option(&pat_type.ty),
+        });
+    }
+
+    // Without a return type annotation the result is serialized as-is (`()` becomes `null`) and no return
+    // schema is published; `Result` unwrapping requires an explicit `-> Result<T, E>` annotation.
+    let (return_type, ok_type, is_result) = match &closure.output {
+        ReturnType::Default => (None, None, false),
+        ReturnType::Type(_, ty) => match result_ok_type(ty) {
+            Some(ok) => (Some((**ty).clone()), (!is_unit(ok)).then(|| ok.clone()), true),
+            None => (Some((**ty).clone()), (!is_unit(ty)).then(|| (**ty).clone()), false),
+        },
+    };
+
+    let parameters = parameters_tokens(&params, &nagare);
+    let return_definition = return_definition_tokens(ok_type.as_ref(), &nagare);
+    let arg_parsing = arg_parsing_tokens(&params, &name_str, &nagare);
+
+    let body = &closure.body;
+    let closure_params = params.iter().map(|param| {
+        let ident = &param.ident;
+        let ty = &param.ty;
+        quote!(#ident: #ty)
+    });
+    // An async body is rewritten as a closure returning an `async move` block, so each invocation produces
+    // an owned future; the invoker clones the closure per call, which only requires the captures to be
+    // `Clone + Send + Sync + 'static`.
+    let func = if is_async {
+        quote!(move |#(#closure_params),*| async move { #body })
+    } else {
+        quote!(move |#(#closure_params),*| { #body })
+    };
+
+    let arg_idents = params.iter().map(|param| &param.ident);
+    let mut call = quote!(__uzu_tool_func(#(#arg_idents),*));
+    if is_async {
+        call = quote!(#call.await);
+    }
+    let result_stmt = match &return_type {
+        Some(ty) => quote!(let __uzu_result: #ty = #call;),
+        None => quote!(let __uzu_result = #call;),
+    };
+    let unwrap_stmt = if is_result {
+        quote! {
+            let __uzu_result =
+                __uzu_result.map_err(|error| -> #nagare::tool::func_def::FutureError { error.into() })?;
+        }
+    } else {
+        quote!()
+    };
+    let serialize_result = return_type.is_none() || ok_type.is_some();
+    let output_expr = if serialize_result {
+        quote! {
+            let json = #nagare::__private::serde_json::to_value(&__uzu_result)?;
+            ::core::result::Result::<
+                #nagare::tool::func_def::Value,
+                #nagare::tool::func_def::FutureError,
+            >::Ok(::core::convert::Into::into(json))
+        }
+    } else {
+        quote! {
+            let _ = __uzu_result;
+            ::core::result::Result::<
+                #nagare::tool::func_def::Value,
+                #nagare::tool::func_def::FutureError,
+            >::Ok(::core::convert::Into::into(#nagare::__private::serde_json::Value::Null))
+        }
+    };
+
+    Ok(quote! {
+        {
+            let __uzu_tool_func = #func;
+            #nagare::tool::func_def::ToolFunctionDefinition::new(
+                ::std::string::String::from(#name_str),
+                ::std::string::String::from(#description),
+                #parameters,
+                #return_definition,
+                ::std::boxed::Box::new(move |args| {
+                    let __uzu_tool_func = ::core::clone::Clone::clone(&__uzu_tool_func);
+                    ::std::boxed::Box::pin(async move {
+                        let args: #nagare::__private::serde_json::Value =
+                            ::core::convert::TryInto::try_into(args)?;
+                        #(#arg_parsing)*
+                        #result_stmt
+                        #unwrap_stmt
+                        #output_expr
+                    })
+                }),
+            )
+        }
+    })
+}
+
+fn parameters_tokens(
+    params: &[Param],
+    nagare: &TokenStream2,
+) -> TokenStream2 {
+    if params.is_empty() {
+        return quote!(::core::option::Option::None);
+    }
+    let properties = params.iter().map(|param| {
+        let name = param.ident.unraw().to_string();
+        let ty = &param.ty;
+        let schema = quote!(<#ty as #nagare::tool::schema::ToolSchema>::json_schema());
+        if param.description.is_empty() {
+            quote!((#name, #schema))
+        } else {
+            let description = &param.description;
+            quote!((#name, #schema.with_description(#description)))
+        }
+    });
+    let required = params.iter().filter(|param| param.required).map(|param| param.ident.unraw().to_string());
+    quote! {
+        ::core::option::Option::Some(
+            #nagare::tool::schema::JsonSchema::object(
+                [#(#properties),*],
+                ::std::vec::Vec::<&str>::from([#(#required),*]),
+            )
+            .to_value(),
+        )
+    }
+}
+
+fn return_definition_tokens(
+    ok_type: Option<&Type>,
+    nagare: &TokenStream2,
+) -> TokenStream2 {
+    match ok_type {
+        Some(ty) => quote! {
+            ::core::option::Option::Some(<#ty as #nagare::tool::schema::ToolSchema>::json_schema().to_value())
+        },
+        None => quote!(::core::option::Option::None),
+    }
+}
+
+fn arg_parsing_tokens(
+    params: &[Param],
+    tool_name: &str,
+    nagare: &TokenStream2,
+) -> Vec<TokenStream2> {
+    params
+        .iter()
+        .map(|param| {
+            let ident = &param.ident;
+            let ty = &param.ty;
+            let arg_name = param.ident.unraw().to_string();
+            quote! {
+                let #ident: #ty = #nagare::__private::serde_json::from_value(
+                    args.get(#arg_name)
+                        .cloned()
+                        .unwrap_or(#nagare::__private::serde_json::Value::Null),
+                )
+                .map_err(|error| {
+                    ::std::format!("invalid value for parameter `{}` of tool `{}`: {}", #arg_name, #tool_name, error)
+                })?;
+            }
+        })
+        .collect()
 }
 
 fn expand_tool_schema(input: DeriveInput) -> syn::Result<TokenStream2> {

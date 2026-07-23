@@ -1,4 +1,4 @@
-use nagare::tool::{func_def::FutureError, schema::UzuToolSchema, uzu_tool_function};
+use nagare::tool::{func_def::FutureError, schema::UzuToolSchema, uzu_tool_closure, uzu_tool_function};
 use serde::{Deserialize, Serialize};
 use shoji::types::{
     basic::{SamplingMethod, SamplingPolicy},
@@ -24,17 +24,6 @@ fn get_current_location() -> Result<Coordinate, FutureError> {
     })
 }
 
-/// Returns temperature in provided location
-#[uzu_tool_function]
-fn get_current_temperature(
-    /// Latitude in decimal degrees.
-    _latitude: f64,
-    /// Longitude in decimal degrees.
-    _longitude: f64,
-) -> Result<f64, FutureError> {
-    Ok(25.0)
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::new(EngineConfig::default()).await?;
@@ -46,7 +35,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut session = engine.chat(model, ChatConfig::default()).await?;
     session.add_tool_function(get_current_location).await?;
-    session.add_tool_function(get_current_temperature).await?;
+    session
+        .add_tool_function_definition(uzu_tool_closure! {
+            /// Returns temperature in provided location
+            get_current_temperature: |
+                /// Latitude in decimal degrees.
+                _latitude: f64,
+                /// Longitude in decimal degrees.
+                _longitude: f64
+            | -> Result<f64, FutureError> {
+                Ok(25.0)
+            }
+        })
+        .await?;
 
     let messages = vec![
         ChatMessage::system().with_text("You are a helpful assistant".to_string()),

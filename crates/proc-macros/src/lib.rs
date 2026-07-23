@@ -1,7 +1,7 @@
 mod dsl;
-mod tool;
 mod uzu_config;
 mod uzu_test;
+mod uzu_tool;
 
 use proc_macro::TokenStream;
 
@@ -54,10 +54,15 @@ pub fn uzu_tool_function(
     args: TokenStream,
     input: TokenStream,
 ) -> TokenStream {
-    tool::tool_function(args, input)
+    uzu_tool::uzu_tool_function(args, input)
+}
+
+#[proc_macro]
+pub fn uzu_tool_closure(input: TokenStream) -> TokenStream {
+    uzu_tool::uzu_tool_closure(input)
 }
 
 #[proc_macro_derive(UzuToolSchema, attributes(serde))]
 pub fn uzu_tool_schema(input: TokenStream) -> TokenStream {
-    tool::derive_tool_schema(input)
+    uzu_tool::uzu_derive_tool_schema(input)
 }
