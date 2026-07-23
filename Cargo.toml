@@ -117,6 +117,7 @@ tokio-util = { version = "0.7.17", default-features = false, features = ["rt"] }
 blake3 = "1.8"
 quote = "1.0"
 proc-macro2 = "1.0"
+proc-macro-crate = "3.5"
 syn = { version = "2.0", features = ["full", "fold"] }
 prettyplease = "0.2"
 rhai = "1.24.0"

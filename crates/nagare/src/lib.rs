@@ -8,3 +8,8 @@ pub mod telemetry;
 pub mod text_to_speech;
 pub mod tool;
 mod util;
+
+#[doc(hidden)]
+pub mod __private {
+    pub use serde_json;
+}

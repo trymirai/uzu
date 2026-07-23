@@ -83,11 +83,6 @@
                                         },
                                         {
                                             "type": "regex_replace",
-                                            "pattern": "<parameter=(\\w+)>\\n(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?|true|false|null)\\n</parameter>",
-                                            "template": "\"$1\": $2"
-                                        },
-                                        {
-                                            "type": "regex_replace",
                                             "pattern": "<parameter=(\\w+)>\\n([\\s\\S]*?)\\n</parameter>",
                                             "template": "\"$1\": \"$2\""
                                         }

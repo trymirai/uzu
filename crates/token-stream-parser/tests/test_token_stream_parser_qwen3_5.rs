@@ -9,7 +9,7 @@ fn qwen35_suite() -> TestSuite {
 }
 
 #[test]
-fn test_token_stream_parser_qwen35_tool_call_typed_arguments() {
+fn test_token_stream_parser_qwen35_tool_call_preserves_scalar_arguments() {
     let suite = qwen35_suite();
     let data = TestData {
         prompt: "<|im_start|>user\nTemp?<|im_end|>\n<|im_start|>assistant\n".into(),
@@ -29,11 +29,42 @@ fn test_token_stream_parser_qwen35_tool_call_typed_arguments() {
                     {"type": "tool_call", "value": {
                         "name": "get_current_temperature",
                         "arguments": {
-                            "latitude": 51.5074,
-                            "longitude": -0.1278,
-                            "days": 3,
-                            "metric": true,
+                            "latitude": "51.5074",
+                            "longitude": "-0.1278",
+                            "days": "3",
+                            "metric": "true",
                             "unit": "celsius"
+                        }
+                    }}
+                ]}
+            ])),
+        },
+    );
+}
+
+#[test]
+fn test_token_stream_parser_qwen35_preserves_ambiguous_string_arguments() {
+    let suite = qwen35_suite();
+    let data = TestData {
+        prompt: "<|im_start|>user\nLook up IDs<|im_end|>\n<|im_start|>assistant\n".into(),
+        completion: "<tool_call>\n<function=lookup>\n<parameter=nullable_id>\nnull\n</parameter>\n<parameter=padded_id>\n00123\n</parameter>\n</function>\n</tool_call><|im_end|>".into(),
+    };
+
+    run_parser_test(
+        &suite,
+        &data,
+        &TestExpectations {
+            framing: None,
+            reduction: None,
+            extraction: suite.expect_extraction(json!([
+                {"role": "user", "content": [{"type": "$text", "value": "\nLook up IDs"}]},
+                {"role": "assistant", "content": [
+                    {"type": "$text", "value": "\n"},
+                    {"type": "tool_call", "value": {
+                        "name": "lookup",
+                        "arguments": {
+                            "nullable_id": "null",
+                            "padded_id": "00123"
                         }
                     }}
                 ]}
