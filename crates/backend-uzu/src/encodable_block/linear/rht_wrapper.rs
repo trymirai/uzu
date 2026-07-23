@@ -94,7 +94,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
                 None
             };
 
-        let inner_linear = LinearMatmul::quantized(
+        let mut inner_linear = LinearMatmul::quantized(
             context,
             quantization_spec,
             input_dimension,
@@ -106,6 +106,9 @@ impl<B: Backend> RHTLinearWrapper<B> {
             has_biases.then_some(parameter_tree),
             Some(output_factors),
         )?;
+        if symmetric_int8_preparation.is_some() {
+            inner_linear.sign_convert_quantized_weights_for_int8_activations();
+        }
 
         Ok(Self {
             input_hadamard_kernel,

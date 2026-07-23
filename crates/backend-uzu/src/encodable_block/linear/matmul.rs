@@ -209,6 +209,26 @@ fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
+    pub(super) fn sign_convert_quantized_weights_for_int8_activations(&mut self) {
+        let Mode::Quantized {
+            mode,
+            ..
+        } = &self.mode
+        else {
+            return;
+        };
+        let midpoint_mask: u8 = match mode {
+            QuantizationMode::U4 => 0x88,
+            QuantizationMode::U8 => 0x80,
+            QuantizationMode::I8 => return,
+        };
+        let mut codes: Vec<u8> = self.weights.copyout();
+        for code in &mut codes {
+            *code ^= midpoint_mask;
+        }
+        self.weights.copyin(&codes);
+    }
+
     pub(super) fn encode_with_a(
         &self,
         a: MatmulA<'_, B>,
