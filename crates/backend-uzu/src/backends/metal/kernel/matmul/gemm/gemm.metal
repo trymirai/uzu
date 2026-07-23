@@ -11,14 +11,12 @@ using namespace metal;
 using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
-#define GEMM_A8W4 (A_IS_INT8 && BITS == 4)
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_TGB_ELEMENTS                                                                                              \
   ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT)))) : 1)    \
              : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
-#define GEMM_A8W4_TG_BYTES (GEMM_A8W4 ? (gemm_tiling_block_n(GEMM_TILING) * 16) : 1)
 
 template <
     typename AT,
@@ -124,7 +122,6 @@ KERNEL(Gemm)(
     const GemmAlignment alignment SPECIALIZE,
     threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
     threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
-    threadgroup uint8_t staged_int4_weights[GEMM_A8W4_TG_BYTES],
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint group_z GROUPS(group_count_z),
@@ -156,11 +153,9 @@ KERNEL(Gemm)(
         a_int8,
         a_scales,
         b_shared,
-        staged_int4_weights,
         thread_context
     );
   } else {
-    (void)staged_int4_weights;
     SimdgroupMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
         a,
         b,

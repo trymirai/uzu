@@ -286,8 +286,6 @@ struct MxuMmaCore {
       const uint k_offset_act_groups,
       const uint weight_groups_per_row,
       const uint act_groups_per_row,
-      const ushort tile_col_offset,
-      threadgroup uint8_t* staged_int4_weights,
       const thread ThreadContext& thread_context
   ) {
     using Ops = uzu::matmul::MxuFragmentOps<>;
@@ -297,8 +295,6 @@ struct MxuMmaCore {
     const short2 position = Ops::get_position(thread_context.simd_lane_id);
     thread float* accumulator_elements = accumulator.elements();
     constexpr int k_bytes_per_weight_group = (BITS == 4) ? (int(GROUP_SIZE) / 2) : int(GROUP_SIZE);
-    (void)tile_col_offset;
-    (void)staged_int4_weights;
     constexpr int act_chunks_per_weight_group = int(GROUP_SIZE) / int(SIMDGROUP_BLOCK_K);
 
     uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> ones_tile;
@@ -361,12 +357,6 @@ struct MxuMmaCore {
         uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> chunk_products;
         chunk_products.clear();
         if constexpr (BITS == 4) {
-          // Unpack the packed nibbles straight into the int8 fragment and reuse the
-          // register-marshaled int8 x int8 MMA (as the 8-bit branch does). Each
-          // thread's fragment row covers 4 contiguous K positions whose base is a
-          // multiple of 4 (relaxed MXU layout), so its 4 nibbles are one aligned
-          // 16-bit load; value = nibble - 8 (excess-8 grid). This avoids the
-          // threadgroup staging round-trip and its per-chunk barrier entirely.
           uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> right_tile;
           METAL_PRAGMA_UNROLL
           for (ushort tile_n = 0; tile_n < TILES_N; ++tile_n) {
@@ -488,7 +478,6 @@ struct MxuMmaCore {
       const device int8_t* a_int8,
       const device float* a_scales,
       threadgroup BT* b_shared,
-      threadgroup uint8_t* staged_int4_weights,
       const thread ThreadContext& thread_context
   ) {
     const uint partition = thread_context.threadgroup_position.z;
@@ -585,8 +574,6 @@ struct MxuMmaCore {
                           k_offset / uint(SIMDGROUP_BLOCK_K),
                           uint(quantized_weights.groups_per_row),
                           uint(params->K) / uint(SIMDGROUP_BLOCK_K),
-                          tile_col_offset,
-                          staged_int4_weights,
                           thread_context
                       );
                     } else if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
