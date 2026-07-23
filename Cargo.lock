@@ -4719,6 +4719,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
+ "serde_derive_internals",
  "syn 2.0.118",
 ]
 

@@ -57,7 +57,7 @@ pub fn uzu_tool_function(
     tool::tool_function(args, input)
 }
 
-#[proc_macro_derive(UzuToolSchema)]
+#[proc_macro_derive(UzuToolSchema, attributes(serde))]
 pub fn uzu_tool_schema(input: TokenStream) -> TokenStream {
     tool::derive_tool_schema(input)
 }

@@ -55,13 +55,12 @@ impl Content {
                                 Ok(tool_call) => tool_calls.push(ChatContentBlock::ToolCall {
                                     value: tool_call,
                                 }),
-                                // tool_call sections keep their raw string value while streaming and
-                                // are parsed into objects once finished; a finished object that still
-                                // is not a tool call is model output that only looks like one (e.g.
-                                // llama-3.2 echoing a tool result as `<|python_tag|>{"time": ...}`),
-                                // so surface it as plain text instead of a dead-end candidate
+                                // Llama 3.2 may echo a result as a pseudo call such as
+                                // `{"time":"17:03","return":"time"}`. Only treat that
+                                // positively identified shape as text; malformed calls must
+                                // remain candidates so the turn retains its ToolCalls finish reason.
                                 Err(_) => {
-                                    if value.is_object() {
+                                    if is_tool_call_result_echo(&value) {
                                         text_parts.push(value.to_string());
                                     } else {
                                         tool_calls.push(ChatContentBlock::ToolCallCandidate {
@@ -111,6 +110,16 @@ impl Content {
             },
         }
     }
+}
+
+fn is_tool_call_result_echo(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    let Some(Value::String(returned_field)) = object.get("return") else {
+        return false;
+    };
+    returned_field != "return" && object.contains_key(returned_field)
 }
 
 // Parsers may emit tool results as `{"name": ..., "value": ...}` (e.g. functiongemma, gemma-4);

@@ -233,6 +233,65 @@ async fn structured_input_and_output() {
     assert!(error.to_string().contains("request"), "unexpected error: {error}");
 }
 
+#[derive(Serialize, Deserialize, UzuToolSchema)]
+#[serde(rename_all = "camelCase")]
+struct UserLookup {
+    #[serde(rename = "id")]
+    user_id: String,
+    display_name: String,
+    #[serde(default)]
+    max_results: u32,
+    #[serde(skip)]
+    internal_note: String,
+}
+
+#[uzu_tool_function]
+fn lookup_user(request: UserLookup) -> String {
+    let _ = &request.internal_note;
+    format!("{}:{}:{}", request.user_id, request.display_name, request.max_results)
+}
+
+#[tokio::test]
+async fn serde_field_attributes_match_generated_schema() {
+    let definition: ToolFunctionDefinition = lookup_user.into();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();
+
+    assert_eq!(
+        parameters,
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "request": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "displayName": { "type": "string" },
+                        "maxResults": { "type": "integer" }
+                    },
+                    "required": ["id", "displayName"]
+                }
+            },
+            "required": ["request"]
+        })
+    );
+
+    let result: serde_json::Value = definition
+        .execute(
+            serde_json::json!({
+                "request": {
+                    "id": "00123",
+                    "displayName": "Ada"
+                }
+            })
+            .into(),
+        )
+        .await
+        .unwrap()
+        .try_into()
+        .unwrap();
+    assert_eq!(result, serde_json::json!("00123:Ada:0"));
+}
+
 /// Add two integers.
 #[uzu_tool_function]
 fn add(

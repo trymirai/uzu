@@ -66,6 +66,7 @@ xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgramma
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17"
 serde = { version = "1.0", features = ["derive"] }
+serde_derive_internals = "0.29"
 serde_json = "1.0"
 monostate = "0.1"
 thiserror = "2.0"
