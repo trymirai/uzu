@@ -8,7 +8,6 @@ use crate::{
 pub(crate) struct GemmSpecialization {
     pub(crate) weights_data_type: DataType,
     pub(crate) tiling: GemmTiling,
-    pub(crate) use_mxu: bool,
     pub(crate) output_transform: GemmDTransform,
     pub(crate) alignment: GemmAlignment,
     pub(crate) transpose_b: bool,
@@ -19,13 +18,7 @@ pub(crate) struct GemmSpecialization {
 
 impl GemmSpecialization {
     pub(crate) fn validate(&self) -> Result<(), GemmSpecializationError> {
-        if self.use_mxu != self.tiling.is_mxu_variant() {
-            return Err(GemmSpecializationError::TilingUseMxuMismatch {
-                tiling: self.tiling,
-                use_mxu: self.use_mxu,
-            });
-        }
-        if self.use_mxu
+        if self.tiling.is_mxu_variant()
             && self.b_prologue != GemmBPrologueKind::FullPrecision
             && let Some(group_size) = self.group_size
             && !self.tiling.fits_quant_group_size(group_size)
@@ -35,7 +28,7 @@ impl GemmSpecialization {
                 group_size,
             });
         }
-        if !self.use_mxu
+        if !self.tiling.is_mxu_variant()
             && let Some(group_size) = self.group_size
         {
             let simdgroup_block_k = self.tiling.simdgroup_block_k();

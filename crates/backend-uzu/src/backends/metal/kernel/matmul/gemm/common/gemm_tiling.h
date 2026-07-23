@@ -50,6 +50,13 @@ constexpr uint gemm_tiling_block_k(GemmTiling t) {
                                                           : 0;
 }
 
+// MXU execution is derived from the selected tile, not an independent axis.
+constexpr bool gemm_tiling_use_mxu(GemmTiling t) {
+  return t == GemmTiling::Tile16x32x256_Simdgroups1x1 || t == GemmTiling::Tile16x128x256_Simdgroups1x4 ||
+         t == GemmTiling::Tile32x64x256_Simdgroups2x2 || t == GemmTiling::Tile64x32x256_Simdgroups4x1 ||
+         t == GemmTiling::Tile64x64x256_Simdgroups2x2 || t == GemmTiling::Tile128x128x256_Simdgroups4x4;
+}
+
 constexpr uint gemm_tiling_simdgroups_per_row(GemmTiling t) {
   return t == GemmTiling::Tile8x32x32_Simdgroups1x1       ? 1
          : t == GemmTiling::Tile64x32x32_Simdgroups2x2    ? 2

@@ -10,12 +10,15 @@
 using namespace metal;
 using namespace uzu::gemm;
 
-#define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision)
+#define GEMM_MXU_QUANT (gemm_tiling_use_mxu(GEMM_TILING) && B_PROLOGUE != GemmBPrologueKind::FullPrecision)
 #define GEMM_TGA_ELEMENTS                                                                                              \
-  ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
+  (gemm_tiling_use_mxu(GEMM_TILING)                                                                                    \
+       ? 1                                                                                                             \
+       : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_TGB_ELEMENTS                                                                                              \
-  ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT)))) : 1)    \
-             : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
+  (gemm_tiling_use_mxu(GEMM_TILING)                                                                                    \
+       ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT)))) : 1)          \
+       : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
 
 template <
     typename AT,
@@ -23,7 +26,6 @@ template <
     typename DT,
     GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
-    bool USE_MXU,
     GemmBPrologueKind B_PROLOGUE,
     uint BITS,
     uint GROUP_SIZE>
@@ -45,25 +47,14 @@ VARIANTS(
     GemmTiling::Tile64x64x256_Simdgroups2x2,
     GemmTiling::Tile128x128x256_Simdgroups4x4)
 VARIANTS(TRANSPOSE_B, false, true)
-VARIANTS(USE_MXU, false, true)
+VARIANTS((B_PROLOGUE, GemmBPrologueKind::FullPrecision), (BITS, 0), (GROUP_SIZE, 0))
 VARIANTS(
-    B_PROLOGUE,
-    GemmBPrologueKind::FullPrecision,
-    GemmBPrologueKind::ScaleBiasDequant,
-    GemmBPrologueKind::ScaleZeroPointDequant,
-    GemmBPrologueKind::ScaleSymmetricDequant)
-VARIANTS(BITS, 0, 4, 8)
-VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
-CONSTRAINT(
-    USE_MXU ==
-    (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
-     GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4 ||
-     GEMM_TILING == GemmTiling::Tile32x64x256_Simdgroups2x2 ||
-     GEMM_TILING == GemmTiling::Tile64x32x256_Simdgroups4x1 ||
-     GEMM_TILING == GemmTiling::Tile64x64x256_Simdgroups2x2 ||
-     GEMM_TILING == GemmTiling::Tile128x128x256_Simdgroups4x4))
-CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
-CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
+    (B_PROLOGUE,
+     GemmBPrologueKind::ScaleBiasDequant,
+     GemmBPrologueKind::ScaleZeroPointDequant,
+     GemmBPrologueKind::ScaleSymmetricDequant),
+    (BITS, 4, 8),
+    (GROUP_SIZE, 16, 32, 64, 128))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(
     GROUP_SIZE != 16 ||
@@ -118,7 +109,7 @@ KERNEL(Gemm)(
   (void)thread_y;
   (void)thread_z;
 
-  if constexpr (USE_MXU) {
+  if constexpr (gemm_tiling_use_mxu(GEMM_TILING)) {
     MxuMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
         a,
         b,

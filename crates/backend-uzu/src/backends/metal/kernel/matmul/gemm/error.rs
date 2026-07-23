@@ -11,11 +11,6 @@ pub enum GemmSpecializationError {
     },
     #[error("quantized B requires transposed layout")]
     QuantizedRequiresTransposedB,
-    #[error("tiling {tiling} does not match use_mxu={use_mxu}")]
-    TilingUseMxuMismatch {
-        tiling: GemmTiling,
-        use_mxu: bool,
-    },
     #[error(
         "MXU quantized GEMM with tile {tiling} requires group_size <= 64 (got {group_size}) due to threadgroup memory budget"
     )]

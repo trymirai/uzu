@@ -2,6 +2,7 @@ use std::{collections::HashMap, iter::once};
 
 use anyhow::bail;
 use itertools::Itertools;
+use serde::Serialize;
 
 use super::{
     ast::{MetalArgument, MetalArgumentType, MetalKernelInfo, shared_element_type},
@@ -10,6 +11,46 @@ use super::{
 use crate::common::{enum_paths::EnumPaths, identifiers::KernelName, mangling::static_mangle};
 
 pub type SpecializeBaseIndices = HashMap<KernelName, usize>;
+
+#[derive(Serialize)]
+pub struct KernelVariant {
+    pub bindings: Vec<(String, String)>,
+    pub entry_name: String,
+}
+
+/// Enumerates the variants compiled into both the Metal library and its Rust bindings.
+pub fn accepted_variants(kernel: &MetalKernelInfo) -> Vec<KernelVariant> {
+    let evaluator = crate::common::constraints::Evaluator::new(
+        kernel.variants.as_deref().into_iter().flatten().flat_map(|tp| tp.variants.iter().map(AsRef::as_ref)),
+    );
+
+    let variants = kernel.variants.as_ref().map_or_else(
+        || vec![Vec::new()],
+        |parameters| {
+            parameters
+                .iter()
+                .map(|parameter| parameter.variants.iter())
+                .multi_cartesian_product()
+                .map(|values| {
+                    parameters
+                        .iter()
+                        .zip(values)
+                        .map(|(parameter, value)| (parameter.name.to_string(), value.to_string()))
+                        .collect()
+                })
+                .collect()
+        },
+    );
+
+    variants
+        .into_iter()
+        .filter(|bindings| evaluator.satisfied(bindings, &kernel.constraints))
+        .map(|bindings| KernelVariant {
+            entry_name: static_mangle(kernel.name.as_ref(), bindings.iter().map(|(_, value)| value)),
+            bindings,
+        })
+        .collect()
+}
 
 pub fn wrappers(
     kernels: &[MetalKernelInfo],
@@ -137,40 +178,15 @@ fn kernel_wrappers(
         kernel_wrappers.push(kernel_header(&bindings, base).into_boxed_str());
     }
 
-    let evaluator = crate::common::constraints::Evaluator::new(
-        kernel.variants.as_deref().into_iter().flatten().flat_map(|tp| tp.variants.iter().map(|v| v.as_ref())),
-    );
-    for type_variant in if let Some(variants) = &kernel.variants {
-        variants
-            .iter()
-            .map(|type_parameter| type_parameter.variants.iter())
-            .multi_cartesian_product()
-            .map(|values| {
-                Some(
-                    variants
-                        .iter()
-                        .map(|tp| tp.name.to_string())
-                        .zip(values.iter().map(|v| v.to_string()))
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect()
-    } else {
-        vec![None]
-    } {
-        if let Some(ref tv) = type_variant
-            && !evaluator.satisfied(tv, &kernel.constraints)
-        {
-            continue;
-        }
-
-        let (wrapper_name, underlying_name) = if let Some(type_variant) = &type_variant {
-            (
-                static_mangle(kernel.name.as_ref(), type_variant.iter().map(|(_k, v)| v.as_str())),
-                format!("{}<{}>", kernel.name, type_variant.iter().map(|(_k, v)| v).join(", ")),
-            )
+    for KernelVariant {
+        bindings,
+        entry_name,
+    } in accepted_variants(kernel)
+    {
+        let (wrapper_name, underlying_name) = if bindings.is_empty() {
+            (entry_name, kernel.name.to_string())
         } else {
-            (static_mangle(kernel.name.as_ref(), [] as [&str; 0]), kernel.name.to_string())
+            (entry_name, format!("{}<{}>", kernel.name, bindings.iter().map(|(_name, value)| value).join(", ")))
         };
 
         let max_total_threads_per_threadgroup = kernel
@@ -279,11 +295,8 @@ fn kernel_wrappers(
         let wrapper_body =
             shared_definitions.chain(once(underlying_call)).map(|l| format!("  {l};\n")).collect::<Vec<_>>().join("");
 
-        let (defs, undefs): (Vec<_>, Vec<_>) = type_variant
-            .unwrap_or_default()
-            .iter()
-            .map(|(k, v)| (format!("\n#define {k} {v}"), format!("#undef {k}\n")))
-            .unzip();
+        let (defs, undefs): (Vec<_>, Vec<_>) =
+            bindings.iter().map(|(k, v)| (format!("\n#define {k} {v}"), format!("#undef {k}\n"))).unzip();
 
         let defs = defs.join("");
         let condition_definitions = condition_definitions.into_iter().flatten().join("\n");

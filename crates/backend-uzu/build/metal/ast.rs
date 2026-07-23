@@ -1,4 +1,5 @@
 use anyhow::{Context, bail};
+use itertools::Itertools;
 use quote::quote;
 use serde::{Deserialize, Serialize};
 
@@ -596,19 +597,74 @@ impl MetalKernelInfo {
 
         let public = annotations.iter().any(|(k, _)| k.as_ref() == "dsl.public");
 
-        let variants: Box<[_]> = annotations
-            .iter()
-            .filter(|(k, _)| k.as_ref() == "dsl.variants")
-            .map(|(_, v)| {
-                let [variant_name, variant_values] = v.as_ref() else {
-                    bail!("malformed dsl.variants annotation");
-                };
+        let mut variants = Vec::<(Box<str>, Vec<Box<str>>)>::new();
+        let mut grouped_constraints = Vec::<(Vec<Box<str>>, Vec<String>)>::new();
+        for (_, annotation) in annotations.iter().filter(|(key, _)| key.as_ref() == "dsl.variants") {
+            let [name, values] = annotation.as_ref() else {
+                bail!("malformed dsl.variants annotation");
+            };
+            if !name.starts_with('(') {
+                variants.push((name.clone(), values.split(',').map(|value| value.trim().into()).collect()));
+                continue;
+            }
 
-                let variant_values = variant_values.split(',').map(|v| v.trim().into()).collect::<Box<[Box<str>]>>();
-
-                Ok((variant_name.clone(), variant_values))
-            })
-            .collect::<anyhow::Result<_>>()?;
+            let groups = format!("{name}, {values}");
+            let axes = groups
+                .split("),")
+                .map(|group| {
+                    let mut items = group
+                        .trim()
+                        .strip_prefix('(')
+                        .context("grouped dsl.variants entries must start with '('")?
+                        .trim_end_matches(')')
+                        .split(',')
+                        .map(|item| Box::from(item.trim()))
+                        .collect::<Vec<Box<str>>>();
+                    let name = items.remove(0);
+                    if name.is_empty() || items.is_empty() || items.iter().any(|item| item.is_empty()) {
+                        bail!("grouped dsl.variants entries require a parameter and values");
+                    }
+                    Ok((name, items))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let names = axes.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
+            let clause = axes
+                .iter()
+                .map(|(name, values)| {
+                    let is_type = template_parameters.iter().any(|(parameter, ty)| parameter == name && ty.is_none());
+                    values
+                        .iter()
+                        .map(|value| {
+                            format!(
+                                "{name} == {}",
+                                if is_type {
+                                    format!("{value:?}")
+                                } else {
+                                    value.to_string()
+                                }
+                            )
+                        })
+                        .join(" || ")
+                })
+                .map(|axis| format!("({axis})"))
+                .join(" && ");
+            if let Some((_, clauses)) = grouped_constraints.iter_mut().find(|(parameters, _)| parameters == &names) {
+                clauses.push(clause);
+            } else {
+                grouped_constraints.push((names, vec![clause]));
+            }
+            for (name, values) in axes {
+                if let Some((_, existing)) = variants.iter_mut().find(|(parameter, _)| parameter == &name) {
+                    for value in values {
+                        if !existing.contains(&value) {
+                            existing.push(value);
+                        }
+                    }
+                } else {
+                    variants.push((name, values));
+                }
+            }
+        }
 
         let has_variants = !variants.is_empty();
         if has_variants != is_template {
@@ -617,17 +673,27 @@ impl MetalKernelInfo {
 
         let variants = if is_template {
             let template_names = template_parameters.iter().map(|(name, _)| name.as_ref()).collect::<Vec<_>>();
-            let variant_names = variants.iter().map(|(name, _)| name.as_ref()).collect::<Vec<_>>();
-            if template_names != variant_names {
-                bail!("template parameters {:?} do not match dsl.variants order {:?}", template_names, variant_names);
+            let declaration_names = variants.iter().map(|(name, _)| name.as_ref()).collect::<Vec<_>>();
+            if template_names.len() != declaration_names.len()
+                || template_names
+                    .iter()
+                    .any(|name| declaration_names.iter().filter(|declared| *declared == name).count() != 1)
+            {
+                bail!(
+                    "template parameters {:?} do not match dsl variant declarations {:?}",
+                    template_names,
+                    declaration_names
+                );
             }
 
             Some(
                 template_parameters
                     .into_iter()
-                    .zip(variants)
-                    .map(|((name, ty), (v_name, variants))| {
-                        assert_eq!(name, v_name);
+                    .map(|(name, ty)| {
+                        let variants = variants
+                            .iter()
+                            .find_map(|(variant_name, variants)| (variant_name == &name).then_some(variants.clone()))
+                            .unwrap_or_default();
 
                         Ok(MetalTemplateParameter {
                             name,
@@ -637,7 +703,7 @@ impl MetalKernelInfo {
                                     ntt.desugared_qual_type.unwrap_or(ntt.qual_type).as_ref(),
                                 )?),
                             },
-                            variants,
+                            variants: variants.into_boxed_slice(),
                         })
                     })
                     .collect::<anyhow::Result<_>>()?,
@@ -646,7 +712,7 @@ impl MetalKernelInfo {
             None
         };
 
-        let constraints: Box<[_]> = annotations
+        let mut constraints = annotations
             .iter()
             .filter(|(k, _)| k.as_ref() == "dsl.constraint")
             .map(|(_, v)| {
@@ -656,7 +722,12 @@ impl MetalKernelInfo {
 
                 Ok(constraint_expr.clone())
             })
-            .collect::<anyhow::Result<_>>()?;
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        constraints.extend(
+            grouped_constraints
+                .into_iter()
+                .map(|(_, clauses)| clauses.into_iter().map(|clause| format!("({clause})")).join(" || ").into()),
+        );
 
         let integer_defines = integer_object_defines_from_source(source);
         let arguments = arg_nodes
@@ -669,7 +740,7 @@ impl MetalKernelInfo {
             name: KernelName::from(name),
             arguments,
             variants,
-            constraints,
+            constraints: constraints.into_boxed_slice(),
         }))
     }
 }
