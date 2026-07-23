@@ -2,7 +2,7 @@ use crate::backends::common::{Allocation, Backend, Encoder};
 
 pub const MAX_K: u32 = 512;
 
-pub trait RadixTopKSmall<B: Backend>: Sized {
+pub trait RadixTopKSmall<B: Backend>: Sized + Send + Sync {
     fn new(
         context: &B::Context,
         columns: u32,

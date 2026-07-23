@@ -52,12 +52,17 @@ impl ChatTokenBackend for UzuLlmBackend {
         &'a self,
         reference: String,
         config: ChatConfig,
-        tokenizer: &'a Tokenizer,
+        #[cfg_attr(not(grammar), allow(unused_variables))] tokenizer: &'a Tokenizer,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn ChatTokenInstance>, BackendError>> + Send + 'a>> {
         Box::pin(async move {
             let instance = select_backend!(
-                UzuChatTokenBackendInstance::<B>::new(reference, config, tokenizer)
-                    .map(|i| Box::new(i) as Box<dyn ChatTokenInstance>),
+                UzuChatTokenBackendInstance::<B>::new(
+                    reference,
+                    config,
+                    #[cfg(grammar)]
+                    tokenizer,
+                )
+                .map(|i| Box::new(i) as Box<dyn ChatTokenInstance>),
                 BackendError::from("Unable to open any backend")
             )?;
             Ok(instance)
