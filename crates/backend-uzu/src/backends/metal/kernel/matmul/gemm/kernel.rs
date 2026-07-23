@@ -25,6 +25,10 @@ use crate::{
     data_type::DataType,
 };
 
+/// A8 tiles are cheaper per tile; a lower target avoids oversplitting MN-heavy shapes.
+const SPLIT_K_TARGET_TILES_INT8_ACTIVATIONS: u32 = 128;
+const SPLIT_K_TARGET_TILES: u32 = 512;
+
 #[derive(Debug, Clone, Copy)]
 pub enum GemmDispatchPath {
     Simdgroup,
@@ -744,10 +748,6 @@ fn split_k_output_supported(
     }
     n.is_multiple_of(4) && weights_data_type == output_data_type
 }
-
-/// A8 tiles are cheaper per tile; a lower target avoids oversplitting MN-heavy shapes.
-const SPLIT_K_TARGET_TILES_INT8_ACTIVATIONS: u32 = 128;
-const SPLIT_K_TARGET_TILES: u32 = 512;
 
 fn select_split_k(
     m: u32,

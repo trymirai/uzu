@@ -21,7 +21,7 @@ use crate::{
     data_type::DataType,
     tests::{
         helpers::{alloc_allocation, alloc_allocation_with_data},
-        matmul::{QuantInput, iter_encode_loop_named},
+        matmul::{QuantInput, iter_encode_loop_named, qwen3_layer_shapes},
         util::{shared_metal_context, type_short_name},
     },
 };
@@ -30,17 +30,6 @@ type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 type MetalPrepare = <<Metal as Backend>::Kernels as Kernels>::ActivationsPrepareKernel;
 type MetalHadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel;
 
-const SHAPES: &[(usize, usize, usize)] = &[
-    (1, 2048, 2048),
-    (2, 2048, 2048),
-    (4, 2048, 2048),
-    (8, 2048, 2048),
-    (16, 2048, 2048),
-    (32, 2048, 2048),
-    (64, 2048, 2048),
-];
-
-/// The three RHT-linear execution paths we compare on each shape.
 #[derive(Clone, Copy)]
 enum BenchPath {
     A8GemmMxu,
@@ -58,9 +47,6 @@ impl BenchPath {
     }
 }
 
-/// Device buffers for one RHT-linear shape. Weights are stored unsigned exactly
-/// as they ship; every path (A8 MXU, BF16 GEMM, BF16 GEMV) shares the same
-/// buffer, and the A8 shader applies the signed conversion just before the MMA.
 struct BenchmarkData {
     weights_u8: Allocation<Metal>,
     weight_scales: Allocation<Metal>,
@@ -77,7 +63,6 @@ struct BenchmarkData {
 }
 
 impl BenchmarkData {
-    /// Builds the unsigned weight/scale/activation buffers shared by all paths.
     fn new(
         context: &MetalContext,
         m: usize,
@@ -124,8 +109,6 @@ impl BenchmarkData {
         }
     }
 
-    /// Full-precision (BF16) matmul arguments reading the already-transformed
-    /// activation working buffer and the unsigned weights.
     fn bf16_arguments<'a>(
         &'a self,
         output: &'a mut Allocation<Metal>,
@@ -167,9 +150,6 @@ fn encode_step(
 ) {
     match path {
         BenchPath::A8GemmMxu => {
-            // Fused input RHT + int8 quantization, then the A8 GEMM-MXU matmul.
-            // The shader converts the unsigned weights to signed just before the
-            // MMA, so this shares the same buffer as the BF16 paths.
             prepare.encode(
                 &data.activations,
                 &mut data.a_int8,
@@ -236,13 +216,12 @@ fn bench_bits(
     group.warm_up_time(Duration::from_millis(100));
     group.measurement_time(Duration::from_millis(800));
 
-    for &(m, k, n) in SHAPES {
-        let mut data = BenchmarkData::new(context, m, k, n, bits, 0xA8_00 ^ u64::from(bits) ^ k as u64);
+    for (layer, shape) in qwen3_layer_shapes(bits).filter(|(_, shape)| matches!(shape.m, 1 | 8)) {
+        let (m, k, n) = (shape.m, shape.k, shape.n);
+        let mut data = BenchmarkData::new(context, m, k, n, bits, 0xA8_00 ^ u64::from(bits) ^ k as u64 ^ n as u64);
         let mut output = alloc_allocation::<Metal, bf16>(context, m * n);
-        let shape_label = format!("m{m}_k{k}_n{n}");
+        let shape_label = format!("{layer}_m{m}_k{k}_n{n}");
 
-        // GEMV is the decode path: only emit it where the specialization applies
-        // (small m); prefill shapes fall back to A8 vs BF16 GEMM-MXU only.
         let gemv_eligible = GemvSpecialization::select(
             &data.bf16_arguments(&mut output),
             DataType::BF16,
