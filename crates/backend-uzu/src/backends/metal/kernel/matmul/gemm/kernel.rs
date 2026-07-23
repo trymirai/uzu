@@ -175,12 +175,12 @@ impl GemmKernel {
                     return None;
                 }
                 let group_size = arguments.b.group_size().unwrap_or(0);
-                if arguments.a.is_int8() {
-                    let tiling =
-                        select_mxu_activation_quantized_tiling(arguments.m, arguments.n, arguments.k, group_size);
+                let int8_activations = arguments.a.is_int8();
+                let tiling =
+                    select_mxu_quant_tiling(arguments.m, arguments.n, arguments.k, group_size, int8_activations);
+                if int8_activations {
                     return (group_size != 0 && arguments.k.is_multiple_of(group_size)).then_some(tiling);
                 }
-                let tiling = select_mxu_quant_tiling(arguments.m, arguments.n, group_size);
                 arguments.k.is_multiple_of(tiling.block_k()).then_some(tiling)
             },
         }
@@ -313,7 +313,7 @@ impl GemmKernel {
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
 
                 if b_transpose && b_leading_dimension.is_none() {
-                    let split_k = select_split_k(m, n, k, tiling, use_mxu, 0, true, false, 512);
+                    let split_k = select_split_k(m, n, k, tiling, use_mxu, 0, true, false, SPLIT_K_TARGET_TILES);
                     if split_k > 1
                         && split_k_output_supported(output_transform, n, self.weights_data_type, self.output_data_type)
                     {
@@ -449,11 +449,7 @@ impl GemmKernel {
                 };
 
                 let tiling = if use_mxu {
-                    if a_is_int8 {
-                        select_mxu_activation_quantized_tiling(m, n, k, group_size.unwrap_or(0))
-                    } else {
-                        select_mxu_quant_tiling(m, n, group_size.unwrap_or(0))
-                    }
+                    select_mxu_quant_tiling(m, n, k, group_size.unwrap_or(0), a_is_int8)
                 } else {
                     select_quant_tiling(m, n, group_size.unwrap_or(0))
                 };
@@ -465,9 +461,9 @@ impl GemmKernel {
 
                 let zero_point_4bit = zero_points.is_some() && bits_per_b == Some(4);
                 let split_k_target = if a_is_int8 {
-                    128
+                    SPLIT_K_TARGET_TILES_INT8_ACTIVATIONS
                 } else {
-                    512
+                    SPLIT_K_TARGET_TILES
                 };
                 let split_k = select_split_k(
                     m,
@@ -749,6 +745,10 @@ fn split_k_output_supported(
     n.is_multiple_of(4) && weights_data_type == output_data_type
 }
 
+/// A8 tiles are cheaper per tile; a lower target avoids oversplitting MN-heavy shapes.
+const SPLIT_K_TARGET_TILES_INT8_ACTIVATIONS: u32 = 128;
+const SPLIT_K_TARGET_TILES: u32 = 512;
+
 fn select_split_k(
     m: u32,
     n: u32,
@@ -855,23 +855,15 @@ fn select_small_m_mxu_tiling(
 pub(crate) fn select_mxu_quant_tiling(
     m: u32,
     n: u32,
-    group_size: u32,
-) -> GemmTiling {
-    let tiling = select_base_mxu_tiling(m, n);
-    if tiling.fits_quant_group_size(group_size) {
-        tiling
-    } else {
-        GemmTiling::Tile64x64x256_Simdgroups2x2
-    }
-}
-
-fn select_mxu_activation_quantized_tiling(
-    m: u32,
-    n: u32,
     k: u32,
     group_size: u32,
+    int8_activations: bool,
 ) -> GemmTiling {
-    let tiling = select_mxu_tiling(m, n, k);
+    let tiling = if int8_activations {
+        select_mxu_tiling(m, n, k)
+    } else {
+        select_base_mxu_tiling(m, n)
+    };
     if tiling.fits_quant_group_size(group_size) {
         tiling
     } else {
