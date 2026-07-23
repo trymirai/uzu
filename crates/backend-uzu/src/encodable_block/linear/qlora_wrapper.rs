@@ -5,7 +5,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        gpu_types::HadamardTransformOrder,
+        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
         kernel::{
             HadamardTransformKernel, Kernels,
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -60,7 +60,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
     ) -> Result<Self, QLoRALinearWrapperError<B>> {
         let use_incoherence_signs = match (incoherence_block_size, incoherence_processing_mode) {
             (None, _) => false,
-            (Some(32), IncoherenceProcessingMode::InputOutput) => true,
+            (Some(HADAMARD_TRANSFORM_BLOCK_SIZE), IncoherenceProcessingMode::InputOutput) => true,
             (incoherence_block_size, incoherence_processing_mode) => {
                 return Err(QLoRALinearWrapperError::UnsupportedConfiguration(format!(
                     "incoherence block_size={incoherence_block_size:?}, processing_mode={incoherence_processing_mode:?}"
