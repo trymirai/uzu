@@ -402,10 +402,8 @@ struct MxuFragmentOps {
         RightPointer right_tile = right_int4_signed + int(col * FRAGMENT_COLS) * bytes_per_row;
         RightTensor right_tensor(right_tile, extents<int, tile_k, tile_n>{}, right_strides);
 
-        auto cooperative_output = matmul_op.template get_destination_cooperative_tensor<
-            decltype(cooperative_left),
-            RightTensor,
-            int>();
+        auto cooperative_output =
+            matmul_op.template get_destination_cooperative_tensor<decltype(cooperative_left), RightTensor, int>();
 
         if constexpr (ACCUMULATE) {
           load_paired_vectors(cooperative_output, output.fragment_at(row, col), output.fragment_at(row, col + 1));

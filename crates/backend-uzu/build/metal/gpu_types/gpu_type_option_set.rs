@@ -1,26 +1,13 @@
+use super::rust_to_metal;
 use crate::common::gpu_types::GpuTypeOptionSet;
-
-fn r2c(ty: &str) -> anyhow::Result<&'static str> {
-    Ok(match ty {
-        "u8" => "uint8_t",
-        "u16" => "uint16_t",
-        "u32" => "uint",
-        "u64" => "uint64_t",
-        "i8" => "int8_t",
-        "i16" => "int16_t",
-        "i32" => "int",
-        "i64" => "int64_t",
-        unknown => anyhow::bail!("Unsupported option-set underlying type: {unknown}"),
-    })
-}
 
 /// Emit a Metal-side option-set as a struct wrapping the underlying primitive,
 /// with named static constants for each flag and a `contains()` helper.
-/// Implicit conversions from the underlying type allow a `uint` function
+/// Implicit conversions from the underlying type allow a `uint32_t` function
 /// constant to be passed where the struct is expected.
 pub fn gpu_type_gen_option_set(option_set: &GpuTypeOptionSet) -> anyhow::Result<String> {
     let name = &option_set.name;
-    let underlying_c = r2c(&option_set.underlying_type)?;
+    let underlying_c = rust_to_metal(&option_set.underlying_type)?;
 
     let variants = option_set
         .variants

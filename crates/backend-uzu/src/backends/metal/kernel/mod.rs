@@ -1,7 +1,10 @@
 use crate::backends::{
     common::{
         Kernels,
-        gpu_types::gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_row},
+        gpu_types::{
+            gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_row},
+            weaver,
+        },
     },
     metal::Metal,
 };

@@ -1,6 +1,6 @@
 use proc_macros::kernel;
 
-use crate::backends::common::kernel::weaver::*;
+use crate::backends::common::gpu_types::weaver;
 
 #[kernel(WeaverFrontierSelect)]
 pub fn weaver_frontier_select(
@@ -26,9 +26,9 @@ pub fn weaver_frontier_select(
     candidate_pool_size: u32,
 ) {
     if capacity == 0
-        || capacity as usize > MAX_FRONTIER_SLOTS
+        || capacity as usize > weaver::FRONTIER_MAX_SLOTS
         || width == 0
-        || width as usize > MAX_FRONTIER_WIDTH
+        || width as usize > weaver::FRONTIER_MAX_WIDTH
         || ancestor_stride == 0
         || max_depth == 0
         || tree_slots == 0
@@ -42,11 +42,11 @@ pub fn weaver_frontier_select(
         (capacity as usize, tree_slots as usize, width as usize, ancestor_stride as usize);
     let (candidate_pool_rows, candidate_pool_size) = (candidate_pool_rows as usize, candidate_pool_size as usize);
     let pool_len = candidate_pool_rows * candidate_pool_size;
-    let frontier = unsafe { std::slice::from_raw_parts_mut(frontier, FRONTIER_LANE_COUNT * capacity) };
-    let tree = unsafe { std::slice::from_raw_parts_mut(tree, TREE_LANE_COUNT * slots) };
+    let frontier = unsafe { std::slice::from_raw_parts_mut(frontier, weaver::FRONTIER_LANE_COUNT * capacity) };
+    let tree = unsafe { std::slice::from_raw_parts_mut(tree, weaver::TREE_LANE_COUNT * slots) };
     let slot_ancestors = unsafe { std::slice::from_raw_parts_mut(slot_ancestors, slots * stride) };
     let round_token_ids = unsafe { std::slice::from_raw_parts_mut(round_token_ids, width) };
-    let round_metadata = unsafe { std::slice::from_raw_parts_mut(round_metadata, METADATA_LANE_COUNT * width) };
+    let round_metadata = unsafe { std::slice::from_raw_parts_mut(round_metadata, weaver::METADATA_LANE_COUNT * width) };
     let round_ancestors = unsafe { std::slice::from_raw_parts_mut(round_ancestors, width * stride) };
     let round_valid = unsafe { std::slice::from_raw_parts_mut(round_valid, width) };
     let candidate_pool_ids = unsafe { std::slice::from_raw_parts(candidate_pool_ids, pool_len) };
@@ -57,21 +57,22 @@ pub fn weaver_frontier_select(
         unsafe { std::slice::from_raw_parts_mut(round_candidate_scores, width * candidate_pool_size) };
 
     for row in 0..width {
-        let (mut key, mut parent, mut token, mut winner) = (0, NO_WINNER, NO_WINNER, NO_WINNER);
+        let (mut key, mut parent, mut token, mut winner) =
+            (0, weaver::FRONTIER_NO_WINNER, weaver::FRONTIER_NO_WINNER, weaver::FRONTIER_NO_WINNER);
         for slot in 0..capacity {
-            if frontier[FRONTIER_LANE_ACTIVE * capacity + slot] == 0 {
+            if frontier[weaver::FRONTIER_LANE_ACTIVE * capacity + slot] == 0 {
                 continue;
             }
             let next = (
-                frontier[FRONTIER_LANE_KEY * capacity + slot],
-                frontier[FRONTIER_LANE_PARENT * capacity + slot],
-                frontier[FRONTIER_LANE_TOKEN * capacity + slot],
+                frontier[weaver::FRONTIER_LANE_KEY * capacity + slot],
+                frontier[weaver::FRONTIER_LANE_PARENT * capacity + slot],
+                frontier[weaver::FRONTIER_LANE_TOKEN * capacity + slot],
             );
             if next.0 > key || (next.0 == key && (next.1 < parent || (next.1 == parent && next.2 < token))) {
                 (key, parent, token, winner) = (next.0, next.1, next.2, slot as u32);
             }
         }
-        let real = winner != NO_WINNER;
+        let real = winner != weaver::FRONTIER_NO_WINNER;
         let winner = if real {
             winner as usize
         } else {
@@ -79,24 +80,24 @@ pub fn weaver_frontier_select(
         };
         let tree_slot = slot_start as usize + row;
         let lane_value = |lane: usize| u32::from(real) * frontier[lane * capacity + winner];
-        let token = lane_value(FRONTIER_LANE_TOKEN);
-        let depth = lane_value(FRONTIER_LANE_DEPTH);
-        let cumulative_logprob = lane_value(FRONTIER_LANE_CUM);
-        let logprob = lane_value(FRONTIER_LANE_LOGPROB);
+        let token = lane_value(weaver::FRONTIER_LANE_TOKEN);
+        let depth = lane_value(weaver::FRONTIER_LANE_DEPTH);
+        let cumulative_logprob = lane_value(weaver::FRONTIER_LANE_CUM);
+        let logprob = lane_value(weaver::FRONTIER_LANE_LOGPROB);
 
-        tree[TREE_LANE_TOKEN * slots + tree_slot] = token;
-        tree[TREE_LANE_PARENT * slots + tree_slot] = if real {
+        tree[weaver::TREE_LANE_TOKEN * slots + tree_slot] = token;
+        tree[weaver::TREE_LANE_PARENT * slots + tree_slot] = if real {
             parent
         } else {
-            NO_WINNER
+            weaver::FRONTIER_NO_WINNER
         };
-        tree[TREE_LANE_DEPTH * slots + tree_slot] = depth;
-        tree[TREE_LANE_CUM * slots + tree_slot] = cumulative_logprob;
-        tree[TREE_LANE_LOGPROB * slots + tree_slot] = logprob;
-        tree[TREE_LANE_MASK * slots + tree_slot] = u32::from(real);
+        tree[weaver::TREE_LANE_DEPTH * slots + tree_slot] = depth;
+        tree[weaver::TREE_LANE_CUM * slots + tree_slot] = cumulative_logprob;
+        tree[weaver::TREE_LANE_LOGPROB * slots + tree_slot] = logprob;
+        tree[weaver::TREE_LANE_MASK * slots + tree_slot] = u32::from(real);
 
         if real {
-            frontier[FRONTIER_LANE_ACTIVE * capacity + winner] = 0;
+            frontier[weaver::FRONTIER_LANE_ACTIVE * capacity + winner] = 0;
         }
 
         let parent_slot = if real && (parent as usize) < slots {
@@ -117,9 +118,9 @@ pub fn weaver_frontier_select(
         }
 
         round_token_ids[row] = token;
-        round_metadata[METADATA_LANE_DEPTH * width + row] = depth.min(max_depth - 1);
-        round_metadata[METADATA_LANE_ANCESTOR_COUNT * width + row] = depth.min(stride as u32);
-        round_metadata[METADATA_LANE_NODE_INDEX * width + row] = tree_slot as u32;
+        round_metadata[weaver::METADATA_LANE_DEPTH * width + row] = depth.min(max_depth - 1);
+        round_metadata[weaver::METADATA_LANE_ANCESTOR_COUNT * width + row] = depth.min(stride as u32);
+        round_metadata[weaver::METADATA_LANE_NODE_INDEX * width + row] = tree_slot as u32;
         round_valid[row] = u32::from(real && depth < lookahead_count && depth < max_depth);
 
         // Every row of a round expands the pool for its own depth, so the winner's pool row is

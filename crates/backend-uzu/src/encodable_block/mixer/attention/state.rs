@@ -109,8 +109,7 @@ impl<B: Backend> AttentionState<B> {
         let kv_buffer_bytes = max_elements * element_size * data_type.size_in_bytes();
 
         let is_ring = matches!(state_type, AttentionStateType::Ring { .. });
-        let is_sparse =
-            !is_ring && context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS);
+        let is_sparse = !is_ring && context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS);
 
         let (keys, values): (Box<dyn Buffer<Backend = B>>, Box<dyn Buffer<Backend = B>>) = if is_sparse {
             (

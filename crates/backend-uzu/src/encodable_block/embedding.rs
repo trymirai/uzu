@@ -5,7 +5,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
-        gpu_types::{QuantizationMethod, QuantizationMode},
+        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
         kernel::{
             FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel, QuantizedEmbeddingLookupKernel,
             matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -212,7 +212,7 @@ impl<B: Backend> Embedding<B> {
                     AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                         quantization_spec,
                         adapter_spec: None,
-                        incoherence_block_size: Some(32),
+                        incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
                         incoherence_processing_mode: IncoherenceProcessingMode::Output,
                         ..
                     }) => {

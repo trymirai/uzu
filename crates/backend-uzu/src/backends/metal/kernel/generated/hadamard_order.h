@@ -5,6 +5,8 @@
 using namespace metal;
 
 namespace uzu::hadamard_order {
+static constant constexpr size_t HADAMARD_TRANSFORM_BLOCK_SIZE = 32;
+
 enum class HadamardTransformOrder : uint32_t {
   Input = 0,
   Output = 1,
