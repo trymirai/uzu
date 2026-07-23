@@ -296,8 +296,9 @@ struct MxuMmaCore {
 
     const short2 position = Ops::get_position(thread_context.simd_lane_id);
     thread float* accumulator_elements = accumulator.elements();
-    constexpr int k_bytes_per_act_chunk = (BITS == 4) ? (int(SIMDGROUP_BLOCK_K) / 2) : int(SIMDGROUP_BLOCK_K);
     constexpr int k_bytes_per_weight_group = (BITS == 4) ? (int(GROUP_SIZE) / 2) : int(GROUP_SIZE);
+    (void)tile_col_offset;
+    (void)staged_int4_weights;
     constexpr int act_chunks_per_weight_group = int(GROUP_SIZE) / int(SIMDGROUP_BLOCK_K);
 
     uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> ones_tile;
@@ -350,7 +351,6 @@ struct MxuMmaCore {
       METAL_PRAGMA_NO_UNROLL
       for (int act_chunk = 0; act_chunk < act_chunks_per_weight_group; ++act_chunk) {
         const int k_element_offset = act_chunk * int(SIMDGROUP_BLOCK_K);
-        const int k_byte_offset = act_chunk * k_bytes_per_act_chunk;
         auto activation_tile = load_int8_left_tile<ALIGNED_M>(
             a_int8_simdgroup + k_element_offset,
             leading_dimension_a,
@@ -361,24 +361,43 @@ struct MxuMmaCore {
         uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> chunk_products;
         chunk_products.clear();
         if constexpr (BITS == 4) {
-          threadgroup uint8_t* staged_weights = staged_int4_weights + int(tile_col_offset) * k_bytes_per_act_chunk;
-          const int packed_bytes = int(SIMDGROUP_BLOCK_N) * k_bytes_per_act_chunk;
-          for (int byte_index = int(thread_context.simd_lane_id); byte_index < packed_bytes;
-               byte_index += int(METAL_SIMD_SIZE)) {
-            const int row = byte_index / k_bytes_per_act_chunk;
-            const int byte_in_row = byte_index - row * k_bytes_per_act_chunk;
-            staged_weights[byte_index] =
-                short(row) < simdgroup_limit_n
-                    ? uchar(b_packed_simdgroup[row * b_row_stride_bytes + k_byte_offset + byte_in_row] ^ uchar(0x88))
-                    : uchar(0);
+          // Unpack the packed nibbles straight into the int8 fragment and reuse the
+          // register-marshaled int8 x int8 MMA (as the 8-bit branch does). Each
+          // thread's fragment row covers 4 contiguous K positions whose base is a
+          // multiple of 4 (relaxed MXU layout), so its 4 nibbles are one aligned
+          // 16-bit load; value = nibble - 8 (excess-8 grid). This avoids the
+          // threadgroup staging round-trip and its per-chunk barrier entirely.
+          uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> right_tile;
+          METAL_PRAGMA_UNROLL
+          for (ushort tile_n = 0; tile_n < TILES_N; ++tile_n) {
+            METAL_PRAGMA_UNROLL
+            for (ushort tile_k = 0; tile_k < TILES_K; ++tile_k) {
+              thread auto& weight_vector = right_tile.fragment_at(tile_n, tile_k);
+              METAL_PRAGMA_UNROLL
+              for (ushort thread_row = 0; thread_row < Ops::THREAD_ELEMENT_ROWS; ++thread_row) {
+                const short row = short(tile_n * Ops::FRAGMENT_ROWS) + position.y +
+                                  short(thread_row * Ops::THREAD_ELEMENT_ROW_STRIDE);
+                const ushort element_base = thread_row * Ops::THREAD_ELEMENT_COLS;
+                if (ALIGNED_N || row < simdgroup_limit_n) {
+                  const int k_base = k_element_offset + int(tile_k * Ops::FRAGMENT_COLS) + int(position.x);
+                  const ushort packed = *reinterpret_cast<const device ushort*>(
+                      b_packed_simdgroup + int(row) * b_row_stride_bytes + (k_base >> 1)
+                  );
+                  METAL_PRAGMA_UNROLL
+                  for (ushort element_col = 0; element_col < Ops::THREAD_ELEMENT_COLS; ++element_col) {
+                    const ushort nibble = (packed >> (4u * element_col)) & 0xFu;
+                    weight_vector[element_base + element_col] = int8_t(short(nibble) - short(8));
+                  }
+                } else {
+                  METAL_PRAGMA_UNROLL
+                  for (ushort element_col = 0; element_col < Ops::THREAD_ELEMENT_COLS; ++element_col) {
+                    weight_vector[element_base + element_col] = int8_t(0);
+                  }
+                }
+              }
+            }
           }
-          threadgroup_barrier(mem_flags::mem_threadgroup);
-          Ops::template fragment_mma_int8_int4b<false>(
-              chunk_products,
-              activation_tile,
-              staged_weights,
-              int(SIMDGROUP_BLOCK_K)
-          );
+          Ops::template fragment_mma<false, true>(chunk_products, activation_tile, right_tile);
         } else {
           static_assert(BITS == 8, "symmetric int8 activations only support 4-bit or 8-bit weights");
           uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> right_tile;
