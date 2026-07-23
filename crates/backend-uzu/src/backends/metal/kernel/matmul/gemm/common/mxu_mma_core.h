@@ -377,7 +377,7 @@ struct MxuMmaCore {
                   uint spread = uint(packed);
                   spread = (spread | (spread << 8)) & 0x00FF00FFu;
                   spread = (spread | (spread << 4)) & 0x0F0F0F0Fu;
-                  codes = as_type<char4>(spread) - char4(8);
+                  codes = as_type<char4>(spread ^ 0x08080808u) - char4(8);
                 }
                 weight_vector[element_base + 0] = codes.x;
                 weight_vector[element_base + 1] = codes.y;
@@ -398,11 +398,6 @@ struct MxuMmaCore {
             right_src = right_src.bounded(simdgroup_limit_n, SIMDGROUP_BLOCK_K);
           }
           right_tile.load_from(thread_context.simd_lane_id, right_src);
-          thread int8_t* right_codes = right_tile.elements();
-          METAL_PRAGMA_UNROLL
-          for (ushort i = 0; i < right_tile.ELEMENTS_PER_FRAGMENT; ++i) {
-            right_codes[i] = as_type<int8_t>(uchar(as_type<uchar>(right_codes[i]) ^ uchar(0x80)));
-          }
           Ops::template fragment_mma<false, true>(chunk_products, activation_tile, right_tile);
         }
 
