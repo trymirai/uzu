@@ -27,6 +27,8 @@ pub fn bindgen(
 
     let variant_binds = variants::parse(kernel)?;
     let accepted_variants = accepted_variants(kernel);
+    let first_variant =
+        accepted_variants.first().context(format!("kernel {kernel_name}: all variants rejected by constraints"))?;
     let request_emission = variants::request(kernel, &variant_binds, &accepted_variants, enum_paths)?;
     let specialize_emission =
         specialize::parse(kernel, specialize_indices.get(&kernel.name).copied(), kernel_name, enum_paths)?;
@@ -118,10 +120,7 @@ pub fn bindgen(
     let new_body = if request_emission.is_some() {
         quote! { Self::from_request(context, #request_initializer #(, #specialize_names)*) }
     } else {
-        let entry_name = &accepted_variants
-            .first()
-            .context(format!("kernel {kernel_name}: all variants rejected by constraints"))?
-            .entry_name;
+        let entry_name = &first_variant.entry_name;
         quote! {
             let entry_name = #entry_name;
             #function_constants_initialization

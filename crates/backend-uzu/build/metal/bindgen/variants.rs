@@ -94,7 +94,6 @@ pub fn request(
 
     let kernel_name = kernel.name.as_ref();
     let request_name = format_ident!("{kernel_name}Request");
-    let accepted_variant_count = variants.len();
     let fields = binds.iter().map(|bind| {
         let name = &bind.field_name;
         let ty = bind.parsed_type.as_ref().map_or_else(|| quote! { crate::data_type::DataType }, |ty| quote! { #ty });
@@ -133,9 +132,6 @@ pub fn request(
             }
 
             impl #request_name {
-                #[cfg(test)]
-                #[allow(dead_code)]
-                pub(crate) const ACCEPTED_VARIANT_COUNT: usize = #accepted_variant_count;
                 pub(crate) fn resolve(&self) -> Result<&'static str, MetalError> {
                     match (#(self.#field_names,)*) {
                         #(#arms,)*
