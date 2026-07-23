@@ -32,6 +32,7 @@ pub struct Normalization<B: Backend> {
     epsilon: f32,
     scale_offset: Option<f32>,
     scales: Allocation<B>,
+    biases: Option<Allocation<B>>,
     element_count: usize,
     hadamard_factors: Option<Allocation<B>>,
     post_layer_scalar_value: f32,
@@ -51,10 +52,13 @@ impl<B: Backend> Normalization<B> {
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
     ) -> Result<Self, NormalizationNewError<B>> {
-        assert!(!config.has_biases, "normalization doesn't support biases");
         assert!(copy_to_shortcut || !residual_add, "residual_add requires shortcut");
 
         let scales = parameter_tree.leaf("scales")?.validate(&[element_count], DataType::F32)?.read_allocation()?;
+        let biases = config
+            .has_biases
+            .then(|| parameter_tree.leaf("biases")?.validate(&[element_count], DataType::F32)?.read_allocation())
+            .transpose()?;
 
         let (scale_residual_sum, scale_output, post_layer_scalar_value) = match post_layer_scalar {
             PostLayerScalar::None => (false, false, 1.0),
@@ -76,6 +80,7 @@ impl<B: Backend> Normalization<B> {
             hadamard_factors.is_some(),
             scale_residual_sum,
             scale_output,
+            biases.is_some(),
         )
         .map_err(NormalizationNewError::Backend)?;
 
@@ -83,6 +88,7 @@ impl<B: Backend> Normalization<B> {
             epsilon: config.epsilon,
             scale_offset: config.scale_offset,
             scales,
+            biases,
             element_count,
             hadamard_factors,
             post_layer_scalar_value,
@@ -106,6 +112,7 @@ impl<B: Backend> Normalization<B> {
         self.kernel.encode(
             Some((input, row_offset_bytes)),
             &self.scales,
+            self.biases.as_ref(),
             &mut output,
             shortcut,
             self.hadamard_factors.as_ref(),
