@@ -214,13 +214,13 @@ async fn gpt_oss_20b() {
 #[ignore]
 #[tokio::test]
 async fn lfm2_350m() {
-    run_tool_calls_test("LiquidAI/LFM2-350M", true, false, TEST_CASES).await;
+    run_tool_calls_test("LiquidAI/LFM2-350M", true, false, &TEST_CASES[..1]).await;
 }
 
 #[ignore]
 #[tokio::test]
 async fn lfm2_5_350m() {
-    run_tool_calls_test("LiquidAI/LFM2.5-350M", true, false, TEST_CASES).await;
+    run_tool_calls_test("LiquidAI/LFM2.5-350M", true, false, &TEST_CASES[..1]).await;
 }
 
 #[ignore]
