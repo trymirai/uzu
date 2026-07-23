@@ -6,7 +6,7 @@ pub use crate::encodable_block::dflash::DFlashState;
 use crate::{
     backends::common::{
         Allocation, AllocationType, Backend, Context, Encoder, Kernels,
-        gpu_types::weaver,
+        gpu_types::weaver::{FRONTIER_MAX_SLOTS, FRONTIER_NO_WINNER, FrontierIdx, MetadataIdx, TreeIdx},
         kernel::{WeaverFrontierScatterKernel, WeaverFrontierSelectKernel},
     },
     config::speculator::dflash::DFlashSpeculatorConfig,
@@ -158,7 +158,7 @@ impl<B: Backend> DFlashSpeculator<B> {
             let lookahead_count = max_depth.min(block_size.saturating_sub(1));
             // The frontier holds one slot per (tree slot, child) pair; the select
             // kernel silently no-ops past its capacity.
-            if (options.budget + 1) * options.children_per_node > weaver::FRONTIER_MAX_SLOTS || lookahead_count == 0 {
+            if (options.budget + 1) * options.children_per_node > FRONTIER_MAX_SLOTS || lookahead_count == 0 {
                 return Err(DFlashTreeError::InvalidOptions);
             }
             let target_hidden = state.target_output_norm().ok_or(DFlashTreeError::MissingTargetHidden)?;
@@ -314,8 +314,8 @@ impl<B: Backend> DFlashSpeculator<B> {
     ) -> Result<Allocation<B>, DFlashTreeError<B>> {
         let context = &*self.context;
         let slots = params.options.budget + 1;
-        let fanout = params.options.children_per_node;
-        let capacity = slots * fanout;
+        let children_per_node = params.options.children_per_node;
+        let capacity = slots * children_per_node;
         let width = params.options.frontier_width;
         let stride = params.max_depth;
         let pool_size = params.pool_size;
@@ -325,16 +325,16 @@ impl<B: Backend> DFlashSpeculator<B> {
         let scatter =
             <B::Kernels as Kernels>::WeaverFrontierScatterKernel::new(context).map_err(DFlashTreeError::Backend)?;
 
-        let mut tree_values = vec![0u32; weaver::TREE_LANE_COUNT * slots];
+        let mut tree_values = vec![0u32; TreeIdx::COUNT * slots];
         for slot in 0..slots {
-            tree_values[weaver::TREE_LANE_PARENT * slots + slot] = weaver::FRONTIER_NO_WINNER;
+            tree_values[TreeIdx::ParentSlot as usize * slots + slot] = FRONTIER_NO_WINNER;
         }
-        tree_values[weaver::TREE_LANE_TOKEN * slots] = params.bonus_token;
-        tree_values[weaver::TREE_LANE_MASK * slots] = 1;
+        tree_values[TreeIdx::TokenId as usize * slots] = params.bonus_token;
+        tree_values[TreeIdx::Valid as usize * slots] = 1;
 
         let mut tree = encoder.allocate_constant_from_slice(&tree_values).map_err(DFlashTreeError::Backend)?;
         let mut frontier = encoder
-            .allocate_constant_from_slice(&vec![0u32; weaver::FRONTIER_LANE_COUNT * capacity])
+            .allocate_constant_from_slice(&vec![0u32; FrontierIdx::COUNT * capacity])
             .map_err(DFlashTreeError::Backend)?;
         let mut slot_ancestors =
             encoder.allocate_constant_from_slice(&vec![0u32; slots * stride]).map_err(DFlashTreeError::Backend)?;
@@ -346,7 +346,7 @@ impl<B: Backend> DFlashSpeculator<B> {
         let mut round_token_ids =
             encoder.allocate_constant_from_slice(&round_token_id_values).map_err(DFlashTreeError::Backend)?;
         let mut round_metadata = encoder
-            .allocate_constant_from_slice(&vec![0u32; weaver::METADATA_LANE_COUNT * width])
+            .allocate_constant_from_slice(&vec![0u32; MetadataIdx::COUNT * width])
             .map_err(DFlashTreeError::Backend)?;
         let mut round_ancestors =
             encoder.allocate_constant_from_slice(&vec![0u32; width * stride]).map_err(DFlashTreeError::Backend)?;
@@ -408,7 +408,7 @@ impl<B: Backend> DFlashSpeculator<B> {
                 params.prefix,
                 &input,
                 state,
-                fanout,
+                children_per_node,
                 params.target_embedding,
                 encoder,
             )?;
@@ -422,7 +422,7 @@ impl<B: Backend> DFlashSpeculator<B> {
                 capacity as u32,
                 slots as u32,
                 rows as u32,
-                fanout as u32,
+                children_per_node as u32,
                 encoder,
             );
             drop(child_ids);
@@ -434,20 +434,16 @@ impl<B: Backend> DFlashSpeculator<B> {
 }
 
 fn tree_from_slots(tree: &[u32]) -> Vec<HostTreeNode> {
-    assert!(
-        tree.len().is_multiple_of(weaver::TREE_LANE_COUNT),
-        "tree array must contain {} equal-length lanes",
-        weaver::TREE_LANE_COUNT
-    );
-    let slots = tree.len() / weaver::TREE_LANE_COUNT;
-    let lane = |lane: usize, slot: usize| tree[lane * slots + slot];
+    assert!(tree.len().is_multiple_of(TreeIdx::COUNT), "tree array must contain {} equal-length lanes", TreeIdx::COUNT);
+    let slots = tree.len() / TreeIdx::COUNT;
+    let field = |field: TreeIdx, slot: usize| tree[field as usize * slots + slot];
     let mut slot_to_node = vec![usize::MAX; slots];
     let mut nodes: Vec<HostTreeNode> = Vec::with_capacity(slots);
     for slot in 0..slots {
-        if lane(weaver::TREE_LANE_MASK, slot) == 0 {
+        if field(TreeIdx::Valid, slot) == 0 {
             continue;
         }
-        let parent_slot = lane(weaver::TREE_LANE_PARENT, slot) as i32;
+        let parent_slot = field(TreeIdx::ParentSlot, slot) as i32;
         let parent = (parent_slot >= 0).then(|| {
             let parent = slot_to_node[parent_slot as usize];
             assert_ne!(parent, usize::MAX, "tree slot {slot} names padding slot {parent_slot} as its parent");
@@ -459,10 +455,10 @@ fn tree_from_slots(tree: &[u32]) -> Vec<HostTreeNode> {
             nodes[parent].children.push(index);
         }
         nodes.push(HostTreeNode {
-            token: lane(weaver::TREE_LANE_TOKEN, slot),
+            token: field(TreeIdx::TokenId, slot),
             parent,
-            depth: lane(weaver::TREE_LANE_DEPTH, slot) as usize,
-            logprob: f32::from_bits(lane(weaver::TREE_LANE_LOGPROB, slot)),
+            depth: field(TreeIdx::Depth, slot) as usize,
+            logprob: f32::from_bits(field(TreeIdx::EdgeLogprobBits, slot)),
             children: Vec::new(),
         });
     }
