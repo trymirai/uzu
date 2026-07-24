@@ -7,7 +7,7 @@ use proc_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{Allocation, Backend, Encoder, Kernels, kernel::AttentionLastQueryKernel},
+        common::{Allocation, Backend, Encoder, Kernels, kernel::AncestorAttentionKernel},
         cpu::Cpu,
         metal::Metal,
     },
@@ -22,7 +22,7 @@ const NUM_HEADS: u32 = 16;
 
 struct Runner<B: Backend> {
     context: Arc<B::Context>,
-    kernel: <B::Kernels as Kernels>::AttentionLastQueryKernel,
+    kernel: <B::Kernels as Kernels>::AncestorAttentionKernel,
     prefix_kv: Allocation<B>,
     node_kv: Allocation<B>,
     current_qkv: Allocation<B>,
@@ -63,7 +63,7 @@ impl<B: Backend> Runner<B> {
 
         let context = create_context::<B>();
         let kernel =
-            <B::Kernels as Kernels>::AttentionLastQueryKernel::new(context.as_ref(), HEAD_DIM as u32, NUM_HEADS)
+            <B::Kernels as Kernels>::AncestorAttentionKernel::new(context.as_ref(), HEAD_DIM as u32, NUM_HEADS)
                 .unwrap();
         Self {
             prefix_kv: alloc_allocation_with_data::<B, bf16>(&context, &values(prefix_length * kv_width, 0)),
@@ -107,7 +107,7 @@ impl<B: Backend> Runner<B> {
 }
 
 #[uzu_test]
-fn attention_last_query_matches_cpu() {
+fn ancestor_attention_matches_cpu() {
     let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16);
     let initial_nodes = allocation_to_vec::<Cpu, bf16>(&cpu.node_kv);
     cpu.encode(1);
@@ -119,13 +119,13 @@ fn attention_last_query_matches_cpu() {
     metal.encode(1);
     let actual_output = allocation_to_vec::<Metal, bf16>(&metal.output);
 
-    assert_eq_float(&expected_output, &actual_output, 0.02, "AttentionLastQuery output");
+    assert_eq_float(&expected_output, &actual_output, 0.02, "AncestorAttention output");
     assert_eq!(allocation_to_vec::<Metal, bf16>(&metal.node_kv), initial_nodes);
 }
 
 #[uzu_test]
 #[ignore = "benchmark"]
-fn benchmark_attention_last_query() {
+fn benchmark_ancestor_attention() {
     const BATCH: u32 = 32;
     const SAMPLES: usize = 50;
 
@@ -137,5 +137,5 @@ fn benchmark_attention_last_query() {
     }
     let mut samples = (0..SAMPLES).map(|_| run()).collect::<Vec<_>>();
     samples.sort_unstable();
-    eprintln!("attention_last_query gpu={:?}", samples[SAMPLES / 2]);
+    eprintln!("ancestor_attention gpu={:?}", samples[SAMPLES / 2]);
 }

@@ -51,7 +51,7 @@ METAL_FUNC void attend_qkv(
 
 template <uint HEAD_DIM>
 VARIANTS(HEAD_DIM, 128)
-PUBLIC KERNEL(AttentionLastQuery)(
+PUBLIC KERNEL(AncestorAttention)(
     const device bfloat* prefix_kv,
     const device bfloat* node_kv,
     const device bfloat* current_qkv,

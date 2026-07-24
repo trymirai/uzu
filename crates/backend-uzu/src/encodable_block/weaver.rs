@@ -6,7 +6,7 @@ use crate::{
         Allocation, AllocationType, Backend, Context, Encoder, Kernels,
         gpu_types::weaver::{CANDIDATES_MAX, MetadataIdx},
         kernel::{
-            ActivationKernel, AttentionLastQueryKernel, AttentionPrepareKernel, TensorAddBiasKernel,
+            ActivationKernel, AncestorAttentionKernel, AttentionPrepareKernel, TensorAddBiasKernel,
             TensorAddSwapKernel, WeaverNodeCacheWriteKernel, WeaverTopChildrenKernel,
         },
     },
@@ -80,7 +80,7 @@ struct WeaverBlock<B: Backend> {
     qkv_projection: Box<dyn Linear<B>>,
     attention_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     prefix_attention: AttentionCores<B>,
-    last_query_attention: <B::Kernels as Kernels>::AttentionLastQueryKernel,
+    ancestor_attention: <B::Kernels as Kernels>::AncestorAttentionKernel,
     node_cache_write: <B::Kernels as Kernels>::WeaverNodeCacheWriteKernel,
     out_projection: Box<dyn Linear<B>>,
     residual_add: <B::Kernels as Kernels>::TensorAddSwapKernel,
@@ -487,8 +487,8 @@ impl<B: Backend> WeaverBlock<B> {
             .map_err(WeaverNewError::Backend)?;
         let residual_add =
             <B::Kernels as Kernels>::TensorAddSwapKernel::new(context, DATA_TYPE).map_err(WeaverNewError::Backend)?;
-        let last_query_attention =
-            <B::Kernels as Kernels>::AttentionLastQueryKernel::new(context, head_dim as u32, num_heads as u32)
+        let ancestor_attention =
+            <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim as u32, num_heads as u32)
                 .map_err(WeaverNewError::Backend)?;
         let node_cache_write = <B::Kernels as Kernels>::WeaverNodeCacheWriteKernel::new(context, DATA_TYPE)
             .map_err(WeaverNewError::Backend)?;
@@ -503,7 +503,7 @@ impl<B: Backend> WeaverBlock<B> {
             down_projection,
             activation,
             residual_add,
-            last_query_attention,
+            ancestor_attention,
             node_cache_write,
             attention_scale,
             model_dim,
@@ -581,7 +581,7 @@ impl<B: Backend> WeaverBlock<B> {
         let ancestor_counts = (batch.node_metadata, MetadataIdx::AncestorCount as usize * metadata_lane_bytes);
         let tree_slots = (batch.node_metadata, MetadataIdx::TreeSlot as usize * metadata_lane_bytes);
         let mut attention = encoder.allocate_scratch(size_for_shape(&[batch.node_count, self.model_dim], DATA_TYPE))?;
-        self.last_query_attention.encode(
+        self.ancestor_attention.encode(
             prefix_kv,
             &*node_kv_cache,
             &current_qkv,

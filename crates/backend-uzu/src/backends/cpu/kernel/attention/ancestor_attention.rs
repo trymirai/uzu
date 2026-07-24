@@ -3,9 +3,9 @@ use proc_macros::kernel;
 
 use super::attention_single_pass::attention_single_pass;
 
-#[kernel(AttentionLastQuery)]
+#[kernel(AncestorAttention)]
 #[variants(HEAD_DIM, 128)]
-fn attention_last_query<const HEAD_DIM: u32>(
+fn ancestor_attention<const HEAD_DIM: u32>(
     prefix_kv: *const bf16,
     node_kv: *const bf16,
     current_qkv: *const bf16,

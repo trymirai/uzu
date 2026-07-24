@@ -2,7 +2,7 @@
 #include "../common/dsl.h"
 
 // Scatters the key/value halves of the current step's packed QKV rows into their
-// node-cache slots. Kept out of AttentionLastQuery so that the node arena stays
+// node-cache slots. Kept out of AncestorAttention so that the node arena stays
 // read-only for the whole attention dispatch.
 template <typename T>
 VARIANTS(T, float, bfloat)
