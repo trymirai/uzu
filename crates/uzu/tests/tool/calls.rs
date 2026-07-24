@@ -208,7 +208,7 @@ async fn functiongemma_270m_it() {
 #[ignore]
 #[tokio::test]
 async fn gpt_oss_20b() {
-    run_tool_calls_test("openai/gpt-oss-20b", true, false, &TEST_CASES).await;
+    run_tool_calls_test("openai/gpt-oss-20b", true, false, TEST_CASES).await;
 }
 
 #[ignore]
