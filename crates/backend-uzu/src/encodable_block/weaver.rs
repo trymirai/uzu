@@ -33,8 +33,7 @@ pub(crate) struct TopKChildren<B: Backend> {
 
 struct PrefixLayerOutput<B: Backend> {
     hidden: Allocation<B>,
-    keys: Allocation<B>,
-    values: Allocation<B>,
+    kv: Allocation<B>,
 }
 
 pub(crate) struct WeaverPrefixKvCache<B: Backend> {
@@ -267,7 +266,6 @@ impl<B: Backend> Weaver<B> {
         assert!(target_hidden.size() >= row_bytes);
         assert!(lookaheads.size() >= (lookahead_offset + lookahead_count) * row_bytes);
 
-        let context = encoder.context();
         let mut input = encoder
             .allocate_scratch(size_for_shape(&[token_count, self.target_model_dim], DATA_TYPE))
             .map_err(WeaverEncodeError::Backend)?;
@@ -301,15 +299,9 @@ impl<B: Backend> Weaver<B> {
         for block in &self.blocks {
             let PrefixLayerOutput {
                 hidden: next_hidden,
-                keys,
-                values,
+                kv,
             } = block.encode_prefix(hidden, token_count, encoder).map_err(WeaverEncodeError::Backend)?;
-            let mut cached_kv = context
-                .create_allocation(keys.size() + values.size(), AllocationType::Global)
-                .map_err(WeaverEncodeError::Backend)?;
-            encoder.encode_copy(&keys, .., &mut cached_kv, 0..keys.size());
-            encoder.encode_copy(&values, .., &mut cached_kv, keys.size()..keys.size() + values.size());
-            layer_kv.push(cached_kv);
+            layer_kv.push(kv);
             hidden = next_hidden;
         }
         drop(input);
@@ -607,13 +599,16 @@ impl<B: Backend> WeaverBlock<B> {
         let qkv = self.qkv_projection.encode(normalized, token_count, encoder)?;
         let mut queries =
             encoder.allocate_scratch(size_for_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE))?;
-        let mut keys = encoder.allocate_scratch(size_for_shape(&[token_count, self.model_dim], DATA_TYPE))?;
-        let mut values = encoder.allocate_scratch(size_for_shape(&[token_count, self.model_dim], DATA_TYPE))?;
+        let kv_plane_bytes = size_for_shape(&[token_count, self.model_dim], DATA_TYPE);
+        let mut kv = encoder
+            .context()
+            .create_allocation(size_for_shape(&[2, token_count, self.model_dim], DATA_TYPE), AllocationType::Global)?;
+        let (keys, values) = kv.split_at_mut(kv_plane_bytes);
         self.attention_prepare.encode(
             &qkv,
             &mut queries,
-            Some(&mut keys),
-            Some(&mut values),
+            Some(keys),
+            Some(values),
             None::<&Allocation<B>>,
             None::<&Allocation<B>>,
             self.num_heads as u32,
@@ -630,8 +625,8 @@ impl<B: Backend> WeaverBlock<B> {
         let attention = self.prefix_attention.encode(
             AttentionCoreEncodeArguments {
                 queries: &queries,
-                keys: &keys,
-                values: &values,
+                keys: &kv,
+                values: (&kv, kv_plane_bytes),
                 suffix_length: token_count,
                 trie: None,
                 sinks: None,
@@ -655,8 +650,7 @@ impl<B: Backend> WeaverBlock<B> {
         self.residual_add.encode(&mut output, &mut residual, (token_count * self.model_dim) as u32, encoder);
         Ok(PrefixLayerOutput {
             hidden: residual,
-            keys,
-            values,
+            kv,
         })
     }
 }

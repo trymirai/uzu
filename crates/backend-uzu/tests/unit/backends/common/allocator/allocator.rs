@@ -10,7 +10,7 @@ use proc_macros::uzu_test;
 use serde::{Deserialize, Serialize};
 
 use crate::backends::{
-    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
+    common::{Allocation, AllocationPool, AllocationType, Allocator, AsBufferRangeRef, Backend, BufferArgMut, Context},
     metal::Metal,
 };
 
@@ -126,4 +126,19 @@ fn bench_allocator_generation_trace() {
     eprintln!("--------------------");
     eprintln!("Cpu time: {} ms", elapsed.as_millis());
     eprintln!("--------------------");
+}
+
+#[uzu_test]
+#[ignore]
+fn allocation_split_at_mut_returns_disjoint_buffer_arguments() {
+    let context = <<Metal as Backend>::Context as Context>::new().unwrap();
+    let mut allocation = context.create_allocation(64, AllocationType::Global).unwrap();
+    let allocation_range = allocation.as_buffer_range_ref().range();
+
+    let (head, tail) = allocation.split_at_mut(24);
+    let (_, head_offset, head_length) = BufferArgMut::<'_, Metal>::into_parts(head);
+    let (_, tail_offset, tail_length) = BufferArgMut::<'_, Metal>::into_parts(tail);
+
+    assert_eq!((head_offset, head_length), (allocation_range.start, 24));
+    assert_eq!((tail_offset, tail_length), (allocation_range.start + 24, 40));
 }
