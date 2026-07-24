@@ -198,18 +198,17 @@ async fn run_tool_calls_test(
 #[ignore]
 #[tokio::test]
 async fn functiongemma_270m_it() {
-    // FunctionGemma 270M only handles single-step tool calls out of the box: for the prompts that
-    // require chaining (get_current_location -> get_current_temperature) it invents coordinates or
-    // asks the user for them instead of calling get_current_location first. Per the model card,
-    // multi-step use cases require task-specific fine-tuning.
+    // FunctionGemma 270M only handles single-step tool calls out of the box:
+    // for the prompts that require chaining (get_current_location -> get_current_temperature) it invents coordinates or
+    // asks the user for them instead of calling get_current_location first.
+    // Per the model card, multi-step use cases require task-specific fine-tuning.
     run_tool_calls_test("google/functiongemma-270m-it", false, true, &TEST_CASES[..1]).await;
 }
 
 #[ignore]
 #[tokio::test]
 async fn gpt_oss_20b() {
-    // flaky on chain tool calls
-    run_tool_calls_test("openai/gpt-oss-20b", true, false, &TEST_CASES[..1]).await;
+    run_tool_calls_test("openai/gpt-oss-20b", true, false, &TEST_CASES).await;
 }
 
 #[ignore]
