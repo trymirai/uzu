@@ -13,7 +13,7 @@ use helpers::{
     tokenizer_directory,
 };
 use shoji::types::{
-    basic::{ReasoningEffort, ToolCall, Value},
+    basic::{ReasoningEffort, Token, ToolCall, Value},
     session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
 
@@ -520,4 +520,40 @@ fn test_encoding_functiongemma() {
             result
         }),
     );
+}
+
+#[test]
+fn test_rendering_functiongemma_non_object_tool_results() {
+    let config = HanashiConfig::FunctionGemma.resolve().unwrap();
+    let renderer = hanashi::chat::hanashi::renderer::Renderer::new(config.rendering);
+    let cases = [
+        (serde_json::json!(42), "response:get_value{value:42}"),
+        (
+            serde_json::json!(["first", "second"]),
+            "response:get_value{value:[<escape>first<escape>,<escape>second<escape>]}",
+        ),
+    ];
+
+    for (value, expected) in cases {
+        let message = ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+            identifier: None,
+            name: Some("get_value".to_string()),
+            value: Value::from(value),
+        });
+        let rendered = renderer
+            .render(
+                &[message],
+                true,
+                Some(Token {
+                    id: 0,
+                    value: "<bos>".to_string(),
+                    is_special: true,
+                }),
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert!(rendered.contains(expected), "rendered prompt did not preserve the tool result: {rendered}");
+    }
 }

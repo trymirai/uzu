@@ -143,6 +143,15 @@ impl Message {
                             serde_json::to_value(value.clone()).map_err(|error| Error::SerializationFailed {
                                 reason: error.to_string(),
                             })?;
+                        let response = if response.is_object() {
+                            response
+                        } else {
+                            serde_json::to_value(IndexMap::from([("value".to_string(), response)])).map_err(
+                                |error| Error::SerializationFailed {
+                                    reason: error.to_string(),
+                                },
+                            )?
+                        };
                         serde_json::to_value(IndexMap::from([
                             (name_key.clone(), Value::String(name.clone())),
                             (response_key.clone(), response),
