@@ -14,7 +14,7 @@ use crate::{
     encodable_block::{
         dflash::DFlashDraft,
         embedding::{Embedding, EmbeddingError},
-        weaver::{Weaver, WeaverEncodeError, WeaverNodeState, WeaverPrefix, WeaverStepBatch},
+        weaver::{Weaver, WeaverEncodeError, WeaverNodeCache, WeaverPrefixCache, WeaverStepBatch},
     },
     engine::language_model::LanguageModel,
 };
@@ -165,7 +165,7 @@ impl<B: Backend> DFlashSpeculator<B> {
             let prefix = weaver.build_prefix(target_hidden, &draft_hidden, 1, lookahead_count, &mut encoder)?;
             drop(draft_hidden);
             drop(draft_logits);
-            let mut weaver_state = weaver.create_node_state(options.budget + 1, &self.context)?;
+            let mut weaver_state = weaver.create_node_cache(options.budget + 1, &self.context)?;
             let arguments = TreeEncodingArguments {
                 weaver,
                 prefix: &prefix,
@@ -310,7 +310,7 @@ impl<B: Backend> DFlashSpeculator<B> {
         &self,
         encoder: &mut Encoder<B>,
         params: &TreeEncodingArguments<'_, B>,
-        state: &mut WeaverNodeState<B>,
+        state: &mut WeaverNodeCache<B>,
     ) -> Result<Allocation<B>, DFlashTreeError<B>> {
         let context = &*self.context;
         let slots = params.options.budget + 1;
@@ -395,16 +395,16 @@ impl<B: Backend> DFlashSpeculator<B> {
                 (&round_candidate_ids, &round_candidate_scores)
             };
             let input = WeaverStepBatch {
-                row_count: rows,
-                candidate_count: pool_size,
+                node_count: rows,
+                candidates_per_node: pool_size,
                 ancestor_stride: stride,
-                parent_token_ids: &round_token_ids,
+                node_token_ids: &round_token_ids,
                 candidate_ids,
-                candidate_scores,
+                candidate_logits: candidate_scores,
                 ancestor_indices: &round_ancestors,
                 node_metadata: &round_metadata,
             };
-            let (child_ids, child_logprobs) = params.weaver.encode_step_batch(
+            let children = params.weaver.encode_step_batch(
                 params.prefix,
                 &input,
                 state,
@@ -416,8 +416,8 @@ impl<B: Backend> DFlashSpeculator<B> {
                 &tree,
                 &round_metadata,
                 &round_valid,
-                &child_ids,
-                &child_logprobs,
+                &children.token_ids,
+                &children.logprobs,
                 &mut frontier,
                 capacity as u32,
                 slots as u32,
@@ -425,8 +425,7 @@ impl<B: Backend> DFlashSpeculator<B> {
                 children_per_node as u32,
                 encoder,
             );
-            drop(child_ids);
-            drop(child_logprobs);
+            drop(children);
             slot_start += rows;
         }
         Ok(tree)
@@ -467,7 +466,7 @@ fn tree_from_slots(tree: &[u32]) -> Vec<HostTreeNode> {
 
 struct TreeEncodingArguments<'a, B: Backend> {
     weaver: &'a Weaver<B>,
-    prefix: &'a WeaverPrefix<B>,
+    prefix: &'a WeaverPrefixCache<B>,
     target_embedding: &'a Embedding<B>,
     pool_ids: &'a Allocation<B>,
     pool_scores: &'a Allocation<B>,
