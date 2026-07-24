@@ -549,14 +549,13 @@ fn doc_string(attrs: &[Attribute]) -> String {
             if !attr.path().is_ident("doc") {
                 return None;
             }
-            if let Meta::NameValue(name_value) = &attr.meta {
-                if let Expr::Lit(ExprLit {
+            if let Meta::NameValue(name_value) = &attr.meta
+                && let Expr::Lit(ExprLit {
                     lit: Lit::Str(literal),
                     ..
                 }) = &name_value.value
-                {
-                    return Some(literal.value().trim().to_string());
-                }
+            {
+                return Some(literal.value().trim().to_string());
             }
             None
         })
@@ -565,10 +564,10 @@ fn doc_string(attrs: &[Attribute]) -> String {
 }
 
 fn is_option(ty: &Type) -> bool {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            return segment.ident == "Option";
-        }
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+    {
+        return segment.ident == "Option";
     }
     false
 }
