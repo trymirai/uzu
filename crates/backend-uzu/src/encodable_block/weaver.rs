@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+        Allocation, AllocationType, AsBufferRangeMut, Backend, Context, Encoder, Kernels,
         gpu_types::weaver::{CANDIDATES_MAX, MetadataIdx},
         kernel::{
             ActivationKernel, AncestorAttentionKernel, AttentionPrepareKernel, TensorAddBiasKernel,
@@ -581,7 +581,7 @@ impl<B: Backend> WeaverBlock<B> {
         let mut kv = encoder
             .context()
             .create_allocation(size_for_shape(&[2, token_count, self.model_dim], DATA_TYPE), AllocationType::Global)?;
-        let (keys, values) = kv.split_at_mut(kv_plane_bytes);
+        let (keys, values) = kv.as_buffer_range_mut().split_at(kv_plane_bytes);
         self.attention_prepare.encode(
             &qkv,
             &mut queries,

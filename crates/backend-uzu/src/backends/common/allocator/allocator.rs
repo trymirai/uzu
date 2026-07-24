@@ -26,13 +26,6 @@ impl<B: Backend> Allocation<B> {
         self.range.len()
     }
 
-    pub fn split_at_mut(
-        &mut self,
-        byte_offset: usize,
-    ) -> (BufferRangeMut<'_, B::DenseBuffer>, BufferRangeMut<'_, B::DenseBuffer>) {
-        self.as_buffer_range_mut().split_at(byte_offset)
-    }
-
     pub fn as_slice_mut<T: NoUninit + AnyBitPattern>(&mut self) -> &mut [T] {
         let buffer_range = self.as_buffer_range_mut();
         let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
