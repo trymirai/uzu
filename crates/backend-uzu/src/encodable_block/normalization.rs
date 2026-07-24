@@ -20,6 +20,13 @@ pub enum PostLayerScalar {
     ScaleOutput(f32),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutMode {
+    None,
+    Copy,
+    Add,
+}
+
 #[derive(Debug, Error)]
 pub enum NormalizationNewError<B: Backend> {
     #[error("Backend error: {0}")]
@@ -44,15 +51,18 @@ impl<B: Backend> Normalization<B> {
     pub fn new(
         element_count: usize,
         hadamard_factors: Option<Allocation<B>>,
-        copy_to_shortcut: bool,
-        residual_add: bool,
+        shortcut_mode: ShortcutMode,
         post_layer_scalar: PostLayerScalar,
         data_type: DataType,
         config: &NormalizationConfig,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
     ) -> Result<Self, NormalizationNewError<B>> {
-        assert!(copy_to_shortcut || !residual_add, "residual_add requires shortcut");
+        let (copy_to_shortcut, residual_add) = match shortcut_mode {
+            ShortcutMode::None => (false, false),
+            ShortcutMode::Copy => (true, false),
+            ShortcutMode::Add => (true, true),
+        };
 
         let scales = parameter_tree.leaf("scales")?.validate(&[element_count], DataType::F32)?.read_allocation()?;
         let biases = config
