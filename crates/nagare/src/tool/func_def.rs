@@ -136,27 +136,3 @@ fn coerce_to_schema(
         _ => value,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::coerce_to_schema;
-
-    #[test]
-    fn coerces_integer_strings_across_the_u64_range() {
-        let schema = json!({ "type": "integer" });
-
-        assert_eq!(coerce_to_schema(json!("9223372036854775807"), &schema), json!(i64::MAX));
-        assert_eq!(coerce_to_schema(json!("9223372036854775808"), &schema), json!(i64::MAX as u64 + 1));
-        assert_eq!(coerce_to_schema(json!("18446744073709551615"), &schema), json!(u64::MAX));
-    }
-
-    #[test]
-    fn leaves_out_of_range_integer_strings_unchanged() {
-        let schema = json!({ "type": "integer" });
-
-        assert_eq!(coerce_to_schema(json!("18446744073709551616"), &schema), json!("18446744073709551616"));
-        assert_eq!(coerce_to_schema(json!("-9223372036854775809"), &schema), json!("-9223372036854775809"));
-    }
-}

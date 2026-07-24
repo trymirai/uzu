@@ -214,8 +214,7 @@ impl Encoding {
         let mut streamed_messages: Vec<ChatMessage> = Vec::new();
         for msg in messages {
             let role = rendering_config.get_role_by_name(&msg.role.to_string());
-            // templates may render tool results inside another role's turn
-            // (e.g. qwen renders them as `<|im_start|>user\n<tool_response>...`,
+            // templates may render tool results inside another role's turn (e.g. qwen renders them as `<|im_start|>user\n<tool_response>...`,
             // functiongemma keeps calls, responses and the follow-up reply in one model turn),
             // so tool result sections are split into standalone tool messages in stream order
             match msg.content {

@@ -55,10 +55,9 @@ impl Content {
                                 Ok(tool_call) => tool_calls.push(ChatContentBlock::ToolCall {
                                     value: tool_call,
                                 }),
-                                // Llama 3.2 may echo a result as a pseudo call such as
-                                // `{"time":"17:03","return":"time"}`. Only treat that
-                                // positively identified shape as text; malformed calls must
-                                // remain candidates so the turn retains its ToolCalls finish reason.
+                                // Llama 3.2 may echo a result as a pseudo call such as `{"time":"17:03","return":"time"}`.
+                                // Only treat that positively identified shape as text;
+                                // malformed calls must remain candidates so the turn retains its ToolCalls finish reason.
                                 Err(_) => {
                                     if is_tool_call_result_echo(&value) {
                                         text_parts.push(value.to_string());

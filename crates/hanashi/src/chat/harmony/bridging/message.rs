@@ -18,8 +18,6 @@ const FUNCTIONS_NAMESPACE: &str = "functions";
 const CHANNEL_ANALYSIS: &str = "analysis";
 const CHANNEL_COMMENTARY: &str = "commentary";
 const CHANNEL_FINAL: &str = "final";
-// Plain "json" matches how the reference gpt-oss chat template re-renders tool calls in the conversation history (`<|channel|>commentary json<|message|>`);
-// the `<|constrain|>json` special-token form only appears in fresh completions, not in re-rendered history.
 const CONTENT_TYPE_JSON: &str = "json";
 const RECIPIENT_ASSISTANT: &str = "assistant";
 const BUILTIN_BROWSER: &str = "browser";
@@ -27,9 +25,8 @@ const BUILTIN_PYTHON: &str = "python";
 
 pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<ExternalMessage>, Error> {
     let mut result = Vec::new();
-    // Plain system text becomes developer `# Instructions`, matching the reference gpt-oss chat
-    // template; the harmony system message always carries the meta preamble (identity, reasoning
-    // effort, valid channels) the model was trained to expect.
+    // Plain system text becomes developer `# Instructions`, matching the reference gpt-oss chat template.
+    // The harmony system message always carries the meta preamble (identity, reasoning effort, valid channels) the model was trained to expect.
     let mut pending_instructions: Vec<String> = Vec::new();
 
     for message in messages {
@@ -96,8 +93,7 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                     }
                 }
 
-                // the reference gpt-oss chat template always includes the current date, so
-                // default it here the same way it does (strftime_now("%Y-%m-%d"))
+                // the reference gpt-oss chat template always includes the current date, so default it here the same way it does (strftime_now("%Y-%m-%d"))
                 if system_content.conversation_start_date.is_none() {
                     system_content.conversation_start_date = Some(strftime_now("%Y-%m-%d".to_string()));
                 }

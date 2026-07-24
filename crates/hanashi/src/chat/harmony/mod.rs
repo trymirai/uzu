@@ -39,9 +39,8 @@ pub struct Encoding {
     state: State,
     completion_message_start: usize,
     special_tokens: SpecialTokens,
-    // Some while the current message header is being decoded (from decoding start or `<|start|>`
-    // until `<|message|>`); header tokens are held back from the parser so a malformed header can
-    // be repaired before the parser sees it.
+    // Some while the current message header is being decoded (from decoding start or `<|start|>` until `<|message|>`);
+    // header tokens are held back from the parser so a malformed header can be repaired before the parser sees it.
     header_buffer: Option<Vec<Token>>,
 }
 
@@ -238,13 +237,11 @@ impl Encoding {
     }
 }
 
-/// gpt-oss sometimes drops or misplaces the `<|channel|>` token when it opens a tool-call header
-/// right after a tool response, emitting e.g. `commentary to=functions.x<|channel|>commentary
-/// <|constrain|>json` straight after `<|start|>assistant`. When a header is that recognizable
-/// quirk — the channel name first, followed only by fragments we can attribute (a recipient, a
-/// repeated channel declaration, a content type) — rebuild the canonical header the parser
-/// expects. Any other shape returns None and is replayed verbatim, keeping the parser's strict
-/// behavior for genuinely garbled output.
+/// gpt-oss sometimes drops or misplaces the `<|channel|>` token when it opens a tool-call header  right after a tool response,
+/// emitting e.g. `commentary to=functions.x<|channel|>commentary<|constrain|>json` straight after `<|start|>assistant`.
+/// When a header is that recognizable quirk — the channel name first, followed only by fragments we can attribute
+/// (a recipient, a repeated channel declaration, a content type) — rebuild the canonical header the parser expects.
+/// Any other shape returns None and is replayed verbatim, keeping the parser's strict behavior for genuinely garbled output.
 fn repair_header(
     encoding: &HarmonyEncoding,
     header_tokens: &[Token],
