@@ -239,7 +239,8 @@ impl MatmulKernel for MatmulCpuKernel {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 8;
                                         let w = weights.as_ptr() as *const u32;
-                                        let mut byte = ((w.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as u8;
+                                        let mut byte =
+                                            ((w.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as u8;
                                         if signed_codes {
                                             byte ^= 0x80;
                                         }

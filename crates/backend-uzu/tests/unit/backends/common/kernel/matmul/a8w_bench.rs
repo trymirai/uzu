@@ -81,7 +81,15 @@ impl BenchmarkData {
         let group_size = HADAMARD_TRANSFORM_BLOCK_SIZE as u32;
         let seed = 0xA8_00 ^ u64::from(bits) ^ k as u64 ^ n as u64;
         let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed);
-        let rht: Vec<i32> = (0..k).map(|index| if index % 3 == 0 { -1 } else { 1 }).collect();
+        let rht: Vec<i32> = (0..k)
+            .map(|index| {
+                if index % 3 == 0 {
+                    -1
+                } else {
+                    1
+                }
+            })
+            .collect();
         let groups = k / group_size as usize;
 
         Self {
