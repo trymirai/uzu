@@ -124,23 +124,6 @@ pub enum WeaverEncodeError<B: Backend> {
 }
 
 impl<B: Backend> Weaver<B> {
-    pub(crate) fn create_node_kv_cache(
-        &self,
-        capacity: usize,
-        context: &B::Context,
-    ) -> Result<WeaverNodeKvCache<B>, WeaverEncodeError<B>> {
-        assert!(capacity > 0, "Weaver node capacity must be positive");
-        let node_capacity = u32::try_from(capacity).expect("Weaver node capacity exceeds the kernel limit");
-        let kv_size = size_for_shape(&[2, capacity, self.model_dim], DATA_TYPE);
-        let layer_kv = (0..self.blocks.len())
-            .map(|_| context.create_allocation(kv_size, AllocationType::Global).map_err(WeaverEncodeError::Backend))
-            .collect::<Result<Box<[_]>, _>>()?;
-        Ok(WeaverNodeKvCache {
-            layer_kv,
-            node_capacity,
-        })
-    }
-
     pub(crate) fn new(
         context: &B::Context,
         config: &WeaverConfig,
@@ -304,6 +287,23 @@ impl<B: Backend> Weaver<B> {
         Ok(WeaverPrefixKvCache {
             layer_kv: layer_kv.into_boxed_slice(),
             token_count,
+        })
+    }
+
+    pub(crate) fn create_node_kv_cache(
+        &self,
+        capacity: usize,
+        context: &B::Context,
+    ) -> Result<WeaverNodeKvCache<B>, WeaverEncodeError<B>> {
+        assert!(capacity > 0, "Weaver node capacity must be positive");
+        let node_capacity = u32::try_from(capacity).expect("Weaver node capacity exceeds the kernel limit");
+        let kv_size = size_for_shape(&[2, capacity, self.model_dim], DATA_TYPE);
+        let layer_kv = (0..self.blocks.len())
+            .map(|_| context.create_allocation(kv_size, AllocationType::Global).map_err(WeaverEncodeError::Backend))
+            .collect::<Result<Box<[_]>, _>>()?;
+        Ok(WeaverNodeKvCache {
+            layer_kv,
+            node_capacity,
         })
     }
 
@@ -520,50 +520,6 @@ impl<B: Backend> WeaverBlock<B> {
         })
     }
 
-    fn encode_step(
-        &self,
-        hidden: Allocation<B>,
-        prefix_kv: &Allocation<B>,
-        node_kv_cache: &mut Allocation<B>,
-        node_capacity: u32,
-        batch: &WeaverStepBatch<'_, B>,
-        prefix_length: usize,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        let attention_input = self.pre_attention_norm.encode(&hidden, 0, batch.node_count, None, encoder)?;
-        let current_qkv = self.qkv_projection.encode(attention_input, batch.node_count, encoder)?;
-        let metadata_lane_bytes = batch.node_count * DataType::U32.size_in_bytes();
-        let ancestor_counts = (batch.node_metadata, MetadataIdx::AncestorCount as usize * metadata_lane_bytes);
-        let tree_slots = (batch.node_metadata, MetadataIdx::TreeSlot as usize * metadata_lane_bytes);
-        let mut attention = encoder.allocate_scratch(size_for_shape(&[batch.node_count, self.model_dim], DATA_TYPE))?;
-        self.last_query_attention.encode(
-            prefix_kv,
-            &*node_kv_cache,
-            &current_qkv,
-            batch.ancestor_indices,
-            ancestor_counts,
-            &mut attention,
-            batch.node_count as u32,
-            prefix_length as u32,
-            batch.ancestor_stride as u32,
-            node_capacity,
-            self.attention_scale,
-            encoder,
-        );
-        // Separate dispatch so the node arena is read-only above; the encoder
-        // serializes it after the attention that reads the ancestor slots.
-        self.node_cache_write.encode(
-            &current_qkv,
-            node_kv_cache,
-            tree_slots,
-            self.model_dim as u32,
-            node_capacity,
-            (batch.node_count * 2 * self.model_dim) as u32,
-            encoder,
-        );
-        self.encode_post_attention(attention, hidden, batch.node_count, encoder)
-    }
-
     fn encode_prefix(
         &self,
         hidden: Allocation<B>,
@@ -614,6 +570,50 @@ impl<B: Backend> WeaverBlock<B> {
             hidden,
             kv,
         })
+    }
+
+    fn encode_step(
+        &self,
+        hidden: Allocation<B>,
+        prefix_kv: &Allocation<B>,
+        node_kv_cache: &mut Allocation<B>,
+        node_capacity: u32,
+        batch: &WeaverStepBatch<'_, B>,
+        prefix_length: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        let attention_input = self.pre_attention_norm.encode(&hidden, 0, batch.node_count, None, encoder)?;
+        let current_qkv = self.qkv_projection.encode(attention_input, batch.node_count, encoder)?;
+        let metadata_lane_bytes = batch.node_count * DataType::U32.size_in_bytes();
+        let ancestor_counts = (batch.node_metadata, MetadataIdx::AncestorCount as usize * metadata_lane_bytes);
+        let tree_slots = (batch.node_metadata, MetadataIdx::TreeSlot as usize * metadata_lane_bytes);
+        let mut attention = encoder.allocate_scratch(size_for_shape(&[batch.node_count, self.model_dim], DATA_TYPE))?;
+        self.last_query_attention.encode(
+            prefix_kv,
+            &*node_kv_cache,
+            &current_qkv,
+            batch.ancestor_indices,
+            ancestor_counts,
+            &mut attention,
+            batch.node_count as u32,
+            prefix_length as u32,
+            batch.ancestor_stride as u32,
+            node_capacity,
+            self.attention_scale,
+            encoder,
+        );
+        // Separate dispatch so the node arena is read-only above; the encoder
+        // serializes it after the attention that reads the ancestor slots.
+        self.node_cache_write.encode(
+            &current_qkv,
+            node_kv_cache,
+            tree_slots,
+            self.model_dim as u32,
+            node_capacity,
+            (batch.node_count * 2 * self.model_dim) as u32,
+            encoder,
+        );
+        self.encode_post_attention(attention, hidden, batch.node_count, encoder)
     }
 
     fn encode_post_attention(
