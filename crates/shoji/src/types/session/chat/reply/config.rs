@@ -8,6 +8,9 @@ pub struct ChatReplyConfig {
     pub token_limit: Option<u32>,
     pub sampling_policy: SamplingPolicy,
     pub grammar: Option<Grammar>,
+    /// Maximum number of automatic tool-call turns per reply.
+    /// `None` falls back to the session default.
+    pub tool_turn_limit: Option<u32>,
 }
 
 #[bindings::export(Implementation)]
@@ -51,6 +54,17 @@ impl ChatReplyConfig {
             sampling_policy: SamplingPolicy::Custom {
                 method: sampling_method,
             },
+            ..self.clone()
+        }
+    }
+
+    #[bindings::export(Method)]
+    pub fn with_tool_turn_limit(
+        &self,
+        tool_turn_limit: Option<u32>,
+    ) -> Self {
+        Self {
+            tool_turn_limit,
             ..self.clone()
         }
     }

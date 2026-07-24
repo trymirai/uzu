@@ -30,6 +30,8 @@ use crate::{
     tool::{func_def::ToolFunctionDefinition, registry::ToolRegistry},
 };
 
+const DEFAULT_TOOL_TURN_LIMIT: u32 = 10;
+
 #[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ChatSessionStreamChunk {
@@ -324,6 +326,8 @@ impl ChatSession {
             return;
         }
 
+        let tool_turn_limit = config.tool_turn_limit.unwrap_or(DEFAULT_TOOL_TURN_LIMIT);
+        let mut tool_turns: u32 = 0;
         let mut next_input = input;
 
         'turns: loop {
@@ -363,6 +367,14 @@ impl ChatSession {
                 if !self.has_registered_tool_functions(&tool_calls).await {
                     break;
                 }
+
+                if tool_turns >= tool_turn_limit {
+                    let _ = sender.send(Err(ChatSessionError::ToolTurnLimitExceeded {
+                        limit: tool_turn_limit,
+                    }));
+                    break;
+                }
+                tool_turns += 1;
 
                 if self.try_transition(ChatSessionState::Generation, ChatSessionState::ToolCalling).await {
                     let supports_multiple_tool_calls = self.instance.lock().await.supports_multiple_tool_calls();
