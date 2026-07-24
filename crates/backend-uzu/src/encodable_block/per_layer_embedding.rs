@@ -15,7 +15,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         linear::{Linear, LinearBlockError},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar},
+        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -83,8 +83,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let projection_norm = Normalization::new(
             config.ple_dim,
             None,
-            false,
-            false,
+            ShortcutMode::None,
             PostLayerScalar::ScaleOutput(config.input_scale),
             data_type,
             &projection_norm_config,
@@ -200,8 +199,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         let norm = Normalization::new(
             model_dim,
             None,
-            false,
-            false,
+            ShortcutMode::None,
             PostLayerScalar::None,
             data_type,
             &config.norm_config,

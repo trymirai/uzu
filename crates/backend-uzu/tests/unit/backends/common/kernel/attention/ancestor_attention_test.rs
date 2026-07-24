@@ -7,7 +7,7 @@ use proc_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{Allocation, Backend, Encoder, Kernels, kernel::AttentionLastQueryKernel},
+        common::{Allocation, Backend, Encoder, Kernels, kernel::AncestorAttentionKernel},
         cpu::Cpu,
         metal::Metal,
     },
@@ -22,9 +22,9 @@ const NUM_HEADS: u32 = 16;
 
 struct Runner<B: Backend> {
     context: Arc<B::Context>,
-    kernel: <B::Kernels as Kernels>::AttentionLastQueryKernel,
-    prefix_qkv: Allocation<B>,
-    node_qkv: Allocation<B>,
+    kernel: <B::Kernels as Kernels>::AncestorAttentionKernel,
+    prefix_kv: Allocation<B>,
+    node_kv: Allocation<B>,
     current_qkv: Allocation<B>,
     ancestor_indices: Allocation<B>,
     ancestor_counts: Allocation<B>,
@@ -43,7 +43,9 @@ impl<B: Backend> Runner<B> {
         nodes: usize,
     ) -> Self {
         assert!(rows < nodes && ancestor_stride > 0);
-        let packed_width = 3 * NUM_HEADS as usize * HEAD_DIM;
+        let model_dim = NUM_HEADS as usize * HEAD_DIM;
+        let qkv_width = 3 * model_dim;
+        let kv_width = 2 * model_dim;
         let values = |length, offset| {
             (0..length)
                 .map(|index| bf16::from_f32((((index + offset) * 17 % 251) as f32 - 125.0) / 128.0))
@@ -61,12 +63,12 @@ impl<B: Backend> Runner<B> {
 
         let context = create_context::<B>();
         let kernel =
-            <B::Kernels as Kernels>::AttentionLastQueryKernel::new(context.as_ref(), HEAD_DIM as u32, NUM_HEADS)
+            <B::Kernels as Kernels>::AncestorAttentionKernel::new(context.as_ref(), HEAD_DIM as u32, NUM_HEADS)
                 .unwrap();
         Self {
-            prefix_qkv: alloc_allocation_with_data::<B, bf16>(&context, &values(prefix_length * packed_width, 0)),
-            node_qkv: alloc_allocation_with_data::<B, bf16>(&context, &values(nodes * packed_width, 11)),
-            current_qkv: alloc_allocation_with_data::<B, bf16>(&context, &values(rows * packed_width, 29)),
+            prefix_kv: alloc_allocation_with_data::<B, bf16>(&context, &values(prefix_length * kv_width, 0)),
+            node_kv: alloc_allocation_with_data::<B, bf16>(&context, &values(nodes * kv_width, 11)),
+            current_qkv: alloc_allocation_with_data::<B, bf16>(&context, &values(rows * qkv_width, 29)),
             ancestor_indices: alloc_allocation_with_data::<B, u32>(&context, &ancestor_indices),
             ancestor_counts: alloc_allocation_with_data::<B, u32>(&context, &ancestor_counts),
             output: alloc_allocation::<B, bf16>(&context, rows * NUM_HEADS as usize * HEAD_DIM),
@@ -86,8 +88,8 @@ impl<B: Backend> Runner<B> {
         let mut encoder = Encoder::new(self.context.as_ref()).unwrap();
         for _ in 0..repetitions {
             self.kernel.encode(
-                &self.prefix_qkv,
-                &self.node_qkv,
+                &self.prefix_kv,
+                &self.node_kv,
                 &self.current_qkv,
                 &self.ancestor_indices,
                 &self.ancestor_counts,
@@ -105,25 +107,25 @@ impl<B: Backend> Runner<B> {
 }
 
 #[uzu_test]
-fn attention_last_query_matches_cpu() {
+fn ancestor_attention_matches_cpu() {
     let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16);
-    let initial_nodes = allocation_to_vec::<Cpu, bf16>(&cpu.node_qkv);
+    let initial_nodes = allocation_to_vec::<Cpu, bf16>(&cpu.node_kv);
     cpu.encode(1);
     let expected_output = allocation_to_vec::<Cpu, bf16>(&cpu.output);
 
-    assert_eq!(allocation_to_vec::<Cpu, bf16>(&cpu.node_qkv), initial_nodes);
+    assert_eq!(allocation_to_vec::<Cpu, bf16>(&cpu.node_kv), initial_nodes);
 
     let mut metal = Runner::<Metal>::new(4, 5, 3, 16);
     metal.encode(1);
     let actual_output = allocation_to_vec::<Metal, bf16>(&metal.output);
 
-    assert_eq_float(&expected_output, &actual_output, 0.02, "AttentionLastQuery output");
-    assert_eq!(allocation_to_vec::<Metal, bf16>(&metal.node_qkv), initial_nodes);
+    assert_eq_float(&expected_output, &actual_output, 0.02, "AncestorAttention output");
+    assert_eq!(allocation_to_vec::<Metal, bf16>(&metal.node_kv), initial_nodes);
 }
 
 #[uzu_test]
 #[ignore = "benchmark"]
-fn benchmark_attention_last_query() {
+fn benchmark_ancestor_attention() {
     const BATCH: u32 = 32;
     const SAMPLES: usize = 50;
 
@@ -135,5 +137,5 @@ fn benchmark_attention_last_query() {
     }
     let mut samples = (0..SAMPLES).map(|_| run()).collect::<Vec<_>>();
     samples.sort_unstable();
-    eprintln!("attention_last_query gpu={:?}", samples[SAMPLES / 2]);
+    eprintln!("ancestor_attention gpu={:?}", samples[SAMPLES / 2]);
 }

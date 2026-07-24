@@ -24,7 +24,7 @@ use crate::{
             },
         },
         mlp::{Mlp, MlpBlockError},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar},
+        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
     parameters::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -92,7 +92,16 @@ fn plain_norm<B: Backend>(
     parameter_tree: &ParameterTree<B>,
     data_type: DataType,
 ) -> Result<Normalization<B>, NormalizationNewError<B>> {
-    Normalization::new(model_dim, None, false, false, PostLayerScalar::None, data_type, config, parameter_tree, context)
+    Normalization::new(
+        model_dim,
+        None,
+        ShortcutMode::None,
+        PostLayerScalar::None,
+        data_type,
+        config,
+        parameter_tree,
+        context,
+    )
 }
 
 impl<B: Backend> DFlashDraft<B> {
