@@ -81,7 +81,6 @@ impl GemmKernel {
                     self.output_data_type,
                     specialization.tiling,
                     specialization.transpose_b,
-                    specialization.use_mxu,
                     specialization.b_prologue,
                     specialization.bits_per_b.unwrap_or(0),
                     specialization.group_size.unwrap_or(0),
@@ -349,7 +348,6 @@ impl GemmKernel {
                 let specialization = GemmSpecialization {
                     weights_data_type: self.weights_data_type,
                     tiling,
-                    use_mxu,
                     output_transform,
                     alignment,
                     transpose_b: b_transpose,
@@ -449,7 +447,6 @@ impl GemmKernel {
                 let specialization = GemmSpecialization {
                     weights_data_type: self.weights_data_type,
                     tiling,
-                    use_mxu,
                     output_transform,
                     alignment,
                     transpose_b: true,
@@ -515,7 +512,6 @@ impl GemmKernel {
         let part_spec = GemmSpecialization {
             weights_data_type: self.weights_data_type,
             tiling,
-            use_mxu,
             output_transform: GemmDTransform::empty(),
             alignment,
             transpose_b: true,

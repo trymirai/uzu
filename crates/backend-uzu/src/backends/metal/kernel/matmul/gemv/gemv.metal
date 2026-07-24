@@ -23,22 +23,19 @@ VARIANTS(AT, bfloat, float)
 VARIANTS(BT, bfloat, float)
 VARIANTS(DT, bfloat, float)
 CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
+VARIANTS((B_PROLOGUE, GemmBPrologueKind::FullPrecision), (BITS, 0), (GROUP_SIZE, 0))
 VARIANTS(
-    B_PROLOGUE,
-    GemmBPrologueKind::FullPrecision,
-    GemmBPrologueKind::ScaleBiasDequant,
-    GemmBPrologueKind::ScaleZeroPointDequant,
-    GemmBPrologueKind::ScaleSymmetricDequant)
-VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
-VARIANTS(BITS, 0, 4, 8)
+    (B_PROLOGUE,
+     GemmBPrologueKind::ScaleBiasDequant,
+     GemmBPrologueKind::ScaleZeroPointDequant,
+     GemmBPrologueKind::ScaleSymmetricDequant),
+    (BITS, 4, 8),
+    (GROUP_SIZE, 16, 32, 64, 128))
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
 VARIANTS(RESULTS_PER_SIMDGROUP, 1, 2, 4, 8)
 VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
-CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
-CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
-CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
-CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || K_SPLIT == 1)
+CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || (BT != "float" && K_SPLIT == 1))
 CONSTRAINT(K_SPLIT <= NUM_SIMDGROUPS)
 // Only selector-reachable tiles are instantiated (fleet-tuned tables): fp
 // always runs 8 simdgroups with 1 or 4 rows each; non-default quantized

@@ -33,6 +33,11 @@ pub enum MetalError {
     CannotCreateFunction(String),
     #[error("Cannot create pipeline state: {0}")]
     CannotCreatePipelineState(String),
+    #[error("Kernel {kernel} was not compiled for request {request}")]
+    UnsupportedKernelVariant {
+        kernel: &'static str,
+        request: String,
+    },
     #[error("Can not allocate buffer with size={0}")]
     SparseBufferAlloc(usize),
     #[error("Can not allocate heap with size={0} and page size={1}")]

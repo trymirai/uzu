@@ -12,7 +12,7 @@ use walkdir::WalkDir;
 use super::{
     ast::MetalKernelInfo,
     toolchain::MetalToolchain,
-    wrapper::{SpecializeBaseIndices, wrappers},
+    wrapper::{SpecializeBaseIndices, accepted_variants, wrappers},
 };
 use crate::{
     common::{
@@ -70,9 +70,10 @@ async fn hash_dependencies(
 fn objects_hash<'a>(objects: impl IntoIterator<Item = &'a ObjectInfo>) -> anyhow::Result<blake3::Hash> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(caching::build_system_hash().context("cannot get build system hash")?.as_bytes());
-    let mut paths: Vec<_> = objects.into_iter().map(|o| &o.object_path).collect();
-    paths.sort();
-    for path in paths {
+    let mut objects: Vec<_> = objects.into_iter().collect();
+    objects.sort_by_key(|object| &object.object_path);
+    for object in objects {
+        let path = &object.object_path;
         let path_bytes = path.to_string_lossy();
         let path_bytes = path_bytes.as_bytes();
         hasher.update(&(path_bytes.len() as u32).to_le_bytes());
@@ -80,6 +81,10 @@ fn objects_hash<'a>(objects: impl IntoIterator<Item = &'a ObjectInfo>) -> anyhow
         let contents = fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
         hasher.update(&(contents.len() as u32).to_le_bytes());
         hasher.update(&contents);
+        let accepted_variants = object.kernels.iter().map(accepted_variants).collect::<Vec<_>>();
+        let metadata = serde_json::to_vec(&(&object.kernels, accepted_variants))?;
+        hasher.update(&(metadata.len() as u32).to_le_bytes());
+        hasher.update(&metadata);
     }
     Ok(hasher.finalize())
 }
@@ -294,9 +299,7 @@ impl MetalCompiler {
             use crate::backends::metal::{
                 context::MetalContext,
                 error::MetalError,
-                metal_extensions::{
-                    ComputeEncoderSetValue, FunctionConstantValuesSetValue, MetalDataTypeExt,
-                },
+                metal_extensions::{ComputeEncoderSetValue, FunctionConstantValuesSetValue},
             };
 
             #(#bindings)*
