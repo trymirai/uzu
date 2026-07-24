@@ -62,6 +62,8 @@ pub enum JsonSchemaType {
         properties: IndexMap<String, JsonSchema>,
         #[serde(default)]
         required: Vec<String>,
+        #[serde(rename = "additionalProperties", skip_serializing_if = "Option::is_none")]
+        additional_properties: Option<bool>,
     },
 }
 
@@ -119,6 +121,7 @@ impl JsonSchema {
             schema_type: JsonSchemaType::Object {
                 properties: properties.into_iter().map(|(key, schema)| (key.into(), schema)).collect(),
                 required: required.into_iter().map(Into::into).collect(),
+                additional_properties: None,
             },
             description: None,
         }
@@ -129,9 +132,24 @@ impl JsonSchema {
             schema_type: JsonSchemaType::Object {
                 properties: IndexMap::new(),
                 required: Vec::new(),
+                additional_properties: None,
             },
             description: None,
         }
+    }
+
+    pub fn with_additional_properties(
+        mut self,
+        allowed: bool,
+    ) -> Self {
+        if let JsonSchemaType::Object {
+            additional_properties,
+            ..
+        } = &mut self.schema_type
+        {
+            *additional_properties = Some(allowed);
+        }
+        self
     }
 
     pub fn with_description(

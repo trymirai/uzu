@@ -501,6 +501,11 @@ fn expand_tool_schema(input: DeriveInput) -> syn::Result<TokenStream2> {
             )
         }
     };
+    let with_additional_properties = if serde_container.attrs.deny_unknown_fields() {
+        quote!(.with_additional_properties(false))
+    } else {
+        quote!()
+    };
 
     let struct_description = doc_string(&input.attrs);
     let with_description = if struct_description.is_empty() {
@@ -512,7 +517,7 @@ fn expand_tool_schema(input: DeriveInput) -> syn::Result<TokenStream2> {
     Ok(quote! {
         impl #impl_generics #nagare::tool::schema::ToolSchema for #ident #ty_generics #where_clause {
             fn json_schema() -> #nagare::tool::schema::JsonSchema {
-                #schema #with_description
+                #schema #with_additional_properties #with_description
             }
         }
     })

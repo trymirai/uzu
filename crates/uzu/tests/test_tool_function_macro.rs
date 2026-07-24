@@ -292,6 +292,47 @@ async fn serde_field_attributes_match_generated_schema() {
     assert_eq!(result, serde_json::json!("00123:Ada:0"));
 }
 
+#[derive(Deserialize, UzuToolSchema)]
+#[serde(deny_unknown_fields)]
+struct StrictRequest {
+    query: String,
+}
+
+#[uzu_tool_function]
+fn strict_lookup(request: StrictRequest) -> String {
+    request.query
+}
+
+#[tokio::test]
+async fn deny_unknown_fields_disallows_additional_schema_properties() {
+    let definition: ToolFunctionDefinition = strict_lookup.into();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();
+
+    assert_eq!(
+        parameters,
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "request": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string" }
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                }
+            },
+            "required": ["request"]
+        })
+    );
+
+    let error = definition
+        .execute(serde_json::json!({ "request": { "query": "Ada", "unexpected": true } }).into())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("unknown field"), "unexpected error: {error}");
+}
+
 /// Add two integers.
 #[uzu_tool_function]
 fn add(
