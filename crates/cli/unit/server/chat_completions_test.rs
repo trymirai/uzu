@@ -1,7 +1,17 @@
+use uzu::types::session::chat::ChatMessageList;
+
 use super::*;
 
 fn request(json: &str) -> ChatCompletionRequest {
     serde_json::from_str(json).expect("valid request json")
+}
+
+fn chat_messages(json: &str) -> Vec<ChatMessage> {
+    let request = request(json);
+    to_chat_messages(
+        &request.messages,
+        parse_reasoning_effort(request.reasoning_effort.as_ref()).expect("valid reasoning_effort"),
+    )
 }
 
 fn reply_config(json: &str) -> ChatReplyConfig {
@@ -97,9 +107,113 @@ fn malformed_response_format_passes_json_extraction() {
     }
 }
 
+#[test]
+fn reasoning_effort_is_optional() {
+    let messages = chat_messages(r#"{"messages":[{"role":"user","content":"hi"}]}"#);
+    assert_eq!(messages.reasoning_effort(), None);
+}
+
+#[test]
+fn reasoning_effort_applies_to_latest_message() {
+    let messages = chat_messages(
+        r#"{"messages":[{"role":"system","content":"s"},{"role":"user","content":"u"}],"reasoning_effort":"none"}"#,
+    );
+
+    assert_eq!(messages.reasoning_effort(), Some(ReasoningEffort::Disabled));
+    assert_eq!(messages.first().and_then(ChatMessage::reasoning_effort), None);
+    assert_eq!(messages.last().and_then(ChatMessage::reasoning_effort), Some(ReasoningEffort::Disabled));
+}
+
+#[test]
+fn reasoning_effort_accepts_openai_values_and_uzu_aliases() {
+    for (value, expected) in [
+        ("none", ReasoningEffort::Disabled),
+        ("disabled", ReasoningEffort::Disabled),
+        ("default", ReasoningEffort::Default),
+        ("low", ReasoningEffort::Low),
+        ("medium", ReasoningEffort::Medium),
+        ("high", ReasoningEffort::High),
+    ] {
+        let request = request(&format!(r#"{{"messages":[],"reasoning_effort":"{value}"}}"#));
+        assert_eq!(parse_reasoning_effort(request.reasoning_effort.as_ref()), Ok(Some(expected)));
+    }
+}
+
+#[test]
+fn recognized_unsupported_reasoning_effort_is_request_error() {
+    for value in ["minimal", "xhigh"] {
+        let request = request(&format!(r#"{{"messages":[],"reasoning_effort":"{value}"}}"#));
+        let error = parse_reasoning_effort(request.reasoning_effort.as_ref())
+            .expect_err("unsupported reasoning_effort should be rejected");
+        assert_eq!(error, RequestValidationError::UnsupportedReasoningEffort(value));
+        assert_eq!(error.param(), "reasoning_effort");
+        assert_eq!(error.code(), "unsupported_reasoning_effort");
+    }
+}
+
+#[test]
+fn invalid_reasoning_effort_is_request_error() {
+    let request = request(r#"{"messages":[],"reasoning_effort":"maximum"}"#);
+    let error = parse_reasoning_effort(request.reasoning_effort.as_ref())
+        .expect_err("invalid reasoning_effort should be rejected");
+    assert_eq!(error, RequestValidationError::InvalidReasoningEffort("maximum".to_string()));
+    assert_eq!(error.param(), "reasoning_effort");
+    assert_eq!(error.code(), "invalid_reasoning_effort");
+}
+
+#[test]
+fn malformed_reasoning_effort_passes_json_extraction() {
+    for body in
+        [r#"{"messages":[],"reasoning_effort":123}"#, r#"{"messages":[],"reasoning_effort":{"level":"disabled"}}"#]
+    {
+        let request = serde_json::from_str::<ChatCompletionRequest>(body)
+            .unwrap_or_else(|error| panic!("expected {body} to pass extraction, got {error}"));
+        let error = parse_reasoning_effort(request.reasoning_effort.as_ref())
+            .expect_err("malformed reasoning_effort should be rejected");
+        assert_eq!(error.param(), "reasoning_effort");
+        assert_eq!(error.code(), "invalid_reasoning_effort");
+    }
+}
+
+#[test]
+fn reasoning_effort_composes_with_sampling_options() {
+    let stochastic =
+        reply_config(r#"{"messages":[],"temperature":0.7,"top_p":0.9,"top_k":40,"reasoning_effort":"none"}"#);
+    let messages = chat_messages(
+        r#"{"messages":[{"role":"user","content":"json please"}],"temperature":0.7,"top_p":0.9,"top_k":40,"reasoning_effort":"none"}"#,
+    );
+    assert_eq!(messages.reasoning_effort(), Some(ReasoningEffort::Disabled));
+    assert_eq!(
+        stochastic.sampling_policy,
+        uzu::types::basic::SamplingPolicy::Custom {
+            method: SamplingMethod::Stochastic {
+                temperature: Some(0.7),
+                top_k: Some(40),
+                top_p: Some(0.9),
+                min_p: None,
+                repetition_penalty: None,
+                suffix_repetition_length: None,
+            },
+        }
+    );
+
+    let greedy = reply_config(r#"{"messages":[],"temperature":0,"reasoning_effort":"none"}"#);
+    assert_eq!(
+        greedy.sampling_policy,
+        uzu::types::basic::SamplingPolicy::Custom {
+            method: SamplingMethod::Greedy {},
+        }
+    );
+}
+
 #[rocket::get("/err")]
 fn err_route() -> ChatCompletionResult {
-    request_error_response(ResponseFormatError::InvalidResponseFormat("bad".to_string()))
+    response_format_error_response(ResponseFormatError::InvalidResponseFormat("bad".to_string()))
+}
+
+#[rocket::get("/reasoning-err")]
+fn reasoning_err_route() -> ChatCompletionResult {
+    reasoning_effort_error_response(RequestValidationError::InvalidReasoningEffort("bad".to_string()))
 }
 
 #[test]
@@ -117,6 +231,20 @@ fn error_responder_yields_http_400_with_openai_body() {
         body["error"]["message"].as_str().is_some_and(|message| !message.is_empty()),
         "expected a non-empty error message, got {body}"
     );
+}
+
+#[test]
+fn reasoning_effort_error_responder_yields_http_400_with_openai_body() {
+    let client =
+        rocket::local::blocking::Client::tracked(rocket::build().mount("/", rocket::routes![reasoning_err_route]))
+            .expect("rocket client");
+    let response = client.get("/reasoning-err").dispatch();
+
+    assert_eq!(response.status(), Status::BadRequest);
+    let body: serde_json::Value = response.into_json().expect("json error body");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+    assert_eq!(body["error"]["param"], "reasoning_effort");
+    assert_eq!(body["error"]["code"], "invalid_reasoning_effort");
 }
 
 #[cfg(feature = "capability-grammar")]
