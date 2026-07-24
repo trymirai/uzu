@@ -30,3 +30,7 @@ impl Kernels for MetalKernels {
     type MatmulKernel = matmul::MatmulMetalKernel;
     type RadixTopKSmall = radix_top_k_small::MetalRadixTopKSmall;
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/backends/metal/kernel/activation_prepare_test.rs"]
+mod activation_prepare_test;

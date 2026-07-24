@@ -3,10 +3,10 @@ use crate::{
     backends::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
-            gpu_types::HadamardTransformOrder,
+            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder, QuantizationMode},
             kernel::{
                 HadamardTransformKernel,
-                matmul::{MatmulArguments, MatmulError, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
         cpu::{Cpu, context::CpuContext, error::CpuError},
@@ -62,7 +62,6 @@ impl MatmulKernel for MatmulCpuKernel {
 
         let MatmulArguments {
             a,
-            a_offset,
             b,
             b_leading_dimension,
             b_transpose,
@@ -81,9 +80,62 @@ impl MatmulKernel for MatmulCpuKernel {
         let input_data_type = self.input_data_type;
         let output_data_type = self.output_data_type;
 
-        let a_buffer_range = a.as_buffer_range_ref();
-        let a_byte_off = a_buffer_range.range().start + a_offset * input_data_type.size_in_bytes();
-        let a_ptr = SendPtr(unsafe { &*a_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(a_byte_off));
+        #[derive(Clone, Copy)]
+        enum AData {
+            FullPrecision(SendPtr<u8>),
+            Int8 {
+                values: SendPtr<u8>,
+                scales: SendPtr<u8>,
+                group_size: usize,
+            },
+        }
+        let a_data = match a {
+            MatmulA::FullPrecision {
+                values,
+                offset,
+            } => {
+                let range = values.as_buffer_range_ref();
+                let byte_offset = range.range().start + offset * input_data_type.size_in_bytes();
+                AData::FullPrecision(SendPtr(unsafe { &*range.buffer().get() }.as_ptr().wrapping_byte_add(byte_offset)))
+            },
+            MatmulA::Int8Symmetric {
+                values,
+                scales,
+            } => {
+                let weight_gs_ok = matches!(b.group_size(), Some(32 | 64 | 128));
+                let weights_ok = matches!(
+                    b,
+                    MatmulB::ScaleSymmetricDequant {
+                        mode: QuantizationMode::U4 | QuantizationMode::U8,
+                        ..
+                    } | MatmulB::ScaleBiasDequant {
+                        mode: QuantizationMode::U4 | QuantizationMode::U8,
+                        ..
+                    } | MatmulB::ScaleZeroPointDequant {
+                        mode: QuantizationMode::U4 | QuantizationMode::U8,
+                        ..
+                    }
+                );
+                if !weight_gs_ok || !weights_ok {
+                    return Err(MatmulError::IncompatibleA {
+                        path: "CpuMatmul",
+                        reason: "symmetric int8 activations require unsigned 4/8-bit quantized weights with group size 32/64/128",
+                    }
+                    .into());
+                }
+                let values_range = values.as_buffer_range_ref();
+                let scales_range = scales.as_buffer_range_ref();
+                AData::Int8 {
+                    values: SendPtr(
+                        unsafe { &*values_range.buffer().get() }.as_ptr().wrapping_byte_add(values_range.range().start),
+                    ),
+                    scales: SendPtr(
+                        unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
+                    ),
+                    group_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                }
+            },
+        };
         let bias_ptr = bias_alloc.map(|bias| {
             let r = bias.as_buffer_range_ref();
             SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
@@ -135,7 +187,20 @@ impl MatmulKernel for MatmulCpuKernel {
                         };
                         let mut accumulator = 0.0f32;
                         for inner in 0..k_u {
-                            let a_value = read_f32(a_ptr.as_ptr(), input_data_type, row * k_u + inner);
+                            let a_value = match a_data {
+                                AData::FullPrecision(ptr) => read_f32(ptr.as_ptr(), input_data_type, row * k_u + inner),
+                                AData::Int8 {
+                                    values,
+                                    scales,
+                                    group_size,
+                                } => {
+                                    let groups = k_u.div_ceil(group_size);
+                                    let group = inner / group_size;
+                                    let q = *(values.as_ptr() as *const i8).add(row * k_u + inner) as f32;
+                                    let scale = *(scales.as_ptr() as *const f32).add(row * groups + group);
+                                    q * scale
+                                },
+                            };
                             let b_value = match &weight_data {
                                 WeightData::FullPrecision {
                                     ptr,
@@ -163,7 +228,8 @@ impl MatmulKernel for MatmulCpuKernel {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 4;
                                         let w = weights.as_ptr() as *const u32;
-                                        ((w.add(word_index).read_unaligned() >> bit_offset) & 0xF) as f32
+                                        let nibble = ((w.add(word_index).read_unaligned() >> bit_offset) & 0xF) as u8;
+                                        f32::from(nibble)
                                     } else {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 8;
@@ -176,8 +242,9 @@ impl MatmulKernel for MatmulCpuKernel {
                                         weights_data_type,
                                         b_col * num_groups_k + group_index,
                                     );
-                                    let bias_term = if let Some(zp) = zero_points {
-                                        let zero_point = if *bits == 4 {
+                                    let midpoint = (1u32 << (bits - 1)) as f32;
+                                    let zero_point = zero_points.map(|zp| {
+                                        if *bits == 4 {
                                             let byte_index = b_col * zero_point_stride + (group_index >> 1);
                                             let byte_value = *zp.as_ptr().add(byte_index);
                                             if (group_index & 1) == 0 {
@@ -187,12 +254,13 @@ impl MatmulKernel for MatmulCpuKernel {
                                             }
                                         } else {
                                             *zp.as_ptr().add(b_col * zero_point_stride + group_index) as f32
-                                        };
-                                        -scale * zero_point
+                                        }
+                                    });
+                                    let bias_term = if let Some(zp) = zero_point {
+                                        -scale * zp
                                     } else if let Some(b) = biases {
                                         read_f32(b.as_ptr(), weights_data_type, b_col * num_groups_k + group_index)
                                     } else {
-                                        let midpoint = (1u32 << (bits - 1)) as f32;
                                         -scale * midpoint
                                     };
                                     scale * quantized_value + bias_term

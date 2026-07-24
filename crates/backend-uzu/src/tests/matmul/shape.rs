@@ -79,22 +79,23 @@ pub fn bench_quant_gemv_shapes(bits: u32) -> impl Iterator<Item = Shape> {
 }
 
 const QWEN3_LAYERS: &[(&str, usize, usize)] = &[
-    ("0.6b_qkv", 1024, 4096),
-    ("0.6b_o", 2048, 1024),
-    ("0.6b_gateup", 1024, 6144),
-    ("0.6b_down", 3072, 1024),
-    ("1.7b_qkv", 2048, 4096),
-    ("1.7b_o", 2048, 2048),
-    ("1.7b_gateup", 2048, 12288),
-    ("1.7b_down", 6144, 2048),
+    ("0.8b_qkv", 1024, 3072),
+    ("0.8b_o", 2048, 1024),
+    ("0.8b_gate", 1024, 2048),
+    ("0.8b_up", 1024, 7168),
+    ("0.8b_down", 3584, 1024),
+    ("0.8b_in", 1024, 8224),
+    ("2b_qkv", 2048, 3072),
+    ("2b_o", 2048, 2048),
+    ("2b_up", 2048, 12288),
+    ("2b_down", 6144, 2048),
+    ("2b_in", 2048, 8224),
     ("4b_qkv", 2560, 6144),
     ("4b_o", 4096, 2560),
-    ("4b_gateup", 2560, 19456),
-    ("4b_down", 9728, 2560),
-    ("8b_qkv", 4096, 6144),
-    ("8b_o", 4096, 4096),
-    ("8b_gateup", 4096, 24576),
-    ("8b_down", 12288, 4096),
+    ("4b_gate", 2560, 4096),
+    ("4b_up", 2560, 18432),
+    ("4b_down", 9216, 2560),
+    ("4b_in", 2560, 12352),
 ];
 
 pub fn qwen3_layer_shapes(bits: u32) -> impl Iterator<Item = (&'static str, Shape)> {
@@ -103,13 +104,9 @@ pub fn qwen3_layer_shapes(bits: u32) -> impl Iterator<Item = (&'static str, Shap
     } else {
         256
     };
-    let decode_ms = &[1usize, 4, 8];
-    let prefill_ms = &[32usize, 64];
-    QWEN3_LAYERS.iter().flat_map(move |&(label, k, n)| {
-        decode_ms
-            .iter()
-            .chain(prefill_ms.iter())
-            .filter(move |_| k % block_size == 0)
-            .map(move |&m| (label, Shape::new(m, k, n)))
-    })
+    let ms = &[1usize, 2, 4, 8, 16, 32, 64];
+    QWEN3_LAYERS
+        .iter()
+        .filter(move |&&(_, k, _)| k.is_multiple_of(block_size))
+        .flat_map(move |&(label, k, n)| ms.iter().map(move |&m| (label, Shape::new(m, k, n))))
 }

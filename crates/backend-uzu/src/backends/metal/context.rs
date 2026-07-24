@@ -25,7 +25,7 @@ use super::{
     metal_extensions::{DeviceExt, LibraryPipelineExtensions},
 };
 use crate::backends::{
-    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DeviceCapabilities},
     metal::{
         command_buffer::MetalCommandBufferInitial,
         sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
@@ -234,7 +234,14 @@ impl Context for MetalContext {
         Ok(())
     }
 
-    fn sparse_buffers_supported(&self) -> bool {
-        self.device.supports_placement_sparse_resources()
+    fn device_capabilities(&self) -> DeviceCapabilities {
+        let mut capabilities = DeviceCapabilities::empty();
+        if self.device.supports_placement_sparse_resources() {
+            capabilities |= DeviceCapabilities::SPARSE_BUFFERS;
+        }
+        if self.device.supports_mxu() {
+            capabilities |= DeviceCapabilities::HARDWARE_INT8_MATMUL;
+        }
+        capabilities
     }
 }

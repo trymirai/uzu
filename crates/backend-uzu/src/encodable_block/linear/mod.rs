@@ -8,7 +8,9 @@ pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE},
+    backends::common::{
+        Allocation, Backend, Context, DeviceCapabilities, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+    },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
         full_precision_spec::FullPrecisionSpec,
@@ -216,8 +218,22 @@ impl<B: Backend> dyn Linear<B> {
             incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
             incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
             ..
-        }) = spec
+        }) = &spec
         {
+            if context.device_capabilities().contains(DeviceCapabilities::HARDWARE_INT8_MATMUL) {
+                let linear = RHTLinearWrapper::new(
+                    context,
+                    input_dimension,
+                    output_dimension_sum,
+                    has_biases,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    parameter_tree,
+                )?;
+                return Ok((Box::new(linear), None));
+            }
+
             let input_factors = weights_tree
                 .leaf("incoherence_signs.input_signs")?
                 .validate(&[input_dimension], DataType::I32)?

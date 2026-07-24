@@ -1,0 +1,18 @@
+use crate::backends::common::{Allocation, Backend};
+
+pub enum MatmulA<'a, B: Backend> {
+    FullPrecision {
+        values: &'a Allocation<B>,
+        offset: usize,
+    },
+    Int8Symmetric {
+        values: &'a Allocation<B>,
+        scales: &'a Allocation<B>,
+    },
+}
+
+impl<'a, B: Backend> MatmulA<'a, B> {
+    pub fn is_int8(&self) -> bool {
+        matches!(self, Self::Int8Symmetric { .. })
+    }
+}

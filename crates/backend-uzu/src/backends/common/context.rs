@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer};
+use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer, DeviceCapabilities};
 
 pub trait Context: Sized + Send + Sync {
     type Backend: Backend<Context = Self>;
@@ -43,5 +43,5 @@ pub trait Context: Sized + Send + Sync {
 
     fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error>;
 
-    fn sparse_buffers_supported(&self) -> bool;
+    fn device_capabilities(&self) -> DeviceCapabilities;
 }

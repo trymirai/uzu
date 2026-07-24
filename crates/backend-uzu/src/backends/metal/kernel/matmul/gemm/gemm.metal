@@ -10,7 +10,8 @@
 using namespace metal;
 using namespace uzu::gemm;
 
-#define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision)
+#define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
+#define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_TGB_ELEMENTS                                                                                              \
@@ -26,7 +27,8 @@ template <
     bool USE_MXU,
     GemmBPrologueKind B_PROLOGUE,
     uint BITS,
-    uint GROUP_SIZE>
+    uint GROUP_SIZE,
+    GemmAPrologueKind A_PROLOGUE>
 VARIANTS(AT, bfloat, float)
 VARIANTS(BT, bfloat, float)
 VARIANTS(DT, bfloat, float)
@@ -54,6 +56,10 @@ VARIANTS(
     GemmBPrologueKind::ScaleSymmetricDequant)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
+VARIANTS(
+    A_PROLOGUE,
+    GemmAPrologueKind::FullPrecision,
+    GemmAPrologueKind::Int8Symmetric)
 CONSTRAINT(
     USE_MXU ==
     (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
@@ -80,9 +86,20 @@ CONSTRAINT(
 CONSTRAINT(
     !(GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
       GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4) ||
-    (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::FullPrecision))
+    (TRANSPOSE_B &&
+     (B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
+      A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)))
+CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
+CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || BITS == 4 || BITS == 8)
+CONSTRAINT(
+    A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
+    (GROUP_SIZE % METAL_SIMD_SIZE == 0 && GROUP_SIZE != 0))
+CONSTRAINT(
+    A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
+    (TRANSPOSE_B && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
+CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
 KERNEL(Gemm)(
-    const device AT* a,
+    const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
     const device BT* b,
     device DT* d,
     const device BT* scales
@@ -95,6 +112,8 @@ KERNEL(Gemm)(
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const device int32_t* rht_factors
         OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
+    const device int8_t* a_int8 OPTIONAL(A_IS_INT8),
+    const device float* a_scales OPTIONAL(A_IS_INT8),
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
@@ -119,7 +138,7 @@ KERNEL(Gemm)(
   (void)thread_z;
 
   if constexpr (USE_MXU) {
-    MxuMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
+    MxuMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE, A_PROLOGUE>::run(
         a,
         b,
         d,
@@ -131,6 +150,8 @@ KERNEL(Gemm)(
         zero_points,
         output_bias,
         rht_factors,
+        a_int8,
+        a_scales,
         b_shared,
         thread_context
     );

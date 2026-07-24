@@ -8,7 +8,7 @@ use crate::{
         gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
         kernel::{
             HadamardTransformKernel, Kernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, hybrid_spec::IncoherenceProcessingMode, low_rank_spec::LowRankSpec},
@@ -175,8 +175,10 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
             let mut adapter_kernel = self.adapter_down_kernel.lock();
             adapter_kernel.encode(
                 MatmulArguments {
-                    a: &input,
-                    a_offset: 0,
+                    a: MatmulA::FullPrecision {
+                        values: &input,
+                        offset: 0,
+                    },
                     b: MatmulB::FullPrecision {
                         b: &self.adapter_down,
                     },
@@ -215,8 +217,10 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
             let mut adapter_kernel = self.adapter_up_kernel.lock();
             adapter_kernel.encode(
                 MatmulArguments {
-                    a: &intermediate,
-                    a_offset: 0,
+                    a: MatmulA::FullPrecision {
+                        values: &intermediate,
+                        offset: 0,
+                    },
                     b: MatmulB::FullPrecision {
                         b: &self.adapter_up,
                     },

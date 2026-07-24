@@ -1,24 +1,27 @@
 use super::error::GemmSpecializationError;
 use crate::{
-    backends::common::gpu_types::gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
+    backends::common::gpu_types::gemm::{
+        GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling,
+    },
     data_type::DataType,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct GemmSpecialization {
-    pub(crate) weights_data_type: DataType,
-    pub(crate) tiling: GemmTiling,
-    pub(crate) use_mxu: bool,
-    pub(crate) output_transform: GemmDTransform,
-    pub(crate) alignment: GemmAlignment,
-    pub(crate) transpose_b: bool,
-    pub(crate) b_prologue: GemmBPrologueKind,
-    pub(crate) bits_per_b: Option<u32>,
-    pub(crate) group_size: Option<u32>,
+pub(super) struct GemmSpecialization {
+    pub(super) weights_data_type: DataType,
+    pub(super) tiling: GemmTiling,
+    pub(super) use_mxu: bool,
+    pub(super) output_transform: GemmDTransform,
+    pub(super) alignment: GemmAlignment,
+    pub(super) transpose_b: bool,
+    pub(super) a_prologue: GemmAPrologueKind,
+    pub(super) b_prologue: GemmBPrologueKind,
+    pub(super) bits_per_b: Option<u32>,
+    pub(super) group_size: Option<u32>,
 }
 
 impl GemmSpecialization {
-    pub(crate) fn validate(&self) -> Result<(), GemmSpecializationError> {
+    pub(super) fn validate(&self) -> Result<(), GemmSpecializationError> {
         if self.use_mxu != self.tiling.is_mxu_variant() {
             return Err(GemmSpecializationError::TilingUseMxuMismatch {
                 tiling: self.tiling,

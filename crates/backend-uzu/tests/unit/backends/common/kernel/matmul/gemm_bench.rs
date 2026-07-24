@@ -11,7 +11,7 @@ use crate::{
             Backend,
             kernel::{
                 Kernels,
-                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         metal::{GemmDispatchPath, Metal},
@@ -56,8 +56,10 @@ fn bench_gemm(c: &mut Criterion) {
                         .gemm
                         .encode_dispatch_path(
                             MatmulArguments {
-                                a: &a,
-                                a_offset: 0,
+                                a: MatmulA::FullPrecision {
+                                    values: &a,
+                                    offset: 0,
+                                },
                                 b: MatmulB::FullPrecision {
                                     b: &b_weights,
                                 },
