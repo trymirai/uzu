@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Allocation, Backend, Encoder,
-        gpu_types::HadamardTransformOrder,
+        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
         kernel::{HadamardTransformKernel, Kernels},
     },
     config::weight_matrix::{
@@ -49,7 +49,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             adapter_spec: None,
-            incoherence_block_size: Some(32),
+            incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
             incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
             ..
         }) = &spec

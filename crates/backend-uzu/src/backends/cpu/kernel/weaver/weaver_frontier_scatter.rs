@@ -1,6 +1,6 @@
 use proc_macros::kernel;
 
-use crate::backends::common::kernel::weaver::*;
+use crate::backends::common::gpu_types::weaver;
 
 const F32_SIGN_BIT: u32 = 1 << (u32::BITS - 1);
 
@@ -30,13 +30,13 @@ pub fn weaver_frontier_scatter(
         return;
     }
     let (capacity, tree_slots, rows, fanout) = (capacity as usize, tree_slots as usize, rows as usize, fanout as usize);
-    let tree = unsafe { std::slice::from_raw_parts(tree, TREE_LANE_COUNT * tree_slots) };
+    let tree = unsafe { std::slice::from_raw_parts(tree, weaver::TREE_LANE_COUNT * tree_slots) };
     let parent_indices =
-        unsafe { std::slice::from_raw_parts(round_metadata.add(METADATA_LANE_NODE_INDEX * rows), rows) };
+        unsafe { std::slice::from_raw_parts(round_metadata.add(weaver::METADATA_LANE_NODE_INDEX * rows), rows) };
     let round_valid = unsafe { std::slice::from_raw_parts(round_valid, rows) };
     let child_ids = unsafe { std::slice::from_raw_parts(child_ids, rows * fanout) };
     let child_logprobs = unsafe { std::slice::from_raw_parts(child_logprobs, rows * fanout) };
-    let frontier = unsafe { std::slice::from_raw_parts_mut(frontier, FRONTIER_LANE_COUNT * capacity) };
+    let frontier = unsafe { std::slice::from_raw_parts_mut(frontier, weaver::FRONTIER_LANE_COUNT * capacity) };
 
     for index in 0..rows * fanout {
         let row = index / fanout;
@@ -49,11 +49,11 @@ pub fn weaver_frontier_scatter(
             continue;
         }
         let logprob = child_logprobs[index];
-        let cumulative_logprob = f32::from_bits(tree[TREE_LANE_CUM * tree_slots + parent]) + logprob;
+        let cumulative_logprob = f32::from_bits(tree[weaver::TREE_LANE_CUM * tree_slots + parent]) + logprob;
         let values = [
             child_ids[index],
             parent as u32,
-            tree[TREE_LANE_DEPTH * tree_slots + parent] + 1,
+            tree[weaver::TREE_LANE_DEPTH * tree_slots + parent] + 1,
             cumulative_logprob.to_bits(),
             logprob.to_bits(),
             top_k_score_key(cumulative_logprob),

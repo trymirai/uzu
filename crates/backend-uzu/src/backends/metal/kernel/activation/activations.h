@@ -20,10 +20,8 @@ inline T activate_silu(T x) {
 
 template <typename T>
 inline T activate_gelu(T x) {
-  constexpr float k0 = 0.044715f;
-  constexpr float k1 = 0.7978845608f; // sqrt(2/pi)
   float xf = float(x);
-  float yf = 0.5f * xf * (1.0f + metal::precise::tanh(k1 * (xf + k0 * xf * xf * xf)));
+  float yf = 0.5f * xf * (1.0f + metal::precise::tanh(GELU_K1 * (xf + GELU_K0 * xf * xf * xf)));
   return T(yf);
 }
 

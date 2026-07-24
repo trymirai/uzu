@@ -5,7 +5,6 @@ pub mod delta_net_chunked_prefill;
 pub mod delta_net_tree_verify;
 pub mod matmul;
 pub mod radix_top_k_small;
-pub(crate) mod weaver;
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 

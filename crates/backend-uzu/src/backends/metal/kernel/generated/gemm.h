@@ -13,18 +13,18 @@ enum class GemmBPrologueKind : uint32_t {
 };
 
 struct GemmDTransform {
-  uint raw_value;
+  uint32_t raw_value;
   constexpr GemmDTransform() thread : raw_value(0) {}
-  constexpr GemmDTransform(uint __dsl_v) thread : raw_value(__dsl_v) {}
-  static constant constexpr uint SCALE = 1 << 0;
-  static constant constexpr uint ACCUMULATE = 1 << 1;
-  static constant constexpr uint BIAS = 1 << 2;
-  static constant constexpr uint RHT = 1 << 3;
-  static constant constexpr uint SOFT_CAP = 1 << 4;
-  constexpr bool contains(uint flag) const thread { return (raw_value & flag) != 0; }
-  constexpr bool contains(uint flag) const constant { return (raw_value & flag) != 0; }
-  constexpr uint bits() const thread { return raw_value; }
-  constexpr uint bits() const constant { return raw_value; }
+  constexpr GemmDTransform(uint32_t __dsl_v) thread : raw_value(__dsl_v) {}
+  static constant constexpr uint32_t SCALE = 1 << 0;
+  static constant constexpr uint32_t ACCUMULATE = 1 << 1;
+  static constant constexpr uint32_t BIAS = 1 << 2;
+  static constant constexpr uint32_t RHT = 1 << 3;
+  static constant constexpr uint32_t SOFT_CAP = 1 << 4;
+  constexpr bool contains(uint32_t flag) const thread { return (raw_value & flag) != 0; }
+  constexpr bool contains(uint32_t flag) const constant { return (raw_value & flag) != 0; }
+  constexpr uint32_t bits() const thread { return raw_value; }
+  constexpr uint32_t bits() const constant { return raw_value; }
 };
 
 enum class GemmTiling : uint32_t {
@@ -41,16 +41,18 @@ enum class GemmTiling : uint32_t {
   Tile128x128x256_Simdgroups4x4 = 10,
 };
 
+static constant constexpr uint32_t MXU_SIMDGROUP_BLOCK_K = 32;
+
 struct GemmAlignment {
-  uint raw_value;
+  uint32_t raw_value;
   constexpr GemmAlignment() thread : raw_value(0) {}
-  constexpr GemmAlignment(uint __dsl_v) thread : raw_value(__dsl_v) {}
-  static constant constexpr uint M = 1 << 0;
-  static constant constexpr uint N = 1 << 1;
-  static constant constexpr uint K = 1 << 2;
-  constexpr bool contains(uint flag) const thread { return (raw_value & flag) != 0; }
-  constexpr bool contains(uint flag) const constant { return (raw_value & flag) != 0; }
-  constexpr uint bits() const thread { return raw_value; }
-  constexpr uint bits() const constant { return raw_value; }
+  constexpr GemmAlignment(uint32_t __dsl_v) thread : raw_value(__dsl_v) {}
+  static constant constexpr uint32_t M = 1 << 0;
+  static constant constexpr uint32_t N = 1 << 1;
+  static constant constexpr uint32_t K = 1 << 2;
+  constexpr bool contains(uint32_t flag) const thread { return (raw_value & flag) != 0; }
+  constexpr bool contains(uint32_t flag) const constant { return (raw_value & flag) != 0; }
+  constexpr uint32_t bits() const thread { return raw_value; }
+  constexpr uint32_t bits() const constant { return raw_value; }
 };
 } // namespace uzu::gemm
