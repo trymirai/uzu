@@ -13,17 +13,17 @@ METAL_FUNC bool weaver_better(uint score, uint token, uint index, uint best_scor
 
 PUBLIC KERNEL(WeaverTopChildren)(
     const device bfloat* residual_logits,
-    const device float* candidate_scores,
+    const device float* candidate_logits,
     const device uint* candidate_ids,
-    device uint* output_ids,
-    device float* output_logprobs,
+    device uint* output_token_ids,
+    device float* output_model_logprobs,
     constant uint& rows,
     constant uint& candidates,
-    constant uint& children,
-    threadgroup float reduce_float[weaver::TOP_CHILDREN_SIMDGROUPS],
-    threadgroup uint reduce_score[weaver::TOP_CHILDREN_SIMDGROUPS],
-    threadgroup uint reduce_token[weaver::TOP_CHILDREN_SIMDGROUPS],
-    threadgroup uint reduce_index[weaver::TOP_CHILDREN_SIMDGROUPS],
+    constant uint& children_per_node,
+    threadgroup float reduce_float[TOP_CHILDREN_SIMDGROUPS],
+    threadgroup uint reduce_score[TOP_CHILDREN_SIMDGROUPS],
+    threadgroup uint reduce_token[TOP_CHILDREN_SIMDGROUPS],
+    threadgroup uint reduce_index[TOP_CHILDREN_SIMDGROUPS],
     threadgroup float& logit_max,
     threadgroup float& log_sum,
     threadgroup uint& winner_score,
@@ -31,21 +31,21 @@ PUBLIC KERNEL(WeaverTopChildren)(
     threadgroup uint& winner_index,
     const ThreadContext thread_context,
     const uint row GROUPS(rows),
-    const uint lid THREADS(weaver::TOP_CHILDREN_THREADS)
+    const uint lid THREADS(TOP_CHILDREN_THREADS)
 ) {
-  if (candidates == 0 || candidates > weaver::CANDIDATES_MAX || children == 0 || children > candidates) {
+  if (candidates == 0 || candidates > CANDIDATES_MAX || children_per_node == 0 || children_per_node > candidates) {
     return;
   }
 
   const uint base = row * candidates;
   const uint first_index = lid;
-  const uint second_index = lid + weaver::TOP_CHILDREN_THREADS;
+  const uint second_index = lid + TOP_CHILDREN_THREADS;
   const bool first_valid = first_index < candidates;
   const bool second_valid = second_index < candidates;
   const float first_logit =
-      first_valid ? candidate_scores[base + first_index] + float(residual_logits[base + first_index]) : -INFINITY;
+      first_valid ? candidate_logits[base + first_index] + float(residual_logits[base + first_index]) : -INFINITY;
   const float second_logit =
-      second_valid ? candidate_scores[base + second_index] + float(residual_logits[base + second_index]) : -INFINITY;
+      second_valid ? candidate_logits[base + second_index] + float(residual_logits[base + second_index]) : -INFINITY;
   const uint first_token = first_valid ? uint(candidate_ids[base + first_index]) : 0xffffffffu;
   const uint second_token = second_valid ? uint(candidate_ids[base + second_index]) : 0xffffffffu;
   const uint first_score = first_valid ? top_k_score_key(first_logit) : 0u;
@@ -60,9 +60,8 @@ PUBLIC KERNEL(WeaverTopChildren)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
   if (thread_context.simdgroup_index == 0) {
-    const float group_value = thread_context.simd_lane_id < weaver::TOP_CHILDREN_SIMDGROUPS
-                                  ? reduce_float[thread_context.simd_lane_id]
-                                  : -INFINITY;
+    const float group_value =
+        thread_context.simd_lane_id < TOP_CHILDREN_SIMDGROUPS ? reduce_float[thread_context.simd_lane_id] : -INFINITY;
     const float maximum = simd_max(group_value);
     if (thread_context.simd_lane_id == 0) {
       logit_max = maximum;
@@ -78,9 +77,8 @@ PUBLIC KERNEL(WeaverTopChildren)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
   if (thread_context.simdgroup_index == 0) {
-    const float group_value = thread_context.simd_lane_id < weaver::TOP_CHILDREN_SIMDGROUPS
-                                  ? reduce_float[thread_context.simd_lane_id]
-                                  : 0.0f;
+    const float group_value =
+        thread_context.simd_lane_id < TOP_CHILDREN_SIMDGROUPS ? reduce_float[thread_context.simd_lane_id] : 0.0f;
     const float total = simd_sum(group_value);
     if (thread_context.simd_lane_id == 0) {
       log_sum = log(total) + logit_max;
@@ -88,7 +86,7 @@ PUBLIC KERNEL(WeaverTopChildren)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  for (uint child = 0; child < children; ++child) {
+  for (uint child = 0; child < children_per_node; ++child) {
     uint local_score = 0u;
     uint local_token = 0xffffffffu;
     uint local_index = 0xffffffffu;
@@ -116,7 +114,7 @@ PUBLIC KERNEL(WeaverTopChildren)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (thread_context.simdgroup_index == 0) {
-      const bool lane_valid = thread_context.simd_lane_id < weaver::TOP_CHILDREN_SIMDGROUPS;
+      const bool lane_valid = thread_context.simd_lane_id < TOP_CHILDREN_SIMDGROUPS;
       const uint group_score = lane_valid ? reduce_score[thread_context.simd_lane_id] : 0u;
       const uint selected_score = simd_max(group_score);
       const uint group_token =
@@ -136,8 +134,8 @@ PUBLIC KERNEL(WeaverTopChildren)(
 
     if (lid == 0) {
       const float winner_logit = top_k_score_from_key(winner_score);
-      output_ids[row * children + child] = winner_token;
-      output_logprobs[row * children + child] = winner_logit - log_sum;
+      output_token_ids[row * children_per_node + child] = winner_token;
+      output_model_logprobs[row * children_per_node + child] = winner_logit - log_sum;
     }
     first_active = first_active && first_index != winner_index;
     second_active = second_active && second_index != winner_index;

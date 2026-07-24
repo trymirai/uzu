@@ -1,6 +1,6 @@
 use proc_macros::kernel;
 
-use crate::backends::common::gpu_types::weaver;
+use crate::backends::common::gpu_types::weaver::{FrontierIdx, MetadataIdx, TreeIdx};
 
 const F32_SIGN_BIT: u32 = 1 << (u32::BITS - 1);
 
@@ -24,43 +24,43 @@ pub fn weaver_frontier_scatter(
     capacity: u32,
     tree_slots: u32,
     rows: u32,
-    fanout: u32,
+    children_per_node: u32,
 ) {
-    if capacity == 0 || tree_slots == 0 || fanout == 0 {
+    if capacity == 0 || tree_slots == 0 || children_per_node == 0 {
         return;
     }
-    let (capacity, tree_slots, rows, fanout) = (capacity as usize, tree_slots as usize, rows as usize, fanout as usize);
-    let tree = unsafe { std::slice::from_raw_parts(tree, weaver::TREE_LANE_COUNT * tree_slots) };
+    let (capacity, tree_slots, rows, children_per_node) =
+        (capacity as usize, tree_slots as usize, rows as usize, children_per_node as usize);
+    let tree = unsafe { std::slice::from_raw_parts(tree, TreeIdx::COUNT * tree_slots) };
     let parent_indices =
-        unsafe { std::slice::from_raw_parts(round_metadata.add(weaver::METADATA_LANE_NODE_INDEX * rows), rows) };
+        unsafe { std::slice::from_raw_parts(round_metadata.add(MetadataIdx::TreeSlot as usize * rows), rows) };
     let round_valid = unsafe { std::slice::from_raw_parts(round_valid, rows) };
-    let child_ids = unsafe { std::slice::from_raw_parts(child_ids, rows * fanout) };
-    let child_logprobs = unsafe { std::slice::from_raw_parts(child_logprobs, rows * fanout) };
-    let frontier = unsafe { std::slice::from_raw_parts_mut(frontier, weaver::FRONTIER_LANE_COUNT * capacity) };
+    let child_ids = unsafe { std::slice::from_raw_parts(child_ids, rows * children_per_node) };
+    let child_logprobs = unsafe { std::slice::from_raw_parts(child_logprobs, rows * children_per_node) };
+    let frontier = unsafe { std::slice::from_raw_parts_mut(frontier, FrontierIdx::COUNT * capacity) };
 
-    for index in 0..rows * fanout {
-        let row = index / fanout;
+    for index in 0..rows * children_per_node {
+        let row = index / children_per_node;
         if round_valid[row] == 0 {
             continue;
         }
         let parent = parent_indices[row] as usize;
-        let slot = parent * fanout + index % fanout;
+        let slot = parent * children_per_node + index % children_per_node;
         if parent >= tree_slots || slot >= capacity {
             continue;
         }
         let logprob = child_logprobs[index];
-        let cumulative_logprob = f32::from_bits(tree[weaver::TREE_LANE_CUM * tree_slots + parent]) + logprob;
-        let values = [
-            child_ids[index],
-            parent as u32,
-            tree[weaver::TREE_LANE_DEPTH * tree_slots + parent] + 1,
-            cumulative_logprob.to_bits(),
-            logprob.to_bits(),
-            top_k_score_key(cumulative_logprob),
-            1,
-        ];
-        for (lane, value) in values.into_iter().enumerate() {
-            frontier[lane * capacity + slot] = value;
-        }
+        let cumulative_logprob =
+            f32::from_bits(tree[TreeIdx::PathLogprobBits as usize * tree_slots + parent]) + logprob;
+        let mut set = |field: FrontierIdx, value| {
+            frontier[field as usize * capacity + slot] = value;
+        };
+        set(FrontierIdx::TokenId, child_ids[index]);
+        set(FrontierIdx::ParentSlot, parent as u32);
+        set(FrontierIdx::Depth, tree[TreeIdx::Depth as usize * tree_slots + parent] + 1);
+        set(FrontierIdx::PathLogprobBits, cumulative_logprob.to_bits());
+        set(FrontierIdx::EdgeLogprobBits, logprob.to_bits());
+        set(FrontierIdx::PathScoreKey, top_k_score_key(cumulative_logprob));
+        set(FrontierIdx::Active, 1);
     }
 }
