@@ -357,7 +357,6 @@ struct MxuFragmentOps {
     // MXU relaxed multiply is slightly faster than multiply_accumulate for pure matmul.
     fragment_matmul<false, transpose_a, transpose_b>(output, left, right);
   }
-
 };
 
 using MxuStrictFragmentOps = MxuFragmentOps<false>;
