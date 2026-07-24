@@ -316,25 +316,14 @@ impl<B: Backend> Weaver<B> {
         target_embedding: &Embedding<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<TopKChildren<B>, WeaverEncodeError<B>> {
-        let rows = batch.node_count;
-        let candidates = batch.candidates_per_node;
-        assert!(rows > 0);
-        assert!(candidates > 0 && candidates <= CANDIDATES_MAX);
-        assert!(children_per_node > 0 && children_per_node <= candidates);
-        assert!(batch.ancestor_stride > 0);
-        let u32_bytes = DataType::U32.size_in_bytes();
-        debug_assert!(batch.node_metadata.size() >= MetadataIdx::COUNT * rows * u32_bytes);
-        debug_assert!(batch.node_token_ids.size() >= rows * u32_bytes);
-        debug_assert!(batch.ancestor_indices.size() >= rows * batch.ancestor_stride * u32_bytes);
-
-        let token_embedding = target_embedding.encode_lookup(batch.node_token_ids, rows, encoder)?;
+        let token_embedding = target_embedding.encode_lookup(batch.node_token_ids, batch.node_count, encoder)?;
         let normalized_embedding = self
             .token_embedding_norm
-            .encode(&token_embedding, 0, rows, None, encoder)
+            .encode(&token_embedding, 0, batch.node_count, None, encoder)
             .map_err(WeaverEncodeError::Backend)?;
         let mut hidden = self
             .token_embedding_projection
-            .encode(normalized_embedding, rows, encoder)
+            .encode(normalized_embedding, batch.node_count, encoder)
             .map_err(WeaverEncodeError::Backend)?;
         self.node_position_add.encode(
             None::<&Allocation<B>>,
@@ -342,7 +331,7 @@ impl<B: Backend> Weaver<B> {
             Some(batch.node_metadata),
             &mut hidden,
             self.model_dim as u32,
-            (rows * self.model_dim) as u32,
+            (batch.node_count * self.model_dim) as u32,
             encoder,
         );
 
@@ -373,20 +362,24 @@ impl<B: Backend> Weaver<B> {
         target_embedding: &Embedding<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<TopKChildren<B>, WeaverEncodeError<B>> {
-        let (rows, candidates) = (batch.node_count, batch.candidates_per_node);
         let normalized_output =
-            self.readout_norm.encode(hidden, 0, rows, None, encoder).map_err(WeaverEncodeError::Backend)?;
+            self.readout_norm.encode(hidden, 0, batch.node_count, None, encoder).map_err(WeaverEncodeError::Backend)?;
         let query = self
             .readout_query_projection
-            .encode(normalized_output, rows, encoder)
+            .encode(normalized_output, batch.node_count, encoder)
             .map_err(WeaverEncodeError::Backend)?;
-        let residual_logits =
-            target_embedding.encode_readout_sparse(&query, batch.candidate_ids, rows, candidates, encoder)?;
+        let residual_logits = target_embedding.encode_readout_sparse(
+            &query,
+            batch.candidate_ids,
+            batch.node_count,
+            batch.candidates_per_node,
+            encoder,
+        )?;
         let mut token_ids = encoder
-            .allocate_scratch(size_for_shape(&[rows, children_per_node], DataType::U32))
+            .allocate_scratch(size_for_shape(&[batch.node_count, children_per_node], DataType::U32))
             .map_err(WeaverEncodeError::Backend)?;
         let mut logprobs = encoder
-            .allocate_scratch(size_for_shape(&[rows, children_per_node], DataType::F32))
+            .allocate_scratch(size_for_shape(&[batch.node_count, children_per_node], DataType::F32))
             .map_err(WeaverEncodeError::Backend)?;
         self.top_children.encode(
             &residual_logits,
@@ -394,8 +387,8 @@ impl<B: Backend> Weaver<B> {
             batch.candidate_ids,
             &mut token_ids,
             &mut logprobs,
-            rows as u32,
-            candidates as u32,
+            batch.node_count as u32,
+            batch.candidates_per_node as u32,
             children_per_node as u32,
             encoder,
         );
