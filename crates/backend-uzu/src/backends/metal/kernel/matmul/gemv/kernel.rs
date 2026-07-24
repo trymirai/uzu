@@ -49,6 +49,25 @@ impl GemvSpecialization {
         output_data_type: DataType,
         device_tier: DeviceTier,
     ) -> Option<GemvSpecialization> {
+        let is_quant = !matches!(args.b, MatmulB::FullPrecision { .. });
+        let batch_within_policy = if is_quant {
+            args.m < 5
+        } else {
+            args.m <= max_gemv_batch_threshold()
+        };
+        if !batch_within_policy {
+            return None;
+        }
+        Self::select_for_any_batch(args, weights_data_type, input_data_type, output_data_type, device_tier)
+    }
+
+    pub(crate) fn select_for_any_batch<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+        args: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        device_tier: DeviceTier,
+    ) -> Option<GemvSpecialization> {
         if !args.b_transpose || !matches!(args.a, MatmulA::FullPrecision { .. }) {
             return None;
         }
@@ -68,14 +87,13 @@ impl GemvSpecialization {
         if args.d_transform.rht_factors.is_some() && !args.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32) {
             return None;
         }
-        if is_quant {
-            if args.n < DEFAULT_RESULTS_PER_SIMDGROUP || args.m >= 5 {
-                return None;
-            }
-        } else {
+        if args.n < DEFAULT_RESULTS_PER_SIMDGROUP {
+            return None;
+        }
+        if !is_quant {
             let mixed_precision = weights_data_type == DataType::F32
                 && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
-            if mixed_precision || args.n < DEFAULT_RESULTS_PER_SIMDGROUP || args.m > max_gemv_batch_threshold() {
+            if mixed_precision {
                 return None;
             }
         }
