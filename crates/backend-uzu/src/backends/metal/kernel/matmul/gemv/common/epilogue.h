@@ -41,7 +41,7 @@ struct Epilogue {
         if (is_accumulate && global_row < out_vec_size) {
           value += static_cast<U>(d[row]);
         }
-        if (is_bias && global_row < out_vec_size) {
+        if (is_bias && !use_hadamard && global_row < out_vec_size) {
           value += static_cast<U>(output_bias[global_row]);
         }
         if (is_soft_cap) {
@@ -64,11 +64,15 @@ struct Epilogue {
       if (simd_group == 0) {
         uint global_out_idx = out_block_idx * 32 + simd_lane;
         if (global_out_idx < out_vec_size) {
-          d[simd_lane] = simdgroup_output_random_hadamard_transform(
+          DT transformed = simdgroup_output_random_hadamard_transform(
               static_cast<ushort>(simd_lane),
               static_cast<DT>(shared_results[simd_lane]),
               hadamard_factors[global_out_idx]
           );
+          if (is_bias) {
+            transformed += static_cast<DT>(output_bias[global_out_idx]);
+          }
+          d[simd_lane] = transformed;
         }
       }
     } else {
