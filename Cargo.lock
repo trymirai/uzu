@@ -3802,6 +3802,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "proc-macros",
  "pyo3",
  "pyo3-async-runtimes",
  "pyo3-build-config",
@@ -4715,8 +4716,10 @@ dependencies = [
 name = "proc-macros"
 version = "0.5.12"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
+ "serde_derive_internals",
  "syn 2.0.118",
 ]
 

@@ -51,15 +51,24 @@ impl Content {
                         Section::ToolCall {
                             value: Some(value),
                         } => {
-                            let block = match serde_json::from_value::<ToolCall>(value.clone()) {
-                                Ok(tool_call) => ChatContentBlock::ToolCall {
+                            match serde_json::from_value::<ToolCall>(value.clone()) {
+                                Ok(tool_call) => tool_calls.push(ChatContentBlock::ToolCall {
                                     value: tool_call,
+                                }),
+                                // Llama 3.2 may echo a result as a pseudo call such as
+                                // `{"time":"17:03","return":"time"}`. Only treat that
+                                // positively identified shape as text; malformed calls must
+                                // remain candidates so the turn retains its ToolCalls finish reason.
+                                Err(_) => {
+                                    if is_tool_call_result_echo(&value) {
+                                        text_parts.push(value.to_string());
+                                    } else {
+                                        tool_calls.push(ChatContentBlock::ToolCallCandidate {
+                                            value: value.into(),
+                                        });
+                                    }
                                 },
-                                Err(_) => ChatContentBlock::ToolCallCandidate {
-                                    value: value.into(),
-                                },
-                            };
-                            tool_calls.push(block);
+                            }
                         },
                         Section::ToolCall {
                             value: None,
@@ -101,6 +110,16 @@ impl Content {
             },
         }
     }
+}
+
+fn is_tool_call_result_echo(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    let Some(Value::String(returned_field)) = object.get("return") else {
+        return false;
+    };
+    returned_field != "return" && object.contains_key(returned_field)
 }
 
 // Parsers may emit tool results as `{"name": ..., "value": ...}` (e.g. functiongemma, gemma-4);

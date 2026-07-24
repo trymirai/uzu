@@ -160,7 +160,21 @@ impl ChatSession {
         self.instance.lock().await.peak_memory_usage()
     }
 
-    pub async fn add_tool_functions(
+    pub async fn add_tool_function(
+        &mut self,
+        function: impl Into<ToolFunctionDefinition>,
+    ) -> Result<(), ChatSessionError> {
+        self.add_tool_function_definitions(vec![function.into()]).await
+    }
+
+    pub async fn add_tool_function_definition(
+        &mut self,
+        definition: ToolFunctionDefinition,
+    ) -> Result<(), ChatSessionError> {
+        self.add_tool_function_definitions(vec![definition]).await
+    }
+
+    pub async fn add_tool_function_definitions(
         &mut self,
         definitions: Vec<ToolFunctionDefinition>,
     ) -> Result<(), ChatSessionError> {
