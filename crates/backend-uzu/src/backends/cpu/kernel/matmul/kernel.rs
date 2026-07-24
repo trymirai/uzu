@@ -224,17 +224,26 @@ impl MatmulKernel for MatmulCpuKernel {
                                 } => {
                                     let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
                                     let weight_linear_index = b_col * k_u + inner;
+                                    let signed_codes = matches!(a_data, AData::Int8 { .. });
                                     let quantized_value = if *bits == 4 {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 4;
                                         let w = weights.as_ptr() as *const u32;
-                                        let nibble = ((w.add(word_index).read_unaligned() >> bit_offset) & 0xF) as u8;
+                                        let mut nibble =
+                                            ((w.add(word_index).read_unaligned() >> bit_offset) & 0xF) as u8;
+                                        if signed_codes {
+                                            nibble ^= 0x8;
+                                        }
                                         f32::from(nibble)
                                     } else {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 8;
                                         let w = weights.as_ptr() as *const u32;
-                                        ((w.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as f32
+                                        let mut byte = ((w.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as u8;
+                                        if signed_codes {
+                                            byte ^= 0x80;
+                                        }
+                                        f32::from(byte)
                                     };
                                     let group_index = inner / group_size;
                                     let scale = read_f32(

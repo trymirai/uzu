@@ -132,7 +132,17 @@ impl<T: ArrayElement + Float> QuantInput<T> {
     }
 
     fn weights_for_upload(&self) -> Vec<u32> {
-        self.w_packed.clone()
+        let mut words = self.w_packed.clone();
+        if self.prepared_a.is_some() {
+            let midpoint_mask: u32 = match self.mode {
+                QuantizationMode::U4 => 0x8888_8888,
+                QuantizationMode::U8 | QuantizationMode::I8 => 0x8080_8080,
+            };
+            for word in &mut words {
+                *word ^= midpoint_mask;
+            }
+        }
+        words
     }
 
     pub(crate) fn weight_buffer_bytes(&self) -> usize {
