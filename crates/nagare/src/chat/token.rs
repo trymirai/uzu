@@ -54,14 +54,11 @@ impl Session {
         let encoding = build_encoding(reference.clone(), model).map_err(|err| ChatSessionError::Loading {
             message: err.to_string(),
         })?;
-        let tokenizer = encoding.tokenizer().ok_or_else(|| ChatSessionError::Loading {
-            message: "tokenizer is empty".to_string(),
-        })?;
-
-        let instance =
-            backend.instance(reference, config, tokenizer).await.map_err(|error| ChatSessionError::Backend {
+        let instance = backend.instance(reference, config, encoding.tokenizer()).await.map_err(|error| {
+            ChatSessionError::Backend {
                 message: error.to_string(),
-            })?;
+            }
+        })?;
         let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
@@ -256,7 +253,15 @@ impl Session {
                 } => Some(ToolCallState::Candidate(value.json.clone())),
                 _ => None,
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        let finish_reason = if let Some(ChatReplyFinishReason::Stop) = finish_reason
+            && !tool_calls.is_empty()
+        {
+            Some(ChatReplyFinishReason::ToolCalls)
+        } else {
+            finish_reason
+        };
 
         Output {
             reasoning: message.reasoning(),
@@ -265,6 +270,14 @@ impl Session {
             finish_reason,
             stats: state.get_stats(have_finish_reason),
         }
+    }
+
+    pub fn supports_tool_calls(&self) -> bool {
+        self.encoding.supports_tool_calls()
+    }
+
+    pub fn supports_multiple_tool_calls(&self) -> bool {
+        self.encoding.supports_multiple_tool_calls()
     }
 }
 

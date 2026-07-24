@@ -85,4 +85,12 @@ impl EncodingTrait for Encoding {
     fn tokenizer(&self) -> Option<&Tokenizer> {
         dispatch!(infallible self, tokenizer)
     }
+
+    fn supports_tool_calls(&self) -> bool {
+        dispatch!(infallible self, supports_tool_calls)
+    }
+
+    fn supports_multiple_tool_calls(&self) -> bool {
+        dispatch!(infallible self, supports_multiple_tool_calls)
+    }
 }

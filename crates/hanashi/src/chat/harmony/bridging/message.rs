@@ -2,14 +2,17 @@ use std::collections::HashMap;
 
 use openai_harmony::chat::{
     Author as ExternalAuthor, Content as ExternalContent, DeveloperContent as ExternalDeveloperContent,
-    Message as ExternalMessage, Role as ExternalRole, SystemContent as ExternalSystemContent, TextContent,
+    Message as ExternalMessage, Role as ExternalRole, SystemContent as ExternalSystemContent,
 };
 use shoji::types::{
     basic::{ReasoningEffort, ToolCall, ToolNamespace, Value},
     session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
 
-use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};
+use crate::chat::{
+    harmony::bridging::{Error, FromHarmony, ToHarmony},
+    strftime_now,
+};
 
 const FUNCTIONS_NAMESPACE: &str = "functions";
 const CHANNEL_ANALYSIS: &str = "analysis";
@@ -22,38 +25,39 @@ const BUILTIN_PYTHON: &str = "python";
 
 pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<ExternalMessage>, Error> {
     let mut result = Vec::new();
+    // Plain system text becomes developer `# Instructions`, matching the reference gpt-oss chat template.
+    // The harmony system message always carries the meta preamble (identity, reasoning effort, valid channels) the model was trained to expect.
+    let mut pending_instructions: Vec<String> = Vec::new();
 
     for message in messages {
+        if !pending_instructions.is_empty() && !matches!(message.role, ChatRole::System {} | ChatRole::Developer {}) {
+            result.push(developer_message(std::mem::take(&mut pending_instructions).join("")));
+        }
+
         match &message.role {
             ChatRole::System {} => {
-                let mut system_filled = false;
                 let mut system_content = ExternalSystemContent::default();
-                let mut text_parts: Vec<String> = Vec::new();
 
                 for block in &message.content {
                     match block {
                         ChatContentBlock::Identity {
                             value,
                         } => {
-                            system_filled = true;
                             system_content.model_identity = Some(value.clone());
                         },
                         ChatContentBlock::ReasoningEffort {
                             value,
                         } => {
-                            system_filled = true;
                             system_content.reasoning_effort = Some((*value).to_harmony()?);
                         },
                         ChatContentBlock::ConversationStartDate {
                             value,
                         } => {
-                            system_filled = true;
                             system_content.conversation_start_date = Some(value.clone());
                         },
                         ChatContentBlock::KnowledgeCutoff {
                             value,
                         } => {
-                            system_filled = true;
                             system_content.knowledge_cutoff = Some(value.clone());
                         },
                         ChatContentBlock::BuiltinTools {
@@ -62,11 +66,9 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                             for name in names {
                                 match name.as_str() {
                                     BUILTIN_BROWSER => {
-                                        system_filled = true;
                                         system_content = system_content.with_browser_tool();
                                     },
                                     BUILTIN_PYTHON => {
-                                        system_filled = true;
                                         system_content = system_content.with_python_tool();
                                     },
                                     _ => {
@@ -80,7 +82,7 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                         ChatContentBlock::Text {
                             value,
                         } => {
-                            text_parts.push(value.clone());
+                            pending_instructions.push(value.clone());
                         },
                         other => {
                             return Err(Error::UnsupportedContentBlock {
@@ -91,27 +93,22 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                     }
                 }
 
-                let mut content: Vec<ExternalContent> = vec![];
-                if system_filled {
-                    content.push(ExternalContent::SystemContent(system_content));
-                }
-                if !text_parts.is_empty() {
-                    content.push(ExternalContent::Text(TextContent {
-                        text: text_parts.join(""),
-                    }));
+                // the reference gpt-oss chat template always includes the current date, so default it here the same way it does (strftime_now("%Y-%m-%d"))
+                if system_content.conversation_start_date.is_none() {
+                    system_content.conversation_start_date = Some(strftime_now("%Y-%m-%d".to_string()));
                 }
 
                 result.push(ExternalMessage {
                     author: ExternalAuthor::from(ExternalRole::System),
                     recipient: None,
-                    content,
+                    content: vec![ExternalContent::SystemContent(system_content)],
                     channel: None,
                     content_type: None,
                 });
             },
             ChatRole::Developer {} => {
                 let mut developer_content = ExternalDeveloperContent::default();
-                let mut text_parts: Vec<String> = Vec::new();
+                let mut text_parts: Vec<String> = std::mem::take(&mut pending_instructions);
 
                 for block in &message.content {
                     match block {
@@ -218,9 +215,15 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                 }
 
                 if !text_parts.is_empty() {
+                    // text next to a tool call is a commentary-channel preamble, not a final reply
+                    let channel = if tool_calls.is_empty() {
+                        CHANNEL_FINAL
+                    } else {
+                        CHANNEL_COMMENTARY
+                    };
                     result.push(
                         ExternalMessage::from_role_and_content(ExternalRole::Assistant, text_parts.join(""))
-                            .with_channel(CHANNEL_FINAL),
+                            .with_channel(channel),
                     );
                 }
 
@@ -290,7 +293,25 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
         }
     }
 
+    if !pending_instructions.is_empty() {
+        result.push(developer_message(pending_instructions.join("")));
+    }
+
     Ok(result)
+}
+
+fn developer_message(instructions: String) -> ExternalMessage {
+    let developer_content = ExternalDeveloperContent {
+        instructions: Some(instructions),
+        ..Default::default()
+    };
+    ExternalMessage {
+        author: ExternalAuthor::from(ExternalRole::Developer),
+        recipient: None,
+        content: vec![ExternalContent::DeveloperContent(developer_content)],
+        channel: None,
+        content_type: None,
+    }
 }
 
 pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<ChatMessage>, Error> {
@@ -429,25 +450,32 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                             });
                         },
                         Some(CHANNEL_COMMENTARY) => {
-                            let recipient =
-                                assistant_message.recipient.as_deref().ok_or_else(|| Error::SerializationFailed {
-                                    message: "Tool call missing recipient".to_string(),
-                                })?;
-                            let name = strip_namespace_prefix(recipient);
+                            match assistant_message.recipient.as_deref() {
+                                Some(recipient) => {
+                                    let name = strip_namespace_prefix(recipient);
 
-                            match serde_json::from_str::<serde_json::Value>(&text) {
-                                Ok(json_value) => {
-                                    content.push(ChatContentBlock::ToolCall {
-                                        value: ToolCall {
-                                            identifier: None,
-                                            name: name.to_string(),
-                                            arguments: Value::from(json_value),
+                                    match serde_json::from_str::<serde_json::Value>(&text) {
+                                        Ok(json_value) => {
+                                            content.push(ChatContentBlock::ToolCall {
+                                                value: ToolCall {
+                                                    identifier: None,
+                                                    name: name.to_string(),
+                                                    arguments: Value::from(json_value),
+                                                },
+                                            });
                                         },
-                                    });
+                                        Err(_) => {
+                                            content.push(ChatContentBlock::ToolCallCandidate {
+                                                value: Value::from(serde_json::Value::String(text)),
+                                            });
+                                        },
+                                    }
                                 },
-                                Err(_) => {
-                                    content.push(ChatContentBlock::ToolCallCandidate {
-                                        value: Value::from(serde_json::Value::String(text)),
+                                // commentary without a recipient is a user-visible preamble
+                                // (e.g. an action plan announced before calling tools)
+                                None => {
+                                    content.push(ChatContentBlock::Text {
+                                        value: text,
                                     });
                                 },
                             }

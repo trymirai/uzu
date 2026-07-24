@@ -5,15 +5,21 @@ mod ordering;
 pub mod renderer;
 mod token;
 
+use std::collections::HashSet;
+
 pub use error::Error;
 use shoji::types::{
     basic::{Token, TokenId},
-    session::chat::{ChatContentBlock, ChatMessage},
+    session::chat::{ChatContentBlock, ChatMessage, ChatModelCapabilities, ChatRole},
 };
 use token_stream_parser::{Parser as _, token_stream::TokenStreamParser};
 use tokenizers::{Tokenizer, step_decode_stream};
 
-use self::{config::HanashiResolvedConfig, messages::streamed::Message as StreamedMessage, ordering::Validator};
+use self::{
+    config::HanashiResolvedConfig,
+    messages::streamed::{Content as StreamedContent, Message as StreamedMessage, Section as StreamedSection},
+    ordering::Validator,
+};
 use crate::{
     Encoding as EncodingTrait,
     chat::{
@@ -24,9 +30,11 @@ use crate::{
 };
 
 pub struct Encoding {
+    capabilities: ChatModelCapabilities,
     config: HanashiResolvedConfig,
     tokenizer: Tokenizer,
     parser: TokenStreamParser,
+    framing_tokens: HashSet<String>,
     renderer: Renderer,
     validator: Validator,
 
@@ -51,12 +59,15 @@ impl EncodingTrait for Encoding {
         let resolved_config = config.resolve()?;
         let tokenizer = load_tokenizer(&context.tokenizer_location).map_err(|_| Error::UnableToLoadTokenizer)?;
         let parser = TokenStreamParser::new(resolved_config.parsing.clone())?;
+        let framing_tokens = resolved_config.parsing.framing_config().tokens.into_iter().collect();
         let renderer = Renderer::new(resolved_config.rendering.clone());
         let validator = Validator::new(resolved_config.ordering.clone());
         Ok(Self {
+            capabilities: config.capabilities()?,
             config: resolved_config,
             tokenizer,
             parser,
+            framing_tokens,
             renderer,
             validator,
             state: State::default(),
@@ -96,7 +107,7 @@ impl EncodingTrait for Encoding {
         let text_encoding = self.tokenizer.encode(text, false).map_err(|_| Error::UnableToEncodeText)?;
         for token_id in text_encoding.get_ids() {
             let token = self.resolve_token(*token_id, true)?;
-            self.parser.push(&token.clone().to_parser_token())?;
+            self.push_token_to_parser(&token)?;
             self.state.tokens.push(token);
         }
 
@@ -110,7 +121,7 @@ impl EncodingTrait for Encoding {
     ) -> Result<(), Self::Error> {
         for token_id in &token_ids {
             let token = self.resolve_token(*token_id, true)?;
-            self.parser.push(&token.clone().to_parser_token())?;
+            self.push_token_to_parser(&token)?;
             self.state.tokens.push(token);
         }
 
@@ -121,9 +132,28 @@ impl EncodingTrait for Encoding {
     fn tokenizer(&self) -> Option<&Tokenizer> {
         Some(&self.tokenizer)
     }
+
+    fn supports_tool_calls(&self) -> bool {
+        self.capabilities.supports_tools
+    }
+
+    fn supports_multiple_tool_calls(&self) -> bool {
+        self.capabilities.supports_multiple_tool_calls
+    }
 }
 
 impl Encoding {
+    fn push_token_to_parser(
+        &mut self,
+        token: &Token,
+    ) -> Result<(), Error> {
+        if token.is_special && !self.framing_tokens.contains(&token.value) {
+            return Ok(());
+        }
+        self.parser.push(&token.clone().to_parser_token())?;
+        Ok(())
+    }
+
     fn fill_default_content(
         &self,
         messages: &[ChatMessage],
@@ -165,19 +195,75 @@ impl Encoding {
         Ok(modified_messages)
     }
 
+    fn message_from_sections(
+        sections: Vec<StreamedSection>,
+        role: ChatRole,
+    ) -> ChatMessage {
+        ChatMessage::from(StreamedMessage {
+            role,
+            content: Some(StreamedContent::Sections(sections)),
+        })
+    }
+
     fn update_messages_from_parser_state(&mut self) -> Result<(), Error> {
         let value = self.parser.state().value.clone();
+        let messages =
+            serde_json::from_value::<Vec<StreamedMessage>>(value).map_err(|_| Error::InvalidStreamedContent)?;
         let rendering_config = &self.config.rendering;
-        let streamed_messages: Vec<ChatMessage> = serde_json::from_value::<Vec<StreamedMessage>>(value)
-            .map_err(|_| Error::InvalidStreamedContent)?
-            .into_iter()
-            .map(|streamed_message| {
-                let role = rendering_config.get_role_by_name(&streamed_message.role.to_string());
-                let mut message = ChatMessage::from(streamed_message);
-                message.role = role;
-                message
-            })
-            .collect();
+
+        let mut streamed_messages: Vec<ChatMessage> = Vec::new();
+        for msg in messages {
+            let role = rendering_config.get_role_by_name(&msg.role.to_string());
+            // templates may render tool results inside another role's turn (e.g. qwen renders them as `<|im_start|>user\n<tool_response>...`,
+            // functiongemma keeps calls, responses and the follow-up reply in one model turn),
+            // so tool result sections are split into standalone tool messages in stream order
+            match msg.content {
+                Some(StreamedContent::Sections(sections))
+                    if sections.iter().any(|section| {
+                        matches!(
+                            section,
+                            StreamedSection::ToolCallResult {
+                                value: Some(serde_json::Value::Object(_))
+                            }
+                        )
+                    }) =>
+                {
+                    let mut pending: Vec<StreamedSection> = Vec::new();
+                    for section in sections {
+                        if matches!(
+                            section,
+                            StreamedSection::ToolCallResult {
+                                value: Some(serde_json::Value::Object(_))
+                            }
+                        ) {
+                            let message = Self::message_from_sections(std::mem::take(&mut pending), role.clone());
+                            if !message.content.is_empty() {
+                                streamed_messages.push(message);
+                            }
+                            streamed_messages.push(Self::message_from_sections(vec![section], ChatRole::Tool {}));
+                        } else {
+                            pending.push(section);
+                        }
+                    }
+                    let message = Self::message_from_sections(pending, role.clone());
+                    if !message.content.is_empty() {
+                        streamed_messages.push(message);
+                    }
+                },
+                content => {
+                    let mut message = ChatMessage::from(StreamedMessage {
+                        role: role.clone(),
+                        content,
+                    });
+                    if !message.content.is_empty()
+                        && message.content.iter().all(|block| matches!(block, ChatContentBlock::ToolCallResult { .. }))
+                    {
+                        message.role = ChatRole::Tool {};
+                    }
+                    streamed_messages.push(message);
+                },
+            }
+        }
 
         let result = self.state.synchronize_messages(&streamed_messages)?;
         if result == SynchronizationResult::Inserted {

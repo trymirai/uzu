@@ -91,7 +91,11 @@ impl StreamState {
         }
 
         if let Some(reason) = chunk.finish_reason {
-            self.finish_reason = Some(reason);
+            if matches!(reason, ChatReplyFinishReason::Stop) && !self.tool_calls.is_empty() {
+                self.finish_reason = Some(ChatReplyFinishReason::ToolCalls)
+            } else {
+                self.finish_reason = Some(reason);
+            }
             processed = true;
         }
 

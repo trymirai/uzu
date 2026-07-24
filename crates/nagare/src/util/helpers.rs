@@ -30,9 +30,9 @@ pub fn build_encoding(
     } else if encoding_configs.len() == 1 {
         encoding_configs.first().cloned()
     } else {
-        let hanashi_config = encoding_configs.iter().find(|config| matches!(config, EncodingConfig::Hanashi { .. }));
-        if hanashi_config.is_some() {
-            hanashi_config.cloned()
+        let harmony_config = encoding_configs.iter().find(|config| matches!(config, EncodingConfig::Harmony { .. }));
+        if harmony_config.is_some() {
+            harmony_config.cloned()
         } else {
             encoding_configs.first().cloned()
         }

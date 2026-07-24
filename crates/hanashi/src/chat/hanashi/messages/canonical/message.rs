@@ -132,9 +132,34 @@ impl Message {
             } => serde_json::to_value(value.clone()),
             OriginalContentBlock::ToolCallResult {
                 identifier: _,
-                name: _,
+                name,
                 value,
-            } => serde_json::to_value(value.clone()),
+            } => {
+                let name_key = config.custom_keys.get("tool_call_result_name");
+                let response_key = config.custom_keys.get("tool_call_result_response");
+                match (name_key, response_key, name) {
+                    (Some(name_key), Some(response_key), Some(name)) => {
+                        let response =
+                            serde_json::to_value(value.clone()).map_err(|error| Error::SerializationFailed {
+                                reason: error.to_string(),
+                            })?;
+                        let response = if response.is_object() {
+                            response
+                        } else {
+                            serde_json::to_value(IndexMap::from([("value".to_string(), response)])).map_err(
+                                |error| Error::SerializationFailed {
+                                    reason: error.to_string(),
+                                },
+                            )?
+                        };
+                        serde_json::to_value(IndexMap::from([
+                            (name_key.clone(), Value::String(name.clone())),
+                            (response_key.clone(), response),
+                        ]))
+                    },
+                    _ => serde_json::to_value(value.clone()),
+                }
+            },
             OriginalContentBlock::Translation {
                 payload: input,
                 source_language_code,

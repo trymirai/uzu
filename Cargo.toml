@@ -66,6 +66,7 @@ xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgramma
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17"
 serde = { version = "1.0", features = ["derive"] }
+serde_derive_internals = "0.29"
 serde_json = "1.0"
 monostate = "0.1"
 thiserror = "2.0"
@@ -117,6 +118,7 @@ tokio-util = { version = "0.7.17", default-features = false, features = ["rt"] }
 blake3 = "1.8"
 quote = "1.0"
 proc-macro2 = "1.0"
+proc-macro-crate = "3.5"
 syn = { version = "2.0", features = ["full", "fold"] }
 prettyplease = "0.2"
 rhai = "1.24.0"
