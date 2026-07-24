@@ -8,13 +8,49 @@ use crate::{
         kernel::{ActivationsPrepareKernel, HadamardTransformKernel, Kernels, matmul::MatmulA},
     },
     config::weight_matrix::{
-        AnyWeightMatrixSpec,
+        AnyWeightMatrixSpec, Layout,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+        int_spec::IntSpec,
+        mlx_spec::MLXSpec,
     },
     data_type::DataType,
     encodable_block::linear::{Linear, LinearMatmul, LinearMatmulError},
     parameters::{ParameterLoaderError, ParameterTree},
 };
+
+pub(super) fn int8_activation_prepare_eligible<B: Backend>(
+    context: &B::Context,
+    quantization_spec: &AnyWeightMatrixSpec,
+    input_dimension: usize,
+    input_data_type: DataType,
+    output_data_type: DataType,
+) -> bool {
+    if !context.device_capabilities().contains(DeviceCapabilities::HARDWARE_INT8_MATMUL) {
+        return false;
+    }
+    if input_data_type != DataType::BF16 || output_data_type != DataType::BF16 {
+        return false;
+    }
+    let (bits, group_size) = match quantization_spec {
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
+            bits,
+            group_size,
+            layout: Layout::OutputInput,
+            ..
+        })
+        | AnyWeightMatrixSpec::MLXSpec(MLXSpec {
+            bits,
+            group_size,
+            layout: Layout::OutputInput,
+            ..
+        }) => (*bits, *group_size),
+        _ => return false,
+    };
+    matches!(bits, 4 | 8)
+        && matches!(group_size, 32 | 64 | 128)
+        && input_dimension.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
+        && input_dimension.is_multiple_of(group_size)
+}
 
 #[derive(Debug, Error)]
 pub enum RHTLinearWrapperError<B: Backend> {
@@ -81,18 +117,23 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )
         .map_err(RHTLinearWrapperError::BackendError)?;
 
-        let symmetric_int8_preparation =
-            if context.device_capabilities().contains(DeviceCapabilities::HARDWARE_INT8_MATMUL) {
-                Some(
-                    <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type)
-                        .map(|kernel| SymmetricInt8Preparation {
-                            kernel,
-                        })
-                        .map_err(RHTLinearWrapperError::BackendError)?,
-                )
-            } else {
-                None
-            };
+        let symmetric_int8_preparation = if int8_activation_prepare_eligible::<B>(
+            context,
+            &quantization_spec,
+            input_dimension,
+            input_data_type,
+            output_data_type,
+        ) {
+            Some(
+                <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type)
+                    .map(|kernel| SymmetricInt8Preparation {
+                        kernel,
+                    })
+                    .map_err(RHTLinearWrapperError::BackendError)?,
+            )
+        } else {
+            None
+        };
 
         let inner_linear = LinearMatmul::quantized(
             context,
