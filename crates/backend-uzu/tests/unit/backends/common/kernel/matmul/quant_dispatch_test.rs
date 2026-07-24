@@ -311,8 +311,6 @@ fn parity_bf16_gemv_quant_rht_with_bias() {
     let bias_f32: Vec<f32> = (0..input.n as usize).map(|j| 0.3 + 0.05 * (j % 4) as f32).collect();
     let bias_t: Vec<bf16> = bias_f32.iter().map(|&v| bf16::from_f32(v)).collect();
 
-    // CPU reference applies bias before RHT (matmul loop adds bias, then the
-    // Hadamard pass transforms the result) — the same order GEMV uses.
     let cpu_context = <Cpu as Backend>::Context::new().expect("Cpu context");
     let mut cpu_buffers = QuantBuffers::<Cpu, bf16>::allocate(&cpu_context, &input);
     let cpu_rht = crate::tests::helpers::alloc_allocation_with_data::<Cpu, i32>(&cpu_context, &rht);

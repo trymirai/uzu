@@ -151,6 +151,7 @@ impl MatmulKernel for MatmulCpuKernel {
 
         let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u);
 
+        let bias_after_rht = post_rht.is_some();
         let command_buffer = encoder.as_command_buffer_mut();
         command_buffer.push_command(move || {
             let quant_layout = match &weight_data {
@@ -274,7 +275,7 @@ impl MatmulKernel for MatmulCpuKernel {
                         if accumulate {
                             value += read_f32(d_ptr.as_ptr(), output_data_type, output_index);
                         }
-                        if let Some(bias) = bias_ptr {
+                        if !bias_after_rht && let Some(bias) = bias_ptr {
                             value += read_f32(bias.as_ptr(), weights_data_type, col);
                         }
                         if let Some(cap) = soft_cap {
@@ -288,6 +289,18 @@ impl MatmulKernel for MatmulCpuKernel {
 
         if let Some(factors) = post_rht {
             self.hadamard.encode(d, factors, n, m, encoder);
+            if let Some(bias) = bias_ptr {
+                encoder.as_command_buffer_mut().push_command(move || unsafe {
+                    for row in 0..m_u {
+                        for col in 0..n_u {
+                            let index = row * n_u + col;
+                            let value = read_f32(d_ptr.as_ptr(), output_data_type, index)
+                                + read_f32(bias.as_ptr(), weights_data_type, col);
+                            write_f32(d_ptr.as_ptr(), output_data_type, index, value);
+                        }
+                    }
+                });
+            }
         }
 
         Ok(())
