@@ -186,6 +186,65 @@ struct MxuMmaCore {
     return left_tile;
   }
 
+  template <bool ALIGNED_N>
+  static METAL_FUNC uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps<>> load_int8_weight_tile(
+      const device uint8_t* b_packed_simdgroup,
+      const int k_element_offset,
+      const int b_row_stride_bytes,
+      const short simdgroup_limit_n,
+      const short2 position,
+      const ushort simd_lane_id
+  ) {
+    using Ops = uzu::matmul::MxuFragmentOps<>;
+    uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> right_tile;
+    if constexpr (BITS == 4) {
+      METAL_PRAGMA_UNROLL
+      for (ushort tile_n = 0; tile_n < TILES_N; ++tile_n) {
+        METAL_PRAGMA_UNROLL
+        for (ushort tile_k = 0; tile_k < TILES_K; ++tile_k) {
+          thread auto& weight_vector = right_tile.fragment_at(tile_n, tile_k);
+          METAL_PRAGMA_UNROLL
+          for (ushort thread_row = 0; thread_row < Ops::THREAD_ELEMENT_ROWS; ++thread_row) {
+            const short row =
+                short(tile_n * Ops::FRAGMENT_ROWS) + position.y + short(thread_row * Ops::THREAD_ELEMENT_ROW_STRIDE);
+            const ushort element_base = thread_row * Ops::THREAD_ELEMENT_COLS;
+            char4 codes = char4(0);
+            if (ALIGNED_N || row < simdgroup_limit_n) {
+              const int k_base = k_element_offset + int(tile_k * Ops::FRAGMENT_COLS) + int(position.x);
+              const ushort packed = *reinterpret_cast<const device ushort*>(
+                  b_packed_simdgroup + int(row) * b_row_stride_bytes + (k_base >> 1)
+              );
+              uint spread = uint(packed);
+              spread = (spread | (spread << 8)) & 0x00FF00FFu;
+              spread = (spread | (spread << 4)) & 0x0F0F0F0Fu;
+              codes = as_type<char4>(spread) - char4(8);
+            }
+            weight_vector[element_base + 0] = codes.x;
+            weight_vector[element_base + 1] = codes.y;
+            weight_vector[element_base + 2] = codes.z;
+            weight_vector[element_base + 3] = codes.w;
+          }
+        }
+      }
+    } else {
+      static_assert(BITS == 8, "symmetric int8 activations only support 4-bit or 8-bit weights");
+      auto right_src = uzu::matmul::fragment_source(
+          reinterpret_cast<const device int8_t*>(b_packed_simdgroup) + k_element_offset,
+          b_row_stride_bytes
+      );
+      if constexpr (!ALIGNED_N) {
+        right_src = right_src.bounded(simdgroup_limit_n, SIMDGROUP_BLOCK_K);
+      }
+      right_tile.load_from(simd_lane_id, right_src);
+      thread int8_t* right_codes = right_tile.elements();
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < right_tile.ELEMENTS_PER_FRAGMENT; ++i) {
+        right_codes[i] = as_type<int8_t>(uchar(as_type<uchar>(right_codes[i]) ^ uchar(0x80)));
+      }
+    }
+    return right_tile;
+  }
+
   template <bool ALIGNED_M, typename Ops>
   static METAL_FUNC void fill_row_group_cache(
       thread float* cache,
@@ -356,55 +415,15 @@ struct MxuMmaCore {
 
         uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> chunk_products;
         chunk_products.clear();
-        if constexpr (BITS == 4) {
-          uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> right_tile;
-          METAL_PRAGMA_UNROLL
-          for (ushort tile_n = 0; tile_n < TILES_N; ++tile_n) {
-            METAL_PRAGMA_UNROLL
-            for (ushort tile_k = 0; tile_k < TILES_K; ++tile_k) {
-              thread auto& weight_vector = right_tile.fragment_at(tile_n, tile_k);
-              METAL_PRAGMA_UNROLL
-              for (ushort thread_row = 0; thread_row < Ops::THREAD_ELEMENT_ROWS; ++thread_row) {
-                const short row = short(tile_n * Ops::FRAGMENT_ROWS) + position.y +
-                                  short(thread_row * Ops::THREAD_ELEMENT_ROW_STRIDE);
-                const ushort element_base = thread_row * Ops::THREAD_ELEMENT_COLS;
-                char4 codes = char4(0);
-                if (ALIGNED_N || row < simdgroup_limit_n) {
-                  const int k_base = k_element_offset + int(tile_k * Ops::FRAGMENT_COLS) + int(position.x);
-                  const ushort packed = *reinterpret_cast<const device ushort*>(
-                      b_packed_simdgroup + int(row) * b_row_stride_bytes + (k_base >> 1)
-                  );
-                  uint spread = uint(packed);
-                  spread = (spread | (spread << 8)) & 0x00FF00FFu;
-                  spread = (spread | (spread << 4)) & 0x0F0F0F0Fu;
-                  codes = as_type<char4>(spread) - char4(8);
-                }
-                weight_vector[element_base + 0] = codes.x;
-                weight_vector[element_base + 1] = codes.y;
-                weight_vector[element_base + 2] = codes.z;
-                weight_vector[element_base + 3] = codes.w;
-              }
-            }
-          }
-          Ops::template fragment_mma<false, true>(chunk_products, activation_tile, right_tile);
-        } else {
-          static_assert(BITS == 8, "symmetric int8 activations only support 4-bit or 8-bit weights");
-          uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> right_tile;
-          auto right_src = uzu::matmul::fragment_source(
-              reinterpret_cast<const device int8_t*>(b_packed_simdgroup) + k_element_offset,
-              b_row_stride_bytes
-          );
-          if constexpr (!ALIGNED_N) {
-            right_src = right_src.bounded(simdgroup_limit_n, SIMDGROUP_BLOCK_K);
-          }
-          right_tile.load_from(thread_context.simd_lane_id, right_src);
-          thread int8_t* right_codes = right_tile.elements();
-          METAL_PRAGMA_UNROLL
-          for (ushort i = 0; i < right_tile.ELEMENTS_PER_FRAGMENT; ++i) {
-            right_codes[i] = as_type<int8_t>(uchar(as_type<uchar>(right_codes[i]) ^ uchar(0x80)));
-          }
-          Ops::template fragment_mma<false, true>(chunk_products, activation_tile, right_tile);
-        }
+        auto right_tile = load_int8_weight_tile<ALIGNED_N>(
+            b_packed_simdgroup,
+            k_element_offset,
+            b_row_stride_bytes,
+            simdgroup_limit_n,
+            position,
+            thread_context.simd_lane_id
+        );
+        Ops::template fragment_mma<false, true>(chunk_products, activation_tile, right_tile);
 
         const uint act_group_index = k_offset_act_groups + uint(weight_group * act_chunks_per_weight_group + act_chunk);
         float activation_scale_cache[TILES_M * Ops::THREAD_ELEMENT_ROWS];
