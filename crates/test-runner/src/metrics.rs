@@ -15,7 +15,6 @@ fn get_gpu_temp() -> f32 {
     }
 }
 
-// iOS / non-macOS: keisoku is unavailable, so cooldown is a no-op.
 #[cfg(not(target_os = "macos"))]
 fn get_gpu_temp() -> f32 {
     0.0

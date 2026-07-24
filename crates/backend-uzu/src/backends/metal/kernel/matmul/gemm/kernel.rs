@@ -25,7 +25,6 @@ use crate::{
     data_type::DataType,
 };
 
-/// A8 tiles are cheaper per tile; a lower target avoids oversplitting MN-heavy shapes.
 const SPLIT_K_TARGET_TILES_INT8_ACTIVATIONS: u32 = 128;
 const SPLIT_K_TARGET_TILES: u32 = 512;
 
