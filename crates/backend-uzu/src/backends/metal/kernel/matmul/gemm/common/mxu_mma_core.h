@@ -356,7 +356,14 @@ struct MxuMmaCore {
 
         uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> chunk_products;
         chunk_products.clear();
-        if constexpr (BITS == 4) {
+        if constexpr (BITS == 4 && ALIGNED_N) {
+          Ops::template fragment_mma_int8_device_weights<false, metal::int4b_format>(
+              chunk_products,
+              activation_tile,
+              b_packed_simdgroup + (k_element_offset >> 1),
+              b_row_stride_bytes * 2
+          );
+        } else if constexpr (BITS == 4) {
           uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> right_tile;
           METAL_PRAGMA_UNROLL
           for (ushort tile_n = 0; tile_n < TILES_N; ++tile_n) {
@@ -369,7 +376,7 @@ struct MxuMmaCore {
                                   short(thread_row * Ops::THREAD_ELEMENT_ROW_STRIDE);
                 const ushort element_base = thread_row * Ops::THREAD_ELEMENT_COLS;
                 char4 codes = char4(0);
-                if (ALIGNED_N || row < simdgroup_limit_n) {
+                if (row < simdgroup_limit_n) {
                   const int k_base = k_element_offset + int(tile_k * Ops::FRAGMENT_COLS) + int(position.x);
                   const ushort packed = *reinterpret_cast<const device ushort*>(
                       b_packed_simdgroup + int(row) * b_row_stride_bytes + (k_base >> 1)
