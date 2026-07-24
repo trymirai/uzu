@@ -33,16 +33,17 @@ pub(crate) struct TopKChildren<B: Backend> {
 
 struct PrefixLayerOutput<B: Backend> {
     hidden: Allocation<B>,
-    qkv: Allocation<B>,
+    keys: Allocation<B>,
+    values: Allocation<B>,
 }
 
-pub(crate) struct WeaverPrefixCache<B: Backend> {
-    layer_qkv: Box<[Allocation<B>]>,
+pub(crate) struct WeaverPrefixKvCache<B: Backend> {
+    layer_kv: Box<[Allocation<B>]>,
     token_count: usize,
 }
 
-pub(crate) struct WeaverNodeCache<B: Backend> {
-    layer_qkv: Box<[Allocation<B>]>,
+pub(crate) struct WeaverNodeKvCache<B: Backend> {
+    layer_kv: Box<[Allocation<B>]>,
     node_capacity: u32,
 }
 
@@ -124,19 +125,19 @@ pub enum WeaverEncodeError<B: Backend> {
 }
 
 impl<B: Backend> Weaver<B> {
-    pub(crate) fn create_node_cache(
+    pub(crate) fn create_node_kv_cache(
         &self,
         capacity: usize,
         context: &B::Context,
-    ) -> Result<WeaverNodeCache<B>, WeaverEncodeError<B>> {
+    ) -> Result<WeaverNodeKvCache<B>, WeaverEncodeError<B>> {
         debug_assert!(capacity > 0 && capacity <= u32::MAX as usize);
         let capacity = capacity as u32;
-        let qkv_size = size_for_shape(&[capacity as usize, 3, self.model_dim], DATA_TYPE);
-        let layer_qkv = (0..self.blocks.len())
-            .map(|_| context.create_allocation(qkv_size, AllocationType::Global).map_err(WeaverEncodeError::Backend))
+        let kv_size = size_for_shape(&[2, capacity as usize, self.model_dim], DATA_TYPE);
+        let layer_kv = (0..self.blocks.len())
+            .map(|_| context.create_allocation(kv_size, AllocationType::Global).map_err(WeaverEncodeError::Backend))
             .collect::<Result<Box<[_]>, _>>()?;
-        Ok(WeaverNodeCache {
-            layer_qkv,
+        Ok(WeaverNodeKvCache {
+            layer_kv,
             node_capacity: capacity,
         })
     }
@@ -259,7 +260,7 @@ impl<B: Backend> Weaver<B> {
         lookahead_offset: usize,
         lookahead_count: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<WeaverPrefixCache<B>, WeaverEncodeError<B>> {
+    ) -> Result<WeaverPrefixKvCache<B>, WeaverEncodeError<B>> {
         let token_count = lookahead_count + 1;
         assert!(lookahead_count <= self.max_depth);
         let row_bytes = self.target_model_dim * DATA_TYPE.size_in_bytes();
@@ -296,31 +297,34 @@ impl<B: Backend> Weaver<B> {
             encoder,
         );
 
-        let mut layer_qkv = Vec::with_capacity(self.blocks.len());
+        let mut layer_kv = Vec::with_capacity(self.blocks.len());
         for block in &self.blocks {
             let PrefixLayerOutput {
                 hidden: next_hidden,
-                qkv,
+                keys,
+                values,
             } = block.encode_prefix(hidden, token_count, encoder).map_err(WeaverEncodeError::Backend)?;
-            let mut cached_qkv =
-                context.create_allocation(qkv.size(), AllocationType::Global).map_err(WeaverEncodeError::Backend)?;
-            encoder.encode_copy(&qkv, .., &mut cached_qkv, ..);
-            layer_qkv.push(cached_qkv);
+            let mut cached_kv = context
+                .create_allocation(keys.size() + values.size(), AllocationType::Global)
+                .map_err(WeaverEncodeError::Backend)?;
+            encoder.encode_copy(&keys, .., &mut cached_kv, 0..keys.size());
+            encoder.encode_copy(&values, .., &mut cached_kv, keys.size()..keys.size() + values.size());
+            layer_kv.push(cached_kv);
             hidden = next_hidden;
         }
         drop(input);
         drop(hidden);
-        Ok(WeaverPrefixCache {
-            layer_qkv: layer_qkv.into_boxed_slice(),
+        Ok(WeaverPrefixKvCache {
+            layer_kv: layer_kv.into_boxed_slice(),
             token_count,
         })
     }
 
     pub(crate) fn encode_step_batch(
         &self,
-        prefix: &WeaverPrefixCache<B>,
+        prefix: &WeaverPrefixKvCache<B>,
         batch: &WeaverStepBatch<'_, B>,
-        node_cache: &mut WeaverNodeCache<B>,
+        node_cache: &mut WeaverNodeKvCache<B>,
         children_per_node: usize,
         target_embedding: &Embedding<B>,
         encoder: &mut Encoder<B>,
@@ -360,8 +364,8 @@ impl<B: Backend> Weaver<B> {
             hidden = block
                 .encode_step(
                     hidden,
-                    &prefix.layer_qkv[layer_index],
-                    &mut node_cache.layer_qkv[layer_index],
+                    &prefix.layer_kv[layer_index],
+                    &mut node_cache.layer_kv[layer_index],
                     node_capacity,
                     batch,
                     prefix.token_count,
@@ -532,8 +536,8 @@ impl<B: Backend> WeaverBlock<B> {
     fn encode_step(
         &self,
         hidden: Allocation<B>,
-        prefix_qkv: &Allocation<B>,
-        node_qkv_cache: &mut Allocation<B>,
+        prefix_kv: &Allocation<B>,
+        node_kv_cache: &mut Allocation<B>,
         node_capacity: u32,
         batch: &WeaverStepBatch<'_, B>,
         prefix_length: usize,
@@ -547,8 +551,8 @@ impl<B: Backend> WeaverBlock<B> {
         let mut attention_output =
             encoder.allocate_scratch(size_for_shape(&[batch.node_count, self.model_dim], DATA_TYPE))?;
         self.last_query_attention.encode(
-            prefix_qkv,
-            &*node_qkv_cache,
+            prefix_kv,
+            &*node_kv_cache,
             &current_qkv,
             batch.ancestor_indices,
             ancestor_counts,
@@ -564,7 +568,7 @@ impl<B: Backend> WeaverBlock<B> {
         // serializes it after the attention that reads the ancestor slots.
         self.node_cache_write.encode(
             &current_qkv,
-            node_qkv_cache,
+            node_kv_cache,
             tree_slots,
             self.model_dim as u32,
             node_capacity,
@@ -651,7 +655,8 @@ impl<B: Backend> WeaverBlock<B> {
         self.residual_add.encode(&mut output, &mut residual, (token_count * self.model_dim) as u32, encoder);
         Ok(PrefixLayerOutput {
             hidden: residual,
-            qkv,
+            keys,
+            values,
         })
     }
 }

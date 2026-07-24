@@ -14,7 +14,7 @@ use crate::{
     encodable_block::{
         dflash::DFlashDraft,
         embedding::{Embedding, EmbeddingError},
-        weaver::{Weaver, WeaverEncodeError, WeaverNodeCache, WeaverPrefixCache, WeaverStepBatch},
+        weaver::{Weaver, WeaverEncodeError, WeaverNodeKvCache, WeaverPrefixKvCache, WeaverStepBatch},
     },
     engine::language_model::LanguageModel,
 };
@@ -165,7 +165,7 @@ impl<B: Backend> DFlashSpeculator<B> {
             let prefix = weaver.build_prefix(target_hidden, &draft_hidden, 1, lookahead_count, &mut encoder)?;
             drop(draft_hidden);
             drop(draft_logits);
-            let mut weaver_state = weaver.create_node_cache(options.budget + 1, &self.context)?;
+            let mut weaver_state = weaver.create_node_kv_cache(options.budget + 1, &self.context)?;
             let arguments = TreeEncodingArguments {
                 weaver,
                 prefix: &prefix,
@@ -310,7 +310,7 @@ impl<B: Backend> DFlashSpeculator<B> {
         &self,
         encoder: &mut Encoder<B>,
         params: &TreeEncodingArguments<'_, B>,
-        state: &mut WeaverNodeCache<B>,
+        state: &mut WeaverNodeKvCache<B>,
     ) -> Result<Allocation<B>, DFlashTreeError<B>> {
         let context = &*self.context;
         let slots = params.options.budget + 1;
@@ -466,7 +466,7 @@ fn tree_from_slots(tree: &[u32]) -> Vec<HostTreeNode> {
 
 struct TreeEncodingArguments<'a, B: Backend> {
     weaver: &'a Weaver<B>,
-    prefix: &'a WeaverPrefixCache<B>,
+    prefix: &'a WeaverPrefixKvCache<B>,
     target_embedding: &'a Embedding<B>,
     pool_ids: &'a Allocation<B>,
     pool_scores: &'a Allocation<B>,
