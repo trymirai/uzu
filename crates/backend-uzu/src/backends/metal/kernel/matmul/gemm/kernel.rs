@@ -440,6 +440,13 @@ impl GemmKernel {
                         scales: activation_scales,
                     } => {
                         validate_int8_activation_arguments(use_mxu, k, b_prologue, bits_per_b, group_size)?;
+                        if output_transform.contains(GemmDTransform::SOFT_CAP) {
+                            return Err(MatmulError::UnsupportedDOp {
+                                bit: GemmDTransform::SOFT_CAP,
+                                path: "Gemm int8 activations",
+                            }
+                            .into());
+                        }
                         (None, Some(values), Some(activation_scales), GemmAPrologueKind::Int8Symmetric)
                     },
                 };
