@@ -173,7 +173,7 @@ impl<B: Backend> DFlashSpeculator<B> {
                     draft_hidden: &draft_hidden,
                     target_embedding,
                     candidate_ids: &candidates.ids,
-                    candidate_scores: &candidates.scores,
+                    candidate_logits: &candidates.scores,
                     candidate_rows: candidates.rows,
                     candidates_per_row: candidates.candidates_per_row,
                     depth_seeds: &depth_seeds,
@@ -186,7 +186,7 @@ impl<B: Backend> DFlashSpeculator<B> {
                 &mut encoder,
             )?;
             let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
-            let nodes = tree.decode();
+            let nodes = tree.read_nodes();
             drop(candidates);
             drop(draft_hidden);
             drop(completed);
@@ -208,20 +208,20 @@ impl<B: Backend> DFlashSpeculator<B> {
         drop(completed);
 
         let mut nodes = vec![ProposalNode {
-            token: target_output_token,
+            token_id: target_output_token,
             depth: 0,
-            children: Vec::new(),
+            child_indices: Vec::new(),
         }];
         for depth in 0..options.budget.min(candidate_rows) {
             let token = candidate_id_values[depth * candidates_per_row];
             let parent = nodes.len() - 1;
             let index = nodes.len();
             nodes.push(ProposalNode {
-                token,
+                token_id: token,
                 depth: depth + 1,
-                children: Vec::new(),
+                child_indices: Vec::new(),
             });
-            nodes[parent].children.push(index);
+            nodes[parent].child_indices.push(index);
         }
         Ok(Self::finish_tree(
             nodes,
@@ -246,11 +246,11 @@ impl<B: Backend> DFlashSpeculator<B> {
             #[cfg(grammar)] grammar: &mut Option<&mut Grammar>,
         ) -> TrieNode {
             let node = &nodes[index];
-            let mut trie_node = TrieNode::new(node.token as u64, prng.derive((root_position + node.depth) as u64));
-            for &child_index in &node.children {
+            let mut trie_node = TrieNode::new(node.token_id as u64, prng.derive((root_position + node.depth) as u64));
+            for &child_index in &node.child_indices {
                 #[cfg(grammar)]
                 if let Some(grammar) = grammar.as_mut()
-                    && grammar.accept_token(nodes[child_index].token as u64).is_err()
+                    && grammar.accept_token(nodes[child_index].token_id as u64).is_err()
                 {
                     continue;
                 }
