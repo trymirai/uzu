@@ -406,7 +406,6 @@ struct MxuMmaCore {
         );
 
         uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> chunk_products;
-        chunk_products.clear();
         auto right_tile = load_int8_weight_tile<ALIGNED_N>(
             b_packed_simdgroup,
             k_element_offset,
@@ -415,7 +414,7 @@ struct MxuMmaCore {
             position,
             thread_context.simd_lane_id
         );
-        Ops::template fragment_mma<false, true>(chunk_products, activation_tile, right_tile);
+        Ops::template fragment_mm<false, true>(chunk_products, activation_tile, right_tile);
 
         const uint act_group_index = k_offset_act_groups + uint(weight_group * act_chunks_per_weight_group + act_chunk);
         float activation_scale_cache[TILES_M * Ops::THREAD_ELEMENT_ROWS];
@@ -431,8 +430,7 @@ struct MxuMmaCore {
 
         uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> activation_row_sums;
         if constexpr (int8_activation_needs_weight_correction) {
-          activation_row_sums.clear();
-          Ops::template fragment_mma<false, true>(activation_row_sums, activation_tile, ones_tile);
+          Ops::template fragment_mm<false, true>(activation_row_sums, activation_tile, ones_tile);
         }
         thread int* chunk_products_data = chunk_products.elements();
         thread int* activation_row_sums_data = activation_row_sums.elements();
