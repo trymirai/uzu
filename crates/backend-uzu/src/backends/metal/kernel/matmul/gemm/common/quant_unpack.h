@@ -50,6 +50,27 @@ METAL_FUNC bfloat4 uint4_to_fp4<bfloat, 8>(uint4 n) {
   return bfloat4(_uint4_to_fp4_float<8>(n));
 }
 
+template <int BITS>
+METAL_FUNC constexpr uint symmetric_zero_point() {
+  return 1u << (BITS - 1);
+}
+
+template <int BITS, typename Int>
+METAL_FUNC constexpr Int zero_point_row_stride(Int groups_per_row) {
+  return (BITS == 4) ? (groups_per_row + Int(1)) / Int(2) : groups_per_row;
+}
+
+template <int BITS>
+METAL_FUNC uint decode_zero_point(const device uint8_t* zero_points_row, uint group_index) {
+  static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 zero points supported");
+  if constexpr (BITS == 4) {
+    const uint packed = uint(zero_points_row[group_index >> 1]);
+    return (packed >> ((group_index & 1u) * 4u)) & 0x0Fu;
+  } else {
+    return uint(zero_points_row[group_index]);
+  }
+}
+
 template <typename U, int N, int bits>
 inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local) {
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");

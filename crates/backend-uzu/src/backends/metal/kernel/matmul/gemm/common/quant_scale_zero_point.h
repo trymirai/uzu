@@ -77,11 +77,11 @@ struct QuantizedBlockLoaderScaleZeroPoint {
         scales(REDUCTION_DIMENSION == 1 ? (scales_ + tile_row_index * groups_per_row_) : scales_),
         scales_row_start(REDUCTION_DIMENSION == 1 ? (scales_ + tile_row_index * groups_per_row_) : scales_),
         zero_points_row_start(
-            SCALE_SYMMETRIC ? nullptr
-                            : (REDUCTION_DIMENSION == 1
-                                   ? (zero_points_row_start_ +
-                                      tile_row_index * (BITS == 4 ? ((groups_per_row_ + 1) / 2) : groups_per_row_))
-                                   : zero_points_row_start_)
+            SCALE_SYMMETRIC
+                ? nullptr
+                : (REDUCTION_DIMENSION == 1
+                       ? (zero_points_row_start_ + tile_row_index * zero_point_row_stride<BITS>(groups_per_row_))
+                       : zero_points_row_start_)
         ) {}
 
   inline void current_scale_bias(thread T& out_scale, thread T& out_bias) const {
@@ -96,13 +96,9 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       scale_value = *scales;
     }
     if constexpr (SCALE_SYMMETRIC) {
-      zero_point_value = 1u << (BITS - 1);
-    } else if constexpr (BITS == 4) {
-      const device uint8_t* zero_point_ptr = zero_points_row_start + (group_index >> 1);
-      uint8_t zero_point_byte = *zero_point_ptr;
-      zero_point_value = (uint(zero_point_byte) >> (uint(group_index & 1) * 4u)) & 0x0Fu;
+      zero_point_value = symmetric_zero_point<BITS>();
     } else {
-      zero_point_value = zero_points_row_start[group_index];
+      zero_point_value = decode_zero_point<BITS>(zero_points_row_start, uint(group_index));
     }
     out_scale = scale_value;
     out_bias = static_cast<T>(-scale_value * static_cast<T>(zero_point_value));

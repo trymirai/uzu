@@ -14,6 +14,7 @@
 #include "quant_pack.h"
 #include "quant_scale_bias.h"
 #include "quant_scale_zero_point.h"
+#include "quant_unpack.h"
 
 using namespace metal;
 
@@ -297,30 +298,22 @@ struct MxuMmaCore {
   );
   UZU_CONST bool int8_activation_needs_weight_correction =
       A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant;
-  UZU_CONST float int8_weight_midpoint = (BITS == 4) ? 8.0f : 128.0f;
+  UZU_CONST float int8_weight_midpoint = float(symmetric_zero_point<(BITS > 0) ? BITS : 4>());
 
-  static METAL_FUNC float int8_weight_correction_coefficient(
+  static METAL_FUNC float int8_weight_dequant_bias(
+      const float scale,
+      const uint scale_index,
       const uint col,
       const uint weight_group,
       const uint weight_groups_per_row,
-      const device BT* b_scales,
       const device BT* biases,
       const device uint8_t* zero_points
   ) {
-    const uint scale_index = col * weight_groups_per_row + weight_group;
-    const float scale = static_cast<float>(b_scales[scale_index]);
     if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-      return static_cast<float>(biases[scale_index]) + scale * int8_weight_midpoint;
+      return static_cast<float>(biases[scale_index]);
     } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
-      float zero_point;
-      if constexpr (BITS == 4) {
-        const uint zp_row_stride = (weight_groups_per_row + 1u) / 2u;
-        const uchar packed = zero_points[col * zp_row_stride + (weight_group / 2u)];
-        zero_point = float((weight_group & 1u) == 0u ? (packed & 0x0fu) : (packed >> 4));
-      } else {
-        zero_point = float(zero_points[scale_index]);
-      }
-      return scale * (int8_weight_midpoint - zero_point);
+      const device uint8_t* zero_points_row = zero_points + col * zero_point_row_stride<BITS>(weight_groups_per_row);
+      return -scale * float(decode_zero_point<BITS>(zero_points_row, weight_group));
     } else {
       return 0.0f;
     }
@@ -391,14 +384,16 @@ struct MxuMmaCore {
             weight_group_index,
             [&](uint scale_index) {
               const uint col = scale_index / weight_groups_per_row;
-              return int8_weight_correction_coefficient(
-                  col,
-                  weight_group_index,
-                  weight_groups_per_row,
-                  b_scales,
-                  biases,
-                  zero_points
-              );
+              const float scale = static_cast<float>(b_scales[scale_index]);
+              return scale * int8_weight_midpoint + int8_weight_dequant_bias(
+                                                        scale,
+                                                        scale_index,
+                                                        col,
+                                                        weight_group_index,
+                                                        weight_groups_per_row,
+                                                        biases,
+                                                        zero_points
+                                                    );
             }
         );
       }
@@ -641,8 +636,7 @@ struct MxuMmaCore {
                               thread_context.simd_lane_id
                           );
                         } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
-                          const int zero_point_stride_per_row =
-                              (BITS == 4) ? ((groups_per_row + 1) / 2) : groups_per_row;
+                          const int zero_point_stride_per_row = zero_point_row_stride<BITS>(groups_per_row);
                           const device uint8_t* zero_points_row_start =
                               zero_points + block_col * zero_point_stride_per_row +
                               ((BITS == 4) ? (k_offset_groups / 2) : k_offset_groups);
