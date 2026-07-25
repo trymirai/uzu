@@ -71,6 +71,16 @@ METAL_FUNC uint decode_zero_point(const device uint8_t* zero_points_row, uint gr
   }
 }
 
+METAL_FUNC char4 unpack_nibbles_to_int8(uint packed) {
+  uint spread = (packed | (packed << 8)) & 0x00FF00FFu;
+  spread = (spread | (spread << 4)) & 0x0F0F0F0Fu;
+  return as_type<char4>(spread) - char4(char(symmetric_zero_point<4>()));
+}
+
+METAL_FUNC int8_t unbias_uint8_to_int8(int8_t code) {
+  return as_type<int8_t>(uchar(as_type<uchar>(code) ^ uchar(symmetric_zero_point<8>())));
+}
+
 template <typename U, int N, int bits>
 inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local) {
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
