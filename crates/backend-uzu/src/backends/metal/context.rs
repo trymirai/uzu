@@ -240,7 +240,7 @@ impl Context for MetalContext {
             capabilities |= DeviceCapabilities::SPARSE_BUFFERS;
         }
         if self.device.supports_mxu() {
-            capabilities |= DeviceCapabilities::HARDWARE_INT8_MATMUL;
+            capabilities |= DeviceCapabilities::NATIVE_INT8_MATMUL;
         }
         capabilities
     }

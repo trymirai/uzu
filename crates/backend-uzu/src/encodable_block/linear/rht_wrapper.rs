@@ -82,7 +82,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         .map_err(RHTLinearWrapperError::BackendError)?;
 
         let symmetric_int8_preparation =
-            if context.device_capabilities().contains(DeviceCapabilities::HARDWARE_INT8_MATMUL) {
+            if context.device_capabilities().contains(DeviceCapabilities::NATIVE_INT8_MATMUL) {
                 Some(
                     <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type)
                         .map(|kernel| SymmetricInt8Preparation {

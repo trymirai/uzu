@@ -220,7 +220,7 @@ impl<B: Backend> dyn Linear<B> {
             ..
         }) = &spec
         {
-            if context.device_capabilities().contains(DeviceCapabilities::HARDWARE_INT8_MATMUL) {
+            if context.device_capabilities().contains(DeviceCapabilities::NATIVE_INT8_MATMUL) {
                 let linear = RHTLinearWrapper::new(
                     context,
                     input_dimension,
