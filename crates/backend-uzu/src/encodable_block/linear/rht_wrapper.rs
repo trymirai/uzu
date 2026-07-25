@@ -18,6 +18,10 @@ use crate::{
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
+// Temporary, for testing only: flip to false to run linear layers on the bf16
+// activation path without touching model configs.
+const INT8_ACTIVATIONS_ENABLED: bool = true;
+
 pub(super) fn int8_activations_eligible<B: Backend>(
     context: &B::Context,
     quantization_spec: &AnyWeightMatrixSpec,
@@ -25,6 +29,9 @@ pub(super) fn int8_activations_eligible<B: Backend>(
     input_data_type: DataType,
     output_data_type: DataType,
 ) -> bool {
+    if !INT8_ACTIVATIONS_ENABLED {
+        return false;
+    }
     if !context.device_capabilities().contains(DeviceCapabilities::NATIVE_INT8_MATMUL) {
         return false;
     }
