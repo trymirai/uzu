@@ -25,7 +25,7 @@ pub(super) fn int8_activation_prepare_eligible<B: Backend>(
     input_data_type: DataType,
     output_data_type: DataType,
 ) -> bool {
-    if !context.device_capabilities().contains(DeviceCapabilities::HARDWARE_INT8_MATMUL) {
+    if !context.device_capabilities().contains(DeviceCapabilities::NATIVE_INT8_MATMUL) {
         return false;
     }
     if input_data_type != DataType::BF16 || output_data_type != DataType::BF16 {
