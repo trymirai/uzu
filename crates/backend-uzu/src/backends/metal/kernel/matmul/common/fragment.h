@@ -143,7 +143,12 @@ struct Fragment {
   template <class Fn, class... Fragments>
   METAL_FUNC static void zip_for_each_coord(const ushort simd_lane_id, Fn fn, thread Fragments&... fragments) {
     static_assert(sizeof...(Fragments) > 0, "zip_for_each_coord needs at least one fragment");
-    static_assert((metal::is_same_v<Fragment, Fragments> && ...), "zipped fragments must have the same type");
+    static_assert(
+        ((Fragments::ROW_FRAGMENTS == ROW_FRAGMENTS && Fragments::COL_FRAGMENTS == COL_FRAGMENTS &&
+          metal::is_same_v<typename Fragments::FragmentOpsType, Ops>) &&
+         ...),
+        "zipped fragments must share this fragment's layout"
+    );
 
     const short2 position = get_position(simd_lane_id);
     for_each_fragment([&](auto fragment_row, auto fragment_col) {

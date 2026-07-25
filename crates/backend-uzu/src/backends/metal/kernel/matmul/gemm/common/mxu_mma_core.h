@@ -364,7 +364,6 @@ struct MxuMmaCore {
     accumulator.clear();
 
     const short2 position = Ops::get_position(thread_context.simd_lane_id);
-    thread float* accumulator_elements = accumulator.elements();
     constexpr int k_bytes_per_weight_group = (BITS == 4) ? (int(GROUP_SIZE) / 2) : int(GROUP_SIZE);
     constexpr int act_chunks_per_weight_group = int(GROUP_SIZE) / int(SIMDGROUP_BLOCK_K);
 
@@ -445,35 +444,25 @@ struct MxuMmaCore {
         if constexpr (int8_activation_needs_weight_correction) {
           Ops::template fragment_mm<false, true>(activation_row_sums, activation_tile, ones_tile);
         }
-        thread int* chunk_products_data = chunk_products.elements();
-        thread int* activation_row_sums_data = activation_row_sums.elements();
-        METAL_PRAGMA_UNROLL
-        for (ushort tile_row = 0; tile_row < TILES_M; ++tile_row) {
-          METAL_PRAGMA_UNROLL
-          for (ushort tile_col = 0; tile_col < TILES_N; ++tile_col) {
-            const ushort fragment_base = (tile_row * TILES_N + tile_col) * Ops::ELEMENTS_PER_THREAD;
-            const short row_base = position.y + tile_row * Ops::FRAGMENT_ROWS;
-            const short col_base = position.x + tile_col * Ops::FRAGMENT_COLS;
-            METAL_PRAGMA_UNROLL
-            for (ushort element = 0; element < Ops::ELEMENTS_PER_THREAD; ++element) {
-              const short2 element_offset = Ops::get_element_offset(element);
-              const short row = row_base + element_offset.y;
-              const short col = col_base + element_offset.x;
-              if ((ALIGNED_M || row < simdgroup_limit_m) && (ALIGNED_N || col < simdgroup_limit_n)) {
-                const ushort activation_slot = ushort(element_offset.y / Ops::THREAD_ELEMENT_ROW_STRIDE);
-                const ushort weight_slot = ushort(element_offset.x);
-                float scaled_products =
-                    weight_scales.slot(tile_col, weight_slot) * float(chunk_products_data[fragment_base + element]);
-                if constexpr (int8_activation_needs_weight_correction) {
-                  scaled_products += weight_corrections.slot(tile_col, weight_slot) *
-                                     float(activation_row_sums_data[fragment_base + element]);
-                }
-                accumulator_elements[fragment_base + element] +=
-                    activation_scales.slot(tile_row, activation_slot) * scaled_products;
+        AccumFragment::zip_for_each_coord(
+            thread_context.simd_lane_id,
+            [&](short row, short col, thread float& accumulated, thread int& products, thread int& row_sums) {
+              if (!ALIGNED_M && row >= simdgroup_limit_m) {
+                return;
               }
-            }
-          }
-        }
+              if (!ALIGNED_N && col >= simdgroup_limit_n) {
+                return;
+              }
+              float scaled_products = weight_scales.at(col - position.x) * float(products);
+              if constexpr (int8_activation_needs_weight_correction) {
+                scaled_products += weight_corrections.at(col - position.x) * float(row_sums);
+              }
+              accumulated += activation_scales.at(row - position.y) * scaled_products;
+            },
+            accumulator,
+            chunk_products,
+            activation_row_sums
+        );
       }
 
       a_int8_simdgroup += GROUP_SIZE;
