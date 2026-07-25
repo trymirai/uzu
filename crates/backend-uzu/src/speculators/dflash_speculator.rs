@@ -16,7 +16,7 @@ use crate::{
         dflash::{DFlashDraft, DFlashDraftNewError},
         embedding::{Embedding, EmbeddingError},
         sampling::PRng,
-        weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeInput},
+        weaver::{CandidatePool, ProposalNode, TreeShape, Weaver, WeaverEncodeError, WeaverInputs, WeaverNewError},
     },
     engine::language_model::grammar::Grammar,
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
@@ -198,20 +198,15 @@ impl<B: Backend> DFlashSpeculator<B> {
             let depth_seeds =
                 (0..max_depth).map(|depth| prng.derive((root_position + depth) as u64)).collect::<Box<[u64]>>();
             let tree = weaver.encode_tree(
-                WeaverTreeInput {
-                    target_hidden: target_output_norm,
-                    draft_hidden: &draft_hidden,
+                WeaverInputs::new(
+                    target_output_norm,
+                    &draft_hidden,
                     target_embedding,
-                    candidate_ids: &pool_ids,
-                    candidate_logits: &pool_logits,
-                    candidate_rows: block_size - 1,
-                    candidates_per_row: pool_size,
-                    depth_seeds: &depth_seeds,
-                    root_token_id: target_output_token,
-                    tree_budget: options.budget,
-                    frontier_width: options.frontier_width,
-                    children_per_node: options.children_per_node,
-                },
+                    CandidatePool::new(&pool_ids, &pool_logits, block_size - 1, pool_size),
+                    &depth_seeds,
+                    target_output_token,
+                ),
+                TreeShape::new(options.budget, options.frontier_width, options.children_per_node),
                 &self.context,
                 &mut encoder,
             )?;
@@ -275,7 +270,7 @@ impl<B: Backend> DFlashSpeculator<B> {
         let token_embeddings = target_embedding.encode_lookup(&noise_ids, block_size, encoder)?;
         let draft_hidden =
             self.model.encode_block(state, token_embeddings, encoder).map_err(DFlashTreeError::Backend)?;
-        // The first block row is the target's output token; only the lookahead rows are ranked.
+        // The first draft position is the target's output token; only later positions are ranked.
         let row_bytes = target_embedding.model_dim() * DataType::BF16.size_in_bytes();
         let mut lookahead_hidden =
             encoder.allocate_scratch((block_size - 1) * row_bytes).map_err(DFlashTreeError::Backend)?;

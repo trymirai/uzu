@@ -25,11 +25,11 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
     constant uint& ancestor_stride,
     constant uint& max_depth,
     constant uint& lookahead_count,
-    constant uint& candidate_pool_row_count,
-    constant uint& candidates_per_row,
+    constant uint& candidate_depth_count,
+    constant uint& candidates_per_depth,
     threadgroup uint4 reduce[FRONTIER_SELECT_SIMDGROUPS],
     threadgroup uint winner_slot[FRONTIER_MAX_WIDTH],
-    threadgroup uint node_candidate_pool_row[FRONTIER_MAX_WIDTH],
+    threadgroup uint node_candidate_depth[FRONTIER_MAX_WIDTH],
     const ThreadContext thread_context,
     const uint group_index GROUPS(1),
     const uint lid THREADS(FRONTIER_SELECT_THREADS)
@@ -37,7 +37,7 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
   (void)group_index;
   if (frontier_capacity == 0 || frontier_capacity > FRONTIER_MAX_SLOTS || node_count == 0 ||
       node_count > FRONTIER_MAX_WIDTH || ancestor_stride == 0 || max_depth == 0 || tree_slot_count == 0 ||
-      batch_start_slot + node_count > tree_slot_count || candidate_pool_row_count == 0 || candidates_per_row == 0) {
+      batch_start_slot + node_count > tree_slot_count || candidate_depth_count == 0 || candidates_per_depth == 0) {
     return;
   }
 
@@ -94,10 +94,10 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
   }
 
   if (lid < node_count) {
-    const uint row = lid;
-    const uint slot = winner_slot[row];
+    const uint node = lid;
+    const uint slot = winner_slot[node];
     const bool real = slot != FRONTIER_NO_WINNER;
-    const uint tree_slot = batch_start_slot + row;
+    const uint tree_slot = batch_start_slot + node;
 
     const uint token = real ? frontier[uint(FrontierIdx::TokenId) * frontier_capacity + slot] : 0u;
     const uint parent = real ? frontier[uint(FrontierIdx::ParentSlot) * frontier_capacity + slot] : FRONTIER_NO_WINNER;
@@ -123,24 +123,24 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
               ? (index + 1u == depth ? parent_slot : slot_ancestors[parent_slot * ancestor_stride + index])
               : 0u;
       slot_ancestors[tree_slot * ancestor_stride + index] = ancestor;
-      node_ancestor_indices[row * ancestor_stride + index] = ancestor;
+      node_ancestor_indices[node * ancestor_stride + index] = ancestor;
     }
 
-    node_token_ids[row] = token;
-    node_metadata[uint(MetadataIdx::Depth) * node_count + row] = min(depth, max_depth - 1u);
-    node_metadata[uint(MetadataIdx::AncestorCount) * node_count + row] = min(depth, ancestor_stride);
-    node_metadata[uint(MetadataIdx::TreeSlot) * node_count + row] = tree_slot;
-    node_valid[row] = real && depth < lookahead_count && depth < max_depth ? 1u : 0u;
+    node_token_ids[node] = token;
+    node_metadata[uint(MetadataIdx::Depth) * node_count + node] = min(depth, max_depth - 1u);
+    node_metadata[uint(MetadataIdx::AncestorCount) * node_count + node] = min(depth, ancestor_stride);
+    node_metadata[uint(MetadataIdx::TreeSlot) * node_count + node] = tree_slot;
+    node_valid[node] = real && depth < lookahead_count && depth < max_depth ? 1u : 0u;
 
-    node_candidate_pool_row[row] = min(depth, candidate_pool_row_count - 1u);
+    node_candidate_depth[node] = min(depth, candidate_depth_count - 1u);
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  for (uint row = 0; row < node_count; ++row) {
-    const uint source = node_candidate_pool_row[row] * candidates_per_row;
-    const uint destination = row * candidates_per_row;
-    for (uint candidate = lid; candidate < candidates_per_row; candidate += FRONTIER_SELECT_THREADS) {
+  for (uint node = 0; node < node_count; ++node) {
+    const uint source = node_candidate_depth[node] * candidates_per_depth;
+    const uint destination = node * candidates_per_depth;
+    for (uint candidate = lid; candidate < candidates_per_depth; candidate += FRONTIER_SELECT_THREADS) {
       node_candidate_ids[destination + candidate] = candidate_pool_ids[source + candidate];
       node_candidate_logits[destination + candidate] = candidate_pool_logits[source + candidate];
     }
