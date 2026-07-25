@@ -18,7 +18,7 @@ use crate::{
         dflash::{DFlashDraft, DFlashDraftEncodeError, DFlashDraftNewError, DFlashDraftOutput},
         embedding::Embedding,
         sampling::PRng,
-        weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeInput},
+        weaver::{CandidatePool, ProposalNode, TreeShape, Weaver, WeaverEncodeError, WeaverInputs, WeaverNewError},
     },
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
     trie::TrieNode,
@@ -168,20 +168,20 @@ impl<B: Backend> DFlashSpeculator<B> {
             let depth_seeds =
                 (0..max_depth).map(|depth| prng.derive((root_position + depth) as u64)).collect::<Box<[u64]>>();
             let tree = weaver.encode_tree(
-                WeaverTreeInput {
-                    target_hidden: target_output_norm,
-                    draft_hidden: &draft_hidden,
+                WeaverInputs::new(
+                    target_output_norm,
+                    &draft_hidden,
                     target_embedding,
-                    candidate_ids: &candidates.ids,
-                    candidate_logits: &candidates.scores,
-                    candidate_rows: candidates.rows,
-                    candidates_per_row: candidates.candidates_per_row,
-                    depth_seeds: &depth_seeds,
-                    root_token_id: target_output_token,
-                    tree_budget: options.budget,
-                    frontier_width: options.frontier_width,
-                    children_per_node: options.children_per_node,
-                },
+                    CandidatePool::new(
+                        &candidates.ids,
+                        &candidates.scores,
+                        candidates.rows,
+                        candidates.candidates_per_row,
+                    ),
+                    &depth_seeds,
+                    target_output_token,
+                ),
+                TreeShape::new(options.budget, options.frontier_width, options.children_per_node),
                 &self.context,
                 &mut encoder,
             )?;

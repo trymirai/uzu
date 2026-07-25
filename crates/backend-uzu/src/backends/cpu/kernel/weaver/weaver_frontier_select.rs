@@ -24,8 +24,8 @@ pub fn weaver_frontier_select(
     ancestor_stride: u32,
     max_depth: u32,
     lookahead_count: u32,
-    candidate_pool_row_count: u32,
-    candidates_per_row: u32,
+    candidate_depth_count: u32,
+    candidates_per_depth: u32,
 ) {
     if frontier_capacity == 0
         || frontier_capacity as usize > FRONTIER_MAX_SLOTS
@@ -35,16 +35,15 @@ pub fn weaver_frontier_select(
         || max_depth == 0
         || tree_slot_count == 0
         || batch_start_slot + node_count > tree_slot_count
-        || candidate_pool_row_count == 0
-        || candidates_per_row == 0
+        || candidate_depth_count == 0
+        || candidates_per_depth == 0
     {
         return;
     }
     let (frontier_capacity, tree_slot_count, node_count, ancestor_stride) =
         (frontier_capacity as usize, tree_slot_count as usize, node_count as usize, ancestor_stride as usize);
-    let (candidate_pool_row_count, candidates_per_row) =
-        (candidate_pool_row_count as usize, candidates_per_row as usize);
-    let pool_len = candidate_pool_row_count * candidates_per_row;
+    let (candidate_depth_count, candidates_per_depth) = (candidate_depth_count as usize, candidates_per_depth as usize);
+    let pool_len = candidate_depth_count * candidates_per_depth;
     let frontier = unsafe { std::slice::from_raw_parts_mut(frontier, FrontierIdx::COUNT * frontier_capacity) };
     let packed_tree = unsafe { std::slice::from_raw_parts_mut(packed_tree, TreeIdx::COUNT * tree_slot_count) };
     let slot_ancestors = unsafe { std::slice::from_raw_parts_mut(slot_ancestors, tree_slot_count * ancestor_stride) };
@@ -56,11 +55,11 @@ pub fn weaver_frontier_select(
     let candidate_pool_ids = unsafe { std::slice::from_raw_parts(candidate_pool_ids, pool_len) };
     let candidate_pool_logits = unsafe { std::slice::from_raw_parts(candidate_pool_logits, pool_len) };
     let node_candidate_ids =
-        unsafe { std::slice::from_raw_parts_mut(node_candidate_ids, node_count * candidates_per_row) };
+        unsafe { std::slice::from_raw_parts_mut(node_candidate_ids, node_count * candidates_per_depth) };
     let node_candidate_logits =
-        unsafe { std::slice::from_raw_parts_mut(node_candidate_logits, node_count * candidates_per_row) };
+        unsafe { std::slice::from_raw_parts_mut(node_candidate_logits, node_count * candidates_per_depth) };
 
-    for row in 0..node_count {
+    for node in 0..node_count {
         let (mut key, mut parent, mut token, mut winner) =
             (0, FRONTIER_NO_WINNER, FRONTIER_NO_WINNER, FRONTIER_NO_WINNER);
         for slot in 0..frontier_capacity {
@@ -82,7 +81,7 @@ pub fn weaver_frontier_select(
         } else {
             0
         };
-        let tree_slot = batch_start_slot as usize + row;
+        let tree_slot = batch_start_slot as usize + node;
         let field_value = |field: FrontierIdx| u32::from(real) * frontier[field as usize * frontier_capacity + winner];
         let token = field_value(FrontierIdx::TokenId);
         let depth = field_value(FrontierIdx::Depth);
@@ -118,19 +117,19 @@ pub fn weaver_frontier_select(
                 0
             };
             slot_ancestors[tree_slot * ancestor_stride + index] = ancestor;
-            node_ancestor_indices[row * ancestor_stride + index] = ancestor;
+            node_ancestor_indices[node * ancestor_stride + index] = ancestor;
         }
 
-        node_token_ids[row] = token;
-        node_metadata[MetadataIdx::Depth as usize * node_count + row] = depth.min(max_depth - 1);
-        node_metadata[MetadataIdx::AncestorCount as usize * node_count + row] = depth.min(ancestor_stride as u32);
-        node_metadata[MetadataIdx::TreeSlot as usize * node_count + row] = tree_slot as u32;
-        node_valid[row] = u32::from(real && depth < lookahead_count && depth < max_depth);
+        node_token_ids[node] = token;
+        node_metadata[MetadataIdx::Depth as usize * node_count + node] = depth.min(max_depth - 1);
+        node_metadata[MetadataIdx::AncestorCount as usize * node_count + node] = depth.min(ancestor_stride as u32);
+        node_metadata[MetadataIdx::TreeSlot as usize * node_count + node] = tree_slot as u32;
+        node_valid[node] = u32::from(real && depth < lookahead_count && depth < max_depth);
 
-        // Every node expands the candidate-pool row for its own depth.
-        let candidate_pool_row = (depth as usize).min(candidate_pool_row_count - 1);
-        let source = candidate_pool_row * candidates_per_row..(candidate_pool_row + 1) * candidates_per_row;
-        let destination = row * candidates_per_row..(row + 1) * candidates_per_row;
+        // Every node expands the candidate pool for its own depth.
+        let candidate_depth = (depth as usize).min(candidate_depth_count - 1);
+        let source = candidate_depth * candidates_per_depth..(candidate_depth + 1) * candidates_per_depth;
+        let destination = node * candidates_per_depth..(node + 1) * candidates_per_depth;
         node_candidate_ids[destination.clone()].copy_from_slice(&candidate_pool_ids[source.clone()]);
         node_candidate_logits[destination].copy_from_slice(&candidate_pool_logits[source]);
     }
