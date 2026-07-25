@@ -2,10 +2,10 @@ use super::reference::{WeightData, read_f32, write_f32};
 use crate::{
     backends::{
         common::{
-            AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
+            Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
             gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder, QuantizationMode},
             kernel::{
-                HadamardTransformKernel,
+                HadamardTransformKernel, TensorAddBiasKernel,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
@@ -20,6 +20,7 @@ pub struct MatmulCpuKernel {
     input_data_type: DataType,
     output_data_type: DataType,
     hadamard: <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel,
+    bias_add: <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel,
 }
 
 impl MatmulKernel for MatmulCpuKernel {
@@ -41,11 +42,19 @@ impl MatmulKernel for MatmulCpuKernel {
             output_data_type,
             HadamardTransformOrder::Output,
         )?;
+        let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(
+            context,
+            output_data_type,
+            weights_data_type,
+            true,
+            false,
+        )?;
         Ok(Self {
             weights_data_type,
             input_data_type,
             output_data_type,
             hadamard,
+            bias_add,
         })
     }
 
@@ -288,18 +297,18 @@ impl MatmulKernel for MatmulCpuKernel {
         });
 
         if let Some(factors) = post_rht {
-            self.hadamard.encode(d, factors, n, m, encoder);
-            if let Some(bias) = bias_ptr {
-                encoder.as_command_buffer_mut().push_command(move || unsafe {
-                    for row in 0..m_u {
-                        for col in 0..n_u {
-                            let index = row * n_u + col;
-                            let value = read_f32(d_ptr.as_ptr(), output_data_type, index)
-                                + read_f32(bias.as_ptr(), weights_data_type, col);
-                            write_f32(d_ptr.as_ptr(), output_data_type, index, value);
-                        }
-                    }
-                });
+            self.hadamard.encode(&mut *d, factors, n, m, encoder);
+            if let Some(bias) = bias_alloc {
+                let output_length = m.checked_mul(n).expect("matmul output length must fit in u32");
+                self.bias_add.encode(
+                    None::<&Allocation<Cpu>>,
+                    bias,
+                    None::<&Allocation<Cpu>>,
+                    &mut *d,
+                    n,
+                    output_length,
+                    encoder,
+                );
             }
         }
 
