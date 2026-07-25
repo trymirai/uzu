@@ -7,9 +7,7 @@ pub enum UzuTest {
 
 pub fn uzu_harness(tests: &[&UzuTest]) {
     let args = std::env::args().collect::<Vec<String>>();
-    // Prefer UZU_RUN_BENCHES on dinghy/iOS: cargo-dinghy's apple-host treats a
-    // `--bench` arg as a [[bench]] target and skips the UIKit host runtime.
-    let benchmarks = args.contains(&"--bench".to_string()) || std::env::var_os("UZU_RUN_BENCHES").is_some();
+    let benchmarks = args.contains(&"--bench".to_string());
     if benchmarks {
         #[cfg(target_os = "ios")]
         crate::path::ios_set_current_dir();
