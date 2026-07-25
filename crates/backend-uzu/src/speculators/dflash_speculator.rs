@@ -48,7 +48,7 @@ pub enum DFlashTreeError<B: Backend> {
 
 struct DFlashChainOutput<B: Backend> {
     pool_ids: Allocation<B>,
-    pool_scores: Allocation<B>,
+    pool_logits: Allocation<B>,
     draft_logits: Allocation<B>,
     draft_hidden: Allocation<B>,
 }
@@ -179,7 +179,7 @@ impl<B: Backend> DFlashSpeculator<B> {
         let mut encoder = Encoder::new(&*self.context).map_err(DFlashTreeError::Backend)?;
         let DFlashChainOutput {
             pool_ids,
-            pool_scores,
+            pool_logits,
             draft_logits,
             draft_hidden,
         } = self.encode_dflash_chain(
@@ -203,7 +203,7 @@ impl<B: Backend> DFlashSpeculator<B> {
                     draft_hidden: &draft_hidden,
                     target_embedding,
                     candidate_ids: &pool_ids,
-                    candidate_scores: &pool_scores,
+                    candidate_logits: &pool_logits,
                     candidate_rows: block_size - 1,
                     candidates_per_row: pool_size,
                     depth_seeds: &depth_seeds,
@@ -216,9 +216,9 @@ impl<B: Backend> DFlashSpeculator<B> {
                 &mut encoder,
             )?;
             let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
-            let nodes = tree.decode();
+            let nodes = tree.read_nodes();
             drop(pool_ids);
-            drop(pool_scores);
+            drop(pool_logits);
             drop(draft_logits);
             drop(draft_hidden);
             drop(completed);
@@ -228,26 +228,26 @@ impl<B: Backend> DFlashSpeculator<B> {
         let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
         let pool_id_values = pool_ids.copyout::<u32>();
         drop(pool_ids);
-        drop(pool_scores);
+        drop(pool_logits);
         drop(draft_logits);
         drop(draft_hidden);
         drop(completed);
 
         let mut nodes = vec![ProposalNode {
-            token: target_output_token,
+            token_id: target_output_token,
             depth: 0,
-            children: Vec::new(),
+            child_indices: Vec::new(),
         }];
         for depth in 0..options.budget.min(block_size.saturating_sub(1)) {
             let token = pool_id_values[depth * pool_size];
             let parent = nodes.len() - 1;
             let index = nodes.len();
             nodes.push(ProposalNode {
-                token,
+                token_id: token,
                 depth: depth + 1,
-                children: Vec::new(),
+                child_indices: Vec::new(),
             });
-            nodes[parent].children.push(index);
+            nodes[parent].child_indices.push(index);
         }
         Ok(Self::finish_tree(nodes, prng, root_position, grammar))
     }
@@ -282,7 +282,7 @@ impl<B: Backend> DFlashSpeculator<B> {
         encoder.encode_copy(&draft_hidden, row_bytes..block_size * row_bytes, &mut lookahead_hidden, ..);
         let draft_logits =
             target_embedding.encode_readout(block_size - 1, &lookahead_hidden, DataType::F32, encoder)?;
-        let (pool_ids, pool_scores) = self
+        let (pool_ids, pool_logits) = self
             .model
             .encode_top_k(&draft_logits, block_size - 1, pool_size, encoder)
             .map_err(DFlashTreeError::Backend)?;
@@ -290,7 +290,7 @@ impl<B: Backend> DFlashSpeculator<B> {
         drop(lookahead_hidden);
         Ok(DFlashChainOutput {
             pool_ids,
-            pool_scores,
+            pool_logits,
             draft_logits,
             draft_hidden,
         })
@@ -310,10 +310,10 @@ impl<B: Backend> DFlashSpeculator<B> {
             grammar: &mut Option<&mut (dyn Grammar + 'grammar)>,
         ) -> TrieNode {
             let node = &nodes[index];
-            let mut trie_node = TrieNode::new(node.token as u64, prng.derive((root_position + node.depth) as u64));
-            for &child_index in &node.children {
+            let mut trie_node = TrieNode::new(node.token_id as u64, prng.derive((root_position + node.depth) as u64));
+            for &child_index in &node.child_indices {
                 if let Some(grammar) = grammar.as_deref_mut()
-                    && grammar.accept_token(nodes[child_index].token as u64).is_err()
+                    && grammar.accept_token(nodes[child_index].token_id as u64).is_err()
                 {
                     continue;
                 }
