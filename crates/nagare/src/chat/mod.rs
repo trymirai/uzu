@@ -368,7 +368,14 @@ impl ChatSession {
                 && !cancel_token.is_cancelled()
             {
                 let mut tool_calls = last_reply.message.tool_calls();
-                if !self.has_registered_tool_functions(&tool_calls).await {
+                // a candidate is a call the parser could not finalize; executing only the
+                // finished subset would run a partial batch, so hand the turn back to the caller
+                let has_unfinished_candidates = last_reply
+                    .message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }));
+                if has_unfinished_candidates || !self.has_registered_tool_functions(&tool_calls).await {
                     break;
                 }
 
