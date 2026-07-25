@@ -4,6 +4,7 @@ mod rht_wrapper;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
+use rht_wrapper::int8_activations_eligible;
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
@@ -216,8 +217,29 @@ impl<B: Backend> dyn Linear<B> {
             incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
             incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
             ..
-        }) = spec
+        }) = &spec
         {
+            let quantization_spec = weights_tree.subtree("quantized")?.metadata::<AnyWeightMatrixSpec>("spec")?;
+            if int8_activations_eligible::<B>(
+                context,
+                &quantization_spec,
+                input_dimension,
+                input_data_type,
+                output_data_type,
+            ) {
+                let linear = RHTLinearWrapper::new(
+                    context,
+                    input_dimension,
+                    output_dimension_sum,
+                    has_biases,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    parameter_tree,
+                )?;
+                return Ok((Box::new(linear), None));
+            }
+
             let input_factors = weights_tree
                 .leaf("incoherence_signs.input_signs")?
                 .validate(&[input_dimension], DataType::I32)?

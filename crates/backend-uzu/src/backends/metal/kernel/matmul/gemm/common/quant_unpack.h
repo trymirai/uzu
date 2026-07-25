@@ -50,6 +50,37 @@ METAL_FUNC bfloat4 uint4_to_fp4<bfloat, 8>(uint4 n) {
   return bfloat4(_uint4_to_fp4_float<8>(n));
 }
 
+template <ushort BITS>
+METAL_FUNC constexpr uint symmetric_zero_point() {
+  return 1u << (BITS - 1);
+}
+
+template <ushort BITS, typename Int>
+METAL_FUNC constexpr Int zero_point_row_stride(Int groups_per_row) {
+  return (BITS == 4) ? (groups_per_row + Int(1)) / Int(2) : groups_per_row;
+}
+
+template <ushort BITS>
+METAL_FUNC uint decode_zero_point(const device uint8_t* zero_points_row, uint group_index) {
+  static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 zero points supported");
+  if constexpr (BITS == 4) {
+    const uint packed = uint(zero_points_row[group_index >> 1]);
+    return (packed >> ((group_index & 1u) * 4u)) & 0x0Fu;
+  } else {
+    return uint(zero_points_row[group_index]);
+  }
+}
+
+METAL_FUNC char4 unpack_nibbles_to_int8(uint packed) {
+  uint spread = (packed | (packed << 8)) & 0x00FF00FFu;
+  spread = (spread | (spread << 4)) & 0x0F0F0F0Fu;
+  return as_type<char4>(spread) - char4(char(symmetric_zero_point<4>()));
+}
+
+METAL_FUNC int8_t unbias_uint8_to_int8(uchar code) {
+  return as_type<int8_t>(uchar(code ^ uchar(symmetric_zero_point<8>())));
+}
+
 template <typename U, int N, int bits>
 inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local) {
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");

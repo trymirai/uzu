@@ -3,6 +3,7 @@ mod backend;
 mod buffer;
 mod command_buffer;
 mod context;
+mod device_capabilities;
 mod encoder;
 pub mod gpu_types;
 mod hazard_tracker;
@@ -22,6 +23,7 @@ pub use command_buffer::{
     CommandBufferInitial, CommandBufferPending,
 };
 pub use context::Context;
+pub use device_capabilities::DeviceCapabilities;
 pub use encoder::{Completed, Encoder, Executable, Pending};
 pub use hazard_tracker::Access;
 pub use kernel::Kernels;

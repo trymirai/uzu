@@ -14,6 +14,7 @@ mod moe;
 mod normalization;
 mod pooling;
 mod radix_top_k_small;
+pub(crate) mod rht_quantize_activations;
 mod sampling;
 mod short_conv;
 mod softmax;

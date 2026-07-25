@@ -20,6 +20,11 @@ pub enum MatmulError<B: Backend> {
     UnsupportedLayout {
         path: &'static str,
     },
+    #[error("Incompatible A operand for {path}: {reason}")]
+    IncompatibleA {
+        path: &'static str,
+        reason: &'static str,
+    },
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
 }
