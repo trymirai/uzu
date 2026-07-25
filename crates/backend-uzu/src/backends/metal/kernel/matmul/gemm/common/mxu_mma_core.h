@@ -243,10 +243,10 @@ struct MxuMmaCore {
     return right_tile;
   }
 
-  // Per-thread cache holding one value per distinct fragment row (or column) slot
+  // Per-thread cache holding one value per distinct fragment row (or column) line
   // a thread owns, addressable either by slot or by offset from the thread origin.
   template <ushort TILES, ushort SLOTS_PER_TILE, ushort FRAGMENT_EXTENT, ushort SLOT_STRIDE>
-  struct AxisScaleCache {
+  struct FragmentLineCache {
     float values[TILES * SLOTS_PER_TILE];
 
     METAL_FUNC thread float& slot(const ushort tile, const ushort index) thread {
@@ -261,12 +261,12 @@ struct MxuMmaCore {
   };
 
   using FragmentOps = uzu::matmul::MxuFragmentOps<>;
-  using ActivationScaleCache = AxisScaleCache<
+  using ActivationLineCache = FragmentLineCache<
       TILES_M,
       FragmentOps::THREAD_ELEMENT_ROWS,
       FragmentOps::FRAGMENT_ROWS,
       FragmentOps::THREAD_ELEMENT_ROW_STRIDE>;
-  using WeightScaleCache = AxisScaleCache<TILES_N, FragmentOps::THREAD_ELEMENT_COLS, FragmentOps::FRAGMENT_COLS, 1>;
+  using WeightLineCache = FragmentLineCache<TILES_N, FragmentOps::THREAD_ELEMENT_COLS, FragmentOps::FRAGMENT_COLS, 1>;
 
   template <bool ALIGNED_M, typename Sink>
   static METAL_FUNC void for_each_row_group(
@@ -381,8 +381,8 @@ struct MxuMmaCore {
     for (int weight_group = 0; weight_group < weight_group_iterations; ++weight_group) {
       const uint weight_group_index = k_offset_weight_groups + uint(weight_group);
 
-      WeightScaleCache weight_scales;
-      WeightScaleCache weight_corrections;
+      WeightLineCache weight_scales;
+      WeightLineCache weight_corrections;
       for_each_column_group<ALIGNED_N>(
           position,
           simdgroup_limit_n,
@@ -429,7 +429,7 @@ struct MxuMmaCore {
         Ops::template fragment_mm<false, true>(chunk_products, activation_tile, right_tile);
 
         const uint act_group_index = k_offset_act_groups + uint(weight_group * act_chunks_per_weight_group + act_chunk);
-        ActivationScaleCache activation_scales;
+        ActivationLineCache activation_scales;
         for_each_row_group<ALIGNED_M>(
             position,
             simdgroup_limit_m,
