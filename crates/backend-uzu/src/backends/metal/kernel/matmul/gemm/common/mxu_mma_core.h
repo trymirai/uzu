@@ -243,47 +243,69 @@ struct MxuMmaCore {
     return right_tile;
   }
 
-  template <bool ALIGNED_M, typename Ops>
-  static METAL_FUNC void fill_row_group_cache(
-      thread float* cache,
-      const device float* scales,
+  // Per-thread cache holding one value per distinct fragment row (or column) slot
+  // a thread owns, addressable either by slot or by offset from the thread origin.
+  template <ushort TILES, ushort SLOTS_PER_TILE, ushort FRAGMENT_EXTENT, ushort SLOT_STRIDE>
+  struct AxisScaleCache {
+    float values[TILES * SLOTS_PER_TILE];
+
+    METAL_FUNC thread float& slot(const ushort tile, const ushort index) thread {
+      return values[tile * SLOTS_PER_TILE + index];
+    }
+
+    METAL_FUNC float at(const short offset) const thread {
+      const ushort tile = ushort(offset) / FRAGMENT_EXTENT;
+      const ushort index = (ushort(offset) % FRAGMENT_EXTENT) / SLOT_STRIDE;
+      return values[tile * SLOTS_PER_TILE + index];
+    }
+  };
+
+  using FragmentOps = uzu::matmul::MxuFragmentOps<>;
+  using ActivationScaleCache = AxisScaleCache<
+      TILES_M,
+      FragmentOps::THREAD_ELEMENT_ROWS,
+      FragmentOps::FRAGMENT_ROWS,
+      FragmentOps::THREAD_ELEMENT_ROW_STRIDE>;
+  using WeightScaleCache = AxisScaleCache<TILES_N, FragmentOps::THREAD_ELEMENT_COLS, FragmentOps::FRAGMENT_COLS, 1>;
+
+  template <bool ALIGNED_M, typename Sink>
+  static METAL_FUNC void for_each_row_group(
       const short2 position,
       const short simdgroup_limit_m,
       const uint abs_row_base,
       const uint groups_per_row,
-      const uint group_index
+      const uint group_index,
+      Sink sink
   ) {
     METAL_PRAGMA_UNROLL
     for (ushort tile_row = 0; tile_row < TILES_M; ++tile_row) {
       METAL_PRAGMA_UNROLL
-      for (ushort thread_row = 0; thread_row < Ops::THREAD_ELEMENT_ROWS; ++thread_row) {
-        const short row = position.y + tile_row * Ops::FRAGMENT_ROWS + thread_row * Ops::THREAD_ELEMENT_ROW_STRIDE;
-        const ushort cache_index = tile_row * Ops::THREAD_ELEMENT_ROWS + thread_row;
+      for (ushort thread_row = 0; thread_row < FragmentOps::THREAD_ELEMENT_ROWS; ++thread_row) {
+        const short row =
+            position.y + tile_row * FragmentOps::FRAGMENT_ROWS + thread_row * FragmentOps::THREAD_ELEMENT_ROW_STRIDE;
         if (ALIGNED_M || row < simdgroup_limit_m) {
-          cache[cache_index] = scales[(abs_row_base + uint(row)) * groups_per_row + group_index];
+          sink(tile_row, thread_row, (abs_row_base + uint(row)) * groups_per_row + group_index);
         }
       }
     }
   }
 
-  template <bool ALIGNED_N, typename Ops, typename ValueForGroup>
-  static METAL_FUNC void fill_column_group_cache(
-      thread float* cache,
+  template <bool ALIGNED_N, typename Sink>
+  static METAL_FUNC void for_each_column_group(
       const short2 position,
       const short simdgroup_limit_n,
       const uint abs_col_base,
       const uint groups_per_row,
       const uint group_index,
-      ValueForGroup value_for_group
+      Sink sink
   ) {
     METAL_PRAGMA_UNROLL
     for (ushort tile_col = 0; tile_col < TILES_N; ++tile_col) {
       METAL_PRAGMA_UNROLL
-      for (ushort thread_col = 0; thread_col < Ops::THREAD_ELEMENT_COLS; ++thread_col) {
-        const short col = position.x + tile_col * Ops::FRAGMENT_COLS + thread_col;
-        const ushort cache_index = tile_col * Ops::THREAD_ELEMENT_COLS + thread_col;
+      for (ushort thread_col = 0; thread_col < FragmentOps::THREAD_ELEMENT_COLS; ++thread_col) {
+        const short col = position.x + tile_col * FragmentOps::FRAGMENT_COLS + thread_col;
         if (ALIGNED_N || col < simdgroup_limit_n) {
-          cache[cache_index] = value_for_group((abs_col_base + uint(col)) * groups_per_row + group_index);
+          sink(tile_col, thread_col, (abs_col_base + uint(col)) * groups_per_row + group_index);
         }
       }
     }
@@ -359,41 +381,31 @@ struct MxuMmaCore {
     for (int weight_group = 0; weight_group < weight_group_iterations; ++weight_group) {
       const uint weight_group_index = k_offset_weight_groups + uint(weight_group);
 
-      float weight_scale_cache[TILES_N * Ops::THREAD_ELEMENT_COLS];
-      fill_column_group_cache<ALIGNED_N, Ops>(
-          weight_scale_cache,
+      WeightScaleCache weight_scales;
+      WeightScaleCache weight_corrections;
+      for_each_column_group<ALIGNED_N>(
           position,
           simdgroup_limit_n,
           abs_col_base,
           weight_groups_per_row,
           weight_group_index,
-          [&](uint scale_index) { return static_cast<float>(b_scales[scale_index]); }
-      );
-
-      float weight_correction_cache[TILES_N * Ops::THREAD_ELEMENT_COLS];
-      if constexpr (int8_activation_needs_weight_correction) {
-        fill_column_group_cache<ALIGNED_N, Ops>(
-            weight_correction_cache,
-            position,
-            simdgroup_limit_n,
-            abs_col_base,
-            weight_groups_per_row,
-            weight_group_index,
-            [&](uint scale_index) {
+          [&](ushort tile_col, ushort thread_col, uint scale_index) {
+            const float scale = static_cast<float>(b_scales[scale_index]);
+            weight_scales.slot(tile_col, thread_col) = scale;
+            if constexpr (int8_activation_needs_weight_correction) {
               const uint col = scale_index / weight_groups_per_row;
-              const float scale = static_cast<float>(b_scales[scale_index]);
-              return scale * int8_weight_midpoint + int8_weight_dequant_bias(
-                                                        scale,
-                                                        scale_index,
-                                                        col,
-                                                        weight_group_index,
-                                                        weight_groups_per_row,
-                                                        biases,
-                                                        zero_points
-                                                    );
+              weight_corrections.slot(tile_col, thread_col) = scale * int8_weight_midpoint + int8_weight_dequant_bias(
+                                                                                                 scale,
+                                                                                                 scale_index,
+                                                                                                 col,
+                                                                                                 weight_group_index,
+                                                                                                 weight_groups_per_row,
+                                                                                                 biases,
+                                                                                                 zero_points
+                                                                                             );
             }
-        );
-      }
+          }
+      );
 
       METAL_PRAGMA_NO_UNROLL
       for (int act_chunk = 0; act_chunk < act_chunks_per_weight_group; ++act_chunk) {
@@ -417,15 +429,16 @@ struct MxuMmaCore {
         Ops::template fragment_mm<false, true>(chunk_products, activation_tile, right_tile);
 
         const uint act_group_index = k_offset_act_groups + uint(weight_group * act_chunks_per_weight_group + act_chunk);
-        float activation_scale_cache[TILES_M * Ops::THREAD_ELEMENT_ROWS];
-        fill_row_group_cache<ALIGNED_M, Ops>(
-            activation_scale_cache,
-            a_scales,
+        ActivationScaleCache activation_scales;
+        for_each_row_group<ALIGNED_M>(
             position,
             simdgroup_limit_m,
             abs_row_base,
             act_groups_per_row,
-            act_group_index
+            act_group_index,
+            [&](ushort tile_row, ushort thread_row, uint scale_index) {
+              activation_scales.slot(tile_row, thread_row) = a_scales[scale_index];
+            }
         );
 
         uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> activation_row_sums;
@@ -447,17 +460,16 @@ struct MxuMmaCore {
               const short row = row_base + element_offset.y;
               const short col = col_base + element_offset.x;
               if ((ALIGNED_M || row < simdgroup_limit_m) && (ALIGNED_N || col < simdgroup_limit_n)) {
-                const ushort activation_scale_index =
-                    tile_row * Ops::THREAD_ELEMENT_ROWS + ushort(element_offset.y / Ops::THREAD_ELEMENT_ROW_STRIDE);
-                const ushort weight_scale_index = tile_col * Ops::THREAD_ELEMENT_COLS + ushort(element_offset.x);
+                const ushort activation_slot = ushort(element_offset.y / Ops::THREAD_ELEMENT_ROW_STRIDE);
+                const ushort weight_slot = ushort(element_offset.x);
                 float scaled_products =
-                    weight_scale_cache[weight_scale_index] * float(chunk_products_data[fragment_base + element]);
+                    weight_scales.slot(tile_col, weight_slot) * float(chunk_products_data[fragment_base + element]);
                 if constexpr (int8_activation_needs_weight_correction) {
-                  scaled_products += weight_correction_cache[weight_scale_index] *
+                  scaled_products += weight_corrections.slot(tile_col, weight_slot) *
                                      float(activation_row_sums_data[fragment_base + element]);
                 }
                 accumulator_elements[fragment_base + element] +=
-                    activation_scale_cache[activation_scale_index] * scaled_products;
+                    activation_scales.slot(tile_row, activation_slot) * scaled_products;
               }
             }
           }
