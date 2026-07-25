@@ -14,7 +14,7 @@ use shoji::{
         backend::chat_message::{Output as BackendOutput, ToolCallState},
     },
     types::{
-        basic::{CancelToken, ToolCall, Value},
+        basic::{CancelToken, ToolCall, ToolDescription, ToolNamespace, Value},
         model::{Model, ModelSpecialization},
         session::chat::{
             ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatReplyFinishReason, ChatRole,
@@ -237,10 +237,14 @@ impl ChatSession {
             // register tools if needed
             if let Some(ref registry) = self.tool_registry {
                 let namespaces = registry.lock().await.get_namespaces();
-                if !namespaces.is_empty() && !messages_guard.iter().any(contains_tools_definitions) {
-                    let position = messages_guard.iter().position(|msg| msg.role == ChatRole::System {});
-                    let tools_msg = ChatMessage::developer().with_tool_namespaces(namespaces);
-                    messages_guard.insert(position.map(|pos| pos + 1).unwrap_or(0), tools_msg);
+                if !namespaces.is_empty() {
+                    if let Some(existing) = find_tools_definitions(&mut messages_guard) {
+                        merge_tool_namespaces(existing, namespaces);
+                    } else {
+                        let position = messages_guard.iter().position(|msg| msg.role == ChatRole::System {});
+                        let tools_msg = ChatMessage::developer().with_tool_namespaces(namespaces);
+                        messages_guard.insert(position.map(|pos| pos + 1).unwrap_or(0), tools_msg);
+                    }
                 }
             }
 
@@ -606,7 +610,39 @@ fn build_message(
     message
 }
 
-fn contains_tools_definitions(msg: &ChatMessage) -> bool {
-    msg.role == ChatRole::Developer {}
-        && msg.content.iter().any(|content| matches!(content, ChatContentBlock::Tools { .. }))
+fn find_tools_definitions(messages: &mut [ChatMessage]) -> Option<&mut Vec<ToolNamespace>> {
+    messages.iter_mut().filter(|msg| msg.role == ChatRole::Developer {}).find_map(|msg| {
+        msg.content.iter_mut().find_map(|content| match content {
+            ChatContentBlock::Tools {
+                namespaces,
+            } => Some(namespaces),
+            _ => None,
+        })
+    })
+}
+
+fn merge_tool_namespaces(
+    existing: &mut Vec<ToolNamespace>,
+    registered: Vec<ToolNamespace>,
+) {
+    for namespace in registered {
+        let Some(target) = existing.iter_mut().find(|existing_ns| existing_ns.name == namespace.name) else {
+            existing.push(namespace);
+            continue;
+        };
+        for tool in namespace.tools {
+            let ToolDescription::Function {
+                tool_function,
+            } = &tool;
+            let duplicate = target.tools.iter().any(|existing_tool| {
+                let ToolDescription::Function {
+                    tool_function: existing_function,
+                } = existing_tool;
+                existing_function.name == tool_function.name
+            });
+            if !duplicate {
+                target.tools.push(tool);
+            }
+        }
+    }
 }
