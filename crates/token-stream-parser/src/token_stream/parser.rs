@@ -70,6 +70,15 @@ impl Parser for TokenStreamParser {
 }
 
 impl TokenStreamParser {
+    /// Exposes `value` to every transformation pipeline as `$<name>`.
+    pub fn set_variable(
+        &mut self,
+        name: &str,
+        value: serde_json::Value,
+    ) {
+        self.extraction.set_variable(name, value);
+    }
+
     pub fn framing(&self) -> &FramingParser {
         &self.framing
     }

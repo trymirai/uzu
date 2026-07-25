@@ -4,16 +4,14 @@ use std::collections::HashMap;
 
 use hanashi::{
     Encoding as EncodingTrait,
-    chat::{
-        Context, Encoding, EncodingConfig, TokenizerLocation, hanashi::config::HanashiConfig, harmony::HarmonyConfig,
-    },
+    chat::{EncodingConfig, hanashi::config::HanashiConfig, harmony::HarmonyConfig},
 };
 use helpers::{
-    build_messages, load_registry, load_response_test_data, load_tokenizer, normalize_pattern, response_path,
-    tokenizer_directory,
+    build_encoding, build_messages, load_registry, load_response_test_data, load_tokenizer, normalize_pattern,
+    response_path, tokenizer_directory,
 };
 use shoji::types::{
-    basic::{ReasoningEffort, Token, ToolCall, Value},
+    basic::{ReasoningEffort, Token, ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value},
     session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
 
@@ -64,13 +62,7 @@ fn run_encoding_test(
 
         let tokenizer = load_tokenizer(&model.name());
         let test_data = load_response_test_data(&model.name());
-        let context = Context {
-            tokenizer_location: TokenizerLocation::Directory {
-                path: tokenizer_directory.to_str().unwrap().to_string(),
-                name: None,
-            },
-        };
-        let mut encoding = Encoding::new(expected_config.clone(), context).unwrap();
+        let mut encoding = build_encoding(expected_config.clone(), &model.name());
 
         for data in &test_data {
             let messages = match messages_normalizer {
@@ -248,13 +240,7 @@ fn test_encoding_gpt_oss_tool_call_rerender() {
         return;
     }
 
-    let context = Context {
-        tokenizer_location: TokenizerLocation::Directory {
-            path: tokenizer_directory.to_str().unwrap().to_string(),
-            name: None,
-        },
-    };
-    let mut encoding = Encoding::new(harmony(HarmonyConfig::GptOss), context).unwrap();
+    let mut encoding = build_encoding(harmony(HarmonyConfig::GptOss), "openai_gpt-oss-20b");
 
     let messages = vec![
         ChatMessage::system().with_text("You are a helpful assistant".to_string()).with_block(
@@ -309,13 +295,7 @@ fn test_decoding_gpt_oss_malformed_tool_call_header() {
     }
     let tokenizer = load_tokenizer("openai_gpt-oss-20b");
 
-    let context = Context {
-        tokenizer_location: TokenizerLocation::Directory {
-            path: tokenizer_directory.to_str().unwrap().to_string(),
-            name: None,
-        },
-    };
-    let mut encoding = Encoding::new(harmony(HarmonyConfig::GptOss), context).unwrap();
+    let mut encoding = build_encoding(harmony(HarmonyConfig::GptOss), "openai_gpt-oss-20b");
 
     let cases: &[(&str, Option<&str>)] = &[
         // the exact quirk observed from gpt-oss-20b: channel name first, marker misplaced
@@ -393,13 +373,7 @@ fn test_decoding_llama_32_malformed_tool_call() {
     }
     let tokenizer = load_tokenizer("meta-llama_Llama-3.2-1B-Instruct");
 
-    let context = Context {
-        tokenizer_location: TokenizerLocation::Directory {
-            path: tokenizer_directory.to_str().unwrap().to_string(),
-            name: None,
-        },
-    };
-    let mut encoding = Encoding::new(hanashi(HanashiConfig::Llama32), context).unwrap();
+    let mut encoding = build_encoding(hanashi(HanashiConfig::Llama32), "meta-llama_Llama-3.2-1B-Instruct");
 
     // (completion, expected tool call, expected text fragment)
     let cases: &[(&str, Option<&str>, Option<&str>)] = &[
@@ -445,6 +419,65 @@ fn test_decoding_llama_32_malformed_tool_call() {
                 text.contains(fragment),
                 "Expected text with {fragment:?} for completion {completion:?}, got {text:?}"
             );
+        }
+    }
+}
+
+/// Llama 3 emits content-level tool calls as bare JSON with "name"/"parameters" — the same shape as an ordinary reply
+/// that happens to contain a function descriptor. The bare-JSON fallback must only rewrite content into a tool call
+/// when the conversation actually declared tools AND the turn ended with <|eom_id|> (the "expect a tool response"
+/// stop token). A turn ending with <|eot_id|> is a final answer even if it quotes a call-shaped JSON — treating it
+/// as a call sends the session into an endless call/result loop. Otherwise the JSON must survive as plain text.
+#[test]
+fn test_decoding_llama_32_content_tool_call_requires_tools() {
+    let tokenizer_directory = tokenizer_directory("meta-llama_Llama-3.2-1B-Instruct");
+    if !tokenizer_directory.exists() {
+        return;
+    }
+    let tokenizer = load_tokenizer("meta-llama_Llama-3.2-1B-Instruct");
+
+    let call_json = "{\"name\": \"get_current_time\", \"parameters\": {\"timezone\": \"UTC\"}}";
+    let tools_message = ChatMessage::developer().with_tool_namespaces(vec![ToolNamespace {
+        name: "functions".to_string(),
+        description: None,
+        tools: vec![ToolDescription::Function {
+            tool_function: ToolFunction {
+                name: "get_current_time".to_string(),
+                description: "Returns the current time".to_string(),
+                parameters: None,
+                return_definition: None,
+            },
+        }],
+    }]);
+
+    // (tools declared, stop token, expected tool calls)
+    let cases: &[(bool, &str, &[&str])] = &[
+        (false, "<|eom_id|>", &[]),
+        (false, "<|eot_id|>", &[]),
+        (true, "<|eom_id|>", &["get_current_time"]),
+        (true, "<|eot_id|>", &[]),
+    ];
+    for (tools_declared, stop_token, expected_tool_calls) in cases {
+        let completion = format!("{call_json}{stop_token}");
+        let mut encoding = build_encoding(hanashi(HanashiConfig::Llama32), "meta-llama_Llama-3.2-1B-Instruct");
+        let mut messages = vec![ChatMessage::system().with_text("You are a helpful assistant".to_string())];
+        if *tools_declared {
+            messages.push(tools_message.clone());
+        }
+        messages.push(ChatMessage::user().with_text("Describe the time tool as JSON".to_string()));
+        encoding.encode(messages).unwrap();
+
+        for token_id in tokenizer.encode(completion.as_str(), false).unwrap().get_ids().to_vec() {
+            encoding.decode(vec![token_id]).unwrap();
+        }
+
+        let assistant_message = encoding.state().messages.last().unwrap();
+        assert_eq!(assistant_message.role, ChatRole::Assistant {}, "for completion {completion:?}");
+        let tool_call_names = assistant_message.tool_calls().iter().map(|call| call.name.clone()).collect::<Vec<_>>();
+        assert_eq!(tool_call_names, *expected_tool_calls, "for completion {completion:?}");
+        if expected_tool_calls.is_empty() {
+            let text = assistant_message.text().unwrap_or_default();
+            assert!(text.contains("\"parameters\""), "Expected raw JSON to stay text, got {text:?}");
         }
     }
 }

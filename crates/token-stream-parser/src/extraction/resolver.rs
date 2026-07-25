@@ -15,6 +15,7 @@ const PIPELINE_NAME_ROOT: &str = "root";
 const PIPELINE_INPUT_NAME: &str = "$name";
 const PIPELINE_INPUT_FINISHED: &str = "$finished";
 const PIPELINE_INPUT_VALUE: &str = "$value";
+const PIPELINE_INPUT_CLOSE: &str = "$close";
 
 type ExtractionParserGroupPath = Vec<usize>;
 
@@ -23,6 +24,7 @@ pub(crate) struct ExtractionParserResolver {
     cache: HashMap<ExtractionParserGroupPath, Value>,
     sections_compose_groups: HashSet<String>,
     schema: Option<TransformSchema>,
+    variables: serde_json::Map<String, Value>,
 }
 
 impl ExtractionParserResolver {
@@ -34,11 +36,24 @@ impl ExtractionParserResolver {
             cache: HashMap::new(),
             sections_compose_groups,
             schema,
+            variables: serde_json::Map::new(),
         }
+    }
+
+    /// Exposes `value` to every pipeline as `$<name>`, alongside the built-in inputs.
+    pub fn set_variable(
+        &mut self,
+        name: &str,
+        value: Value,
+    ) {
+        // cached group values may have been computed with the old variable value
+        self.cache.clear();
+        self.variables.insert(format!("${name}"), value);
     }
 
     pub fn reset(&mut self) {
         self.cache.clear();
+        self.variables.clear();
     }
 
     /// Compute output value from reduction state
@@ -47,7 +62,7 @@ impl ExtractionParserResolver {
         &mut self,
         reduction_state: &ReductionParserState,
     ) -> Value {
-        let child_values = self.compute_children(&reduction_state.sections, &vec![]);
+        let child_values = self.compute_children(&reduction_state.sections, &vec![], None);
 
         let root_values: Vec<Value> = child_values
             .into_iter()
@@ -57,16 +72,19 @@ impl ExtractionParserResolver {
             .collect();
 
         let composed = Value::Array(root_values);
-        execute_named_pipeline(PIPELINE_NAME_ROOT, false, composed, &self.schema)
+        execute_named_pipeline(PIPELINE_NAME_ROOT, false, composed, &self.schema, &self.variables, None)
     }
 }
 
 impl ExtractionParserResolver {
-    /// Compute values for a list of reduction sections
+    /// Compute values for a list of reduction sections.
+    /// `inherited_close` is the closing token of the nearest ancestor group: nested groups are
+    /// closed implicitly (with no token of their own) when an ancestor's close token arrives.
     fn compute_children(
         &mut self,
         sections: &[ReductionParserSection],
         parent_path: &ExtractionParserGroupPath,
+        inherited_close: Option<&str>,
     ) -> Vec<(String, Value)> {
         let mut results = Vec::new();
 
@@ -79,6 +97,7 @@ impl ExtractionParserResolver {
                 },
                 ReductionParserSection::Group {
                     name,
+                    close,
                     finished,
                     sections: group_sections,
                     ..
@@ -86,7 +105,8 @@ impl ExtractionParserResolver {
                     let mut group_path = parent_path.clone();
                     group_path.push(section_index);
 
-                    let value = self.compute_group(name, group_sections, *finished, &group_path);
+                    let close = close.as_ref().map(|token| token.value.as_str()).or(inherited_close);
+                    let value = self.compute_group(name, group_sections, *finished, &group_path, close);
                     results.push((name.clone(), value));
                 },
             }
@@ -103,18 +123,19 @@ impl ExtractionParserResolver {
         sections: &[ReductionParserSection],
         finished: bool,
         path: &ExtractionParserGroupPath,
+        close: Option<&str>,
     ) -> Value {
         if let Some(cached) = self.cache.get(path) {
             tracing::trace!("cached");
             return cached.clone();
         }
 
-        let child_values = self.compute_children(sections, path);
+        let child_values = self.compute_children(sections, path, close);
 
         let sections_compose = self.sections_compose_groups.contains(name);
         let composed = auto_compose(child_values, sections_compose);
 
-        let value = execute_named_pipeline(name, finished, composed, &self.schema);
+        let value = execute_named_pipeline(name, finished, composed, &self.schema, &self.variables, close);
 
         if finished {
             tracing::trace!(group = name, "finalized");
@@ -190,6 +211,8 @@ fn execute_named_pipeline(
     finished: bool,
     composed_value: Value,
     schema: &Option<TransformSchema>,
+    variables: &serde_json::Map<String, Value>,
+    close: Option<&str>,
 ) -> Value {
     let Some(schema) = schema else {
         return composed_value;
@@ -200,10 +223,14 @@ fn execute_named_pipeline(
     let _span = tracing::info_span!("execute_named_pipeline", name = name, finished = finished,).entered();
     let fallback = composed_value.clone();
 
-    let mut pipeline_input_map = serde_json::Map::new();
+    let mut pipeline_input_map = variables.clone();
     pipeline_input_map.insert(PIPELINE_INPUT_NAME.to_string(), Value::String(name.to_string()));
     pipeline_input_map.insert(PIPELINE_INPUT_FINISHED.to_string(), Value::Bool(finished));
     pipeline_input_map.insert(PIPELINE_INPUT_VALUE.to_string(), composed_value);
+    pipeline_input_map.insert(
+        PIPELINE_INPUT_CLOSE.to_string(),
+        close.map(|token| Value::String(token.to_string())).unwrap_or(Value::Null),
+    );
     let pipeline_input = Value::Object(pipeline_input_map);
     schema.execute(name, pipeline_input).unwrap_or(fallback)
 }

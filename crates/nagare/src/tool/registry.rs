@@ -49,7 +49,10 @@ impl ToolRegistry {
                             .into(),
                         )
                     }),
-                    return_definition: func_def.return_definition().clone(),
+                    // No chat format documents a "return" schema in tool declarations
+                    // (harmony drops it too). Small models mimic any extra key they see:
+                    // Llama 3.2 1B answers with {"return": ...} echoes instead of text.
+                    return_definition: None,
                 },
             })
             .collect::<Vec<_>>();

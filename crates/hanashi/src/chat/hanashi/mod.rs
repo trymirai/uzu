@@ -100,6 +100,16 @@ impl EncodingTrait for HanashiEncodingImpl {
         }
         self.state.messages.extend(messages.clone());
 
+        // let transformation pipelines gate tool-call extraction on whether tools were declared
+        let tools_declared = self
+            .state
+            .messages
+            .iter()
+            .any(|message| message.content.iter().any(|block| matches!(block, ChatContentBlock::Tools { .. })));
+        if tools_declared {
+            self.parser.set_variable("tools", serde_json::Value::Bool(true));
+        }
+
         let bos_token = self.config.tokens.bos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
         let eos_token = self.config.tokens.eos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
         let text = self.renderer.render(&messages, true, bos_token, eos_token, None)?;

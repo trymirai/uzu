@@ -33,97 +33,134 @@
     "transformation": {
         "content": [
             {
-                "type": "on",
-                "field": "$finished",
-                "with": "$value",
-                "do": [
+                "type": "switch",
+                "key": [],
+                "cases": [
                     {
-                        "type": "switch",
-                        "key": [
-                            {
-                                "type": "first"
-                            },
-                            {
-                                "type": "get",
-                                "key": "value"
-                            },
-                            {
-                                "type": "regex_replace",
-                                "pattern": "^\\s+",
-                                "template": ""
-                            }
-                        ],
-                        "cases": [
-                            {
-                                "when": {
-                                    "type": "and",
-                                    "conditions": [
-                                        {
-                                            "type": "starts_with",
-                                            "value": "{"
-                                        },
-                                        {
-                                            "type": "contains",
-                                            "value": "\"name\""
-                                        },
-                                        {
-                                            "type": "contains",
-                                            "value": "\"parameters\""
-                                        }
-                                    ]
+                        "when": {
+                            "type": "and",
+                            "conditions": [
+                                {
+                                    "type": "field",
+                                    "key": "$tools",
+                                    "condition": {
+                                        "type": "equals",
+                                        "value": true
+                                    }
                                 },
-                                "then": [
+                                {
+                                    "type": "field",
+                                    "key": "$close",
+                                    "condition": {
+                                        "type": "equals",
+                                        "value": "<|eom_id|>"
+                                    }
+                                }
+                            ]
+                        },
+                        "then": [
+                            {
+                                "type": "on",
+                                "field": "$finished",
+                                "with": "$value",
+                                "do": [
                                     {
-                                        "type": "first"
-                                    },
-                                    {
-                                        "type": "get",
-                                        "key": "value"
-                                    },
-                                    {
-                                        "type": "regex_replace",
-                                        "pattern": "\\{\\s*\"\\s*\\}",
-                                        "template": "{}"
-                                    },
-                                    {
-                                        "type": "split_top_level",
-                                        "separator": ";"
-                                    },
-                                    {
-                                        "type": "each",
-                                        "apply": [
+                                        "type": "switch",
+                                        "key": [
                                             {
-                                                "type": "regex_replace",
-                                                "pattern": "\"type\"\\s*:\\s*\"function\"\\s*,\\s*\"function\"\\s*:\\s*(?:\\{\\s*\"name\"\\s*:)?",
-                                                "template": "\"name\":"
+                                                "type": "first"
+                                            },
+                                            {
+                                                "type": "get",
+                                                "key": "value"
                                             },
                                             {
                                                 "type": "regex_replace",
-                                                "pattern": "\"parameters\"",
-                                                "template": "\"arguments\""
-                                            },
-                                            {
-                                                "type": "parse_json",
-                                                "repair": true
-                                            },
-                                            {
-                                                "type": "object",
-                                                "fields": {
-                                                    "type": [
-                                                        {
-                                                            "type": "literal",
-                                                            "value": "tool_call"
-                                                        }
-                                                    ],
-                                                    "value": []
-                                                }
+                                                "pattern": "^\\s+",
+                                                "template": ""
                                             }
-                                        ]
+                                        ],
+                                        "cases": [
+                                            {
+                                                "when": {
+                                                    "type": "and",
+                                                    "conditions": [
+                                                        {
+                                                            "type": "starts_with",
+                                                            "value": "{"
+                                                        },
+                                                        {
+                                                            "type": "contains",
+                                                            "value": "\"name\""
+                                                        },
+                                                        {
+                                                            "type": "contains",
+                                                            "value": "\"parameters\""
+                                                        }
+                                                    ]
+                                                },
+                                                "then": [
+                                                    {
+                                                        "type": "first"
+                                                    },
+                                                    {
+                                                        "type": "get",
+                                                        "key": "value"
+                                                    },
+                                                    {
+                                                        "type": "regex_replace",
+                                                        "pattern": "\\{\\s*\"\\s*\\}",
+                                                        "template": "{}"
+                                                    },
+                                                    {
+                                                        "type": "split_top_level",
+                                                        "separator": ";"
+                                                    },
+                                                    {
+                                                        "type": "each",
+                                                        "apply": [
+                                                            {
+                                                                "type": "regex_replace",
+                                                                "pattern": "\"type\"\\s*:\\s*\"function\"\\s*,\\s*\"function\"\\s*:\\s*(?:\\{\\s*\"name\"\\s*:)?",
+                                                                "template": "\"name\":"
+                                                            },
+                                                            {
+                                                                "type": "regex_replace",
+                                                                "pattern": "\"parameters\"",
+                                                                "template": "\"arguments\""
+                                                            },
+                                                            {
+                                                                "type": "parse_json",
+                                                                "repair": true
+                                                            },
+                                                            {
+                                                                "type": "object",
+                                                                "fields": {
+                                                                    "type": [
+                                                                        {
+                                                                            "type": "literal",
+                                                                            "value": "tool_call"
+                                                                        }
+                                                                    ],
+                                                                    "value": []
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                        "default": []
                                     }
                                 ]
                             }
-                        ],
-                        "default": []
+                        ]
+                    }
+                ],
+                "default": [
+                    {
+                        "type": "get",
+                        "key": "$value"
                     }
                 ]
             }
