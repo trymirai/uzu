@@ -12,7 +12,7 @@ use crate::{
             Allocation, Backend, Encoder,
             gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder, QuantizationMethod, QuantizationMode},
             kernel::{
-                ActivationsPrepareKernel, HadamardTransformKernel, Kernels,
+                HadamardTransformKernel, Kernels, RHTQuantizeActivationsKernel,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
@@ -27,7 +27,7 @@ use crate::{
 };
 
 type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
-type MetalPrepare = <<Metal as Backend>::Kernels as Kernels>::ActivationsPrepareKernel;
+type MetalPrepare = <<Metal as Backend>::Kernels as Kernels>::RHTQuantizeActivationsKernel;
 type MetalHadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel;
 
 #[derive(Clone, Copy)]
@@ -216,7 +216,7 @@ fn bench_bits(
     group.warm_up_time(Duration::from_millis(100));
     group.measurement_time(Duration::from_millis(800));
 
-    for (layer, shape) in qwen3_layer_shapes(bits).filter(|(_, shape)| matches!(shape.m, 1 | 2 | 4 | 8 | 16 | 32 | 64)) {
+    for (layer, shape) in qwen3_layer_shapes(bits).filter(|(_, shape)| shape.m == 16) {
         let (m, k, n) = (shape.m, shape.k, shape.n);
         let mut data = BenchmarkData::new(context, m, k, n, bits, 0xA8_00 ^ u64::from(bits) ^ k as u64 ^ n as u64);
         let mut output = alloc_allocation::<Metal, bf16>(context, m * n);
@@ -268,7 +268,8 @@ fn bench_a8w(c: &mut Criterion) {
     }
     let device_tier = context.device_tier();
 
-    let prepare = <MetalPrepare as ActivationsPrepareKernel>::new(&context, DataType::BF16).expect("prepare kernel");
+    let prepare =
+        <MetalPrepare as RHTQuantizeActivationsKernel>::new(&context, DataType::BF16).expect("prepare kernel");
     let hadamard =
         <MetalHadamard as HadamardTransformKernel>::new(&context, DataType::BF16, HadamardTransformOrder::Input)
             .expect("hadamard kernel");

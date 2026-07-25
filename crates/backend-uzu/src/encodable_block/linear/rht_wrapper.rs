@@ -5,7 +5,7 @@ use crate::{
     backends::common::{
         Allocation, Backend, Context, DeviceCapabilities, Encoder,
         gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
-        kernel::{ActivationsPrepareKernel, HadamardTransformKernel, Kernels, matmul::MatmulA},
+        kernel::{HadamardTransformKernel, Kernels, RHTQuantizeActivationsKernel, matmul::MatmulA},
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
@@ -18,7 +18,7 @@ use crate::{
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
-pub(super) fn int8_activation_prepare_eligible<B: Backend>(
+pub(super) fn int8_activations_eligible<B: Backend>(
     context: &B::Context,
     quantization_spec: &AnyWeightMatrixSpec,
     input_dimension: usize,
@@ -65,7 +65,7 @@ pub enum RHTLinearWrapperError<B: Backend> {
 }
 
 struct SymmetricInt8Preparation<B: Backend> {
-    kernel: <B::Kernels as Kernels>::ActivationsPrepareKernel,
+    kernel: <B::Kernels as Kernels>::RHTQuantizeActivationsKernel,
 }
 
 pub struct RHTLinearWrapper<B: Backend> {
@@ -117,7 +117,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )
         .map_err(RHTLinearWrapperError::BackendError)?;
 
-        let symmetric_int8_preparation = if int8_activation_prepare_eligible::<B>(
+        let symmetric_int8_preparation = if int8_activations_eligible::<B>(
             context,
             &quantization_spec,
             input_dimension,
@@ -125,7 +125,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             output_data_type,
         ) {
             Some(
-                <B::Kernels as Kernels>::ActivationsPrepareKernel::new(context, input_data_type)
+                <B::Kernels as Kernels>::RHTQuantizeActivationsKernel::new(context, input_data_type)
                     .map(|kernel| SymmetricInt8Preparation {
                         kernel,
                     })

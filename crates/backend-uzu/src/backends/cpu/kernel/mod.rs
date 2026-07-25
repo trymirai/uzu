@@ -3,7 +3,6 @@ use std::convert::Infallible;
 use crate::backends::{common::Kernels, cpu::Cpu};
 
 mod activation;
-pub(crate) mod activation_prepare;
 mod attention;
 mod embedding;
 mod gated_act_mul;
@@ -15,6 +14,7 @@ mod moe;
 mod normalization;
 mod pooling;
 mod radix_top_k_small;
+pub(crate) mod rht_quantize_activations;
 mod sampling;
 mod short_conv;
 mod softmax;

@@ -9,7 +9,7 @@ UZU_CONST float SYM_QMAX = 127.0;
 
 template <typename InputT>
 VARIANTS(InputT, float, bfloat)
-PUBLIC KERNEL(ActivationsPrepare)(
+PUBLIC KERNEL(RHTQuantizeActivations)(
     const device InputT* input,
     device int8_t* q_out,
     device float* scales_out,

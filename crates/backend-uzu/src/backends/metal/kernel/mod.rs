@@ -32,5 +32,5 @@ impl Kernels for MetalKernels {
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/unit/backends/metal/kernel/activation_prepare_test.rs"]
-mod activation_prepare_test;
+#[path = "../../../../tests/unit/backends/metal/kernel/rht_quantize_activations_test.rs"]
+mod rht_quantize_activations_test;

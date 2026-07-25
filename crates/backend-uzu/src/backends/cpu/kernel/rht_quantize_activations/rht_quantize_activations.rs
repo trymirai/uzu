@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{array::ArrayElement, backends::common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE};
 
-#[kernel(ActivationsPrepare)]
+#[kernel(RHTQuantizeActivations)]
 #[variants(InputT, f32, bf16)]
 pub fn activations_prepare<InputT: ArrayElement + Float>(
     input: *const InputT,

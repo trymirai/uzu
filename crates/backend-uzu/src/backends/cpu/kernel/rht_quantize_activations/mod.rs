@@ -1,4 +1,4 @@
-pub mod activation_prepare;
+pub mod rht_quantize_activations;
 
 pub const INT8_SYMMETRIC_QUANTIZATION_MAXIMUM: f32 = 127.0;
 

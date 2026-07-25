@@ -4,7 +4,7 @@ mod rht_wrapper;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
-use rht_wrapper::int8_activation_prepare_eligible;
+use rht_wrapper::int8_activations_eligible;
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
@@ -220,7 +220,7 @@ impl<B: Backend> dyn Linear<B> {
         }) = &spec
         {
             let quantization_spec = weights_tree.subtree("quantized")?.metadata::<AnyWeightMatrixSpec>("spec")?;
-            if int8_activation_prepare_eligible::<B>(
+            if int8_activations_eligible::<B>(
                 context,
                 &quantization_spec,
                 input_dimension,
