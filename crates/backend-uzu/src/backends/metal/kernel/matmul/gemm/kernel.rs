@@ -178,7 +178,7 @@ impl GemmKernel {
                     return None;
                 }
                 let group_size = arguments.b.group_size().unwrap_or(0);
-                let int8_activations = arguments.a.is_int8();
+                let int8_activations = arguments.a.a_prologue() == GemmAPrologueKind::Int8Symmetric;
                 let tiling =
                     select_mxu_quant_tiling(arguments.m, arguments.n, arguments.k, group_size, int8_activations);
                 if int8_activations {
@@ -195,7 +195,8 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let path = if encoder.context().device.supports_mxu()
-            && (arguments.a.is_int8() || self.select_mxu_tiling(&arguments).is_some())
+            && (arguments.a.a_prologue() == GemmAPrologueKind::Int8Symmetric
+                || self.select_mxu_tiling(&arguments).is_some())
         {
             GemmDispatchPath::Mxu
         } else {
@@ -429,11 +430,13 @@ impl GemmKernel {
                     _ => unreachable!(),
                 };
 
-                let (a_full_precision, a_int8, a_scales, a_prologue) = match a {
+                let a_prologue = a.a_prologue();
+                let a_is_int8 = a_prologue == GemmAPrologueKind::Int8Symmetric;
+                let (a_full_precision, a_int8, a_scales) = match a {
                     MatmulA::FullPrecision {
                         values,
                         offset,
-                    } => (Some((values, offset)), None, None, GemmAPrologueKind::FullPrecision),
+                    } => (Some((values, offset)), None, None),
                     MatmulA::Int8Symmetric {
                         values,
                         scales: activation_scales,
@@ -446,10 +449,9 @@ impl GemmKernel {
                             }
                             .into());
                         }
-                        (None, Some(values), Some(activation_scales), GemmAPrologueKind::Int8Symmetric)
+                        (None, Some(values), Some(activation_scales))
                     },
                 };
-                let a_is_int8 = a_prologue == GemmAPrologueKind::Int8Symmetric;
 
                 let (output_bias, bias_after_rht, output_transform) = if rht_factors.is_some() && output_bias.is_some()
                 {

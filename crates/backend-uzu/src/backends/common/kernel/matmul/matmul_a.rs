@@ -1,4 +1,4 @@
-use crate::backends::common::{Allocation, Backend};
+use crate::backends::common::{Allocation, Backend, gpu_types::gemm::GemmAPrologueKind};
 
 pub enum MatmulA<'a, B: Backend> {
     FullPrecision {
@@ -12,7 +12,14 @@ pub enum MatmulA<'a, B: Backend> {
 }
 
 impl<'a, B: Backend> MatmulA<'a, B> {
-    pub fn is_int8(&self) -> bool {
-        matches!(self, Self::Int8Symmetric { .. })
+    pub fn a_prologue(&self) -> GemmAPrologueKind {
+        match self {
+            Self::FullPrecision {
+                ..
+            } => GemmAPrologueKind::FullPrecision,
+            Self::Int8Symmetric {
+                ..
+            } => GemmAPrologueKind::Int8Symmetric,
+        }
     }
 }
