@@ -2,27 +2,48 @@ pub const CANDIDATES_MAX: usize = 512;
 pub const TOP_CHILDREN_THREADS: usize = 256;
 pub const TOP_CHILDREN_SIMDGROUPS: usize = 8;
 
-pub const FRONTIER_LANE_TOKEN: usize = 0;
-pub const FRONTIER_LANE_PARENT: usize = 1;
-pub const FRONTIER_LANE_DEPTH: usize = 2;
-pub const FRONTIER_LANE_CUM: usize = 3;
-pub const FRONTIER_LANE_LOGPROB: usize = 4;
-pub const FRONTIER_LANE_KEY: usize = 5;
-pub const FRONTIER_LANE_ACTIVE: usize = 6;
-pub const FRONTIER_LANE_COUNT: usize = FRONTIER_LANE_ACTIVE + 1;
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub enum FrontierIdx {
+    TokenId,
+    ParentSlot,
+    Depth,
+    PathLogprobBits,
+    EdgeLogprobBits,
+    PathScoreKey,
+    Active,
+}
 
-pub const TREE_LANE_TOKEN: usize = 0;
-pub const TREE_LANE_PARENT: usize = 1;
-pub const TREE_LANE_DEPTH: usize = 2;
-pub const TREE_LANE_CUM: usize = 3;
-pub const TREE_LANE_LOGPROB: usize = 4;
-pub const TREE_LANE_MASK: usize = 5;
-pub const TREE_LANE_COUNT: usize = TREE_LANE_MASK + 1;
+impl FrontierIdx {
+    pub const COUNT: usize = Self::Active as usize + 1;
+}
 
-pub const METADATA_LANE_DEPTH: usize = 0;
-pub const METADATA_LANE_ANCESTOR_COUNT: usize = 1;
-pub const METADATA_LANE_NODE_INDEX: usize = 2;
-pub const METADATA_LANE_COUNT: usize = METADATA_LANE_NODE_INDEX + 1;
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub enum TreeIdx {
+    TokenId,
+    ParentSlot,
+    Depth,
+    PathLogprobBits,
+    EdgeLogprobBits,
+    Valid,
+}
+
+impl TreeIdx {
+    pub const COUNT: usize = Self::Valid as usize + 1;
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub enum MetadataIdx {
+    Depth,
+    AncestorCount,
+    TreeSlot,
+}
+
+impl MetadataIdx {
+    pub const COUNT: usize = Self::TreeSlot as usize + 1;
+}
 
 pub const FRONTIER_NO_WINNER: u32 = !0;
 pub const FRONTIER_SELECT_THREADS: usize = 256;

@@ -8,7 +8,7 @@ use crate::array::ArrayElement;
 #[variants(T, f32, bf16)]
 pub fn weaver_node_cache_write<T: ArrayElement + Float>(
     current_qkv: *const T,
-    node_qkv: *mut T,
+    node_kv: *mut T,
     node_indices: *const u32,
     model_dim: u32,
     node_capacity: u32,
@@ -24,9 +24,11 @@ pub fn weaver_node_cache_write<T: ArrayElement + Float>(
         for position in 0..total as usize {
             let row = position / (2 * model_dim);
             let offset = position - row * 2 * model_dim;
+            let component = offset / model_dim;
+            let component_offset = offset % model_dim;
             let node = (*node_indices.add(row) as usize).min(last_node);
-            *node_qkv.add(node * qkv_width + model_dim + offset) =
-                *current_qkv.add(row * qkv_width + model_dim + offset);
+            *node_kv.add(component * node_capacity as usize * model_dim + node * model_dim + component_offset) =
+                *current_qkv.add(row * qkv_width + (component + 1) * model_dim + component_offset);
         }
     }
 }

@@ -3,11 +3,11 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
-        gpu_types::weaver,
+        Allocation, AllocationType, AsBufferRangeMut, Backend, Context, Encoder, Kernels,
+        gpu_types::weaver::{CANDIDATES_MAX, MetadataIdx},
         kernel::{
-            ActivationKernel, AttentionLastQueryKernel, AttentionPrepareKernel, TensorAddBiasKernel,
-            TensorAddSwapKernel, WeaverNodeCacheWriteKernel, WeaverTopChildrenKernel,
+            ActivationKernel, AncestorAttentionKernel, AttentionPrepareKernel, TensorAddBiasKernel,
+            WeaverNodeCacheWriteKernel, WeaverTopChildrenKernel,
         },
     },
     config::{normalization::NormalizationConfig, weaver::WeaverConfig},
@@ -19,75 +19,88 @@ use crate::{
             AttentionStateType,
             core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments, AttentionCores},
         },
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar},
+        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
-pub(crate) struct WeaverPrefix<B: Backend> {
-    layer_qkv: Box<[Allocation<B>]>,
-    pub(crate) length: usize,
+const DATA_TYPE: DataType = DataType::BF16;
+
+pub(crate) struct TopKChildren<B: Backend> {
+    pub(crate) token_ids: Allocation<B>,
+    pub(crate) logprobs: Allocation<B>,
+}
+
+struct PrefixOutput<B: Backend> {
+    hidden: Allocation<B>,
+    kv_cache: Allocation<B>,
+}
+
+struct PrefixAttentionInputs<B: Backend> {
+    queries: Allocation<B>,
+    kv_cache: Allocation<B>,
+}
+
+pub(crate) struct WeaverPrefixKvCache<B: Backend> {
+    layer_kv: Box<[Allocation<B>]>,
+    token_count: usize,
+}
+
+pub(crate) struct WeaverNodeKvCache<B: Backend> {
+    layer_kv: Box<[Allocation<B>]>,
+    node_capacity: u32,
 }
 
 pub(crate) struct WeaverStepBatch<'a, B: Backend> {
-    pub row_count: usize,
-    pub candidate_count: usize,
+    pub node_count: usize,
+    pub candidates_per_node: usize,
     pub ancestor_stride: usize,
-    pub parent_token_ids: &'a Allocation<B>,
+    pub node_token_ids: &'a Allocation<B>,
     pub candidate_ids: &'a Allocation<B>,
-    pub candidate_scores: &'a Allocation<B>,
+    pub candidate_logits: &'a Allocation<B>,
     pub ancestor_indices: &'a Allocation<B>,
     pub node_metadata: &'a Allocation<B>,
 }
 
-pub(crate) struct WeaverNodeState<B: Backend> {
-    layer_qkv: Box<[Allocation<B>]>,
-}
-
 pub(crate) struct Weaver<B: Backend> {
-    embedding_norm: WeaverNorm<B>,
-    hidden_state_norm: WeaverNorm<B>,
-    embedding_projection: Box<dyn Linear<B>>,
-    blocks: Box<[WeaverBlock<B>]>,
-    output_norm: WeaverNorm<B>,
+    token_embedding_norm: Normalization<B>,
+    token_embedding_projection: Box<dyn Linear<B>>,
+    hidden_state_norm: Normalization<B>,
     hidden_state_projection: Box<dyn Linear<B>>,
-    query_projection: Box<dyn Linear<B>>,
+    blocks: Box<[WeaverBlock<B>]>,
+    readout_norm: Normalization<B>,
+    readout_query_projection: Box<dyn Linear<B>>,
     position_embeddings: Allocation<B>,
-    position_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
-    indexed_position_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
+    prefix_position_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
+    node_position_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
     top_children: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
     model_dim: usize,
     target_model_dim: usize,
     max_depth: usize,
-    data_type: DataType,
-}
-
-struct WeaverNorm<B: Backend> {
-    normalization: Normalization<B>,
-    biases: Option<Allocation<B>>,
-    bias_kernel: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
-    dimension: usize,
 }
 
 struct WeaverBlock<B: Backend> {
+    // Attention
+    pre_attention_norm: Normalization<B>,
     qkv_projection: Box<dyn Linear<B>>,
-    out_projection: Box<dyn Linear<B>>,
-    prefix_attention: AttentionCores<B>,
     attention_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
-    pre_attention_norm: WeaverNorm<B>,
-    pre_mlp_norm: WeaverNorm<B>,
-    up_projection: Box<dyn Linear<B>>,
-    down_projection: Box<dyn Linear<B>>,
-    activation: <B::Kernels as Kernels>::ActivationKernel,
-    residual_add: <B::Kernels as Kernels>::TensorAddSwapKernel,
-    last_query_attention: <B::Kernels as Kernels>::AttentionLastQueryKernel,
+    prefix_attention: AttentionCores<B>,
+    ancestor_attention: <B::Kernels as Kernels>::AncestorAttentionKernel,
     node_cache_write: <B::Kernels as Kernels>::WeaverNodeCacheWriteKernel,
+    out_projection: Box<dyn Linear<B>>,
+
+    // MLP
+    pre_mlp_norm: Normalization<B>,
+    up_projection: Box<dyn Linear<B>>,
+    activation: <B::Kernels as Kernels>::ActivationKernel,
+    down_projection: Box<dyn Linear<B>>,
+
+    // Geometry
     attention_scale: f32,
     model_dim: usize,
     hidden_dim: usize,
     num_heads: usize,
     head_dim: usize,
-    data_type: DataType,
 }
 
 #[derive(Debug, Error)]
@@ -100,9 +113,11 @@ pub enum WeaverNewError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("backend error: {0}")]
     Backend(#[source] B::Error),
+    #[error("Weaver requires at least one layer")]
+    InvalidLayerCount,
     #[error("model_dim must be divisible by num_heads")]
     InvalidHeadConfig,
-    #[error("candidate_pool_size must be in 1..={max}, got {0}", max = weaver::CANDIDATES_MAX)]
+    #[error("candidate_pool_size must be in 1..={max}, got {0}", max = CANDIDATES_MAX)]
     InvalidCandidatePoolSize(usize),
 }
 
@@ -114,120 +129,48 @@ pub enum WeaverEncodeError<B: Backend> {
     Embedding(#[from] EmbeddingError<B>),
 }
 
-fn linear<B: Backend>(
-    context: &B::Context,
-    parameter_tree: &ParameterTree<B>,
-    name: &str,
-    input_dim: usize,
-    output_dim: usize,
-    has_biases: bool,
-    data_type: DataType,
-) -> Result<Box<dyn Linear<B>>, WeaverNewError<B>> {
-    Ok(<dyn Linear<B>>::new(input_dim, [output_dim], has_biases, context, data_type, &parameter_tree.subtree(name)?)?)
-}
-
-impl<B: Backend> WeaverNorm<B> {
-    fn new(
-        context: &B::Context,
-        dim: usize,
-        config: &NormalizationConfig,
-        parameter_tree: &ParameterTree<B>,
-        data_type: DataType,
-    ) -> Result<Self, WeaverNewError<B>> {
-        let mut normalization_config = config.clone();
-        normalization_config.has_biases = false;
-        let normalization = Normalization::new(
-            dim,
-            None,
-            false,
-            false,
-            PostLayerScalar::None,
-            data_type,
-            &normalization_config,
-            parameter_tree,
-            context,
-        )?;
-        let biases = config
-            .has_biases
-            .then(|| parameter_tree.leaf("biases")?.validate(&[dim], DataType::F32)?.read_allocation())
-            .transpose()?;
-        let bias_kernel = biases
-            .as_ref()
-            .map(|_| <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, DataType::F32, true, false))
-            .transpose()
-            .map_err(WeaverNewError::Backend)?;
-        Ok(Self {
-            normalization,
-            biases,
-            bias_kernel,
-            dimension: dim,
-        })
-    }
-
-    fn encode(
-        &self,
-        input: &Allocation<B>,
-        row_count: usize,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        let mut output = self.normalization.encode(input, 0, row_count, None, encoder)?;
-        if let (Some(biases), Some(kernel)) = (&self.biases, &self.bias_kernel) {
-            kernel.encode(
-                None::<&Allocation<B>>,
-                biases,
-                None::<&Allocation<B>>,
-                &mut output,
-                self.dimension as u32,
-                (row_count * self.dimension) as u32,
-                encoder,
-            );
-        }
-        Ok(output)
-    }
-}
-
 impl<B: Backend> Weaver<B> {
-    pub(crate) fn create_node_state(
-        &self,
-        capacity: usize,
-        context: &B::Context,
-    ) -> Result<WeaverNodeState<B>, WeaverEncodeError<B>> {
-        assert!(capacity > 0);
-        let qkv_size = size_for_shape(&[capacity, 3, self.model_dim], self.data_type);
-        let layer_qkv = (0..self.blocks.len())
-            .map(|_| context.create_allocation(qkv_size, AllocationType::Global).map_err(WeaverEncodeError::Backend))
-            .collect::<Result<Box<[_]>, _>>()?;
-        Ok(WeaverNodeState {
-            layer_qkv,
-        })
-    }
-
     pub(crate) fn new(
         context: &B::Context,
         config: &WeaverConfig,
         parameter_tree: &ParameterTree<B>,
-        data_type: DataType,
     ) -> Result<Self, WeaverNewError<B>> {
-        assert_eq!(data_type, DataType::BF16, "Weaver only supports BF16");
+        if config.num_layers == 0 {
+            return Err(WeaverNewError::InvalidLayerCount);
+        }
         if config.num_heads == 0 || !config.model_dim.is_multiple_of(config.num_heads) {
             return Err(WeaverNewError::InvalidHeadConfig);
         }
-        if config.candidate_pool_size == 0 || config.candidate_pool_size > weaver::CANDIDATES_MAX {
+        if config.candidate_pool_size == 0 || config.candidate_pool_size > CANDIDATES_MAX {
             return Err(WeaverNewError::InvalidCandidatePoolSize(config.candidate_pool_size));
         }
-        let norm = |dim, name: &str| -> Result<_, WeaverNewError<B>> {
-            WeaverNorm::new(context, dim, &config.norm_config, &parameter_tree.subtree(name)?, data_type)
-        };
-        let embedding_norm = norm(config.target_embedding_dim, "embedding_norm")?;
-        let hidden_state_norm = norm(config.target_model_dim, "hidden_state_norm")?;
-        let embedding_projection = linear(
-            context,
-            parameter_tree,
-            "embedding_projection",
+        let token_embedding_norm = Normalization::new(
             config.target_embedding_dim,
-            config.model_dim,
+            None,
+            ShortcutMode::None,
+            PostLayerScalar::None,
+            DATA_TYPE,
+            &config.norm_config,
+            &parameter_tree.subtree("embedding_norm")?,
+            context,
+        )?;
+        let hidden_state_norm = Normalization::new(
+            config.target_model_dim,
+            None,
+            ShortcutMode::None,
+            PostLayerScalar::None,
+            DATA_TYPE,
+            &config.norm_config,
+            &parameter_tree.subtree("hidden_state_norm")?,
+            context,
+        )?;
+        let token_embedding_projection = <dyn Linear<B>>::new(
+            config.target_embedding_dim,
+            [config.model_dim],
             true,
-            data_type,
+            context,
+            DATA_TYPE,
+            &parameter_tree.subtree("embedding_projection")?,
         )?;
         let blocks_tree = parameter_tree.subtree("blocks")?;
         let blocks = (0..config.num_layers)
@@ -237,207 +180,241 @@ impl<B: Backend> Weaver<B> {
                     config.model_dim,
                     config.hidden_dim,
                     config.num_heads,
+                    index > 0,
                     &config.norm_config,
                     &blocks_tree.subtree(&index.to_string())?,
-                    data_type,
                 )
             })
             .collect::<Result<Box<[_]>, WeaverNewError<B>>>()?;
-        let output_norm = norm(config.model_dim, "output_norm")?;
-        let hidden_state_projection = linear(
-            context,
-            parameter_tree,
-            "hidden_state_projection",
-            config.target_model_dim,
+        let readout_norm = Normalization::new(
             config.model_dim,
-            true,
-            data_type,
+            None,
+            ShortcutMode::Add,
+            PostLayerScalar::None,
+            DATA_TYPE,
+            &config.norm_config,
+            &parameter_tree.subtree("output_norm")?,
+            context,
         )?;
-        let query_projection = linear(
-            context,
-            parameter_tree,
-            "query_projection",
-            config.model_dim,
+        let hidden_state_projection = <dyn Linear<B>>::new(
             config.target_model_dim,
+            [config.model_dim],
+            true,
+            context,
+            DATA_TYPE,
+            &parameter_tree.subtree("hidden_state_projection")?,
+        )?;
+        let readout_query_projection = <dyn Linear<B>>::new(
+            config.model_dim,
+            [config.target_model_dim],
             false,
-            data_type,
+            context,
+            DATA_TYPE,
+            &parameter_tree.subtree("query_projection")?,
         )?;
         let position_embeddings = parameter_tree
             .leaf("position_embeddings")?
             .validate(&[config.max_depth, config.model_dim], DataType::F32)?
             .read_allocation()?;
-        let position_add =
-            <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, DataType::F32, true, false)
+        let prefix_position_add =
+            <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, DATA_TYPE, DataType::F32, true, false)
                 .map_err(WeaverNewError::Backend)?;
-        let indexed_position_add =
-            <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, DataType::F32, true, true)
+        let node_position_add =
+            <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, DATA_TYPE, DataType::F32, true, true)
                 .map_err(WeaverNewError::Backend)?;
         let top_children =
             <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context).map_err(WeaverNewError::Backend)?;
         Ok(Self {
-            embedding_norm,
+            token_embedding_norm,
+            token_embedding_projection,
             hidden_state_norm,
-            embedding_projection,
-            blocks,
-            output_norm,
             hidden_state_projection,
-            query_projection,
+            blocks,
+            readout_norm,
+            readout_query_projection,
             position_embeddings,
-            position_add,
-            indexed_position_add,
+            prefix_position_add,
+            node_position_add,
             top_children,
             model_dim: config.model_dim,
             target_model_dim: config.target_model_dim,
             max_depth: config.max_depth,
-            data_type,
         })
     }
 
     pub(crate) fn build_prefix(
         &self,
         target_hidden: &Allocation<B>,
-        lookaheads: &Allocation<B>,
-        lookahead_offset: usize,
+        draft_hidden: &Allocation<B>,
         lookahead_count: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<WeaverPrefix<B>, WeaverEncodeError<B>> {
-        let length = lookahead_count + 1;
-        assert!(lookahead_count <= self.max_depth);
-        let row_bytes = self.target_model_dim * self.data_type.size_in_bytes();
-        assert!(target_hidden.size() >= row_bytes);
-        assert!(lookaheads.size() >= (lookahead_offset + lookahead_count) * row_bytes);
+    ) -> Result<WeaverPrefixKvCache<B>, WeaverEncodeError<B>> {
+        assert!((1..=self.max_depth).contains(&lookahead_count));
+        let token_count = lookahead_count + 1;
+        let hidden_row_bytes = self.target_model_dim * DATA_TYPE.size_in_bytes();
 
-        let context = encoder.context();
-        let mut input = encoder
-            .allocate_scratch(size_for_shape(&[length, self.target_model_dim], self.data_type))
+        let mut prefix_input = encoder
+            .allocate_scratch(size_for_shape(&[token_count, self.target_model_dim], DATA_TYPE))
             .map_err(WeaverEncodeError::Backend)?;
-        encoder.encode_copy(target_hidden, 0..row_bytes, &mut input, 0..row_bytes);
-        if lookahead_count > 0 {
-            encoder.encode_copy(
-                lookaheads,
-                lookahead_offset * row_bytes..(lookahead_offset + lookahead_count) * row_bytes,
-                &mut input,
-                row_bytes..length * row_bytes,
-            );
-        }
-        let normalized = self.hidden_state_norm.encode(&input, length, encoder).map_err(WeaverEncodeError::Backend)?;
-        let mut hidden =
-            self.hidden_state_projection.encode(normalized, length, encoder).map_err(WeaverEncodeError::Backend)?;
+        encoder.encode_copy(target_hidden, 0..hidden_row_bytes, &mut prefix_input, 0..hidden_row_bytes);
+        encoder.encode_copy(
+            draft_hidden,
+            hidden_row_bytes..token_count * hidden_row_bytes,
+            &mut prefix_input,
+            hidden_row_bytes..token_count * hidden_row_bytes,
+        );
+        let normalized_prefix = self
+            .hidden_state_norm
+            .encode(&prefix_input, 0, token_count, None, encoder)
+            .map_err(WeaverEncodeError::Backend)?;
+        let mut hidden = self
+            .hidden_state_projection
+            .encode(normalized_prefix, token_count, encoder)
+            .map_err(WeaverEncodeError::Backend)?;
         let position_elements = lookahead_count * self.model_dim;
-        self.position_add.encode(
+        self.prefix_position_add.encode(
             None::<&Allocation<B>>,
             &self.position_embeddings,
             None::<&Allocation<B>>,
-            (&mut hidden, self.model_dim * self.data_type.size_in_bytes()),
+            (&mut hidden, self.model_dim * DATA_TYPE.size_in_bytes()),
             position_elements as u32,
             position_elements as u32,
             encoder,
         );
-
-        let mut layer_qkv = Vec::with_capacity(self.blocks.len());
-        for block in &self.blocks {
-            let (next_hidden, qkv) =
-                block.encode_prefix(hidden, length, encoder).map_err(WeaverEncodeError::Backend)?;
-            let mut cached_qkv =
-                context.create_allocation(qkv.size(), AllocationType::Global).map_err(WeaverEncodeError::Backend)?;
-            encoder.encode_copy(&qkv, .., &mut cached_qkv, ..);
-            layer_qkv.push(cached_qkv);
+        let (last_block, preceding_blocks) = self.blocks.split_last().expect("Weaver must have at least one block");
+        let mut residual = encoder.allocate_scratch(hidden.size()).map_err(WeaverEncodeError::Backend)?;
+        let mut layer_kv = Vec::with_capacity(self.blocks.len());
+        for block in preceding_blocks {
+            let PrefixOutput {
+                hidden: next_hidden,
+                kv_cache,
+            } = block.encode_prefix(hidden, &mut residual, token_count, encoder).map_err(WeaverEncodeError::Backend)?;
+            layer_kv.push(kv_cache);
             hidden = next_hidden;
         }
-        drop(input);
-        drop(hidden);
-        Ok(WeaverPrefix {
-            layer_qkv: layer_qkv.into_boxed_slice(),
-            length,
+        layer_kv.push(
+            last_block
+                .prepare_prefix_attention(&hidden, &mut residual, token_count, encoder)
+                .map_err(WeaverEncodeError::Backend)?
+                .kv_cache,
+        );
+        Ok(WeaverPrefixKvCache {
+            layer_kv: layer_kv.into_boxed_slice(),
+            token_count,
+        })
+    }
+
+    pub(crate) fn create_node_kv_cache(
+        &self,
+        capacity: usize,
+        context: &B::Context,
+    ) -> Result<WeaverNodeKvCache<B>, WeaverEncodeError<B>> {
+        assert!(capacity > 0, "Weaver node capacity must be positive");
+        let node_capacity = u32::try_from(capacity).expect("Weaver node capacity exceeds the kernel limit");
+        let kv_size = size_for_shape(&[2, capacity, self.model_dim], DATA_TYPE);
+        let layer_kv = (0..self.blocks.len())
+            .map(|_| context.create_allocation(kv_size, AllocationType::Global).map_err(WeaverEncodeError::Backend))
+            .collect::<Result<Box<[_]>, _>>()?;
+        Ok(WeaverNodeKvCache {
+            layer_kv,
+            node_capacity,
         })
     }
 
     pub(crate) fn encode_step_batch(
         &self,
-        prefix: &WeaverPrefix<B>,
-        input: &WeaverStepBatch<'_, B>,
-        state: &mut WeaverNodeState<B>,
-        children: usize,
+        prefix: &WeaverPrefixKvCache<B>,
+        batch: &WeaverStepBatch<'_, B>,
+        node_cache: &mut WeaverNodeKvCache<B>,
+        children_per_node: usize,
         target_embedding: &Embedding<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(Allocation<B>, Allocation<B>), WeaverEncodeError<B>> {
-        let rows = input.row_count;
-        let candidates = input.candidate_count;
-        assert!(rows > 0);
-        assert!(candidates > 0 && candidates <= weaver::CANDIDATES_MAX);
-        assert!(children > 0 && children <= candidates);
-        assert!(input.ancestor_stride > 0);
-        let word = DataType::U32.size_in_bytes();
-        debug_assert!(input.node_metadata.size() >= weaver::METADATA_LANE_COUNT * rows * word);
-        debug_assert!(input.parent_token_ids.size() >= rows * word);
-        debug_assert!(input.ancestor_indices.size() >= rows * input.ancestor_stride * word);
-
-        let token_embedding = target_embedding.encode_lookup(input.parent_token_ids, rows, encoder)?;
-        let embedding_normalized =
-            self.embedding_norm.encode(&token_embedding, rows, encoder).map_err(WeaverEncodeError::Backend)?;
-        let mut current = self
-            .embedding_projection
-            .encode(embedding_normalized, rows, encoder)
+    ) -> Result<TopKChildren<B>, WeaverEncodeError<B>> {
+        let token_embedding = target_embedding.encode_lookup(batch.node_token_ids, batch.node_count, encoder)?;
+        let normalized_embedding = self
+            .token_embedding_norm
+            .encode(&token_embedding, 0, batch.node_count, None, encoder)
             .map_err(WeaverEncodeError::Backend)?;
-        self.indexed_position_add.encode(
+        let mut hidden = self
+            .token_embedding_projection
+            .encode(normalized_embedding, batch.node_count, encoder)
+            .map_err(WeaverEncodeError::Backend)?;
+        self.node_position_add.encode(
             None::<&Allocation<B>>,
             &self.position_embeddings,
-            Some(input.node_metadata),
-            &mut current,
+            Some(batch.node_metadata),
+            &mut hidden,
             self.model_dim as u32,
-            (rows * self.model_dim) as u32,
+            (batch.node_count * self.model_dim) as u32,
             encoder,
         );
 
+        let mut residual = encoder.allocate_scratch(hidden.size()).map_err(WeaverEncodeError::Backend)?;
+        let node_capacity = node_cache.node_capacity;
         for (layer_index, block) in self.blocks.iter().enumerate() {
-            current = block
+            hidden = block
                 .encode_step(
-                    current,
-                    &prefix.layer_qkv[layer_index],
-                    &mut state.layer_qkv[layer_index],
-                    input,
-                    prefix.length,
+                    hidden,
+                    &mut residual,
+                    &prefix.layer_kv[layer_index],
+                    &mut node_cache.layer_kv[layer_index],
+                    node_capacity,
+                    batch,
+                    prefix.token_count,
                     encoder,
                 )
                 .map_err(WeaverEncodeError::Backend)?;
         }
 
-        self.encode_step_output(&current, input, children, target_embedding, encoder)
+        self.encode_step_output(&hidden, &mut residual, batch, children_per_node, target_embedding, encoder)
     }
 
     /// Outputs must outlive the batch.
     fn encode_step_output(
         &self,
-        current: &Allocation<B>,
-        step: &WeaverStepBatch<'_, B>,
-        children: usize,
+        hidden: &Allocation<B>,
+        residual: &mut Allocation<B>,
+        batch: &WeaverStepBatch<'_, B>,
+        children_per_node: usize,
         target_embedding: &Embedding<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(Allocation<B>, Allocation<B>), WeaverEncodeError<B>> {
-        let (rows, candidates) = (step.row_count, step.candidate_count);
-        let output_normalized = self.output_norm.encode(current, rows, encoder).map_err(WeaverEncodeError::Backend)?;
-        let query =
-            self.query_projection.encode(output_normalized, rows, encoder).map_err(WeaverEncodeError::Backend)?;
-        let candidate_logits =
-            target_embedding.encode_readout_sparse(&query, step.candidate_ids, rows, candidates, encoder)?;
-        let mut child_ids = encoder
-            .allocate_scratch(size_for_shape(&[rows, children], DataType::U32))
+    ) -> Result<TopKChildren<B>, WeaverEncodeError<B>> {
+        let normalized_output = self
+            .readout_norm
+            .encode(hidden, 0, batch.node_count, Some(residual), encoder)
             .map_err(WeaverEncodeError::Backend)?;
-        let mut child_logprobs = encoder
-            .allocate_scratch(size_for_shape(&[rows, children], DataType::F32))
+        let query = self
+            .readout_query_projection
+            .encode(normalized_output, batch.node_count, encoder)
+            .map_err(WeaverEncodeError::Backend)?;
+        let residual_logits = target_embedding.encode_readout_sparse(
+            &query,
+            batch.candidate_ids,
+            batch.node_count,
+            batch.candidates_per_node,
+            encoder,
+        )?;
+        let mut token_ids = encoder
+            .allocate_scratch(size_for_shape(&[batch.node_count, children_per_node], DataType::U32))
+            .map_err(WeaverEncodeError::Backend)?;
+        let mut logprobs = encoder
+            .allocate_scratch(size_for_shape(&[batch.node_count, children_per_node], DataType::F32))
             .map_err(WeaverEncodeError::Backend)?;
         self.top_children.encode(
-            &candidate_logits,
-            step.candidate_scores,
-            step.candidate_ids,
-            &mut child_ids,
-            &mut child_logprobs,
-            rows as u32,
-            candidates as u32,
-            children as u32,
+            &residual_logits,
+            batch.candidate_logits,
+            batch.candidate_ids,
+            &mut token_ids,
+            &mut logprobs,
+            batch.node_count as u32,
+            batch.candidates_per_node as u32,
+            children_per_node as u32,
             encoder,
         );
-        Ok((child_ids, child_logprobs))
+        Ok(TopKChildren {
+            token_ids,
+            logprobs,
+        })
     }
 }
 
@@ -447,15 +424,28 @@ impl<B: Backend> WeaverBlock<B> {
         model_dim: usize,
         hidden_dim: usize,
         num_heads: usize,
+        add_to_residual: bool,
         norm_config: &NormalizationConfig,
         parameter_tree: &ParameterTree<B>,
-        data_type: DataType,
     ) -> Result<Self, WeaverNewError<B>> {
         let head_dim = model_dim / num_heads;
         let attention_scale = 1.0 / (head_dim as f32).sqrt();
-        let qkv_projection =
-            linear(context, parameter_tree, "qkv_projection", model_dim, 3 * model_dim, false, data_type)?;
-        let out_projection = linear(context, parameter_tree, "out_projection", model_dim, model_dim, false, data_type)?;
+        let qkv_projection = <dyn Linear<B>>::new(
+            model_dim,
+            [3 * model_dim],
+            false,
+            context,
+            DATA_TYPE,
+            &parameter_tree.subtree("qkv_projection")?,
+        )?;
+        let out_projection = <dyn Linear<B>>::new(
+            model_dim,
+            [model_dim],
+            false,
+            context,
+            DATA_TYPE,
+            &parameter_tree.subtree("out_projection")?,
+        )?;
         let prefix_attention = AttentionCores::new(
             AttentionCoreNewArguments {
                 head_dim,
@@ -467,30 +457,60 @@ impl<B: Backend> WeaverBlock<B> {
                 is_trie: false,
                 sliding_window_size: None,
                 scale: Some(attention_scale),
-                data_type,
+                data_type: DATA_TYPE,
             },
             context,
         )
         .map_err(WeaverNewError::Backend)?;
         let attention_prepare =
-            <B::Kernels as Kernels>::AttentionPrepareKernel::new(context, data_type, DataType::F32, true, false)
+            <B::Kernels as Kernels>::AttentionPrepareKernel::new(context, DATA_TYPE, DataType::F32, true, false)
                 .map_err(WeaverNewError::Backend)?;
-        let norm = |name: &str| -> Result<_, WeaverNewError<B>> {
-            WeaverNorm::new(context, model_dim, norm_config, &parameter_tree.subtree(name)?, data_type)
-        };
-        let pre_attention_norm = norm("pre_attention_norm")?;
-        let pre_mlp_norm = norm("pre_mlp_norm")?;
-        let up_projection = linear(context, parameter_tree, "up_projection", model_dim, hidden_dim, true, data_type)?;
-        let down_projection =
-            linear(context, parameter_tree, "down_projection", hidden_dim, model_dim, true, data_type)?;
-        let activation = <B::Kernels as Kernels>::ActivationKernel::new(context, data_type, true)
+        let pre_attention_norm = Normalization::new(
+            model_dim,
+            None,
+            if add_to_residual {
+                ShortcutMode::Add
+            } else {
+                ShortcutMode::Copy
+            },
+            PostLayerScalar::None,
+            DATA_TYPE,
+            norm_config,
+            &parameter_tree.subtree("pre_attention_norm")?,
+            context,
+        )?;
+        let pre_mlp_norm = Normalization::new(
+            model_dim,
+            None,
+            ShortcutMode::Add,
+            PostLayerScalar::None,
+            DATA_TYPE,
+            norm_config,
+            &parameter_tree.subtree("pre_mlp_norm")?,
+            context,
+        )?;
+        let up_projection = <dyn Linear<B>>::new(
+            model_dim,
+            [hidden_dim],
+            true,
+            context,
+            DATA_TYPE,
+            &parameter_tree.subtree("up_projection")?,
+        )?;
+        let down_projection = <dyn Linear<B>>::new(
+            hidden_dim,
+            [model_dim],
+            true,
+            context,
+            DATA_TYPE,
+            &parameter_tree.subtree("down_projection")?,
+        )?;
+        let activation = <B::Kernels as Kernels>::ActivationKernel::new(context, DATA_TYPE, true)
             .map_err(WeaverNewError::Backend)?;
-        let residual_add =
-            <B::Kernels as Kernels>::TensorAddSwapKernel::new(context, data_type).map_err(WeaverNewError::Backend)?;
-        let last_query_attention =
-            <B::Kernels as Kernels>::AttentionLastQueryKernel::new(context, head_dim as u32, num_heads as u32)
+        let ancestor_attention =
+            <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim as u32, num_heads as u32)
                 .map_err(WeaverNewError::Backend)?;
-        let node_cache_write = <B::Kernels as Kernels>::WeaverNodeCacheWriteKernel::new(context, data_type)
+        let node_cache_write = <B::Kernels as Kernels>::WeaverNodeCacheWriteKernel::new(context, DATA_TYPE)
             .map_err(WeaverNewError::Backend)?;
         Ok(Self {
             qkv_projection,
@@ -502,45 +522,114 @@ impl<B: Backend> WeaverBlock<B> {
             up_projection,
             down_projection,
             activation,
-            residual_add,
-            last_query_attention,
+            ancestor_attention,
             node_cache_write,
             attention_scale,
             model_dim,
             hidden_dim,
             num_heads,
             head_dim,
-            data_type,
+        })
+    }
+
+    fn encode_prefix(
+        &self,
+        input: Allocation<B>,
+        residual: &mut Allocation<B>,
+        token_count: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<PrefixOutput<B>, B::Error> {
+        let PrefixAttentionInputs {
+            queries,
+            kv_cache,
+        } = self.prepare_prefix_attention(&input, residual, token_count, encoder)?;
+        let state_type = AttentionStateType::Full {
+            length: 0,
+        };
+        let kv_plane_bytes = size_for_shape(&[token_count, self.model_dim], DATA_TYPE);
+        let attention = self.prefix_attention.encode(
+            AttentionCoreEncodeArguments {
+                queries: &queries,
+                keys: &kv_cache,
+                values: (&kv_cache, kv_plane_bytes),
+                suffix_length: token_count,
+                trie: None,
+                sinks: None,
+                state_type: &state_type,
+            },
+            encoder,
+        )?;
+        let hidden = self.encode_post_attention(attention, residual, token_count, encoder)?;
+        Ok(PrefixOutput {
+            hidden,
+            kv_cache,
+        })
+    }
+
+    fn prepare_prefix_attention(
+        &self,
+        input: &Allocation<B>,
+        residual: &mut Allocation<B>,
+        token_count: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<PrefixAttentionInputs<B>, B::Error> {
+        let attention_input = self.pre_attention_norm.encode(input, 0, token_count, Some(residual), encoder)?;
+        let qkv = self.qkv_projection.encode(attention_input, token_count, encoder)?;
+        let mut queries =
+            encoder.allocate_scratch(size_for_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE))?;
+        let kv_plane_bytes = size_for_shape(&[token_count, self.model_dim], DATA_TYPE);
+        let mut kv = encoder
+            .context()
+            .create_allocation(size_for_shape(&[2, token_count, self.model_dim], DATA_TYPE), AllocationType::Global)?;
+        let (keys, values) = kv.as_buffer_range_mut().split_at(kv_plane_bytes);
+        self.attention_prepare.encode(
+            &qkv,
+            &mut queries,
+            Some(keys),
+            Some(values),
+            None::<&Allocation<B>>,
+            None::<&Allocation<B>>,
+            self.num_heads as u32,
+            Some(self.num_heads as u32),
+            self.head_dim as u32,
+            None,
+            Some(0),
+            token_count as u32,
+            encoder,
+        );
+        Ok(PrefixAttentionInputs {
+            queries,
+            kv_cache: kv,
         })
     }
 
     fn encode_step(
         &self,
-        current: Allocation<B>,
-        prefix_qkv: &Allocation<B>,
-        state_qkv: &mut Allocation<B>,
-        step: &WeaverStepBatch<'_, B>,
+        input: Allocation<B>,
+        residual: &mut Allocation<B>,
+        prefix_kv: &Allocation<B>,
+        node_kv_cache: &mut Allocation<B>,
+        node_capacity: u32,
+        batch: &WeaverStepBatch<'_, B>,
         prefix_length: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let rows = step.row_count;
-        let normalized = self.pre_attention_norm.encode(&current, rows, encoder)?;
-        let current_qkv = self.qkv_projection.encode(normalized, rows, encoder)?;
-        let metadata_row_bytes = rows * DataType::U32.size_in_bytes();
-        let ancestor_counts = (step.node_metadata, metadata_row_bytes);
-        let node_indices = (step.node_metadata, 2 * metadata_row_bytes);
-        let mut attention = encoder.allocate_scratch(size_for_shape(&[rows, self.model_dim], self.data_type))?;
-        let node_capacity = (state_qkv.size() / size_for_shape(&[3, self.model_dim], self.data_type)) as u32;
-        self.last_query_attention.encode(
-            prefix_qkv,
-            &*state_qkv,
+        let attention_input = self.pre_attention_norm.encode(&input, 0, batch.node_count, Some(residual), encoder)?;
+        let current_qkv = self.qkv_projection.encode(attention_input, batch.node_count, encoder)?;
+        let metadata_lane_bytes = batch.node_count * DataType::U32.size_in_bytes();
+        let ancestor_counts = (batch.node_metadata, MetadataIdx::AncestorCount as usize * metadata_lane_bytes);
+        let tree_slots = (batch.node_metadata, MetadataIdx::TreeSlot as usize * metadata_lane_bytes);
+        let mut attention = encoder.allocate_scratch(size_for_shape(&[batch.node_count, self.model_dim], DATA_TYPE))?;
+        self.ancestor_attention.encode(
+            prefix_kv,
+            &*node_kv_cache,
             &current_qkv,
-            step.ancestor_indices,
+            batch.ancestor_indices,
             ancestor_counts,
             &mut attention,
-            rows as u32,
+            batch.node_count as u32,
             prefix_length as u32,
-            step.ancestor_stride as u32,
+            batch.ancestor_stride as u32,
             node_capacity,
             self.attention_scale,
             encoder,
@@ -549,86 +638,33 @@ impl<B: Backend> WeaverBlock<B> {
         // serializes it after the attention that reads the ancestor slots.
         self.node_cache_write.encode(
             &current_qkv,
-            state_qkv,
-            node_indices,
+            node_kv_cache,
+            tree_slots,
             self.model_dim as u32,
             node_capacity,
-            (rows * 2 * self.model_dim) as u32,
+            (batch.node_count * 2 * self.model_dim) as u32,
             encoder,
         );
-        attention = self.out_projection.encode(attention, rows, encoder)?;
-        let mut residual = current;
-        self.residual_add.encode(&mut residual, &mut attention, (rows * self.model_dim) as u32, encoder);
-        let normalized = self.pre_mlp_norm.encode(&residual, rows, encoder)?;
-        let mut mlp = self.up_projection.encode(normalized, rows, encoder)?;
-        self.activation.encode(
-            None::<&Allocation<B>>,
-            &mut mlp,
-            (rows * self.hidden_dim) as u32,
-            crate::backends::common::gpu_types::ActivationType::GELUExact,
-            encoder,
-        );
-        let mut output = self.down_projection.encode(mlp, rows, encoder)?;
-        self.residual_add.encode(&mut output, &mut residual, (rows * self.model_dim) as u32, encoder);
-        Ok(residual)
+        self.encode_post_attention(attention, residual, batch.node_count, encoder)
     }
 
-    fn encode_prefix(
+    fn encode_post_attention(
         &self,
-        hidden: Allocation<B>,
-        rows: usize,
+        attention: Allocation<B>,
+        residual: &mut Allocation<B>,
+        row_count: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
-        let normalized = self.pre_attention_norm.encode(&hidden, rows, encoder)?;
-        let qkv = self.qkv_projection.encode(normalized, rows, encoder)?;
-        let mut queries =
-            encoder.allocate_scratch(size_for_shape(&[self.num_heads, rows, self.head_dim], self.data_type))?;
-        let mut keys = encoder.allocate_scratch(size_for_shape(&[rows, self.model_dim], self.data_type))?;
-        let mut values = encoder.allocate_scratch(size_for_shape(&[rows, self.model_dim], self.data_type))?;
-        self.attention_prepare.encode(
-            &qkv,
-            &mut queries,
-            Some(&mut keys),
-            Some(&mut values),
-            None::<&Allocation<B>>,
-            None::<&Allocation<B>>,
-            self.num_heads as u32,
-            Some(self.num_heads as u32),
-            self.head_dim as u32,
-            None,
-            Some(0),
-            rows as u32,
-            encoder,
-        );
-        let state_type = AttentionStateType::Full {
-            length: 0,
-        };
-        let attention = self.prefix_attention.encode(
-            AttentionCoreEncodeArguments {
-                queries: &queries,
-                keys: &keys,
-                values: &values,
-                suffix_length: rows,
-                trie: None,
-                sinks: None,
-                state_type: &state_type,
-            },
-            encoder,
-        )?;
-        let mut attention = self.out_projection.encode(attention, rows, encoder)?;
-        let mut residual = hidden;
-        self.residual_add.encode(&mut residual, &mut attention, (rows * self.model_dim) as u32, encoder);
-        let normalized = self.pre_mlp_norm.encode(&residual, rows, encoder)?;
-        let mut mlp = self.up_projection.encode(normalized, rows, encoder)?;
+    ) -> Result<Allocation<B>, B::Error> {
+        let projected_attention = self.out_projection.encode(attention, row_count, encoder)?;
+        let mlp_input = self.pre_mlp_norm.encode(&projected_attention, 0, row_count, Some(residual), encoder)?;
+        let mut mlp_hidden = self.up_projection.encode(mlp_input, row_count, encoder)?;
         self.activation.encode(
             None::<&Allocation<B>>,
-            &mut mlp,
-            (rows * self.hidden_dim) as u32,
+            &mut mlp_hidden,
+            (row_count * self.hidden_dim) as u32,
             crate::backends::common::gpu_types::ActivationType::GELUExact,
             encoder,
         );
-        let mut output = self.down_projection.encode(mlp, rows, encoder)?;
-        self.residual_add.encode(&mut output, &mut residual, (rows * self.model_dim) as u32, encoder);
-        Ok((residual, qkv))
+        self.down_projection.encode(mlp_hidden, row_count, encoder)
     }
 }

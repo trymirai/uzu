@@ -11,43 +11,30 @@ static constant constexpr size_t TOP_CHILDREN_THREADS = 256;
 
 static constant constexpr size_t TOP_CHILDREN_SIMDGROUPS = 8;
 
-static constant constexpr size_t FRONTIER_LANE_TOKEN = 0;
+enum class FrontierIdx : uint32_t {
+  TokenId = 0,
+  ParentSlot = 1,
+  Depth = 2,
+  PathLogprobBits = 3,
+  EdgeLogprobBits = 4,
+  PathScoreKey = 5,
+  Active = 6,
+};
 
-static constant constexpr size_t FRONTIER_LANE_PARENT = 1;
+enum class TreeIdx : uint32_t {
+  TokenId = 0,
+  ParentSlot = 1,
+  Depth = 2,
+  PathLogprobBits = 3,
+  EdgeLogprobBits = 4,
+  Valid = 5,
+};
 
-static constant constexpr size_t FRONTIER_LANE_DEPTH = 2;
-
-static constant constexpr size_t FRONTIER_LANE_CUM = 3;
-
-static constant constexpr size_t FRONTIER_LANE_LOGPROB = 4;
-
-static constant constexpr size_t FRONTIER_LANE_KEY = 5;
-
-static constant constexpr size_t FRONTIER_LANE_ACTIVE = 6;
-
-static constant constexpr size_t FRONTIER_LANE_COUNT = FRONTIER_LANE_ACTIVE + 1;
-
-static constant constexpr size_t TREE_LANE_TOKEN = 0;
-
-static constant constexpr size_t TREE_LANE_PARENT = 1;
-
-static constant constexpr size_t TREE_LANE_DEPTH = 2;
-
-static constant constexpr size_t TREE_LANE_CUM = 3;
-
-static constant constexpr size_t TREE_LANE_LOGPROB = 4;
-
-static constant constexpr size_t TREE_LANE_MASK = 5;
-
-static constant constexpr size_t TREE_LANE_COUNT = TREE_LANE_MASK + 1;
-
-static constant constexpr size_t METADATA_LANE_DEPTH = 0;
-
-static constant constexpr size_t METADATA_LANE_ANCESTOR_COUNT = 1;
-
-static constant constexpr size_t METADATA_LANE_NODE_INDEX = 2;
-
-static constant constexpr size_t METADATA_LANE_COUNT = METADATA_LANE_NODE_INDEX + 1;
+enum class MetadataIdx : uint32_t {
+  Depth = 0,
+  AncestorCount = 1,
+  TreeSlot = 2,
+};
 
 static constant constexpr uint32_t FRONTIER_NO_WINNER = ~0;
 

@@ -66,9 +66,7 @@ impl<B: Backend> Engine<B> {
         let weaver = speculator_config
             .weaver_config
             .as_ref()
-            .map(|weaver_config| {
-                Weaver::new(&*self.context, weaver_config, &speculator_tree.subtree("weaver")?, data_type)
-            })
+            .map(|weaver_config| Weaver::new(&*self.context, weaver_config, &speculator_tree.subtree("weaver")?))
             .transpose()?;
 
         weight_loader.tree().assert_all_tensors_validated()?;

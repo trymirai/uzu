@@ -3,7 +3,7 @@ use crate::backends::{
         Kernels,
         gpu_types::{
             gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_row},
-            weaver,
+            weaver::{FRONTIER_SELECT_THREADS, TOP_CHILDREN_THREADS},
         },
     },
     metal::Metal,
