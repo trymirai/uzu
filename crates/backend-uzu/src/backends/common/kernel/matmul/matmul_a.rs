@@ -12,7 +12,7 @@ pub enum MatmulA<'a, B: Backend> {
 }
 
 impl<'a, B: Backend> MatmulA<'a, B> {
-    pub fn a_prologue(&self) -> GemmAPrologueKind {
+    pub fn prologue_kind(&self) -> GemmAPrologueKind {
         match self {
             Self::FullPrecision {
                 ..

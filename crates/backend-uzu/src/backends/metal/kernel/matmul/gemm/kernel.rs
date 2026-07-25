@@ -178,7 +178,7 @@ impl GemmKernel {
                     return None;
                 }
                 let group_size = arguments.b.group_size().unwrap_or(0);
-                let int8_activations = arguments.a.a_prologue() == GemmAPrologueKind::Int8Symmetric;
+                let int8_activations = arguments.a.prologue_kind() == GemmAPrologueKind::Int8Symmetric;
                 let tiling =
                     select_mxu_quant_tiling(arguments.m, arguments.n, arguments.k, group_size, int8_activations);
                 if int8_activations {
@@ -195,7 +195,7 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let path = if encoder.context().device.supports_mxu()
-            && (arguments.a.a_prologue() == GemmAPrologueKind::Int8Symmetric
+            && (arguments.a.prologue_kind() == GemmAPrologueKind::Int8Symmetric
                 || self.select_mxu_tiling(&arguments).is_some())
         {
             GemmDispatchPath::Mxu
@@ -430,7 +430,7 @@ impl GemmKernel {
                     _ => unreachable!(),
                 };
 
-                let a_prologue = a.a_prologue();
+                let a_prologue = a.prologue_kind();
                 let a_is_int8 = a_prologue == GemmAPrologueKind::Int8Symmetric;
                 let (a_full_precision, a_int8, a_scales) = match a {
                     MatmulA::FullPrecision {
