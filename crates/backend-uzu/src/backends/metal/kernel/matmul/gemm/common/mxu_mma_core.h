@@ -237,7 +237,7 @@ struct MxuMmaCore {
       thread int8_t* right_codes = right_tile.elements();
       METAL_PRAGMA_UNROLL
       for (ushort i = 0; i < right_tile.ELEMENTS_PER_FRAGMENT; ++i) {
-        right_codes[i] = unbias_uint8_to_int8(right_codes[i]);
+        right_codes[i] = unbias_uint8_to_int8(as_type<uchar>(right_codes[i]));
       }
     }
     return right_tile;

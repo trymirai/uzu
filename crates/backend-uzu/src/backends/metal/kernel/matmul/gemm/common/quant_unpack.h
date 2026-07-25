@@ -77,8 +77,8 @@ METAL_FUNC char4 unpack_nibbles_to_int8(uint packed) {
   return as_type<char4>(spread) - char4(char(symmetric_zero_point<4>()));
 }
 
-METAL_FUNC int8_t unbias_uint8_to_int8(int8_t code) {
-  return as_type<int8_t>(uchar(as_type<uchar>(code) ^ uchar(symmetric_zero_point<8>())));
+METAL_FUNC int8_t unbias_uint8_to_int8(uchar code) {
+  return as_type<int8_t>(uchar(code ^ uchar(symmetric_zero_point<8>())));
 }
 
 template <typename U, int N, int bits>
