@@ -64,6 +64,7 @@ indexmap.workspace = true
 reqwest.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
+tokenizers.workspace = true
 tokio = { workspace = true, features = ["full"] }
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }

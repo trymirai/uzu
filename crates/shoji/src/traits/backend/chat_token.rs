@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 
 use tokenizers::Tokenizer;
 
@@ -30,7 +30,7 @@ pub trait Backend: Send + Sync {
         &'a self,
         reference: String,
         config: ChatConfig,
-        tokenizer: Option<&'a Tokenizer>,
+        tokenizer: Arc<Tokenizer>,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn Instance>, Error>> + Send + 'a>>;
 }
 

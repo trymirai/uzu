@@ -3813,6 +3813,7 @@ dependencies = [
  "serde_json",
  "shoji",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio",
  "tokio-util",
  "tracing",

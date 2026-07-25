@@ -1,10 +1,16 @@
 use std::{
+    io,
     pin::Pin,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use futures::{Stream, StreamExt, stream};
-use hanashi::{Encoding as EncodingTrait, chat::Encoding};
+use hanashi::{
+    Encoding as EncodingTrait,
+    chat::{Encoding, EncodingConfig, TokenizerLocation, hanashi::HanashiEncodingImpl, harmony::HarmonyEncodingImpl},
+    load_tokenizer,
+};
 use shoji::{
     traits::{
         State,
@@ -29,10 +35,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     chat::ChatSessionError,
-    util::{
-        helpers::{build_encoding, error_stream},
-        power::PowerRecorder,
-    },
+    util::{helpers::error_stream, power::PowerRecorder},
 };
 
 pub struct Session {
@@ -51,10 +54,60 @@ impl Session {
         reference: String,
         model: &Model,
     ) -> Result<Self, ChatSessionError> {
-        let encoding = build_encoding(reference.clone(), model).map_err(|err| ChatSessionError::Loading {
-            message: err.to_string(),
+        let encoding_configs = model
+            .encodings
+            .iter()
+            .map(|value| serde_json::from_str::<EncodingConfig>(value.json.as_str()).map_err(io::Error::other))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| ChatSessionError::Loading {
+                message: format!("Failed to parse encoding config: {err}"),
+            })?;
+
+        let encoding_config: Option<EncodingConfig> = if encoding_configs.is_empty() {
+            None
+        } else if encoding_configs.len() == 1 {
+            encoding_configs.first().cloned()
+        } else {
+            let harmony_config =
+                encoding_configs.iter().find(|config| matches!(config, EncodingConfig::Harmony { .. }));
+            if harmony_config.is_some() {
+                harmony_config.cloned()
+            } else {
+                encoding_configs.first().cloned()
+            }
+        };
+
+        let tokenizer_location = TokenizerLocation::Directory {
+            path: reference.clone(),
+            name: None,
+        };
+        let tokenizer = load_tokenizer(&tokenizer_location).map_err(|err| ChatSessionError::Loading {
+            message: format!("Failed to initialize tokenizer: {err}"),
         })?;
-        let instance = backend.instance(reference, config, encoding.tokenizer()).await.map_err(|error| {
+        let tokenizer = Arc::new(tokenizer);
+
+        let encoding =
+            match encoding_config {
+                Some(EncodingConfig::Hanashi {
+                    config,
+                }) => HanashiEncodingImpl::new(config, tokenizer.clone()).map(|enc| Encoding::Hanashi(enc)).map_err(
+                    |err| ChatSessionError::Loading {
+                        message: format!("can not create harmony encoding: {err}"),
+                    },
+                ),
+                Some(EncodingConfig::Harmony {
+                    config,
+                }) => HarmonyEncodingImpl::new(config, tokenizer_location).map(|enc| Encoding::Harmony(enc)).map_err(
+                    |err| ChatSessionError::Loading {
+                        message: format!("can not create harmony encoding: {err}"),
+                    },
+                ),
+                None => Err(ChatSessionError::Loading {
+                    message: "can not get encoding config".to_string(),
+                }),
+            }?;
+
+        let instance = backend.instance(reference.clone(), config, tokenizer).await.map_err(|error| {
             ChatSessionError::Backend {
                 message: error.to_string(),
             }

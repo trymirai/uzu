@@ -17,11 +17,10 @@ use shoji::types::{
     basic::{Token, TokenId},
     session::chat::{ChatMessage, ChatModelCapabilities},
 };
-use tokenizers::Tokenizer;
 
 use crate::{
     Encoding as EncodingTrait,
-    chat::{Context, State, TokenizerLocation},
+    chat::{State, TokenizerLocation},
 };
 
 const TOKEN_START: &str = "<|start|>";
@@ -31,18 +30,6 @@ const TOKEN_CONSTRAIN: &str = "<|constrain|>";
 const ROLE_ASSISTANT: &str = "assistant";
 const CONTENT_TYPE_JSON: &str = "json";
 const CHANNELS: [&str; 3] = ["analysis", "commentary", "final"];
-
-pub struct Encoding {
-    capabilities: ChatModelCapabilities,
-    encoding: HarmonyEncoding,
-    parser: StreamableParser,
-    state: State,
-    completion_message_start: usize,
-    special_tokens: SpecialTokens,
-    // Some while the current message header is being decoded (from decoding start or `<|start|>` until `<|message|>`);
-    // header tokens are held back from the parser so a malformed header can be repaired before the parser sees it.
-    header_buffer: Option<Vec<Token>>,
-}
 
 /// Ids of the harmony formatting tokens the decode-side header repair needs to recognize.
 struct SpecialTokens {
@@ -69,22 +56,27 @@ impl SpecialTokens {
     }
 }
 
-impl EncodingTrait for Encoding {
-    type Config = HarmonyConfig;
-    type Context = Context;
-    type Input = Vec<ChatMessage>;
-    type Output = Vec<TokenId>;
-    type State = State;
-    type Error = Error;
+pub struct HarmonyEncodingImpl {
+    capabilities: ChatModelCapabilities,
+    encoding: HarmonyEncoding,
+    parser: StreamableParser,
+    state: State,
+    completion_message_start: usize,
+    special_tokens: SpecialTokens,
+    // Some while the current message header is being decoded (from decoding start or `<|start|>` until `<|message|>`);
+    // header tokens are held back from the parser so a malformed header can be repaired before the parser sees it.
+    header_buffer: Option<Vec<Token>>,
+}
 
-    fn new(
-        config: Self::Config,
-        context: Self::Context,
-    ) -> Result<Self, Self::Error> {
+impl HarmonyEncodingImpl {
+    pub fn new(
+        config: HarmonyConfig,
+        tokenizer_location: TokenizerLocation,
+    ) -> Result<Self, Error> {
         let TokenizerLocation::Directory {
             path,
             ..
-        } = &context.tokenizer_location
+        } = &tokenizer_location
         else {
             return Err(Error::ExpectedDirectoryTokenizerLocation);
         };
@@ -108,6 +100,14 @@ impl EncodingTrait for Encoding {
             header_buffer: None,
         })
     }
+}
+
+impl EncodingTrait for HarmonyEncodingImpl {
+    type Config = HarmonyConfig;
+    type Input = Vec<ChatMessage>;
+    type Output = Vec<TokenId>;
+    type State = State;
+    type Error = Error;
 
     fn state(&self) -> &Self::State {
         &self.state
@@ -186,10 +186,6 @@ impl EncodingTrait for Encoding {
         Ok(())
     }
 
-    fn tokenizer(&self) -> Option<&Tokenizer> {
-        None
-    }
-
     fn supports_tool_calls(&self) -> bool {
         self.capabilities.supports_tools
     }
@@ -199,7 +195,7 @@ impl EncodingTrait for Encoding {
     }
 }
 
-impl Encoding {
+impl HarmonyEncodingImpl {
     fn process(
         &mut self,
         token_id: TokenId,

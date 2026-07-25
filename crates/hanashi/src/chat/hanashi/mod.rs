@@ -5,7 +5,7 @@ mod ordering;
 pub mod renderer;
 mod token;
 
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 pub use error::Error;
 use shoji::types::{
@@ -23,16 +23,15 @@ use self::{
 use crate::{
     Encoding as EncodingTrait,
     chat::{
-        Context, State, SynchronizationError, SynchronizationResult,
+        State, SynchronizationError, SynchronizationResult,
         hanashi::{config::HanashiConfig, messages::rendered::FieldConfig, renderer::Renderer, token::ToParserToken},
     },
-    util::tokenizer::load_tokenizer,
 };
 
-pub struct Encoding {
+pub struct HanashiEncodingImpl {
     capabilities: ChatModelCapabilities,
     config: HanashiResolvedConfig,
-    tokenizer: Tokenizer,
+    tokenizer: Arc<Tokenizer>,
     parser: TokenStreamParser,
     framing_tokens: HashSet<String>,
     renderer: Renderer,
@@ -44,20 +43,12 @@ pub struct Encoding {
     tokenizer_decode_prefix_index: usize,
 }
 
-impl EncodingTrait for Encoding {
-    type Config = HanashiConfig;
-    type Context = Context;
-    type Input = Vec<ChatMessage>;
-    type Output = Vec<TokenId>;
-    type State = State;
-    type Error = Error;
-
-    fn new(
-        config: Self::Config,
-        context: Self::Context,
-    ) -> Result<Self, Self::Error> {
+impl HanashiEncodingImpl {
+    pub fn new(
+        config: HanashiConfig,
+        tokenizer: Arc<Tokenizer>,
+    ) -> Result<Self, Error> {
         let resolved_config = config.resolve()?;
-        let tokenizer = load_tokenizer(&context.tokenizer_location).map_err(|_| Error::UnableToLoadTokenizer)?;
         let parser = TokenStreamParser::new(resolved_config.parsing.clone())?;
         let framing_tokens = resolved_config.parsing.framing_config().tokens.into_iter().collect();
         let renderer = Renderer::new(resolved_config.rendering.clone());
@@ -76,6 +67,14 @@ impl EncodingTrait for Encoding {
             tokenizer_decode_prefix_index: 0,
         })
     }
+}
+
+impl EncodingTrait for HanashiEncodingImpl {
+    type Config = HanashiConfig;
+    type Input = Vec<ChatMessage>;
+    type Output = Vec<TokenId>;
+    type State = State;
+    type Error = Error;
 
     fn state(&self) -> &Self::State {
         &self.state
@@ -129,10 +128,6 @@ impl EncodingTrait for Encoding {
         Ok(())
     }
 
-    fn tokenizer(&self) -> Option<&Tokenizer> {
-        Some(&self.tokenizer)
-    }
-
     fn supports_tool_calls(&self) -> bool {
         self.capabilities.supports_tools
     }
@@ -142,7 +137,7 @@ impl EncodingTrait for Encoding {
     }
 }
 
-impl Encoding {
+impl HanashiEncodingImpl {
     fn push_token_to_parser(
         &mut self,
         token: &Token,
