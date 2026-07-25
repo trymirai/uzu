@@ -317,7 +317,7 @@ struct MxuMmaCore {
   );
   UZU_CONST bool int8_activation_needs_weight_correction =
       A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant;
-  UZU_CONST float int8_weight_midpoint = float(symmetric_zero_point<(BITS > 0) ? BITS : 4>());
+  UZU_CONST float int8_weight_midpoint = float(symmetric_zero_point<ushort((BITS > 0) ? BITS : 4)>());
 
   static METAL_FUNC float int8_weight_dequant_bias(
       const float scale,
@@ -331,8 +331,9 @@ struct MxuMmaCore {
     if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
       return static_cast<float>(biases[scale_index]);
     } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
-      const device uint8_t* zero_points_row = zero_points + col * zero_point_row_stride<BITS>(weight_groups_per_row);
-      return -scale * float(decode_zero_point<BITS>(zero_points_row, weight_group));
+      const device uint8_t* zero_points_row =
+          zero_points + col * zero_point_row_stride<ushort(BITS)>(weight_groups_per_row);
+      return -scale * float(decode_zero_point<ushort(BITS)>(zero_points_row, weight_group));
     } else {
       return 0.0f;
     }
@@ -632,7 +633,7 @@ struct MxuMmaCore {
                               thread_context.simd_lane_id
                           );
                         } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
-                          const int zero_point_stride_per_row = zero_point_row_stride<BITS>(groups_per_row);
+                          const int zero_point_stride_per_row = zero_point_row_stride<ushort(BITS)>(groups_per_row);
                           const device uint8_t* zero_points_row_start =
                               zero_points + block_col * zero_point_stride_per_row +
                               ((BITS == 4) ? (k_offset_groups / 2) : k_offset_groups);
