@@ -258,6 +258,27 @@ struct MxuMmaCore {
       const ushort index = (ushort(offset) % FRAGMENT_EXTENT) / SLOT_STRIDE;
       return values[tile * SLOTS_PER_TILE + index];
     }
+
+    template <bool ALIGNED, typename Sink>
+    static METAL_FUNC void for_each_line(
+        const short origin,
+        const short limit,
+        const uint abs_base,
+        const uint groups_per_row,
+        const uint group_index,
+        Sink sink
+    ) {
+      METAL_PRAGMA_UNROLL
+      for (ushort tile = 0; tile < TILES; ++tile) {
+        METAL_PRAGMA_UNROLL
+        for (ushort index = 0; index < SLOTS_PER_TILE; ++index) {
+          const short coord = origin + tile * FRAGMENT_EXTENT + index * SLOT_STRIDE;
+          if (ALIGNED || coord < limit) {
+            sink(tile, index, (abs_base + uint(coord)) * groups_per_row + group_index);
+          }
+        }
+      }
+    }
   };
 
   using FragmentOps = uzu::matmul::MxuFragmentOps<>;
@@ -267,49 +288,6 @@ struct MxuMmaCore {
       FragmentOps::FRAGMENT_ROWS,
       FragmentOps::THREAD_ELEMENT_ROW_STRIDE>;
   using WeightLineCache = FragmentLineCache<TILES_N, FragmentOps::THREAD_ELEMENT_COLS, FragmentOps::FRAGMENT_COLS, 1>;
-
-  template <bool ALIGNED_M, typename Sink>
-  static METAL_FUNC void for_each_row_group(
-      const short2 position,
-      const short simdgroup_limit_m,
-      const uint abs_row_base,
-      const uint groups_per_row,
-      const uint group_index,
-      Sink sink
-  ) {
-    METAL_PRAGMA_UNROLL
-    for (ushort tile_row = 0; tile_row < TILES_M; ++tile_row) {
-      METAL_PRAGMA_UNROLL
-      for (ushort thread_row = 0; thread_row < FragmentOps::THREAD_ELEMENT_ROWS; ++thread_row) {
-        const short row =
-            position.y + tile_row * FragmentOps::FRAGMENT_ROWS + thread_row * FragmentOps::THREAD_ELEMENT_ROW_STRIDE;
-        if (ALIGNED_M || row < simdgroup_limit_m) {
-          sink(tile_row, thread_row, (abs_row_base + uint(row)) * groups_per_row + group_index);
-        }
-      }
-    }
-  }
-
-  template <bool ALIGNED_N, typename Sink>
-  static METAL_FUNC void for_each_column_group(
-      const short2 position,
-      const short simdgroup_limit_n,
-      const uint abs_col_base,
-      const uint groups_per_row,
-      const uint group_index,
-      Sink sink
-  ) {
-    METAL_PRAGMA_UNROLL
-    for (ushort tile_col = 0; tile_col < TILES_N; ++tile_col) {
-      METAL_PRAGMA_UNROLL
-      for (ushort thread_col = 0; thread_col < FragmentOps::THREAD_ELEMENT_COLS; ++thread_col) {
-        const short col = position.x + tile_col * FragmentOps::FRAGMENT_COLS + thread_col;
-        if (ALIGNED_N || col < simdgroup_limit_n) {
-          sink(tile_col, thread_col, (abs_col_base + uint(col)) * groups_per_row + group_index);
-        }
-      }
-    }
-  }
 
   static_assert(
       A_PROLOGUE != GemmAPrologueKind::Int8Symmetric || GROUP_SIZE % int(SIMDGROUP_BLOCK_K) == 0,
@@ -383,8 +361,8 @@ struct MxuMmaCore {
 
       WeightLineCache weight_scales;
       WeightLineCache weight_corrections;
-      for_each_column_group<ALIGNED_N>(
-          position,
+      WeightLineCache::template for_each_line<ALIGNED_N>(
+          position.x,
           simdgroup_limit_n,
           abs_col_base,
           weight_groups_per_row,
@@ -430,8 +408,8 @@ struct MxuMmaCore {
 
         const uint act_group_index = k_offset_act_groups + uint(weight_group * act_chunks_per_weight_group + act_chunk);
         ActivationLineCache activation_scales;
-        for_each_row_group<ALIGNED_M>(
-            position,
+        ActivationLineCache::template for_each_line<ALIGNED_M>(
+            position.y,
             simdgroup_limit_m,
             abs_row_base,
             act_groups_per_row,
