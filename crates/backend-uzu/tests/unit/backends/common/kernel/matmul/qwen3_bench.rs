@@ -1,4 +1,4 @@
-#![cfg(metal_backend)]
+#![cfg(backend = "metal")]
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use half::bf16;

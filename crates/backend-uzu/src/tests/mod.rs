@@ -1,5 +1,7 @@
-#![cfg(test)]
-#![allow(dead_code)]
+#![allow(dead_code)] // TODO
+
+#[cfg(not(backend = "cpu"))]
+compile_error!("uzu tests require cpu backend");
 
 pub extern crate test;
 

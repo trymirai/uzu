@@ -1,4 +1,4 @@
-#![cfg(metal_backend)]
+#![cfg(backend = "metal")]
 
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};

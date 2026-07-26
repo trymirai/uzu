@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 
 use half::{bf16, f16};
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use ndarray::{Array, Array3};
 use num_traits::Float;
 use proc_macros::uzu_test;
@@ -18,7 +18,7 @@ use crate::{
         helpers::{alloc_allocation_with_data, allocation_to_vec},
     },
 };
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use crate::{
     backends::metal::Metal,
     data_type::DataType,
@@ -274,7 +274,7 @@ fn test_large_bf16() {
     test_large_internal::<bf16>();
 }
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 fn apply_copies_3d<T: Clone>(
     array: &mut Array3<T>,
     copies: &[Copy],
@@ -291,7 +291,7 @@ fn apply_copies_3d<T: Clone>(
     }
 }
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 #[uzu_test]
 fn test_sparse_random_pattern_f32() {
     let context = match <Metal as Backend>::Context::new() {

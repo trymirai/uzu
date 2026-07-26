@@ -1,7 +1,7 @@
 use num_traits::Float;
 
 use super::Shape;
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use crate::backends::metal::{GemmDispatchPath, Metal, MetalContext};
 use crate::{
     array::ArrayElement,
@@ -18,7 +18,7 @@ use crate::{
     tests::helpers::{alloc_allocation_with_data, allocation_to_vec},
 };
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 pub type MetalMatmulKernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 
 #[derive(Debug, Clone, Copy)]
@@ -193,7 +193,7 @@ pub fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     })
 }
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 pub fn run_metal<T: ArrayElement + Float>(
     context: &MetalContext,
     kernel: &mut MetalMatmulKernel,

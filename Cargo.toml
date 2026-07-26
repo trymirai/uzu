@@ -225,7 +225,7 @@ needless_range_loop = "allow" # TODO: remove
 missing_safety_doc = "allow" # TODO: maybe remove?
 
 [workspace.metadata.dinghy]
-forward-cfgs = ["metal_backend", "grammar_xgrammar"]
+forward-cfgs = ["backend", "grammar"]
 
 [workspace.metadata.dinghy.test-attribute-aliases]
 uzu_test = "dinghy_apple_runner_macros::test_case"
