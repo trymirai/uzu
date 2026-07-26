@@ -1,4 +1,4 @@
-#![cfg(metal_backend)]
+#![cfg(backend = "metal")]
 
 use half::bf16;
 use proc_macros::uzu_test;

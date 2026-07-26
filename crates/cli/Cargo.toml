@@ -13,7 +13,7 @@ name = "cli"
 path = "src/main.rs"
 
 [features]
-default = ["backend-metal", "capability-grammar", "capability-cli"]
+default = ["backend-cpu", "backend-metal", "capability-grammar", "capability-cli"]
 backend-cpu = ["uzu/backend-cpu"]
 backend-metal = ["uzu/backend-metal"]
 capability-grammar = ["uzu/capability-grammar"]

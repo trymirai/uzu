@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use proptest::prelude::*;
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use crate::backends::metal::Metal;
 use crate::{
     backends::{
@@ -18,7 +18,7 @@ pub fn kernel_data_type() -> impl Strategy<Value = DataType> {
 
 pub struct TestContextes {
     pub cpu: Arc<<Cpu as Backend>::Context>,
-    #[cfg(metal_backend)]
+    #[cfg(backend = "metal")]
     pub metal: Arc<<Metal as Backend>::Context>,
 }
 
@@ -26,7 +26,7 @@ impl TestContextes {
     pub fn new() -> TestContextes {
         TestContextes {
             cpu: <Cpu as Backend>::Context::new().expect("Failed to create Cpu context"),
-            #[cfg(metal_backend)]
+            #[cfg(backend = "metal")]
             metal: <Metal as Backend>::Context::new().expect("Failed to create Metal context"),
         }
     }
@@ -34,7 +34,7 @@ impl TestContextes {
 
 pub struct TestResults<T> {
     pub cpu: T,
-    #[cfg(metal_backend)]
+    #[cfg(backend = "metal")]
     pub metal: T,
 }
 
@@ -47,7 +47,7 @@ macro_rules! for_each_context {
                 let $CONTEXT_NAME = $CONTEXTES.cpu.as_ref();
                 $body
             })?,
-            #[cfg(metal_backend)]
+            #[cfg(backend = "metal")]
             metal: ({
                 type $CONTEXT_TYPE =
                     <backend_uzu::backends::metal::Metal as backend_uzu::backends::common::Backend>::Context;
@@ -69,7 +69,7 @@ pub trait ComparableTestResults {
 
 impl<T: ComparableTestResults> TestResults<T> {
     pub fn compare_results(&self) -> Result<(), TestCaseError> {
-        #[cfg(metal_backend)]
+        #[cfg(backend = "metal")]
         T::compare("metal", &self.metal, &self.cpu)?;
 
         Ok(())
