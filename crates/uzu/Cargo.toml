@@ -67,7 +67,6 @@ anyhow.workspace = true
 bitflags.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
-rodio.workspace = true
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }
@@ -79,13 +78,14 @@ wasm-bindgen = { workspace = true, optional = true }
 serde-wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
 tsify = { workspace = true, optional = true }
-iocraft = { workspace = true, optional = true }
-indoc = { workspace = true, optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+iocraft = { workspace = true, optional = true }
+indoc = { workspace = true, optional = true }
 backend-remote.workspace = true
 nagare.workspace = true
 download-manager.workspace = true
+rodio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

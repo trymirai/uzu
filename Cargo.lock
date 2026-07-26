@@ -486,11 +486,8 @@ dependencies = [
  "indicatif",
  "is_close",
  "itertools 0.14.0",
- "libc",
  "libm",
  "memmap2",
- "minijinja",
- "minijinja-contrib",
  "monostate",
  "mtl-rs",
  "ndarray",
@@ -507,7 +504,6 @@ dependencies = [
  "rand 0.10.2",
  "rand_distr",
  "rangemap",
- "regex",
  "rhai",
  "rstest",
  "rustix",
@@ -516,7 +512,6 @@ dependencies = [
  "serde_json",
  "shoji",
  "syn 2.0.118",
- "sysinfo",
  "tempfile",
  "test-runner",
  "test-tag",
@@ -527,7 +522,6 @@ dependencies = [
  "walkdir",
  "xgrammar-rs",
  "xxhash-rust",
- "zerocopy",
 ]
 
 [[package]]
