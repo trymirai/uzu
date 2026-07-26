@@ -137,6 +137,7 @@ impl EncodingTrait for HarmonyEncodingImpl {
             .encoding
             .render_conversation_for_completion(&conversation, HarmonyRole::Assistant, None)
             .map_err(|_| Error::UnableToRenderConversation)?;
+        let token_ids = canonicalize_tool_call_headers(&self.encoding, token_ids, &self.special_tokens)?;
         for token_id in token_ids {
             let token = resolve_token(&self.encoding, token_id)?;
             self.state.tokens.push(token);
@@ -231,6 +232,56 @@ impl HarmonyEncodingImpl {
 
         Ok(())
     }
+}
+
+/// openai_harmony (like the community HF chat template) re-renders an assistant tool-call header as
+/// `assistant to=functions.x<|channel|>commentary json`, but the model itself generates — and OpenAI's harmony
+/// reference replays — `assistant<|channel|>commentary to=functions.x <|constrain|>json`. Replaying the model's
+/// turns in the non-native order makes it progressively garble its own tool-call headers over multi-turn tool
+/// exchanges (repeated `to=` fragments, misplaced channel markers), so rewrite each re-rendered tool-call header
+/// into the form the model natively emits. Tool-result headers (`functions.x to=assistant<|channel|>commentary`)
+/// already match the reference and stay untouched.
+fn canonicalize_tool_call_headers(
+    encoding: &HarmonyEncoding,
+    token_ids: Vec<TokenId>,
+    special_tokens: &SpecialTokens,
+) -> Result<Vec<TokenId>, Error> {
+    let mut result: Vec<TokenId> = Vec::with_capacity(token_ids.len());
+    let mut index = 0;
+    while index < token_ids.len() {
+        let token_id = token_ids[index];
+        result.push(token_id);
+        index += 1;
+        if token_id != special_tokens.start {
+            continue;
+        }
+
+        let Some(header_length) = token_ids[index..].iter().position(|id| *id == special_tokens.message) else {
+            continue;
+        };
+        let header_text = token_ids[index..index + header_length]
+            .iter()
+            .map(|id| resolve_token(encoding, *id).map(|token| token.value))
+            .collect::<Result<String, Error>>()?;
+
+        let Some(rest) = header_text.strip_prefix("assistant to=") else {
+            continue;
+        };
+        let Some((recipient, after_channel)) = rest.split_once(TOKEN_CHANNEL) else {
+            continue;
+        };
+        let channel_end = after_channel.find(|c: char| c.is_whitespace() || c == '<').unwrap_or(after_channel.len());
+        let channel = &after_channel[..channel_end];
+        if recipient.is_empty() || channel.is_empty() {
+            continue;
+        }
+
+        let header =
+            format!("{ROLE_ASSISTANT}{TOKEN_CHANNEL}{channel} to={recipient} {TOKEN_CONSTRAIN}{CONTENT_TYPE_JSON}");
+        result.extend(encoding.tokenizer().encode_with_special_tokens(&header));
+        index += header_length;
+    }
+    Ok(result)
 }
 
 /// gpt-oss sometimes drops or misplaces the `<|channel|>` token when it opens a tool-call header  right after a tool response,

@@ -228,11 +228,14 @@ fn test_encoding_gpt_oss() {
     );
 }
 
-/// Multi-turn tool calling: prior tool calls re-rendered into the prompt must match the reference
-/// gpt-oss chat template byte for byte (`to=` before the channel, plain `json` content type, the
-/// message closed by `<|call|>`) — the form the model expects to see in its context. Deviations
-/// (e.g. `<|constrain|>json` rendered as a special token) push the follow-up turn out of
-/// distribution and make the model more likely to emit malformed tool-call headers.
+/// Multi-turn tool calling: prior tool calls must be re-rendered in the form the model itself
+/// generates — `<|channel|>commentary to=functions.x <|constrain|>json<|message|>…<|call|>` — not the
+/// `to=` -before-channel, plain-`json` form the community HF chat template (and openai_harmony's
+/// renderer) produce. Replaying the model's turns in the non-native order makes gpt-oss-20b
+/// progressively garble its own tool-call headers over multi-turn tool exchanges (repeated `to=`
+/// fragments, misplaced channel markers) until the reply loop dead-ends; with native-order replay the
+/// same conversation runs to a clean final answer. Tool-result headers
+/// (`functions.x to=assistant<|channel|>commentary`) match the model's expectations as rendered.
 #[test]
 fn test_encoding_gpt_oss_tool_call_rerender() {
     let tokenizer_directory = tokenizer_directory("openai_gpt-oss-20b");
@@ -275,7 +278,7 @@ fn test_encoding_gpt_oss_tool_call_rerender() {
         "You are a helpful assistant<|end|>",
         "<|start|>user<|message|>What time is it now?<|end|>",
         "<|start|>assistant<|channel|>analysis<|message|>Need the current time.<|end|>",
-        "<|start|>assistant to=functions.get_current_time<|channel|>commentary json<|message|>{}<|call|>",
+        "<|start|>assistant<|channel|>commentary to=functions.get_current_time <|constrain|>json<|message|>{}<|call|>",
         "<|start|>functions.get_current_time to=assistant<|channel|>commentary<|message|>{\"time\":\"17:03\"}<|end|>",
         "<|start|>assistant",
     );

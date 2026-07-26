@@ -52,7 +52,7 @@ fn get_current_temperature(
 ) -> Temperature {
     let _ = (latitude, longitude);
     Temperature {
-        temperature: 25.9,
+        temperature: 25.0,
     }
 }
 
@@ -78,7 +78,7 @@ struct TestCase {
 /// Inputs and expected outputs that every model must pass.
 const TEST_CASES: &[TestCase] = &[
     TestCase {
-        prompt: "What is the time now?",
+        prompt: "What is the time now in 24-hour format?",
         tools: &[get_current_time::definition],
         expected_tools: &["get_current_time"],
         expected_fragments: &["17:03"],
@@ -92,7 +92,7 @@ const TEST_CASES: &[TestCase] = &[
         expected_fragments: &["25"],
     },
     TestCase {
-        prompt: "What time is it now and what is the temperature at my current location?",
+        prompt: "What time is it now in 24-hour format and what is the temperature at my current location?",
         tools: &[get_current_time::definition, get_current_location::definition, get_current_temperature::definition],
         expected_tools: &["get_current_time", "get_current_location", "get_current_temperature"],
         expected_fragments: &["17:03", "25"],
