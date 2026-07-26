@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::backends::{
-    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DeviceCapabilities},
     cpu::{Cpu, command_buffer::CpuCommandBufferInitial, dense_buffer::CpuBuffer, error::CpuError},
 };
 
@@ -82,7 +82,7 @@ impl Context for CpuContext {
         Err(CpuError::NotSupported)
     }
 
-    fn sparse_buffers_supported(&self) -> bool {
-        false
+    fn device_capabilities(&self) -> DeviceCapabilities {
+        DeviceCapabilities::empty()
     }
 }

@@ -1,9 +1,8 @@
-use super::{d_ops::MatmulDOps, matmul_b::MatmulB};
+use super::{d_ops::MatmulDOps, matmul_a::MatmulA, matmul_b::MatmulB};
 use crate::backends::common::{Allocation, Backend, BufferArg};
 
 pub struct MatmulArguments<'a, 'b, 'd, B: Backend, TB: BufferArg<'b, B> = &'b Allocation<B>> {
-    pub a: &'a Allocation<B>,
-    pub a_offset: usize,
+    pub a: MatmulA<'a, B>,
     pub b: MatmulB<'b, B, TB>,
     pub b_leading_dimension: Option<u32>,
     pub b_transpose: bool,

@@ -8,7 +8,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             Kernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout, int_spec::IntSpec, mlx_spec::MLXSpec},
@@ -208,10 +208,10 @@ fn load_biases<B: Backend>(
         .transpose()?)
 }
 
-impl<B: Backend> Linear<B> for LinearMatmul<B> {
-    fn encode(
+impl<B: Backend> LinearMatmul<B> {
+    pub(super) fn encode_with_a(
         &self,
-        input: Allocation<B>,
+        a: MatmulA<'_, B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
@@ -270,8 +270,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
 
         self.kernel.lock().encode(
             MatmulArguments {
-                a: &input,
-                a_offset: 0,
+                a,
                 b,
                 b_leading_dimension: None,
                 b_transpose: true,
@@ -286,5 +285,23 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         )?;
 
         Ok(output)
+    }
+}
+
+impl<B: Backend> Linear<B> for LinearMatmul<B> {
+    fn encode(
+        &self,
+        input: Allocation<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        self.encode_with_a(
+            MatmulA::FullPrecision {
+                values: &input,
+                offset: 0,
+            },
+            batch_dim,
+            encoder,
+        )
     }
 }

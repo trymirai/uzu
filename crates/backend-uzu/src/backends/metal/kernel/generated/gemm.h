@@ -5,6 +5,11 @@
 using namespace metal;
 
 namespace uzu::gemm {
+enum class GemmAPrologueKind : uint32_t {
+  FullPrecision = 0,
+  Int8Symmetric = 1,
+};
+
 enum class GemmBPrologueKind : uint32_t {
   FullPrecision = 0,
   ScaleBiasDequant = 1,

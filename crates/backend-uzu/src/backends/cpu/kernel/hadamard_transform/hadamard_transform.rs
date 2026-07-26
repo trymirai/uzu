@@ -7,7 +7,7 @@ use crate::{
     backends::common::gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
 };
 
-fn hadamard_transform(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE]) {
+pub(crate) fn hadamard_transform(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE]) {
     let mut stride = 1;
     while stride < HADAMARD_TRANSFORM_BLOCK_SIZE {
         for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {

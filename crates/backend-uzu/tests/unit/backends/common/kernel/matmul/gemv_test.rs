@@ -14,7 +14,7 @@ use crate::{
             gpu_types::QuantizationMethod,
             kernel::{
                 Kernels,
-                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -77,8 +77,10 @@ fn run_gemv<'a, B: Backend, T: ArrayElement + Float>(
     kernel
         .encode(
             MatmulArguments {
-                a,
-                a_offset: 0,
+                a: MatmulA::FullPrecision {
+                    values: a,
+                    offset: 0,
+                },
                 b,
                 b_leading_dimension: None,
                 b_transpose: true,

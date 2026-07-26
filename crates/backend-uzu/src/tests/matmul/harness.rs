@@ -10,7 +10,7 @@ use crate::{
             AllocationType, Backend, Context, Encoder,
             kernel::{
                 Kernels,
-                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -157,8 +157,10 @@ fn run<B: Backend, T: ArrayElement + Float>(
     encode(
         kernel,
         MatmulArguments {
-            a: &a_allocation,
-            a_offset: 0,
+            a: MatmulA::FullPrecision {
+                values: &a_allocation,
+                offset: 0,
+            },
             b: MatmulB::FullPrecision {
                 b: &b_allocation,
             },

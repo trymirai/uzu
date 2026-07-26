@@ -8,7 +8,7 @@ use crate::{
         gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
         kernel::{
             FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::{
@@ -547,8 +547,10 @@ impl<B: Backend> Embedding<B> {
                     },
             } => {
                 let arguments = MatmulArguments {
-                    a: input_allocation,
-                    a_offset: 0,
+                    a: MatmulA::FullPrecision {
+                        values: input_allocation,
+                        offset: 0,
+                    },
                     b: MatmulB::FullPrecision {
                         b: weights,
                     },
@@ -631,8 +633,10 @@ impl<B: Backend> Embedding<B> {
                     .lock()
                     .encode(
                         MatmulArguments {
-                            a: input_allocation,
-                            a_offset: 0,
+                            a: MatmulA::FullPrecision {
+                                values: input_allocation,
+                                offset: 0,
+                            },
                             b,
                             b_leading_dimension: None,
                             b_transpose: true,
@@ -707,8 +711,10 @@ impl<B: Backend> Embedding<B> {
             .lock()
             .encode(
                 MatmulArguments {
-                    a: input,
-                    a_offset: 0,
+                    a: MatmulA::FullPrecision {
+                        values: input,
+                        offset: 0,
+                    },
                     b: MatmulB::FullPrecision {
                         b: weights,
                     },

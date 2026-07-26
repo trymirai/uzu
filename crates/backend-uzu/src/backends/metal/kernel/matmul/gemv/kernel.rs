@@ -12,7 +12,7 @@ use crate::{
                 HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
-            kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
+            kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
         },
         metal::{Metal, context::MetalContext, device_tier::DeviceTier, kernel::GemvMetalKernel},
     },
@@ -49,7 +49,7 @@ impl GemvSpecialization {
         output_data_type: DataType,
         device_tier: DeviceTier,
     ) -> Option<GemvSpecialization> {
-        if !args.b_transpose {
+        if !args.b_transpose || !matches!(args.a, MatmulA::FullPrecision { .. }) {
             return None;
         }
         let is_quant = !matches!(args.b, MatmulB::FullPrecision { .. });
@@ -185,7 +185,6 @@ impl GemvDispatch {
 
         let MatmulArguments {
             a,
-            a_offset,
             b,
             d,
             m,
@@ -194,6 +193,16 @@ impl GemvDispatch {
             gather_indices,
             ..
         } = arguments;
+        let MatmulA::FullPrecision {
+            values: a,
+            offset: a_offset,
+        } = a
+        else {
+            return Err(MatmulError::IncompatibleA {
+                path: "Gemv",
+                reason: "prepared int8 activations require GEMM",
+            });
+        };
 
         let group_count_x = n.div_ceil(rows_per_threadgroup(
             specialization.k_split,
