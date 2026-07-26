@@ -86,26 +86,25 @@ impl Session {
         })?;
         let tokenizer = Arc::new(tokenizer);
 
-        let encoding =
-            match encoding_config {
-                Some(EncodingConfig::Hanashi {
-                    config,
-                }) => HanashiEncodingImpl::new(config, tokenizer.clone()).map(|enc| Encoding::Hanashi(enc)).map_err(
-                    |err| ChatSessionError::Loading {
-                        message: format!("can not create harmony encoding: {err}"),
-                    },
-                ),
-                Some(EncodingConfig::Harmony {
-                    config,
-                }) => HarmonyEncodingImpl::new(config, tokenizer_location).map(|enc| Encoding::Harmony(enc)).map_err(
-                    |err| ChatSessionError::Loading {
-                        message: format!("can not create harmony encoding: {err}"),
-                    },
-                ),
-                None => Err(ChatSessionError::Loading {
-                    message: "can not get encoding config".to_string(),
-                }),
-            }?;
+        let encoding = match encoding_config {
+            Some(EncodingConfig::Hanashi {
+                config,
+            }) => HanashiEncodingImpl::new(config, tokenizer.clone()).map(Encoding::Hanashi).map_err(|err| {
+                ChatSessionError::Loading {
+                    message: format!("can not create harmony encoding: {err}"),
+                }
+            }),
+            Some(EncodingConfig::Harmony {
+                config,
+            }) => HarmonyEncodingImpl::new(config, tokenizer_location).map(Encoding::Harmony).map_err(|err| {
+                ChatSessionError::Loading {
+                    message: format!("can not create harmony encoding: {err}"),
+                }
+            }),
+            None => Err(ChatSessionError::Loading {
+                message: "can not get encoding config".to_string(),
+            }),
+        }?;
 
         let instance = backend.instance(reference.clone(), config, tokenizer).await.map_err(|error| {
             ChatSessionError::Backend {
