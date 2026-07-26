@@ -1079,13 +1079,23 @@ public struct ChatReplyConfig: Equatable, Hashable, Codable {
     public var tokenLimit: UInt32?
     public var samplingPolicy: SamplingPolicy
     public var grammar: Grammar?
+    /**
+     * Maximum number of automatic tool-call turns per reply.
+     * `None` falls back to the session default.
+     */
+    public var toolTurnLimit: UInt32?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(tokenLimit: UInt32?, samplingPolicy: SamplingPolicy, grammar: Grammar?) {
+    public init(tokenLimit: UInt32?, samplingPolicy: SamplingPolicy, grammar: Grammar?, 
+        /**
+         * Maximum number of automatic tool-call turns per reply.
+         * `None` falls back to the session default.
+         */toolTurnLimit: UInt32?) {
         self.tokenLimit = tokenLimit
         self.samplingPolicy = samplingPolicy
         self.grammar = grammar
+        self.toolTurnLimit = toolTurnLimit
     }
 
     
@@ -1125,6 +1135,15 @@ public func withTokenLimit(tokenLimit: UInt32?) -> ChatReplyConfig  {
 })
 }
     
+public func withToolTurnLimit(toolTurnLimit: UInt32?) -> ChatReplyConfig  {
+    return try!  FfiConverterTypeChatReplyConfig_lift(try! rustCall() {
+    uniffi_shoji_fn_method_chatreplyconfig_with_tool_turn_limit(
+            FfiConverterTypeChatReplyConfig_lower(self),
+        FfiConverterOptionUInt32.lower(toolTurnLimit),$0
+    )
+})
+}
+    
 
     
 }
@@ -1142,7 +1161,8 @@ public struct FfiConverterTypeChatReplyConfig: FfiConverterRustBuffer {
             try ChatReplyConfig(
                 tokenLimit: FfiConverterOptionUInt32.read(from: &buf), 
                 samplingPolicy: FfiConverterTypeSamplingPolicy.read(from: &buf), 
-                grammar: FfiConverterOptionTypeGrammar.read(from: &buf)
+                grammar: FfiConverterOptionTypeGrammar.read(from: &buf), 
+                toolTurnLimit: FfiConverterOptionUInt32.read(from: &buf)
         )
     }
 
@@ -1150,6 +1170,7 @@ public struct FfiConverterTypeChatReplyConfig: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.tokenLimit, into: &buf)
         FfiConverterTypeSamplingPolicy.write(value.samplingPolicy, into: &buf)
         FfiConverterOptionTypeGrammar.write(value.grammar, into: &buf)
+        FfiConverterOptionUInt32.write(value.toolTurnLimit, into: &buf)
     }
 }
 
