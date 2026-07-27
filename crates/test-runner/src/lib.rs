@@ -20,12 +20,12 @@ pub use harness::{UzuTest, uzu_harness};
 macro_rules! for_each_backend {
     (|$B:ident| $body:expr) => {{
         {
-            type $B = backend_uzu::backends::cpu::Cpu;
+            type $B = crate::backends::cpu::Cpu;
             $body
         }
         #[cfg(backend = "metal")]
         {
-            type $B = backend_uzu::backends::metal::Metal;
+            type $B = crate::backends::metal::Metal;
             $body
         }
     }};
@@ -36,12 +36,12 @@ macro_rules! for_each_non_cpu_backend {
     (|$B:ident| $body:expr) => {{
         #[cfg(backend = "metal")]
         {
-            type $B = backend_uzu::backends::metal::Metal;
+            type $B = crate::backends::metal::Metal;
             $body
         }
         {
             if false {
-                type $B = backend_uzu::backends::cpu::Cpu;
+                type $B = crate::backends::cpu::Cpu;
                 $body
             }
         }
