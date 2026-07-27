@@ -1,16 +1,16 @@
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use std::{mem::size_of, time::Duration};
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use criterion::Criterion;
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use half::bf16;
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use proc_macros::uzu_bench;
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use crate::{
     backends::{common::Allocation, metal::Metal},
     tests::{cold_pool::ColdPool, matmul::iter_encode_loop_named},
@@ -128,14 +128,14 @@ fn test_conv_tree_scan() {
     assert_eq_float(&baseline.1[state.clone()], &perturbed.1[state], 0.0, "sibling state");
 }
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 struct Buffers {
     input: Allocation<Metal>,
     output: Allocation<Metal>,
     suffix_state: Allocation<Metal>,
 }
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 #[uzu_bench]
 fn bench_conv_tree_scan(c: &mut Criterion) {
     const BENCH_CONV_DIM: usize = 10_240;

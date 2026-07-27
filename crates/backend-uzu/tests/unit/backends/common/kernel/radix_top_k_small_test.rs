@@ -1,10 +1,10 @@
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use std::time::Instant;
 
 use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use crate::backends::metal::Metal;
 use crate::{
     backends::{
@@ -109,7 +109,7 @@ fn radix_top_k_small_matches_cpu() {
     }
 }
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 #[uzu_test]
 #[ignore = "benchmark"]
 fn benchmark_radix_top_k_small() {

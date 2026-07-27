@@ -1,4 +1,4 @@
-#![cfg(metal_backend)]
+#![cfg(backend = "metal")]
 
 use std::time::Duration;
 

@@ -1,10 +1,10 @@
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use std::{cell::OnceCell, sync::Arc};
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use crate::backends::{common::Context, metal::MetalContext};
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 pub fn shared_metal_context() -> Arc<MetalContext> {
     thread_local! {
         static CTX: OnceCell<Arc<MetalContext>> = const { OnceCell::new() };

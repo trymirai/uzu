@@ -5,7 +5,10 @@ use std::{fs, future::Future, path::Path, pin::Pin};
 pub use config::Config;
 use shoji::{
     traits::Registry as RegistryTrait,
-    types::model::{Model, ModelAccessibility, ModelReference, ModelSpecialization},
+    types::{
+        basic::Value,
+        model::{Model, ModelAccessibility, ModelReference, ModelSpecialization},
+    },
 };
 
 use crate::registry::RegistryError;
@@ -99,7 +102,22 @@ impl Registry {
                     path: path.to_string_lossy().to_string(),
                 },
             },
-            vec![],
+            load_encodings(&path),
         )
+    }
+}
+
+fn load_encodings(model_path: &Path) -> Vec<Value> {
+    let Ok(text) = fs::read_to_string(model_path.join("encoding.json")) else {
+        return vec![];
+    };
+    let parsed = serde_json::from_str::<serde_json::Value>(&text);
+    match parsed {
+        Ok(serde_json::Value::Array(entries)) => entries.into_iter().map(Value::from).collect(),
+        Ok(entry) => vec![Value::from(entry)],
+        Err(error) => {
+            tracing::warn!(?error, path = %model_path.display(), "ignoring invalid encoding.json");
+            vec![]
+        },
     }
 }

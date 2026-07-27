@@ -3,7 +3,7 @@ use std::mem::size_of_val;
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use crate::backends::metal::{GemmDispatchPath, Metal, MetalContext};
 use crate::{
     array::ArrayElement,
@@ -261,7 +261,7 @@ pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
     allocation_to_vec::<Cpu, T>(&buffers.y)
 }
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 pub fn run_quant_metal<T: ArrayElement + Float>(
     context: &MetalContext,
     input: &QuantInput<T>,
