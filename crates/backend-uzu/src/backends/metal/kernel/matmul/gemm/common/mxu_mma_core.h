@@ -399,15 +399,24 @@ struct MxuMmaCore {
         );
 
         uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> chunk_products;
-        auto right_tile = load_int8_weight_tile<ALIGNED_N>(
-            b_packed_simdgroup,
-            k_element_offset,
-            b_row_stride_bytes,
-            simdgroup_limit_n,
-            position,
-            thread_context.simd_lane_id
-        );
-        Ops::template fragment_mm<false, true>(chunk_products, activation_tile, right_tile);
+        if constexpr (BITS == 4 && ALIGNED_N) {
+          Ops::template fragment_mma_int8_device_weights<false, metal::int4b_format>(
+              chunk_products,
+              activation_tile,
+              b_packed_simdgroup + (k_element_offset >> 1),
+              b_row_stride_bytes * 2
+          );
+        } else {
+          auto right_tile = load_int8_weight_tile<ALIGNED_N>(
+              b_packed_simdgroup,
+              k_element_offset,
+              b_row_stride_bytes,
+              simdgroup_limit_n,
+              position,
+              thread_context.simd_lane_id
+          );
+          Ops::template fragment_mm<false, true>(chunk_products, activation_tile, right_tile);
+        }
 
         const uint act_group_index = k_offset_act_groups + uint(weight_group * act_chunks_per_weight_group + act_chunk);
         ActivationLineCache activation_scales;
