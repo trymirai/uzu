@@ -8,6 +8,39 @@ use crate::{
     },
 };
 
+/// Invokes `$body` once per available backend, with `$B` bound to each backend type.
+macro_rules! for_each_backend {
+    (|$B:ident| $body:expr) => {{
+        {
+            type $B = crate::backends::cpu::Cpu;
+            $body
+        }
+        #[cfg(backend = "metal")]
+        {
+            type $B = crate::backends::metal::Metal;
+            $body
+        }
+    }};
+}
+pub(crate) use for_each_backend;
+
+macro_rules! for_each_non_cpu_backend {
+    (|$B:ident| $body:expr) => {{
+        #[cfg(backend = "metal")]
+        {
+            type $B = crate::backends::metal::Metal;
+            $body
+        }
+        {
+            if false {
+                type $B = crate::backends::cpu::Cpu;
+                $body
+            }
+        }
+    }};
+}
+pub(crate) use for_each_non_cpu_backend;
+
 pub fn allocation_size_bytes<T>(elements_count: usize) -> usize {
     elements_count * size_of::<T>()
 }

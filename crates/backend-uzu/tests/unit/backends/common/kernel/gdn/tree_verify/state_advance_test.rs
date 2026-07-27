@@ -8,7 +8,6 @@ use num_traits::Float;
 #[cfg(backend = "metal")]
 use proc_macros::uzu_bench;
 use proc_macros::uzu_test;
-use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::ArrayElement,
@@ -18,7 +17,7 @@ use crate::{
     },
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation_with_data, allocation_to_vec},
+        helpers::{alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
     },
 };
 #[cfg(backend = "metal")]
