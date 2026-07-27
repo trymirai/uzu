@@ -429,6 +429,21 @@ impl ChatSession {
             }
         }
 
+        // a canceled turn can leave the stored assistant tool-call reply without a matching tool result;
+        // drop it so the history stays a valid tool-call sequence
+        if cancel_token.is_cancelled() {
+            let mut messages_guard = self.messages.lock().await;
+            let unresolved = messages_guard.last().is_some_and(|message| {
+                message.role == (ChatRole::Assistant {})
+                    && message.content.iter().any(|block| {
+                        matches!(block, ChatContentBlock::ToolCall { .. } | ChatContentBlock::ToolCallCandidate { .. })
+                    })
+            });
+            if unresolved {
+                messages_guard.pop();
+            }
+        }
+
         *self.state.lock().await = ChatSessionState::Idle;
     }
 
