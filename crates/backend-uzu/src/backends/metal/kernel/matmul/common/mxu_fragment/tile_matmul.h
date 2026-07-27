@@ -2,7 +2,7 @@
 
 // MPP has no valid 16x16x16 op; fragment_mma pairs fragments into 16x32.
 template <
-    bool ACCUMULATE,
+    MatmulMode MODE,
     typename CType,
     typename AType,
     typename BType,
@@ -21,8 +21,7 @@ METAL_FUNC static void mma_impl(
       transpose_a,
       transpose_b,
       RELAXED,
-      ACCUMULATE ? mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate
-                 : mpp::tensor_ops::matmul2d_descriptor::mode::multiply
+      MODE
   );
 
   mpp::tensor_ops::matmul2d<descriptor, metal::execution_simdgroup> matmul_op;
@@ -36,7 +35,7 @@ METAL_FUNC static void mma_impl(
 
   marshal_inputs(cooperative_left, cooperative_right);
 
-  if constexpr (ACCUMULATE) {
+  if constexpr (MODE == MatmulMode::multiply_accumulate) {
     load_paired_vectors(cooperative_output, output_0, output_1);
   }
 
@@ -46,7 +45,7 @@ METAL_FUNC static void mma_impl(
 }
 
 template <
-    bool ACCUMULATE,
+    MatmulMode MODE,
     typename CType,
     typename AType,
     typename BType,
@@ -61,7 +60,7 @@ METAL_FUNC static void matmul(
     const thread ThreadVector<BType>& right_col_1,
     metal::bool_constant<transpose_b>
 ) {
-  mma_impl<ACCUMULATE, CType, AType, BType, transpose_a, transpose_b>(
+  mma_impl<MODE, CType, AType, BType, transpose_a, transpose_b>(
       output_col_0,
       output_col_1,
       [&](thread auto& cooperative_left, thread auto& cooperative_right) {
@@ -75,7 +74,7 @@ METAL_FUNC static void matmul(
 }
 
 template <
-    bool ACCUMULATE,
+    MatmulMode MODE,
     typename CType,
     typename AType,
     typename BType,
@@ -91,7 +90,7 @@ METAL_FUNC static void matmul(
     metal::bool_constant<transpose_b>
 ) {
   static_assert(RELAXED, "strict MXU row-pairing is not implemented");
-  mma_impl<ACCUMULATE, CType, AType, BType, transpose_a, transpose_b>(
+  mma_impl<MODE, CType, AType, BType, transpose_a, transpose_b>(
       output_row_0,
       output_row_1,
       [&](thread auto& cooperative_left, thread auto& cooperative_right) {
