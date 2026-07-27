@@ -183,11 +183,21 @@ impl ChatSession {
         if definitions.is_empty() {
             return Ok(());
         }
-        if self.tool_registry.is_none() {
+        let Some(registry) = self.tool_registry.as_ref() else {
             return Err(ChatSessionError::Backend {
                 message: "Tool calls are not supported by this model".to_string(),
             });
-        }
+        };
+
+        // register first so the owned set covers both prior and incoming definitions;
+        // an incoming name must displace a stale caller-provided declaration too
+        let owned_namespaces = {
+            let mut registry_guard = registry.lock().await;
+            for def in definitions {
+                registry_guard.add_function(def)
+            }
+            registry_guard.get_namespaces()
+        };
 
         let mut messages_guard = self.messages.lock().await;
         let messages_empty = messages_guard.is_empty();
@@ -195,7 +205,18 @@ impl ChatSession {
             messages_guard.retain_mut(|message| {
                 if message.role == (ChatRole::Developer {}) {
                     let original_len = message.content.len();
-                    message.content.retain(|content| !matches!(content, ChatContentBlock::Tools { .. }));
+                    // strip only registry-owned declarations; callers may declare
+                    // tools they execute themselves, which must stay visible
+                    message.content.retain_mut(|content| {
+                        let ChatContentBlock::Tools {
+                            namespaces,
+                        } = content
+                        else {
+                            return true;
+                        };
+                        remove_owned_tools(namespaces, &owned_namespaces);
+                        !namespaces.is_empty()
+                    });
                     original_len == message.content.len() || !message.content.is_empty()
                 } else {
                     true
@@ -210,13 +231,6 @@ impl ChatSession {
                 Instance::Token(session) => session.reset().await?,
                 Instance::Message(session) => session.reset().await?,
             };
-        }
-
-        if let Some(registry) = self.tool_registry.as_mut() {
-            let mut registry_guard = registry.lock().await;
-            for def in definitions {
-                registry_guard.add_function(def)
-            }
         }
 
         Ok(())
@@ -641,6 +655,29 @@ fn find_tools_definitions(messages: &mut [ChatMessage]) -> Option<&mut Vec<ToolN
             _ => None,
         })
     })
+}
+
+fn remove_owned_tools(
+    namespaces: &mut Vec<ToolNamespace>,
+    owned: &[ToolNamespace],
+) {
+    for namespace in namespaces.iter_mut() {
+        let Some(owned_namespace) = owned.iter().find(|owned_ns| owned_ns.name == namespace.name) else {
+            continue;
+        };
+        namespace.tools.retain(|tool| {
+            let ToolDescription::Function {
+                tool_function,
+            } = tool;
+            !owned_namespace.tools.iter().any(|owned_tool| {
+                let ToolDescription::Function {
+                    tool_function: owned_function,
+                } = owned_tool;
+                owned_function.name == tool_function.name
+            })
+        });
+    }
+    namespaces.retain(|namespace| !namespace.tools.is_empty());
 }
 
 fn merge_tool_namespaces(
