@@ -56,8 +56,8 @@ impl Content {
                             value: Some(value),
                         } => {
                             match serde_json::from_value::<ToolCall>(value.clone()) {
-                                Ok(tool_call) => tool_calls.push(ChatContentBlock::ToolCall {
-                                    value: tool_call,
+                                Ok(value) => tool_calls.push(ChatContentBlock::ToolCall {
+                                    value,
                                 }),
                                 // Llama 3.2 may echo a result as a pseudo call such as `{"time":"17:03","return":"time"}`.
                                 // Only treat that positively identified shape as text;

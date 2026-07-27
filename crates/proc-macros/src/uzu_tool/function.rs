@@ -86,13 +86,10 @@ fn expand_tool_function(mut func: ItemFn) -> syn::Result<TokenStream2> {
     };
     let output_expr = match &ok_type {
         Some(_) => quote! {
-            let json = #nagare::__private::serde_json::to_value(&result)?;
-            ::core::result::Result::Ok(::core::convert::Into::into(json))
+            #nagare::tool::func_def::serialize_result(&result)
         },
         None => quote! {
-            ::core::result::Result::Ok(::core::convert::Into::into(
-                #nagare::__private::serde_json::Value::Null,
-            ))
+            ::core::result::Result::Ok(#nagare::tool::func_def::null_result())
         },
     };
 
@@ -122,8 +119,7 @@ fn expand_tool_function(mut func: ItemFn) -> syn::Result<TokenStream2> {
                 #nagare::tool::func_def::ErrorFuture,
             >
             {
-                let args: #nagare::__private::serde_json::Value =
-                    ::core::convert::TryInto::try_into(args)?;
+                let args = #nagare::tool::func_def::parse_arguments(args)?;
                 #(#arg_parsing)*
                 #call_stmt
                 #output_expr

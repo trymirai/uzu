@@ -138,11 +138,7 @@ fn expand_tool_closure(tool: ToolClosure) -> syn::Result<TokenStream2> {
     let serialize_result = return_type.is_none() || ok_type.is_some();
     let output_expr = if serialize_result {
         quote! {
-            let json = #nagare::__private::serde_json::to_value(&__uzu_result)?;
-            ::core::result::Result::<
-                #nagare::tool::func_def::Value,
-                #nagare::tool::func_def::ErrorFuture,
-            >::Ok(::core::convert::Into::into(json))
+            #nagare::tool::func_def::serialize_result(&__uzu_result)
         }
     } else {
         quote! {
@@ -150,7 +146,7 @@ fn expand_tool_closure(tool: ToolClosure) -> syn::Result<TokenStream2> {
             ::core::result::Result::<
                 #nagare::tool::func_def::Value,
                 #nagare::tool::func_def::ErrorFuture,
-            >::Ok(::core::convert::Into::into(#nagare::__private::serde_json::Value::Null))
+            >::Ok(#nagare::tool::func_def::null_result())
         }
     };
 
@@ -165,8 +161,7 @@ fn expand_tool_closure(tool: ToolClosure) -> syn::Result<TokenStream2> {
                 ::std::boxed::Box::new(move |args| {
                     let __uzu_tool_func = ::core::clone::Clone::clone(&__uzu_tool_func);
                     ::std::boxed::Box::new(async move {
-                        let args: #nagare::__private::serde_json::Value =
-                            ::core::convert::TryInto::try_into(args)?;
+                        let args = #nagare::tool::func_def::parse_arguments(args)?;
                         #(#arg_parsing)*
                         #result_stmt
                         #unwrap_stmt

@@ -25,14 +25,7 @@ pub fn arg_parsing_tokens(
             let ty = &param.ty;
             let arg_name = param.ident.unraw().to_string();
             quote! {
-                let #ident: #ty = #nagare::__private::serde_json::from_value(
-                    args.get(#arg_name)
-                        .cloned()
-                        .unwrap_or(#nagare::__private::serde_json::Value::Null),
-                )
-                .map_err(|error| {
-                    ::std::format!("invalid value for parameter `{}` of tool `{}`: {}", #arg_name, #tool_name, error)
-                })?;
+                let #ident: #ty = #nagare::tool::func_def::extract_argument(&args, #arg_name, #tool_name)?;
             }
         })
         .collect()

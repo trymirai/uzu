@@ -59,6 +59,29 @@ impl ToolDescriptor {
     }
 }
 
+/// Runtime surface of the `uzu_tool_function`/`uzu_tool_closure` expansions;
+/// public so generated code relies on ordinary API instead of hidden re-exports.
+pub fn parse_arguments(args: Value) -> Result<serde_json::Value, ErrorFuture> {
+    Ok(serde_json::Value::try_from(args)?)
+}
+
+pub fn extract_argument<T: serde::de::DeserializeOwned>(
+    args: &serde_json::Value,
+    name: &str,
+    tool_name: &str,
+) -> Result<T, ErrorFuture> {
+    serde_json::from_value(args.get(name).cloned().unwrap_or(serde_json::Value::Null))
+        .map_err(|error| format!("invalid value for parameter `{name}` of tool `{tool_name}`: {error}").into())
+}
+
+pub fn serialize_result<T: serde::Serialize>(result: &T) -> Result<Value, ErrorFuture> {
+    Ok(Value::from(serde_json::to_value(result)?))
+}
+
+pub fn null_result() -> Value {
+    Value::from(serde_json::Value::Null)
+}
+
 fn coerce_to_schema(
     value: serde_json::Value,
     schema: &serde_json::Value,
