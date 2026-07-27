@@ -5,23 +5,16 @@ use futures::{Stream, stream};
 use shoji::types::basic::Grammar as ShojiGrammar;
 use shoji::{
     traits::backend::{Error as BackendError, chat_token::StreamOutput as ChatTokenStreamOutput},
-    types::{
-        basic::{ContextLength, SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy},
-        session::chat::ChatSpeculationPreset,
-    },
+    types::basic::{ContextLength, SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy},
 };
+#[cfg(grammar)]
 use tokenizers::Tokenizer;
 
 #[cfg(grammar)]
 use crate::engine::language_model::grammar::{Grammar as UzuGrammar, GrammarConfig, GrammarError};
 use crate::{
-    backends::common::Backend,
-    encodable_block::sampling::SamplingMethod as UzuSamplingMethod,
+    backends::common::Backend, encodable_block::sampling::SamplingMethod as UzuSamplingMethod,
     engine::language_model::LanguageModel,
-    speculators::{
-        fixed_token_speculator::FixedTokensSpeculator, prompt_lookup_speculator::PromptLookupSpeculator,
-        speculator::Speculator,
-    },
 };
 
 pub fn error_stream<'a>(
@@ -98,39 +91,6 @@ pub fn get_sampling_method<B: Backend>(
                 repetition_penalty: repetition_penalty.map(|value| value as f32),
                 suffix_repetition_length: suffix_repetition_length.map(|value| value as usize),
             },
-        },
-    }
-}
-
-pub fn get_speculator(
-    preset: &ChatSpeculationPreset,
-    tokenizer: &Tokenizer,
-) -> Result<Option<(Box<dyn Speculator>, usize)>, BackendError> {
-    match preset {
-        ChatSpeculationPreset::GeneralChat {
-            ..
-        } => Ok(None),
-        ChatSpeculationPreset::Summarization {
-            ..
-        } => {
-            let speculator = Box::new(PromptLookupSpeculator::new_with_params(3));
-            Ok(Some((speculator, 16)))
-        },
-        ChatSpeculationPreset::Classification {
-            feature,
-        } => {
-            let proposals = feature
-                .values
-                .iter()
-                .map(|value| {
-                    let encoding = tokenizer.encode(value.as_str(), false)?;
-                    let ids = encoding.get_ids().iter().map(|&id| id as u64).collect::<Vec<_>>();
-                    Ok(ids)
-                })
-                .collect::<Result<Vec<Vec<u64>>, BackendError>>()?;
-            let speculator = Box::new(FixedTokensSpeculator::new(proposals));
-            let budget = speculator.max_trie_nodes() + 1;
-            Ok(Some((speculator, budget)))
         },
     }
 }

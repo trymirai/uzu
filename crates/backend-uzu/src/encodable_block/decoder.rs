@@ -38,7 +38,7 @@ pub struct Decoder<B: Backend> {
 pub struct DecoderEncodeOutput<B: Backend> {
     pub logits: Option<Allocation<B>>,
     #[allow(dead_code)]
-    pub hidden_features: Box<[Allocation<B>]>,
+    pub hidden_features: Option<Box<[Allocation<B>]>>,
     #[allow(dead_code)]
     pub final_hidden: Option<Allocation<B>>,
 }
@@ -120,9 +120,9 @@ impl<B: Backend> Decoder<B> {
         token_ids: &Allocation<B>,
         batch_dim: &BatchTopology,
         output_range: Option<Range<usize>>,
+        hidden_feature_layer_indices: Option<&[usize]>,
         state: &mut TransformerState<B>,
         encoder: &mut Encoder<B>,
-        hidden_feature_layer_indices: &[usize],
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), encoder)?;
 
@@ -143,9 +143,9 @@ impl<B: Backend> Decoder<B> {
                 per_layer_inputs.as_ref(),
                 batch_dim,
                 output_range.clone(),
+                hidden_feature_layer_indices,
                 Some(state),
                 encoder,
-                hidden_feature_layer_indices,
             )
             .map_err(DecoderError::Backend)?;
 
@@ -155,7 +155,7 @@ impl<B: Backend> Decoder<B> {
         } else {
             None
         };
-        let final_hidden = if hidden_feature_layer_indices.is_empty() {
+        let final_hidden = if hidden_feature_layer_indices.is_none() {
             None
         } else {
             transformer_output.output

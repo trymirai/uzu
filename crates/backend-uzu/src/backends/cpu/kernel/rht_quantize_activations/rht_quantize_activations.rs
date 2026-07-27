@@ -13,10 +13,14 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
     input: *const InputT,
     q_out: *mut i8,
     scales_out: *mut f32,
+    #[optional(emit_group_sums)] group_sums_out: Option<*mut i32>,
     rht_factors: *const i32,
     batch_size: u32,
     element_count: u32,
     group_size: u32,
+    #[allow(unused)]
+    #[specialize]
+    emit_group_sums: bool,
 ) {
     let rows = batch_size as usize;
     let columns = element_count as usize;
@@ -45,9 +49,14 @@ pub fn activations_prepare<InputT: ArrayElement + Float>(
             let slice = &prepared[start..end];
             let divisor = min_max_symmetric_divisor(slice);
             unsafe { *scales_out.add(row * groups + group) = divisor };
+            let mut group_sum = 0i32;
             for index in start..end {
                 let q = quantize_symmetric_i8(prepared[index], divisor);
                 unsafe { *q_out.add(row * columns + index) = q };
+                group_sum += q as i32;
+            }
+            if let Some(group_sums_out) = group_sums_out {
+                unsafe { *group_sums_out.add(row * groups + group) = group_sum };
             }
         }
     }

@@ -110,6 +110,7 @@ impl MatmulKernel for MatmulCpuKernel {
             MatmulA::Int8Symmetric {
                 values,
                 scales,
+                group_sums: _,
             } => {
                 let weight_gs_ok = matches!(b.group_size(), Some(32 | 64 | 128));
                 let weights_ok = matches!(
