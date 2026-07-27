@@ -7,6 +7,10 @@ use shoji::types::{
 
 use crate::chat::hanashi::messages::streamed::Section;
 
+const NAME_KEY: &str = "name";
+const VALUE_KEY: &str = "value";
+const RETURN_KEY: &str = "return";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Content {
@@ -115,10 +119,10 @@ fn is_tool_call_result_echo(value: &Value) -> bool {
     let Some(object) = value.as_object() else {
         return false;
     };
-    let Some(Value::String(returned_field)) = object.get("return") else {
+    let Some(Value::String(returned_field)) = object.get(RETURN_KEY) else {
         return false;
     };
-    returned_field != "return" && object.contains_key(returned_field)
+    returned_field != RETURN_KEY && object.contains_key(returned_field)
 }
 
 // Parsers may emit tool results as `{"name": ..., "value": ...}` (e.g. functiongemma, gemma-4);
@@ -126,13 +130,13 @@ fn is_tool_call_result_echo(value: &Value) -> bool {
 fn tool_call_result_parts(value: Value) -> (Option<String>, Value) {
     match value {
         Value::Object(mut map)
-            if map.len() == 2 && map.get("name").is_some_and(Value::is_string) && map.contains_key("value") =>
+            if map.len() == 2 && map.get(NAME_KEY).is_some_and(Value::is_string) && map.contains_key(VALUE_KEY) =>
         {
-            let name = match map.remove("name") {
+            let name = match map.remove(NAME_KEY) {
                 Some(Value::String(name)) => Some(name),
                 _ => None,
             };
-            let value = map.remove("value").unwrap_or(Value::Null);
+            let value = map.remove(VALUE_KEY).unwrap_or(Value::Null);
             (name, value)
         },
         other => (None, other),

@@ -29,7 +29,10 @@ const TOKEN_CHANNEL: &str = "<|channel|>";
 const TOKEN_CONSTRAIN: &str = "<|constrain|>";
 const ROLE_ASSISTANT: &str = "assistant";
 const CONTENT_TYPE_JSON: &str = "json";
-const CHANNELS: [&str; 3] = ["analysis", "commentary", "final"];
+const CHANNEL_ANALYSIS: &str = "analysis";
+const CHANNEL_COMMENTARY: &str = "commentary";
+const CHANNEL_FINAL: &str = "final";
+const CHANNELS: [&str; 3] = [CHANNEL_ANALYSIS, CHANNEL_COMMENTARY, CHANNEL_FINAL];
 
 /// Ids of the harmony formatting tokens the decode-side header repair needs to recognize.
 struct SpecialTokens {

@@ -10,16 +10,15 @@ use shoji::types::{
 };
 
 use crate::chat::{
-    harmony::bridging::{Error, FromHarmony, ToHarmony},
+    harmony::{
+        CHANNEL_ANALYSIS, CHANNEL_COMMENTARY, CHANNEL_FINAL, CONTENT_TYPE_JSON, ROLE_ASSISTANT,
+        bridging::{Error, FromHarmony, ToHarmony},
+    },
     strftime_now,
 };
 
 const FUNCTIONS_NAMESPACE: &str = "functions";
-const CHANNEL_ANALYSIS: &str = "analysis";
-const CHANNEL_COMMENTARY: &str = "commentary";
-const CHANNEL_FINAL: &str = "final";
-const CONTENT_TYPE_JSON: &str = "json";
-const RECIPIENT_ASSISTANT: &str = "assistant";
+const RECIPIENT_ASSISTANT: &str = ROLE_ASSISTANT;
 const BUILTIN_BROWSER: &str = "browser";
 const BUILTIN_PYTHON: &str = "python";
 
