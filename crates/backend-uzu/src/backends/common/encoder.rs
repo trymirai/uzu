@@ -1,8 +1,11 @@
 use std::{
+    mem::size_of_val,
     ops::{Bound, Range, RangeBounds},
-    rc::Rc,
+    sync::Arc,
     time::Duration,
 };
+
+use bytemuck::{AnyBitPattern, NoUninit};
 
 use crate::backends::common::{
     AccessFlags, Allocation, AllocationPool, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer,
@@ -34,18 +37,18 @@ fn resolve_copy_range(
 pub struct Encoder<'encoding, B: Backend> {
     context: &'encoding B::Context,
     command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
-    allocation_pool: Rc<AllocationPool<B>>,
+    allocation_pool: Arc<AllocationPool<B>>,
     hazard_tracker: HazardTracker,
 }
 
 impl<'encoding, B: Backend> Encoder<'encoding, B> {
     pub fn new(context: &'encoding B::Context) -> Result<Self, B::Error> {
-        Self::new_with_pool(context, Rc::new(context.create_allocation_pool(false)))
+        Self::new_with_pool(context, Arc::new(context.create_allocation_pool(false)))
     }
 
     pub fn new_with_pool(
         context: &'encoding B::Context,
-        allocation_pool: Rc<AllocationPool<B>>,
+        allocation_pool: Arc<AllocationPool<B>>,
     ) -> Result<Self, B::Error> {
         let command_buffer = context.create_command_buffer()?.start_encoding();
         let hazard_tracker = HazardTracker::new();
@@ -70,6 +73,15 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
                 cpu_available: true,
             },
         )
+    }
+
+    pub fn allocate_constant_from_slice<T: NoUninit + AnyBitPattern>(
+        &mut self,
+        data: &[T],
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut allocation = self.allocate_constant(size_of_val(data))?;
+        allocation.copyin(data);
+        Ok(allocation)
     }
 
     // This is valid on gpu timeline only
@@ -159,7 +171,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
 
 pub struct Executable<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Executable,
-    allocation_pool: Rc<AllocationPool<B>>,
+    allocation_pool: Arc<AllocationPool<B>>,
 }
 
 impl<B: Backend> Executable<B> {
@@ -173,22 +185,21 @@ impl<B: Backend> Executable<B> {
 
 pub struct Pending<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Pending,
-    allocation_pool: Rc<AllocationPool<B>>,
+    allocation_pool: Arc<AllocationPool<B>>,
 }
 
 impl<B: Backend> Pending<B> {
     pub fn wait_until_completed(self) -> Result<Completed<B>, B::Error> {
         Ok(Completed {
             command_buffer: self.command_buffer.wait_until_completed()?,
-            allocation_pool: self.allocation_pool,
+            _allocation_pool: self.allocation_pool,
         })
     }
 }
 
 pub struct Completed<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Completed,
-    #[allow(unused)]
-    allocation_pool: Rc<AllocationPool<B>>,
+    _allocation_pool: Arc<AllocationPool<B>>,
 }
 
 impl<B: Backend> Completed<B> {

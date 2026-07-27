@@ -1,0 +1,50 @@
+[package]
+name = "kiban"
+description = "Cross-platform OS primitives"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+futures-util.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+tokio = { workspace = true, features = ["sync", "time"] }
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = [
+    "Blob",
+    "console",
+    "File",
+    "FileSystemCreateWritableOptions",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetDirectoryOptions",
+    "FileSystemGetFileOptions",
+    "FileSystemHandle",
+    "FileSystemHandleKind",
+    "FileSystemRemoveOptions",
+    "FileSystemWritableFileStream",
+    "Navigator",
+    "Storage",
+    "StorageManager",
+    "Window",
+    "WritableStream",
+    "WriteParams",
+    "WriteCommandType",
+] }
+web-time.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

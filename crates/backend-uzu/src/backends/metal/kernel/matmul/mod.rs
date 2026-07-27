@@ -66,6 +66,17 @@ impl MatmulKernel for MatmulMetalKernel {
         {
             return self.gemv.encode(arguments, gemv, encoder).map_err(MetalError::from);
         }
+
+        // TODO: remove after GatherGEMM is supported
+        if arguments.gather_indices.is_some() {
+            return Err(MetalError::KernelDispatchFailed(
+                format!(
+                    "gathered readout requires the GEMV path, but shape (m={}, n={}) routes to GEMM",
+                    arguments.m, arguments.n
+                )
+                .into(),
+            ));
+        }
         self.gemm.encode(arguments, encoder)
     }
 }

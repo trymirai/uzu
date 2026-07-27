@@ -1,10 +1,8 @@
 use std::{path::PathBuf, sync::Arc};
 
-use download_manager::{
-    DownloadError, FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase,
-};
+use download_manager::{DownloadError, FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
+use kiban::rt::RuntimeHandle;
 use rstest::rstest;
-use tokio::runtime::Handle as TokioHandle;
 
 use crate::common::{Behavior, MockRegistry, wait_for_phase};
 
@@ -21,7 +19,7 @@ async fn remove_paused_task_deletes_resume_artifact(
     let resume_artifact = destination.with_extension(resume_artifact_extension);
     tokio::fs::write(&resume_artifact, b"partial").await?;
 
-    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current()).await?;
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await?;
     let task = manager
         .file_download_task("http://example.invalid/model.bin", &destination, FileCheck::None, Some(100))
         .await?;
@@ -49,7 +47,7 @@ async fn dropping_active_download_cancels_backend_before_releasing_lock(
     let destination = temp_dir.path().join(&tokenizer.file.name);
     let lock_path = PathBuf::from(format!("{}.lock", destination.display()));
     let resume_artifact = destination.with_extension(resume_artifact_extension);
-    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current()).await.unwrap();
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
     let task = manager
         .file_download_task(
             &tokenizer.file.url,

@@ -8,8 +8,11 @@ use crate::{
     backends::{
         common::{
             Allocation, BufferArg, Encoder,
-            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-            kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
+            gpu_types::{
+                HADAMARD_TRANSFORM_BLOCK_SIZE,
+                gemm::{GemmBPrologueKind, GemmDTransform},
+            },
+            kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
         },
         metal::{Metal, context::MetalContext, device_tier::DeviceTier, kernel::GemvMetalKernel},
     },
@@ -21,6 +24,7 @@ static GEMV_MAX_BATCH: OnceLock<u32> = OnceLock::new();
 
 fn max_gemv_batch_threshold() -> u32 {
     *GEMV_MAX_BATCH.get_or_init(|| {
+        // TODO: remove magic env var
         std::env::var("UZU_GEMV_MAX_BATCH").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_GEMV_MAX_BATCH)
     })
 }
@@ -35,6 +39,7 @@ pub(crate) struct GemvSpecialization {
     k_split: u32,
     results_per_simdgroup: u32,
     num_simdgroups: u32,
+    gathered: bool,
 }
 
 impl GemvSpecialization {
@@ -45,10 +50,11 @@ impl GemvSpecialization {
         output_data_type: DataType,
         device_tier: DeviceTier,
     ) -> Option<GemvSpecialization> {
-        if !args.b_transpose {
+        if !args.b_transpose || !matches!(args.a, MatmulA::FullPrecision { .. }) {
             return None;
         }
         let is_quant = !matches!(args.b, MatmulB::FullPrecision { .. });
+        let gathered = args.gather_indices.is_some();
         let bad_leading_dimension = if is_quant {
             args.b_leading_dimension.is_some()
         } else {
@@ -60,7 +66,7 @@ impl GemvSpecialization {
         if args.d_transform.accumulate && !args.n.is_multiple_of(32) {
             return None;
         }
-        if args.d_transform.rht_factors.is_some() && !args.n.is_multiple_of(32) {
+        if args.d_transform.rht_factors.is_some() && !args.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32) {
             return None;
         }
         if is_quant {
@@ -104,6 +110,7 @@ impl GemvSpecialization {
             k_split: tile.k_split,
             results_per_simdgroup: tile.results_per_simdgroup,
             num_simdgroups: tile.num_simdgroups,
+            gathered,
         })
     }
 }
@@ -158,6 +165,7 @@ impl GemvDispatch {
                     specialization.results_per_simdgroup,
                     specialization.num_simdgroups,
                     specialization.output_transform,
+                    specialization.gathered,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -174,17 +182,28 @@ impl GemvDispatch {
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
         let rht_factors = arguments.d_transform.rht_factors;
+        let soft_cap = arguments.d_transform.soft_cap;
 
         let MatmulArguments {
             a,
-            a_offset,
             b,
             d,
             m,
             n,
             k,
+            gather_indices,
             ..
         } = arguments;
+        let MatmulA::FullPrecision {
+            values: a,
+            offset: a_offset,
+        } = a
+        else {
+            return Err(MatmulError::IncompatibleA {
+                path: "Gemv",
+                reason: "prepared int8 activations require GEMM",
+            });
+        };
 
         let group_count_x = n.div_ceil(rows_per_threadgroup(
             specialization.k_split,
@@ -208,11 +227,13 @@ impl GemvDispatch {
                     &mut *d,
                     output_bias,
                     rht_factors,
+                    gather_indices,
                     k,
                     n,
                     m,
                     ab_scale,
                     group_count_x,
+                    soft_cap,
                     encoder,
                 );
             },
@@ -256,11 +277,13 @@ impl GemvDispatch {
                     &mut *d,
                     output_bias,
                     rht_factors,
+                    gather_indices,
                     k,
                     n,
                     m,
                     ab_scale,
                     group_count_x,
+                    soft_cap,
                     encoder,
                 );
             },

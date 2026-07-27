@@ -5,13 +5,33 @@ use itertools::Itertools;
 
 use crate::common::gpu_types::{GpuType, GpuTypeFile, GpuTypes};
 
+mod gpu_type_constant;
 mod gpu_type_enum;
 mod gpu_type_option_set;
 mod gpu_type_struct;
 
+use gpu_type_constant::gpu_type_gen_constant;
 use gpu_type_enum::gpu_type_gen_enum;
 use gpu_type_option_set::gpu_type_gen_option_set;
 use gpu_type_struct::gpu_type_gen_struct;
+
+fn rust_to_metal(ty: &str) -> anyhow::Result<&'static str> {
+    match ty {
+        "i8" => Ok("int8_t"),
+        "i16" => Ok("int16_t"),
+        "i32" => Ok("int32_t"),
+        "i64" => Ok("int64_t"),
+        "u8" => Ok("uint8_t"),
+        "u16" => Ok("uint16_t"),
+        "u32" => Ok("uint32_t"),
+        "u64" => Ok("uint64_t"),
+        "f32" => Ok("float"),
+        "bool" => Ok("bool"),
+        "usize" => Ok("size_t"),
+        "isize" => Ok("ptrdiff_t"),
+        unknown => anyhow::bail!("Unsupported GPU type: {unknown}"),
+    }
+}
 
 pub async fn gpu_type_gen(
     gpu_types_dir: &Path,
@@ -36,6 +56,8 @@ async fn gpu_type_gen_file(
         .types
         .iter()
         .map(|gpu_type| match gpu_type {
+            GpuType::Constant(gpu_type_constant) => gpu_type_gen_constant(gpu_type_constant)
+                .with_context(|| format!("Failed to generate bindings for {gpu_type_constant:?}")),
             GpuType::Enum(gpu_type_enum) => gpu_type_gen_enum(gpu_type_enum)
                 .with_context(|| format!("Failed to generate bindings for {gpu_type_enum:?}")),
             GpuType::Struct(gpu_type_struct) => gpu_type_gen_struct(gpu_type_struct)

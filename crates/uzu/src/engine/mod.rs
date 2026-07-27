@@ -21,6 +21,7 @@ pub use download_manager::DownloadManagerType;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
 use indexmap::{IndexMap, IndexSet};
+use kiban::rt::RuntimeHandle;
 use nagare::{
     api::Config as ClientConfig,
     chat::ChatSession,
@@ -35,7 +36,6 @@ use shoji::{
         session::chat::ChatConfig,
     },
 };
-use tokio::runtime::Handle;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
@@ -72,7 +72,7 @@ pub struct Engine {
 
 impl Engine {
     pub async fn new(config: EngineConfig) -> Result<Self, EngineError> {
-        let tokio_handle = Handle::try_current().map_err(|error| EngineError::TokioError {
+        let runtime_handle = RuntimeHandle::try_current().map_err(|error| EngineError::TokioError {
             message: error.to_string(),
         })?;
 
@@ -113,7 +113,7 @@ impl Engine {
         let storage_cache_path = storage_config.cache_path();
         logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
 
-        let storage = SharedAccess::new(Storage::new(tokio_handle, storage_config).await?);
+        let storage = SharedAccess::new(Storage::new(runtime_handle, storage_config).await?);
 
         let engine = Self {
             settings: SharedAccess::new(settings),

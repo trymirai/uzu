@@ -1,6 +1,6 @@
 use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
+use kiban::rt::RuntimeHandle;
 use rstest::rstest;
-use tokio::runtime::Handle as TokioHandle;
 
 use crate::common::{MockRegistry, wait_for_phase};
 
@@ -9,14 +9,14 @@ use crate::common::{MockRegistry, wait_for_phase};
 #[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_download_fresh_completes(
-    #[case] download_manager_type: FileDownloadManagerType,
+    #[case] download_manager_type: FileDownloadManagerType
 ) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start().await?;
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
 
-    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current()).await.unwrap();
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
     let task = manager
         .file_download_task(
             &tokenizer.file.url,

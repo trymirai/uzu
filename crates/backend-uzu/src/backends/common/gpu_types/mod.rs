@@ -14,6 +14,7 @@ pub mod quantization;
 pub mod quantization_method;
 pub mod ring;
 pub mod trie;
+pub mod weaver;
 
 pub use activation_type::*;
 pub use argmax::*;

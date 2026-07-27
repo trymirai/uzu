@@ -12,7 +12,7 @@ pub trait CommandBuffer {
     type Completed: CommandBufferCompleted<CommandBuffer = Self>;
 }
 
-pub trait CommandBufferInitial {
+pub trait CommandBufferInitial: Send {
     type CommandBuffer: CommandBuffer<Initial = Self>;
 
     fn start_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Encoding;
@@ -94,13 +94,13 @@ pub trait CommandBufferEncoding {
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }
 
-pub trait CommandBufferExecutable {
+pub trait CommandBufferExecutable: Send {
     type CommandBuffer: CommandBuffer<Executable = Self>;
 
     fn submit(self) -> <Self::CommandBuffer as CommandBuffer>::Pending;
 }
 
-pub trait CommandBufferPending {
+pub trait CommandBufferPending: Send {
     type CommandBuffer: CommandBuffer<Pending = Self>;
 
     fn wait_until_completed(
@@ -111,7 +111,7 @@ pub trait CommandBufferPending {
     >;
 }
 
-pub trait CommandBufferCompleted {
+pub trait CommandBufferCompleted: Send {
     type CommandBuffer: CommandBuffer<Completed = Self>;
 
     fn gpu_execution_time(&self) -> Duration;

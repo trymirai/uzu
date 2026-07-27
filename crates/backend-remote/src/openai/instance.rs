@@ -1,13 +1,12 @@
 use std::{pin::Pin, sync::Arc};
 
 use async_openai::{Client, config::OpenAIConfig};
-use futures::Stream;
 use shoji::{
     traits::{
         Instance as InstanceTrait, State as StateTrait,
         backend::{
-            Error as BackendError,
-            chat_message::{StreamInput, StreamOutput},
+            Error as BackendError, InstanceStream,
+            chat_message::{StreamInput, StreamMetrics, StreamOutput},
         },
     },
     types::session::chat::ChatReplyConfig,
@@ -52,6 +51,7 @@ impl InstanceTrait for Instance {
     type StreamConfig = ChatReplyConfig;
     type StreamInput = StreamInput;
     type StreamOutput = StreamOutput;
+    type StreamMetrics = StreamMetrics;
 
     fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn StateTrait>, BackendError>> + Send + '_>> {
         Box::pin(async move { Ok(Box::new(State) as Box<dyn StateTrait>) })
@@ -63,7 +63,13 @@ impl InstanceTrait for Instance {
         _state: &'a mut dyn StateTrait,
         config: Self::StreamConfig,
         cancel: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, BackendError>> + Send + 'a>> {
+    ) -> Pin<
+        Box<
+            dyn InstanceStream<Item = Result<Self::StreamOutput, BackendError>, Metrics = Self::StreamMetrics>
+                + Send
+                + 'a,
+        >,
+    > {
         self.api_stream.stream(self.client.clone(), self.model_identifier.clone(), config, input.clone(), cancel)
     }
 

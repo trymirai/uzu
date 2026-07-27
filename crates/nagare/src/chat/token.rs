@@ -11,14 +11,17 @@ use shoji::{
         backend::{
             Error,
             chat_message::{Output, ToolCallState},
-            chat_token::{Backend, Instance as ChatTokenBackendInstance, StreamInput, StreamOutput},
+            chat_token::{
+                Backend, Instance as ChatTokenBackendInstance, StreamInput, StreamOutput, TokenStreamMetrics,
+            },
         },
     },
     types::{
         basic::TokenId,
         model::Model,
         session::chat::{
-            ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats,
+            ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason,
+            ChatReplySpeculatorStats, ChatReplyStats,
         },
     },
 };
@@ -38,6 +41,7 @@ pub struct Session {
     encoding: Encoding,
     input_tokens: Vec<u64>,
     stop_token_ids: Box<[u64]>,
+    power_recorder: Box<dyn PowerRecorder>,
 }
 
 impl Session {
@@ -71,6 +75,7 @@ impl Session {
             encoding,
             input_tokens: Vec::new(),
             stop_token_ids,
+            power_recorder: <dyn PowerRecorder>::create(),
         })
     }
 
@@ -89,7 +94,7 @@ impl Session {
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
         let time_start = Instant::now();
-        let power_recorder = <dyn PowerRecorder>::start();
+        self.power_recorder.begin();
 
         let curr_all_tokens = self.encoding.state().tokens.clone();
         let new_all_tokens = match self.build_input(input) {
@@ -121,25 +126,27 @@ impl Session {
             new_all_tokens[curr_all_tokens.len()..].to_vec()
         };
 
+        let instance = self.instance.as_ref();
+        let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone());
+
         let stream_state = StreamingState {
             config: config.clone(),
-            cancel_token: cancel_token.clone(),
+            cancel_token,
             encoding: &mut self.encoding,
             max_context_length: self.instance.max_context_length(),
             stop_token_ids: self.stop_token_ids.clone(),
-            power_recorder,
+            power_recorder: &mut *self.power_recorder,
 
             time_start,
             time_last_token: None,
-            time_prefill_start: None,
+            time_prefill_start: Instant::now(),
             time_first_token: None,
             total_tokens_input: self.input_tokens.len(),
             total_tokens_output: 0,
             memory_usage: None,
+            metrics: None,
         };
 
-        let instance = self.instance.as_ref();
-        let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token);
         stream::unfold(
             (stream, stream_state, false, false),
             move |(mut inner, mut state, terminated, tail_done)| async move {
@@ -149,6 +156,7 @@ impl Session {
 
                 match inner.next().await {
                     Some(event) => {
+                        state.metrics = inner.metrics();
                         state.memory_usage = instance.peak_memory_usage();
                         let output = Self::build_output(event, &mut state);
                         let terminated = terminated || matches!(&output, Ok(out) if out.finish_reason.is_some());
@@ -204,15 +212,6 @@ impl Session {
 
         match result {
             StreamOutput::LimitReached => Ok(Self::render_output(state, Some(ChatReplyFinishReason::Length))),
-            StreamOutput::PrefillStarted => {
-                state.time_prefill_start = Some(now);
-                // No token has been decoded yet, so the encoding's last message is still the
-                // input message. Emit a stats-only chunk instead of rendering it as the reply.
-                Ok(Output {
-                    stats: state.get_stats(false),
-                    ..Default::default()
-                })
-            },
             StreamOutput::Token(token) => {
                 if state.total_tokens_output == 0 {
                     state.time_first_token = Some(now)
@@ -275,15 +274,16 @@ struct StreamingState<'a> {
     encoding: &'a mut Encoding,
     max_context_length: Option<usize>,
     stop_token_ids: Box<[u64]>,
-    power_recorder: Box<dyn PowerRecorder>,
+    power_recorder: &'a mut dyn PowerRecorder,
 
     time_start: Instant,
     time_last_token: Option<Instant>,
-    time_prefill_start: Option<Instant>,
+    time_prefill_start: Instant,
     time_first_token: Option<Instant>,
     total_tokens_input: usize,
     total_tokens_output: usize,
     memory_usage: Option<usize>,
+    metrics: Option<TokenStreamMetrics>,
 }
 
 impl StreamingState<'_> {
@@ -313,14 +313,21 @@ impl StreamingState<'_> {
         &self,
         last_stat: bool,
     ) -> ChatReplyStats {
-        let power_stats = last_stat.then(|| self.power_recorder.stop()).flatten();
-
-        let total_duration = self.time_last_token.unwrap_or(Instant::now()).duration_since(self.time_start);
-        let ttft_duration = if let (Some(start), Some(finish)) = (self.time_prefill_start, self.time_first_token) {
-            Some(finish.duration_since(start))
+        let speculator_stats = if let Some(metrics) = self.metrics.as_ref()
+            && metrics.num_forward_passes > 0
+        {
+            Some(ChatReplySpeculatorStats {
+                tokens_per_forward_pass: metrics.num_tokens_accepted as f64 / metrics.num_forward_passes as f64,
+            })
         } else {
             None
         };
+
+        let power_stats = last_stat.then(|| self.power_recorder.finish()).flatten();
+
+        let total_duration = self.time_last_token.unwrap_or(Instant::now()).duration_since(self.time_start);
+        let ttft_duration =
+            self.time_first_token.map(|time_first_token| time_first_token.duration_since(self.time_prefill_start));
         let prefill_tps = ttft_duration.and_then(|duration| {
             (self.total_tokens_input > 0 && !duration.is_zero())
                 .then(|| self.total_tokens_input as f64 / duration.as_secs_f64())
@@ -341,6 +348,7 @@ impl StreamingState<'_> {
             tokens_count_input: Some(self.total_tokens_input as u32),
             tokens_count_output: Some(self.total_tokens_output as u32),
             memory_used_bytes: last_stat.then(|| self.memory_usage.map(|bytes| bytes as i64)).flatten(),
+            speculator_stats,
             power_stats,
         }
     }

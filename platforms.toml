@@ -68,7 +68,7 @@ capabilities_default = ["grammar", "cli"]
 
 [targets."wasm32-wasip1-threads"]
 backend = "cpu"
-aliases = ["wasm"]
+aliases = ["wasi"]
 capabilities_supported = []
 capabilities_default = []
 

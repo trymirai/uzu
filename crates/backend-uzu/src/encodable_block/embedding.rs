@@ -1,15 +1,14 @@
-use std::cell::RefCell;
-
+use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
-        gpu_types::{QuantizationMethod, QuantizationMode},
+        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
         kernel::{
             FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::{
@@ -46,7 +45,7 @@ enum TiedEmbeddingType<B: Backend> {
     FullPrecision {
         weights: Allocation<B>,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
-        readout: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+        readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     },
     Quantized {
         weights: Allocation<B>,
@@ -55,7 +54,7 @@ enum TiedEmbeddingType<B: Backend> {
         quantization_method: QuantizationMethod,
         output_hadamard_factors: Option<Allocation<B>>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
-        readout: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+        readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
         readout_config: ReadoutQuantConfig,
     },
 }
@@ -78,13 +77,13 @@ enum UntiedEmbeddingLookupType<B: Backend> {
 enum UntiedEmbeddingReadoutType<B: Backend> {
     FullPrecision {
         weights: Allocation<B>,
-        readout: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+        readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     },
     Quantized {
         weights: Allocation<B>,
         scales: Allocation<B>,
         zero_points_or_biases: Option<Allocation<B>>,
-        readout: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+        readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
         readout_config: ReadoutQuantConfig,
     },
 }
@@ -113,9 +112,19 @@ struct LogitSoftCap<B: Backend> {
     kernel: <B::Kernels as Kernels>::LogitSoftCapKernel,
 }
 
-// TODO: embedding lookup dtype (u64) should match sampling (u32)
-
 impl<B: Backend> Embedding<B> {
+    pub(crate) fn data_type(&self) -> DataType {
+        self.data_type
+    }
+
+    pub(crate) fn vocab_size(&self) -> usize {
+        self.vocab_size as usize
+    }
+
+    pub(crate) fn model_dim(&self) -> usize {
+        self.model_dim as usize
+    }
+
     pub fn new(
         context: &B::Context,
         vocab_size: u32,
@@ -145,7 +154,7 @@ impl<B: Backend> Embedding<B> {
                         let readout_kernel =
                             <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
                                 .map_err(EmbeddingError::BackendError)?;
-                        let readout = RefCell::new(readout_kernel);
+                        let readout = Mutex::new(readout_kernel);
 
                         (
                             TiedEmbeddingType::FullPrecision {
@@ -203,7 +212,7 @@ impl<B: Backend> Embedding<B> {
                     AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                         quantization_spec,
                         adapter_spec: None,
-                        incoherence_block_size: Some(32),
+                        incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
                         incoherence_processing_mode: IncoherenceProcessingMode::Output,
                         ..
                     }) => {
@@ -347,7 +356,7 @@ impl<B: Backend> Embedding<B> {
                         let readout_kernel =
                             <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
                                 .map_err(EmbeddingError::BackendError)?;
-                        let readout = RefCell::new(readout_kernel);
+                        let readout = Mutex::new(readout_kernel);
 
                         UntiedEmbeddingReadoutType::FullPrecision {
                             weights,
@@ -511,11 +520,13 @@ impl<B: Backend> Embedding<B> {
         &self,
         batch_dim: usize,
         input_allocation: &Allocation<B>,
+        output_data_type: DataType,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
         assert!(batch_dim > 0, "Embedding readout requires at least one row");
+        let native_output = output_data_type == self.data_type;
         let mut output_allocation = encoder
-            .allocate_scratch(size_for_shape(&[batch_dim, self.vocab_size as usize], self.data_type))
+            .allocate_scratch(size_for_shape(&[batch_dim, self.vocab_size as usize], output_data_type))
             .map_err(EmbeddingError::BackendError)?;
 
         match &self.tying {
@@ -535,26 +546,35 @@ impl<B: Backend> Embedding<B> {
                         readout,
                     },
             } => {
-                readout
-                    .borrow_mut()
-                    .encode(
-                        MatmulArguments {
-                            a: input_allocation,
-                            a_offset: 0,
-                            b: MatmulB::FullPrecision {
-                                b: weights,
-                            },
-                            b_leading_dimension: None,
-                            b_transpose: true,
-                            d: &mut output_allocation,
-                            d_transform: MatmulDOps::none(),
-                            m: batch_dim as u32,
-                            n: self.vocab_size,
-                            k: self.model_dim,
-                        },
-                        encoder,
+                let arguments = MatmulArguments {
+                    a: MatmulA::FullPrecision {
+                        values: input_allocation,
+                        offset: 0,
+                    },
+                    b: MatmulB::FullPrecision {
+                        b: weights,
+                    },
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    d: &mut output_allocation,
+                    d_transform: MatmulDOps::none(),
+                    gather_indices: None,
+                    m: batch_dim as u32,
+                    n: self.vocab_size,
+                    k: self.model_dim,
+                };
+                if native_output {
+                    readout.lock().encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
+                } else {
+                    let mut widened = <B::Kernels as Kernels>::MatmulKernel::new(
+                        encoder.context(),
+                        self.data_type,
+                        self.data_type,
+                        output_data_type,
                     )
                     .map_err(EmbeddingError::BackendError)?;
+                    widened.encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
+                }
             },
             EmbeddingTying::Tied {
                 ty:
@@ -604,17 +624,25 @@ impl<B: Backend> Embedding<B> {
                         group_size: readout_config.group_size,
                     },
                 };
+                if !native_output {
+                    return Err(EmbeddingError::UnsupportedConfiguration(
+                        "widened readout requires full-precision LM-head weights".to_string(),
+                    ));
+                }
                 readout
-                    .borrow_mut()
+                    .lock()
                     .encode(
                         MatmulArguments {
-                            a: input_allocation,
-                            a_offset: 0,
+                            a: MatmulA::FullPrecision {
+                                values: input_allocation,
+                                offset: 0,
+                            },
                             b,
                             b_leading_dimension: None,
                             b_transpose: true,
                             d: &mut output_allocation,
                             d_transform: MatmulDOps::none(),
+                            gather_indices: None,
                             m: batch_dim as u32,
                             n: self.vocab_size,
                             k: self.model_dim,
@@ -626,15 +654,87 @@ impl<B: Backend> Embedding<B> {
         };
 
         if let Some(logit_soft_cap) = &self.logit_soft_cap {
-            logit_soft_cap.kernel.encode(
-                &mut output_allocation,
-                (batch_dim * self.vocab_size as usize) as u32,
-                logit_soft_cap.value,
-                encoder,
-            );
+            let length = (batch_dim * self.vocab_size as usize) as u32;
+            if native_output {
+                logit_soft_cap.kernel.encode(&mut output_allocation, length, logit_soft_cap.value, encoder);
+            } else {
+                let kernel = <B::Kernels as Kernels>::LogitSoftCapKernel::new(encoder.context(), output_data_type)
+                    .map_err(EmbeddingError::BackendError)?;
+                kernel.encode(&mut output_allocation, length, logit_soft_cap.value, encoder);
+            }
         }
 
         Ok(output_allocation)
+    }
+
+    /// Per-row candidate readout via the GEMV B-row gather: `out[r][j] == dense[r][token_ids[r][j]]`,
+    /// soft-capped when configured, one dispatch. Full-precision weights; caller guarantees `token_ids < vocab_size`.
+    pub(crate) fn encode_readout_sparse(
+        &self,
+        input: &Allocation<B>,
+        token_ids: &Allocation<B>,
+        rows: usize,
+        ids_per_row: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        assert!(rows > 0 && ids_per_row > 0);
+        let (weights, readout) = match &self.tying {
+            EmbeddingTying::Tied {
+                ty:
+                    TiedEmbeddingType::FullPrecision {
+                        weights,
+                        readout,
+                        ..
+                    },
+            } => (weights, readout),
+            EmbeddingTying::Untied {
+                output_ty:
+                    UntiedEmbeddingReadoutType::FullPrecision {
+                        weights,
+                        readout,
+                    },
+                ..
+            } => (weights, readout),
+            _ => {
+                return Err(EmbeddingError::UnsupportedConfiguration(
+                    "fused sparse readout requires full-precision embedding weights".to_string(),
+                ));
+            },
+        };
+
+        let mut output = encoder
+            .allocate_scratch(size_for_shape(&[rows, ids_per_row], self.data_type))
+            .map_err(EmbeddingError::BackendError)?;
+
+        let soft_cap = self.logit_soft_cap.as_ref().map(|cap| cap.value);
+        readout
+            .lock()
+            .encode(
+                MatmulArguments {
+                    a: MatmulA::FullPrecision {
+                        values: input,
+                        offset: 0,
+                    },
+                    b: MatmulB::FullPrecision {
+                        b: weights,
+                    },
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    d: &mut output,
+                    d_transform: MatmulDOps {
+                        soft_cap,
+                        ..MatmulDOps::none()
+                    },
+                    gather_indices: Some(token_ids),
+                    m: rows as u32,
+                    n: ids_per_row as u32,
+                    k: self.model_dim,
+                },
+                encoder,
+            )
+            .map_err(EmbeddingError::BackendError)?;
+
+        Ok(output)
     }
 }
 
@@ -753,11 +853,11 @@ fn quantized_readout<B: Backend>(
     mode: QuantizationMode,
     method: QuantizationMethod,
     group_size: usize,
-) -> Result<(RefCell<<B::Kernels as Kernels>::MatmulKernel>, ReadoutQuantConfig), EmbeddingError<B>> {
+) -> Result<(Mutex<<B::Kernels as Kernels>::MatmulKernel>, ReadoutQuantConfig), EmbeddingError<B>> {
     let readout = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
         .map_err(EmbeddingError::BackendError)?;
     Ok((
-        RefCell::new(readout),
+        Mutex::new(readout),
         ReadoutQuantConfig {
             method,
             mode,

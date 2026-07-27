@@ -15,7 +15,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         linear::{Linear, LinearBlockError},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar},
+        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -83,8 +83,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let projection_norm = Normalization::new(
             config.ple_dim,
             None,
-            false,
-            false,
+            ShortcutMode::None,
             PostLayerScalar::ScaleOutput(config.input_scale),
             data_type,
             &projection_norm_config,
@@ -200,8 +199,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         let norm = Normalization::new(
             model_dim,
             None,
-            false,
-            false,
+            ShortcutMode::None,
             PostLayerScalar::None,
             data_type,
             &config.norm_config,
@@ -211,8 +209,9 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
 
         let gate_act_mul = <B::Kernels as Kernels>::GatedActMulKernel::new(context, data_type, false, false)
             .map_err(PerLayerEmbeddingError::BackendError)?;
-        let residual_finalize = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true)
-            .map_err(PerLayerEmbeddingError::BackendError)?;
+        let residual_finalize =
+            <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true, false)
+                .map_err(PerLayerEmbeddingError::BackendError)?;
         let residual_combine = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, true)
             .map_err(PerLayerEmbeddingError::BackendError)?;
 
@@ -246,6 +245,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         self.residual_finalize.encode(
             None::<&Allocation<B>>,
             hidden,
+            None::<&Allocation<B>>,
             &mut *outputs,
             length as u32,
             length as u32,

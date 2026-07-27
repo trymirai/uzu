@@ -1,8 +1,7 @@
 use std::{collections::HashMap, ops::Deref};
 
-use bytemuck::cast_slice;
+use bytemuck::{Pod, Zeroable, cast_slice, from_bytes};
 use xxhash_rust::xxh3::xxh3_64;
-use zerocopy::{FromBytes, Immutable, KnownLayout};
 
 use crate::speculators::speculator::Speculator;
 
@@ -34,7 +33,7 @@ fn apply_temperature(
 }
 
 #[repr(C)]
-#[derive(FromBytes, KnownLayout, Immutable)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct TaggedTableHeader {
     hashtable_size: u32,
     top_k: u32,
@@ -59,7 +58,7 @@ impl TaggedTableLayout {
         bytes: &[u8],
         offset: usize,
     ) -> (Self, usize) {
-        let header = TaggedTableHeader::ref_from_bytes(&bytes[offset..offset + HEADER_SIZE]).unwrap();
+        let header = from_bytes::<TaggedTableHeader>(&bytes[offset..offset + HEADER_SIZE]);
 
         assert!(header.hashtable_size > 0, "hashtable_size must be > 0");
         assert!(header.top_k > 0, "top_k must be > 0");

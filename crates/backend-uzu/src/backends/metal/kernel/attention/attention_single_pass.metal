@@ -79,10 +79,10 @@ PUBLIC KERNEL(AttentionSinglePass)(
   out += o_offset * value_dim + thread_context.simdgroup_index * value_elements_per_thread;
 
   // Read the query and 0 the output accumulator
-  for (int i = 0; i < qk_elements_per_thread; i++) {
+  for (uint i = 0; i < qk_elements_per_thread; i++) {
     q[i] = static_cast<U>(scale) * queries[i];
   }
-  for (int i = 0; i < value_elements_per_thread; i++) {
+  for (uint i = 0; i < value_elements_per_thread; i++) {
     o[i] = 0;
   }
 
@@ -132,7 +132,7 @@ PUBLIC KERNEL(AttentionSinglePass)(
       sum_exp_score = sum_exp_score * factor + exp_score;
 
       // Update the output accumulator
-      for (int j = 0; j < value_elements_per_thread; j++) {
+      for (uint j = 0; j < value_elements_per_thread; j++) {
         o[j] = o[j] * factor + exp_score * values[j];
       }
     }
@@ -154,7 +154,7 @@ PUBLIC KERNEL(AttentionSinglePass)(
   sum_exp_score = simd_sum(shared_sum_exp_scores[thread_context.simd_lane_id] * factor);
 
   // Now we need to aggregate all the outputs
-  for (int i = 0; i < value_elements_per_thread; i++) {
+  for (uint i = 0; i < value_elements_per_thread; i++) {
     shared_outputs[thread_context.simd_lane_id * HEAD_BLOCK_SIZE + thread_context.simdgroup_index] = o[i];
     threadgroup_barrier(mem_flags::mem_threadgroup);
     o[i] = simd_sum(
@@ -166,7 +166,7 @@ PUBLIC KERNEL(AttentionSinglePass)(
 
   // And write the output
   if (thread_context.simd_lane_id == 0) {
-    for (int i = 0; i < value_elements_per_thread; i++) {
+    for (uint i = 0; i < value_elements_per_thread; i++) {
       out[i] = static_cast<T>(o[i]);
     }
   }

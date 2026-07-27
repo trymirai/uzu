@@ -10,7 +10,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         linear::{Linear, LinearBlockError},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar},
+        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -61,8 +61,7 @@ impl<B: Backend> PredictionHead<B> {
         let normalization = Normalization::new(
             hidden_dim,
             None,
-            false,
-            false,
+            ShortcutMode::None,
             PostLayerScalar::None,
             data_type,
             &config.normalization_config,

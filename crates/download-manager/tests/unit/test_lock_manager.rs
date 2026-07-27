@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use download_manager::{LockFileInfo, acquire_lock, release_lock_if_owned};
+use download_manager::{LockFileInfo, LockFileState, acquire_lock, release_lock_if_owned};
 use uuid::Uuid;
 
 use crate::lock_manager::{
-    ReclaimExpectation, ReclaimOutcome, RestoreOutcome, reclaim_stale_lock, try_restore_quarantine,
+    ReclaimExpectation, ReclaimOutcome, RestoreOutcome, classify_same_manager_lock_without_process, reclaim_stale_lock,
+    try_restore_quarantine,
 };
 
 fn lock_path(temp: &tempfile::TempDir) -> PathBuf {
@@ -106,6 +107,36 @@ async fn acquire_lock_blocks_same_manager_id_with_different_instance_id() -> Res
     Ok(())
 }
 
+#[test]
+fn same_manager_lock_without_process_blocks_different_recent_instance() {
+    let other_instance_id = Uuid::new_v4();
+    let lock_info = LockFileInfo {
+        manager_id: "manager-a".to_string(),
+        instance_id: other_instance_id,
+        acquired_at: Utc::now(),
+        process_id: 0,
+    };
+
+    let state = classify_same_manager_lock_without_process(lock_info, Uuid::new_v4());
+
+    assert!(matches!(state, LockFileState::OwnedByOtherApp(info) if info.instance_id == other_instance_id));
+}
+
+#[test]
+fn same_manager_lock_without_process_reclaims_only_after_stale() {
+    let other_instance_id = Uuid::new_v4();
+    let lock_info = LockFileInfo {
+        manager_id: "manager-a".to_string(),
+        instance_id: other_instance_id,
+        acquired_at: Utc::now() - ChronoDuration::hours(2),
+        process_id: 0,
+    };
+
+    let state = classify_same_manager_lock_without_process(lock_info, Uuid::new_v4());
+
+    assert!(matches!(state, LockFileState::Stale(info) if info.instance_id == other_instance_id));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn check_lock_file_treats_disappearing_lock_as_missing() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
@@ -203,8 +234,8 @@ async fn reclaim_unparseable_snapshot_succeeds_when_bytes_match() -> Result<(), 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn try_restore_quarantine_does_not_overwrite_a_new_lock_at_destination()
--> Result<(), Box<dyn std::error::Error>> {
+async fn try_restore_quarantine_does_not_overwrite_a_new_lock_at_destination() -> Result<(), Box<dyn std::error::Error>>
+{
     let temp = tempfile::tempdir()?;
     let lock_target = lock_path(&temp);
     let quarantine = lock_target.with_extension("reclaim-test");

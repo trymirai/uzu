@@ -192,11 +192,16 @@ fn chat_reply_stats_component(
         .prefill_tokens_per_second
         .map(|tokens_per_second| format!("{tokens_per_second:.2} t/s"))
         .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let tokens_per_forward_pass = stats
+        .speculator_stats
+        .as_ref()
+        .map(|speculator_stats| format!("{:.2} t/f", speculator_stats.tokens_per_forward_pass))
+        .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let memory_used = stats.memory_used_bytes.map(format_memory_used).unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let power = stats
         .power_stats
         .as_ref()
-        .map(|power| format!("{:.2} W avg / {:.2} W max", power.average_package_watts, power.max_package_watts))
+        .map(|power| format!("{:.2} W avg", power.average_total_watts))
         .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let energy = stats
         .power_stats
@@ -223,15 +228,19 @@ fn chat_reply_stats_component(
                 color: subtitle_color,
             )
             Text(
+                content: format!("tokens per forward pass: {tokens_per_forward_pass}"),
+                color: subtitle_color,
+            )
+            Text(
                 content: format!("memory used: {memory_used}"),
                 color: subtitle_color,
             )
             Text(
-                content: format!("package power: {power}"),
+                content: format!("total power: {power}"),
                 color: subtitle_color,
             )
             Text(
-                content: format!("package energy: {energy}"),
+                content: format!("total energy: {energy}"),
                 color: subtitle_color,
             )
             Text(

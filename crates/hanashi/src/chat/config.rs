@@ -1,20 +1,31 @@
 use serde::{Deserialize, Serialize};
 use shoji::types::session::chat::ChatModelCapabilities;
 
-use crate::chat::{Error, hanashi::Config as HanashiConfig, harmony::Config as HarmonyConfig};
+use crate::chat::{Error, hanashi::config::HanashiConfig, harmony::HarmonyConfig};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Config {
-    Hanashi(HanashiConfig),
-    Harmony(HarmonyConfig),
+pub enum EncodingConfig {
+    Hanashi {
+        #[serde(flatten)]
+        config: HanashiConfig,
+    },
+    Harmony {
+        #[serde(flatten)]
+        config: HarmonyConfig,
+    },
 }
 
-impl Config {
-    pub fn capabilities(&self) -> Result<ChatModelCapabilities, Error> {
+impl EncodingConfig {
+    #[allow(dead_code)]
+    fn capabilities(&self) -> Result<ChatModelCapabilities, Error> {
         match self {
-            Config::Hanashi(config) => config.capabilities().map_err(Error::from),
-            Config::Harmony(config) => Ok(config.capabilities()),
+            EncodingConfig::Hanashi {
+                config,
+            } => config.capabilities().map_err(Error::from),
+            EncodingConfig::Harmony {
+                config,
+            } => Ok(config.capabilities()),
         }
     }
 }

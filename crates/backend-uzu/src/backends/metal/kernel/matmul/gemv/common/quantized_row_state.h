@@ -18,8 +18,8 @@ struct QuantizedGroupRows {
   const device T* values;
   uint group_stride;
 
-  QuantizedGroupRows(const device T* values_base, uint out_row, uint group_count, uint group_offset)
-      : values(values_base + out_row * group_count + group_offset), group_stride(group_count) {}
+  QuantizedGroupRows(const device T* values_base, uint base_row, uint group_count, uint group_offset)
+      : values(values_base + base_row * group_count + group_offset), group_stride(group_count) {}
 
   METAL_FUNC U value(uint row) const { return static_cast<U>(values[row * group_stride]); }
 
@@ -36,11 +36,11 @@ struct QuantizedOffsetState<BT, U, GemmBPrologueKind::ScaleBiasDequant, BITS> {
   QuantizedOffsetState(
       const device uint8_t*,
       const device BT* biases_base,
-      uint out_row,
+      uint base_row,
       uint group_count,
       uint group_offset
   )
-      : biases(biases_base, out_row, group_count, group_offset) {}
+      : biases(biases_base, base_row, group_count, group_offset) {}
 
   METAL_FUNC U value(uint row, U) const { return biases.value(row); }
 
@@ -56,17 +56,17 @@ struct QuantizedOffsetState<BT, U, GemmBPrologueKind::ScaleZeroPointDequant, BIT
   QuantizedOffsetState(
       const device uint8_t* zero_points_base,
       const device BT*,
-      uint out_row,
+      uint base_row,
       uint group_count,
       uint group_offset
   ) {
     if constexpr (BITS == 4) {
       zero_point_stride = (group_count + 1) / 2;
-      zero_points = zero_points_base + out_row * zero_point_stride + group_offset / 2;
+      zero_points = zero_points_base + base_row * zero_point_stride + group_offset / 2;
       zero_point_shift = (group_offset & 1) * 4u;
     } else {
       zero_point_stride = group_count;
-      zero_points = zero_points_base + out_row * zero_point_stride + group_offset;
+      zero_points = zero_points_base + base_row * zero_point_stride + group_offset;
     }
   }
 
@@ -107,19 +107,28 @@ struct QuantizedRowState {
       const device BT* scales_base,
       const device uint8_t* zero_points_base,
       const device BT* biases_base,
-      uint out_row,
+      uint base_row,
       uint group_count,
       uint group_offset
   )
-      : scale_rows(scales_base, out_row, group_count, group_offset),
-        offset_state(zero_points_base, biases_base, out_row, group_count, group_offset) {}
+      : scale_rows(scales_base, base_row, group_count, group_offset),
+        offset_state(zero_points_base, biases_base, base_row, group_count, group_offset) {}
 
-  void load(thread Params& params) const {
+  // Row index: dense = local row, gather = absolute gather index.
+  void load(
+      thread Params& params,
+      const device uint* gather_indices,
+      bool gathered,
+      uint batch_idx,
+      uint out_vec_size,
+      uint out_row
+  ) const {
     METAL_PRAGMA_UNROLL
     for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-      const U scale = scale_rows.value(row);
+      const uint addr_row = gathered ? gather_indices[batch_idx * out_vec_size + out_row + row] : row;
+      const U scale = scale_rows.value(addr_row);
       params.scale[row] = scale;
-      params.offset[row] = offset_state.value(row, scale);
+      params.offset[row] = offset_state.value(addr_row, scale);
     }
   }
 

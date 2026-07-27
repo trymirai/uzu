@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
+use kiban::rt::RuntimeHandle;
 use tempfile::tempdir;
 use tokio::time::timeout;
 use wiremock::{
@@ -23,10 +24,14 @@ async fn test_universal_resume_restarts_when_server_ignores_range() -> Result<()
     let part_path = destination.with_extension("part");
     tokio::fs::write(&part_path, b"partial").await?;
 
-    let manager =
-        <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, tokio::runtime::Handle::current()).await?;
+    let manager = <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, RuntimeHandle::current()).await?;
     let task = manager
-        .file_download_task(&format!("{}/model.bin", server.uri()), &destination, FileCheck::None, Some(bytes.len() as u64))
+        .file_download_task(
+            &format!("{}/model.bin", server.uri()),
+            &destination,
+            FileCheck::None,
+            Some(bytes.len() as u64),
+        )
         .await?;
 
     assert_eq!(task.state().await.phase, FileDownloadPhase::Paused);

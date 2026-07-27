@@ -24,7 +24,7 @@ pub mod delta_net;
 pub mod mamba2;
 pub mod short_conv;
 
-pub trait MixerState<B: Backend>: Any {
+pub trait MixerState<B: Backend>: Any + Send {
     fn prepare(
         &mut self,
         context_length: usize,
@@ -48,7 +48,7 @@ impl<'a, B: Backend> MaybeMut<'a, dyn MixerState<B>> {
     }
 }
 
-pub trait Mixer<B: Backend> {
+pub trait Mixer<B: Backend>: Send + Sync {
     fn speculation_supported(&self) -> bool;
 
     fn max_context_length(&self) -> Option<usize>;

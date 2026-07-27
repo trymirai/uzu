@@ -11,7 +11,7 @@ PUBLIC KERNEL(RepetitionPenalty)(
     const device T* original_logits,
     device T* logits_copy,
     const device uint32_t* context_ring,
-    const device uint64_t* token_ids,
+    const device uint32_t* token_ids,
     const constant float& repetition_penalty,
     const constant uint32_t& suffix_repetition_length,
     const constant uint32_t& vocab_size,
@@ -37,7 +37,7 @@ PUBLIC KERNEL(RepetitionPenalty)(
     const uint32_t slot = (ring.ring_offset + source_index) % suffix_repetition_length;
     token_id = ring_tokens[slot];
   } else {
-    token_id = static_cast<uint32_t>(token_ids[source_index - ring.ring_length]);
+    token_id = token_ids[source_index - ring.ring_length];
   }
 
   const uint32_t logit_offset = sample_index * vocab_size + token_id;

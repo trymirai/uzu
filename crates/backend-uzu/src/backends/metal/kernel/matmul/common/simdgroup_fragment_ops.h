@@ -10,15 +10,15 @@ namespace uzu {
 namespace matmul {
 
 struct SimdgroupFragmentOps {
-  METAL_CONST ushort FRAGMENT_ROWS = SIMDGROUP_MMA_ROWS;
-  METAL_CONST ushort FRAGMENT_COLS = SIMDGROUP_MMA_COLS;
-  METAL_CONST bool READ_TRANSPOSE_SWAPS_SOURCE_STRIDES = true;
+  UZU_CONST ushort FRAGMENT_ROWS = SIMDGROUP_MMA_ROWS;
+  UZU_CONST ushort FRAGMENT_COLS = SIMDGROUP_MMA_COLS;
+  UZU_CONST bool READ_TRANSPOSE_SWAPS_SOURCE_STRIDES = true;
   using BlockStorage = ThreadgroupBlockStorage;
 
-  METAL_CONST ushort ELEMENTS_PER_THREAD = (FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE;
-  METAL_CONST ushort THREAD_ELEMENT_ROWS = 1;
-  METAL_CONST ushort THREAD_ELEMENT_COLS = 2;
-  METAL_CONST ushort THREAD_ELEMENT_ROW_STRIDE = FRAGMENT_ROWS / THREAD_ELEMENT_ROWS;
+  UZU_CONST ushort ELEMENTS_PER_THREAD = (FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE;
+  UZU_CONST ushort THREAD_ELEMENT_ROWS = 1;
+  UZU_CONST ushort THREAD_ELEMENT_COLS = 2;
+  UZU_CONST ushort THREAD_ELEMENT_ROW_STRIDE = FRAGMENT_ROWS / THREAD_ELEMENT_ROWS;
 
   template <typename U>
   using ThreadVector = typename metal::vec<U, ELEMENTS_PER_THREAD>;
@@ -47,7 +47,12 @@ struct SimdgroupFragmentOps {
     static_assert(LeftFragment::ROW_FRAGMENTS == rows, "fragment matmul: M dimensions do not match");
     static_assert(RightFragment::COL_FRAGMENTS == cols, "fragment matmul: N dimensions do not match");
     static_assert(RightFragment::ROW_FRAGMENTS == depth, "fragment matmul: K dimensions do not match");
-    using Sg = SimdgroupMMA<typename OutputFragment::ElementType, FRAGMENT_ROWS, FRAGMENT_COLS>;
+    using Sg = SimdgroupMMA<
+        typename OutputFragment::ElementType,
+        FRAGMENT_ROWS,
+        FRAGMENT_COLS,
+        typename LeftFragment::ElementType,
+        typename RightFragment::ElementType>;
 
     METAL_PRAGMA_UNROLL
     for (ushort m = 0; m < rows; ++m) {

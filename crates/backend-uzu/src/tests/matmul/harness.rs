@@ -1,7 +1,7 @@
 use num_traits::Float;
 
 use super::Shape;
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 use crate::backends::metal::{GemmDispatchPath, Metal, MetalContext};
 use crate::{
     array::ArrayElement,
@@ -10,7 +10,7 @@ use crate::{
             AllocationType, Backend, Context, Encoder,
             kernel::{
                 Kernels,
-                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -18,7 +18,7 @@ use crate::{
     tests::helpers::{alloc_allocation_with_data, allocation_to_vec},
 };
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 pub type MetalMatmulKernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 
 #[derive(Debug, Clone, Copy)]
@@ -150,14 +150,17 @@ fn run<B: Backend, T: ArrayElement + Float>(
         accumulate: input.case.accumulate,
         bias: bias_allocation.as_ref(),
         rht_factors: rht_allocation.as_ref(),
+        soft_cap: None,
     };
 
     let mut encoder = Encoder::new(context).expect("encoder");
     encode(
         kernel,
         MatmulArguments {
-            a: &a_allocation,
-            a_offset: 0,
+            a: MatmulA::FullPrecision {
+                values: &a_allocation,
+                offset: 0,
+            },
             b: MatmulB::FullPrecision {
                 b: &b_allocation,
             },
@@ -165,6 +168,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
             b_transpose: input.case.b_transpose,
             d: &mut d_allocation,
             d_transform,
+            gather_indices: None,
             m: m as u32,
             n: n as u32,
             k: k as u32,
@@ -189,7 +193,7 @@ pub fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     })
 }
 
-#[cfg(metal_backend)]
+#[cfg(backend = "metal")]
 pub fn run_metal<T: ArrayElement + Float>(
     context: &MetalContext,
     kernel: &mut MetalMatmulKernel,

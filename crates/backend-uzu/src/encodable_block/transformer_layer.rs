@@ -8,7 +8,7 @@ use crate::{
         batch_topology::BatchTopology,
         mixer::{Mixer, MixerNewError, MixerState, attention::rope::PrecalculatedRoPE},
         mlp::{Mlp, MlpBlockError},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar},
+        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         per_layer_embedding::PerLayerEmbeddingProjection,
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -94,8 +94,11 @@ impl<B: Backend> TransformerLayer<B> {
             Some(Normalization::new(
                 transformer_config.model_dim,
                 mixer_hadamard_factors,
-                true,
-                layer_index > 0,
+                if layer_index > 0 {
+                    ShortcutMode::Add
+                } else {
+                    ShortcutMode::Copy
+                },
                 PostLayerScalar::None,
                 data_type,
                 pre_mixer_norm_config,
@@ -113,8 +116,7 @@ impl<B: Backend> TransformerLayer<B> {
             Some(Normalization::new(
                 transformer_config.model_dim,
                 None,
-                false,
-                false,
+                ShortcutMode::None,
                 PostLayerScalar::None,
                 data_type,
                 norm_config,
@@ -137,8 +139,7 @@ impl<B: Backend> TransformerLayer<B> {
         let pre_mlp_norm = Normalization::new(
             transformer_config.model_dim,
             mlp_input_hadamard_factors,
-            true,
-            true,
+            ShortcutMode::Add,
             residual_sum_scalar,
             data_type,
             &layer_config.pre_mlp_norm_config,
@@ -150,8 +151,7 @@ impl<B: Backend> TransformerLayer<B> {
             Some(Normalization::new(
                 transformer_config.model_dim,
                 None,
-                false,
-                false,
+                ShortcutMode::None,
                 output_scalar,
                 data_type,
                 norm_config,

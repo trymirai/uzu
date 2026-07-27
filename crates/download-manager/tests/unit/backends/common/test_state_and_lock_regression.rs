@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use download_manager::{DownloadError, FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
+use kiban::rt::RuntimeHandle;
 use rstest::rstest;
-use tokio::runtime::Handle as TokioHandle;
 
 use crate::common::{Behavior, MockRegistry, wait_for_phase};
 
@@ -17,9 +17,7 @@ async fn test_concurrent_task_creation_returns_same_task(
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
-    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current())
-        .await
-        .unwrap();
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
 
     let (first, second) = tokio::join!(
         manager.file_download_task(
@@ -47,13 +45,13 @@ async fn test_concurrent_task_creation_returns_same_task(
 #[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
 async fn different_urls_targeting_same_destination_are_rejected(
-    #[case] download_manager_type: FileDownloadManagerType,
+    #[case] download_manager_type: FileDownloadManagerType
 ) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start().await?;
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
-    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current()).await.unwrap();
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
 
     let _first = manager
         .file_download_task(
@@ -82,13 +80,13 @@ async fn different_urls_targeting_same_destination_are_rejected(
 #[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
 async fn different_expected_bytes_targeting_same_destination_are_rejected(
-    #[case] download_manager_type: FileDownloadManagerType,
+    #[case] download_manager_type: FileDownloadManagerType
 ) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start().await?;
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
-    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current()).await.unwrap();
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
 
     let _first = manager
         .file_download_task(
@@ -117,14 +115,14 @@ async fn different_expected_bytes_targeting_same_destination_are_rejected(
 #[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
 async fn separate_managers_in_same_process_cannot_share_destination_lock(
-    #[case] download_manager_type: FileDownloadManagerType,
+    #[case] download_manager_type: FileDownloadManagerType
 ) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
 
-    let manager_a = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current()).await.unwrap();
+    let manager_a = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
     let task_a = manager_a
         .file_download_task(
             &tokenizer.file.url,
@@ -138,7 +136,7 @@ async fn separate_managers_in_same_process_cannot_share_destination_lock(
     task_a.download().await.unwrap();
     wait_for_phase(&task_a, &mut progress_a, |phase| matches!(phase, FileDownloadPhase::Downloading)).await;
 
-    let manager_b = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current()).await.unwrap();
+    let manager_b = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
     let task_b = manager_b
         .file_download_task(
             &tokenizer.file.url,

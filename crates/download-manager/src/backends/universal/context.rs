@@ -5,14 +5,14 @@ use std::{
 };
 
 use futures_util::StreamExt;
+use kiban::{fs, fs::PartFile, rt::RuntimeHandle, time::Instant};
 use reqwest::{
     StatusCode,
     header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE},
 };
-use tokio::{
-    fs::{File as TokioFile, OpenOptions as TokioOpenOptions},
-    io::AsyncWriteExt,
-    runtime::Handle as TokioHandle,
+use tokio::sync::{
+    oneshot::channel as tokio_oneshot_channel,
+    watch::{Receiver as TokioWatchReceiver, channel as tokio_watch_channel},
 };
 
 use crate::{
@@ -24,22 +24,23 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct UniversalBackendContext {
-    tokio_handle: TokioHandle,
+    runtime_handle: RuntimeHandle,
     pub retries: u16,
     pub progress_interval_ms: u64,
 }
 
 impl UniversalBackendContext {
-    pub fn new(tokio_handle: TokioHandle) -> Self {
+    pub fn new(runtime_handle: RuntimeHandle) -> Self {
         Self {
-            tokio_handle,
+            runtime_handle,
             retries: 3,
             progress_interval_ms: 500,
         }
     }
 }
 
-#[async_trait::async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 impl BackendContext for UniversalBackendContext {
     type Backend = UniversalBackend;
 
@@ -75,22 +76,32 @@ impl UniversalBackendContext {
         backend_event_sender: BackendEventSender,
     ) -> Result<UniversalActiveTask, UniversalBackendError> {
         if let Some(parent) = config.destination.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|error| UniversalBackendError::Io(error.to_string()))?;
+            fs::asyn::create_dir_all(parent).await.map_err(|error| UniversalBackendError::Io(error.to_string()))?;
         }
 
         let retry_count = self.retries;
         let progress_interval = Duration::from_millis(self.progress_interval_ms);
-        let task_handle = self.tokio_handle.spawn(download_streaming(
+        let (pause_sender, pause_receiver) = tokio_watch_channel(false);
+        let (completion_sender, completion_receiver) = tokio_oneshot_channel();
+        let task_handle = self.runtime_handle.spawn(download_streaming(
             config,
             generation,
             resume_artifact_path.clone(),
             backend_event_sender,
             retry_count,
             progress_interval,
+            pause_receiver,
+            completion_sender,
         ));
 
-        Ok(UniversalActiveTask::new(Box::from([task_handle]), resume_artifact_path))
+        Ok(UniversalActiveTask::new(Box::from([task_handle]), pause_sender, completion_receiver, resume_artifact_path))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DownloadStreamCompletion {
+    Completed,
+    Paused,
 }
 
 async fn download_streaming(
@@ -100,7 +111,10 @@ async fn download_streaming(
     backend_event_sender: BackendEventSender,
     retry_count: u16,
     progress_interval: Duration,
+    pause_receiver: TokioWatchReceiver<bool>,
+    completion_sender: tokio::sync::oneshot::Sender<()>,
 ) {
+    let mut pause_receiver = pause_receiver;
     let result = download_streaming_with_retries(
         Arc::clone(&config),
         generation,
@@ -108,14 +122,20 @@ async fn download_streaming(
         &backend_event_sender,
         retry_count,
         progress_interval,
+        &mut pause_receiver,
     )
     .await;
 
-    let terminal_event = match result {
-        Ok(()) => BackendEvent::completed(generation),
-        Err(error) => BackendEvent::error(generation, error),
-    };
-    let _ = backend_event_sender.send_terminal(terminal_event).await;
+    match result {
+        Ok(DownloadStreamCompletion::Completed) => {
+            let _ = backend_event_sender.send_terminal(BackendEvent::completed(generation)).await;
+        },
+        Ok(DownloadStreamCompletion::Paused) => {},
+        Err(error) => {
+            let _ = backend_event_sender.send_terminal(BackendEvent::error(generation, error)).await;
+        },
+    }
+    let _ = completion_sender.send(());
 }
 
 async fn download_streaming_with_retries(
@@ -125,7 +145,8 @@ async fn download_streaming_with_retries(
     backend_event_sender: &BackendEventSender,
     retry_count: u16,
     progress_interval: Duration,
-) -> Result<(), String> {
+    pause_receiver: &mut TokioWatchReceiver<bool>,
+) -> Result<DownloadStreamCompletion, String> {
     let mut attempt = 0_u16;
     loop {
         match download_once(
@@ -134,13 +155,14 @@ async fn download_streaming_with_retries(
             resume_artifact_path,
             backend_event_sender,
             progress_interval,
+            pause_receiver,
         )
         .await
         {
-            Ok(()) => return Ok(()),
+            Ok(completion) => return Ok(completion),
             Err(error) if attempt < retry_count => {
                 attempt = attempt.saturating_add(1);
-                tokio::time::sleep(Duration::from_millis(250)).await;
+                kiban::time::sleep(Duration::from_millis(250)).await;
                 tracing::debug!("retrying universal download after error: {error}");
             },
             Err(error) => return Err(error),
@@ -154,16 +176,19 @@ async fn download_once(
     resume_artifact_path: &Path,
     backend_event_sender: &BackendEventSender,
     progress_interval: Duration,
-) -> Result<(), String> {
+    pause_receiver: &mut TokioWatchReceiver<bool>,
+) -> Result<DownloadStreamCompletion, String> {
     let client = reqwest::Client::new();
-    let resume_from_bytes =
-        tokio::fs::metadata(resume_artifact_path).await.ok().map(|metadata| metadata.len()).unwrap_or(0);
+    let resume_from_bytes = fs::asyn::file_length(resume_artifact_path).await.unwrap_or(0);
     let mut request = client.get(&config.source_url);
     if resume_from_bytes > 0 {
         request = request.header(RANGE, format!("bytes={resume_from_bytes}-"));
     }
 
-    let response = request.send().await.map_err(|error| error.to_string())?;
+    let response = tokio::select! {
+        _ = wait_for_pause(pause_receiver) => return Ok(DownloadStreamCompletion::Paused),
+        response = request.send() => response.map_err(|error| error.to_string())?,
+    };
     let status = response.status();
     let content_range = response.headers().get(CONTENT_RANGE).cloned();
     let resume_from_bytes = if resume_from_bytes > 0 {
@@ -189,11 +214,12 @@ async fn download_once(
                     content_range.as_ref().and_then(|header| header.to_str().ok()).and_then(parse_content_range_total);
                 if advertised_total == Some(resume_from_bytes) {
                     backend_event_sender.send_progress(generation, resume_from_bytes, Some(resume_from_bytes)).await;
-                    return tokio::fs::rename(resume_artifact_path, &config.destination)
+                    return fs::asyn::rename(resume_artifact_path, &config.destination)
                         .await
+                        .map(|()| DownloadStreamCompletion::Completed)
                         .map_err(|error| error.to_string());
                 }
-                let _ = tokio::fs::remove_file(resume_artifact_path).await;
+                let _ = fs::asyn::remove_file(resume_artifact_path).await;
                 return Err(format!("server did not honor range request: status {status}"));
             },
             _ => return Err(format!("server did not honor range request: status {status}")),
@@ -211,37 +237,48 @@ async fn download_once(
         .map(|remaining_bytes| remaining_bytes.saturating_add(resume_from_bytes))
         .or(config.expected_bytes);
 
-    let mut file = open_part_file(resume_artifact_path, resume_from_bytes).await.map_err(|error| error.to_string())?;
+    let mut file =
+        <dyn PartFile>::new(resume_artifact_path, resume_from_bytes).await.map_err(|error| error.to_string())?;
     let mut downloaded_bytes = resume_from_bytes;
-    let mut last_progress_emit =
-        std::time::Instant::now().checked_sub(progress_interval).unwrap_or_else(std::time::Instant::now);
+    let mut last_progress_emit = Instant::now().checked_sub(progress_interval).unwrap_or_else(Instant::now);
     let mut stream = response.bytes_stream();
 
-    while let Some(chunk) = stream.next().await {
+    loop {
+        let chunk = tokio::select! {
+            _ = wait_for_pause(pause_receiver) => {
+                file.flush().await.map_err(|error| error.to_string())?;
+                backend_event_sender.send_progress(generation, downloaded_bytes, total_bytes).await;
+                return Ok(DownloadStreamCompletion::Paused);
+            },
+            chunk = stream.next() => chunk,
+        };
+
+        let Some(chunk) = chunk else {
+            break;
+        };
         let chunk = chunk.map_err(|error| error.to_string())?;
         file.write_all(&chunk).await.map_err(|error| error.to_string())?;
         downloaded_bytes = downloaded_bytes.saturating_add(chunk.len() as u64);
 
         if last_progress_emit.elapsed() >= progress_interval {
             backend_event_sender.send_progress(generation, downloaded_bytes, total_bytes).await;
-            last_progress_emit = std::time::Instant::now();
+            last_progress_emit = Instant::now();
         }
     }
 
     file.flush().await.map_err(|error| error.to_string())?;
     backend_event_sender.send_progress(generation, downloaded_bytes, total_bytes.or(Some(downloaded_bytes))).await;
-    tokio::fs::rename(resume_artifact_path, &config.destination).await.map_err(|error| error.to_string())
+    fs::asyn::rename(resume_artifact_path, &config.destination)
+        .await
+        .map(|()| DownloadStreamCompletion::Completed)
+        .map_err(|error| error.to_string())
 }
 
-async fn open_part_file(
-    resume_artifact_path: &Path,
-    resume_from_bytes: u64,
-) -> Result<TokioFile, std::io::Error> {
-    if resume_from_bytes > 0 {
-        TokioOpenOptions::new().create(true).append(true).open(resume_artifact_path).await
-    } else {
-        TokioOpenOptions::new().create(true).write(true).truncate(true).open(resume_artifact_path).await
+async fn wait_for_pause(pause_receiver: &mut TokioWatchReceiver<bool>) {
+    if *pause_receiver.borrow() {
+        return;
     }
+    let _ = pause_receiver.changed().await;
 }
 
 fn parse_content_range_start(header_value: &str) -> Option<u64> {

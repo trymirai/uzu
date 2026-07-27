@@ -1,15 +1,14 @@
 use std::{
-    fs::{self, File},
-    io::{Error as IoError, Read},
+    io::{Error as IoError, ErrorKind},
     path::{Path, PathBuf},
-    time::UNIX_EPOCH,
 };
 
 use base64::Engine;
+use kiban::{fs, time::SystemTime};
 use serde::{Deserialize, Serialize};
 
-const CHUNK_SIZE: usize = 8 * 1024 * 1024;
 const CRC_CACHE_VERSION: u8 = 1;
+const CRC_READ_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 struct CrcCacheReceipt {
@@ -20,7 +19,7 @@ struct CrcCacheReceipt {
     modified_nanos: u32,
 }
 
-pub fn calculate_and_verify_crc(
+pub async fn calculate_and_verify_crc(
     file_path: &Path,
     expected_crc32c_base64: &str,
 ) -> Result<bool, IoError> {
@@ -28,22 +27,23 @@ pub fn calculate_and_verify_crc(
         return Ok(false);
     };
 
-    let mut file = File::open(file_path)?;
-    let mut buffer = vec![0_u8; CHUNK_SIZE];
-    let mut crc = 0_u32;
-
-    loop {
-        let bytes_read = file.read(&mut buffer)?;
-        if bytes_read == 0 {
-            break;
+    let file_len = kiban::fs::asyn::file_length(file_path).await?;
+    let mut offset = 0;
+    let mut actual_crc = 0;
+    while offset < file_len {
+        let end = offset.saturating_add(CRC_READ_CHUNK_SIZE).min(file_len);
+        let chunk = kiban::fs::asyn::read_range(file_path, offset..end).await?;
+        if chunk.len() != (end - offset) as usize {
+            return Err(IoError::new(ErrorKind::UnexpectedEof, "file changed during CRC verification"));
         }
-        crc = crc32c::crc32c_append(crc, &buffer[..bytes_read]);
+        actual_crc = crc32c::crc32c_append(actual_crc, &chunk);
+        offset = end;
     }
 
-    Ok(crc == expected_crc)
+    Ok(actual_crc == expected_crc)
 }
 
-pub fn crc_cache_matches(
+pub async fn crc_cache_matches(
     file_path: &Path,
     expected_crc32c_base64: &str,
 ) -> bool {
@@ -51,28 +51,28 @@ pub fn crc_cache_matches(
         return false;
     }
 
-    let Ok(cache_contents) = fs::read_to_string(crc_path_for_file(file_path)) else {
+    let Ok(cache_contents) = kiban::fs::asyn::read_to_string(crc_path_for_file(file_path)).await else {
         return false;
     };
     let Ok(cached_receipt) = serde_json::from_str::<CrcCacheReceipt>(&cache_contents) else {
         return false;
     };
-    let Some(current_receipt) = CrcCacheReceipt::from_file(file_path, expected_crc32c_base64) else {
+    let Some(current_receipt) = CrcCacheReceipt::from_file(file_path, expected_crc32c_base64).await else {
         return false;
     };
 
     cached_receipt == current_receipt
 }
 
-pub fn save_crc_file(
+pub async fn save_crc_file(
     file_path: &Path,
     crc_value: &str,
 ) -> Result<(), IoError> {
-    let Some(receipt) = CrcCacheReceipt::from_file(file_path, crc_value) else {
+    let Some(receipt) = CrcCacheReceipt::from_file(file_path, crc_value).await else {
         return Ok(());
     };
     let receipt_json = serde_json::to_vec(&receipt).map_err(IoError::other)?;
-    std::fs::write(crc_path_for_file(file_path), receipt_json)
+    fs::asyn::write(crc_path_for_file(file_path), receipt_json).await
 }
 
 pub fn crc_path_for_file(file_path: &Path) -> PathBuf {
@@ -80,20 +80,20 @@ pub fn crc_path_for_file(file_path: &Path) -> PathBuf {
 }
 
 impl CrcCacheReceipt {
-    fn from_file(
+    async fn from_file(
         file_path: &Path,
         crc: &str,
     ) -> Option<Self> {
-        let metadata = fs::metadata(file_path).ok()?;
-        if !metadata.is_file() {
+        if !fs::asyn::is_file(file_path).await {
             return None;
         }
-        let modified = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
 
+        let file_size = fs::asyn::file_length(file_path).await.ok()?;
+        let modified = fs::asyn::file_modified(file_path).await.ok()?.duration_since(SystemTime::UNIX_EPOCH).ok()?;
         Some(Self {
             version: CRC_CACHE_VERSION,
             crc: crc.to_string(),
-            file_size: metadata.len(),
+            file_size,
             modified_unix_seconds: modified.as_secs(),
             modified_nanos: modified.subsec_nanos(),
         })

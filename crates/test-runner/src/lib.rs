@@ -23,7 +23,7 @@ macro_rules! for_each_backend {
             type $B = backend_uzu::backends::cpu::Cpu;
             $body
         }
-        #[cfg(metal_backend)]
+        #[cfg(backend = "metal")]
         {
             type $B = backend_uzu::backends::metal::Metal;
             $body
@@ -34,7 +34,7 @@ macro_rules! for_each_backend {
 #[macro_export]
 macro_rules! for_each_non_cpu_backend {
     (|$B:ident| $body:expr) => {{
-        #[cfg(metal_backend)]
+        #[cfg(backend = "metal")]
         {
             type $B = backend_uzu::backends::metal::Metal;
             $body

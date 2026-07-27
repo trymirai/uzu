@@ -1,4 +1,4 @@
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, path::PathBuf, process::ExitCode};
 
 use anyhow::Context;
 use futures::future::try_join_all;
@@ -12,29 +12,31 @@ mod cpu;
 mod metal;
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> anyhow::Result<ExitCode> {
     println!("cargo::rerun-if-changed=.");
-
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") && env::var("IPHONEOS_DEPLOYMENT_TARGET").is_err() {
-        println!("cargo::rustc-env=IPHONEOS_DEPLOYMENT_TARGET=26.4");
-    }
-
     if envs::build_always() {
         println!("cargo::rerun-if-changed=/var/empty/hack_nonexistent_file_to_always_rerun");
     }
 
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH")?;
     let target_os = env::var("CARGO_CFG_TARGET_OS")?;
 
-    let metal_backend = cfg!(feature = "metal") && matches!(target_os.as_ref(), "macos" | "ios" | "tvos" | "visionos");
-    println!("cargo::rustc-check-cfg=cfg(metal_backend)");
-    if metal_backend {
-        println!("cargo::rustc-cfg=metal_backend");
+    println!("cargo::rustc-check-cfg=cfg(backend, values(\"cpu\", \"metal\"))");
+
+    let backend_cpu = cfg!(feature = "cpu");
+    if backend_cpu {
+        println!("cargo::rustc-cfg=backend=\"cpu\"");
     }
 
-    let grammar_xgrammar = cfg!(feature = "grammar");
-    println!("cargo::rustc-check-cfg=cfg(grammar_xgrammar)");
-    if grammar_xgrammar {
-        println!("cargo::rustc-cfg=grammar_xgrammar");
+    let backend_metal = cfg!(feature = "metal") && matches!(target_os.as_ref(), "macos" | "ios" | "tvos" | "visionos");
+    if backend_metal {
+        println!("cargo::rustc-cfg=backend=\"metal\"");
+    }
+
+    let grammar = cfg!(feature = "grammar") && target_arch != "wasm32";
+    println!("cargo::rustc-check-cfg=cfg(grammar)");
+    if grammar {
+        println!("cargo::rustc-cfg=grammar");
     }
 
     debug_log!("build script started");
@@ -53,11 +55,21 @@ async fn main() -> anyhow::Result<()> {
 
     let enum_paths = EnumPaths::from_gpu_types(&gpu_types).context("Failed to build enum path map")?;
 
-    let compilers: Vec<Box<dyn Compiler>> = vec![
-        Box::new(cpu::CpuCompiler::new()?),
-        #[cfg(all(feature = "metal", target_os = "macos"))]
-        Box::new(metal::MetalCompiler::new()?),
-    ];
+    let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
+
+    if backend_cpu {
+        compilers.push(Box::new(cpu::CpuCompiler::new()?));
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    if backend_metal {
+        compilers.push(Box::new(metal::MetalCompiler::new()?));
+    }
+
+    if compilers.is_empty() {
+        println!("cargo::error=uzu requires at least one backend to be compiled in!");
+        return Ok(ExitCode::FAILURE);
+    }
 
     let backends_kernels = try_join_all(compilers.iter().map(|c| c.build(&gpu_types, &enum_paths))).await?;
 
@@ -67,5 +79,5 @@ async fn main() -> anyhow::Result<()> {
 
     debug_log!("build script ended");
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }

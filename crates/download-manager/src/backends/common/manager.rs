@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::runtime::Handle as TokioHandle;
+use kiban::rt::RuntimeHandle;
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
 use crate::{
@@ -21,8 +21,8 @@ pub struct DownloadManager<B: Backend> {
 }
 
 impl<B: Backend> DownloadManager<B> {
-    pub fn from_tokio_handle(tokio_handle: TokioHandle) -> Result<Self, DownloadError> {
-        let context = B::create_context(tokio_handle.clone())?;
+    pub fn from_runtime_handle(runtime_handle: RuntimeHandle) -> Result<Self, DownloadError> {
+        let context = B::create_context(runtime_handle)?;
         let state = DownloadManagerState::new(B::manager_suffix());
         log(DownloadLogEvent::ManagerCreated {
             manager_id: state.manager_id.clone(),
@@ -34,7 +34,8 @@ impl<B: Backend> DownloadManager<B> {
     }
 }
 
-#[async_trait::async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 impl<B: Backend> FileDownloadManager for DownloadManager<B> {
     fn manager_id(&self) -> &str {
         &self.state.manager_id
@@ -166,7 +167,7 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
         destination_path: &std::path::Path,
     ) -> Option<String> {
         let lock_path = lock_path_for_destination(destination_path);
-        match check_lock_file(&lock_path, &self.state.manager_id, self.state.instance_id, std::process::id()).await {
+        match check_lock_file(&lock_path, &self.state.manager_id, self.state.instance_id, kiban::process::id()).await {
             LockFileState::OwnedByOtherApp(info) => Some(info.manager_id),
             _ => None,
         }

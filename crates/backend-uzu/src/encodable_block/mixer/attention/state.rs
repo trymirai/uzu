@@ -2,13 +2,15 @@ use std::any::Any;
 
 use crate::{
     backends::common::{
-        Backend, Buffer, Context, Encoder, Kernels, SparseBuffer,
+        Backend, Buffer, Context, DeviceCapabilities, Encoder, Kernels, SparseBuffer,
         gpu_types::{Copy, ring::RingParams},
         kernel::KVCacheUpdateKernel,
     },
     data_type::DataType,
     encodable_block::mixer::{MixerState, attention::Attention},
 };
+
+pub(crate) const ATTENTION_SUFFIX_CAPACITY: usize = 1024; // TODO: remove hardcoded suffix capacity
 
 pub enum AttentionStateType {
     Full {
@@ -102,13 +104,12 @@ impl<B: Backend> AttentionState<B> {
             }
         };
 
-        let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
-        let max_elements = max_prefix_elements + suffix_capacity;
+        let max_elements = max_prefix_elements + ATTENTION_SUFFIX_CAPACITY;
         let element_size = attention.num_kv_heads.unwrap() * attention.head_dim;
         let kv_buffer_bytes = max_elements * element_size * data_type.size_in_bytes();
 
         let is_ring = matches!(state_type, AttentionStateType::Ring { .. });
-        let is_sparse = !is_ring && context.sparse_buffers_supported();
+        let is_sparse = !is_ring && context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS);
 
         let (keys, values): (Box<dyn Buffer<Backend = B>>, Box<dyn Buffer<Backend = B>>) = if is_sparse {
             (
@@ -134,7 +135,6 @@ impl<B: Backend> AttentionState<B> {
         })
     }
 
-    #[allow(dead_code)] // TODO: remove when wiring with DFlash.
     pub(super) fn append_full(
         &mut self,
         length: usize,
@@ -161,8 +161,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
             return Ok(());
         }
 
-        let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
-        assert!(suffix_length <= suffix_capacity, "attention suffix length exceeds hardcoded capacity");
+        assert!(suffix_length <= ATTENTION_SUFFIX_CAPACITY, "attention suffix length exceeds hardcoded capacity");
         let elements_required = context_length + suffix_length;
         let bytes_required = elements_required * self.element_dim * self.data_type.size_in_bytes();
         let bytes_prepared = self.elements_prepared * self.element_dim * self.data_type.size_in_bytes();

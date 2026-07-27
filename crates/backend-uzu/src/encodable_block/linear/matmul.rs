@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-
+use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
@@ -9,7 +8,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             Kernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout, int_spec::IntSpec, mlx_spec::MLXSpec},
@@ -43,7 +42,7 @@ enum Mode<B: Backend> {
 }
 
 pub struct LinearMatmul<B: Backend> {
-    kernel: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+    kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     weights: Allocation<B>,
     biases: Option<Allocation<B>>,
     input_dim: usize,
@@ -81,7 +80,7 @@ impl<B: Backend> LinearMatmul<B> {
                 .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
-            kernel: RefCell::new(kernel),
+            kernel: Mutex::new(kernel),
             weights,
             biases,
             input_dim,
@@ -175,7 +174,7 @@ impl<B: Backend> LinearMatmul<B> {
                 .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
-            kernel: RefCell::new(kernel),
+            kernel: Mutex::new(kernel),
             weights,
             biases,
             input_dim,
@@ -209,10 +208,10 @@ fn load_biases<B: Backend>(
         .transpose()?)
 }
 
-impl<B: Backend> Linear<B> for LinearMatmul<B> {
-    fn encode(
+impl<B: Backend> LinearMatmul<B> {
+    pub(super) fn encode_with_a(
         &self,
-        input: Allocation<B>,
+        a: MatmulA<'_, B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
@@ -264,21 +263,20 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             _ => None,
         };
         let d_transform = MatmulDOps {
-            ab_scale: 1.0,
-            accumulate: false,
             bias: self.biases.as_ref(),
             rht_factors,
+            ..MatmulDOps::none()
         };
 
-        self.kernel.borrow_mut().encode(
+        self.kernel.lock().encode(
             MatmulArguments {
-                a: &input,
-                a_offset: 0,
+                a,
                 b,
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut output,
                 d_transform,
+                gather_indices: None,
                 m: batch_dim as u32,
                 n: self.output_dim as u32,
                 k: self.input_dim as u32,
@@ -287,5 +285,23 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         )?;
 
         Ok(output)
+    }
+}
+
+impl<B: Backend> Linear<B> for LinearMatmul<B> {
+    fn encode(
+        &self,
+        input: Allocation<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        self.encode_with_a(
+            MatmulA::FullPrecision {
+                values: &input,
+                offset: 0,
+            },
+            batch_dim,
+            encoder,
+        )
     }
 }

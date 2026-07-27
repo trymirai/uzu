@@ -84,5 +84,5 @@ impl AcceptedProposal {
 }
 
 #[cfg(test)]
-#[path = "../../unit/speculators/chain_acceptance.rs"]
+#[path = "../../tests/unit/speculators/chain_acceptance.rs"]
 mod tests;

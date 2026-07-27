@@ -13,7 +13,7 @@ name = "cli"
 path = "src/main.rs"
 
 [features]
-default = ["backend-metal", "capability-grammar", "capability-cli"]
+default = ["backend-cpu", "backend-metal", "capability-grammar", "capability-cli"]
 backend-cpu = ["uzu/backend-cpu"]
 backend-metal = ["uzu/backend-metal"]
 capability-grammar = ["uzu/capability-grammar"]
@@ -22,7 +22,7 @@ capability-cli = ["uzu/capability-cli"]
 [dependencies]
 backend-uzu.workspace = true
 uzu = { workspace = true, default-features = false }
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 anyhow.workspace = true
 clap.workspace = true
 comfy-table.workspace = true

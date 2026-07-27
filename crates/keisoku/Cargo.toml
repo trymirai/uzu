@@ -18,13 +18,8 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+bitflags.workspace = true
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
-sysinfo.workspace = true
-
-# Used only by the on-device `table` test to render a snapshot via TestBackend.
-[dev-dependencies]
-ratatui.workspace = true
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 kanka.workspace = true
@@ -35,3 +30,8 @@ libc.workspace = true
 # IOReport/SoC traversal is macOS-only; IOKit service iteration via objc2-io-kit.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-io-kit.workspace = true
+serde_json.workspace = true
+
+# Memory stats on non-macOS Apple (iOS) come from sysinfo.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+sysinfo.workspace = true

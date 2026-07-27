@@ -8,7 +8,7 @@ pub mod sparse;
 pub mod arg;
 pub mod range;
 
-pub trait Buffer: Any + Debug {
+pub trait Buffer: Any + Debug + Send + Sync {
     type Backend: Backend;
 
     fn gpu_ptr(&self) -> usize;

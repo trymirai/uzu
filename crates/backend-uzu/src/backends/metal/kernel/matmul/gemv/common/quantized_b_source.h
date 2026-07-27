@@ -24,7 +24,10 @@ struct QuantizedBSource {
       const device uint8_t* zero_points,
       const device BT* biases,
       const device AT* a,
+      const device uint* gather_indices,
+      bool gathered,
       uint in_vec_size,
+      uint out_vec_size,
       uint out_row,
       uint batch_idx,
       uint simd_lane
@@ -41,10 +44,14 @@ struct QuantizedBSource {
     const uint weights_row_stride = in_vec_size * bytes_per_pack / pack_factor;
     const uint group_count = (in_vec_size + GROUP_SIZE - 1) / GROUP_SIZE;
     const uint group_offset = simd_lane / scale_step_per_thread;
-    const device uint8_t* weights = reinterpret_cast<const device uint8_t*>(b);
-    weights += out_row * weights_row_stride + simd_lane * packs_per_thread * bytes_per_pack;
 
-    RowState row_state(scales, zero_points, biases, out_row, group_count, group_offset);
+    // Base row = out_row (dense) or 0 (gather); rows indexed relative to it.
+    const uint base_row = gathered ? 0u : out_row;
+
+    const device uint8_t* weights = reinterpret_cast<const device uint8_t*>(b);
+    weights += base_row * weights_row_stride + simd_lane * packs_per_thread * bytes_per_pack;
+
+    RowState row_state(scales, zero_points, biases, base_row, group_count, group_offset);
 
     const device AT* input = a + batch_idx * in_vec_size + simd_lane * values_per_thread;
     thread U input_values[values_per_thread];
@@ -54,10 +61,11 @@ struct QuantizedBSource {
       U input_sum = load_vector<AT, U, values_per_thread, BITS>(input, input_values);
 
       RowParams row_params;
-      row_state.load(row_params);
+      row_state.load(row_params, gather_indices, gathered, batch_idx, out_vec_size, out_row);
       METAL_PRAGMA_UNROLL
       for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-        const device uint8_t* weight_row = weights + row * weights_row_stride;
+        const uint addr_row = gathered ? gather_indices[batch_idx * out_vec_size + out_row + row] : row;
+        const device uint8_t* weight_row = weights + addr_row * weights_row_stride;
         result[row] += qdot<U, values_per_thread, BITS>(
             weight_row,
             input_values,
@@ -81,10 +89,11 @@ struct QuantizedBSource {
         U input_sum = load_vector_safe<AT, U, values_per_thread>(input, input_values, remaining);
 
         RowParams row_params;
-        row_state.load(row_params);
+        row_state.load(row_params, gather_indices, gathered, batch_idx, out_vec_size, out_row);
         METAL_PRAGMA_UNROLL
         for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-          const device uint8_t* weight_row = weights + row * weights_row_stride;
+          const uint addr_row = gathered ? gather_indices[batch_idx * out_vec_size + out_row + row] : row;
+          const device uint8_t* weight_row = weights + addr_row * weights_row_stride;
           result[row] += qdot_safe<U, values_per_thread, BITS>(
               weight_row,
               input_values,

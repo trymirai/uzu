@@ -1,7 +1,8 @@
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{ops::Range, sync::Arc};
 
 use metal::{MTL4UpdateSparseBufferMappingOperation, MTLBuffer};
 use objc2::{rc::Retained, runtime::ProtocolObject};
+use parking_lot::Mutex;
 
 use crate::backends::metal::sparse::sparse_heap::MetalSparseHeap;
 
@@ -37,6 +38,6 @@ impl MetalSparseHeapBufferMapping {
 
 pub(crate) struct MetalSparseMappingOpsBatch {
     pub buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub heap: Rc<RefCell<MetalSparseHeap>>,
+    pub heap: Arc<Mutex<MetalSparseHeap>>,
     pub mtl_operations: Box<[MTL4UpdateSparseBufferMappingOperation]>,
 }

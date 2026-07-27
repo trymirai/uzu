@@ -1,16 +1,18 @@
 use crate::backends::{
     common::{
         Kernels,
-        gpu_types::gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_row},
+        gpu_types::{
+            gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_row},
+            weaver::{FRONTIER_SELECT_THREADS, TOP_CHILDREN_THREADS},
+        },
     },
     metal::Metal,
 };
 
-#[path = "gdn_tree_verify/build_tree_out_dispatch_helper.rs"]
-mod build_tree_out_dispatch_helper;
+pub mod attention;
+pub mod gdn;
 pub mod matmul;
-#[path = "gdn_tree_verify/tree_update_solve_dispatch_helper.rs"]
-mod tree_update_solve_dispatch_helper;
+mod radix_top_k_small;
 
 pub const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
 
@@ -22,5 +24,13 @@ impl Kernels for MetalKernels {
     type Backend = Metal;
 
     autogen_kernels!();
+    type AttentionGemmCore = attention::AttentionGemmMetalCore;
+    type DeltaNetChunkedPrefill = gdn::chunked::MetalDeltaNetChunkedPrefill;
+    type DeltaNetTreeVerify = gdn::tree_verify::MetalDeltaNetTreeVerify;
     type MatmulKernel = matmul::MatmulMetalKernel;
+    type RadixTopKSmall = radix_top_k_small::MetalRadixTopKSmall;
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/backends/metal/kernel/rht_quantize_activations_test.rs"]
+mod rht_quantize_activations_test;

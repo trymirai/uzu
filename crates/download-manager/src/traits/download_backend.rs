@@ -1,4 +1,6 @@
-use std::{fmt::Debug, path::Path};
+use std::{fmt::Debug, future::Future, path::Path};
+
+use kiban::{fs, maybe::MaybeSend};
 
 use crate::traits::{ActiveTask, BackendContext};
 
@@ -9,7 +11,7 @@ pub trait DownloadBackend: Debug + Clone + Send + Sync + 'static {
 
     // Default = file size (correct for `.part`-style artifacts). Apple must override:
     // `.resume_data` is a small metadata blob, not the downloaded bytes.
-    fn read_resume_progress(part_path: &Path) -> Option<u64> {
-        std::fs::metadata(part_path).ok().map(|metadata| metadata.len())
+    fn read_resume_progress(part_path: &Path) -> impl Future<Output = Option<u64>> + MaybeSend {
+        async move { fs::asyn::file_length(part_path).await.ok() }
     }
 }

@@ -3,16 +3,23 @@
 #include <metal_stdlib>
 #include "../common/defines.h"
 #include "../common/thread_context.h"
+#include "../generated/hadamard_order.h"
 
 using namespace metal;
+using uzu::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE;
+
+static_assert(
+    HADAMARD_TRANSFORM_BLOCK_SIZE == METAL_SIMD_SIZE,
+    "Hadamard transform block size must match the Metal SIMD width"
+);
 
 static METAL_FUNC float simdgroup_hadamard_transform(ushort lane_index, float lane_value) {
-  for (ushort stride = 1; stride < METAL_SIMD_SIZE; stride <<= 1) {
+  for (ushort stride = 1; stride < HADAMARD_TRANSFORM_BLOCK_SIZE; stride <<= 1) {
     float partner_lane_value = simd_shuffle_xor(lane_value, stride);
     lane_value = (lane_index & stride) ? (partner_lane_value - lane_value) : (partner_lane_value + lane_value);
   }
 
-  return lane_value / sqrt((float)METAL_SIMD_SIZE);
+  return lane_value / sqrt(static_cast<float>(HADAMARD_TRANSFORM_BLOCK_SIZE));
 }
 
 template <typename T>

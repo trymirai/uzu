@@ -1,18 +1,29 @@
+#[cfg(grammar)]
 use itertools::Itertools;
 use thiserror::Error;
 
 use crate::{
     backends::common::gpu_types::trie::TrieNode as GpuTrieNode,
-    data_type::DataType,
     encodable_block::sampling::{PRng, speculator_sample},
-    engine::language_model::grammar::{Grammar, GrammarError},
     speculators::speculator::Speculator,
+};
+#[cfg(grammar)]
+use crate::{
+    data_type::DataType,
+    engine::language_model::grammar::{Grammar, GrammarError},
 };
 
 #[derive(Debug, Error)]
 pub enum TrieError {
     #[error("child with the same token id is already present")]
     DuplicateTokenId,
+}
+
+#[derive(Debug, Error)]
+pub enum TrieAcceptError {
+    #[cfg(grammar)]
+    #[error("Grammar error: {0}")]
+    Grammar(#[from] GrammarError),
 }
 
 pub struct TrieCreationConfig {
@@ -93,10 +104,10 @@ impl TrieNode {
         self.seed
     }
 
-    pub fn from_speculator<'grammar>(
+    pub fn from_speculator(
         prefix: &[u64],
         prng: &PRng,
-        mut grammar: Option<&mut (dyn Grammar + 'grammar)>,
+        #[cfg(grammar)] mut grammar: Option<&mut Grammar>,
         speculator: &dyn Speculator,
         vocab_size: usize,
         creation_config: &TrieCreationConfig,
@@ -126,7 +137,8 @@ impl TrieNode {
                 speculator_sample(cur_node.seed(), vocab_size, &cur_node_speculator_weights)
             {
                 // Add speculated token to the trie
-                if let Some(grammar) = grammar.as_deref_mut() {
+                #[cfg(grammar)]
+                if let Some(grammar) = grammar.as_mut() {
                     if grammar.accept_token(next_speculated_token).is_err() {
                         cur_node_speculator_weights.remove(&next_speculated_token);
                         continue;
@@ -153,7 +165,8 @@ impl TrieNode {
             } else if let Some(next_node_token) = next_node.take() {
                 // Out of speculated tokens for this node, move onto the likeliest next node
                 speculated_suffix.push(next_node_token);
-                if let Some(grammar) = grammar.as_deref_mut()
+                #[cfg(grammar)]
+                if let Some(grammar) = grammar.as_mut()
                     && grammar.accept_token(next_node_token).is_err()
                 {
                     break;
@@ -169,6 +182,7 @@ impl TrieNode {
             };
         }
 
+        #[cfg(grammar)]
         if let Some(grammar) = grammar {
             grammar.rollback(height);
         }
@@ -262,11 +276,12 @@ impl<'a> FlatTrie<'a> {
         self.tokens.iter().map(|n| n.node.seed)
     }
 
-    pub fn fill_bitmasks<'grammar>(
+    #[cfg(grammar)]
+    pub fn fill_bitmasks(
         &self,
         bitmasks: &mut [u32],
         vocab_size: usize,
-        grammar: &mut (dyn Grammar + 'grammar),
+        grammar: &mut Grammar,
     ) -> bool {
         let vocab_size_in_u32s = vocab_size.div_ceil(DataType::U32.size_in_bits());
         assert!(bitmasks.len() == self.tokens.len() * vocab_size_in_u32s);
@@ -306,11 +321,11 @@ impl<'a> FlatTrie<'a> {
         self.tokens.iter().position(|n| std::ptr::eq(n.node, node))
     }
 
-    pub fn accept<'grammar>(
+    pub fn accept(
         &self,
         sampled_tokens: &[u64],
-        mut grammar: Option<&mut (dyn Grammar + 'grammar)>,
-    ) -> Result<Box<[(usize, u64, u64)]>, GrammarError> {
+        #[cfg(grammar)] mut grammar: Option<&mut Grammar>,
+    ) -> Result<Box<[(usize, u64, u64)]>, TrieAcceptError> {
         let mut current_token = self.root().unwrap();
         let mut accepted = Vec::new();
         loop {
@@ -318,7 +333,8 @@ impl<'a> FlatTrie<'a> {
             let current_token_id = sampled_tokens[current_token_index];
 
             accepted.push((current_token_index, current_token.token, current_token_id));
-            if let Some(grammar) = grammar.as_deref_mut()
+            #[cfg(grammar)]
+            if let Some(grammar) = grammar.as_mut()
                 && !grammar.is_terminated()
             {
                 grammar.accept_token(current_token_id)?;
@@ -328,7 +344,8 @@ impl<'a> FlatTrie<'a> {
                 break;
             };
 
-            if let Some(grammar) = grammar.as_deref_mut() {
+            #[cfg(grammar)]
+            if let Some(grammar) = grammar.as_mut() {
                 assert!(!grammar.is_terminated(), "Grammar has terminated but llm continued generation");
             }
 
@@ -340,5 +357,5 @@ impl<'a> FlatTrie<'a> {
 }
 
 #[cfg(test)]
-#[path = "../unit/trie_test.rs"]
+#[path = "../tests/unit/trie_test.rs"]
 mod tests;

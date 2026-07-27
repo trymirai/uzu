@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-#[cfg(target_vendor = "apple")]
 use crate::sys;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -10,17 +9,6 @@ pub enum SensorKind {
     Current,
 }
 
-impl SensorKind {
-    pub fn unit(self) -> &'static str {
-        match self {
-            SensorKind::Temperature => "°C",
-            SensorKind::Voltage => "V",
-            SensorKind::Current => "A",
-        }
-    }
-}
-
-#[cfg(target_vendor = "apple")]
 impl SensorKind {
     pub(crate) fn matching(self) -> (i32, i32) {
         match self {

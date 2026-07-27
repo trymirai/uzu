@@ -1,5 +1,7 @@
 use std::{path::Path, sync::Arc};
 
+use kiban::fs;
+
 use crate::{
     DownloadError, DownloadId, FileCheck, FileState, LockFileState,
     backends::common::{Backend, action_executor::apply_actions},
@@ -37,16 +39,16 @@ impl Startup {
             FileCheck::None => None,
         };
         let crc_path = crc_path_for_file(destination_path);
-        let resume_state = file_state(&resume_artifact_path);
+        let resume_state = file_state(&resume_artifact_path).await;
         let resume_size = match resume_state {
-            FileState::Exists => B::read_resume_progress(&resume_artifact_path),
+            FileState::Exists => B::read_resume_progress(&resume_artifact_path).await,
             FileState::Missing => None,
         };
         let observation = DiskObservation {
-            destination_state: file_state(destination_path),
-            crc_state: file_state(&crc_path),
+            destination_state: file_state(destination_path).await,
+            crc_state: file_state(&crc_path).await,
             resume_state,
-            destination_size: file_size(destination_path),
+            destination_size: fs::asyn::file_length(destination_path).await.ok(),
             resume_size,
             expected_crc,
             expected_bytes,
@@ -58,7 +60,7 @@ impl Startup {
             &lock_path_for_destination(destination_path),
             manager_id,
             manager_instance_id,
-            std::process::id(),
+            kiban::process::id(),
         )
         .await;
         let lock_observation = LockObservation {
@@ -94,14 +96,10 @@ impl Startup {
     }
 }
 
-fn file_state(path: &Path) -> FileState {
-    if path.exists() && path.is_file() {
+async fn file_state(path: &Path) -> FileState {
+    if fs::asyn::try_exists(path).await.is_ok() && fs::asyn::is_file(path).await {
         FileState::Exists
     } else {
         FileState::Missing
     }
-}
-
-fn file_size(path: &Path) -> Option<u64> {
-    path.metadata().ok().map(|metadata| metadata.len())
 }

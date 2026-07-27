@@ -3,13 +3,13 @@ use std::ops::Range;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::TensorAddScaleKernel},
     config::{rope::AnyRoPEConfig, transformer::TransformerConfig},
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
         mixer::{MixerState, attention::rope::PrecalculatedRoPE},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar},
+        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -88,6 +88,8 @@ pub struct Transformer<B: Backend> {
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
     output_norm: Normalization<B>,
+    model_dim: usize,
+    residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
 }
 
 impl<B: Backend> Transformer<B> {
@@ -130,8 +132,7 @@ impl<B: Backend> Transformer<B> {
         let output_norm = Normalization::new(
             transformer_config.model_dim,
             output_norm_hadamard_factors,
-            true,
-            true,
+            ShortcutMode::Add,
             PostLayerScalar::None,
             data_type,
             &transformer_config.output_norm_config,
@@ -139,11 +140,29 @@ impl<B: Backend> Transformer<B> {
             context,
         )?;
 
+        let residual_add = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, false)
+            .map_err(TransformerNewError::Backend)?;
+
         Ok(Self {
             ropes: ropes.into_boxed_slice(),
             layers,
             output_norm,
+            model_dim: transformer_config.model_dim,
+            residual_add,
         })
+    }
+
+    fn capture_residual(
+        &self,
+        shortcut: &Allocation<B>,
+        hidden: &Allocation<B>,
+        batch_size: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut output = encoder.allocate_scratch(hidden.size())?;
+        let elements = (batch_size * self.model_dim) as u32;
+        self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, encoder);
+        Ok(output)
     }
 
     pub fn speculation_supported(&self) -> bool {
@@ -158,6 +177,21 @@ impl<B: Backend> Transformer<B> {
                 (None, None) => None,
             }
         })
+    }
+
+    pub fn prefill_cache_layer_count(&self) -> usize {
+        let num_layers = self.layers.len();
+        let Some(last_owned_kv_layer_index) =
+            self.layers.iter().rposition(|(layer, _rope_index)| layer.kv_source_layer_index.is_none())
+        else {
+            return num_layers;
+        };
+
+        last_owned_kv_layer_index + 1
+    }
+
+    pub fn prefill_cache_skips_trailing_layers(&self) -> bool {
+        self.prefill_cache_layer_count() < self.layers.len()
     }
 
     pub fn create_empty_state(
@@ -195,6 +229,11 @@ impl<B: Backend> Transformer<B> {
         hidden_feature_layer_indices: &[usize],
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
         let mut hidden = input;
+        let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_empty() {
+            self.prefill_cache_layer_count()
+        } else {
+            self.layers.len()
+        };
 
         let mut shortcut = encoder.allocate_scratch(hidden.size())?;
         let mut hidden_features = (0..hidden_feature_layer_indices.len()).map(|_| None).collect::<Vec<_>>();
@@ -209,7 +248,7 @@ impl<B: Backend> Transformer<B> {
             .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, encoder))
             .collect::<Result<Box<[_]>, B::Error>>()?;
 
-        for (layer, layer_rope_index) in self.layers.iter() {
+        for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
             let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
 
             let layer_state = if let Some(state) = &mut state {
@@ -239,8 +278,7 @@ impl<B: Backend> Transformer<B> {
 
             for (feature_index, &layer_index) in hidden_feature_layer_indices.iter().enumerate() {
                 if layer_index == layer.layer_index {
-                    let mut feature = encoder.allocate_scratch(hidden.size())?;
-                    encoder.encode_copy(&hidden, .., &mut feature, ..);
+                    let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
                     hidden_features[feature_index] = Some(feature);
                 }
             }

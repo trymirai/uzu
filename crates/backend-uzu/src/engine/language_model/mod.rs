@@ -1,12 +1,9 @@
-use std::{fs::File, io, io::BufReader, path::Path, rc::Rc};
+use std::{fs::File, io, io::BufReader, path::Path, sync::Arc};
 
 use thiserror::Error;
 
 use crate::{
-    backends::common::{
-        Backend, Context, Kernels,
-        kernel::{ContextRingUpdateKernel, TokenCopySampledKernel},
-    },
+    backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
     config::model::{generation::GenerationConfig, language_model::LanguageModelConfig},
     data_type::DataType,
     encodable_block::{
@@ -17,15 +14,16 @@ use crate::{
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
 };
 
-pub mod grammar;
 pub mod state;
 pub mod stream;
 
+#[cfg(grammar)]
+pub mod grammar;
+
 pub struct LanguageModel<B: Backend> {
-    context: Rc<B::Context>,
+    context: Arc<B::Context>,
     decoder: Decoder<B>,
     sampling: Sampling<B>,
-    token_copy: <B::Kernels as Kernels>::TokenCopySampledKernel,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
     vocab_size: usize,
@@ -52,15 +50,37 @@ impl<B: Backend> Engine<B> {
         &self,
         model_path: &Path,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
-        let context = self.context.clone();
-
         let config: LanguageModelConfig =
             serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
 
-        let data_type = DataType::BF16;
-
         let weights_file = File::open(model_path.join("model.safetensors"))?;
-        let weight_loader = ParameterLoader::new(&weights_file, context.as_ref())?;
+        let weight_loader = ParameterLoader::new(&weights_file, &*self.context)?;
+
+        self.build_language_model(config, &weight_loader)
+    }
+
+    pub fn load_language_model_random(
+        &self,
+        config_path: &Path,
+        header_path: &Path,
+        seed: u64,
+    ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
+        let config: LanguageModelConfig = serde_json::from_reader(BufReader::new(File::open(config_path)?))?;
+
+        let header_file = File::open(header_path)?;
+        let weight_loader = ParameterLoader::new_random(&header_file, &*self.context, seed)?;
+
+        self.build_language_model(config, &weight_loader)
+    }
+
+    fn build_language_model(
+        &self,
+        config: LanguageModelConfig,
+        weight_loader: &ParameterLoader<B>,
+    ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
+        let context = self.context.clone();
+
+        let data_type = DataType::BF16;
 
         let decoder = Decoder::new(
             context.as_ref(),
@@ -71,8 +91,6 @@ impl<B: Backend> Engine<B> {
 
         let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);
 
-        let token_copy = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context)
-            .map_err(EngineLoadLanguageModelError::Backend)?;
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
@@ -86,7 +104,6 @@ impl<B: Backend> Engine<B> {
             context,
             decoder,
             sampling,
-            token_copy,
             context_ring_update,
             generation_config,
             vocab_size,
@@ -95,6 +112,10 @@ impl<B: Backend> Engine<B> {
 }
 
 impl<B: Backend> LanguageModel<B> {
+    pub(crate) fn embedding(&self) -> &crate::encodable_block::embedding::Embedding<B> {
+        self.decoder.embedding()
+    }
+
     pub fn max_context_length(&self) -> Option<usize> {
         self.decoder.max_context_length()
     }
@@ -103,7 +124,7 @@ impl<B: Backend> LanguageModel<B> {
         let max_context_length = self.max_context_length();
 
         // TODO: This is not the correct way to do it, there should be a real memory model
-        if self.context.sparse_buffers_supported() {
+        if self.context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS) {
             // We just assume that all mixers use sparse if it's available to make max context free until it's actually used
             // Currenlty true for all mixers in uzu:
             // - full attention uses sparse if it's available to make max context free until it's actually used

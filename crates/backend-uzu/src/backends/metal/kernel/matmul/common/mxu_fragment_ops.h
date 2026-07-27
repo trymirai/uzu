@@ -18,23 +18,23 @@ using namespace metal;
 namespace uzu {
 namespace matmul {
 
-METAL_CONST ushort MXU_MMA_ROWS = 16;
-METAL_CONST ushort MXU_MMA_COLS = 16;
+UZU_CONST ushort MXU_MMA_ROWS = 16;
+UZU_CONST ushort MXU_MMA_COLS = 16;
 
 // RELAXED=false uses the strict MPP layout; it currently performs about the same as simdgroup.
 template <bool RELAXED = true>
 struct MxuFragmentOps {
-  METAL_CONST ushort FRAGMENT_ROWS = MXU_MMA_ROWS;
-  METAL_CONST ushort FRAGMENT_COLS = MXU_MMA_COLS;
-  METAL_CONST bool READ_TRANSPOSE_SWAPS_SOURCE_STRIDES = false;
+  UZU_CONST ushort FRAGMENT_ROWS = MXU_MMA_ROWS;
+  UZU_CONST ushort FRAGMENT_COLS = MXU_MMA_COLS;
+  UZU_CONST bool READ_TRANSPOSE_SWAPS_SOURCE_STRIDES = false;
   using BlockStorage = DeviceBlockStorage;
 
-  METAL_CONST ushort ELEMENTS_PER_THREAD = (FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE;
+  UZU_CONST ushort ELEMENTS_PER_THREAD = (FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE;
 
-  METAL_CONST ushort THREAD_ELEMENT_ROWS = 2;
-  METAL_CONST ushort THREAD_ELEMENT_COLS = 4;
+  UZU_CONST ushort THREAD_ELEMENT_ROWS = 2;
+  UZU_CONST ushort THREAD_ELEMENT_COLS = 4;
 
-  METAL_CONST ushort THREAD_ELEMENT_ROW_STRIDE = FRAGMENT_ROWS / THREAD_ELEMENT_ROWS;
+  UZU_CONST ushort THREAD_ELEMENT_ROW_STRIDE = FRAGMENT_ROWS / THREAD_ELEMENT_ROWS;
 
   static_assert(
       THREAD_ELEMENT_ROWS * THREAD_ELEMENT_COLS == ELEMENTS_PER_THREAD,
@@ -67,6 +67,52 @@ struct MxuFragmentOps {
       const ushort col_slot = element_index & 3;
       const short col = short((col_slot & 1) + (col_slot / 2) * 8);
       return short2{col, row};
+    }
+  }
+
+  template <typename CooperativeTensor, typename U>
+  METAL_FUNC static void load_paired_vectors(
+      thread CooperativeTensor& cooperative,
+      const thread ThreadVector<U>& vector_0,
+      const thread ThreadVector<U>& vector_1
+  ) {
+    if constexpr (RELAXED) {
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
+        cooperative[i] = vector_0[i];
+        cooperative[ELEMENTS_PER_THREAD + i] = vector_1[i];
+      }
+    } else {
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < 4; i++) {
+        cooperative[i] = vector_0[i];
+        cooperative[4 + i] = vector_1[i];
+        cooperative[8 + i] = vector_0[4 + i];
+        cooperative[12 + i] = vector_1[4 + i];
+      }
+    }
+  }
+
+  template <typename CooperativeTensor, typename U>
+  METAL_FUNC static void store_paired_vectors(
+      thread CooperativeTensor& cooperative,
+      thread ThreadVector<U>& vector_0,
+      thread ThreadVector<U>& vector_1
+  ) {
+    if constexpr (RELAXED) {
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
+        vector_0[i] = cooperative[i];
+        vector_1[i] = cooperative[ELEMENTS_PER_THREAD + i];
+      }
+    } else {
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < 4; i++) {
+        vector_0[i] = cooperative[i];
+        vector_1[i] = cooperative[4 + i];
+        vector_0[4 + i] = cooperative[8 + i];
+        vector_1[4 + i] = cooperative[12 + i];
+      }
     }
   }
 
@@ -107,40 +153,12 @@ struct MxuFragmentOps {
     marshal_inputs(cooperative_left, cooperative_right);
 
     if constexpr (ACCUMULATE) {
-      if constexpr (RELAXED) {
-        METAL_PRAGMA_UNROLL
-        for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
-          cooperative_output[i] = output_0[i];
-          cooperative_output[ELEMENTS_PER_THREAD + i] = output_1[i];
-        }
-      } else {
-        METAL_PRAGMA_UNROLL
-        for (ushort i = 0; i < 4; i++) {
-          cooperative_output[i] = output_0[i];
-          cooperative_output[4 + i] = output_1[i];
-          cooperative_output[8 + i] = output_0[4 + i];
-          cooperative_output[12 + i] = output_1[4 + i];
-        }
-      }
+      load_paired_vectors(cooperative_output, output_0, output_1);
     }
 
     matmul_op.run(cooperative_left, cooperative_right, cooperative_output);
 
-    if constexpr (RELAXED) {
-      METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
-        output_0[i] = cooperative_output[i];
-        output_1[i] = cooperative_output[ELEMENTS_PER_THREAD + i];
-      }
-    } else {
-      METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < 4; i++) {
-        output_0[i] = cooperative_output[i];
-        output_1[i] = cooperative_output[4 + i];
-        output_0[4 + i] = cooperative_output[8 + i];
-        output_1[4 + i] = cooperative_output[12 + i];
-      }
-    }
+    store_paired_vectors(cooperative_output, output_0, output_1);
   }
 
   template <
@@ -167,21 +185,7 @@ struct MxuFragmentOps {
           for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
             cooperative_left[i] = left[i];
           }
-          if constexpr (RELAXED) {
-            METAL_PRAGMA_UNROLL
-            for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
-              cooperative_right[i] = right_col_0[i];
-              cooperative_right[ELEMENTS_PER_THREAD + i] = right_col_1[i];
-            }
-          } else {
-            METAL_PRAGMA_UNROLL
-            for (ushort i = 0; i < 4; i++) {
-              cooperative_right[i] = right_col_0[i];
-              cooperative_right[4 + i] = right_col_1[i];
-              cooperative_right[8 + i] = right_col_0[4 + i];
-              cooperative_right[12 + i] = right_col_1[4 + i];
-            }
-          }
+          load_paired_vectors(cooperative_right, right_col_0, right_col_1);
         }
     );
   }
@@ -207,10 +211,9 @@ struct MxuFragmentOps {
         output_row_0,
         output_row_1,
         [&](thread auto& cooperative_left, thread auto& cooperative_right) {
+          load_paired_vectors(cooperative_left, left_row_0, left_row_1);
           METAL_PRAGMA_UNROLL
           for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
-            cooperative_left[i] = left_row_0[i];
-            cooperative_left[ELEMENTS_PER_THREAD + i] = left_row_1[i];
             cooperative_right[i] = right[i];
           }
         }

@@ -8,15 +8,13 @@ use std::{
     },
 };
 
-use tokio::{
-    sync::{
-        Mutex as TokioMutex,
-        broadcast::{Sender as TokioBroadcastSender, channel as tokio_broadcast_channel},
-        mpsc::{Sender as TokioMpscSender, channel as tokio_mpsc_channel},
-        oneshot::channel as tokio_oneshot_channel,
-        watch::{Receiver as TokioWatchReceiver, channel as tokio_watch_channel},
-    },
-    task::JoinHandle as TokioJoinHandle,
+use kiban::{rt, rt::TaskJoinHandle};
+use tokio::sync::{
+    Mutex as TokioMutex,
+    broadcast::{Sender as TokioBroadcastSender, channel as tokio_broadcast_channel},
+    mpsc::{Sender as TokioMpscSender, channel as tokio_mpsc_channel},
+    oneshot::channel as tokio_oneshot_channel,
+    watch::{Receiver as TokioWatchReceiver, channel as tokio_watch_channel},
 };
 use tokio_stream::{StreamExt as TokioStreamExt, wrappers::BroadcastStream as TokioBroadcastStream};
 
@@ -40,7 +38,7 @@ pub struct GenericFileDownloadTask<B: DownloadBackend> {
     public_state_receiver: TokioWatchReceiver<FileDownloadState>,
     progress_sender: TokioBroadcastSender<FileDownloadState>,
     terminal_receiver: TokioWatchReceiver<TerminalOutcome>,
-    listener_task: Arc<TokioMutex<Option<TokioJoinHandle<()>>>>,
+    listener_task: Arc<TokioMutex<Option<Box<dyn TaskJoinHandle<()>>>>>,
     is_stopped: AtomicBool,
     backend: PhantomData<B>,
 }
@@ -152,7 +150,7 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
             progress_sender.clone(),
             terminal_sender,
         );
-        tokio::spawn(actor.run());
+        rt::spawn(actor.run());
 
         Ok(Self {
             config,
@@ -206,7 +204,8 @@ impl<B: DownloadBackend> fmt::Debug for GenericFileDownloadTask<B> {
     }
 }
 
-#[async_trait::async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> {
     fn download_id(&self) -> DownloadId {
         self.config.download_id
@@ -269,7 +268,7 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
         let download_id = self.config.download_id;
         let destination = self.config.destination.clone();
         let mut local_stream = TokioBroadcastStream::new(self.progress_sender.subscribe());
-        *listener_task = Some(tokio::spawn(async move {
+        *listener_task = Some(rt::spawn(async move {
             let mut last_downloaded_bytes = 0u64;
 
             while let Some(result) = local_stream.next().await {
@@ -325,8 +324,7 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
 
     async fn stop_listening(&self) {
         if let Some(listener_task) = self.listener_task.lock().await.take() {
-            listener_task.abort();
-            let _ = listener_task.await;
+            listener_task.abort_and_join().await;
         }
     }
 
@@ -349,7 +347,8 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
     }
 }
 
-#[async_trait::async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 impl<B: DownloadBackend> ManagedFileDownloadTask for GenericFileDownloadTask<B> {
     async fn shutdown_for_removal(&self) -> Result<(), DownloadError> {
         if self.is_stopped.swap(true, Ordering::SeqCst) {

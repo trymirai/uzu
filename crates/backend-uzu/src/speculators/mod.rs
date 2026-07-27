@@ -1,4 +1,5 @@
 pub mod chain_acceptance;
+pub mod dflash_speculator;
 pub mod empty_speculator;
 pub mod fixed_token_speculator;
 pub mod ngram_speculator;

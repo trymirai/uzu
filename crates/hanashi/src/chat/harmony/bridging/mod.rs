@@ -1,4 +1,3 @@
-mod encoding_name;
 mod message;
 mod reasoning_effort;
 mod role;

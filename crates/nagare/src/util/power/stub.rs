@@ -11,7 +11,9 @@ impl StubPowerRecorder {
 }
 
 impl PowerRecorder for StubPowerRecorder {
-    fn stop(&self) -> Option<ChatReplyPowerStats> {
+    fn begin(&self) {}
+
+    fn finish(&self) -> Option<ChatReplyPowerStats> {
         None
     }
 }

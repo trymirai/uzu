@@ -4,13 +4,13 @@ use std::path::PathBuf;
 /// This example shows how to use FileDownloadManager trait
 /// which works on both Apple and non-Apple platforms
 use download_manager::{FileCheck, FileDownloadManager};
-use tokio::runtime::Handle;
+use kiban::rt::RuntimeHandle;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let tokio_handle = Handle::current();
+    let runtime_handle = RuntimeHandle::current();
 
-    let manager = <dyn FileDownloadManager>::system_default(tokio_handle).await?;
+    let manager = <dyn FileDownloadManager>::system_default(runtime_handle).await?;
 
     let url = "https://huggingface.co/Qwen/Qwen3.5-0.8B/resolve/main/tokenizer.json".to_string();
 

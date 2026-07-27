@@ -1,14 +1,12 @@
 mod bridging;
 mod config;
-mod encoding_name;
 mod error;
 
 use bridging::{bridge_messages_from_harmony, bridge_messages_to_harmony};
-pub use config::Config;
-pub use encoding_name::EncodingName;
+pub use config::HarmonyConfig;
 pub use error::Error;
 use openai_harmony::{
-    HarmonyEncoding, StreamableParser,
+    HarmonyEncoding, HarmonyEncodingName, StreamableParser,
     chat::{
         Author as HarmonyAuthor, Content as HarmonyContent, Conversation as HarmonyConversation,
         Message as HarmonyMessage, Role as HarmonyRole, TextContent as HarmonyTextContent,
@@ -33,7 +31,7 @@ pub struct Encoding {
 }
 
 impl EncodingTrait for Encoding {
-    type Config = Config;
+    type Config = HarmonyConfig;
     type Context = Context;
     type Input = Vec<ChatMessage>;
     type Output = Vec<TokenId>;
@@ -54,7 +52,11 @@ impl EncodingTrait for Encoding {
         unsafe {
             std::env::set_var("TIKTOKEN_ENCODINGS_BASE", path);
         }
-        let encoding = load_harmony_encoding(config.encoding_name.into()).map_err(|_| Error::UnableToLoadEncoding)?;
+
+        let encoding_name = match config {
+            HarmonyConfig::GptOss => HarmonyEncodingName::HarmonyGptOss,
+        };
+        let encoding = load_harmony_encoding(encoding_name).map_err(|_| Error::UnableToLoadEncoding)?;
         let parser = StreamableParser::new(encoding.clone(), None).map_err(|_| Error::UnableToLoadEncoding)?;
         Ok(Self {
             encoding,

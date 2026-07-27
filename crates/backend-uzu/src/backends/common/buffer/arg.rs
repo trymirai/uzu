@@ -1,4 +1,4 @@
-use crate::backends::common::{AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer};
+use crate::backends::common::{AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, BufferRangeMut};
 
 // TODO: This whole thing is horrible and should be unified with AsBufferRangeRef
 pub trait BufferArg<'a, B: Backend>: Copy {
@@ -28,6 +28,13 @@ impl<'a, B: Backend, T: BufferArg<'a, B>> BufferArg<'a, B> for (T, usize) {
 
 pub trait BufferArgMut<'a, B: Backend> {
     fn into_parts(self) -> (&'a dyn Buffer<Backend = B>, usize, usize);
+}
+
+impl<'a, B: Backend, Buf: Buffer<Backend = B>> BufferArgMut<'a, B> for BufferRangeMut<'a, Buf> {
+    fn into_parts(self) -> (&'a dyn Buffer<Backend = B>, usize, usize) {
+        let (buffer, range) = (self.buffer(), self.range());
+        (buffer, range.start, range.len())
+    }
 }
 
 impl<'a, B: Backend, T: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> BufferArgMut<'a, B> for &'a mut T {

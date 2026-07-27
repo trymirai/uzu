@@ -6,17 +6,18 @@ use crate::array::ArrayElement;
 
 #[kernel(Normalization)]
 #[variants(InputT, f32, f16, bf16)]
-#[variants(ScaleT, f32, f16, bf16)]
+#[variants(AffineT, f32, f16, bf16)]
 #[variants(OutputT, f32, f16, bf16)]
 #[variants(AccumT, f32)]
 pub fn normalization<
     InputT: ArrayElement + Float,
-    ScaleT: ArrayElement + Float,
+    AffineT: ArrayElement + Float,
     OutputT: ArrayElement + Float,
     AccumT: ArrayElement + Float,
 >(
     #[optional(!in_place)] input: Option<*const InputT>,
-    scales: *const ScaleT,
+    scales: *const AffineT,
+    #[optional(has_biases)] biases: Option<*const AffineT>,
     output: *mut OutputT,
     #[optional(copy_to_shortcut)] shortcut: Option<*mut InputT>,
     #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
@@ -33,9 +34,11 @@ pub fn normalization<
     #[specialize] use_hadamard: bool,
     #[specialize] scale_residual_sum: bool,
     #[specialize] scale_output: bool,
+    #[specialize] has_biases: bool,
 ) {
     assert_eq!(shortcut.is_some(), copy_to_shortcut);
     assert_eq!(hadamard_factors.is_some(), use_hadamard);
+    assert_eq!(biases.is_some(), has_biases);
     assert!(copy_to_shortcut || !residual_add);
 
     if use_hadamard {
@@ -94,7 +97,7 @@ pub fn normalization<
             };
             let scale_val = unsafe { AccumT::from(*scales.add(i)).unwrap() };
             let normalized: AccumT = (input_val - mean) * rms_inv;
-            let result: OutputT = if full_layer {
+            let mut result: OutputT = if full_layer {
                 // Full-layer: keep everything in accumulation precision
                 let scale_with_offset: AccumT = scale_val + scale_offset;
                 OutputT::from(normalized * scale_with_offset).unwrap()
@@ -104,11 +107,13 @@ pub fn normalization<
                 let scale_with_offset_out = OutputT::from(scale_val + scale_offset).unwrap();
                 normalized_out * scale_with_offset_out
             };
-            let result = if scale_output {
-                result * OutputT::from(post_layer_scalar).unwrap()
-            } else {
-                result
-            };
+            if has_biases {
+                let bias = unsafe { AccumT::from(*biases.unwrap().add(i)).unwrap() };
+                result = OutputT::from(AccumT::from(result).unwrap() + bias).unwrap();
+            }
+            if scale_output {
+                result = result * OutputT::from(post_layer_scalar).unwrap();
+            }
             unsafe { *output.add(batch_offset + i) = result };
         }
     }

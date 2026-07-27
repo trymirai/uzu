@@ -1,9 +1,10 @@
 use std::{
-    cell::RefCell,
     collections::{HashMap, hash_map::Entry},
     mem::size_of,
     ops::Range,
 };
+
+use parking_lot::Mutex;
 
 use crate::{
     backends::common::{
@@ -17,13 +18,15 @@ use crate::{
 mod gumbel;
 mod prng;
 
-pub use gumbel::{gumbel_float, revidx, speculator_sample};
+pub use gumbel::speculator_sample;
+#[cfg(backend = "cpu")]
+pub use gumbel::{gumbel_float, revidx};
 pub use prng::PRng;
 
 pub struct Sampling<B: Backend> {
     vocab_size: usize,
     data_type: DataType,
-    unified_kernels: RefCell<HashMap<UnifiedSamplingKey, <B::Kernels as Kernels>::UnifiedSamplingKernel>>,
+    unified_kernels: Mutex<HashMap<UnifiedSamplingKey, <B::Kernels as Kernels>::UnifiedSamplingKernel>>,
 }
 
 impl<B: Backend> Sampling<B> {
@@ -34,7 +37,7 @@ impl<B: Backend> Sampling<B> {
         Self {
             vocab_size,
             data_type,
-            unified_kernels: RefCell::new(HashMap::new()),
+            unified_kernels: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -143,7 +146,7 @@ impl<B: Backend> Sampling<B> {
         };
         let logits = penalized_logits.as_ref().unwrap_or(logits);
 
-        let mut unified_kernels = self.unified_kernels.borrow_mut();
+        let mut unified_kernels = self.unified_kernels.lock();
         let entry = unified_kernels.entry(key);
         let kernel = match entry {
             Entry::Occupied(occupied) => occupied.into_mut(),
@@ -187,5 +190,5 @@ impl<B: Backend> Sampling<B> {
 }
 
 #[cfg(test)]
-#[path = "../../../unit/encodable_block/sampling_test.rs"]
+#[path = "../../../tests/unit/encodable_block/sampling_test.rs"]
 mod tests;

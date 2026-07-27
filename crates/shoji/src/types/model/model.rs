@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    basic::Metadata,
+    basic::{Metadata, Value},
     model::{
         ModelAccessibility, ModelBackend, ModelFamily, ModelProperties, ModelQuantization, ModelReference,
         ModelRegistry, ModelSpecialization,
@@ -21,6 +21,8 @@ pub struct Model {
     pub quantization: Option<ModelQuantization>,
     pub specializations: Vec<ModelSpecialization>,
     pub accessibility: ModelAccessibility,
+    #[serde(default)]
+    pub encodings: Vec<Value>,
 }
 
 #[bindings::export(Implementation)]
@@ -184,6 +186,7 @@ impl Model {
         backend_version: String,
         specializations: Vec<ModelSpecialization>,
         accessibility: ModelAccessibility,
+        encodings: Vec<Value>,
     ) -> Self {
         let registry = ModelRegistry {
             identifier: registry_identifier,
@@ -203,6 +206,7 @@ impl Model {
             quantization: None,
             specializations,
             accessibility,
+            encodings,
         }
     }
 }

@@ -3,7 +3,7 @@ use crate::{
     data_type::DataType,
 };
 
-pub trait MatmulKernel: Sized {
+pub trait MatmulKernel: Sized + Send + Sync {
     type Backend: Backend<Kernels: Kernels<MatmulKernel = Self>>;
 
     fn new(

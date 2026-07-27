@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{convert::Infallible, pin::Pin};
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,7 @@ pub struct Output {
 
 pub type StreamInput = Vec<ChatMessage>;
 pub type StreamOutput = Output;
+pub type StreamMetrics = Option<Infallible>;
 
 pub trait Backend: Send + Sync {
     fn instance(
@@ -38,11 +39,21 @@ pub trait Backend: Send + Sync {
 }
 
 pub trait Instance:
-    InstanceTrait<StreamConfig = ChatReplyConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
+    InstanceTrait<
+        StreamConfig = ChatReplyConfig,
+        StreamInput = StreamInput,
+        StreamOutput = StreamOutput,
+        StreamMetrics = StreamMetrics,
+    >
 {
 }
 
 impl<T> Instance for T where
-    T: InstanceTrait<StreamConfig = ChatReplyConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
+    T: InstanceTrait<
+            StreamConfig = ChatReplyConfig,
+            StreamInput = StreamInput,
+            StreamOutput = StreamOutput,
+            StreamMetrics = StreamMetrics,
+        >
 {
 }

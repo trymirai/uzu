@@ -19,6 +19,5 @@ pub fn resolve_model_specialization(model_path: &Path) -> Result<ModelSpecializa
     Ok(match config {
         AnyModelConfig::LanguageModelConfig(_) => ModelSpecialization::Chat {},
         AnyModelConfig::ClassifierModelConfig(_) => ModelSpecialization::Classification {},
-        AnyModelConfig::DFlashSpeculatorConfig(_) => ModelSpecialization::Speculation {},
     })
 }

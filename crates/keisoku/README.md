@@ -1,44 +1,31 @@
 # keisoku
 
-System telemetry collector for Apple platforms — CPU/GPU/ANE power, memory, bandwidth,
-frequencies, temperatures and sensors. Power is read from the SoC's IOReport/SMC counters,
-so sampling runs off your work thread and adds no measurable load.
+System telemetry for Apple platforms — power, energy, memory, temperatures and sensors — read from the SoC's IOReport/SMC counters via [`kanka`](../kanka).
 
-## Two ways to use it
-
-**One-shot** — take a single reading averaged over a window:
+## `Device` — device facts and instantaneous gauges
 
 ```rust
-let mut collector = keisoku::Collector::new();
-let snapshot = collector.sample(std::time::Duration::from_millis(100));
-if let Some(power) = snapshot.power {
-    println!("gpu {} / total {}", power.gpu, power.total); // Watts
-}
+use keisoku::Device;
+
+let mut device = Device::new();
+println!("{}  {} GPU cores", device.chip(), device.gpu_cores());
+println!("battery {:?}", device.battery());
 ```
 
-**Background recorder** — sample at an interval while something runs, then collect:
+## `interval_measurement` — IOReport channel deltas over a window
+
+Build once per measurement set. The caller owns timing; `start`/`stop` are cheap counter reads.
 
 ```rust
-let recorder = keisoku::start(keisoku::Config {
-    interval: std::time::Duration::from_millis(100),
-});
-// ... do work ...
-let session = recorder.stop();          // stops the sampler, returns what it collected
-let samples = session.snapshots.len();
+use keisoku::{AneBandwidth, Cpu, Device, DramBytes, DramRead, EnergyRail, Gpu, Select};
+
+let mut handle = Device::interval_measurement::<Select![EnergyRail<Cpu>, EnergyRail<Gpu>, AneBandwidth, DramBytes<DramRead>]>();
+handle.start();
+// ... run work ...
+let sample = handle.stop().expect("started");
+println!("CPU energy: {}", sample.get::<EnergyRail<Cpu>>());
 ```
-
-## What you get back
-
-- `Session { interval, snapshots }` — the snapshots sampled between `start` and `stop`.
-- `Snapshot { elapsed, power, memory, cpu, gpu, neural_engine, bandwidth, temperatures, .. }`.
-- `PowerMetrics { cpu, gpu, gpu_sram, ane, ram, total, package }` — all `Watts`.
-- `Device { chip, gpu_cores, performance_cores, efficiency_cores, ram_total, os }`.
 
 ## Platform
 
-Real numbers on Apple Silicon (macOS, and iOS for the subset exposed there). On other
-platforms the power/SoC fields are `None` and the calls are safe no-ops, so code that
-depends on keisoku still builds and runs everywhere.
-
-Used by [`kanshi`](../kanshi) (live monitor); reaches Apple's private counters via
-[`kanka`](../kanka).
+Apple only. `interval_measurement` (IOReport) is macOS-only; iOS exposes the `Device` instant subset.

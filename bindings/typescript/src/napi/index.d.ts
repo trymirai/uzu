@@ -270,14 +270,16 @@ export declare class ChatReplyPowerStats {
   samplesCount: number
   averageCpuWatts: number
   averageGpuWatts: number
-  averageGpuSramWatts: number
   averageAneWatts: number
   averageRamWatts: number
   averageTotalWatts: number
-  averagePackageWatts: number
-  maxPackageWatts: number
   energyJoules: number
-  constructor(samplesCount: number, averageCpuWatts: number, averageGpuWatts: number, averageGpuSramWatts: number, averageAneWatts: number, averageRamWatts: number, averageTotalWatts: number, averagePackageWatts: number, maxPackageWatts: number, energyJoules: number)
+  constructor(samplesCount: number, averageCpuWatts: number, averageGpuWatts: number, averageAneWatts: number, averageRamWatts: number, averageTotalWatts: number, energyJoules: number)
+}
+
+export declare class ChatReplySpeculatorStats {
+  tokensPerForwardPass: number
+  constructor(tokensPerForwardPass: number)
 }
 
 export declare class ChatReplyStats {
@@ -288,8 +290,9 @@ export declare class ChatReplyStats {
   tokensCountInput?: number
   tokensCountOutput?: number
   memoryUsedBytes?: number
+  speculatorStats?: ChatReplySpeculatorStats
   powerStats?: ChatReplyPowerStats
-  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountOutput?: number, memoryUsedBytes?: number, powerStats?: ChatReplyPowerStats)
+  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountOutput?: number, memoryUsedBytes?: number, speculatorStats?: ChatReplySpeculatorStats, powerStats?: ChatReplyPowerStats)
   get tokensCount(): number | null
 }
 
@@ -457,7 +460,8 @@ export declare class Model {
   quantization?: ModelQuantization
   specializations: Array<ModelSpecialization>
   accessibility: ModelAccessibility
-  constructor(identifier: string, registry: ModelRegistry, backends: Array<ModelBackend>, family?: ModelFamily, properties?: ModelProperties, quantization?: ModelQuantization, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility)
+  encodings: Array<any>
+  constructor(identifier: string, registry: ModelRegistry, backends: Array<ModelBackend>, family?: ModelFamily, properties?: ModelProperties, quantization?: ModelQuantization, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encodings: Array<any>)
   get name(): string
   get isLocal(): boolean
   get isRemote(): boolean
@@ -469,7 +473,7 @@ export declare class Model {
   get referenceName(): string | null
   get checkpointVersion(): string | null
 
-  static external(identifier: string, registryIdentifier: string, registryName: string, backendIdentifier: string, backendName: string, backendVersion: string, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility): Model
+  static external(identifier: string, registryIdentifier: string, registryName: string, backendIdentifier: string, backendName: string, backendVersion: string, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encodings: Array<any>): Model
   get isChatCapable(): boolean
   get isClassificationCapable(): boolean
   get isTextToSpeechCapable(): boolean

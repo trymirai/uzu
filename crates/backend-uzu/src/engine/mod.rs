@@ -1,14 +1,15 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use thiserror::Error;
 
 use crate::backends::common::{Backend, Context};
 
 pub mod classifier_model;
+pub mod dflash_speculator;
 pub mod language_model;
 
 pub struct Engine<B: Backend> {
-    context: Rc<B::Context>,
+    context: Arc<B::Context>,
 }
 
 #[derive(Debug, Error)]

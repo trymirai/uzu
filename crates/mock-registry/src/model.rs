@@ -44,5 +44,6 @@ pub fn mock_model(
                 files: files.iter().map(|served_file| served_file.file.clone()).collect(),
             },
         },
+        encodings: vec![],
     }
 }

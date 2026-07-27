@@ -4,14 +4,8 @@ mod reading;
 pub use kind::SensorKind;
 pub use reading::Sensor;
 
-pub fn thermal_sensors() -> Vec<Sensor> {
-    crate::sensors(SensorKind::Temperature)
-}
+use crate::sys::hid::SensorReader;
 
-pub fn voltage_sensors() -> Vec<Sensor> {
-    crate::sensors(SensorKind::Voltage)
-}
-
-pub fn current_sensors() -> Vec<Sensor> {
-    crate::sensors(SensorKind::Current)
+pub fn thermal_sensors() -> Box<[Sensor]> {
+    SensorReader::new(SensorKind::Temperature).map(|mut reader| reader.read()).unwrap_or_default()
 }

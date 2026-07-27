@@ -1,11 +1,11 @@
-use std::{path::Path, rc::Rc};
+use std::{path::Path, sync::Arc};
 
-use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer};
+use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer, DeviceCapabilities};
 
-pub trait Context: Sized {
+pub trait Context: Sized + Send + Sync {
     type Backend: Backend<Context = Self>;
 
-    fn new() -> Result<Rc<Self>, <Self::Backend as Backend>::Error>;
+    fn new() -> Result<Arc<Self>, <Self::Backend as Backend>::Error>;
 
     fn create_command_buffer(
         &self
@@ -43,9 +43,5 @@ pub trait Context: Sized {
 
     fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error>;
 
-    fn sparse_buffers_supported(&self) -> bool;
-
-    fn supports_mxu(&self) -> bool {
-        false
-    }
+    fn device_capabilities(&self) -> DeviceCapabilities;
 }

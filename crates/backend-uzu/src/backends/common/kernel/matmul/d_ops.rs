@@ -5,6 +5,7 @@ pub struct MatmulDOps<'a, B: Backend> {
     pub accumulate: bool,
     pub bias: Option<&'a Allocation<B>>,
     pub rht_factors: Option<&'a Allocation<B>>,
+    pub soft_cap: Option<f32>,
 }
 
 impl<'a, B: Backend> MatmulDOps<'a, B> {
@@ -14,6 +15,7 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
             accumulate: false,
             bias: None,
             rht_factors: None,
+            soft_cap: None,
         }
     }
 
@@ -30,6 +32,9 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
         }
         if self.rht_factors.is_some() {
             m |= GemmDTransform::RHT;
+        }
+        if self.soft_cap.is_some() {
+            m |= GemmDTransform::SOFT_CAP;
         }
         m
     }
@@ -58,6 +63,11 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
                 None
             } else {
                 self.rht_factors
+            },
+            soft_cap: if bits.contains(GemmDTransform::SOFT_CAP) {
+                None
+            } else {
+                self.soft_cap
             },
         }
     }

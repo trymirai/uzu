@@ -1,15 +1,14 @@
-use std::cell::RefCell;
-
+use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        gpu_types::HadamardTransformOrder,
+        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
         kernel::{
             HadamardTransformKernel, Kernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, hybrid_spec::IncoherenceProcessingMode, low_rank_spec::LowRankSpec},
@@ -34,8 +33,8 @@ pub struct QLoRALinearWrapper<B: Backend> {
     base_linear: LinearMatmul<B>,
     input_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
     output_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
-    adapter_down_kernel: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
-    adapter_up_kernel: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+    adapter_down_kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
+    adapter_up_kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     adapter_down: Allocation<B>,
     adapter_up: Allocation<B>,
     input_dim: usize,
@@ -61,7 +60,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
     ) -> Result<Self, QLoRALinearWrapperError<B>> {
         let use_incoherence_signs = match (incoherence_block_size, incoherence_processing_mode) {
             (None, _) => false,
-            (Some(32), IncoherenceProcessingMode::InputOutput) => true,
+            (Some(HADAMARD_TRANSFORM_BLOCK_SIZE), IncoherenceProcessingMode::InputOutput) => true,
             (incoherence_block_size, incoherence_processing_mode) => {
                 return Err(QLoRALinearWrapperError::UnsupportedConfiguration(format!(
                     "incoherence block_size={incoherence_block_size:?}, processing_mode={incoherence_processing_mode:?}"
@@ -116,7 +115,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             (None, None)
         };
 
-        let adapter_down_kernel = RefCell::new(
+        let adapter_down_kernel = Mutex::new(
             <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::new(
                 context,
                 weights_data_type,
@@ -125,7 +124,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             )
             .map_err(QLoRALinearWrapperError::BackendError)?,
         );
-        let adapter_up_kernel = RefCell::new(
+        let adapter_up_kernel = Mutex::new(
             <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::new(
                 context,
                 weights_data_type,
@@ -173,11 +172,13 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.weights_data_type))?;
 
         {
-            let mut adapter_kernel = self.adapter_down_kernel.borrow_mut();
+            let mut adapter_kernel = self.adapter_down_kernel.lock();
             adapter_kernel.encode(
                 MatmulArguments {
-                    a: &input,
-                    a_offset: 0,
+                    a: MatmulA::FullPrecision {
+                        values: &input,
+                        offset: 0,
+                    },
                     b: MatmulB::FullPrecision {
                         b: &self.adapter_down,
                     },
@@ -185,6 +186,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                     b_transpose: true,
                     d: &mut intermediate,
                     d_transform: MatmulDOps::none(),
+                    gather_indices: None,
                     m: batch_dim as u32,
                     n: self.lora_rank as u32,
                     k: self.input_dim as u32,
@@ -212,11 +214,13 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         let mut output = self.base_linear.encode(base_input, batch_dim, encoder)?;
 
         {
-            let mut adapter_kernel = self.adapter_up_kernel.borrow_mut();
+            let mut adapter_kernel = self.adapter_up_kernel.lock();
             adapter_kernel.encode(
                 MatmulArguments {
-                    a: &intermediate,
-                    a_offset: 0,
+                    a: MatmulA::FullPrecision {
+                        values: &intermediate,
+                        offset: 0,
+                    },
                     b: MatmulB::FullPrecision {
                         b: &self.adapter_up,
                     },
@@ -224,11 +228,10 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                     b_transpose: true,
                     d: &mut output,
                     d_transform: MatmulDOps {
-                        ab_scale: 1.0,
                         accumulate: true,
-                        bias: None,
-                        rht_factors: None,
+                        ..MatmulDOps::none()
                     },
+                    gather_indices: None,
                     m: batch_dim as u32,
                     n: self.output_dim as u32,
                     k: self.lora_rank as u32,

@@ -1,5 +1,5 @@
-#![cfg(test)]
-#![allow(dead_code, unused_imports, unused_macros)]
+#[cfg(not(backend = "cpu"))]
+compile_error!("uzu tests require cpu backend");
 
 pub extern crate test;
 
@@ -10,5 +10,5 @@ pub mod matmul;
 pub mod proptest;
 pub mod util;
 
-#[path = "../../unit/bench_cold_pool_test.rs"]
+#[path = "../../tests/unit/bench_cold_pool_test.rs"]
 mod bench_cold_pool_test;
