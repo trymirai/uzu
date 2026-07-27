@@ -2,10 +2,10 @@ mod error;
 pub mod message;
 pub mod token;
 
-use std::sync::Arc;
+use std::{panic::AssertUnwindSafe, sync::Arc};
 
 pub use error::ChatSessionError;
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use shoji::{
@@ -490,11 +490,16 @@ impl ChatSession {
                 registry_guard.get_function(&call.name).cloned()
             };
             let value = if let Some(func) = func {
-                func.execute(call.arguments).await.unwrap_or_else(|err| {
-                    Value::from(serde_json::json!({
+                // a panicking tool must not unwind the turn task: the stream would close as a success while the session stays stuck in ToolCalling
+                match AssertUnwindSafe(func.execute(call.arguments)).catch_unwind().await {
+                    Ok(Ok(value)) => value,
+                    Ok(Err(err)) => Value::from(serde_json::json!({
                         "error": err.to_string(),
-                    }))
-                })
+                    })),
+                    Err(panic) => Value::from(serde_json::json!({
+                        "error": format!("Tool '{}' panicked: {}", call.name, panic_message(panic.as_ref())),
+                    })),
+                }
             } else {
                 Value::from(serde_json::json!({
                     "error": format!("Unknown function: {}", call.name),
@@ -655,6 +660,14 @@ fn find_tools_definitions(messages: &mut [ChatMessage]) -> Option<&mut Vec<ToolN
             _ => None,
         })
     })
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown panic")
 }
 
 fn remove_owned_tools(
