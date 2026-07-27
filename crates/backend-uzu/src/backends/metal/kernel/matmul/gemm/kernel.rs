@@ -25,7 +25,12 @@ use crate::{
     data_type::DataType,
 };
 
-const SPLIT_K_TARGET_TILES_INT8_ACTIVATIONS: u32 = 128;
+/// Measured on M5 Max over m 16..2048 x {k2048 n3072, k3584 n1024} x {sym, zp}, each
+/// candidate scored against the default dispatch in the same process. 256 beats 128 in 21
+/// of 32 cells by 8-17% and regresses only one cell (+3%). 512 is better still at m=16 on
+/// k2048 n3072 but worse on k3584 n1024, so it is shape-dependent and not worth branching
+/// on. Above m~1024 the tile count already exceeds any target and split-k stays at 1.
+const SPLIT_K_TARGET_TILES_INT8_ACTIVATIONS: u32 = 256;
 const SPLIT_K_TARGET_TILES: u32 = 512;
 
 #[derive(Debug, Clone, Copy)]
