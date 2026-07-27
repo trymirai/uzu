@@ -42,15 +42,13 @@ macro_rules! for_each_context {
     ($CONTEXTES:ident, |$CONTEXT_NAME:ident: $CONTEXT_TYPE:ident| $body:expr) => {
         crate::tests::proptest::TestResults {
             cpu: ({
-                type $CONTEXT_TYPE =
-                    <backend_uzu::backends::cpu::Cpu as backend_uzu::backends::common::Backend>::Context;
+                type $CONTEXT_TYPE = <crate::backends::cpu::Cpu as crate::backends::common::Backend>::Context;
                 let $CONTEXT_NAME = $CONTEXTES.cpu.as_ref();
                 $body
             })?,
             #[cfg(backend = "metal")]
             metal: ({
-                type $CONTEXT_TYPE =
-                    <backend_uzu::backends::metal::Metal as backend_uzu::backends::common::Backend>::Context;
+                type $CONTEXT_TYPE = <crate::backends::metal::Metal as crate::backends::common::Backend>::Context;
                 let $CONTEXT_NAME = $CONTEXTES.metal.as_ref();
                 $body
             })?,
