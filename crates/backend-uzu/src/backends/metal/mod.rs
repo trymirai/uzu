@@ -22,3 +22,5 @@ pub use context::MetalContext;
 pub use kernel::matmul::GemmDispatchPath;
 #[cfg(test)]
 pub(crate) use kernel::matmul::gemm::{select_mxu_quant_tiling, select_split_k};
+#[cfg(test)]
+pub(crate) use kernel::{MxuRateProbeBf16MetalKernel, MxuRateProbeInt8MetalKernel};

@@ -20,6 +20,11 @@ pub(super) struct GemmSpecialization {
     pub(super) group_size: Option<u32>,
     pub(super) signed_w8_storage: bool,
     pub(super) fused_a8_epilogue: bool,
+    /// Whether the a8 k-loop stages per-group weight-scale lines in threadgroup memory.
+    /// The host disables it for dispatches whose k-range covers too few weight groups to
+    /// amortize the cooperative fill (see `STAGE_SCALE_LINES_MIN_GROUPS`). Ignored (and
+    /// fixed to true) outside the int8-activation path.
+    pub(super) stage_scale_lines: bool,
 }
 
 impl GemmSpecialization {

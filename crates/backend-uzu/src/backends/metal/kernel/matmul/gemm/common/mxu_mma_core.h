@@ -311,6 +311,13 @@ struct MxuMmaCore {
   );
   UZU_CONST bool int8_activation_needs_weight_correction =
       A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant;
+  // Staging the per-group scale line in threadgroup memory wins wherever the cooperative
+  // fill retires real per-simdgroup work (the asymmetric correction decode) or the
+  // threadgroup is small. Measured on M5 Max, the symmetric 128x128 tile instead loses
+  // load/compute overlap to the barrier worth more than the registers the line frees,
+  // so it keeps the per-simdgroup register path.
+  UZU_CONST bool STAGE_SCALE_LINES =
+      int8_activation_needs_weight_correction || !(THREADGROUP_BLOCK_M == 128 && THREADGROUP_BLOCK_N == 128);
   UZU_CONST float int8_weight_midpoint = float(symmetric_zero_point<ushort((BITS > 0) ? BITS : 4)>());
 
   static METAL_FUNC float int8_weight_dequant_bias(
@@ -346,13 +353,19 @@ struct MxuMmaCore {
       const device BT* b_scales,
       const device BT* biases,
       const device uint8_t* zero_points,
+      threadgroup BT* scales_shared,
+      threadgroup float* corrections_shared,
       const int leading_dimension_a,
       const int b_row_stride_bytes,
       const int weight_group_iterations,
       const short simdgroup_limit_m,
       const short simdgroup_limit_n,
+      const short tile_col_offset,
+      const short tile_block_cols,
+      const bool stage_scale_lines,
       const uint abs_row_base,
       const uint abs_col_base,
+      const uint block_col_start,
       const uint k_offset_weight_groups,
       const uint k_offset_act_groups,
       const uint weight_groups_per_row,
@@ -366,34 +379,99 @@ struct MxuMmaCore {
     const short2 position = Ops::get_position(thread_context.simd_lane_id);
     constexpr int k_bytes_per_weight_group = (BITS == 4) ? (int(GROUP_SIZE) / 2) : int(GROUP_SIZE);
     constexpr int act_chunks_per_weight_group = int(GROUP_SIZE) / int(SIMDGROUP_BLOCK_K);
+    const ushort threads_per_threadgroup = thread_context.simdgroups_per_threadgroup * thread_context.simdgroup_size;
+    const ushort local_thread_index =
+        thread_context.simdgroup_index * thread_context.simdgroup_size + thread_context.simd_lane_id;
+    // stage_scale_lines is a function constant, so this folds per PSO and the dead path
+    // is stripped - the register fallback really does get its registers back.
+    const bool staging = STAGE_SCALE_LINES && stage_scale_lines;
+    // One thread per column stages a group's scale line (and asymmetric correction) in
+    // threadgroup memory, replacing per-simdgroup register line caches: SIMDGROUPS_M
+    // simdgroups previously rebuilt identical values, and the register footprint capped
+    // occupancy. Scales are staged in their storage type, so dequant stays bit-exact.
+    // The line is double-buffered: group g+1 is staged into the other slab while group g
+    // computes, so one barrier per group both publishes the prefetched slab and orders
+    // the next overwrite after the reads it replaces. Every simdgroup runs identical
+    // trip counts and barrier positions, so the barriers are threadgroup-uniform even
+    // where ALIGNED_M/N specialization differs between simdgroups on edge tiles.
+    auto stage_group = [&](const int weight_group, threadgroup BT* scales_slab, threadgroup float* corrections_slab) {
+      const uint staged_group_index = k_offset_weight_groups + uint(weight_group);
+      for (short staged_col = short(local_thread_index); staged_col < tile_block_cols;
+           staged_col += short(threads_per_threadgroup)) {
+        const uint weight_column = block_col_start + uint(staged_col);
+        const uint scale_index = weight_column * weight_groups_per_row + staged_group_index;
+        const BT scale = b_scales[scale_index];
+        scales_slab[staged_col] = scale;
+        if constexpr (int8_activation_needs_weight_correction) {
+          corrections_slab[staged_col] = float(scale) * int8_weight_midpoint + int8_weight_dequant_bias(
+                                                                                   float(scale),
+                                                                                   scale_index,
+                                                                                   weight_column,
+                                                                                   staged_group_index,
+                                                                                   weight_groups_per_row,
+                                                                                   biases,
+                                                                                   zero_points
+                                                                               );
+        }
+      }
+    };
+    if (staging) {
+      stage_group(0, scales_shared, corrections_shared);
+    }
+
     METAL_PRAGMA_NO_UNROLL
     for (int weight_group = 0; weight_group < weight_group_iterations; ++weight_group) {
       const uint weight_group_index = k_offset_weight_groups + uint(weight_group);
-
+      threadgroup BT* scales_group = scales_shared + (weight_group & 1) * int(THREADGROUP_BLOCK_N);
+      threadgroup float* corrections_group = corrections_shared + (weight_group & 1) * int(THREADGROUP_BLOCK_N);
+      if (staging) {
+        // Publishes this group's slab, and orders the upcoming prefetch's overwrite
+        // after the previous group's reads of that slab.
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (weight_group + 1 < weight_group_iterations) {
+          stage_group(
+              weight_group + 1,
+              scales_shared + ((weight_group + 1) & 1) * int(THREADGROUP_BLOCK_N),
+              corrections_shared + ((weight_group + 1) & 1) * int(THREADGROUP_BLOCK_N)
+          );
+        }
+      }
+      // The register fallback for the configurations where staging loses (see
+      // STAGE_SCALE_LINES): each simdgroup rebuilds its own scale line per group.
       WeightLineCache weight_scales;
       WeightLineCache weight_corrections;
-      WeightLineCache::template for_each_line<ALIGNED_N>(
-          position.x,
-          simdgroup_limit_n,
-          abs_col_base,
-          weight_groups_per_row,
-          weight_group_index,
-          [&](ushort tile_col, ushort thread_col, uint scale_index, uint weight_column) {
-            const float scale = static_cast<float>(b_scales[scale_index]);
-            weight_scales.slot(tile_col, thread_col) = scale;
-            if constexpr (int8_activation_needs_weight_correction) {
-              weight_corrections.slot(tile_col, thread_col) = scale * int8_weight_midpoint + int8_weight_dequant_bias(
-                                                                                                 scale,
-                                                                                                 scale_index,
-                                                                                                 weight_column,
-                                                                                                 weight_group_index,
-                                                                                                 weight_groups_per_row,
-                                                                                                 biases,
-                                                                                                 zero_points
-                                                                                             );
+      if (!staging) {
+        WeightLineCache::template for_each_line<ALIGNED_N>(
+            position.x,
+            simdgroup_limit_n,
+            abs_col_base,
+            weight_groups_per_row,
+            weight_group_index,
+            [&](ushort tile_col, ushort thread_col, uint scale_index, uint weight_column) {
+              const float scale = static_cast<float>(b_scales[scale_index]);
+              weight_scales.slot(tile_col, thread_col) = scale;
+              if constexpr (int8_activation_needs_weight_correction) {
+                weight_corrections.slot(tile_col, thread_col) =
+                    scale * int8_weight_midpoint + int8_weight_dequant_bias(
+                                                       scale,
+                                                       scale_index,
+                                                       weight_column,
+                                                       weight_group_index,
+                                                       weight_groups_per_row,
+                                                       biases,
+                                                       zero_points
+                                                   );
+              }
             }
-          }
-      );
+        );
+      }
+      auto weight_scale_at = [&](const short col) -> float {
+        if (staging) {
+          return float(scales_group[tile_col_offset + col]);
+        } else {
+          return weight_scales.at(col - position.x);
+        }
+      };
 
       ActivationLineCache activation_corrections;
       if constexpr (int8_activation_needs_weight_correction) {
@@ -459,7 +537,7 @@ struct MxuMmaCore {
                 if (!ALIGNED_N && col >= simdgroup_limit_n) {
                   return;
                 }
-                const float weight_scale = weight_scales.at(col - position.x);
+                const float weight_scale = weight_scale_at(col);
                 accumulated += activation_scales_0.at(row - position.y) * weight_scale * float(product_0);
                 accumulated += activation_scales_1.at(row - position.y) * weight_scale * float(product_1);
               },
@@ -484,8 +562,7 @@ struct MxuMmaCore {
                 if (!ALIGNED_N && col >= simdgroup_limit_n) {
                   return;
                 }
-                accumulated +=
-                    activation_scales.at(row - position.y) * weight_scales.at(col - position.x) * float(products);
+                accumulated += activation_scales.at(row - position.y) * weight_scale_at(col) * float(products);
               },
               accumulator,
               chunk_products
@@ -501,7 +578,9 @@ struct MxuMmaCore {
           if (!ALIGNED_N && col >= simdgroup_limit_n) {
             return value;
           }
-          return value + weight_corrections.at(col - position.x) * activation_corrections.at(row - position.y);
+          const float correction =
+              staging ? corrections_group[tile_col_offset + col] : weight_corrections.at(col - position.x);
+          return value + correction * activation_corrections.at(row - position.y);
         });
       }
 
@@ -528,6 +607,7 @@ struct MxuMmaCore {
       const device float* a_scales,
       const device int32_t* a_group_sums,
       threadgroup BT* b_shared,
+      const bool stage_scale_lines,
       const thread ThreadContext& thread_context
   ) {
     const uint partition = thread_context.threadgroup_position.z;
@@ -606,6 +686,11 @@ struct MxuMmaCore {
                                                               size_t(tile_row_offset) * params->leading_dimension_a;
                       const device uint8_t* b_packed_simdgroup =
                           quantized_weights.block + size_t(tile_col_offset) * quantized_weights.row_stride_bytes;
+                      // Scale lines live at the front of b_shared in their storage type;
+                      // asymmetric corrections follow as floats (the offset is 4-byte
+                      // aligned because BLOCK_N * sizeof(BT) is a multiple of 4).
+                      threadgroup float* corrections_shared =
+                          reinterpret_cast<threadgroup float*>(b_shared + 2 * THREADGROUP_BLOCK_N);
                       return int8_activation_k_loop<aligned_m.value, aligned_n.value>(
                           a_int8_simdgroup,
                           b_packed_simdgroup,
@@ -614,13 +699,19 @@ struct MxuMmaCore {
                           scales,
                           biases,
                           zero_points,
+                          b_shared,
+                          corrections_shared,
                           int(params->leading_dimension_a),
                           quantized_weights.row_stride_bytes,
                           int(params->aligned_inner_iterations),
                           simdgroup_limit_m,
                           simdgroup_limit_n,
+                          short(tile_col_offset),
+                          short(tile_block_cols),
+                          stage_scale_lines,
                           uint(geometry.block_row_start) + tile_row_offset,
                           uint(geometry.block_col_start) + tile_col_offset,
+                          uint(geometry.block_col_start),
                           uint(quantized_weights.k_offset_groups),
                           k_offset / uint(SIMDGROUP_BLOCK_K),
                           uint(quantized_weights.groups_per_row),

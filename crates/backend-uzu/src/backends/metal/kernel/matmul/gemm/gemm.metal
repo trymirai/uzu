@@ -15,8 +15,15 @@ using namespace uzu::gemm;
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
+// The a8 path stages per-weight-group scale lines (and asymmetric corrections, as floats
+// carved out of the BT array) in threadgroup memory: one cooperative fill per group
+// replaces every simdgroup rebuilding the same per-column values in registers.
+#define GEMM_A8_TGB_ELEMENTS                                                                                           \
+  (2 * gemm_tiling_block_n(GEMM_TILING) *                                                                              \
+   (NEEDS_ASYMMETRIC_WEIGHT_CORRECTION ? (1 + int(sizeof(float) / sizeof(BT))) : 1))
 #define GEMM_TGB_ELEMENTS                                                                                              \
-  ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT)))) : 1)    \
+  ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT))))         \
+                               : (A_IS_INT8 ? GEMM_A8_TGB_ELEMENTS : 1))                                               \
              : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
 
 template <
@@ -132,6 +139,7 @@ KERNEL(Gemm)(
     const constant uint& group_count_z,
     const GemmDTransform output_transform SPECIALIZE,
     const GemmAlignment alignment SPECIALIZE,
+    const bool stage_scale_lines SPECIALIZE,
     threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
     threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
     const uint group_x GROUPS(group_count_x),
@@ -177,6 +185,7 @@ KERNEL(Gemm)(
             a_scales,
             a_group_sums,
             b_shared,
+            stage_scale_lines,
             thread_context);
   } else {
     SimdgroupMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE, SIGNED_W8_STORAGE>::run(

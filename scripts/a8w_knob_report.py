@@ -14,7 +14,7 @@ import sys
 
 MS = [16, 32, 64, 128, 256, 512, 1024, 2048]
 SHAPES = ["k2048_n3072", "k1024_n7168", "k2048_n12288", "k3584_n1024", "k9216_n2560"]
-METHODS = ["sym", "zp"]
+METHODS = ["sym", "bias", "zp"]
 
 
 def main() -> None:

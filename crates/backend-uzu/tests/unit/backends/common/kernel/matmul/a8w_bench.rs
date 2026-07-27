@@ -638,9 +638,11 @@ fn bench_a8w(c: &mut Criterion) {
 // benchmarks and lets process isolation sit between knob values.
 // ---------------------------------------------------------------------------
 
-/// Knob values worth sweeping. Only sym and zp are measured: they bracket the
-/// register pressure, and bias sits between them.
-const SWEEP_METHODS: &[QuantizationMethod] = &[QuantizationMethod::ScaleSymmetric, QuantizationMethod::ScaleZeroPoint];
+/// Schemes measured for every knob. Sym and zp bracket the register pressure, but bias
+/// does not sit between them - it is the slowest of the three in over half the full-matrix
+/// cells - so tuning on the bracket alone leaves the worst scheme unmeasured.
+const SWEEP_METHODS: &[QuantizationMethod] =
+    &[QuantizationMethod::ScaleSymmetric, QuantizationMethod::ScaleBias, QuantizationMethod::ScaleZeroPoint];
 
 const MXU_TILINGS: &[(GemmTiling, &str)] = &[
     (GemmTiling::Tile16x32x256_Simdgroups1x1, "t16x32_1x1"),
@@ -969,6 +971,22 @@ fn bench_signed_w8_other_consumers(c: &mut Criterion) {
     group.finish();
 }
 
+/// Asserts two bf16 outputs agree to within one representable step. The absolute floor
+/// covers elements near zero, where cancellation leaves a large relative gap between
+/// neighbouring bf16 values.
+fn assert_within_one_ulp(
+    left: &[bf16],
+    right: &[bf16],
+    context: &str,
+) {
+    assert_eq!(left.len(), right.len(), "{context}: length mismatch");
+    for (index, (&a, &b)) in left.iter().zip(right).enumerate() {
+        let (a, b) = (a.to_f32(), b.to_f32());
+        let tolerance = bf16::EPSILON.to_f32() * a.abs().max(b.abs()).max(1e-3);
+        assert!((a - b).abs() <= tolerance, "{context}: element {index} differs, {a} vs {b}");
+    }
+}
+
 #[uzu_test]
 fn signed_w8_storage_is_bit_exact() {
     let context = shared_metal_context();
@@ -977,11 +995,13 @@ fn signed_w8_storage_is_bit_exact() {
     }
     let mut matmul = <MetalMatmul as MatmulKernel>::new(&context, DataType::BF16, DataType::BF16, DataType::BF16)
         .expect("matmul kernel");
-    let mut data = ShapeData::new(&context, 32, 256, 64, 0x51_6E_ED);
+    // k has to clear several K blocks: a split never covers less than one block, so at
+    // k = block_k the shape stops splitting and the reduction path below goes unexercised.
+    let mut data = ShapeData::new(&context, 32, 1024, 64, 0x51_6E_ED);
     let tiling = select_mxu_quant_tiling(32, 64, WEIGHT_GROUP_SIZE, true);
 
-    assert_eq!(select_split_k(32, 64, 256, tiling, true, WEIGHT_GROUP_SIZE, false, false, 1), 1);
-    assert!(select_split_k(32, 64, 256, tiling, true, WEIGHT_GROUP_SIZE, false, false, 256) > 1);
+    assert_eq!(select_split_k(32, 64, 1024, tiling, true, WEIGHT_GROUP_SIZE, false, false, 1), 1);
+    assert!(select_split_k(32, 64, 1024, tiling, true, WEIGHT_GROUP_SIZE, false, false, 256) > 1);
 
     for (split_mode, split_k_target) in [("non-split", 1), ("split", 256)] {
         matmul.gemm.split_k_target_override = Some(split_k_target);
@@ -1002,8 +1022,12 @@ fn signed_w8_storage_is_bit_exact() {
             let unsigned = run(false, false);
             let signed = run(true, false);
             let fused = run(true, true);
+            // Signed storage reinterprets the same bytes through the same operations, so it
+            // has to match exactly. The fused epilogue instead folds the scale into the
+            // accumulator at a different point, which reorders the f32 adds - equal to a
+            // rounding step, not to the bit.
             assert_eq!(unsigned, signed, "signed-W8 mismatch for {method:?} in {split_mode} mode");
-            assert_eq!(signed, fused, "fused A8 epilogue mismatch for {method:?} in {split_mode} mode");
+            assert_within_one_ulp(&signed, &fused, &format!("fused A8 epilogue for {method:?} in {split_mode} mode"));
         }
     }
 
@@ -1199,5 +1223,72 @@ fn bench_a8w_roofline(c: &mut Criterion) {
             });
         });
     }
+    group.finish();
+}
+
+/// Raw MXU MMA rate: a register-resident fragment_mma loop with no memory traffic, no
+/// scale epilogue, and no k-loop bookkeeping, at the production per-simdgroup tile shape.
+/// The int8/bf16 ratio bounds what any epilogue optimization can recover: if the MXU does
+/// not run int8 MACs faster than bf16, the compute-bound ceiling for a8w8 is parity.
+#[uzu_bench]
+fn bench_mxu_raw_rate(c: &mut Criterion) {
+    use criterion::Throughput;
+
+    use crate::backends::metal::{MxuRateProbeBf16MetalKernel, MxuRateProbeInt8MetalKernel};
+
+    let context = shared_metal_context();
+    if !context.supports_mxu() {
+        return;
+    }
+    let group_name = format!("{}/A8WMxuRate", type_short_name::<Metal>());
+    if !group_selected(&group_name) {
+        return;
+    }
+
+    const THREADGROUPS: u32 = 2048;
+    const THREADS_PER_THREADGROUP: u32 = 128;
+    const SIMDGROUPS_PER_THREADGROUP: u64 = 4;
+    const INNER_ITERATIONS: u32 = 2048;
+    const SEED_LENGTH: u32 = 4096;
+    // One fragment_mma over 2x2 fragments is a 32x32 output tile advanced 32 deep in k,
+    // at 2 ops per multiply-accumulate.
+    const OPS_PER_SIMDGROUP_ITERATION: u64 = 32 * 32 * 32 * 2;
+    let ops_per_dispatch = u64::from(THREADGROUPS)
+        * SIMDGROUPS_PER_THREADGROUP
+        * u64::from(INNER_ITERATIONS)
+        * OPS_PER_SIMDGROUP_ITERATION;
+
+    let mut rng = SmallRng::seed_from_u64(0x4A7E_5EED);
+    let int8_seed_data: Vec<i8> = (0..SEED_LENGTH).map(|_| rng.random_range(-127i8..=127)).collect();
+    let bf16_seed_data: Vec<bf16> = (0..SEED_LENGTH).map(|_| bf16::from_f32(rng.random_range(-1.0f32..1.0))).collect();
+    let int8_seed = alloc_allocation_with_data::<Metal, i8>(&context, &int8_seed_data);
+    let bf16_seed = alloc_allocation_with_data::<Metal, bf16>(&context, &bf16_seed_data);
+    let mut checksums = alloc_allocation::<Metal, f32>(&context, (THREADGROUPS * THREADS_PER_THREADGROUP) as usize);
+
+    let bf16_kernel = MxuRateProbeBf16MetalKernel::new(&context).expect("bf16 rate probe kernel");
+
+    let mut group = c.benchmark_group(group_name.as_str());
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_millis(600));
+    group.measurement_time(Duration::from_millis(2000));
+    group.throughput(Throughput::Elements(ops_per_dispatch));
+
+    // The drain ladder: raw MMA rate, then the production-style per-chunk scale
+    // drain, then the same drain with the magic-number int->float conversion.
+    for (drain_mode, label) in [(0u32, "raw"), (1u32, "drain_cvt"), (2u32, "drain_magic")] {
+        let int8_kernel = MxuRateProbeInt8MetalKernel::new(&context, drain_mode).expect("int8 rate probe kernel");
+        cool_off();
+        group.bench_function(BenchmarkId::new("int8", label), |bench| {
+            iter_encode_loop_named::<Metal, _>(&context, bench, &format!("{group_name}/int8/{label}"), |encoder| {
+                int8_kernel.encode(&int8_seed, &mut checksums, SEED_LENGTH, INNER_ITERATIONS, THREADGROUPS, encoder);
+            });
+        });
+    }
+    cool_off();
+    group.bench_function(BenchmarkId::new("bf16", "raw"), |bench| {
+        iter_encode_loop_named::<Metal, _>(&context, bench, &format!("{group_name}/bf16/raw"), |encoder| {
+            bf16_kernel.encode(&bf16_seed, &mut checksums, SEED_LENGTH, INNER_ITERATIONS, THREADGROUPS, encoder);
+        });
+    });
     group.finish();
 }

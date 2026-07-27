@@ -33,6 +33,22 @@ use crate::{
 const SPLIT_K_TARGET_TILES_INT8_ACTIVATIONS: u32 = 256;
 const SPLIT_K_TARGET_TILES: u32 = 512;
 
+/// Empirical exclusion for a8 scale-line staging: on the 32x64 tile, dispatches whose
+/// k-range covers fewer weight groups than this lose 13-15% staged (M5 Max, k3584 n1024
+/// at m=32: 4 groups per split) - too few iterations to amortize the double-buffer
+/// prologue and per-group barrier. The same group count *wins* staged on the other
+/// tilings (16x128 at m=16, 64x64 at m=64), so the tile is part of the condition.
+const STAGE_SCALE_LINES_MIN_GROUPS: u32 = 6;
+
+fn should_stage_scale_lines(
+    tiling: GemmTiling,
+    dispatch_k: u32,
+    group_size: Option<u32>,
+) -> bool {
+    tiling != GemmTiling::Tile32x64x256_Simdgroups2x2
+        || group_size.is_none_or(|group_size| dispatch_k / group_size >= STAGE_SCALE_LINES_MIN_GROUPS)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum GemmDispatchPath {
     Simdgroup,
@@ -125,6 +141,7 @@ impl GemmKernel {
                     specialization.fused_a8_epilogue,
                     specialization.output_transform,
                     specialization.alignment,
+                    specialization.stage_scale_lines,
                 )?;
                 Ok(entry.insert(kernel))
             },
@@ -417,6 +434,7 @@ impl GemmKernel {
                     a_prologue: GemmAPrologueKind::FullPrecision,
                     signed_w8_storage: false,
                     fused_a8_epilogue: false,
+                    stage_scale_lines: true,
                 };
                 specialization.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -583,6 +601,7 @@ impl GemmKernel {
                         a_prologue,
                         signed_w8_storage,
                         fused_a8_epilogue: self.use_fused_a8_epilogue(m, a_prologue, group_size),
+                        stage_scale_lines: should_stage_scale_lines(tiling, k, group_size),
                     };
                     specialization.validate()?;
                     let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -673,6 +692,7 @@ impl GemmKernel {
             a_prologue,
             signed_w8_storage,
             fused_a8_epilogue: self.use_fused_a8_epilogue(m, a_prologue, group_size),
+            stage_scale_lines: should_stage_scale_lines(tiling, kp, group_size),
         };
         part_spec.validate()?;
 
@@ -850,6 +870,13 @@ pub(crate) fn select_split_k(
         align = align.max(2 * group_size);
     }
     split_k = split_k.min((k / align).max(1));
+    // `align` only has to land splits on weight-group boundaries, which for MXU int8 is
+    // the group size - a quarter of the K block. That lets a narrow-n shape split finer
+    // than one K block, and every split then runs a masked partial block for the same
+    // launch and reduction cost as a full one. Give each split at least one whole block.
+    if tiling.block_k() != 0 {
+        split_k = split_k.min((k / tiling.block_k()).max(1));
+    }
     while split_k > 1 && !k.is_multiple_of(split_k * align) {
         split_k -= 1;
     }
