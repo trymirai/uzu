@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         gpu_types::trie::TrieNode,
         kernel::{TensorAddSwapKernel, radix_top_k_small::RadixTopKSmall},
     },
@@ -36,12 +36,11 @@ pub struct DFlashState<B: Backend> {
     layer_states: Box<[AttentionState<B>]>,
     context_length: usize,
     context_capacity: usize,
-    target_output_norm: Option<Allocation<B>>,
 }
 
 impl<B: Backend> DFlashState<B> {
-    pub(crate) fn target_output_norm(&self) -> Option<&Allocation<B>> {
-        self.target_output_norm.as_ref()
+    pub(crate) fn context_length(&self) -> usize {
+        self.context_length
     }
 }
 
@@ -192,7 +191,6 @@ impl<B: Backend> DFlashDraft<B> {
             layer_states,
             context_length: 0,
             context_capacity,
-            target_output_norm: None,
         })
     }
 
@@ -200,30 +198,28 @@ impl<B: Backend> DFlashDraft<B> {
         &self,
         state: &mut DFlashState<B>,
         target_features: &[Allocation<B>],
-        num_tokens: usize,
-        target_output_norm: &Allocation<B>,
+        accepted_indices: &[usize],
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        if num_tokens == 0 {
+        if accepted_indices.is_empty() {
             return Ok(());
         }
 
+        let num_tokens = accepted_indices.len();
         let expected_feature_count = self.target_feature_width / self.model_dim;
         assert_eq!(target_features.len(), expected_feature_count);
-        let row_size = self.model_dim * self.data_type.size_in_bytes();
-        let layer_feature_size = num_tokens * self.model_dim * self.data_type.size_in_bytes();
-        assert!(target_features.iter().all(|features| features.size() == layer_feature_size));
-        assert_eq!(target_output_norm.size(), row_size);
+        let layer_feature_bytes = self.model_dim * self.data_type.size_in_bytes();
+        assert!(target_features.iter().all(|features| features.size() % layer_feature_bytes == 0));
         let context_length = state.context_length + num_tokens;
         assert!(context_length <= state.context_capacity, "DFlash state capacity exceeded");
         assert!(context_length <= self.max_context_length, "DFlash context exceeds configured RoPE capacity");
 
         let mut projection_input =
             encoder.allocate_scratch(num_tokens * self.target_feature_width * self.data_type.size_in_bytes())?;
-        let layer_feature_bytes = self.model_dim * self.data_type.size_in_bytes();
         for (layer_index, features) in target_features.iter().enumerate() {
-            for token_index in 0..num_tokens {
-                let source_start = token_index * layer_feature_bytes;
+            for (token_index, &accepted_index) in accepted_indices.iter().enumerate() {
+                let source_start = accepted_index * layer_feature_bytes;
+                assert!(source_start + layer_feature_bytes <= features.size(), "accepted index out of feature bounds");
                 let destination_start = (token_index * target_features.len() + layer_index) * layer_feature_bytes;
                 encoder.encode_copy(
                     features,
@@ -233,10 +229,6 @@ impl<B: Backend> DFlashDraft<B> {
                 );
             }
         }
-        let mut stored_hidden = encoder.context().create_allocation(row_size, AllocationType::Global)?;
-        encoder.encode_copy(target_output_norm, .., &mut stored_hidden, ..);
-        state.target_output_norm = Some(stored_hidden);
-
         let projected = self.context_projection.encode(projection_input, num_tokens, encoder)?;
         let projected = self.context_norm.encode(&projected, 0, num_tokens, None, encoder)?;
         let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();

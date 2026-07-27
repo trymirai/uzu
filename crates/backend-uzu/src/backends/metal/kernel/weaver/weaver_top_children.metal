@@ -1,10 +1,30 @@
 #include <metal_stdlib>
+#include "../common/defines.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "../common/top_k.h"
+#include "../rng.h"
 #include "weaver_frontier.h"
 
 using namespace metal;
+
+#define GUMBEL_THREADGROUP_SIZE 1024u
+#define GUMBEL_WORDS_PER_OFFSET 4u
+
+METAL_FUNC uint2 gumbel_revidx(uint logit_idx, uint vocab_size) {
+  const uint thread_idx = logit_idx % GUMBEL_THREADGROUP_SIZE;
+  const uint thread_offset = div_ceil(vocab_size, GUMBEL_THREADGROUP_SIZE * GUMBEL_WORDS_PER_OFFSET) * thread_idx;
+  const uint block_idx = logit_idx / GUMBEL_THREADGROUP_SIZE;
+  return uint2(thread_offset + block_idx / GUMBEL_WORDS_PER_OFFSET, block_idx % GUMBEL_WORDS_PER_OFFSET);
+}
+
+METAL_FUNC float gumbel_noise(uint64_t seed, uint logit_idx, uint vocab_size) {
+  const uint2 offset_word = gumbel_revidx(logit_idx, vocab_size);
+  PhiloxState rng;
+  philox_init(&rng, seed, offset_word.x);
+  const float uniform = float(rng.output[offset_word.y]) * (1.0f / 4294967296.0f);
+  return -log(-log(uniform));
+}
 
 METAL_FUNC bool weaver_better(uint score, uint token, uint index, uint best_score, uint best_token, uint best_index) {
   return score > best_score ||
@@ -15,18 +35,20 @@ PUBLIC KERNEL(WeaverTopChildren)(
     const device bfloat* residual_logits,
     const device float* candidate_logits,
     const device uint* candidate_ids,
+    const device uint64_t* depth_seeds,
+    const device uint* node_metadata,
     device uint* output_token_ids,
     device float* output_model_logprobs,
     constant uint& rows,
     constant uint& candidates,
     constant uint& children_per_node,
+    constant uint& vocab_size,
     threadgroup float reduce_float[TOP_CHILDREN_SIMDGROUPS],
     threadgroup uint reduce_score[TOP_CHILDREN_SIMDGROUPS],
     threadgroup uint reduce_token[TOP_CHILDREN_SIMDGROUPS],
     threadgroup uint reduce_index[TOP_CHILDREN_SIMDGROUPS],
     threadgroup float& logit_max,
     threadgroup float& log_sum,
-    threadgroup uint& winner_score,
     threadgroup uint& winner_token,
     threadgroup uint& winner_index,
     const ThreadContext thread_context,
@@ -38,6 +60,8 @@ PUBLIC KERNEL(WeaverTopChildren)(
   }
 
   const uint base = row * candidates;
+  const uint depth = node_metadata[uint(MetadataIdx::Depth) * rows + row];
+  const uint64_t seed = depth_seeds[depth];
   const uint first_index = lid;
   const uint second_index = lid + TOP_CHILDREN_THREADS;
   const bool first_valid = first_index < candidates;
@@ -48,8 +72,10 @@ PUBLIC KERNEL(WeaverTopChildren)(
       second_valid ? candidate_logits[base + second_index] + float(residual_logits[base + second_index]) : -INFINITY;
   const uint first_token = first_valid ? uint(candidate_ids[base + first_index]) : 0xffffffffu;
   const uint second_token = second_valid ? uint(candidate_ids[base + second_index]) : 0xffffffffu;
-  const uint first_score = first_valid ? top_k_score_key(first_logit) : 0u;
-  const uint second_score = second_valid ? top_k_score_key(second_logit) : 0u;
+  const uint first_score =
+      first_valid ? top_k_score_key(first_logit + gumbel_noise(seed, first_token, vocab_size)) : 0u;
+  const uint second_score =
+      second_valid ? top_k_score_key(second_logit + gumbel_noise(seed, second_token, vocab_size)) : 0u;
   bool first_active = first_valid;
   bool second_active = second_valid;
 
@@ -125,7 +151,6 @@ PUBLIC KERNEL(WeaverTopChildren)(
                                    : 0xffffffffu;
       const uint selected_index = simd_min(group_index);
       if (thread_context.simd_lane_id == 0) {
-        winner_score = selected_score;
         winner_token = selected_token;
         winner_index = selected_index;
       }
@@ -133,7 +158,7 @@ PUBLIC KERNEL(WeaverTopChildren)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (lid == 0) {
-      const float winner_logit = top_k_score_from_key(winner_score);
+      const float winner_logit = candidate_logits[base + winner_index] + float(residual_logits[base + winner_index]);
       output_token_ids[row * children_per_node + child] = winner_token;
       output_model_logprobs[row * children_per_node + child] = winner_logit - log_sum;
     }

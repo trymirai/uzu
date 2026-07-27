@@ -69,7 +69,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-You can run any example via `cargo tools example` \<**swift**\> \<**chat** | **chat-cloud** | **chat-speculation-classification** | **chat-speculation-summarization** | **chat-structured-output** | **classification** | **quick-start** | **text-to-speech**\>:
+You can run any example via `cargo tools example` \<**swift**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start** | **text-to-speech**\>:
 
 ### Chat
 
@@ -143,97 +143,6 @@ public func runChatCloud() async throws {
     print("Text: \(message.text() ?? "empty")")
 }
 ```
-
-### Chat using speculation preset for classification
-
-In this example, we will use the `classification` speculation preset to determine the sentiment of the user's input:
-
-```swift
-import Uzu
-
-public func runChatSpeculationClassification() async throws {
-    let engineConfig = EngineConfig.create()
-    let engine = try await Engine.create(config: engineConfig)
-    
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
-        return
-    }
-    for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
-    }
-    
-    let feature = Feature(name: "sentiment", values: [
-        "Happy",
-        "Sad",
-        "Angry",
-        "Fearful",
-        "Surprised",
-        "Disgusted",
-    ])
-    let chatConfig = ChatConfig.create().withSpeculationPreset(speculationPreset: .classification(feature: feature))
-    let session = try await engine.chat(model: model, config: chatConfig)
-    
-    let textToDetectFeature =
-            "Today's been awesome! Everything just feels right, and I can't stop smiling."
-    let prompt = "Text is: \"\(textToDetectFeature)\". Choose \(feature.name) from the list: \(feature.values.joined(separator: ", ")). Answer with one word. Don't add a dot at the end."
-    let messages = [
-        ChatMessage.system().withReasoningEffort(reasoningEffort: .disabled),
-        ChatMessage.user().withText(text: prompt)
-    ]
-    
-    let chatReplyConfig = ChatReplyConfig.create().withTokenLimit(tokenLimit: 32).withSamplingMethod(samplingMethod: .greedy)
-    let replies = try await session.reply(input: messages, config: chatReplyConfig)
-    guard let reply = replies.last else {
-        return
-    }
-    
-    print("Prediction: \(reply.message.text() ?? "empty")")
-    print("Generated tokens: \(reply.stats.tokensCountOutput ?? 0)")
-}
-```
-
-<br>You can view the stats to see that the answer will be ready immediately after the prefill step, and actual generation won’t even start due to speculative decoding, which significantly improves generation speed.
-
-### Chat using speculation preset for summarization
-
-In this example, we will use the `summarization` speculation preset to generate a summary of the input text:
-
-```swift
-import Uzu
-
-public func runChatSpeculationSummarization() async throws {
-    let engineConfig = EngineConfig.create()
-    let engine = try await Engine.create(config: engineConfig)
-    
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
-        return
-    }
-    for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
-    }
-    
-    let textToSummarize = "A Large Language Model (LLM) is a type of artificial intelligence that processes and generates human-like text. It is trained on vast datasets containing books, articles, and web content, allowing it to understand and predict language patterns. LLMs use deep learning, particularly transformer-based architectures, to analyze text, recognize context, and generate coherent responses. These models have a wide range of applications, including chatbots, content creation, translation, and code generation. One of the key strengths of LLMs is their ability to generate contextually relevant text based on prompts. They utilize self-attention mechanisms to weigh the importance of words within a sentence, improving accuracy and fluency. Examples of popular LLMs include OpenAI's GPT series, Google's BERT, and Meta's LLaMA. As these models grow in size and sophistication, they continue to enhance human-computer interactions, making AI-powered communication more natural and effective.";
-    let prompt = "Text is: \"\(textToSummarize)\". Write only summary itself."
-    let messages = [
-        ChatMessage.system().withReasoningEffort(reasoningEffort: .disabled),
-        ChatMessage.user().withText(text: prompt)
-    ]
-    
-    let chatConfig = ChatConfig.create().withSpeculationPreset(speculationPreset: .summarization)
-    let session = try await engine.chat(model: model, config: chatConfig)
-    
-    let chatReplyConfig = ChatReplyConfig.create().withTokenLimit(tokenLimit: 256).withSamplingMethod(samplingMethod: .greedy)
-    let replies = try await session.reply(input: messages, config: chatReplyConfig)
-    guard let reply = replies.last else {
-        return
-    }
-    
-    print("Summary: \(reply.message.text() ?? "empty")")
-    print("Generation t\\s: \(reply.stats.generateTokensPerSecond ?? 0.0)")
-}
-```
-
-<br>You will notice that the model’s run count is lower than the actual number of generated tokens due to speculative decoding, which significantly improves generation speed.
 
 ### Chat with structured output
 
