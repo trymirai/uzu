@@ -24,6 +24,7 @@ static GEMV_MAX_BATCH: OnceLock<u32> = OnceLock::new();
 
 fn max_gemv_batch_threshold() -> u32 {
     *GEMV_MAX_BATCH.get_or_init(|| {
+        // TODO: remove magic env var
         std::env::var("UZU_GEMV_MAX_BATCH").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_GEMV_MAX_BATCH)
     })
 }

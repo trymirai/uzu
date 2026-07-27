@@ -6,6 +6,8 @@ use std::{
 
 use shoji::traits::backend::chat_token::TokenStreamMetrics;
 
+#[cfg(grammar)]
+use crate::engine::language_model::grammar::Grammar;
 use crate::{
     backends::common::{
         Allocation, AllocationPool, AllocationType, Backend, Context, Encoder, Pending,
@@ -15,7 +17,6 @@ use crate::{
     encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
     engine::language_model::{
         LanguageModel,
-        grammar::Grammar,
         state::LanguageModelState,
         stream::{LanguageModelStreamError, LanguageModelStreamOptions},
     },
@@ -28,10 +29,10 @@ enum ForwardPassChaining<B: Backend> {
 }
 
 impl<B: Backend> ForwardPassChaining<B> {
-    fn resolve<'grammar>(
+    fn resolve(
         &mut self,
         tokens: &mut Vec<u64>,
-        grammar: Option<&mut (dyn Grammar + 'grammar)>,
+        #[cfg(grammar)] grammar: Option<&mut Grammar>,
     ) -> Result<u64, LanguageModelStreamError<B>> {
         match self {
             Self::Constant(token_id) => Ok(*token_id),
@@ -45,6 +46,7 @@ impl<B: Backend> ForwardPassChaining<B> {
                 let token_id = output[0] as u64;
                 *self = Self::Constant(token_id);
                 tokens.push(token_id);
+                #[cfg(grammar)]
                 if let Some(grammar) = grammar {
                     grammar.accept_token(token_id)?;
                 }
@@ -102,8 +104,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         model: &'a LanguageModel<B>,
         input: &[u64],
         model_state: &'a mut LanguageModelState<B>,
-        mut options: LanguageModelStreamOptions<'a>,
+        options: LanguageModelStreamOptions<'a>,
     ) -> Result<Self, LanguageModelStreamError<B>> {
+        #[cfg(grammar)]
+        let mut options = options;
         if model_state.tokens.is_empty() && input.is_empty() {
             return Err(LanguageModelStreamError::NoSeedToken);
         };
@@ -218,7 +222,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         None
                     };
 
-                    let bitmask = if let Some(grammar) = options.grammar.as_deref_mut() {
+                    #[cfg(grammar)]
+                    let bitmask = if let Some(grammar) = options.grammar.as_mut() {
                         let mut bitmask = encoder
                             .allocate_constant(
                                 model.vocab_size.div_ceil(DataType::U32.size_in_bits()) * DataType::U32.size_in_bytes(),
@@ -233,6 +238,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     } else {
                         None
                     };
+                    #[cfg(not(grammar))]
+                    let bitmask = None;
 
                     output = Some(
                         model
@@ -308,7 +315,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     seed_token,
                 } => {
                     self.model_state.tokens.push(seed_token);
-                    if let Some(grammar) = self.options.grammar.as_deref_mut() {
+                    #[cfg(grammar)]
+                    if let Some(grammar) = self.options.grammar.as_mut() {
                         let _ = grammar.accept_token(seed_token); // TODO: this should not be ignored
                     }
                     self.metrics.num_tokens_returned += 1;
@@ -328,10 +336,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             .iter()
                             .map(|x| *x as u64)
                             .collect::<Box<[u64]>>();
-                        let full = forward_pass_pending
-                            .input_trie
-                            .linearize()
-                            .accept(&sampled_tokens, self.options.grammar.as_deref_mut())?;
+                        let full = forward_pass_pending.input_trie.linearize().accept(
+                            &sampled_tokens,
+                            #[cfg(grammar)]
+                            self.options.grammar.as_mut(),
+                        )?;
                         self.metrics.num_tokens_accepted += full.len();
                         self.decoding_state = DecodingState::Accepting {
                             full,
@@ -396,7 +405,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         if self.model_state.max_context_length.is_some_and(|max_context_length| context_length >= max_context_length) {
             self.decoding_state = DecodingState::Halted;
-            return Ok(Some(prev_output.resolve(&mut self.model_state.tokens, self.options.grammar.as_deref_mut())?));
+            return Ok(Some(prev_output.resolve(
+                &mut self.model_state.tokens,
+                #[cfg(grammar)]
+                self.options.grammar.as_mut(),
+            )?));
         }
 
         let mut pending = Vec::new();
@@ -408,12 +421,17 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         };
 
         let (input_trie, chain_copy, full_accept) = if let Some(speculator) = &self.options.speculator {
-            prev_output.resolve(&mut self.model_state.tokens, self.options.grammar.as_deref_mut())?;
+            prev_output.resolve(
+                &mut self.model_state.tokens,
+                #[cfg(grammar)]
+                self.options.grammar.as_mut(),
+            )?;
 
             let input_trie = TrieNode::from_speculator(
                 &self.model_state.tokens,
                 &self.model_state.prng,
-                self.options.grammar.as_deref_mut(),
+                #[cfg(grammar)]
+                self.options.grammar.as_mut(),
                 speculator.speculator,
                 self.model.vocab_size,
                 &speculator.trie_creation_config,
@@ -466,7 +484,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             .logits
             .unwrap();
 
-        let (bitmask, mut encoder) = if let Some(grammar) = self.options.grammar.as_deref_mut() {
+        #[cfg(grammar)]
+        let (bitmask, mut encoder) = if let Some(grammar) = self.options.grammar.as_mut() {
             if chain_copy.is_some() {
                 pending.push(encoder.end_encoding().submit());
 
@@ -503,6 +522,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         } else {
             (None, encoder)
         };
+        #[cfg(not(grammar))]
+        let bitmask = None;
 
         let seeds = if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
             let mut seeds = encoder
@@ -568,7 +589,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             output,
         });
 
-        Ok(Some(prev_output.resolve(&mut self.model_state.tokens, self.options.grammar.as_deref_mut())?))
+        Ok(Some(prev_output.resolve(
+            &mut self.model_state.tokens,
+            #[cfg(grammar)]
+            self.options.grammar.as_mut(),
+        )?))
     }
 
     pub fn metrics(&self) -> &TokenStreamMetrics {

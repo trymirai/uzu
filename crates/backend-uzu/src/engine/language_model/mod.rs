@@ -14,9 +14,11 @@ use crate::{
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
 };
 
-pub mod grammar;
 pub mod state;
 pub mod stream;
+
+#[cfg(grammar)]
+pub mod grammar;
 
 pub struct LanguageModel<B: Backend> {
     context: Arc<B::Context>,

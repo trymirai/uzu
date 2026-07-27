@@ -71,8 +71,19 @@ pub enum RHTLinearWrapperError<B: Backend> {
     UnsupportedConfiguration(String),
 }
 
+fn weights_need_group_sums(quantization_spec: &AnyWeightMatrixSpec) -> bool {
+    !matches!(
+        quantization_spec,
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
+            is_symmetric: true,
+            ..
+        })
+    )
+}
+
 struct SymmetricInt8Preparation<B: Backend> {
     kernel: <B::Kernels as Kernels>::RHTQuantizeActivationsKernel,
+    emit_group_sums: bool,
 }
 
 pub struct RHTLinearWrapper<B: Backend> {
@@ -131,10 +142,12 @@ impl<B: Backend> RHTLinearWrapper<B> {
             input_data_type,
             output_data_type,
         ) {
+            let emit_group_sums = weights_need_group_sums(&quantization_spec);
             Some(
-                <B::Kernels as Kernels>::RHTQuantizeActivationsKernel::new(context, input_data_type)
+                <B::Kernels as Kernels>::RHTQuantizeActivationsKernel::new(context, input_data_type, emit_group_sums)
                     .map(|kernel| SymmetricInt8Preparation {
                         kernel,
+                        emit_group_sums,
                     })
                     .map_err(RHTLinearWrapperError::BackendError)?,
             )
@@ -177,11 +190,16 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::F32))?;
+            let mut group_sums = preparation
+                .emit_group_sums
+                .then(|| encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::I32)))
+                .transpose()?;
 
             preparation.kernel.encode(
                 &input,
                 &mut values,
                 &mut scales,
+                group_sums.as_mut(),
                 &self.input_factors,
                 batch_dim as u32,
                 self.input_dimension as u32,
@@ -192,6 +210,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 MatmulA::Int8Symmetric {
                     values: &values,
                     scales: &scales,
+                    group_sums: group_sums.as_ref(),
                 },
                 batch_dim,
                 encoder,
