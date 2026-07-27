@@ -47,6 +47,12 @@ pub struct GemmKernel {
     pub bias_add: TensorAddBiasMetalKernel,
     pub hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
     split_k_reduce: HashMap<GemmDTransform, GemmSplitKReduceMetalKernel>,
+    /// Test-only knobs so tuning sweeps can pin what the dispatch heuristics would pick.
+    /// Absent from release builds, so the production path is exactly as before.
+    #[cfg(test)]
+    pub(crate) tiling_override: Option<GemmTiling>,
+    #[cfg(test)]
+    pub(crate) split_k_target_override: Option<u32>,
 }
 
 impl GemmKernel {
@@ -70,6 +76,10 @@ impl GemmKernel {
             bias_add,
             hadamard,
             split_k_reduce: HashMap::new(),
+            #[cfg(test)]
+            tiling_override: None,
+            #[cfg(test)]
+            split_k_target_override: None,
         };
         Ok(kernel)
     }
@@ -184,8 +194,7 @@ impl GemmKernel {
                 }
                 let group_size = arguments.b.group_size().unwrap_or(0);
                 let int8_activations = arguments.a.prologue_kind() == GemmAPrologueKind::Int8Symmetric;
-                let tiling =
-                    select_mxu_quant_tiling(arguments.m, arguments.n, arguments.k, group_size, int8_activations);
+                let tiling = select_mxu_quant_tiling(arguments.m, arguments.n, group_size, int8_activations);
                 if int8_activations {
                     return (group_size != 0 && arguments.k.is_multiple_of(group_size)).then_some(tiling);
                 }
@@ -468,10 +477,15 @@ impl GemmKernel {
                     (output_bias, None, output_transform)
                 };
 
-                let tiling = if use_mxu {
-                    select_mxu_quant_tiling(m, n, k, group_size.unwrap_or(0), a_is_int8)
-                } else {
-                    select_quant_tiling(m, n, group_size.unwrap_or(0))
+                let tiling = {
+                    let selected = if use_mxu {
+                        select_mxu_quant_tiling(m, n, group_size.unwrap_or(0), a_is_int8)
+                    } else {
+                        select_quant_tiling(m, n, group_size.unwrap_or(0))
+                    };
+                    #[cfg(test)]
+                    let selected = self.tiling_override.unwrap_or(selected);
+                    selected
                 };
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
@@ -484,6 +498,12 @@ impl GemmKernel {
                     SPLIT_K_TARGET_TILES_INT8_ACTIVATIONS
                 } else {
                     SPLIT_K_TARGET_TILES
+                };
+                #[cfg(test)]
+                let split_k_target = if a_is_int8 {
+                    self.split_k_target_override.unwrap_or(split_k_target)
+                } else {
+                    split_k_target
                 };
                 let split_k = select_split_k(
                     m,
@@ -769,7 +789,7 @@ fn split_k_output_supported(
     n.is_multiple_of(4) && weights_data_type == output_data_type
 }
 
-fn select_split_k(
+pub(crate) fn select_split_k(
     m: u32,
     n: u32,
     k: u32,
@@ -872,15 +892,49 @@ fn select_small_m_mxu_tiling(
     GemmTiling::Tile32x64x256_Simdgroups2x2
 }
 
+/// int8 activations want a different tile table from bf16 activations. The a8 path stages
+/// no weights through threadgroup memory, so it is register- rather than LDS-limited, and
+/// the bf16 table mispicks at both ends of the m range.
+///
+/// Measured on M5 Max, w8, group size 64, m 16..2048 x 5 shapes x {sym, zp}, every
+/// candidate measured back to back with the incumbent in one process and scored against a
+/// bracketing pair of incumbent readings.
+fn select_int8_mxu_tiling(
+    m: u32,
+    n: u32,
+) -> GemmTiling {
+    if n < 64 {
+        return GemmTiling::Tile64x32x256_Simdgroups4x1;
+    }
+    // m == 16 fell through to a block_m=32 tile, wasting half the m dimension: a block_m=16
+    // tile is 15-43% faster on every shape measured. Which of the two 16-row tilings wins
+    // does not follow n, k or n/k, but this one has the better mean (0.68 sym / 0.64 zp
+    // against the incumbent, versus 0.71 / 0.69 for Tile16x32).
+    if m <= 16 {
+        return GemmTiling::Tile16x128x256_Simdgroups1x4;
+    }
+    if m < 64 {
+        return GemmTiling::Tile32x64x256_Simdgroups2x2;
+    }
+    // The bf16 table promotes to 128x128 at m >= 256. For int8 that is premature: at m=256
+    // Tile64x64 averages 0.941 over all shape/method cells (worst +3.2%, best -17.1%),
+    // while at m >= 1024 the promotion is correct (Tile64x64 averages 1.019 there). The two
+    // share a per-thread register footprint, so the larger tile buys no extra reuse - only
+    // coarser m granularity, which is what costs at 256.
+    if m >= 512 {
+        return GemmTiling::Tile128x128x256_Simdgroups4x4;
+    }
+    GemmTiling::Tile64x64x256_Simdgroups2x2
+}
+
 pub(crate) fn select_mxu_quant_tiling(
     m: u32,
     n: u32,
-    k: u32,
     group_size: u32,
     int8_activations: bool,
 ) -> GemmTiling {
     let tiling = if int8_activations {
-        select_mxu_tiling(m, n, k)
+        select_int8_mxu_tiling(m, n)
     } else {
         select_base_mxu_tiling(m, n)
     };
