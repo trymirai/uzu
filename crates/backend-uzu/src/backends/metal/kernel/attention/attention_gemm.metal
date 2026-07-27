@@ -3,7 +3,7 @@
 #include "../common/thread_context.h"
 #include "../matmul/common/fragment.h"
 #include "../matmul/common/loader.h"
-#include "../matmul/common/mxu_fragment_ops.h"
+#include "../matmul/common/mxu_fragment/ops.h"
 #include "../matmul/common/simdgroup_fragment_ops.h"
 #include "../generated/ring.h"
 #include "../generated/trie.h"
