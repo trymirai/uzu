@@ -135,7 +135,6 @@ impl<B: Backend> AttentionState<B> {
         })
     }
 
-    #[allow(dead_code)]
     pub(super) fn append_full(
         &mut self,
         length: usize,

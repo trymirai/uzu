@@ -11,35 +11,23 @@ use crate::{
 #[kernel(QuantizedEmbeddingLookup)]
 #[variants(T, f32, f16, bf16)]
 pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
-    #[allow(unused)] token_ids: *const u32,
-    #[allow(unused)] weights: *const u8,
-    #[allow(unused)] scales: *const T,
-    #[allow(unused)]
-    #[optional(quantization_method == QuantizationMethod::ScaleZeroPoint)]
-    zero_points: Option<*const u8>,
-    #[allow(unused)]
-    #[optional(quantization_method == QuantizationMethod::ScaleBias)]
-    biases: Option<*const T>,
-    #[allow(unused)] output: *mut T,
+    token_ids: *const u32,
+    weights: *const u8,
+    scales: *const T,
+    #[optional(quantization_method == QuantizationMethod::ScaleZeroPoint)] zero_points: Option<*const u8>,
+    #[optional(quantization_method == QuantizationMethod::ScaleBias)] biases: Option<*const T>,
+    output: *mut T,
     #[allow(unused)]
     #[optional(use_hadamard)]
     output_hadamard_factors: Option<*const i32>,
-    #[allow(unused)] batch_size: u32,
-    #[allow(unused)] vocab_size: u32,
-    #[allow(unused)] model_dim: u32,
-    #[allow(unused)] input_scale: f32,
-    #[allow(unused)]
-    #[specialize]
-    group_size: u32,
-    #[allow(unused)]
-    #[specialize]
-    quantization_mode: QuantizationMode,
-    #[allow(unused)]
-    #[specialize]
-    quantization_method: QuantizationMethod,
-    #[allow(unused)]
-    #[specialize]
-    use_hadamard: bool,
+    batch_size: u32,
+    vocab_size: u32,
+    model_dim: u32,
+    input_scale: f32,
+    #[specialize] group_size: u32,
+    #[specialize] quantization_mode: QuantizationMode,
+    #[specialize] quantization_method: QuantizationMethod,
+    #[specialize] use_hadamard: bool,
 ) {
     if use_hadamard {
         unimplemented!("not supported yet");
