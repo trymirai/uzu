@@ -8,16 +8,12 @@ use crate::array::ArrayElement;
 #[variants(T, f32, f16, bf16)]
 #[variants(BiasT, f32, f16, bf16)]
 pub fn tensor_add_bias<T: ArrayElement + Float, BiasT: ArrayElement + Float>(
-    #[allow(unused)]
-    #[optional(!in_place)]
-    input: Option<*const T>,
-    #[allow(unused)] bias: *const BiasT,
-    #[allow(unused)]
-    #[optional(indexed)]
-    bias_row_indices: Option<*const u32>,
-    #[allow(unused)] output: *mut T,
-    #[allow(unused)] num_cols: u32,
-    #[allow(unused)] length: u32,
+    #[optional(!in_place)] input: Option<*const T>,
+    bias: *const BiasT,
+    #[optional(indexed)] bias_row_indices: Option<*const u32>,
+    output: *mut T,
+    num_cols: u32,
+    length: u32,
     #[specialize] in_place: bool,
     #[specialize] indexed: bool,
 ) {
