@@ -110,7 +110,6 @@ clang-ast = "0.1"
 rangemap = "1.7.1"
 parking_lot = "0.12"
 futures = "0.3"
-async-stream = "0.3"
 tokio = "1.49"
 tokio-stream = { version = "0.1.18", features = ["sync"] }
 tokio-util = { version = "0.7.17", default-features = false, features = ["rt"] }
@@ -121,7 +120,6 @@ proc-macro-crate = "3.5"
 syn = { version = "2.0", features = ["full", "fold"] }
 prettyplease = "0.2"
 rhai = "1.24.0"
-cbindgen = "0.29"
 indicatif = "0.18"
 rocket = { version = "0.5", features = ["json"] }
 uuid = { version = "1.20", features = ["serde", "v4", "v5"] }
@@ -131,7 +129,6 @@ rstest = "0.26"
 wiremock = "0.6"
 proptest = { version = "1.10", default-features = false, features = ["std"] }
 criterion = { version = "0.8.2", default-features = false }
-criterion-macro = "0.4.0"
 rustix = "1.1.4"
 indexmap = { version = "2.13.0", features = ["serde"] }
 tracing = "0.1.44"

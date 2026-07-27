@@ -192,15 +192,14 @@ impl<B: Backend> Pending<B> {
     pub fn wait_until_completed(self) -> Result<Completed<B>, B::Error> {
         Ok(Completed {
             command_buffer: self.command_buffer.wait_until_completed()?,
-            allocation_pool: self.allocation_pool,
+            _allocation_pool: self.allocation_pool,
         })
     }
 }
 
 pub struct Completed<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Completed,
-    #[allow(unused)]
-    allocation_pool: Arc<AllocationPool<B>>,
+    _allocation_pool: Arc<AllocationPool<B>>,
 }
 
 impl<B: Backend> Completed<B> {

@@ -24,11 +24,13 @@ use shoji::{
 use tokenizers::Tokenizer;
 use tokio_util::sync::CancellationToken;
 
+#[cfg(grammar)]
+use crate::bridge::helpers::get_grammar;
 use crate::{
     backends::common::Backend,
     bridge::{
         chat_token_state::UzuChatTokenBackendInstanceState,
-        helpers::{error_stream, get_grammar, get_max_context_length, get_sampling_method, get_speculator},
+        helpers::{error_stream, get_max_context_length, get_sampling_method, get_speculator},
     },
     engine::{
         Engine,
@@ -45,6 +47,7 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     engine: Arc<Mutex<Engine<B>>>,
     model: Arc<Mutex<LanguageModel<B>>>,
     config: ChatConfig,
+    #[cfg(grammar)]
     tokenizer: Arc<Tokenizer>,
     stop_token_ids: Vec<i32>,
     speculator: Option<(Box<dyn Speculator>, usize)>,
@@ -75,6 +78,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             engine: Arc::new(Mutex::new(engine)),
             model: Arc::new(Mutex::new(model)),
             config,
+            #[cfg(grammar)]
             tokenizer,
             stop_token_ids,
             speculator,
@@ -122,6 +126,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         let token_limit = config.token_limit.map(|count| count as usize);
 
+        #[cfg(grammar)]
         let grammar = if let Some(grammar_config) = config.grammar {
             match get_grammar(grammar_config, self.tokenizer.as_ref(), &self.stop_token_ids) {
                 Ok(grammar) => Some(grammar),
@@ -132,9 +137,14 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         } else {
             None
         };
+        #[cfg(not(grammar))]
+        if config.grammar.is_some() {
+            return Box::pin(NoMetricsStream::new(error_stream("Grammar is not supported by this build".to_string())));
+        }
 
         let options = LanguageModelStreamOptions {
             sampling_method: get_sampling_method::<B>(&model_guard, &config.sampling_policy),
+            #[cfg(grammar)]
             grammar,
             speculator: self.speculator.as_ref().map(|(speculator, budget)| LanguageModelStreamSpeculatorOptions {
                 speculator: speculator.as_ref(),

@@ -325,6 +325,7 @@ impl GemmKernel {
                             Some((a, a_offset)),
                             None,
                             None,
+                            None,
                             GemmAPrologueKind::FullPrecision,
                             weights,
                             None,
@@ -393,6 +394,7 @@ impl GemmKernel {
                     rht_factors,
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
                     std::slice::from_ref(&params),
                     group_count_x,
                     group_count_y,
@@ -432,14 +434,15 @@ impl GemmKernel {
 
                 let a_prologue = a.prologue_kind();
                 let a_is_int8 = a_prologue == GemmAPrologueKind::Int8Symmetric;
-                let (a_full_precision, a_int8, a_scales) = match a {
+                let (a_full_precision, a_int8, a_scales, a_group_sums) = match a {
                     MatmulA::FullPrecision {
                         values,
                         offset,
-                    } => (Some((values, offset)), None, None),
+                    } => (Some((values, offset)), None, None, None),
                     MatmulA::Int8Symmetric {
                         values,
                         scales: activation_scales,
+                        group_sums: activation_group_sums,
                     } => {
                         validate_int8_activation_arguments(use_mxu, k, b_prologue, bits_per_b, group_size)?;
                         if output_transform.contains(GemmDTransform::SOFT_CAP) {
@@ -449,7 +452,7 @@ impl GemmKernel {
                             }
                             .into());
                         }
-                        (None, Some(values), Some(activation_scales))
+                        (None, Some(values), Some(activation_scales), activation_group_sums)
                     },
                 };
 
@@ -495,6 +498,7 @@ impl GemmKernel {
                         a_full_precision,
                         a_int8,
                         a_scales,
+                        a_group_sums,
                         a_prologue,
                         weights,
                         scales,
@@ -542,6 +546,7 @@ impl GemmKernel {
                         rht_factors,
                         a_int8,
                         a_scales,
+                        a_group_sums,
                         std::slice::from_ref(&params),
                         group_count_x,
                         group_count_y,
@@ -574,6 +579,7 @@ impl GemmKernel {
         a_full_precision: Option<(&Allocation<Metal>, usize)>,
         a_int8: Option<&Allocation<Metal>>,
         a_scales: Option<&Allocation<Metal>>,
+        a_group_sums: Option<&Allocation<Metal>>,
         a_prologue: GemmAPrologueKind,
         weights: WB,
         scales: Option<&Allocation<Metal>>,
@@ -645,6 +651,7 @@ impl GemmKernel {
             None::<&Allocation<Metal>>,
             a_int8,
             a_scales,
+            a_group_sums,
             std::slice::from_ref(&params),
             base_gx,
             base_gy,

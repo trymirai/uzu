@@ -55,7 +55,6 @@ async fn main() -> anyhow::Result<ExitCode> {
 
     let enum_paths = EnumPaths::from_gpu_types(&gpu_types).context("Failed to build enum path map")?;
 
-    #[allow(unused_mut)]
     let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
 
     if backend_cpu {

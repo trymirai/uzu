@@ -19,14 +19,14 @@ cpu = []
 
 metal = [
     "dep:clang-ast",
+    "dep:tempfile",
+    "dep:serde_json",
     "dep:objc2",
-    "dep:objc2-foundation",
-    "dep:bytesize",
     "dep:metal",
     "dep:obfstr",
 ]
 
-grammar = ["dep:xgrammar"]
+grammar = ["dep:xgrammar", "dep:schemars"]
 
 [build-dependencies]
 anyhow.workspace = true
@@ -35,9 +35,7 @@ bindgen.workspace = true
 walkdir.workspace = true
 depfile.workspace = true
 derive_more.workspace = true
-tempfile.workspace = true
 serde.workspace = true
-serde_json = { workspace = true, features = ["unbounded_depth"] }
 futures.workspace = true
 tokio = { workspace = true, features = ["full"] }
 blake3.workspace = true
@@ -46,11 +44,12 @@ proc-macro2.workspace = true
 syn.workspace = true
 prettyplease.workspace = true
 itertools.workspace = true
-cbindgen.workspace = true
 rhai.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.build-dependencies]
 clang-ast = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+serde_json = { workspace = true, features = ["unbounded_depth"], optional = true }
 
 [dependencies]
 proc-macros.workspace = true
@@ -58,7 +57,6 @@ bitflags.workspace = true
 derive_more.workspace = true
 shoji.workspace = true
 half.workspace = true
-ndarray.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 monostate.workspace = true
@@ -72,34 +70,28 @@ num-traits.workspace = true
 libm.workspace = true
 rand.workspace = true
 itertools.workspace = true
-schemars.workspace = true
 rustix.workspace = true
 futures.workspace = true
 parking_lot = { workspace = true, features = ["send_guard"] }
-async-stream.workspace = true
 tokio-util.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }
-objc2-foundation = { workspace = true, optional = true }
-bytesize = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 obfstr = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 xgrammar = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-tag.workspace = true
 test-runner = { workspace = true, features = ["nightly-harness"] }
 proptest.workspace = true
 criterion.workspace = true
-criterion-macro.workspace = true
 rand_distr.workspace = true
 is_close.workspace = true
-schemars.workspace = true
-comfy-table.workspace = true
-indicatif.workspace = true
+ndarray.workspace = true
 rstest.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

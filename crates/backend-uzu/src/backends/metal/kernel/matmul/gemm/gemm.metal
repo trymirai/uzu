@@ -11,6 +11,7 @@ using namespace metal;
 using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
+#define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION (A_IS_INT8 && B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant)
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
@@ -114,6 +115,7 @@ KERNEL(Gemm)(
         OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
     const device int8_t* a_int8 OPTIONAL(A_IS_INT8),
     const device float* a_scales OPTIONAL(A_IS_INT8),
+    const device int32_t* a_group_sums OPTIONAL(NEEDS_ASYMMETRIC_WEIGHT_CORRECTION),
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
@@ -152,6 +154,7 @@ KERNEL(Gemm)(
         rht_factors,
         a_int8,
         a_scales,
+        a_group_sums,
         b_shared,
         thread_context
     );

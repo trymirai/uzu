@@ -8,6 +8,7 @@ pub enum MatmulA<'a, B: Backend> {
     Int8Symmetric {
         values: &'a Allocation<B>,
         scales: &'a Allocation<B>,
+        group_sums: Option<&'a Allocation<B>>,
     },
 }
 

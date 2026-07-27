@@ -214,7 +214,6 @@ impl<B: Backend> Attention<B> {
         self.out_projection.encode(attention_output, batch_dim.size(), encoder)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn append_kv(
         &self,
         hidden: Allocation<B>,

@@ -1,5 +1,3 @@
-#![allow(dead_code)] // TODO
-
 #[cfg(not(backend = "cpu"))]
 compile_error!("uzu tests require cpu backend");
 
