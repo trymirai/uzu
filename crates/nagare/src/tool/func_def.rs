@@ -1,27 +1,26 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{error::Error, future::Future, sync::Arc};
 
 pub use shoji::types::basic::Value;
 
-pub type FutureError = Box<dyn std::error::Error + Send + Sync>;
-pub type FutureFunction =
-    dyn Fn(Value) -> Pin<Box<dyn Future<Output = Result<Value, FutureError>> + Send>> + Send + Sync;
+pub type ErrorFuture = Box<dyn Error + Send + Sync>;
+pub type FunctionFuture = dyn Fn(Value) -> Box<dyn Future<Output = Result<Value, ErrorFuture>> + Send> + Send + Sync;
 
 #[derive(Clone)]
-pub struct ToolFunctionDefinition {
-    name: String,
-    description: String,
-    parameters: Option<Value>,
-    return_definition: Option<Value>,
-    func: Arc<FutureFunction>,
+pub struct ToolDescriptor {
+    pub name: String,
+    pub description: String,
+    pub parameters: Option<Value>,
+    pub return_definition: Option<Value>,
+    func: Arc<FunctionFuture>,
 }
 
-impl ToolFunctionDefinition {
+impl ToolDescriptor {
     pub fn new(
         name: String,
         description: String,
         parameters: Option<Value>,
         return_definition: Option<Value>,
-        func: Box<FutureFunction>,
+        func: Box<FunctionFuture>,
     ) -> Self {
         Self {
             name,
@@ -32,28 +31,12 @@ impl ToolFunctionDefinition {
         }
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn description(&self) -> &str {
-        &self.description
-    }
-
-    pub fn parameters(&self) -> &Option<Value> {
-        &self.parameters
-    }
-
-    pub fn return_definition(&self) -> &Option<Value> {
-        &self.return_definition
-    }
-
     pub async fn execute(
         &self,
         args: Value,
-    ) -> Result<Value, FutureError> {
+    ) -> Result<Value, ErrorFuture> {
         let args = self.coerce_arguments(args);
-        (self.func)(args).await
+        Box::into_pin((self.func)(args)).await
     }
 
     // Small models often mistype scalar tool arguments (e.g. Llama 3.2 1B passes "37" for a number parameter);

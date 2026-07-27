@@ -77,7 +77,7 @@ fn expand_tool_function(mut func: ItemFn) -> syn::Result<TokenStream2> {
     if is_async {
         call = quote!(#call.await);
     }
-    let map_err = quote!(.map_err(|error| -> #nagare::tool::func_def::FutureError { error.into() })?);
+    let map_err = quote!(.map_err(|error| -> #nagare::tool::func_def::ErrorFuture { error.into() })?);
     let call_stmt = match (&ok_type, is_result) {
         (Some(_), true) => quote!(let result = #call #map_err;),
         (Some(_), false) => quote!(let result = #call;),
@@ -105,13 +105,13 @@ fn expand_tool_function(mut func: ItemFn) -> syn::Result<TokenStream2> {
         impl #name {
             #call_fn
 
-            #vis fn definition() -> #nagare::tool::func_def::ToolFunctionDefinition {
-                #nagare::tool::func_def::ToolFunctionDefinition::new(
+            #vis fn definition() -> #nagare::tool::func_def::ToolDescriptor {
+                #nagare::tool::func_def::ToolDescriptor::new(
                     ::std::string::String::from(#name_str),
                     ::std::string::String::from(#description),
                     #parameters,
                     #return_definition,
-                    ::std::boxed::Box::new(|args| ::std::boxed::Box::pin(Self::invoke(args))),
+                    ::std::boxed::Box::new(|args| ::std::boxed::Box::new(Self::invoke(args))),
                 )
             }
 
@@ -119,7 +119,7 @@ fn expand_tool_function(mut func: ItemFn) -> syn::Result<TokenStream2> {
                 args: #nagare::tool::func_def::Value,
             ) -> ::core::result::Result<
                 #nagare::tool::func_def::Value,
-                #nagare::tool::func_def::FutureError,
+                #nagare::tool::func_def::ErrorFuture,
             >
             {
                 let args: #nagare::__private::serde_json::Value =
@@ -130,7 +130,7 @@ fn expand_tool_function(mut func: ItemFn) -> syn::Result<TokenStream2> {
             }
         }
 
-        impl ::core::convert::From<#name> for #nagare::tool::func_def::ToolFunctionDefinition {
+        impl ::core::convert::From<#name> for #nagare::tool::func_def::ToolDescriptor {
             fn from(_: #name) -> Self {
                 #name::definition()
             }

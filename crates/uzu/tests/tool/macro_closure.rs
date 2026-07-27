@@ -5,13 +5,13 @@ use std::sync::{
     atomic::{AtomicI64, Ordering},
 };
 
-use nagare::tool::{func_def::ToolFunctionDefinition, uzu_tool_closure};
+use nagare::tool::{func_def::ToolDescriptor, uzu_tool_closure};
 
 #[tokio::test]
 async fn closure_with_captured_state() {
     let counter = Arc::new(AtomicI64::new(0));
     let captured = counter.clone();
-    let definition: ToolFunctionDefinition = uzu_tool_closure! {
+    let definition: ToolDescriptor = uzu_tool_closure! {
         /// Add an amount to the running total.
         accumulate: |
             /// Amount to add to the total.

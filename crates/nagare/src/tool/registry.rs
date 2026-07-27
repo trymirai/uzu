@@ -1,11 +1,11 @@
 use indexmap::IndexMap;
 use shoji::types::basic::{ToolDescription, ToolFunction, ToolNamespace};
 
-use crate::tool::func_def::ToolFunctionDefinition;
+use crate::tool::func_def::ToolDescriptor;
 
 #[derive(Clone)]
 pub struct ToolRegistry {
-    functions: IndexMap<String, ToolFunctionDefinition>,
+    functions: IndexMap<String, ToolDescriptor>,
 }
 
 impl ToolRegistry {
@@ -17,15 +17,15 @@ impl ToolRegistry {
 
     pub fn add_function(
         &mut self,
-        function: ToolFunctionDefinition,
+        function: ToolDescriptor,
     ) {
-        self.functions.insert(function.name().to_string(), function);
+        self.functions.insert(function.name.to_string(), function);
     }
 
     pub fn get_function(
         &self,
         name: &str,
-    ) -> Option<&ToolFunctionDefinition> {
+    ) -> Option<&ToolDescriptor> {
         self.functions.get(name)
     }
 
@@ -37,9 +37,9 @@ impl ToolRegistry {
             .values()
             .map(|func_def| ToolDescription::Function {
                 tool_function: ToolFunction {
-                    name: func_def.name().to_string(),
-                    description: func_def.description().to_string(),
-                    parameters: func_def.parameters().clone().or_else(|| {
+                    name: func_def.name.to_string(),
+                    description: func_def.description.to_string(),
+                    parameters: func_def.parameters.clone().or_else(|| {
                         Some(
                             serde_json::json!({
                                 "type": "object",

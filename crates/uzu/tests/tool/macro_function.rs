@@ -1,6 +1,6 @@
 #![cfg(not(target_family = "wasm"))]
 
-use nagare::tool::{func_def::ToolFunctionDefinition, schema::UzuToolSchema, uzu_tool_function};
+use nagare::tool::{func_def::ToolDescriptor, schema::UzuToolSchema, uzu_tool_function};
 use serde::{Deserialize, Serialize};
 
 /// The current weather at the requested location.
@@ -34,7 +34,7 @@ async fn current_time() -> String {
 
 #[tokio::test]
 async fn check_generated_definition() {
-    let definition: ToolFunctionDefinition = get_weather.into();
+    let definition: ToolDescriptor = get_weather.into();
     assert_eq!(definition.name(), "get_weather");
     assert_eq!(definition.description(), "Get the current weather for the given geographic coordinates.");
 
@@ -73,7 +73,7 @@ async fn check_generated_definition() {
     let error = definition.execute(serde_json::json!({ "latitude": "oops" }).into()).await.unwrap_err();
     assert!(error.to_string().contains("latitude"), "unexpected error: {error}");
 
-    let time: ToolFunctionDefinition = current_time.into();
+    let time: ToolDescriptor = current_time.into();
     assert_eq!(time.name(), "current_time");
     assert!(time.parameters().is_none());
     let time_schema: serde_json::Value =
@@ -134,7 +134,7 @@ fn get_forecast(request: ForecastRequest) -> Forecast {
 
 #[tokio::test]
 async fn structured_input_and_output() {
-    let definition: ToolFunctionDefinition = get_forecast.into();
+    let definition: ToolDescriptor = get_forecast.into();
     assert_eq!(definition.name(), "get_forecast");
     assert_eq!(definition.description(), "Get the weather forecast for a location.");
 
@@ -253,7 +253,7 @@ fn lookup_user(request: UserLookup) -> String {
 
 #[tokio::test]
 async fn serde_field_attributes_match_generated_schema() {
-    let definition: ToolFunctionDefinition = lookup_user.into();
+    let definition: ToolDescriptor = lookup_user.into();
     let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();
 
     assert_eq!(
@@ -305,7 +305,7 @@ fn strict_lookup(request: StrictRequest) -> String {
 
 #[tokio::test]
 async fn deny_unknown_fields_disallows_additional_schema_properties() {
-    let definition: ToolFunctionDefinition = strict_lookup.into();
+    let definition: ToolDescriptor = strict_lookup.into();
     let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();
 
     assert_eq!(
@@ -346,7 +346,7 @@ fn add(
 
 #[tokio::test]
 async fn primitive_input_and_output() {
-    let definition: ToolFunctionDefinition = add.into();
+    let definition: ToolDescriptor = add.into();
     assert_eq!(definition.name(), "add");
     assert_eq!(definition.description(), "Add two integers.");
 
@@ -378,7 +378,7 @@ fn reset() {}
 
 #[tokio::test]
 async fn void_input_and_output() {
-    let definition: ToolFunctionDefinition = reset.into();
+    let definition: ToolDescriptor = reset.into();
     assert_eq!(definition.name(), "reset");
     assert_eq!(definition.description(), "Reset the session state.");
     assert!(definition.parameters().is_none());
@@ -403,7 +403,7 @@ fn clear_data(
 
 #[tokio::test]
 async fn void_result_and_error_propagation() {
-    let definition: ToolFunctionDefinition = clear_data.into();
+    let definition: ToolDescriptor = clear_data.into();
     assert_eq!(definition.name(), "clear_data");
 
     let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();

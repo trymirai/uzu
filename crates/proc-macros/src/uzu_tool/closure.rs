@@ -130,7 +130,7 @@ fn expand_tool_closure(tool: ToolClosure) -> syn::Result<TokenStream2> {
     let unwrap_stmt = if is_result {
         quote! {
             let __uzu_result =
-                __uzu_result.map_err(|error| -> #nagare::tool::func_def::FutureError { error.into() })?;
+                __uzu_result.map_err(|error| -> #nagare::tool::func_def::ErrorFuture { error.into() })?;
         }
     } else {
         quote!()
@@ -141,7 +141,7 @@ fn expand_tool_closure(tool: ToolClosure) -> syn::Result<TokenStream2> {
             let json = #nagare::__private::serde_json::to_value(&__uzu_result)?;
             ::core::result::Result::<
                 #nagare::tool::func_def::Value,
-                #nagare::tool::func_def::FutureError,
+                #nagare::tool::func_def::ErrorFuture,
             >::Ok(::core::convert::Into::into(json))
         }
     } else {
@@ -149,7 +149,7 @@ fn expand_tool_closure(tool: ToolClosure) -> syn::Result<TokenStream2> {
             let _ = __uzu_result;
             ::core::result::Result::<
                 #nagare::tool::func_def::Value,
-                #nagare::tool::func_def::FutureError,
+                #nagare::tool::func_def::ErrorFuture,
             >::Ok(::core::convert::Into::into(#nagare::__private::serde_json::Value::Null))
         }
     };
@@ -157,14 +157,14 @@ fn expand_tool_closure(tool: ToolClosure) -> syn::Result<TokenStream2> {
     Ok(quote! {
         {
             let __uzu_tool_func = #func;
-            #nagare::tool::func_def::ToolFunctionDefinition::new(
+            #nagare::tool::func_def::ToolDescriptor::new(
                 ::std::string::String::from(#name_str),
                 ::std::string::String::from(#description),
                 #parameters,
                 #return_definition,
                 ::std::boxed::Box::new(move |args| {
                     let __uzu_tool_func = ::core::clone::Clone::clone(&__uzu_tool_func);
-                    ::std::boxed::Box::pin(async move {
+                    ::std::boxed::Box::new(async move {
                         let args: #nagare::__private::serde_json::Value =
                             ::core::convert::TryInto::try_into(args)?;
                         #(#arg_parsing)*

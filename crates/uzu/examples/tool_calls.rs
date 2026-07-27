@@ -1,4 +1,4 @@
-use nagare::tool::{func_def::FutureError, schema::UzuToolSchema, uzu_tool_closure, uzu_tool_function};
+use nagare::tool::{func_def::ErrorFuture, schema::UzuToolSchema, uzu_tool_closure, uzu_tool_function};
 use serde::{Deserialize, Serialize};
 use shoji::types::{
     basic::{SamplingMethod, SamplingPolicy},
@@ -17,7 +17,7 @@ struct Coordinate {
 
 /// Returns current location in coordinates
 #[uzu_tool_function]
-fn get_current_location() -> Result<Coordinate, FutureError> {
+fn get_current_location() -> Result<Coordinate, ErrorFuture> {
     Ok(Coordinate {
         latitude: 51.5074,
         longitude: -0.1278,
@@ -36,14 +36,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut session = engine.chat(model, ChatConfig::default()).await?;
     session.add_tool_function(get_current_location).await?;
     session
-        .add_tool_function_definition(uzu_tool_closure! {
+        .add_tool_descriptor(uzu_tool_closure! {
             /// Returns temperature in provided location
             get_current_temperature: |
                 /// Latitude in decimal degrees.
                 _latitude: f64,
                 /// Longitude in decimal degrees.
                 _longitude: f64
-            | -> Result<f64, FutureError> {
+            | -> Result<f64, ErrorFuture> {
                 Ok(25.0)
             }
         })

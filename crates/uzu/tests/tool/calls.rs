@@ -3,7 +3,7 @@
 use serde::Serialize;
 use uzu::{
     engine::{Engine, EngineConfig},
-    session::tool::{func_def::ToolFunctionDefinition, schema::UzuToolSchema, uzu_tool_function},
+    session::tool::{func_def::ToolDescriptor, schema::UzuToolSchema, uzu_tool_function},
     types::{
         basic::{SamplingMethod, SamplingPolicy},
         session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatRole},
@@ -68,7 +68,7 @@ struct TestCase {
     /// User prompt sent to the model.
     prompt: &'static str,
     /// Tools registered for this case.
-    tools: &'static [fn() -> ToolFunctionDefinition],
+    tools: &'static [fn() -> ToolDescriptor],
     /// Tools that must be called (and produce results) during the turn.
     expected_tools: &'static [&'static str],
     /// Fragments that must appear in the final reply text.

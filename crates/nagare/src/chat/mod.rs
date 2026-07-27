@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use crate::{
     telemetry::{Telemetry, TelemetryEvent},
-    tool::{func_def::ToolFunctionDefinition, registry::ToolRegistry},
+    tool::{func_def::ToolDescriptor, registry::ToolRegistry},
 };
 
 const DEFAULT_TOOL_TURN_LIMIT: u32 = 10;
@@ -164,21 +164,21 @@ impl ChatSession {
 
     pub async fn add_tool_function(
         &mut self,
-        function: impl Into<ToolFunctionDefinition>,
+        function: impl Into<ToolDescriptor>,
     ) -> Result<(), ChatSessionError> {
         self.add_tool_function_definitions(vec![function.into()]).await
     }
 
-    pub async fn add_tool_function_definition(
+    pub async fn add_tool_descriptor(
         &mut self,
-        definition: ToolFunctionDefinition,
+        definition: ToolDescriptor,
     ) -> Result<(), ChatSessionError> {
         self.add_tool_function_definitions(vec![definition]).await
     }
 
     pub async fn add_tool_function_definitions(
         &mut self,
-        definitions: Vec<ToolFunctionDefinition>,
+        definitions: Vec<ToolDescriptor>,
     ) -> Result<(), ChatSessionError> {
         if definitions.is_empty() {
             return Ok(());
