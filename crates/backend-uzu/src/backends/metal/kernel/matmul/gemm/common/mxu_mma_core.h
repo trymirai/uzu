@@ -215,7 +215,7 @@ struct MxuMmaCore {
               const ushort packed = *reinterpret_cast<const device ushort*>(
                   b_packed_simdgroup + int(row) * b_row_stride_bytes + (k_base >> 1)
               );
-              codes = unpack_nibbles_to_int8(uint(packed));
+              codes = unpack_signed_nibbles_to_int8(uint(packed));
             }
             weight_vector[element_base + 0] = codes.x;
             weight_vector[element_base + 1] = codes.y;
@@ -234,11 +234,6 @@ struct MxuMmaCore {
         right_src = right_src.bounded(simdgroup_limit_n, SIMDGROUP_BLOCK_K);
       }
       right_tile.load_from(simd_lane_id, right_src);
-      thread int8_t* right_codes = right_tile.elements();
-      METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < right_tile.ELEMENTS_PER_FRAGMENT; ++i) {
-        right_codes[i] = unbias_uint8_to_int8(as_type<uchar>(right_codes[i]));
-      }
     }
     return right_tile;
   }

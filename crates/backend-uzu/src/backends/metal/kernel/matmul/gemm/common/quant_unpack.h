@@ -71,14 +71,11 @@ METAL_FUNC uint decode_zero_point(const device uint8_t* zero_points_row, uint gr
   }
 }
 
-METAL_FUNC char4 unpack_nibbles_to_int8(uint packed) {
+METAL_FUNC char4 unpack_signed_nibbles_to_int8(uint packed) {
   uint spread = (packed | (packed << 8)) & 0x00FF00FFu;
   spread = (spread | (spread << 4)) & 0x0F0F0F0Fu;
-  return as_type<char4>(spread) - char4(char(symmetric_zero_point<4>()));
-}
-
-METAL_FUNC int8_t unbias_uint8_to_int8(uchar code) {
-  return as_type<int8_t>(uchar(code ^ uchar(symmetric_zero_point<8>())));
+  constexpr uint sign_bits = symmetric_zero_point<4>() * 0x01010101u;
+  return as_type<char4>(spread ^ sign_bits) - char4(char(symmetric_zero_point<4>()));
 }
 
 template <typename U, int N, int bits>
