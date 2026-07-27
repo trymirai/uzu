@@ -228,6 +228,21 @@ fn test_encoding_gpt_oss() {
     );
 }
 
+#[test]
+fn test_encoding_gpt_oss_initializes_empty_completion_message() {
+    let tokenizer_directory = tokenizer_directory("openai_gpt-oss-20b");
+    if !tokenizer_directory.exists() {
+        return;
+    }
+
+    let mut encoding = build_encoding(harmony(HarmonyConfig::GptOss), "openai_gpt-oss-20b");
+    encoding.encode(vec![ChatMessage::user().with_text("Hello".to_string())]).unwrap();
+
+    let completion = encoding.state().messages.last().unwrap();
+    assert_eq!(completion.role, ChatRole::Assistant {});
+    assert!(completion.content.is_empty());
+}
+
 /// Multi-turn tool calling: prior tool calls must be re-rendered in the form the model itself
 /// generates — `<|channel|>commentary to=functions.x <|constrain|>json<|message|>…<|call|>` — not the
 /// `to=` -before-channel, plain-`json` form the community HF chat template (and openai_harmony's

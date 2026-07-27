@@ -130,6 +130,9 @@ impl EncodingTrait for HarmonyEncodingImpl {
     ) -> Result<(), Self::Error> {
         self.state.messages.extend(messages.clone());
         self.completion_message_start = self.state.messages.len();
+        // Keep an empty completion in state until decoding replaces it. Cancellation
+        // or an immediate token limit can render state before decode is ever called.
+        self.state.messages.push(ChatMessage::assistant());
         // The rendered prompt ends with `<|start|>assistant`; parse only the generated continuation of that header.
         self.parser = StreamableParser::new(self.encoding.clone(), Some(HarmonyRole::Assistant))
             .map_err(|_| Error::UnableToLoadEncoding)?;

@@ -252,13 +252,7 @@ impl ChatSession {
             if let Some(ref registry) = self.tool_registry {
                 let namespaces = registry.lock().await.get_namespaces();
                 if !namespaces.is_empty() {
-                    if let Some(existing) = find_tools_definitions(&mut messages_guard) {
-                        merge_tool_namespaces(existing, namespaces);
-                    } else {
-                        let position = messages_guard.iter().position(|msg| msg.role == ChatRole::System {});
-                        let tools_msg = ChatMessage::developer().with_tool_namespaces(namespaces);
-                        messages_guard.insert(position.map(|pos| pos + 1).unwrap_or(0), tools_msg);
-                    }
+                    merge_registered_tools(&mut messages_guard, namespaces);
                 }
             }
 
@@ -389,6 +383,18 @@ impl ChatSession {
                     .content
                     .iter()
                     .any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }));
+
+                let supports_multiple_tool_calls = self.instance.lock().await.supports_multiple_tool_calls();
+                if !supports_multiple_tool_calls && tool_calls.len() > 1 {
+                    tool_calls.truncate(1);
+                    // Sanitize history before any early return below. The caller may
+                    // own one of the calls, but single-call templates still cannot
+                    // re-encode an assistant message containing the extras.
+                    if let Some(last_message) = self.messages.lock().await.last_mut() {
+                        retain_first_tool_call(last_message);
+                    }
+                }
+
                 if has_unfinished_candidates || !self.has_registered_tool_functions(&tool_calls).await {
                     break;
                 }
@@ -402,26 +408,6 @@ impl ChatSession {
                 tool_turns += 1;
 
                 if self.try_transition(ChatSessionState::Generation, ChatSessionState::ToolCalling).await {
-                    let supports_multiple_tool_calls = self.instance.lock().await.supports_multiple_tool_calls();
-                    if !supports_multiple_tool_calls && tool_calls.len() > 1 {
-                        tool_calls.drain(1..);
-                        // keep the history renderable: templates with a single-call limit
-                        // cannot re-encode an assistant message holding extra calls
-                        let mut messages_guard = self.messages.lock().await;
-                        if let Some(last_message) = messages_guard.last_mut() {
-                            let mut tool_call_seen = false;
-                            last_message.content.retain(|block| match block {
-                                ChatContentBlock::ToolCall {
-                                    ..
-                                }
-                                | ChatContentBlock::ToolCallCandidate {
-                                    ..
-                                } => !std::mem::replace(&mut tool_call_seen, true),
-                                _ => true,
-                            });
-                        }
-                    }
-
                     let tool_messages = tokio::select! {
                         tool_messages = self.execute_tool_calls(tool_calls) => tool_messages,
                         _ = cancel_token.cancelled() => break,
@@ -662,12 +648,46 @@ fn find_tools_definitions(messages: &mut [ChatMessage]) -> Option<&mut Vec<ToolN
     })
 }
 
+fn merge_registered_tools(
+    messages: &mut Vec<ChatMessage>,
+    namespaces: Vec<ToolNamespace>,
+) {
+    if let Some(existing) = find_tools_definitions(messages) {
+        merge_tool_namespaces(existing, namespaces);
+        return;
+    }
+
+    if let Some(developer_message) = messages.iter_mut().find(|message| message.role == ChatRole::Developer {}) {
+        developer_message.content.push(ChatContentBlock::Tools {
+            namespaces,
+        });
+        return;
+    }
+
+    let position = messages.iter().position(|message| message.role == ChatRole::System {});
+    let tools_message = ChatMessage::developer().with_tool_namespaces(namespaces);
+    messages.insert(position.map(|position| position + 1).unwrap_or(0), tools_message);
+}
+
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
     payload
         .downcast_ref::<&str>()
         .copied()
         .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
         .unwrap_or("unknown panic")
+}
+
+fn retain_first_tool_call(message: &mut ChatMessage) {
+    let mut tool_call_seen = false;
+    message.content.retain(|block| match block {
+        ChatContentBlock::ToolCall {
+            ..
+        }
+        | ChatContentBlock::ToolCallCandidate {
+            ..
+        } => !std::mem::replace(&mut tool_call_seen, true),
+        _ => true,
+    });
 }
 
 fn remove_owned_tools(
@@ -706,13 +726,15 @@ fn merge_tool_namespaces(
             let ToolDescription::Function {
                 tool_function,
             } = &tool;
-            let duplicate = target.tools.iter().any(|existing_tool| {
+            let existing = target.tools.iter_mut().find(|existing_tool| {
                 let ToolDescription::Function {
                     tool_function: existing_function,
                 } = existing_tool;
                 existing_function.name == tool_function.name
             });
-            if !duplicate {
+            if let Some(existing) = existing {
+                *existing = tool;
+            } else {
                 target.tools.push(tool);
             }
         }
