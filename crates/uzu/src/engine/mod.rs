@@ -4,14 +4,7 @@ mod download_manager;
 mod downloader;
 mod error;
 
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::bridge::UzuLlmBackend;
@@ -64,10 +57,6 @@ pub struct Engine {
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
     callback: SharedAccess<Option<Arc<EngineCallback>>>,
     telemetry: SharedAccess<Telemetry>,
-    /// Whether anonymous usage telemetry may be reported. Defaults to `true`;
-    /// consumers (e.g. an app with a privacy toggle) flip it via
-    /// `set_usage_reporting`.
-    report_usage: Arc<AtomicBool>,
 }
 
 impl Engine {
@@ -122,7 +111,6 @@ impl Engine {
             backends: SharedAccess::new(HashMap::new()),
             callback: SharedAccess::new(None),
             telemetry,
-            report_usage: Arc::new(AtomicBool::new(true)),
         };
         engine.spawn_storage_listener().await;
 
@@ -196,7 +184,10 @@ impl Engine {
             openai_configs.push(OpenAIConfig::openrouter(openrouter_api_key));
         }
         for config in openai_configs {
-            engine.connect_openai(config).await?;
+            let registry = OpenAIRegistry::new(config.clone())?;
+            let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;
+            engine.add_registry(Box::new(registry)).await?;
+            engine.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
         }
 
         Ok(engine)
@@ -238,34 +229,6 @@ impl Engine {
         backend: Arc<dyn Backend>,
     ) {
         self.backends.lock().await.insert(backend.identifier(), backend);
-    }
-
-    /// Register (or replace) an OpenAI-compatible provider's registry *and*
-    /// execution backend in one step, so a model connected at runtime is
-    /// immediately usable — `add_registry` alone leaves `chat` failing with
-    /// `BackendNotFound` until restart. Mirrors the provider setup `Engine::new`
-    /// does at startup. The registry and backend are constructed *before* any
-    /// existing provider is dropped, so an invalid config leaves it untouched.
-    pub async fn connect_openai(
-        &self,
-        config: OpenAIConfig,
-    ) -> Result<(), EngineError> {
-        let registry = OpenAIRegistry::new(config.clone())?;
-        let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;
-        let identifier = registry.indentifier();
-        self.registry.lock().await.remove(&identifier)?;
-        self.add_registry(Box::new(registry)).await?;
-        self.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
-        Ok(())
-    }
-
-    /// Enable or disable anonymous usage telemetry at runtime (e.g. from a
-    /// privacy toggle). Affects download-event reporting; defaults to enabled.
-    pub fn set_usage_reporting(
-        &self,
-        enabled: bool,
-    ) {
-        self.report_usage.store(enabled, Ordering::Relaxed);
     }
 }
 
@@ -602,7 +565,6 @@ impl Engine {
         let mut stream = self.storage_subscribe().await;
         let callback = self.callback.clone();
         let telemetry = self.telemetry.lock().await.clone();
-        let report_usage = self.report_usage.clone();
         tokio::spawn(async move {
             let mut last_phase: HashMap<String, DownloadPhase> = HashMap::new();
             while let Some(update) = stream.next().await {
@@ -623,9 +585,7 @@ impl Engine {
                     },
                     _ => None,
                 };
-                if let Some(event) = event
-                    && report_usage.load(Ordering::Relaxed)
-                {
+                if let Some(event) = event {
                     telemetry.report(event);
                 }
                 if let Some(callback) = callback.lock().await.as_ref().cloned() {
