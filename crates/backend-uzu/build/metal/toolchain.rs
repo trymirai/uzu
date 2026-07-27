@@ -112,7 +112,18 @@ impl MetalToolchain {
                 .into()
             },
             "1" => [OsString::from("-O1")].into(),
-            _ => [OsString::from("-O2")].into(), // treat levels 2,3,s,z as O2 for metal
+            // treat levels 2,3,s,z as O2 for metal
+            _ => {
+                let mut flags = vec![OsString::from("-O2")];
+                // Source-level cost attribution in the GPU profiler needs line tables and
+                // embedded sources. Opt-in, so ordinary release builds stay lean - and kept
+                // at -O2 because profiling a lower opt level measures a different kernel.
+                if env::var("UZU_METAL_DEBUG_INFO").is_ok_and(|value| value != "0") {
+                    flags.push(OsString::from("-gline-tables-only"));
+                    flags.push(OsString::from("-frecord-sources"));
+                }
+                flags.into()
+            },
         };
 
         let extra_options = Box::new([OsString::from(format!("-m{}-version-min={}", sdk.os(), std.min_os()))]);

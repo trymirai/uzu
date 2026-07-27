@@ -204,3 +204,28 @@ fn small_m_tiles_parity() {
         }
     }
 }
+
+/// Prints what the split-k heuristic actually resolves to across the a8w sweep grid.
+///
+/// Pure arithmetic, no GPU: a sweep over `SPLIT_K_TARGET_TILES_INT8_ACTIVATIONS` is only
+/// interpretable if we know which (target, m) pairs genuinely differ. Targets that resolve
+/// to the same split-k must produce the same kernel, so any measured gap between them is
+/// measurement error rather than a tuning result.
+#[uzu_test]
+fn a8w_split_k_resolution_table() {
+    use crate::backends::metal::{select_mxu_quant_tiling, select_split_k};
+
+    const GROUP_SIZE: u32 = 64;
+    for (label, k, n) in [("k2048_n3072", 2048u32, 3072u32), ("k3584_n1024", 3584, 1024)] {
+        println!("\n{label}");
+        for m in [16u32, 32, 64, 128, 256, 512, 1024, 2048] {
+            let tiling = select_mxu_quant_tiling(m, n, GROUP_SIZE, true);
+            let base_tiles = n.div_ceil(tiling.block_n()) * m.div_ceil(tiling.block_m());
+            let splits: Vec<u32> = [128u32, 256, 512, 1024]
+                .into_iter()
+                .map(|target| select_split_k(m, n, k, tiling, true, GROUP_SIZE, false, false, target))
+                .collect();
+            println!("  m{m:<5} {tiling:?} base_tiles={base_tiles:<5} split_k(128/256/512/1024)={:?}", splits);
+        }
+    }
+}
