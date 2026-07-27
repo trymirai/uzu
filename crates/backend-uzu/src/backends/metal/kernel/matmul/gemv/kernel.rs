@@ -9,7 +9,7 @@ use crate::{
         common::{
             Allocation, BufferArg, Encoder,
             gpu_types::{
-                HADAMARD_TRANSFORM_BLOCK_SIZE,
+                HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMode,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
             kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
@@ -38,6 +38,7 @@ pub(crate) struct GemvSpecialization {
     k_split: u32,
     results_per_simdgroup: u32,
     num_simdgroups: u32,
+    signed_w8_storage: bool,
     gathered: bool,
 }
 
@@ -109,6 +110,7 @@ impl GemvSpecialization {
             k_split: tile.k_split,
             results_per_simdgroup: tile.results_per_simdgroup,
             num_simdgroups: tile.num_simdgroups,
+            signed_w8_storage: args.b.quantization_mode() == Some(QuantizationMode::I8),
             gathered,
         })
     }
@@ -163,6 +165,7 @@ impl GemvDispatch {
                     specialization.input_aligned,
                     specialization.results_per_simdgroup,
                     specialization.num_simdgroups,
+                    specialization.signed_w8_storage,
                     specialization.output_transform,
                     specialization.gathered,
                 )

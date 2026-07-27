@@ -28,7 +28,8 @@ template <
     bool TRANSPOSE_B,
     GemmBPrologueKind B_PROLOGUE = GemmBPrologueKind::FullPrecision,
     int BITS = 0,
-    int GROUP_SIZE = 0>
+    int GROUP_SIZE = 0,
+    bool SIGNED_W8_STORAGE = false>
 struct SimdgroupMmaCore {
   UZU_CONST int THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   UZU_CONST int THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
@@ -58,7 +59,8 @@ struct SimdgroupMmaCore {
       1,
       THREADGROUP_THREADS,
       GROUP_SIZE,
-      BITS>;
+      BITS,
+      SIGNED_W8_STORAGE>;
   using BLoaderScaleZeroPoint = QuantizedBlockLoaderScaleZeroPoint<
       BT,
       THREADGROUP_BLOCK_N,
@@ -67,7 +69,9 @@ struct SimdgroupMmaCore {
       1,
       THREADGROUP_THREADS,
       GROUP_SIZE,
-      BITS>;
+      BITS,
+      false,
+      SIGNED_W8_STORAGE>;
   using BLoaderScaleSymmetric = QuantizedBlockLoaderScaleZeroPoint<
       BT,
       THREADGROUP_BLOCK_N,
@@ -77,7 +81,8 @@ struct SimdgroupMmaCore {
       THREADGROUP_THREADS,
       GROUP_SIZE,
       BITS,
-      true>;
+      true,
+      SIGNED_W8_STORAGE>;
   using TileAccumulator = uzu::matmul::ThreadgroupTile<
       AT,
       BT,
@@ -274,6 +279,7 @@ struct SimdgroupMmaCore {
               scales_offset,
               biases_offset,
               k_elements,
+              groups_per_row,
               b_shared,
               thread_context.simdgroup_index,
               thread_context.simd_lane_id

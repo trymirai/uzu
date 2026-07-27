@@ -166,8 +166,9 @@ impl<B: Backend> Embedding<B> {
                         )
                     },
                     spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
+                        let storage_data_type = embedding_tree.leaf("weights")?.data_type();
                         let (embedding_quantization_mode, group_size, quantization_method) =
-                            input_quantization_from_spec(spec)?;
+                            input_quantization_from_spec(spec, storage_data_type)?;
                         let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
                             &embedding_tree,
                             vocab_size as usize,
@@ -216,9 +217,10 @@ impl<B: Backend> Embedding<B> {
                         incoherence_processing_mode: IncoherenceProcessingMode::Output,
                         ..
                     }) => {
-                        let (embedding_quantization_mode, group_size, quantization_method) =
-                            input_quantization_from_spec(*quantization_spec)?;
                         let quantized_tree = embedding_tree.subtree("quantized")?;
+                        let storage_data_type = quantized_tree.leaf("weights")?.data_type();
+                        let (embedding_quantization_mode, group_size, quantization_method) =
+                            input_quantization_from_spec(*quantization_spec, storage_data_type)?;
                         let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
                             &quantized_tree,
                             vocab_size as usize,
@@ -307,8 +309,9 @@ impl<B: Backend> Embedding<B> {
                         }
                     },
                     spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
+                        let storage_data_type = input_embedding_tree.leaf("weights")?.data_type();
                         let (embedding_quantization_mode, group_size, quantization_method) =
-                            input_quantization_from_spec(spec)?;
+                            input_quantization_from_spec(spec, storage_data_type)?;
                         let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
                             &input_embedding_tree,
                             vocab_size as usize,
@@ -364,8 +367,9 @@ impl<B: Backend> Embedding<B> {
                         }
                     },
                     spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
+                        let storage_data_type = output_embedding_tree.leaf("weights")?.data_type();
                         let (embedding_quantization_mode, group_size, quantization_method) =
-                            output_quantization_from_spec(spec)?;
+                            output_quantization_from_spec(spec, storage_data_type)?;
                         let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
                             &output_embedding_tree,
                             vocab_size as usize,
@@ -739,7 +743,8 @@ impl<B: Backend> Embedding<B> {
 }
 
 fn input_quantization_from_spec<B: Backend>(
-    spec: AnyWeightMatrixSpec
+    spec: AnyWeightMatrixSpec,
+    storage_data_type: DataType,
 ) -> Result<(QuantizationMode, usize, QuantizationMethod), EmbeddingError<B>> {
     match spec {
         AnyWeightMatrixSpec::MLXSpec(MLXSpec {
@@ -747,27 +752,28 @@ fn input_quantization_from_spec<B: Backend>(
             group_size,
             layout: Layout::InputOutput,
             ..
-        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleBias),
+        }) => quantization_mode(bits, group_size, storage_data_type, QuantizationMethod::ScaleBias),
         AnyWeightMatrixSpec::IntSpec(IntSpec {
             bits,
             group_size,
             is_symmetric: false,
             layout: Layout::InputOutput,
             ..
-        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleZeroPoint),
+        }) => quantization_mode(bits, group_size, storage_data_type, QuantizationMethod::ScaleZeroPoint),
         AnyWeightMatrixSpec::IntSpec(IntSpec {
             bits,
             group_size,
             is_symmetric: true,
             layout: Layout::InputOutput,
             ..
-        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleSymmetric),
+        }) => quantization_mode(bits, group_size, storage_data_type, QuantizationMethod::ScaleSymmetric),
         spec => Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
     }
 }
 
 fn output_quantization_from_spec<B: Backend>(
-    spec: AnyWeightMatrixSpec
+    spec: AnyWeightMatrixSpec,
+    storage_data_type: DataType,
 ) -> Result<(QuantizationMode, usize, QuantizationMethod), EmbeddingError<B>> {
     match spec {
         AnyWeightMatrixSpec::MLXSpec(MLXSpec {
@@ -775,21 +781,21 @@ fn output_quantization_from_spec<B: Backend>(
             group_size,
             layout: Layout::OutputInput,
             ..
-        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleBias),
+        }) => quantization_mode(bits, group_size, storage_data_type, QuantizationMethod::ScaleBias),
         AnyWeightMatrixSpec::IntSpec(IntSpec {
             bits,
             group_size,
             is_symmetric: false,
             layout: Layout::OutputInput,
             ..
-        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleZeroPoint),
+        }) => quantization_mode(bits, group_size, storage_data_type, QuantizationMethod::ScaleZeroPoint),
         AnyWeightMatrixSpec::IntSpec(IntSpec {
             bits,
             group_size,
             is_symmetric: true,
             layout: Layout::OutputInput,
             ..
-        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleSymmetric),
+        }) => quantization_mode(bits, group_size, storage_data_type, QuantizationMethod::ScaleSymmetric),
         spec => Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
     }
 }
@@ -797,14 +803,14 @@ fn output_quantization_from_spec<B: Backend>(
 fn quantization_mode<B: Backend>(
     bits: u32,
     group_size: usize,
+    storage_data_type: DataType,
     method: QuantizationMethod,
 ) -> Result<(QuantizationMode, usize, QuantizationMethod), EmbeddingError<B>> {
-    let mode = match bits {
-        4 => QuantizationMode::U4,
-        8 => QuantizationMode::U8,
-        _ => {
+    let mode = match QuantizationMode::from_storage(bits, storage_data_type) {
+        Some(mode) => mode,
+        None => {
             return Err(EmbeddingError::UnsupportedConfiguration(format!(
-                "{method:?} bits={bits}, group_size={group_size}"
+                "{method:?} bits={bits}, group_size={group_size}, storage={storage_data_type:?}"
             )));
         },
     };
@@ -837,7 +843,7 @@ fn load_quantized_embedding_parts<B: Backend>(
             let expected_zero_points_entries = num_groups.div_ceil(packing_divisor);
             Some(
                 tree.leaf("zero_points")?
-                    .validate(&[vocab_size, expected_zero_points_entries], storage_data_type)?
+                    .validate(&[vocab_size, expected_zero_points_entries], DataType::U8)?
                     .read_allocation()?,
             )
         },

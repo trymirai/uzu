@@ -526,6 +526,73 @@ fn a8w_mxu_parity_bf16(
 
 #[rstest]
 #[test_attr(uzu_test)]
+#[case::symmetric(QuantizationMethod::ScaleSymmetric)]
+#[case::bias(QuantizationMethod::ScaleBias)]
+#[case::zero_point(QuantizationMethod::ScaleZeroPoint)]
+fn signed_w8_storage_parity_bf16(#[case] method: QuantizationMethod) {
+    let context = MetalContext::new().expect("Metal context");
+    if !context.supports_mxu() {
+        return;
+    }
+
+    for path in [GemmDispatchPath::Simdgroup, GemmDispatchPath::Mxu] {
+        let input = QuantInput::<bf16>::new(64, 256, 128, 64, 8, method, 0).with_signed_w8_storage();
+        let actual = run_quant_metal::<bf16>(&context, &input, Some(path));
+        let reference = run_quant_cpu::<bf16>(&input);
+        assert_parity::<bf16>(&format!("signed W8 A16 {path:?} {method:?}"), &reference, &actual, 0.05, 1.0);
+    }
+
+    let input = QuantInput::<bf16>::new(16, 256, 128, 64, 8, method, 1).with_signed_w8_storage().with_prepared_a();
+    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
+    let reference = run_quant_cpu::<bf16>(&input);
+    assert_parity::<bf16>(&format!("signed W8 A8 MXU {method:?}"), &reference, &actual, 0.08, 0.8);
+
+    let input = QuantInput::<bf16>::new(1, 256, 128, 64, 8, method, 2).with_signed_w8_storage();
+    let actual = run_quant_metal::<bf16>(&context, &input, None);
+    let reference = run_quant_cpu::<bf16>(&input);
+    assert_parity::<bf16>(&format!("signed W8 GEMV {method:?}"), &reference, &actual, 0.05, 0.4);
+
+    for (label, m, k, n, path, prepared_a) in [
+        ("A16 simdgroup edge", 17, 200, 70, Some(GemmDispatchPath::Simdgroup), false),
+        ("A16 automatic K tail", 17, 200, 70, None, false),
+        ("A16 MXU edge", 17, 192, 70, Some(GemmDispatchPath::Mxu), false),
+        ("A8 MXU edge", 17, 256, 70, Some(GemmDispatchPath::Mxu), true),
+        ("GEMV tail", 1, 192, 70, None, false),
+    ] {
+        for signed in [false, true] {
+            let input = QuantInput::<bf16>::new(m, k, n, 64, 8, method, 3);
+            let input = if signed {
+                input.with_signed_w8_storage()
+            } else {
+                input
+            };
+            let input = if prepared_a {
+                input.with_prepared_a()
+            } else {
+                input
+            };
+            let actual = run_quant_metal::<bf16>(&context, &input, path);
+            let reference = run_quant_cpu::<bf16>(&input);
+            assert_parity::<bf16>(
+                &format!(
+                    "{} W8 {label} {method:?}",
+                    if signed {
+                        "signed"
+                    } else {
+                        "unsigned"
+                    }
+                ),
+                &reference,
+                &actual,
+                0.08,
+                1.0,
+            );
+        }
+    }
+}
+
+#[rstest]
+#[test_attr(uzu_test)]
 #[case::w4_bias(4u32, false)]
 #[case::w8_bias(8u32, false)]
 #[case::w4_rht_bias(4u32, true)]

@@ -142,6 +142,10 @@ pub struct ParameterLeaf<'a, 'leaf, B: Backend, const VALIDATED: bool> {
 }
 
 impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, false> {
+    pub fn data_type(&self) -> DataType {
+        self.metadata.data_type
+    }
+
     pub fn validate(
         self,
         expected_shape: &[usize],

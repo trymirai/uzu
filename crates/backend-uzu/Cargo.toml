@@ -99,6 +99,7 @@ schemars.workspace = true
 comfy-table.workspace = true
 indicatif.workspace = true
 rstest.workspace = true
+tempfile.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, default-features = true }

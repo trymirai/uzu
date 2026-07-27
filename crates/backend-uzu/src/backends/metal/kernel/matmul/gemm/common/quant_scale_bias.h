@@ -20,7 +20,8 @@ template <
     short REDUCTION_DIMENSION,
     short THREADGROUP_SIZE,
     short GROUP_SIZE,
-    short BITS>
+    short BITS,
+    bool SIGNED_W8_STORAGE = false>
 struct QuantizedBlockLoaderScaleBias {
   static_assert(THREADGROUP_TILE_COLS <= GROUP_SIZE, "Group size should be larger than columns");
   static_assert(GROUP_SIZE % THREADGROUP_TILE_COLS == 0, "Group size should be divisible by columns");
@@ -54,6 +55,7 @@ struct QuantizedBlockLoaderScaleBias {
       const device T* scales_,
       const device T* biases_,
       const int src_leading_dim_,
+      const int groups_per_row_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
       ushort simd_lane_id [[thread_index_in_simdgroup]]
@@ -63,14 +65,13 @@ struct QuantizedBlockLoaderScaleBias {
             REDUCTION_DIMENSION ? THREADGROUP_TILE_COLS_PACKED * bytes_per_pack
                                 : THREADGROUP_TILE_ROWS * src_leading_dim_ * bytes_per_pack / pack_factor
         ),
-        group_step_counter(0), group_stride(THREADGROUP_TILE_ROWS * src_leading_dim_ / GROUP_SIZE),
+        group_step_counter(0), group_stride(THREADGROUP_TILE_ROWS * groups_per_row_),
         thread_index(simd_group_id * 32 + simd_lane_id),
         tile_row_index(READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED),
         tile_col_index((READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED),
         dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION + tile_col_index * pack_factor),
         src(src_ + tile_row_index * src_leading_dim_ * bytes_per_pack / pack_factor + tile_col_index * bytes_per_pack),
-        scales(scales_ + tile_row_index * src_leading_dim_ / GROUP_SIZE),
-        biases(biases_ + tile_row_index * src_leading_dim_ / GROUP_SIZE) {}
+        scales(scales_ + tile_row_index * groups_per_row_), biases(biases_ + tile_row_index * groups_per_row_) {}
 
   void load_unsafe() const {
     if constexpr (TILE_HAS_IDLE_THREADS) {
@@ -80,9 +81,13 @@ struct QuantizedBlockLoaderScaleBias {
     }
 
     T scale = *scales;
-    T bias = *biases;
+    T bias = *biases + (SIGNED_W8_STORAGE ? scale * T(128.0f) : T(0));
     for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+      if constexpr (SIGNED_W8_STORAGE) {
+        dequantize_signed_w8<T, pack_factor>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+      } else {
+        dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+      }
     }
   }
 
@@ -93,26 +98,36 @@ struct QuantizedBlockLoaderScaleBias {
       }
     }
 
-    if constexpr (REDUCTION_DIMENSION == 1) {
-      if (tile_row_index >= src_tile_dim.x) {
-        for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
-          dst[i] = T(0);
-        }
-        return;
+    if (tile_row_index >= src_tile_dim.y) {
+      for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
+        dst[i] = T(0);
       }
-    } else {
-      if (tile_row_index >= src_tile_dim.y) {
-        for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
-          dst[i] = T(0);
-        }
-        return;
-      }
+      return;
     }
 
+    const int valid_cols = src_tile_dim.x;
+    const int valid_packs = (valid_cols + pack_factor - 1) / pack_factor;
     T scale = *scales;
-    T bias = *biases;
+    T bias = *biases + (SIGNED_W8_STORAGE ? scale * T(128.0f) : T(0));
     for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+      const int pack_index = tile_col_index + i;
+      if (pack_index < valid_packs) {
+        if constexpr (SIGNED_W8_STORAGE) {
+          dequantize_signed_w8<T, pack_factor>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+        } else {
+          dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+        }
+        if (pack_index == valid_packs - 1) {
+          const int remaining = valid_cols - pack_index * pack_factor;
+          for (int lane = remaining; lane < pack_factor; ++lane) {
+            dst[i * pack_factor + lane] = T(0);
+          }
+        }
+      } else {
+        for (int lane = 0; lane < pack_factor; ++lane) {
+          dst[i * pack_factor + lane] = T(0);
+        }
+      }
     }
   }
 

@@ -38,6 +38,13 @@ struct Input<T: ArrayElement + Float> {
 }
 
 fn get_test_data<T: ArrayElement + Float>(quant_mode: QuantizationMode) -> (Input<T>, Vec<T>) {
+    get_test_data_method(quant_mode, QuantizationMethod::ScaleBias)
+}
+
+fn get_test_data_method<T: ArrayElement + Float>(
+    quant_mode: QuantizationMode,
+    quant_method: QuantizationMethod,
+) -> (Input<T>, Vec<T>) {
     let batch_size = 3u32;
     let vocab_size = 8u32;
     let model_dim = 64u32;
@@ -59,20 +66,40 @@ fn get_test_data<T: ArrayElement + Float>(quant_mode: QuantizationMode) -> (Inpu
     let biases: Vec<T> = (0..vocab_size as usize * num_groups as usize)
         .map(|i| T::from((i as f32 * 0.2).cos() * 0.1).unwrap())
         .collect();
+    let zero_point_stride = if quant_mode == QuantizationMode::U4 {
+        num_groups.div_ceil(2)
+    } else {
+        num_groups
+    };
+    let zero_points: Vec<u8> = (0..vocab_size as usize * zero_point_stride as usize)
+        .map(|i| {
+            if quant_mode == QuantizationMode::U4 {
+                ((i % 16) as u8) | ((((i + 5) % 16) as u8) << 4)
+            } else {
+                ((i * 29 + 7) & 0xFF) as u8
+            }
+        })
+        .collect();
+
+    let (zero_points, biases) = match quant_method {
+        QuantizationMethod::ScaleBias => (None, Some(biases.into_boxed_slice())),
+        QuantizationMethod::ScaleZeroPoint => (Some(zero_points.into_boxed_slice()), None),
+        QuantizationMethod::ScaleSymmetric => (None, None),
+    };
 
     let input = Input {
         token_ids,
         weights: weights.into_boxed_slice(),
         scales: scales.into_boxed_slice(),
-        zero_points: None,
-        biases: Some(biases.into_boxed_slice()),
+        zero_points,
+        biases,
         batch_size,
         vocab_size,
         model_dim,
         input_scale,
         group_size,
         quant_mode,
-        quant_method: QuantizationMethod::ScaleBias,
+        quant_method,
     };
 
     let expected = get_output::<T, Cpu>(&input);
@@ -309,6 +336,31 @@ fn test_quant_mode<T: ArrayElement + Float + Debug + Display>(quant_mode: Quanti
             &format!("QuantizedEmbeddingLookup {quant_mode:?} test failed for backend {}", std::any::type_name::<B>()),
         );
     });
+}
+
+#[uzu_test]
+fn test_i8_storage_matches_u8_bf16() {
+    for method in
+        [QuantizationMethod::ScaleSymmetric, QuantizationMethod::ScaleBias, QuantizationMethod::ScaleZeroPoint]
+    {
+        let (mut input, expected) = get_test_data_method::<bf16>(QuantizationMode::U8, method);
+        for byte in &mut input.weights {
+            *byte ^= 0x80;
+        }
+        input.quant_mode = QuantizationMode::I8;
+
+        let cpu = get_output::<bf16, Cpu>(&input);
+        assert_eq_float::<bf16>(&expected, &cpu, 0.5, &format!("I8 embedding {method:?} must preserve U8"));
+        for_each_non_cpu_backend!(|B| {
+            let output = get_output::<bf16, B>(&input);
+            assert_eq_float::<bf16>(
+                &expected,
+                &output,
+                0.5,
+                &format!("I8 embedding {method:?} mismatch for backend {}", std::any::type_name::<B>()),
+            );
+        });
+    }
 }
 
 fn test_oob<T: ArrayElement + Float + Debug + Display>() {

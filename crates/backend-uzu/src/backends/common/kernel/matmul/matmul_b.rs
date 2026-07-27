@@ -70,6 +70,26 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
         }
     }
 
+    pub fn quantization_mode(&self) -> Option<QuantizationMode> {
+        match self {
+            Self::FullPrecision {
+                ..
+            } => None,
+            Self::ScaleBiasDequant {
+                mode,
+                ..
+            }
+            | Self::ScaleZeroPointDequant {
+                mode,
+                ..
+            }
+            | Self::ScaleSymmetricDequant {
+                mode,
+                ..
+            } => Some(*mode),
+        }
+    }
+
     pub fn group_size(&self) -> Option<u32> {
         match self {
             Self::FullPrecision {

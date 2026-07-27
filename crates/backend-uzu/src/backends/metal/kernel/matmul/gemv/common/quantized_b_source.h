@@ -15,7 +15,8 @@ template <
     uint GROUP_SIZE,
     uint BITS,
     uint RESULTS_PER_SIMDGROUP,
-    bool INPUT_ALIGNED>
+    bool INPUT_ALIGNED,
+    bool SIGNED_W8_STORAGE>
 struct QuantizedBSource {
   static METAL_FUNC void accumulate(
       thread U (&result)[RESULTS_PER_SIMDGROUP],
@@ -38,7 +39,7 @@ struct QuantizedBSource {
     constexpr uint values_per_thread = pack_factor * packs_per_thread;
     constexpr uint block_size = values_per_thread * METAL_SIMD_SIZE;
     constexpr uint scale_step_per_thread = GROUP_SIZE / values_per_thread;
-    using RowState = QuantizedRowState<BT, U, B_PROLOGUE, BITS, RESULTS_PER_SIMDGROUP>;
+    using RowState = QuantizedRowState<BT, U, B_PROLOGUE, BITS, RESULTS_PER_SIMDGROUP, SIGNED_W8_STORAGE>;
     using RowParams = typename RowState::Params;
 
     const uint weights_row_stride = in_vec_size * bytes_per_pack / pack_factor;
@@ -58,7 +59,7 @@ struct QuantizedBSource {
 
     uint k = 0;
     for (; k + block_size <= in_vec_size; k += block_size) {
-      U input_sum = load_vector<AT, U, values_per_thread, BITS>(input, input_values);
+      U input_sum = load_vector<AT, U, values_per_thread, BITS, SIGNED_W8_STORAGE>(input, input_values);
 
       RowParams row_params;
       row_state.load(row_params, gather_indices, gathered, batch_idx, out_vec_size, out_row);
@@ -66,7 +67,7 @@ struct QuantizedBSource {
       for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
         const uint addr_row = gathered ? gather_indices[batch_idx * out_vec_size + out_row + row] : row;
         const device uint8_t* weight_row = weights + addr_row * weights_row_stride;
-        result[row] += qdot<U, values_per_thread, BITS>(
+        result[row] += qdot<U, values_per_thread, BITS, SIGNED_W8_STORAGE>(
             weight_row,
             input_values,
             row_params.scale[row],
@@ -94,7 +95,7 @@ struct QuantizedBSource {
         for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
           const uint addr_row = gathered ? gather_indices[batch_idx * out_vec_size + out_row + row] : row;
           const device uint8_t* weight_row = weights + addr_row * weights_row_stride;
-          result[row] += qdot_safe<U, values_per_thread, BITS>(
+          result[row] += qdot_safe<U, values_per_thread, BITS, SIGNED_W8_STORAGE>(
               weight_row,
               input_values,
               row_params.scale[row],

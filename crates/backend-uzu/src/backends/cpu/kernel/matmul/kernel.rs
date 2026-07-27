@@ -116,20 +116,20 @@ impl MatmulKernel for MatmulCpuKernel {
                 let weights_ok = matches!(
                     b,
                     MatmulB::ScaleSymmetricDequant {
-                        mode: QuantizationMode::U4 | QuantizationMode::U8,
+                        mode: QuantizationMode::U4 | QuantizationMode::I8 | QuantizationMode::U8,
                         ..
                     } | MatmulB::ScaleBiasDequant {
-                        mode: QuantizationMode::U4 | QuantizationMode::U8,
+                        mode: QuantizationMode::U4 | QuantizationMode::I8 | QuantizationMode::U8,
                         ..
                     } | MatmulB::ScaleZeroPointDequant {
-                        mode: QuantizationMode::U4 | QuantizationMode::U8,
+                        mode: QuantizationMode::U4 | QuantizationMode::I8 | QuantizationMode::U8,
                         ..
                     }
                 );
                 if !weight_gs_ok || !weights_ok {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
-                        reason: "symmetric int8 activations require unsigned 4/8-bit quantized weights with group size 32/64/128",
+                        reason: "symmetric int8 activations require 4/8-bit quantized weights with group size 32/64/128",
                     }
                     .into());
                 }
@@ -231,6 +231,7 @@ impl MatmulKernel for MatmulCpuKernel {
                                     zero_points,
                                     biases,
                                     bits,
+                                    signed,
                                     group_size,
                                 } => {
                                     let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
@@ -241,6 +242,9 @@ impl MatmulKernel for MatmulCpuKernel {
                                         let w = weights.as_ptr() as *const u32;
                                         let nibble = ((w.add(word_index).read_unaligned() >> bit_offset) & 0xF) as u8;
                                         f32::from(nibble)
+                                    } else if *signed {
+                                        let byte = (*weights.as_ptr().add(weight_linear_index)).cast_signed();
+                                        f32::from(byte) + 128.0
                                     } else {
                                         let word_index = weight_linear_index / pack_factor;
                                         let bit_offset = (weight_linear_index % pack_factor) * 8;

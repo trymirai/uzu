@@ -18,7 +18,8 @@ template <
     uint K_SPLIT,
     bool INPUT_ALIGNED,
     uint RESULTS_PER_SIMDGROUP,
-    uint NUM_SIMDGROUPS>
+    uint NUM_SIMDGROUPS,
+    bool SIGNED_W8_STORAGE>
 VARIANTS(AT, bfloat, float)
 VARIANTS(BT, bfloat, float)
 VARIANTS(DT, bfloat, float)
@@ -35,11 +36,13 @@ VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
 VARIANTS(RESULTS_PER_SIMDGROUP, 1, 2, 4, 8)
 VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
+VARIANTS(SIGNED_W8_STORAGE, false, true)
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || K_SPLIT == 1)
 CONSTRAINT(K_SPLIT <= NUM_SIMDGROUPS)
+CONSTRAINT(!SIGNED_W8_STORAGE || (BITS == 8 && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
 // Only selector-reachable tiles are instantiated (fleet-tuned tables): fp
 // always runs 8 simdgroups with 1 or 4 rows each; non-default quantized
 // tiles exist for bf16 IO only. Widen locally when sweeping new configs.
@@ -85,22 +88,23 @@ KERNEL(Gemv)(
       OutputTile<K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::make(out_block_idx, simd_group, out_vec_size);
   d += batch_idx * out_vec_size + tile.out_row;
 
-  BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED>::accumulate(
-      result,
-      b,
-      scales,
-      zero_points,
-      biases,
-      a,
-      gather_indices,
-      gathered,
-      in_vec_size,
-      out_vec_size,
-      tile.out_row,
-      batch_idx,
-      simd_lane,
-      tile.k_slice
-  );
+  BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED, SIGNED_W8_STORAGE>::
+      accumulate(
+          result,
+          b,
+          scales,
+          zero_points,
+          biases,
+          a,
+          gather_indices,
+          gathered,
+          in_vec_size,
+          out_vec_size,
+          tile.out_row,
+          batch_idx,
+          simd_lane,
+          tile.k_slice
+      );
 
   Reduce<U, K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::run(
       result,

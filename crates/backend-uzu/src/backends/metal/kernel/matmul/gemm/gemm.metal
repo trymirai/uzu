@@ -29,7 +29,9 @@ template <
     GemmBPrologueKind B_PROLOGUE,
     uint BITS,
     uint GROUP_SIZE,
-    GemmAPrologueKind A_PROLOGUE>
+    GemmAPrologueKind A_PROLOGUE,
+    bool SIGNED_W8_STORAGE,
+    bool FUSED_A8_EPILOGUE>
 VARIANTS(AT, bfloat, float)
 VARIANTS(BT, bfloat, float)
 VARIANTS(DT, bfloat, float)
@@ -61,6 +63,8 @@ VARIANTS(
     A_PROLOGUE,
     GemmAPrologueKind::FullPrecision,
     GemmAPrologueKind::Int8Symmetric)
+VARIANTS(SIGNED_W8_STORAGE, false, true)
+VARIANTS(FUSED_A8_EPILOGUE, false, true)
 CONSTRAINT(
     USE_MXU ==
     (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
@@ -99,6 +103,12 @@ CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
     (TRANSPOSE_B && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
+CONSTRAINT(
+    !SIGNED_W8_STORAGE ||
+    (B_PROLOGUE != GemmBPrologueKind::FullPrecision && BITS == 8))
+CONSTRAINT(
+    !FUSED_A8_EPILOGUE ||
+    (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && GROUP_SIZE >= 64))
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
     const device BT* b,
@@ -140,26 +150,36 @@ KERNEL(Gemm)(
   (void)thread_z;
 
   if constexpr (USE_MXU) {
-    MxuMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE, A_PROLOGUE>::run(
-        a,
-        b,
-        d,
-        params,
-        alignment,
-        output_transform,
-        scales,
-        biases,
-        zero_points,
-        output_bias,
-        rht_factors,
-        a_int8,
-        a_scales,
-        a_group_sums,
-        b_shared,
-        thread_context
-    );
+    MxuMmaCore<
+        AT,
+        BT,
+        DT,
+        GEMM_TILING,
+        TRANSPOSE_B,
+        B_PROLOGUE,
+        BITS,
+        GROUP_SIZE,
+        A_PROLOGUE,
+        SIGNED_W8_STORAGE,
+        FUSED_A8_EPILOGUE>::
+        run(a,
+            b,
+            d,
+            params,
+            alignment,
+            output_transform,
+            scales,
+            biases,
+            zero_points,
+            output_bias,
+            rht_factors,
+            a_int8,
+            a_scales,
+            a_group_sums,
+            b_shared,
+            thread_context);
   } else {
-    SimdgroupMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
+    SimdgroupMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE, SIGNED_W8_STORAGE>::run(
         a,
         b,
         d,

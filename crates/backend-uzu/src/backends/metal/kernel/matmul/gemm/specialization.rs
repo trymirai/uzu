@@ -18,6 +18,8 @@ pub(super) struct GemmSpecialization {
     pub(super) b_prologue: GemmBPrologueKind,
     pub(super) bits_per_b: Option<u32>,
     pub(super) group_size: Option<u32>,
+    pub(super) signed_w8_storage: bool,
+    pub(super) fused_a8_epilogue: bool,
 }
 
 impl GemmSpecialization {

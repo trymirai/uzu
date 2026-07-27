@@ -99,6 +99,14 @@ inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* 
   }
 }
 
+template <typename U, int N>
+inline void dequantize_signed_w8(const device uint8_t* w, U scale, U bias, threadgroup U* w_local) {
+  const device int8_t* signed_w = reinterpret_cast<const device int8_t*>(w);
+  for (int i = 0; i < N; ++i) {
+    w_local[i] = scale * static_cast<U>(signed_w[i]) + bias;
+  }
+}
+
 template <>
 inline void dequantize<bfloat, 8, 4>(const device uint8_t* w, bfloat scale, bfloat bias, threadgroup bfloat* w_local) {
   const uint32_t packed = *reinterpret_cast<const device uint32_t*>(w);

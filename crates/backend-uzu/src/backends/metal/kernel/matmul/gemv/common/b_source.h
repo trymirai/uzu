@@ -16,7 +16,8 @@ template <
     uint BITS,
     uint K_SPLIT,
     uint RESULTS_PER_SIMDGROUP,
-    bool INPUT_ALIGNED>
+    bool INPUT_ALIGNED,
+    bool SIGNED_W8_STORAGE>
 struct BSource {
   static METAL_FUNC void accumulate(
       thread U (&result)[RESULTS_PER_SIMDGROUP],
@@ -49,21 +50,31 @@ struct BSource {
           k_slice
       );
     } else {
-      QuantizedBSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED>::accumulate(
-          result,
-          b,
-          scales,
-          zero_points,
-          biases,
-          a,
-          gather_indices,
-          gathered,
-          in_vec_size,
-          out_vec_size,
-          out_row,
-          batch_idx,
-          simd_lane
-      );
+      QuantizedBSource<
+          BT,
+          AT,
+          U,
+          B_PROLOGUE,
+          GROUP_SIZE,
+          BITS,
+          RESULTS_PER_SIMDGROUP,
+          INPUT_ALIGNED,
+          SIGNED_W8_STORAGE>::
+          accumulate(
+              result,
+              b,
+              scales,
+              zero_points,
+              biases,
+              a,
+              gather_indices,
+              gathered,
+              in_vec_size,
+              out_vec_size,
+              out_row,
+              batch_idx,
+              simd_lane
+          );
     }
   }
 };

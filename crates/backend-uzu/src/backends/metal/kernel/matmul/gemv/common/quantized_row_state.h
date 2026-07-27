@@ -94,7 +94,13 @@ struct QuantizedOffsetState<BT, U, GemmBPrologueKind::ScaleSymmetricDequant, BIT
   }
 };
 
-template <typename BT, typename U, GemmBPrologueKind B_PROLOGUE, uint BITS, uint RESULTS_PER_SIMDGROUP>
+template <
+    typename BT,
+    typename U,
+    GemmBPrologueKind B_PROLOGUE,
+    uint BITS,
+    uint RESULTS_PER_SIMDGROUP,
+    bool SIGNED_W8_STORAGE>
 struct QuantizedRowState {
   static_assert(BITS == 4 || BITS == 8, "QMV supports 4- and 8-bit only");
 
@@ -129,6 +135,9 @@ struct QuantizedRowState {
       const U scale = scale_rows.value(addr_row);
       params.scale[row] = scale;
       params.offset[row] = offset_state.value(addr_row, scale);
+      if constexpr (SIGNED_W8_STORAGE) {
+        params.offset[row] += scale * U(128.0f);
+      }
     }
   }
 

@@ -30,7 +30,9 @@ template <
     GemmBPrologueKind B_PROLOGUE = GemmBPrologueKind::FullPrecision,
     int BITS = 0,
     int GROUP_SIZE = 0,
-    GemmAPrologueKind A_PROLOGUE = GemmAPrologueKind::FullPrecision>
+    GemmAPrologueKind A_PROLOGUE = GemmAPrologueKind::FullPrecision,
+    bool SIGNED_W8_STORAGE = false,
+    bool FUSED_A8_EPILOGUE = false>
 struct MxuMmaCore {
   UZU_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   UZU_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
@@ -71,7 +73,8 @@ struct MxuMmaCore {
       1,
       THREADGROUP_THREADS,
       (GROUP_SIZE > 0) ? GROUP_SIZE : 1,
-      (BITS > 0) ? BITS : 4>;
+      (BITS > 0) ? BITS : 4,
+      SIGNED_W8_STORAGE>;
   using BLoaderScaleZeroPoint = QuantizedBlockLoaderScaleZeroPoint<
       BT,
       THREADGROUP_BLOCK_N,
@@ -80,7 +83,9 @@ struct MxuMmaCore {
       1,
       THREADGROUP_THREADS,
       (GROUP_SIZE > 0) ? GROUP_SIZE : 1,
-      (BITS > 0) ? BITS : 4>;
+      (BITS > 0) ? BITS : 4,
+      false,
+      SIGNED_W8_STORAGE>;
   using BLoaderScaleSymmetric = QuantizedBlockLoaderScaleZeroPoint<
       BT,
       THREADGROUP_BLOCK_N,
@@ -90,7 +95,8 @@ struct MxuMmaCore {
       THREADGROUP_THREADS,
       (GROUP_SIZE > 0) ? GROUP_SIZE : 1,
       (BITS > 0) ? BITS : 4,
-      true>;
+      true,
+      SIGNED_W8_STORAGE>;
 
   using AccumFragment = uzu::matmul::Fragment<AccumulatorType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps<>>;
 
@@ -234,10 +240,12 @@ struct MxuMmaCore {
         right_src = right_src.bounded(simdgroup_limit_n, SIMDGROUP_BLOCK_K);
       }
       right_tile.load_from(simd_lane_id, right_src);
-      thread int8_t* right_codes = right_tile.elements();
-      METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < right_tile.ELEMENTS_PER_FRAGMENT; ++i) {
-        right_codes[i] = unbias_uint8_to_int8(as_type<uchar>(right_codes[i]));
+      if constexpr (!SIGNED_W8_STORAGE) {
+        thread int8_t* right_codes = right_tile.elements();
+        METAL_PRAGMA_UNROLL
+        for (ushort i = 0; i < right_tile.ELEMENTS_PER_FRAGMENT; ++i) {
+          right_codes[i] = unbias_uint8_to_int8(as_type<uchar>(right_codes[i]));
+        }
       }
     }
     return right_tile;
@@ -358,7 +366,6 @@ struct MxuMmaCore {
     const short2 position = Ops::get_position(thread_context.simd_lane_id);
     constexpr int k_bytes_per_weight_group = (BITS == 4) ? (int(GROUP_SIZE) / 2) : int(GROUP_SIZE);
     constexpr int act_chunks_per_weight_group = int(GROUP_SIZE) / int(SIMDGROUP_BLOCK_K);
-
     METAL_PRAGMA_NO_UNROLL
     for (int weight_group = 0; weight_group < weight_group_iterations; ++weight_group) {
       const uint weight_group_index = k_offset_weight_groups + uint(weight_group);
@@ -393,8 +400,10 @@ struct MxuMmaCore {
         activation_corrections.clear();
       }
 
-      METAL_PRAGMA_NO_UNROLL
-      for (int act_chunk = 0; act_chunk < act_chunks_per_weight_group; ++act_chunk) {
+      using ProductFragment = uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops>;
+      auto compute_chunk = [&](const int act_chunk,
+                               thread ProductFragment& chunk_products,
+                               thread ActivationLineCache& activation_scales) {
         const int k_element_offset = act_chunk * int(SIMDGROUP_BLOCK_K);
         auto activation_tile = load_int8_left_tile<ALIGNED_M>(
             a_int8_simdgroup + k_element_offset,
@@ -403,7 +412,6 @@ struct MxuMmaCore {
             thread_context.simd_lane_id
         );
 
-        uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> chunk_products;
         auto right_tile = load_int8_weight_tile<ALIGNED_N>(
             b_packed_simdgroup,
             k_element_offset,
@@ -415,7 +423,6 @@ struct MxuMmaCore {
         Ops::template fragment_mm<false, true>(chunk_products, activation_tile, right_tile);
 
         const uint act_group_index = k_offset_act_groups + uint(weight_group * act_chunks_per_weight_group + act_chunk);
-        ActivationLineCache activation_scales;
         ActivationLineCache::template for_each_line<ALIGNED_M>(
             position.y,
             simdgroup_limit_m,
@@ -431,22 +438,59 @@ struct MxuMmaCore {
               }
             }
         );
+      };
 
-        AccumFragment::zip_for_each_coord(
-            thread_context.simd_lane_id,
-            [&](short row, short col, thread float& accumulated, thread int& products) {
-              if (!ALIGNED_M && row >= simdgroup_limit_m) {
-                return;
-              }
-              if (!ALIGNED_N && col >= simdgroup_limit_n) {
-                return;
-              }
-              accumulated +=
-                  activation_scales.at(row - position.y) * weight_scales.at(col - position.x) * float(products);
-            },
-            accumulator,
-            chunk_products
-        );
+      if constexpr (FUSED_A8_EPILOGUE) {
+        METAL_PRAGMA_NO_UNROLL
+        for (int act_chunk = 0; act_chunk < act_chunks_per_weight_group; act_chunk += 2) {
+          ProductFragment products_0;
+          ProductFragment products_1;
+          ActivationLineCache activation_scales_0;
+          ActivationLineCache activation_scales_1;
+          compute_chunk(act_chunk, products_0, activation_scales_0);
+          compute_chunk(act_chunk + 1, products_1, activation_scales_1);
+
+          AccumFragment::zip_for_each_coord(
+              thread_context.simd_lane_id,
+              [&](short row, short col, thread float& accumulated, thread int& product_0, thread int& product_1) {
+                if (!ALIGNED_M && row >= simdgroup_limit_m) {
+                  return;
+                }
+                if (!ALIGNED_N && col >= simdgroup_limit_n) {
+                  return;
+                }
+                const float weight_scale = weight_scales.at(col - position.x);
+                accumulated += activation_scales_0.at(row - position.y) * weight_scale * float(product_0);
+                accumulated += activation_scales_1.at(row - position.y) * weight_scale * float(product_1);
+              },
+              accumulator,
+              products_0,
+              products_1
+          );
+        }
+      } else {
+        METAL_PRAGMA_NO_UNROLL
+        for (int act_chunk = 0; act_chunk < act_chunks_per_weight_group; ++act_chunk) {
+          ProductFragment chunk_products;
+          ActivationLineCache activation_scales;
+          compute_chunk(act_chunk, chunk_products, activation_scales);
+
+          AccumFragment::zip_for_each_coord(
+              thread_context.simd_lane_id,
+              [&](short row, short col, thread float& accumulated, thread int& products) {
+                if (!ALIGNED_M && row >= simdgroup_limit_m) {
+                  return;
+                }
+                if (!ALIGNED_N && col >= simdgroup_limit_n) {
+                  return;
+                }
+                accumulated +=
+                    activation_scales.at(row - position.y) * weight_scales.at(col - position.x) * float(products);
+              },
+              accumulator,
+              chunk_products
+          );
+        }
       }
 
       if constexpr (int8_activation_needs_weight_correction) {
@@ -625,6 +669,7 @@ struct MxuMmaCore {
                               scales_offset,
                               biases_offset,
                               k_elements,
+                              groups_per_row,
                               b_shared,
                               thread_context.simdgroup_index,
                               thread_context.simd_lane_id

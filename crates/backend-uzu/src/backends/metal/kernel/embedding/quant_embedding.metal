@@ -85,6 +85,9 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
     const uint midpoint = quantization_mode == QuantizationMode::U4 ? 8 : 128;
     bias = -float(scale) * float(midpoint);
   }
+  if (quantization_mode == QuantizationMode::I8) {
+    bias += float(scale) * 128.0f;
+  }
 
   float out_f = float(scale) * float(quantized_value) + bias;
   out_f *= input_scale;

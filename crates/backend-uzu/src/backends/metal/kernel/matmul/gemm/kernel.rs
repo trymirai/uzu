@@ -6,7 +6,7 @@ use crate::{
         common::{
             Allocation, Backend, BufferArg, Encoder,
             gpu_types::{
-                GemmParams, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder,
+                GemmParams, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder, QuantizationMode,
                 gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
             },
             kernel::{
@@ -53,6 +53,8 @@ pub struct GemmKernel {
     pub(crate) tiling_override: Option<GemmTiling>,
     #[cfg(test)]
     pub(crate) split_k_target_override: Option<u32>,
+    #[cfg(test)]
+    pub(crate) fused_a8_epilogue_override: Option<bool>,
 }
 
 impl GemmKernel {
@@ -80,8 +82,23 @@ impl GemmKernel {
             tiling_override: None,
             #[cfg(test)]
             split_k_target_override: None,
+            #[cfg(test)]
+            fused_a8_epilogue_override: None,
         };
         Ok(kernel)
+    }
+
+    fn use_fused_a8_epilogue(
+        &self,
+        m: u32,
+        a_prologue: GemmAPrologueKind,
+        group_size: Option<u32>,
+    ) -> bool {
+        let selected =
+            m <= 32 && a_prologue == GemmAPrologueKind::Int8Symmetric && group_size.is_some_and(|size| size >= 64);
+        #[cfg(test)]
+        let selected = self.fused_a8_epilogue_override.unwrap_or(selected);
+        selected
     }
 
     fn get_or_create(
@@ -104,6 +121,8 @@ impl GemmKernel {
                     specialization.bits_per_b.unwrap_or(0),
                     specialization.group_size.unwrap_or(0),
                     specialization.a_prologue,
+                    specialization.signed_w8_storage,
+                    specialization.fused_a8_epilogue,
                     specialization.output_transform,
                     specialization.alignment,
                 )?;
@@ -267,6 +286,7 @@ impl GemmKernel {
         let b_prologue = arguments.b.b_prologue();
         let bits_per_b = arguments.b.bits_per_b();
         let group_size = arguments.b.group_size();
+        let signed_w8_storage = arguments.b.quantization_mode() == Some(QuantizationMode::I8);
 
         let MatmulArguments {
             a,
@@ -355,6 +375,7 @@ impl GemmKernel {
                             b_prologue,
                             bits_per_b,
                             group_size,
+                            false,
                             split_k,
                             output_transform,
                             output_bias,
@@ -394,6 +415,8 @@ impl GemmKernel {
                     bits_per_b,
                     group_size,
                     a_prologue: GemmAPrologueKind::FullPrecision,
+                    signed_w8_storage: false,
+                    fused_a8_epilogue: false,
                 };
                 specialization.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -539,6 +562,7 @@ impl GemmKernel {
                         b_prologue,
                         bits_per_b,
                         group_size,
+                        signed_w8_storage,
                         split_k,
                         output_transform,
                         output_bias,
@@ -557,6 +581,8 @@ impl GemmKernel {
                         bits_per_b,
                         group_size,
                         a_prologue,
+                        signed_w8_storage,
+                        fused_a8_epilogue: self.use_fused_a8_epilogue(m, a_prologue, group_size),
                     };
                     specialization.validate()?;
                     let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -620,6 +646,7 @@ impl GemmKernel {
         b_prologue: GemmBPrologueKind,
         bits_per_b: Option<u32>,
         group_size: Option<u32>,
+        signed_w8_storage: bool,
         split_k: u32,
         output_transform: GemmDTransform,
         output_bias: Option<&Allocation<Metal>>,
@@ -644,6 +671,8 @@ impl GemmKernel {
             bits_per_b,
             group_size,
             a_prologue,
+            signed_w8_storage,
+            fused_a8_epilogue: self.use_fused_a8_epilogue(m, a_prologue, group_size),
         };
         part_spec.validate()?;
 
@@ -732,7 +761,7 @@ fn validate_int8_activation_arguments(
     if !compatible {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
-            reason: "symmetric int8 activations require MXU and unsigned 4/8-bit quantized weights with group size 32/64/128",
+            reason: "symmetric int8 activations require MXU and 4/8-bit quantized weights with group size 32/64/128",
         }
         .into());
     }

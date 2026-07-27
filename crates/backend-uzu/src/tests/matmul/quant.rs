@@ -138,6 +138,21 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         self
     }
 
+    /// Re-encodes the generated U8 codes as their bit-exact signed-storage form.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the generated weights are not 8-bit.
+    #[must_use]
+    pub fn with_signed_w8_storage(mut self) -> Self {
+        assert_eq!(self.mode, QuantizationMode::U8, "signed storage requires 8-bit weights");
+        for word in &mut self.w_packed {
+            *word ^= 0x8080_8080;
+        }
+        self.mode = QuantizationMode::I8;
+        self
+    }
+
     fn weights_for_upload(&self) -> Vec<u32> {
         self.w_packed.clone()
     }

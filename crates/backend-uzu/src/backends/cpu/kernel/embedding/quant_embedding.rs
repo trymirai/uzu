@@ -80,8 +80,8 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                     },
                     QuantizationMode::I8 => {
                         let elem_idx = (token_id * weights_stride + dim_idx) as usize;
-                        let weights_i8 = weights as *const i8;
-                        *weights_i8.add(elem_idx) as i32
+                        let weights_i8 = weights.cast::<i8>();
+                        i32::from(*weights_i8.add(elem_idx))
                     },
                     QuantizationMode::U8 => {
                         let elem_idx = (token_id * weights_stride + dim_idx) as usize;
@@ -89,7 +89,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                     },
                 };
 
-                let bias = match quantization_method {
+                let mut bias = match quantization_method {
                     QuantizationMethod::ScaleBias => biases
                         .expect("ScaleBias quantized embedding requires biases")
                         .add((token_id * num_groups + group_idx) as usize)
@@ -119,6 +119,9 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                         -scale.to_f32().unwrap() * midpoint as f32
                     },
                 };
+                if quantization_mode == QuantizationMode::I8 {
+                    bias = scale.to_f32().unwrap().mul_add(128.0, bias);
+                }
 
                 let out_f = scale.to_f32().unwrap() * quantized_value as f32 + bias;
                 let out_f = out_f * input_scale;

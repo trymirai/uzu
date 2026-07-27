@@ -126,12 +126,13 @@ impl<B: Backend> LinearMatmul<B> {
             spec => return Err(LinearMatmulError::UnsupportedConfiguration(format!("{spec:?}"))),
         };
 
-        let weight_quantization_mode = match bits {
-            4 => QuantizationMode::U4,
-            8 => QuantizationMode::U8,
-            _ => {
+        let weights_leaf = weights_tree.leaf("weights")?;
+        let weight_quantization_mode = match QuantizationMode::from_storage(bits, weights_leaf.data_type()) {
+            Some(mode) => mode,
+            None => {
                 return Err(LinearMatmulError::UnsupportedConfiguration(format!(
-                    "{quantization_method} bits={bits}, group_size={group_size}"
+                    "{quantization_method} bits={bits}, group_size={group_size}, storage={:?}",
+                    weights_leaf.data_type()
                 )));
             },
         };
@@ -146,10 +147,8 @@ impl<B: Backend> LinearMatmul<B> {
         let storage_type = weight_quantization_mode.storage_type();
         let k_g = input_dim.div_ceil(group_size);
 
-        let weights = weights_tree
-            .leaf("weights")?
-            .validate(&[output_dim, input_dim / packing_divisor], storage_type)?
-            .read_allocation()?;
+        let weights =
+            weights_leaf.validate(&[output_dim, input_dim / packing_divisor], storage_type)?.read_allocation()?;
         let scales = weights_tree.leaf("scales")?.validate(&[output_dim, k_g], weights_data_type)?.read_allocation()?;
         let zero_points_or_biases = match quantization_method {
             QuantizationMethod::ScaleBias => {
@@ -160,7 +159,7 @@ impl<B: Backend> LinearMatmul<B> {
                 Some(
                     weights_tree
                         .leaf("zero_points")?
-                        .validate(&[output_dim, expected_zero_points_entries], storage_type)?
+                        .validate(&[output_dim, expected_zero_points_entries], DataType::U8)?
                         .read_allocation()?,
                 )
             },
@@ -303,5 +302,85 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             batch_dim,
             encoder,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use proc_macros::uzu_test;
+    use tempfile::tempfile;
+
+    use super::*;
+    use crate::backends::{common::Context, cpu::Cpu};
+
+    fn load_zero_point_w8(
+        weights_dtype: &str,
+        zero_points_dtype: &str,
+    ) -> Result<LinearMatmul<Cpu>, LinearMatmulError<Cpu>> {
+        let tensors = serde_json::json!({
+            "weights": {"dtype": weights_dtype, "shape": [2, 64], "data_offsets": [0, 128]},
+            "scales": {"dtype": "BF16", "shape": [2, 1], "data_offsets": [128, 132]},
+            "zero_points": {"dtype": zero_points_dtype, "shape": [2, 1], "data_offsets": [132, 134]}
+        });
+        let header = serde_json::to_vec(&tensors).expect("serialize safetensor header");
+        let mut file = tempfile().expect("temporary safetensor");
+        file.write_all(&(header.len() as u64).to_le_bytes()).expect("write header length");
+        file.write_all(&header).expect("write header");
+
+        let context = <Cpu as Backend>::Context::new().expect("CPU context");
+        let loader = crate::parameters::ParameterLoader::<Cpu>::new_random(&file, context.as_ref(), 0)
+            .expect("parse safetensor header");
+        let spec = serde_json::from_value(serde_json::json!({
+            "type": "IntSpec",
+            "bits": 8,
+            "group_size": 64,
+            "is_symmetric": false,
+            "layout": "output_input"
+        }))
+        .expect("parse IntSpec");
+        LinearMatmul::quantized(
+            context.as_ref(),
+            spec,
+            64,
+            2,
+            DataType::BF16,
+            DataType::BF16,
+            DataType::BF16,
+            &loader.tree(),
+            None,
+            None,
+        )
+    }
+
+    #[uzu_test]
+    fn w8_storage_mode_comes_from_safetensor_dtype() {
+        for (dtype, expected) in [("U8", QuantizationMode::U8), ("I8", QuantizationMode::I8)] {
+            let linear = load_zero_point_w8(dtype, "U8").expect("valid W8 tensor dtypes");
+            let Mode::Quantized {
+                mode,
+                ..
+            } = linear.mode
+            else {
+                panic!("expected quantized mode");
+            };
+            assert_eq!(mode, expected);
+        }
+    }
+
+    #[uzu_test]
+    fn signed_w8_still_requires_unsigned_zero_points() {
+        let Err(error) = load_zero_point_w8("I8", "I8") else {
+            panic!("I8 zero-points must be rejected");
+        };
+        assert!(matches!(
+            error,
+            LinearMatmulError::ParameterError(ParameterLoaderError::InvalidTensor {
+                data_type: DataType::I8,
+                expected_data_type: DataType::U8,
+                ..
+            })
+        ));
     }
 }
