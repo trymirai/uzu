@@ -154,6 +154,7 @@ fn encode_step(
                 &data.activations,
                 &mut data.a_int8,
                 &mut data.a_scales,
+                None::<&mut Allocation<Metal>>,
                 &data.rht_factors,
                 data.m,
                 data.k,
@@ -164,6 +165,7 @@ fn encode_step(
                 a: MatmulA::Int8Symmetric {
                     values: &data.a_int8,
                     scales: &data.a_scales,
+                    group_sums: None,
                 },
                 b: MatmulB::ScaleSymmetricDequant {
                     b: &data.weights_u8,
@@ -269,7 +271,7 @@ fn bench_a8w(c: &mut Criterion) {
     let device_tier = context.device_tier();
 
     let prepare =
-        <MetalPrepare as RHTQuantizeActivationsKernel>::new(&context, DataType::BF16).expect("prepare kernel");
+        <MetalPrepare as RHTQuantizeActivationsKernel>::new(&context, DataType::BF16, false).expect("prepare kernel");
     let hadamard =
         <MetalHadamard as HadamardTransformKernel>::new(&context, DataType::BF16, HadamardTransformOrder::Input)
             .expect("hadamard kernel");
