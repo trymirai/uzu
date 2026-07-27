@@ -274,7 +274,8 @@ struct MxuMmaCore {
         for (ushort index = 0; index < SLOTS_PER_TILE; ++index) {
           const short coord = origin + tile * FRAGMENT_EXTENT + index * SLOT_STRIDE;
           if (ALIGNED || coord < limit) {
-            sink(tile, index, (abs_base + uint(coord)) * groups_per_row + group_index);
+            const uint line_index = abs_base + uint(coord);
+            sink(tile, index, line_index * groups_per_row + group_index, line_index);
           }
         }
       }
@@ -300,7 +301,7 @@ struct MxuMmaCore {
   static METAL_FUNC float int8_weight_dequant_bias(
       const float scale,
       const uint scale_index,
-      const uint col,
+      const uint weight_column,
       const uint weight_group,
       const uint weight_groups_per_row,
       const device BT* biases,
@@ -309,9 +310,13 @@ struct MxuMmaCore {
     if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
       return static_cast<float>(biases[scale_index]);
     } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
-      const device uint8_t* zero_points_row =
-          zero_points + col * zero_point_row_stride<ushort(BITS)>(weight_groups_per_row);
-      return -scale * float(decode_zero_point<ushort(BITS)>(zero_points_row, weight_group));
+      if constexpr (BITS == 8) {
+        return -scale * float(zero_points[scale_index]);
+      } else {
+        const device uint8_t* zero_points_row =
+            zero_points + weight_column * zero_point_row_stride<ushort(BITS)>(weight_groups_per_row);
+        return -scale * float(decode_zero_point<ushort(BITS)>(zero_points_row, weight_group));
+      }
     } else {
       return 0.0f;
     }
@@ -367,15 +372,14 @@ struct MxuMmaCore {
           abs_col_base,
           weight_groups_per_row,
           weight_group_index,
-          [&](ushort tile_col, ushort thread_col, uint scale_index) {
+          [&](ushort tile_col, ushort thread_col, uint scale_index, uint weight_column) {
             const float scale = static_cast<float>(b_scales[scale_index]);
             weight_scales.slot(tile_col, thread_col) = scale;
             if constexpr (int8_activation_needs_weight_correction) {
-              const uint col = scale_index / weight_groups_per_row;
               weight_corrections.slot(tile_col, thread_col) = scale * int8_weight_midpoint + int8_weight_dequant_bias(
                                                                                                  scale,
                                                                                                  scale_index,
-                                                                                                 col,
+                                                                                                 weight_column,
                                                                                                  weight_group_index,
                                                                                                  weight_groups_per_row,
                                                                                                  biases,
@@ -414,7 +418,7 @@ struct MxuMmaCore {
             abs_row_base,
             act_groups_per_row,
             act_group_index,
-            [&](ushort tile_row, ushort thread_row, uint scale_index) {
+            [&](ushort tile_row, ushort thread_row, uint scale_index, uint) {
               activation_scales.slot(tile_row, thread_row) = a_scales[scale_index];
             }
         );
