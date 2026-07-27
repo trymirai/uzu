@@ -35,10 +35,10 @@ async fn current_time() -> String {
 #[tokio::test]
 async fn check_generated_definition() {
     let definition: ToolDescriptor = get_weather.into();
-    assert_eq!(definition.name(), "get_weather");
-    assert_eq!(definition.description(), "Get the current weather for the given geographic coordinates.");
+    assert_eq!(definition.name, "get_weather");
+    assert_eq!(definition.description, "Get the current weather for the given geographic coordinates.");
 
-    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
     assert_eq!(
         parameters,
         serde_json::json!({
@@ -52,7 +52,7 @@ async fn check_generated_definition() {
     );
 
     let return_definition: serde_json::Value =
-        serde_json::from_str(&definition.return_definition().as_ref().unwrap().json).unwrap();
+        serde_json::from_str(&definition.return_definition.as_ref().unwrap().json).unwrap();
     assert_eq!(
         return_definition,
         serde_json::json!({
@@ -74,10 +74,9 @@ async fn check_generated_definition() {
     assert!(error.to_string().contains("latitude"), "unexpected error: {error}");
 
     let time: ToolDescriptor = current_time.into();
-    assert_eq!(time.name(), "current_time");
-    assert!(time.parameters().is_none());
-    let time_schema: serde_json::Value =
-        serde_json::from_str(&time.return_definition().as_ref().unwrap().json).unwrap();
+    assert_eq!(time.name, "current_time");
+    assert!(time.parameters.is_none());
+    let time_schema: serde_json::Value = serde_json::from_str(&time.return_definition.as_ref().unwrap().json).unwrap();
     assert_eq!(time_schema, serde_json::json!({ "type": "string" }));
     let result: serde_json::Value = time.execute(serde_json::json!({}).into()).await.unwrap().try_into().unwrap();
     assert_eq!(result, serde_json::json!("17:03"));
@@ -135,15 +134,15 @@ fn get_forecast(request: ForecastRequest) -> Forecast {
 #[tokio::test]
 async fn structured_input_and_output() {
     let definition: ToolDescriptor = get_forecast.into();
-    assert_eq!(definition.name(), "get_forecast");
-    assert_eq!(definition.description(), "Get the weather forecast for a location.");
+    assert_eq!(definition.name, "get_forecast");
+    assert_eq!(definition.description, "Get the weather forecast for a location.");
 
     let coordinate_properties = serde_json::json!({
         "latitude": { "type": "number", "description": "Latitude in decimal degrees." },
         "longitude": { "type": "number", "description": "Longitude in decimal degrees." }
     });
 
-    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
     assert_eq!(
         parameters,
         serde_json::json!({
@@ -170,7 +169,7 @@ async fn structured_input_and_output() {
     );
 
     let return_definition: serde_json::Value =
-        serde_json::from_str(&definition.return_definition().as_ref().unwrap().json).unwrap();
+        serde_json::from_str(&definition.return_definition.as_ref().unwrap().json).unwrap();
     assert_eq!(
         return_definition,
         serde_json::json!({
@@ -254,7 +253,7 @@ fn lookup_user(request: UserLookup) -> String {
 #[tokio::test]
 async fn serde_field_attributes_match_generated_schema() {
     let definition: ToolDescriptor = lookup_user.into();
-    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
 
     assert_eq!(
         parameters,
@@ -306,7 +305,7 @@ fn strict_lookup(request: StrictRequest) -> String {
 #[tokio::test]
 async fn deny_unknown_fields_disallows_additional_schema_properties() {
     let definition: ToolDescriptor = strict_lookup.into();
-    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
 
     assert_eq!(
         parameters,
@@ -347,10 +346,10 @@ fn add(
 #[tokio::test]
 async fn primitive_input_and_output() {
     let definition: ToolDescriptor = add.into();
-    assert_eq!(definition.name(), "add");
-    assert_eq!(definition.description(), "Add two integers.");
+    assert_eq!(definition.name, "add");
+    assert_eq!(definition.description, "Add two integers.");
 
-    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
     assert_eq!(
         parameters,
         serde_json::json!({
@@ -364,7 +363,7 @@ async fn primitive_input_and_output() {
     );
 
     let return_definition: serde_json::Value =
-        serde_json::from_str(&definition.return_definition().as_ref().unwrap().json).unwrap();
+        serde_json::from_str(&definition.return_definition.as_ref().unwrap().json).unwrap();
     assert_eq!(return_definition, serde_json::json!({ "type": "integer" }));
 
     let result: serde_json::Value =
@@ -379,10 +378,10 @@ fn reset() {}
 #[tokio::test]
 async fn void_input_and_output() {
     let definition: ToolDescriptor = reset.into();
-    assert_eq!(definition.name(), "reset");
-    assert_eq!(definition.description(), "Reset the session state.");
-    assert!(definition.parameters().is_none());
-    assert!(definition.return_definition().is_none());
+    assert_eq!(definition.name, "reset");
+    assert_eq!(definition.description, "Reset the session state.");
+    assert!(definition.parameters.is_none());
+    assert!(definition.return_definition.is_none());
 
     let result: serde_json::Value = definition.execute(serde_json::json!({}).into()).await.unwrap().try_into().unwrap();
     assert_eq!(result, serde_json::Value::Null);
@@ -404,9 +403,9 @@ fn clear_data(
 #[tokio::test]
 async fn void_result_and_error_propagation() {
     let definition: ToolDescriptor = clear_data.into();
-    assert_eq!(definition.name(), "clear_data");
+    assert_eq!(definition.name, "clear_data");
 
-    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
     assert_eq!(
         parameters,
         serde_json::json!({
@@ -417,7 +416,7 @@ async fn void_result_and_error_propagation() {
             "required": ["confirm"]
         })
     );
-    assert!(definition.return_definition().is_none());
+    assert!(definition.return_definition.is_none());
 
     let result: serde_json::Value =
         definition.execute(serde_json::json!({ "confirm": true }).into()).await.unwrap().try_into().unwrap();

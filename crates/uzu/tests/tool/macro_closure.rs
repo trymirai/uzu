@@ -21,10 +21,10 @@ async fn closure_with_captured_state() {
         }
     };
 
-    assert_eq!(definition.name(), "accumulate");
-    assert_eq!(definition.description(), "Add an amount to the running total.");
+    assert_eq!(definition.name, "accumulate");
+    assert_eq!(definition.description, "Add an amount to the running total.");
 
-    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
     assert_eq!(
         parameters,
         serde_json::json!({
@@ -37,7 +37,7 @@ async fn closure_with_captured_state() {
     );
 
     let return_definition: serde_json::Value =
-        serde_json::from_str(&definition.return_definition().as_ref().unwrap().json).unwrap();
+        serde_json::from_str(&definition.return_definition.as_ref().unwrap().json).unwrap();
     assert_eq!(return_definition, serde_json::json!({ "type": "integer" }));
 
     let result: serde_json::Value =
@@ -70,10 +70,10 @@ async fn async_closure_with_optional_parameter() {
         }
     };
 
-    assert_eq!(definition.name(), "greet");
-    assert_eq!(definition.description(), "Greet the given person.");
+    assert_eq!(definition.name, "greet");
+    assert_eq!(definition.description, "Greet the given person.");
 
-    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters().as_ref().unwrap().json).unwrap();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
     assert_eq!(
         parameters,
         serde_json::json!({
@@ -116,7 +116,7 @@ async fn result_closure_propagates_errors() {
     };
 
     let return_definition: serde_json::Value =
-        serde_json::from_str(&definition.return_definition().as_ref().unwrap().json).unwrap();
+        serde_json::from_str(&definition.return_definition.as_ref().unwrap().json).unwrap();
     assert_eq!(return_definition, serde_json::json!({ "type": "number" }));
 
     let result: serde_json::Value = definition
@@ -138,9 +138,9 @@ async fn closure_without_parameters_or_annotation() {
         answer: || 42
     };
 
-    assert_eq!(definition.name(), "answer");
-    assert!(definition.parameters().is_none());
-    assert!(definition.return_definition().is_none());
+    assert_eq!(definition.name, "answer");
+    assert!(definition.parameters.is_none());
+    assert!(definition.return_definition.is_none());
 
     let result: serde_json::Value = definition.execute(serde_json::json!({}).into()).await.unwrap().try_into().unwrap();
     assert_eq!(result, serde_json::json!(42));
@@ -157,8 +157,8 @@ async fn unit_closure_returns_null() {
         }
     };
 
-    assert!(definition.parameters().is_none());
-    assert!(definition.return_definition().is_none());
+    assert!(definition.parameters.is_none());
+    assert!(definition.return_definition.is_none());
 
     let result: serde_json::Value = definition.execute(serde_json::json!({}).into()).await.unwrap().try_into().unwrap();
     assert_eq!(result, serde_json::Value::Null);
