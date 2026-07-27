@@ -658,14 +658,12 @@ public func FfiConverterTypeCancelToken_lower(_ value: CancelToken) -> UInt64 {
 public struct ChatConfig: Equatable, Hashable, Codable {
     public var contextLength: ContextLength
     public var samplingSeed: SamplingSeed
-    public var speculationPreset: ChatSpeculationPreset?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(contextLength: ContextLength, samplingSeed: SamplingSeed, speculationPreset: ChatSpeculationPreset?) {
+    public init(contextLength: ContextLength, samplingSeed: SamplingSeed) {
         self.contextLength = contextLength
         self.samplingSeed = samplingSeed
-        self.speculationPreset = speculationPreset
     }
 
     
@@ -687,15 +685,6 @@ public func withSamplingSeed(samplingSeed: SamplingSeed) -> ChatConfig  {
 })
 }
     
-public func withSpeculationPreset(speculationPreset: ChatSpeculationPreset?) -> ChatConfig  {
-    return try!  FfiConverterTypeChatConfig_lift(try! rustCall() {
-    uniffi_shoji_fn_method_chatconfig_with_speculation_preset(
-            FfiConverterTypeChatConfig_lower(self),
-        FfiConverterOptionTypeChatSpeculationPreset.lower(speculationPreset),$0
-    )
-})
-}
-    
 
     
 }
@@ -712,15 +701,13 @@ public struct FfiConverterTypeChatConfig: FfiConverterRustBuffer {
         return
             try ChatConfig(
                 contextLength: FfiConverterTypeContextLength.read(from: &buf), 
-                samplingSeed: FfiConverterTypeSamplingSeed.read(from: &buf), 
-                speculationPreset: FfiConverterOptionTypeChatSpeculationPreset.read(from: &buf)
+                samplingSeed: FfiConverterTypeSamplingSeed.read(from: &buf)
         )
     }
 
     public static func write(_ value: ChatConfig, into buf: inout [UInt8]) {
         FfiConverterTypeContextLength.write(value.contextLength, into: &buf)
         FfiConverterTypeSamplingSeed.write(value.samplingSeed, into: &buf)
-        FfiConverterOptionTypeChatSpeculationPreset.write(value.speculationPreset, into: &buf)
     }
 }
 
@@ -3761,83 +3748,6 @@ public func FfiConverterTypeChatRole_lower(_ value: ChatRole) -> RustBuffer {
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
-public enum ChatSpeculationPreset: Equatable, Hashable, Codable {
-    
-    case generalChat
-    case summarization
-    case classification(feature: Feature
-    )
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension ChatSpeculationPreset: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeChatSpeculationPreset: FfiConverterRustBuffer {
-    typealias SwiftType = ChatSpeculationPreset
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatSpeculationPreset {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .generalChat
-        
-        case 2: return .summarization
-        
-        case 3: return .classification(feature: try FfiConverterTypeFeature.read(from: &buf)
-        )
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: ChatSpeculationPreset, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .generalChat:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .summarization:
-            writeInt(&buf, Int32(2))
-        
-        
-        case let .classification(feature):
-            writeInt(&buf, Int32(3))
-            FfiConverterTypeFeature.write(feature, into: &buf)
-            
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeChatSpeculationPreset_lift(_ buf: RustBuffer) throws -> ChatSpeculationPreset {
-    return try FfiConverterTypeChatSpeculationPreset.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeChatSpeculationPreset_lower(_ value: ChatSpeculationPreset) -> RustBuffer {
-    return FfiConverterTypeChatSpeculationPreset.lower(value)
-}
-
-
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
-
 public enum ClassificationRole: Equatable, Hashable, Codable {
     
     case user
@@ -5310,30 +5220,6 @@ fileprivate struct FfiConverterOptionTypeChatReplyFinishReason: FfiConverterRust
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeChatReplyFinishReason.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeChatSpeculationPreset: FfiConverterRustBuffer {
-    typealias SwiftType = ChatSpeculationPreset?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeChatSpeculationPreset.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeChatSpeculationPreset.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
