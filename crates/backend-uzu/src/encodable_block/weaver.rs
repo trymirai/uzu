@@ -49,7 +49,7 @@ struct PrefixKvCache<B: Backend> {
     length: usize,
 }
 
-struct NodeKvCache<B: Backend> {
+struct NodeExpansionKvCache<B: Backend> {
     layers: Box<[Allocation<B>]>,
     capacity: u32,
 }
@@ -320,7 +320,7 @@ impl<B: Backend> Weaver<B> {
         }
 
         let prefix_cache = self.encode_prefix(inputs.target_hidden, inputs.draft_hidden, lookahead_count, encoder)?;
-        let mut node_cache = self.create_node_kv_cache(tree_slot_count, context)?;
+        let mut node_cache = self.create_node_expansion_kv_cache(tree_slot_count, context)?;
 
         let mut tree_init = vec![0u32; TreeIdx::COUNT * tree_slot_count];
         for slot in 0..tree_slot_count {
@@ -410,7 +410,7 @@ impl<B: Backend> Weaver<B> {
                 candidates_per_node: inputs.candidates.candidates_per_depth,
                 depth_seeds: &depth_seeds,
             };
-            let selected_children = self.encode_nodes(
+            let selected_children = self.encode_node_expansion(
                 &prefix_cache,
                 &nodes,
                 &candidates,
@@ -486,7 +486,7 @@ impl<B: Backend> Weaver<B> {
                 mlp_delta,
                 kv_cache,
             } = layer
-                .encode_prefix(residual_input, &mut residual_state, token_count, encoder)
+                .encode_prefix_tokens(residual_input, &mut residual_state, token_count, encoder)
                 .map_err(WeaverEncodeError::Backend)?;
             prefix_layers.push(kv_cache);
             residual_input = mlp_delta;
@@ -503,29 +503,28 @@ impl<B: Backend> Weaver<B> {
         })
     }
 
-    fn create_node_kv_cache(
+    fn create_node_expansion_kv_cache(
         &self,
         capacity: usize,
         context: &B::Context,
-    ) -> Result<NodeKvCache<B>, WeaverEncodeError<B>> {
+    ) -> Result<NodeExpansionKvCache<B>, WeaverEncodeError<B>> {
         assert!(capacity > 0, "Weaver node capacity must be positive");
-        let kernel_capacity = capacity as u32;
         let kv_size = size_for_shape(&[2, capacity, self.model_dim], DATA_TYPE);
         let layers = (0..self.layers.len())
             .map(|_| context.create_allocation(kv_size, AllocationType::Global).map_err(WeaverEncodeError::Backend))
             .collect::<Result<Box<[_]>, _>>()?;
-        Ok(NodeKvCache {
+        Ok(NodeExpansionKvCache {
             layers,
-            capacity: kernel_capacity,
+            capacity: capacity as u32,
         })
     }
 
-    fn encode_nodes(
+    fn encode_node_expansion(
         &self,
         prefix_cache: &PrefixKvCache<B>,
         nodes: &NodeBatch<'_, B>,
         candidates: &CandidateBatch<'_, B>,
-        node_cache: &mut NodeKvCache<B>,
+        node_cache: &mut NodeExpansionKvCache<B>,
         children_per_node: usize,
         target_embedding: &Embedding<B>,
         encoder: &mut Encoder<B>,
@@ -553,7 +552,7 @@ impl<B: Backend> Weaver<B> {
         let node_capacity = node_cache.capacity;
         for (layer_index, layer) in self.layers.iter().enumerate() {
             residual_input = layer
-                .encode_nodes(
+                .encode_node_batch(
                     residual_input,
                     &mut residual_state,
                     &prefix_cache.layers[layer_index],
@@ -566,7 +565,7 @@ impl<B: Backend> Weaver<B> {
                 .map_err(WeaverEncodeError::Backend)?;
         }
 
-        self.encode_children(
+        self.encode_child_selection(
             &residual_input,
             &mut residual_state,
             nodes,
@@ -577,9 +576,9 @@ impl<B: Backend> Weaver<B> {
         )
     }
 
-    fn encode_children(
+    fn encode_child_selection(
         &self,
-        final_delta: &Allocation<B>,
+        residual_output: &Allocation<B>,
         residual_state: &mut Allocation<B>,
         nodes: &NodeBatch<'_, B>,
         candidates: &CandidateBatch<'_, B>,
@@ -589,7 +588,7 @@ impl<B: Backend> Weaver<B> {
     ) -> Result<TopKChildren<B>, WeaverEncodeError<B>> {
         let normalized_output = self
             .readout_norm
-            .encode(final_delta, 0, nodes.count, Some(residual_state), encoder)
+            .encode(residual_output, 0, nodes.count, Some(residual_state), encoder)
             .map_err(WeaverEncodeError::Backend)?;
         let query = self
             .readout_query_projection
@@ -743,7 +742,7 @@ impl<B: Backend> WeaverLayer<B> {
         })
     }
 
-    fn encode_prefix(
+    fn encode_prefix_tokens(
         &self,
         residual_input: Allocation<B>,
         residual_state: &mut Allocation<B>,
@@ -815,7 +814,7 @@ impl<B: Backend> WeaverLayer<B> {
         })
     }
 
-    fn encode_nodes(
+    fn encode_node_batch(
         &self,
         residual_input: Allocation<B>,
         residual_state: &mut Allocation<B>,
