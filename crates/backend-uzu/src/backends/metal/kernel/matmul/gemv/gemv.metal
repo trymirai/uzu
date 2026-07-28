@@ -68,6 +68,7 @@ KERNEL(Gemv)(
     const constant uint& batch_size,
     const constant float& ab_scale,
     const constant uint& group_count_x,
+    const constant uint& weight_codes_sign_flip_mask,
     const constant float& soft_cap
         OPTIONAL(output_transform.contains(GemmDTransform::SOFT_CAP)),
     const GemmDTransform output_transform SPECIALIZE,
@@ -99,7 +100,8 @@ KERNEL(Gemv)(
       tile.out_row,
       batch_idx,
       simd_lane,
-      tile.k_slice
+      tile.k_slice,
+      weight_codes_sign_flip_mask
   );
 
   Reduce<U, K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::run(

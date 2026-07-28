@@ -253,6 +253,7 @@ impl GemmKernel {
         let b_prologue = arguments.b.b_prologue();
         let bits_per_b = arguments.b.bits_per_b();
         let group_size = arguments.b.group_size();
+        let weights_signed_codes = arguments.b.signed_codes();
 
         let MatmulArguments {
             a,
@@ -341,6 +342,7 @@ impl GemmKernel {
                             b_prologue,
                             bits_per_b,
                             group_size,
+                            0,
                             split_k,
                             output_transform,
                             output_bias,
@@ -367,6 +369,7 @@ impl GemmKernel {
                     aligned_inner_iterations: k / tiling.block_k(),
                     use_morton,
                     ab_scale,
+                    weight_codes_sign_flip_mask: 0,
                 };
 
                 let specialization = GemmSpecialization {
@@ -411,6 +414,15 @@ impl GemmKernel {
             | MatmulB::ScaleSymmetricDequant {
                 ..
             }) => {
+                let weight_codes_sign_flip_mask: u32 = if weights_signed_codes {
+                    match bits_per_b {
+                        Some(4) => 0x88,
+                        Some(8) => 0x80,
+                        _ => 0,
+                    }
+                } else {
+                    0
+                };
                 let (weights, scales, biases, zero_points) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,
@@ -444,7 +456,14 @@ impl GemmKernel {
                         scales: activation_scales,
                         group_sums: activation_group_sums,
                     } => {
-                        validate_int8_activation_arguments(use_mxu, k, b_prologue, bits_per_b, group_size)?;
+                        validate_int8_activation_arguments(
+                            use_mxu,
+                            weights_signed_codes,
+                            k,
+                            b_prologue,
+                            bits_per_b,
+                            group_size,
+                        )?;
                         if output_transform.contains(GemmDTransform::SOFT_CAP) {
                             return Err(MatmulError::UnsupportedDOp {
                                 bit: GemmDTransform::SOFT_CAP,
@@ -470,7 +489,16 @@ impl GemmKernel {
                 };
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
-                let params = quant_params(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), ab_scale);
+                let params = quant_params(
+                    m,
+                    n,
+                    k,
+                    tiling,
+                    use_mxu,
+                    group_size.unwrap_or(0),
+                    ab_scale,
+                    weight_codes_sign_flip_mask,
+                );
                 let group_count_x = n.div_ceil(tiling.block_n());
                 let group_count_y = m.div_ceil(tiling.block_m());
 
@@ -514,6 +542,7 @@ impl GemmKernel {
                         b_prologue,
                         bits_per_b,
                         group_size,
+                        weight_codes_sign_flip_mask,
                         split_k,
                         output_transform,
                         output_bias,
@@ -595,6 +624,7 @@ impl GemmKernel {
         b_prologue: GemmBPrologueKind,
         bits_per_b: Option<u32>,
         group_size: Option<u32>,
+        weight_codes_sign_flip_mask: u32,
         split_k: u32,
         output_transform: GemmDTransform,
         output_bias: Option<&Allocation<Metal>>,
@@ -638,6 +668,7 @@ impl GemmKernel {
             aligned_inner_iterations: kp / k_step,
             use_morton: false,
             ab_scale: 1.0,
+            weight_codes_sign_flip_mask,
         };
         let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
         part_kernel.encode(
@@ -687,6 +718,7 @@ impl GemmKernel {
 
 fn validate_int8_activation_arguments(
     use_mxu: bool,
+    weights_signed_codes: bool,
     k: u32,
     b_prologue: GemmBPrologueKind,
     bits_per_b: Option<u32>,
@@ -694,6 +726,7 @@ fn validate_int8_activation_arguments(
 ) -> Result<(), MetalError> {
     let weight_gs_ok = matches!(weight_group_size, Some(32 | 64 | 128));
     let compatible = use_mxu
+        && weights_signed_codes
         && matches!(
             b_prologue,
             GemmBPrologueKind::ScaleSymmetricDequant
@@ -707,7 +740,7 @@ fn validate_int8_activation_arguments(
     if !compatible {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
-            reason: "symmetric int8 activations require MXU and unsigned 4/8-bit quantized weights with group size 32/64/128",
+            reason: "symmetric int8 activations require MXU and signed 4/8-bit quantized weight codes with group size 32/64/128",
         }
         .into());
     }
@@ -722,6 +755,7 @@ fn quant_params(
     use_mxu: bool,
     group_size: u32,
     ab_scale: f32,
+    weight_codes_sign_flip_mask: u32,
 ) -> GemmParams {
     GemmParams {
         M: m,
@@ -735,6 +769,7 @@ fn quant_params(
         aligned_inner_iterations: split_k_step(tiling, use_mxu, group_size, false).map_or(0, |step| k / step),
         use_morton: false,
         ab_scale,
+        weight_codes_sign_flip_mask,
     }
 }
 

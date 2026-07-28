@@ -79,26 +79,33 @@ METAL_FUNC char4 unpack_signed_nibbles_to_int8(uint packed) {
 }
 
 template <typename U, int N, int bits>
-inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local) {
+inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local, uint sign_flip_mask) {
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   if (bits == 4) {
     U s0 = scale;
     U s1 = scale / static_cast<U>(16.0f);
     for (int i = 0; i < (N / 2); i++) {
-      w_local[2 * i] = s0 * (w[i] & 0x0f) + bias;
-      w_local[2 * i + 1] = s1 * (w[i] & 0xf0) + bias;
+      const uint8_t word = w[i] ^ uint8_t(sign_flip_mask);
+      w_local[2 * i] = s0 * (word & 0x0f) + bias;
+      w_local[2 * i + 1] = s1 * (word & 0xf0) + bias;
     }
   } else if (bits == 8) {
     for (int i = 0; i < N; i++) {
-      w_local[i] = scale * w[i] + bias;
+      w_local[i] = scale * (w[i] ^ uint8_t(sign_flip_mask)) + bias;
     }
   }
 }
 
 template <>
-inline void dequantize<bfloat, 8, 4>(const device uint8_t* w, bfloat scale, bfloat bias, threadgroup bfloat* w_local) {
-  const uint32_t packed = *reinterpret_cast<const device uint32_t*>(w);
+inline void dequantize<bfloat, 8, 4>(
+    const device uint8_t* w,
+    bfloat scale,
+    bfloat bias,
+    threadgroup bfloat* w_local,
+    uint sign_flip_mask
+) {
+  const uint32_t packed = (*reinterpret_cast<const device uint32_t*>(w)) ^ (sign_flip_mask * 0x01010101u);
   const bfloat4 lo = bfloat4(as_type<uchar4>(packed & 0x0f0f0f0fu)) * scale + bias;
   const bfloat4 hi = bfloat4(as_type<uchar4>(packed & 0xf0f0f0f0u)) * (scale * bfloat(0.0625f)) + bias;
 

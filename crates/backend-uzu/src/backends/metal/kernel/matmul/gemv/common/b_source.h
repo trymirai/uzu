@@ -32,7 +32,8 @@ struct BSource {
       uint out_row,
       uint batch_idx,
       uint simd_lane,
-      uint k_slice
+      uint k_slice,
+      uint sign_flip_mask
   ) {
     if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
       FullPrecisionBSource<BT, AT, U, RESULTS_PER_SIMDGROUP, K_SPLIT, INPUT_ALIGNED>::accumulate(
@@ -62,7 +63,8 @@ struct BSource {
           out_vec_size,
           out_row,
           batch_idx,
-          simd_lane
+          simd_lane,
+          sign_flip_mask
       );
     }
   }

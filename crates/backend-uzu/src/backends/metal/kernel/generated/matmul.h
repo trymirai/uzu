@@ -17,5 +17,6 @@ typedef struct {
   uint32_t aligned_inner_iterations;
   bool use_morton;
   float ab_scale;
+  uint32_t weight_codes_sign_flip_mask;
 } GemmParams;
 } // namespace uzu::matmul

@@ -26,7 +26,9 @@ use crate::{
     },
     tests::{
         helpers::allocation_to_vec,
-        matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, run_quant_metal},
+        matmul::{
+            QuantBuffers, QuantInput, quant_arguments, quant_arguments_full_precision_a, run_quant_cpu, run_quant_metal,
+        },
     },
 };
 
@@ -526,6 +528,54 @@ fn a8w_mxu_parity_bf16(
 
 #[rstest]
 #[test_attr(uzu_test)]
+#[case::w4_sym(4u32, QuantizationMethod::ScaleSymmetric)]
+#[case::w4_bias(4u32, QuantizationMethod::ScaleBias)]
+#[case::w4_zp(4u32, QuantizationMethod::ScaleZeroPoint)]
+#[case::w8_sym(8u32, QuantizationMethod::ScaleSymmetric)]
+#[case::w8_bias(8u32, QuantizationMethod::ScaleBias)]
+#[case::w8_zp(8u32, QuantizationMethod::ScaleZeroPoint)]
+fn signed_weights_full_precision_activations_parity_bf16(
+    #[case] bits: u32,
+    #[case] method: QuantizationMethod,
+) {
+    let context = MetalContext::new().expect("Metal context");
+    let (m, k, n, group_size) = (2usize, 256usize, 128usize, 32u32);
+    let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0).with_prepared_a();
+    let reference_input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0);
+    let reference = run_quant_cpu::<bf16>(&reference_input);
+
+    for (label, path) in [("gemv", None), ("simdgroup", Some(GemmDispatchPath::Simdgroup))] {
+        let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+        let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+            &context,
+            bf16::data_type(),
+            bf16::data_type(),
+            bf16::data_type(),
+        )
+        .expect("MatmulMetalKernel");
+        let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
+        let args = quant_arguments_full_precision_a(&mut buffers, &input);
+        match path {
+            None => matmul.encode(args, &mut encoder).expect("matmul encode failed"),
+            Some(gemm_path) => matmul
+                .gemm
+                .encode_dispatch_path(args, gemm_path, &mut encoder)
+                .expect("gemm encode_dispatch_path failed"),
+        }
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
+        assert_parity::<bf16>(
+            &format!("signed weights FP-A {label} bits={bits} method={method:?}"),
+            &reference,
+            &actual,
+            0.05,
+            0.5,
+        );
+    }
+}
+
+#[rstest]
+#[test_attr(uzu_test)]
 #[case::w4_bias(4u32, false)]
 #[case::w8_bias(8u32, false)]
 #[case::w4_rht_bias(4u32, true)]
@@ -645,6 +695,7 @@ fn run_widened_f32<B: Backend>(
             biases: buffers.bias.as_ref().expect("bias buffer"),
             mode: input.mode,
             group_size: input.group_size,
+            signed_codes: input.prepared_a.is_some(),
         },
         QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
             b: &buffers.w,
@@ -652,12 +703,14 @@ fn run_widened_f32<B: Backend>(
             zero_points: buffers.zp.as_ref().expect("zp buffer"),
             mode: input.mode,
             group_size: input.group_size,
+            signed_codes: input.prepared_a.is_some(),
         },
         QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
             b: &buffers.w,
             scales: &buffers.scales,
             mode: input.mode,
             group_size: input.group_size,
+            signed_codes: input.prepared_a.is_some(),
         },
     };
     let mut encoder = Encoder::<B>::new(context).expect("encoder");

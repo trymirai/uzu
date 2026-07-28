@@ -256,6 +256,7 @@ fn gemv_gather() {
                     biases: buffers.bias.as_ref().expect("bias buffer"),
                     mode: input.mode,
                     group_size: input.group_size,
+                    signed_codes: false,
                 },
                 QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
                     b: &buffers.w,
@@ -263,12 +264,14 @@ fn gemv_gather() {
                     zero_points: buffers.zp.as_ref().expect("zp buffer"),
                     mode: input.mode,
                     group_size: input.group_size,
+                    signed_codes: false,
                 },
                 QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
                     b: &buffers.w,
                     scales: &buffers.scales,
                     mode: input.mode,
                     group_size: input.group_size,
+                    signed_codes: false,
                 },
             };
             (

@@ -30,7 +30,8 @@ struct QuantizedBSource {
       uint out_vec_size,
       uint out_row,
       uint batch_idx,
-      uint simd_lane
+      uint simd_lane,
+      uint sign_flip_mask
   ) {
     constexpr uint pack_factor = get_pack_factor<BITS, 32>();
     constexpr uint bytes_per_pack = get_bytes_per_pack<BITS, 32>();
@@ -71,7 +72,8 @@ struct QuantizedBSource {
             input_values,
             row_params.scale[row],
             row_params.offset[row],
-            input_sum
+            input_sum,
+            sign_flip_mask
         );
       }
 
@@ -100,7 +102,8 @@ struct QuantizedBSource {
               row_params.scale[row],
               row_params.offset[row],
               input_sum,
-              remaining
+              remaining,
+              sign_flip_mask
           );
         }
       }

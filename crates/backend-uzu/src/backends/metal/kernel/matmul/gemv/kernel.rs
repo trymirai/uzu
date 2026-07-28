@@ -233,6 +233,7 @@ impl GemvDispatch {
                     m,
                     ab_scale,
                     group_count_x,
+                    0,
                     soft_cap,
                     encoder,
                 );
@@ -246,6 +247,15 @@ impl GemvDispatch {
             | MatmulB::ScaleSymmetricDequant {
                 ..
             }) => {
+                let weight_codes_sign_flip_mask: u32 = if quant_b.signed_codes() {
+                    match quant_b.bits_per_b() {
+                        Some(4) => 0x88,
+                        Some(8) => 0x80,
+                        _ => 0,
+                    }
+                } else {
+                    0
+                };
                 let (weights, scales, zero_points, biases) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,
@@ -283,6 +293,7 @@ impl GemvDispatch {
                     m,
                     ab_scale,
                     group_count_x,
+                    weight_codes_sign_flip_mask,
                     soft_cap,
                     encoder,
                 );

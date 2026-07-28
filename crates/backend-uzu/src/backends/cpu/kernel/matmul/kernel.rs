@@ -187,7 +187,6 @@ impl MatmulKernel for MatmulCpuKernel {
                     ..
                 } => None,
             };
-            let signed_codes = matches!(a_data, AData::Int8 { .. });
 
             unsafe {
                 for row in 0..m_u {
@@ -233,16 +232,17 @@ impl MatmulKernel for MatmulCpuKernel {
                                     biases,
                                     bits,
                                     group_size,
+                                    signed_codes,
                                 } => {
                                     let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
                                     let weight_linear_index = b_col * k_u + inner;
                                     let word_index = weight_linear_index / pack_factor;
-                                    let bit_offset = (weight_linear_index % pack_factor) * (*bits as usize);
+                                    let bit_offset = (weight_linear_index % pack_factor) * *bits;
                                     let weights_words = weights.as_ptr() as *const u32;
                                     let word = weights_words.add(word_index).read_unaligned();
                                     let code_mask = (1u32 << bits) - 1;
                                     let mut weight_code = ((word >> bit_offset) & code_mask) as u8;
-                                    if signed_codes {
+                                    if *signed_codes {
                                         weight_code ^= 1u8 << (bits - 1);
                                     }
                                     let quantized_value = f32::from(weight_code);

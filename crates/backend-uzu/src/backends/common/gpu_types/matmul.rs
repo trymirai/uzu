@@ -13,4 +13,5 @@ pub struct GemmParams {
     pub aligned_inner_iterations: u32,
     pub use_morton: bool,
     pub ab_scale: f32,
+    pub weight_codes_sign_flip_mask: u32,
 }

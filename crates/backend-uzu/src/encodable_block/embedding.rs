@@ -916,6 +916,7 @@ fn quantized_matmul_b<'a, B: Backend>(
             biases: zero_points_or_biases.expect("ScaleBias quantization requires biases"),
             mode: readout_config.mode,
             group_size: readout_config.group_size,
+            signed_codes: false,
         },
         QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
             b: weights,
@@ -923,12 +924,14 @@ fn quantized_matmul_b<'a, B: Backend>(
             zero_points: zero_points_or_biases.expect("ScaleZeroPoint quantization requires zero_points"),
             mode: readout_config.mode,
             group_size: readout_config.group_size,
+            signed_codes: false,
         },
         QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
             b: weights,
             scales,
             mode: readout_config.mode,
             group_size: readout_config.group_size,
+            signed_codes: false,
         },
     }
 }

@@ -38,6 +38,7 @@ enum Mode<B: Backend> {
         scales: Allocation<B>,
         zero_points_or_biases: Option<Allocation<B>>,
         output_hadamard_factors: Option<Allocation<B>>,
+        signed_codes: bool,
     },
 }
 
@@ -187,6 +188,7 @@ impl<B: Backend> LinearMatmul<B> {
                 scales,
                 zero_points_or_biases,
                 output_hadamard_factors,
+                signed_codes: false,
             },
         })
     }
@@ -212,11 +214,15 @@ impl<B: Backend> LinearMatmul<B> {
     pub(super) fn sign_convert_quantized_weights_for_int8_activations(&mut self) {
         let Mode::Quantized {
             mode,
+            signed_codes,
             ..
-        } = &self.mode
+        } = &mut self.mode
         else {
             return;
         };
+        if *signed_codes {
+            return;
+        }
         let Some(sign_flip_mask) = mode.weight_codes_sign_flip_mask() else {
             return;
         };
@@ -224,6 +230,7 @@ impl<B: Backend> LinearMatmul<B> {
         let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(self.weights.as_slice_mut());
         words.iter_mut().for_each(|word| *word ^= broadcast_mask);
         prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
+        *signed_codes = true;
     }
 
     pub(super) fn encode_with_a(
@@ -245,6 +252,7 @@ impl<B: Backend> LinearMatmul<B> {
                 group_size,
                 scales,
                 zero_points_or_biases,
+                signed_codes,
                 ..
             } => match method {
                 QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
@@ -253,6 +261,7 @@ impl<B: Backend> LinearMatmul<B> {
                     biases: zero_points_or_biases.as_ref().expect("ScaleBias quantization requires biases"),
                     mode: *mode,
                     group_size: *group_size,
+                    signed_codes: *signed_codes,
                 },
                 QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
                     b: &self.weights,
@@ -262,12 +271,14 @@ impl<B: Backend> LinearMatmul<B> {
                         .expect("ScaleZeroPoint quantization requires zero_points"),
                     mode: *mode,
                     group_size: *group_size,
+                    signed_codes: *signed_codes,
                 },
                 QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
                     b: &self.weights,
                     scales,
                     mode: *mode,
                     group_size: *group_size,
+                    signed_codes: *signed_codes,
                 },
             },
         };
