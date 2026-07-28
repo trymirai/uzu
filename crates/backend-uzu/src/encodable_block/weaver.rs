@@ -369,7 +369,7 @@ impl<B: Backend> Weaver<B> {
             return Err(WeaverEncodeError::InvalidTreeInput);
         }
 
-        let prefix_cache = self.build_prefix(inputs.target_hidden, inputs.draft_hidden, lookahead_count, encoder)?;
+        let prefix_cache = self.encode_prefix(inputs.target_hidden, inputs.draft_hidden, lookahead_count, encoder)?;
         let mut node_cache = self.create_node_kv_cache(tree_slot_count, context)?;
 
         let mut tree_init = vec![0u32; TreeIdx::COUNT * tree_slot_count];
@@ -460,7 +460,7 @@ impl<B: Backend> Weaver<B> {
                 candidates_per_node: inputs.candidates.candidates_per_depth,
                 depth_seeds: &depth_seeds,
             };
-            let selected_children = self.expand_nodes(
+            let selected_children = self.encode_nodes(
                 &prefix_cache,
                 &nodes,
                 &candidates,
@@ -489,7 +489,7 @@ impl<B: Backend> Weaver<B> {
         })
     }
 
-    fn build_prefix(
+    fn encode_prefix(
         &self,
         target_hidden: &Allocation<B>,
         draft_hidden: &Allocation<B>,
@@ -543,7 +543,7 @@ impl<B: Backend> Weaver<B> {
         }
         prefix_layers.push(
             last_layer
-                .prepare_prefix_attention(&residual_input, &mut residual_state, token_count, encoder)
+                .encode_prefix_attention(&residual_input, &mut residual_state, token_count, encoder)
                 .map_err(WeaverEncodeError::Backend)?
                 .kv_cache,
         );
@@ -559,7 +559,7 @@ impl<B: Backend> Weaver<B> {
         context: &B::Context,
     ) -> Result<NodeKvCache<B>, WeaverEncodeError<B>> {
         assert!(capacity > 0, "Weaver node capacity must be positive");
-        let kernel_capacity = u32::try_from(capacity).expect("Weaver node capacity exceeds the kernel limit");
+        let kernel_capacity = capacity as u32;
         let kv_size = size_for_shape(&[2, capacity, self.model_dim], DATA_TYPE);
         let layers = (0..self.layers.len())
             .map(|_| context.create_allocation(kv_size, AllocationType::Global).map_err(WeaverEncodeError::Backend))
@@ -570,7 +570,7 @@ impl<B: Backend> Weaver<B> {
         })
     }
 
-    fn expand_nodes(
+    fn encode_nodes(
         &self,
         prefix_cache: &PrefixKvCache<B>,
         nodes: &NodeBatch<'_, B>,
@@ -616,7 +616,7 @@ impl<B: Backend> Weaver<B> {
                 .map_err(WeaverEncodeError::Backend)?;
         }
 
-        self.select_children(
+        self.encode_children(
             &residual_input,
             &mut residual_state,
             nodes,
@@ -627,7 +627,7 @@ impl<B: Backend> Weaver<B> {
         )
     }
 
-    fn select_children(
+    fn encode_children(
         &self,
         final_delta: &Allocation<B>,
         residual_state: &mut Allocation<B>,
@@ -803,7 +803,7 @@ impl<B: Backend> WeaverLayer<B> {
         let PreparedPrefixAttention {
             queries,
             kv_cache,
-        } = self.prepare_prefix_attention(&residual_input, residual_state, token_count, encoder)?;
+        } = self.encode_prefix_attention(&residual_input, residual_state, token_count, encoder)?;
         let state_type = AttentionStateType::Full {
             length: 0,
         };
@@ -827,7 +827,7 @@ impl<B: Backend> WeaverLayer<B> {
         })
     }
 
-    fn prepare_prefix_attention(
+    fn encode_prefix_attention(
         &self,
         residual_input: &Allocation<B>,
         residual_state: &mut Allocation<B>,
