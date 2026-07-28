@@ -473,6 +473,46 @@ fn input_and_output_use_separate_serde_contracts() {
     assert_eq!(output_schema["required"], serde_json::json!(["output_only"]));
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct RecursiveRequest {
+    value: String,
+    child: Option<Box<RecursiveRequest>>,
+}
+
+#[uzu_tool_function]
+fn recursive_depth(request: RecursiveRequest) -> usize {
+    let child_depth = request.child.map_or(0, |child| recursive_depth::call(*child));
+    let _ = request.value;
+    child_depth + 1
+}
+
+#[tokio::test]
+async fn recursive_parameter_references_the_nested_parameter_root() {
+    let definition: ToolDescriptor = recursive_depth.into();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
+
+    assert_eq!(parameters["properties"]["request"]["properties"]["child"]["anyOf"][0]["$ref"], "#/properties/request");
+
+    let result: serde_json::Value = definition
+        .execute(
+            serde_json::json!({
+                "request": {
+                    "value": "root",
+                    "child": {
+                        "value": "leaf",
+                        "child": null
+                    }
+                }
+            })
+            .into(),
+        )
+        .await
+        .unwrap()
+        .try_into()
+        .unwrap();
+    assert_eq!(result, serde_json::json!(2));
+}
+
 /// Reset the session state.
 #[uzu_tool_function]
 fn reset() {}

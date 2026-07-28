@@ -1,5 +1,8 @@
-use schemars::generate::SchemaSettings;
 pub use schemars::{JsonSchema, Schema};
+use schemars::{
+    generate::SchemaSettings,
+    transform::{Transform, transform_subschemas},
+};
 use serde_json::{Map, Value as JsonValue};
 use shoji::types::basic::Value;
 
@@ -41,8 +44,19 @@ where
     RK: Into<String>,
     R: IntoIterator<Item = RK>,
 {
-    let properties =
-        properties.into_iter().map(|(name, schema)| (name.into(), schema.to_value())).collect::<Map<_, _>>();
+    let properties = properties
+        .into_iter()
+        .map(|(name, schema)| {
+            let name = name.into();
+            let mut schema = schema;
+            let property_pointer = format!("/properties/{}", escape_json_pointer_token(&name));
+            RebaseLocalReferences {
+                new_root: &property_pointer,
+            }
+            .transform(&mut schema);
+            (name, schema.to_value())
+        })
+        .collect::<Map<_, _>>();
     let required: Vec<JsonValue> = required.into_iter().map(|name| JsonValue::String(name.into())).collect();
 
     Schema::try_from(serde_json::json!({
@@ -51,6 +65,37 @@ where
         "required": required,
     }))
     .expect("the generated tool parameter schema is an object")
+}
+
+fn escape_json_pointer_token(token: &str) -> String {
+    token.replace('~', "~0").replace('/', "~1")
+}
+
+struct RebaseLocalReferences<'a> {
+    new_root: &'a str,
+}
+
+impl Transform for RebaseLocalReferences<'_> {
+    fn transform(
+        &mut self,
+        schema: &mut Schema,
+    ) {
+        // A nested `$id` starts a new schema resource whose references keep their own scope.
+        if schema.get("$id").and_then(JsonValue::as_str).is_some() {
+            return;
+        }
+
+        // Rebase JSON Pointer fragments. URI references and anchor fragments are unchanged.
+        if let Some(JsonValue::String(reference)) = schema.get_mut("$ref") {
+            if reference == "#" {
+                *reference = format!("#{}", self.new_root);
+            } else if let Some(pointer) = reference.strip_prefix("#/") {
+                *reference = format!("#{}/{pointer}", self.new_root);
+            }
+        }
+
+        transform_subschemas(self, schema);
+    }
 }
 
 pub fn with_description(
