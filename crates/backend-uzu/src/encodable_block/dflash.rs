@@ -8,7 +8,6 @@ use crate::{
     config::{
         dflash::{DFlashDraftConfig, DFlashDraftLayerConfig},
         mlp::AnyMLPConfig,
-        normalization::NormalizationConfig,
         rope::AnyRoPEConfig,
     },
     data_type::DataType,
@@ -38,7 +37,7 @@ pub struct DFlashState<B: Backend> {
 }
 
 impl<B: Backend> DFlashState<B> {
-    pub(crate) fn context_length(&self) -> usize {
+    pub fn context_length(&self) -> usize {
         self.context_length
     }
 }
@@ -104,7 +103,7 @@ pub enum DFlashDraftEncodeError<B: Backend> {
 }
 
 impl<B: Backend> DFlashDraft<B> {
-    pub(crate) fn new(
+    pub fn new(
         context: &B::Context,
         config: &DFlashDraftConfig,
         parameter_tree: &ParameterTree<B>,
@@ -186,7 +185,7 @@ impl<B: Backend> DFlashDraft<B> {
         })
     }
 
-    pub(crate) fn empty_state(
+    pub fn empty_state(
         &self,
         context_capacity: usize,
         context: &B::Context,
@@ -204,7 +203,7 @@ impl<B: Backend> DFlashDraft<B> {
         })
     }
 
-    pub(crate) fn append_state(
+    pub fn append_state(
         &self,
         state: &mut DFlashState<B>,
         target_features: &[Allocation<B>],
@@ -307,7 +306,7 @@ impl<B: Backend> DFlashDraft<B> {
         self.output_norm.encode(&hidden, 0, batch_dim, Some(&mut residual), encoder)
     }
 
-    pub(crate) fn encode_draft(
+    pub fn encode_draft(
         &self,
         state: &mut DFlashState<B>,
         target_output_token: u32,
