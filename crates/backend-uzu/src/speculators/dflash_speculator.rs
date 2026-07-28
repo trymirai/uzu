@@ -175,9 +175,8 @@ impl<B: Backend> DFlashSpeculator<B> {
 
         let mut encoder = Encoder::new(&*self.context).map_err(DFlashTreeError::Backend)?;
         let DFlashDraftOutput {
-            candidate_ids: pool_ids,
-            candidate_scores: pool_scores,
-            hidden: draft_hidden,
+            candidates,
+            draft_hidden,
         } = self.model.encode_draft(state, target_output_token, target_embedding, pool_size, &mut encoder)?;
 
         if let Some(weaver) = self.weaver.as_ref() {
@@ -189,10 +188,10 @@ impl<B: Backend> DFlashSpeculator<B> {
                     target_hidden: target_output_norm,
                     draft_hidden: &draft_hidden,
                     target_embedding,
-                    candidate_ids: &pool_ids,
-                    candidate_scores: &pool_scores,
-                    candidate_rows: block_size - 1,
-                    candidates_per_row: pool_size,
+                    candidate_ids: &candidates.ids,
+                    candidate_scores: &candidates.scores,
+                    candidate_rows: candidates.rows,
+                    candidates_per_row: candidates.candidates_per_row,
                     depth_seeds: &depth_seeds,
                     root_token_id: target_output_token,
                     tree_budget: options.budget,
@@ -204,8 +203,7 @@ impl<B: Backend> DFlashSpeculator<B> {
             )?;
             let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
             let nodes = tree.decode();
-            drop(pool_ids);
-            drop(pool_scores);
+            drop(candidates);
             drop(draft_hidden);
             drop(completed);
             return Ok(Self::finish_tree(
@@ -218,9 +216,8 @@ impl<B: Backend> DFlashSpeculator<B> {
         }
 
         let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
-        let pool_id_values = pool_ids.copyout::<u32>();
-        drop(pool_ids);
-        drop(pool_scores);
+        let candidate_id_values = candidates.ids.copyout::<u32>();
+        drop(candidates);
         drop(draft_hidden);
         drop(completed);
 
@@ -230,7 +227,7 @@ impl<B: Backend> DFlashSpeculator<B> {
             children: Vec::new(),
         }];
         for depth in 0..options.budget.min(block_size.saturating_sub(1)) {
-            let token = pool_id_values[depth * pool_size];
+            let token = candidate_id_values[depth * pool_size];
             let parent = nodes.len() - 1;
             let index = nodes.len();
             nodes.push(ProposalNode {
