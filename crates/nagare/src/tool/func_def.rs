@@ -86,7 +86,17 @@ fn coerce_to_schema(
     value: serde_json::Value,
     schema: &serde_json::Value,
 ) -> serde_json::Value {
+    coerce_to_schema_with_root(value, schema, schema)
+}
+
+fn coerce_to_schema_with_root(
+    value: serde_json::Value,
+    schema: &serde_json::Value,
+    root_schema: &serde_json::Value,
+) -> serde_json::Value {
     use serde_json::Value as Json;
+
+    let schema = resolve_local_schema(schema, root_schema);
 
     if let Some(branches) = schema.get("anyOf").and_then(Json::as_array)
         && branches.len() == 2
@@ -94,7 +104,7 @@ fn coerce_to_schema(
         && let Some(non_null_schema) =
             branches.iter().find(|branch| branch.get("type").and_then(Json::as_str) != Some("null"))
     {
-        return coerce_to_schema(value, non_null_schema);
+        return coerce_to_schema_with_root(value, non_null_schema, root_schema);
     }
 
     let schema_type = match schema.get("type") {
@@ -114,7 +124,7 @@ fn coerce_to_schema(
                 map.into_iter()
                     .map(|(key, value)| {
                         let value = match schema.get("properties").and_then(|properties| properties.get(&key)) {
-                            Some(property_schema) => coerce_to_schema(value, property_schema),
+                            Some(property_schema) => coerce_to_schema_with_root(value, property_schema, root_schema),
                             None => value,
                         };
                         (key, value)
@@ -124,9 +134,9 @@ fn coerce_to_schema(
             other => other,
         },
         Some("array") => match (value, schema.get("items")) {
-            (Json::Array(items), Some(item_schema)) => {
-                Json::Array(items.into_iter().map(|item| coerce_to_schema(item, item_schema)).collect())
-            },
+            (Json::Array(items), Some(item_schema)) => Json::Array(
+                items.into_iter().map(|item| coerce_to_schema_with_root(item, item_schema, root_schema)).collect(),
+            ),
             (other, _) => other,
         },
         Some("number") => match &value {
@@ -161,4 +171,36 @@ fn coerce_to_schema(
         },
         _ => value,
     }
+}
+
+fn resolve_local_schema<'a>(
+    mut schema: &'a serde_json::Value,
+    root_schema: &'a serde_json::Value,
+) -> &'a serde_json::Value {
+    use serde_json::Value as Json;
+
+    let mut visited = Vec::new();
+    while let Some(reference) = schema.get("$ref").and_then(Json::as_str) {
+        if visited.contains(&reference) {
+            break;
+        }
+        visited.push(reference);
+
+        let Some(pointer) = reference.strip_prefix('#') else {
+            break;
+        };
+        let target = if pointer.is_empty() {
+            Some(root_schema)
+        } else if pointer.starts_with('/') {
+            root_schema.pointer(pointer)
+        } else {
+            // Anchor fragments are not JSON Pointers.
+            None
+        };
+        let Some(target) = target else {
+            break;
+        };
+        schema = target;
+    }
+    schema
 }
