@@ -3,9 +3,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
-        gpu_types::trie::TrieNode,
-        kernel::{TensorAddSwapKernel, radix_top_k_small::RadixTopKSmall},
+        Allocation, Backend, Encoder, Kernels, gpu_types::trie::TrieNode, kernel::radix_top_k_small::RadixTopKSmall,
     },
     config::{
         dflash::{DFlashDraftConfig, DFlashDraftLayerConfig},
@@ -63,7 +61,6 @@ struct DFlashDraftLayer<B: Backend> {
     input_norm: Normalization<B>,
     post_attention_norm: Normalization<B>,
     mlp: Box<dyn Mlp<B>>,
-    residual_add: <B::Kernels as Kernels>::TensorAddSwapKernel,
 }
 
 #[derive(Debug, Error)]
@@ -142,6 +139,7 @@ impl<B: Backend> DFlashDraft<B> {
             .map(|(index, layer_config)| {
                 DFlashDraftLayer::new(
                     context,
+                    index,
                     config.model_dim,
                     config.hidden_dim,
                     layer_config,
@@ -151,12 +149,15 @@ impl<B: Backend> DFlashDraft<B> {
                 )
             })
             .collect::<Result<Box<[_]>, DFlashDraftNewError<B>>>()?;
-        let output_norm = plain_norm(
-            context,
+        let output_norm = Normalization::new(
             config.model_dim,
+            None,
+            ShortcutMode::Add,
+            PostLayerScalar::None,
+            data_type,
             &config.output_norm_config,
             &parameter_tree.subtree("output_norm")?,
-            data_type,
+            context,
         )?;
         let top_k = <B::Kernels as Kernels>::RadixTopKSmall::new(context, config.vocab_size as u32)
             .map_err(DFlashDraftNewError::Backend)?;
@@ -276,34 +277,23 @@ impl<B: Backend> DFlashDraft<B> {
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, encoder)?;
 
         let mut hidden = token_embeddings;
+        let mut residual = encoder.allocate_scratch(hidden.size())?;
         for (layer, state_layer) in self.layers.iter().zip(state.layer_states.iter_mut()) {
             state_layer.prepare(state.context_length, batch_dim, encoder.context())?;
-            let normalized = layer.input_norm.encode(&hidden, 0, batch_dim, None, encoder)?;
-            let mut attention_output = layer.attention.encode(
+            let normalized = layer.input_norm.encode(&hidden, 0, batch_dim, Some(&mut residual), encoder)?;
+            let attention_output = layer.attention.encode(
                 normalized,
                 Some(&rope),
                 &batch_topology,
                 Some(MaybeMut::Mut(state_layer)),
                 encoder,
             )?;
-            let mut attention_residual = encoder.allocate_scratch(hidden.size())?;
-            encoder.encode_copy(&hidden, .., &mut attention_residual, ..);
-            layer.residual_add.encode(
-                &mut attention_residual,
-                &mut attention_output,
-                (batch_dim * self.model_dim) as u32,
-                encoder,
-            );
-            let normalized = layer.post_attention_norm.encode(&attention_residual, 0, batch_dim, None, encoder)?;
-            let mut mlp_output = layer.mlp.encode(normalized, batch_dim, encoder)?;
-
-            let mut output = encoder.allocate_scratch(hidden.size())?;
-            encoder.encode_copy(&attention_residual, .., &mut output, ..);
-            layer.residual_add.encode(&mut output, &mut mlp_output, (batch_dim * self.model_dim) as u32, encoder);
-            hidden = output;
+            let normalized =
+                layer.post_attention_norm.encode(&attention_output, 0, batch_dim, Some(&mut residual), encoder)?;
+            hidden = layer.mlp.encode(normalized, batch_dim, encoder)?;
         }
 
-        self.output_norm.encode(&hidden, 0, batch_dim, None, encoder)
+        self.output_norm.encode(&hidden, 0, batch_dim, Some(&mut residual), encoder)
     }
 
     pub(crate) fn encode_top_k(
@@ -328,6 +318,7 @@ impl<B: Backend> DFlashDraft<B> {
 impl<B: Backend> DFlashDraftLayer<B> {
     fn new(
         context: &B::Context,
+        layer_index: usize,
         model_dim: usize,
         hidden_dim: usize,
         config: &DFlashDraftLayerConfig,
@@ -349,32 +340,38 @@ impl<B: Backend> DFlashDraftLayer<B> {
             &parameter_tree.subtree("attention")?,
             context,
         )?;
-        let input_norm = plain_norm(
-            context,
+        let input_norm = Normalization::new(
             model_dim,
+            None,
+            if layer_index == 0 {
+                ShortcutMode::Copy
+            } else {
+                ShortcutMode::Add
+            },
+            PostLayerScalar::None,
+            data_type,
             &config.input_norm_config,
             &parameter_tree.subtree("input_norm")?,
-            data_type,
-        )?;
-        let post_attention_norm = plain_norm(
             context,
+        )?;
+        let post_attention_norm = Normalization::new(
             model_dim,
+            None,
+            ShortcutMode::Add,
+            PostLayerScalar::None,
+            data_type,
             &config.post_attention_norm_config,
             &parameter_tree.subtree("post_attention_norm")?,
-            data_type,
+            context,
         )?;
         let mlp_config = AnyMLPConfig::DenseMLPConfig(config.mlp_config.clone());
         let (mlp, _) =
             <dyn Mlp<B>>::new(&mlp_config, model_dim, hidden_dim, context, &parameter_tree.subtree("mlp")?, data_type)?;
-        let residual_add = <B::Kernels as Kernels>::TensorAddSwapKernel::new(context, data_type)
-            .map_err(DFlashDraftNewError::Backend)?;
-
         Ok(Self {
             attention,
             input_norm,
             post_attention_norm,
             mlp,
-            residual_add,
         })
     }
 }
