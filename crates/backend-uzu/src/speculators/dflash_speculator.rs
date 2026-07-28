@@ -50,7 +50,6 @@ pub enum DFlashTreeError<B: Backend> {
 struct DFlashChainOutput<B: Backend> {
     pool_ids: Allocation<B>,
     pool_scores: Allocation<B>,
-    draft_logits: Allocation<B>,
     draft_hidden: Allocation<B>,
 }
 
@@ -181,7 +180,6 @@ impl<B: Backend> DFlashSpeculator<B> {
         let DFlashChainOutput {
             pool_ids,
             pool_scores,
-            draft_logits,
             draft_hidden,
         } = self.encode_dflash_chain(
             &mut encoder,
@@ -220,7 +218,6 @@ impl<B: Backend> DFlashSpeculator<B> {
             let nodes = tree.decode();
             drop(pool_ids);
             drop(pool_scores);
-            drop(draft_logits);
             drop(draft_hidden);
             drop(completed);
             return Ok(Self::finish_tree(
@@ -236,7 +233,6 @@ impl<B: Backend> DFlashSpeculator<B> {
         let pool_id_values = pool_ids.copyout::<u32>();
         drop(pool_ids);
         drop(pool_scores);
-        drop(draft_logits);
         drop(draft_hidden);
         drop(completed);
 
@@ -299,12 +295,12 @@ impl<B: Backend> DFlashSpeculator<B> {
             .model
             .encode_top_k(&draft_logits, block_size - 1, pool_size, encoder)
             .map_err(DFlashTreeError::Backend)?;
+        drop(draft_logits);
         drop(noise_ids);
         drop(lookahead_hidden);
         Ok(DFlashChainOutput {
             pool_ids,
             pool_scores,
-            draft_logits,
             draft_hidden,
         })
     }
