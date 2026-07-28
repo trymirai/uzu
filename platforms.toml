@@ -177,4 +177,3 @@ chat = { title = "Chat", description = "In this example, we will download a mode
 chat-cloud = { title = "Chat with the cloud model", description = "In this example, we will get a reply to a specific list of messages from a cloud model:" }
 chat-structured-output = { title = "Chat with structured output", description = "Sometimes you want the generated output to be valid JSON with predefined fields. You can use `Grammar` to manually specify a JSON schema for the response you want to receive:" }
 classification = { title = "Classification", description = "In this example, we will use a classification model to determine whether the user's input is safe from a moderation perspective:" }
-text-to-speech = { title = "Text to Speech", description = "In this example, we will generate audio from text:" }
