@@ -3,9 +3,9 @@ use crate::{
     backends::{
         common::{
             Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
-            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder, QuantizationMode},
+            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMode},
             kernel::{
-                HadamardTransformKernel, TensorAddBiasKernel,
+                ActivationTransform, TensorAddBiasKernel,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
@@ -19,7 +19,7 @@ pub struct MatmulCpuKernel {
     weights_data_type: DataType,
     input_data_type: DataType,
     output_data_type: DataType,
-    hadamard: <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel,
+    output_rht: ActivationTransform<Cpu>,
     bias_add: <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel,
 }
 
@@ -37,11 +37,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 return Err(MatmulError::<Cpu>::UnsupportedDataType(data_type).into());
             }
         }
-        let hadamard = <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
-            context,
-            output_data_type,
-            HadamardTransformOrder::Output,
-        )?;
+        let output_rht = ActivationTransform::output_rht(context, output_data_type)?;
         let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(
             context,
             output_data_type,
@@ -53,7 +49,7 @@ impl MatmulKernel for MatmulCpuKernel {
             weights_data_type,
             input_data_type,
             output_data_type,
-            hadamard,
+            output_rht,
             bias_add,
         })
     }
@@ -297,7 +293,12 @@ impl MatmulKernel for MatmulCpuKernel {
         });
 
         if let Some(factors) = post_rht {
-            self.hadamard.encode(&mut *d, factors, n, m, encoder);
+            let elem_bytes = (m_u * n_u) * output_data_type.size_in_bytes();
+            let mut src = encoder.allocate_scratch(elem_bytes)?;
+            encoder.encode_copy(&*d, .., &mut src, ..);
+            let mut q_scratch = encoder.allocate_scratch(elem_bytes)?;
+            let mut scales_scratch = encoder.allocate_scratch(std::mem::size_of::<f32>())?;
+            self.output_rht.encode_fp(&src, &mut *d, &mut q_scratch, &mut scales_scratch, factors, n, m, encoder);
             if let Some(bias) = bias_alloc {
                 let output_length = m.checked_mul(n).expect("matmul output length must fit in u32");
                 self.bias_add.encode(

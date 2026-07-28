@@ -1,5 +1,12 @@
 use crate::{
-    backends::common::{Backend, BufferArg, Encoder, Kernels, kernel::matmul::arguments::MatmulArguments},
+    backends::common::{
+        Backend, BufferArg, Encoder, Kernels,
+        gpu_types::gemm::GemmBPrologueKind,
+        kernel::matmul::{
+            arguments::MatmulArguments,
+            routing::{MatmulPath, MatmulShape},
+        },
+    },
     data_type::DataType,
 };
 
@@ -18,4 +25,13 @@ pub trait MatmulKernel: Sized + Send + Sync {
         arguments: MatmulArguments<'a, 'b, 'd, Self::Backend, TB>,
         encoder: &mut Encoder<Self::Backend>,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
+
+    fn select_path(
+        &self,
+        _shape: &MatmulShape,
+        _b_prologue: GemmBPrologueKind,
+        _context: &<Self::Backend as Backend>::Context,
+    ) -> MatmulPath {
+        MatmulPath::Gemm
+    }
 }

@@ -4,11 +4,11 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder,
-        gpu_types::{QuantizationMethod, QuantizationMode},
+        Allocation, Backend, Context, DeviceCapabilities, Encoder,
+        gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmBPrologueKind},
         kernel::{
             Kernels,
-            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulPath, MatmulShape},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout, int_spec::IntSpec, mlx_spec::MLXSpec},
@@ -48,6 +48,7 @@ pub struct LinearMatmul<B: Backend> {
     biases: Option<Allocation<B>>,
     input_dim: usize,
     output_dim: usize,
+    input_data_type: DataType,
     output_data_type: DataType,
     mode: Mode<B>,
 }
@@ -86,6 +87,7 @@ impl<B: Backend> LinearMatmul<B> {
             biases,
             input_dim,
             output_dim,
+            input_data_type,
             output_data_type,
             mode: Mode::FullPrecision,
         })
@@ -180,6 +182,7 @@ impl<B: Backend> LinearMatmul<B> {
             biases,
             input_dim,
             output_dim,
+            input_data_type,
             output_data_type,
             mode: Mode::Quantized {
                 method: quantization_method,
@@ -242,7 +245,44 @@ impl<B: Backend> LinearMatmul<B> {
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
-        let b = match &self.mode {
+        let b = self.matmul_b();
+
+        let rht_factors = match &self.mode {
+            Mode::Quantized {
+                output_hadamard_factors: Some(factors),
+                ..
+            } => Some(factors),
+            _ => None,
+        };
+        let d_transform = MatmulDOps {
+            bias: self.biases.as_ref(),
+            rht_factors,
+            ..MatmulDOps::none()
+        };
+
+        self.kernel.lock().encode(
+            MatmulArguments {
+                a,
+                b,
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut output,
+                d_transform,
+                gather_indices: None,
+                m: batch_dim as u32,
+                n: self.output_dim as u32,
+                k: self.input_dim as u32,
+            },
+            encoder,
+        )?;
+
+        Ok(output)
+    }
+}
+
+impl<B: Backend> LinearMatmul<B> {
+    fn matmul_b(&self) -> MatmulB<'_, B> {
+        match &self.mode {
             Mode::FullPrecision => MatmulB::FullPrecision {
                 b: &self.weights,
             },
@@ -281,38 +321,54 @@ impl<B: Backend> LinearMatmul<B> {
                     signed_codes: *signed_codes,
                 },
             },
-        };
+        }
+    }
 
-        let rht_factors = match &self.mode {
-            Mode::Quantized {
-                output_hadamard_factors: Some(factors),
-                ..
-            } => Some(factors),
-            _ => None,
-        };
+    fn matmul_shape(
+        &self,
+        batch_dim: usize,
+    ) -> (MatmulShape, GemmBPrologueKind) {
+        let b = self.matmul_b();
         let d_transform = MatmulDOps {
             bias: self.biases.as_ref(),
-            rht_factors,
+            rht_factors: match &self.mode {
+                Mode::Quantized {
+                    output_hadamard_factors: Some(factors),
+                    ..
+                } => Some(factors),
+                _ => None,
+            },
             ..MatmulDOps::none()
         };
+        let shape = MatmulShape {
+            m: batch_dim as u32,
+            n: self.output_dim as u32,
+            k: self.input_dim as u32,
+            b_transpose: true,
+            b_leading_dimension: None,
+            is_quant: !matches!(b, MatmulB::FullPrecision { .. }),
+            b_bits: b.bits_per_b(),
+            b_group_size: b.group_size(),
+            gathered: false,
+            d_transform: d_transform.mask(),
+        };
+        (shape, b.b_prologue())
+    }
 
-        self.kernel.lock().encode(
-            MatmulArguments {
-                a,
-                b,
-                b_leading_dimension: None,
-                b_transpose: true,
-                d: &mut output,
-                d_transform,
-                gather_indices: None,
-                m: batch_dim as u32,
-                n: self.output_dim as u32,
-                k: self.input_dim as u32,
-            },
-            encoder,
-        )?;
+    pub(super) fn input_data_type(&self) -> DataType {
+        self.input_data_type
+    }
 
-        Ok(output)
+    pub(super) fn select_path(
+        &self,
+        batch_dim: usize,
+        context: &B::Context,
+    ) -> MatmulPath {
+        if !context.device_capabilities().contains(DeviceCapabilities::NATIVE_INT8_MATMUL) {
+            return MatmulPath::Gemv;
+        }
+        let (shape, b_prologue) = self.matmul_shape(batch_dim);
+        self.kernel.lock().select_path(&shape, b_prologue, context)
     }
 }
 

@@ -4,14 +4,14 @@ use super::specialization::GemmSpecialization;
 use crate::{
     backends::{
         common::{
-            Allocation, Backend, BufferArg, Encoder,
+            Allocation, BufferArg, Encoder,
             gpu_types::{
-                GemmParams, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder,
+                GemmParams, HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
             },
             kernel::{
-                HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
+                ActivationTransform, TensorAddBiasKernel,
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, routing::MatmulShape},
             },
         },
         metal::{
@@ -40,7 +40,7 @@ pub struct GemmKernel {
     output_data_type: DataType,
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
     pub bias_add: TensorAddBiasMetalKernel,
-    pub hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
+    output_rht: ActivationTransform<Metal>,
     split_k_reduce: HashMap<GemmDTransform, GemmSplitKReduceMetalKernel>,
 }
 
@@ -52,18 +52,14 @@ impl GemmKernel {
         output_data_type: DataType,
     ) -> Result<Self, MetalError> {
         let bias_add = TensorAddBiasMetalKernel::new(context, output_data_type, weights_data_type, true, false)?;
-        let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
-            context,
-            output_data_type,
-            HadamardTransformOrder::Output,
-        )?;
+        let output_rht = ActivationTransform::output_rht(context, output_data_type)?;
         let kernel = Self {
             weights_data_type,
             input_data_type,
             output_data_type,
             kernels: HashMap::new(),
             bias_add,
-            hadamard,
+            output_rht,
             split_k_reduce: HashMap::new(),
         };
         Ok(kernel)
@@ -111,29 +107,26 @@ impl GemmKernel {
         }
     }
 
-    pub(crate) fn should_skip_gemv_for_mxu<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+    pub(crate) fn should_skip_gemv_for_mxu_shape(
         &self,
-        arguments: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
+        shape: &MatmulShape,
+        b_prologue: GemmBPrologueKind,
     ) -> bool {
-        if arguments.gather_indices.is_some() {
+        if shape.gathered {
             // TODO: gathered GEMM
             return false;
         }
-        match (
-            arguments.m,
-            arguments.n == arguments.k,
-            (self.weights_data_type, self.input_data_type, self.output_data_type),
-        ) {
+        match (shape.m, shape.n == shape.k, (self.weights_data_type, self.input_data_type, self.output_data_type)) {
             (4, true, (DataType::F32, DataType::F32, DataType::F32))
             | (5, _, (DataType::BF16, DataType::BF16, DataType::BF16)) => return false,
             _ => {},
         }
-        match arguments.m {
+        match shape.m {
             0..=3 => return false,
             4 => {
                 // The M4 MXU tile only uses a quarter of its rows; avoid it for wide-N shapes.
-                let small_enough_for_mxu = arguments.n <= 6144 && arguments.k <= 9728;
-                let k_dominates = arguments.k > 3_u32.saturating_mul(arguments.n);
+                let small_enough_for_mxu = shape.n <= 6144 && shape.k <= 9728;
+                let k_dominates = shape.k > 3_u32.saturating_mul(shape.n);
                 if !(small_enough_for_mxu || k_dominates) {
                     return false;
                 }
@@ -141,9 +134,57 @@ impl GemmKernel {
             _ => {},
         }
         matches!(
-            self.select_mxu_tiling(arguments),
+            self.select_mxu_tiling_shape(shape, b_prologue),
             Some(GemmTiling::Tile16x32x256_Simdgroups1x1 | GemmTiling::Tile16x128x256_Simdgroups1x4)
         )
+    }
+
+    pub(crate) fn should_skip_gemv_for_mxu<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+        &self,
+        arguments: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
+    ) -> bool {
+        let shape = MatmulShape {
+            m: arguments.m,
+            n: arguments.n,
+            k: arguments.k,
+            b_transpose: arguments.b_transpose,
+            b_leading_dimension: arguments.b_leading_dimension,
+            is_quant: !matches!(arguments.b, MatmulB::FullPrecision { .. }),
+            b_bits: arguments.b.bits_per_b(),
+            b_group_size: arguments.b.group_size(),
+            gathered: arguments.gather_indices.is_some(),
+            d_transform: arguments.d_transform.mask(),
+        };
+        self.should_skip_gemv_for_mxu_shape(&shape, arguments.b.b_prologue())
+    }
+
+    fn select_mxu_tiling_shape(
+        &self,
+        shape: &MatmulShape,
+        b_prologue: GemmBPrologueKind,
+    ) -> Option<GemmTiling> {
+        if ![self.weights_data_type, self.input_data_type, self.output_data_type]
+            .into_iter()
+            .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32))
+        {
+            return None;
+        }
+
+        match b_prologue {
+            GemmBPrologueKind::FullPrecision => Some(if shape.b_transpose {
+                select_mxu_tiling(shape.m, shape.n, shape.k)
+            } else {
+                select_base_mxu_tiling(shape.m, shape.n)
+            }),
+            _ => {
+                if !shape.b_transpose || shape.b_leading_dimension.is_some() {
+                    return None;
+                }
+                let group_size = shape.b_group_size.unwrap_or(0);
+                let tiling = select_mxu_quant_tiling(shape.m, shape.n, shape.k, group_size, false);
+                shape.k.is_multiple_of(tiling.block_k()).then_some(tiling)
+            },
+        }
     }
 
     fn select_mxu_tiling<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
@@ -710,7 +751,11 @@ impl GemmKernel {
         if output_transform.contains(GemmDTransform::RHT)
             && let Some(factors) = rht_factors
         {
-            self.hadamard.encode(&mut *d, factors, n, m, encoder);
+            let mut src = encoder.allocate_scratch(slice_bytes)?;
+            encoder.encode_copy(&*d, .., &mut src, ..);
+            let mut q_scratch = encoder.allocate_scratch(slice_bytes)?;
+            let mut scales_scratch = encoder.allocate_scratch(std::mem::size_of::<f32>())?;
+            self.output_rht.encode_fp(&src, &mut *d, &mut q_scratch, &mut scales_scratch, factors, n, m, encoder);
         }
         Ok(())
     }
