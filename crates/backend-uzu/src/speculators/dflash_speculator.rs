@@ -15,8 +15,8 @@ use crate::{
     config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig, model::SpeculatorModelConfig},
     data_type::DataType,
     encodable_block::{
-        dflash::{DFlashDraft, DFlashDraftNewError, DFlashDraftOutput},
-        embedding::{Embedding, EmbeddingError},
+        dflash::{DFlashDraft, DFlashDraftEncodeError, DFlashDraftNewError, DFlashDraftOutput},
+        embedding::Embedding,
         sampling::PRng,
         weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeInput},
     },
@@ -39,8 +39,8 @@ const MAX_CHILDREN_PER_NODE: usize = 8;
 pub enum DFlashTreeError<B: Backend> {
     #[error("backend error: {0}")]
     Backend(#[source] B::Error),
-    #[error("embedding error: {0}")]
-    Embedding(#[from] EmbeddingError<B>),
+    #[error("DFlash draft error: {0}")]
+    Draft(#[from] DFlashDraftEncodeError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverEncodeError<B>),
     #[error("invalid tree options")]
@@ -61,11 +61,6 @@ pub enum DFlashSpeculatorLoadError<B: Backend> {
     Draft(#[from] DFlashDraftNewError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverNewError<B>),
-    #[error("DFlash mask_token_id {mask_token_id} is outside vocabulary size {vocab_size}")]
-    InvalidMaskTokenId {
-        mask_token_id: u64,
-        vocab_size: usize,
-    },
 }
 
 pub struct DFlashSpeculator<B: Backend> {
@@ -83,14 +78,6 @@ impl<B: Backend> DFlashSpeculator<B> {
         let config: SpeculatorModelConfig =
             serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
         let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
-        let draft_config = &config.draft_config;
-        if draft_config.mask_token_id >= draft_config.vocab_size as u64 {
-            return Err(DFlashSpeculatorLoadError::InvalidMaskTokenId {
-                mask_token_id: draft_config.mask_token_id,
-                vocab_size: draft_config.vocab_size,
-            });
-        }
-
         let data_type = DataType::BF16;
 
         let weights_file = File::open(model_path.join("model.safetensors"))?;
@@ -154,30 +141,27 @@ impl<B: Backend> DFlashSpeculator<B> {
         {
             return Err(DFlashTreeError::InvalidOptions);
         }
-        let block_size = self.model.block_size();
-        let target_model_dim = self.config.draft_config.model_dim;
         let vocab_size = self.config.draft_config.vocab_size;
-        let pool_size =
+        let target_model_dim = self.config.draft_config.model_dim;
+        let candidates_per_row =
             self.config.weaver_config.as_ref().map_or(1, |config| config.candidate_pool_size.min(vocab_size));
         if target_output_token as usize >= vocab_size
-            || pool_size == 0
-            || options.children_per_node > pool_size
-            || target_embedding.vocab_size() != self.config.draft_config.vocab_size
+            || candidates_per_row == 0
+            || options.children_per_node > candidates_per_row
+            || target_embedding.vocab_size() != vocab_size
             || target_embedding.model_dim() != target_model_dim
+            || target_output_norm.size() != target_model_dim * DataType::BF16.size_in_bytes()
             || self.config.weaver_config.as_ref().is_some_and(|config| config.target_model_dim != target_model_dim)
         {
             return Err(DFlashTreeError::InvalidOptions);
         }
         let root_position = state.context_length();
-        if target_output_norm.size() != target_model_dim * DataType::BF16.size_in_bytes() {
-            return Err(DFlashTreeError::InvalidOptions);
-        }
 
         let mut encoder = Encoder::new(&*self.context).map_err(DFlashTreeError::Backend)?;
         let DFlashDraftOutput {
             candidates,
             draft_hidden,
-        } = self.model.encode_draft(state, target_output_token, target_embedding, pool_size, &mut encoder)?;
+        } = self.model.encode_draft(state, target_output_token, target_embedding, candidates_per_row, &mut encoder)?;
 
         if let Some(weaver) = self.weaver.as_ref() {
             let max_depth = self.config.weaver_config.as_ref().expect("a Weaver implies a Weaver config").max_depth;
@@ -216,6 +200,8 @@ impl<B: Backend> DFlashSpeculator<B> {
         }
 
         let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
+        let candidate_rows = candidates.rows;
+        let candidates_per_row = candidates.candidates_per_row;
         let candidate_id_values = candidates.ids.copyout::<u32>();
         drop(candidates);
         drop(draft_hidden);
@@ -226,8 +212,8 @@ impl<B: Backend> DFlashSpeculator<B> {
             depth: 0,
             children: Vec::new(),
         }];
-        for depth in 0..options.budget.min(block_size.saturating_sub(1)) {
-            let token = candidate_id_values[depth * pool_size];
+        for depth in 0..options.budget.min(candidate_rows) {
+            let token = candidate_id_values[depth * candidates_per_row];
             let parent = nodes.len() - 1;
             let index = nodes.len();
             nodes.push(ProposalNode {

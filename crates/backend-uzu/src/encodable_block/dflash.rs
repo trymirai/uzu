@@ -93,6 +93,21 @@ pub enum DFlashDraftNewError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("invalid DFlash attention config: {0}")]
     InvalidAttentionConfig(&'static str),
+    #[error("DFlash vocabulary size {0} does not fit u32")]
+    InvalidVocabularySize(usize),
+    #[error("DFlash mask_token_id {mask_token_id} is outside vocabulary size {vocab_size}")]
+    InvalidMaskTokenId {
+        mask_token_id: u64,
+        vocab_size: usize,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum DFlashDraftEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Embedding error: {0}")]
+    Embedding(#[from] EmbeddingError<B>),
 }
 
 fn plain_norm<B: Backend>(
@@ -121,6 +136,14 @@ impl<B: Backend> DFlashDraft<B> {
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, DFlashDraftNewError<B>> {
+        let vocab_size = u32::try_from(config.vocab_size)
+            .map_err(|_| DFlashDraftNewError::InvalidVocabularySize(config.vocab_size))?;
+        let mask_token_id = u32::try_from(config.mask_token_id).ok().filter(|&token| token < vocab_size).ok_or(
+            DFlashDraftNewError::InvalidMaskTokenId {
+                mask_token_id: config.mask_token_id,
+                vocab_size: config.vocab_size,
+            },
+        )?;
         if config.layer_configs.is_empty() {
             return Err(DFlashDraftNewError::InvalidAttentionConfig("at least one DFlash layer is required"));
         }
@@ -173,8 +196,8 @@ impl<B: Backend> DFlashDraft<B> {
             &parameter_tree.subtree("output_norm")?,
             context,
         )?;
-        let top_k = <B::Kernels as Kernels>::RadixTopKSmall::new(context, config.vocab_size as u32)
-            .map_err(DFlashDraftNewError::Backend)?;
+        let top_k =
+            <B::Kernels as Kernels>::RadixTopKSmall::new(context, vocab_size).map_err(DFlashDraftNewError::Backend)?;
 
         Ok(Self {
             target_feature_projection,
@@ -186,7 +209,7 @@ impl<B: Backend> DFlashDraft<B> {
             model_dim: config.model_dim,
             max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
-            mask_token_id: config.mask_token_id as u32,
+            mask_token_id,
             target_feature_input_dim: config.model_dim * config.target_layer_ids.len(),
             data_type,
         })
@@ -222,15 +245,15 @@ impl<B: Backend> DFlashDraft<B> {
         }
 
         let num_tokens = accepted_indices.len();
-        let expected_feature_count = self.target_feature_input_dim / self.model_dim;
-        assert_eq!(target_features.len(), expected_feature_count);
+        let captured_layer_count = self.target_feature_input_dim / self.model_dim;
+        assert_eq!(target_features.len(), captured_layer_count);
         let layer_feature_bytes = self.model_dim * self.data_type.size_in_bytes();
         assert!(target_features.iter().all(|features| features.size() % layer_feature_bytes == 0));
         let context_length = state.context_length + num_tokens;
         assert!(context_length <= state.context_capacity, "DFlash state capacity exceeded");
         assert!(context_length <= self.max_context_length, "DFlash context exceeds configured RoPE capacity");
 
-        let mut projection_input =
+        let mut packed_target_features =
             encoder.allocate_scratch(num_tokens * self.target_feature_input_dim * self.data_type.size_in_bytes())?;
         for (layer_index, features) in target_features.iter().enumerate() {
             for (token_index, &accepted_index) in accepted_indices.iter().enumerate() {
@@ -240,22 +263,23 @@ impl<B: Backend> DFlashDraft<B> {
                 encoder.encode_copy(
                     features,
                     source_start..source_start + layer_feature_bytes,
-                    &mut projection_input,
+                    &mut packed_target_features,
                     destination_start..destination_start + layer_feature_bytes,
                 );
             }
         }
-        let projected_features = self.target_feature_projection.encode(projection_input, num_tokens, encoder)?;
+        let projected_features = self.target_feature_projection.encode(packed_target_features, num_tokens, encoder)?;
         let normalized_features =
             self.projected_feature_norm.encode(&projected_features, 0, num_tokens, None, encoder)?;
         let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, encoder)?;
 
-        let layer_count = self.layers.len();
+        let dflash_layer_count = self.layers.len();
         let mut normalized_features = Some(normalized_features);
-        for (index, (layer, attention_state)) in self.layers.iter().zip(state.layer_states.iter_mut()).enumerate() {
+        for (layer_index, (layer, attention_state)) in self.layers.iter().zip(state.layer_states.iter_mut()).enumerate()
+        {
             attention_state.prepare(state.context_length, num_tokens, encoder.context())?;
-            let kv_input = if index + 1 == layer_count {
+            let kv_input = if layer_index + 1 == dflash_layer_count {
                 normalized_features.take().expect("normalized features available for last layer")
             } else {
                 let source = normalized_features.as_ref().expect("normalized features available");
@@ -319,28 +343,28 @@ impl<B: Backend> DFlashDraft<B> {
         target_embedding: &Embedding<B>,
         candidate_count: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<DFlashDraftOutput<B>, EmbeddingError<B>> {
+    ) -> Result<DFlashDraftOutput<B>, DFlashDraftEncodeError<B>> {
         let mut token_ids = encoder
             .allocate_constant(self.block_size * DataType::U32.size_in_bytes())
-            .map_err(EmbeddingError::BackendError)?;
+            .map_err(DFlashDraftEncodeError::Backend)?;
         let mut tokens = vec![self.mask_token_id; self.block_size];
         tokens[0] = target_output_token;
         token_ids.copyin(&tokens);
 
         let token_embeddings = target_embedding.encode_lookup(&token_ids, self.block_size, encoder)?;
         let draft_hidden =
-            self.encode_hidden(state, token_embeddings, encoder).map_err(EmbeddingError::BackendError)?;
+            self.encode_hidden(state, token_embeddings, encoder).map_err(DFlashDraftEncodeError::Backend)?;
 
         // The first block row is the target's output token; only the lookahead rows are ranked.
         let lookahead_rows = self.block_size - 1;
         let row_bytes = target_embedding.model_dim() * DataType::BF16.size_in_bytes();
         let mut lookahead_hidden =
-            encoder.allocate_scratch(lookahead_rows * row_bytes).map_err(EmbeddingError::BackendError)?;
+            encoder.allocate_scratch(lookahead_rows * row_bytes).map_err(DFlashDraftEncodeError::Backend)?;
         encoder.encode_copy(&draft_hidden, row_bytes..self.block_size * row_bytes, &mut lookahead_hidden, ..);
         let logits = target_embedding.encode_readout(lookahead_rows, &lookahead_hidden, DataType::F32, encoder)?;
         let candidates = self
             .encode_candidates(&logits, lookahead_rows, candidate_count, encoder)
-            .map_err(EmbeddingError::BackendError)?;
+            .map_err(DFlashDraftEncodeError::Backend)?;
         drop(logits);
         drop(token_ids);
         drop(lookahead_hidden);
@@ -368,10 +392,6 @@ impl<B: Backend> DFlashDraft<B> {
             rows,
             candidates_per_row: k,
         })
-    }
-
-    pub(crate) fn block_size(&self) -> usize {
-        self.block_size
     }
 }
 
