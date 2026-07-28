@@ -17,12 +17,12 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "uzu",
-            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.5.12.zip",
-            checksum: "eeb0e17475701d5db681ee2f7a0d0fd260af600c07af39cf2976e9fd070e7b75"
+            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.5.14.zip",
+            checksum: "bb77809bbb9f262b5263354271ba05c9ff4b2a0bd4e53608ef57600354047d71"
         ),
         .target(
             name: "Uzu",
-            dependencies: ["uzu"],
+            dependencies: ["uzu", "UzuMetalIOSimulatorStubs"],
             path: "bindings/swift/Sources/Uzu",
             linkerSettings: [
                 .linkedLibrary("c++"),
@@ -32,6 +32,11 @@ let package = Package(
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
             ]
+        ),
+        .target(
+            name: "UzuMetalIOSimulatorStubs",
+            path: "Sources/UzuMetalIOSimulatorStubs",
+            publicHeadersPath: "include"
         ),
         .executableTarget(
             name: "Examples",

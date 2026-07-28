@@ -4,7 +4,7 @@
   </picture>
 </p>
 
-<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.5.12)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.5.12)](https://www.npmjs.com/package/@trymirai/uzu) 
+<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.5.14)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.5.14)](https://www.npmjs.com/package/@trymirai/uzu) 
 
 # uzu
 
@@ -23,7 +23,7 @@ A high-performance inference engine for AI models. It allows you to deploy AI di
 Add the dependency:
 
 ```bash
-pnpm add @trymirai/uzu@0.5.12
+pnpm add @trymirai/uzu@0.5.14
 ```
 
 Run the code below:
@@ -72,7 +72,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-You can run any example via `cargo tools example` \<**typescript**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start** | **text-to-speech**\>:
+You can run any example via `cargo tools example` \<**typescript**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start**\>:
 
 ### Chat
 
@@ -234,40 +234,6 @@ async function main() {
     let session = await engine.classification(model);
     let output = await session.classify(messages);
     console.log('Output: ', output.probabilities.values);
-}
-
-main().catch((error) => {
-    console.error(error);
-});
-```
-
-### Text to Speech
-
-In this example, we will generate audio from text:
-
-```ts
-import { Engine, EngineConfig } from '@trymirai/uzu';
-import { homedir } from "os";
-import { join } from "path";
-
-async function main() {
-    let engineConfig = EngineConfig.create();
-    let engine = await Engine.create(engineConfig);
-
-    let model = await engine.model('fishaudio/s1-mini');
-    if (!model) {
-        throw new Error('Model not found');
-    }
-    for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
-    }
-
-    const text = "London is the capital of United Kingdom and one of the world’s most influential cities, known for its rich history, cultural diversity, and global significance in finance, politics, and the arts. Situated along the River Thames, the city blends historic landmarks like Tower of London and Buckingham Palace with modern architecture such as The Shard. London is also home to renowned institutions including the British Museum and vibrant areas like Covent Garden, offering a mix of history, entertainment, and innovation that attracts millions of visitors each year.";
-    const outputPath = join(homedir(), "Desktop", "output.wav");
-    let session = await engine.textToSpeech(model);
-    let output = await session.synthesize(text);
-    output.pcmBatch.saveAsWav(outputPath);
-    console.log('Output saved to: ', outputPath);
 }
 
 main().catch((error) => {

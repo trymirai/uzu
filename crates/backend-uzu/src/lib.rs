@@ -18,7 +18,4 @@ pub mod engine;
 pub use utils::version::{TOOLCHAIN_VERSION, VERSION};
 
 #[cfg(test)]
-extern crate self as backend_uzu;
-
-#[cfg(test)]
 pub mod tests;

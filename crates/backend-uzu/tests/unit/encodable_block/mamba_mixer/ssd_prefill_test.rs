@@ -1,5 +1,4 @@
 use proc_macros::uzu_test;
-use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     backends::common::{
@@ -8,7 +7,7 @@ use crate::{
         kernel::{Conv1dScanKernel, SSDPrefill64Kernel, SSDPrefillKernel},
     },
     data_type::DataType,
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
 };
 
 #[derive(Debug, Clone, Copy)]
