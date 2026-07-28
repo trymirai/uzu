@@ -69,7 +69,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-You can run any example via `cargo tools example` \<**swift**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start** | **text-to-speech**\>:
+You can run any example via `cargo tools example` \<**swift**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start**\>:
 
 ### Chat
 
@@ -210,36 +210,6 @@ public func runClassification() async throws {
     let session = try await engine.classification(model: model)
     let output = try await session.classify(input: messages)
     print("Output: \(output.probabilities.values)")
-}
-```
-
-### Text to Speech
-
-In this example, we will generate audio from text:
-
-```swift
-import Foundation
-import Uzu
-
-public func runTextToSpeech() async throws {
-    let engineConfig = EngineConfig.create()
-    let engine = try await Engine.create(config: engineConfig)
-    
-    guard let model = try await engine.model(identifier: "fishaudio/s1-mini") else {
-        return
-    }
-    for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
-    }
-    
-    let text = "London is the capital of United Kingdom and one of the world’s most influential cities, known for its rich history, cultural diversity, and global significance in finance, politics, and the arts. Situated along the River Thames, the city blends historic landmarks like Tower of London and Buckingham Palace with modern architecture such as The Shard. London is also home to renowned institutions including the British Museum and vibrant areas like Covent Garden, offering a mix of history, entertainment, and innovation that attracts millions of visitors each year."
-    let outputPath = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Desktop")
-        .appendingPathComponent("output.wav")
-    let session = try await engine.textToSpeech(model: model)
-    let output = try await session.synthesize(input: text)
-    try output.pcmBatch.saveAsWav(path: outputPath.path())
-    print("Output saved to: \(outputPath.path())")
 }
 ```
 
