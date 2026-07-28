@@ -133,6 +133,10 @@ mock-registry.workspace = true
 rstest.workspace = true
 
 [[test]]
+name = "tool"
+path = "tests/tool/mod.rs"
+
+[[test]]
 name = "unit"
 path = "tests/unit/test_entry.rs"
 

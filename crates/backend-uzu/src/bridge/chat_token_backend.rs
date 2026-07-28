@@ -48,7 +48,7 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     model: Arc<Mutex<LanguageModel<B>>>,
     config: ChatConfig,
     #[cfg(grammar)]
-    tokenizer: Tokenizer,
+    tokenizer: Arc<Tokenizer>,
     stop_token_ids: Vec<i32>,
     max_context_length: Option<usize>,
 }
@@ -57,14 +57,13 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
     pub fn new(
         model_path: String,
         config: ChatConfig,
-        #[cfg(grammar)] tokenizer: &Tokenizer,
+        #[cfg(grammar)] tokenizer: Arc<Tokenizer>,
     ) -> Result<Self, BackendError> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
         let model = engine.load_language_model(&model_path).map_err(|err| err.to_string())?;
 
         let stop_token_ids = model.generation_config().stop_token_ids.iter().map(|id| *id as i32).collect();
-
         let max_context_length = get_max_context_length(&model, config.context_length.clone());
 
         Ok(Self {
@@ -72,7 +71,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             model: Arc::new(Mutex::new(model)),
             config,
             #[cfg(grammar)]
-            tokenizer: tokenizer.clone(),
+            tokenizer,
             stop_token_ids,
             max_context_length,
         })
@@ -120,7 +119,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         #[cfg(grammar)]
         let grammar = if let Some(grammar_config) = config.grammar {
-            match get_grammar(grammar_config, &self.tokenizer, &self.stop_token_ids) {
+            match get_grammar(grammar_config, self.tokenizer.as_ref(), &self.stop_token_ids) {
                 Ok(grammar) => Some(grammar),
                 Err(err) => {
                     return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));

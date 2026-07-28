@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 
 use shoji::{
     traits::{
@@ -52,7 +52,7 @@ impl ChatTokenBackend for UzuLlmBackend {
         &'a self,
         reference: String,
         config: ChatConfig,
-        #[cfg_attr(not(grammar), allow(unused_variables))] tokenizer: &'a Tokenizer,
+        #[cfg_attr(not(grammar), allow(unused_variables))] tokenizer: Arc<Tokenizer>,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn ChatTokenInstance>, BackendError>> + Send + 'a>> {
         Box::pin(async move {
             let instance = select_backend!(

@@ -150,6 +150,11 @@ pub enum Operation {
         #[serde(default)]
         regex_engine: RegexEngine,
     },
+    /// Split a string at separators outside quoted strings and nested structures.
+    /// String → Array<String>
+    SplitTopLevel {
+        separator: char,
+    },
     /// Parse a JSON string into a Value. With `repair: true`, attempts to fix malformed JSON.
     /// String → Value
     ParseJson {
@@ -238,6 +243,9 @@ impl fmt::Display for Operation {
             Self::RegexFindAll {
                 ..
             } => write!(formatter, "regex_find_all"),
+            Self::SplitTopLevel {
+                separator,
+            } => write!(formatter, "split_top_level({separator})"),
             Self::ParseJson {
                 repair,
             } => {
@@ -373,6 +381,9 @@ impl Operation {
                 pattern,
                 regex_engine,
             } => string::execute_regex_find_all(pattern, regex_engine, input),
+            Self::SplitTopLevel {
+                separator,
+            } => string::execute_split_top_level(*separator, input),
             Self::ParseJson {
                 repair,
             } => string::execute_parse_json(*repair, input),
