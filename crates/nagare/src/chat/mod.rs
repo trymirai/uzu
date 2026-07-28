@@ -236,13 +236,15 @@ impl ChatSession {
         Ok(())
     }
 
+    /// Streams one model turn into `sender`.
+    /// Returns the turn's replies, or `None` when the turn must not continue (the stream errored or the receiver was dropped).
     async fn send_input(
         &self,
-        sender: UnboundedSender<Result<Vec<ChatReply>, ChatSessionError>>,
+        sender: &UnboundedSender<Result<Vec<ChatReply>, ChatSessionError>>,
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
-    ) {
+    ) -> Option<Vec<ChatReply>> {
         // prepare all messages
         let all_messages = {
             let mut messages_guard = self.messages.lock().await;
@@ -265,6 +267,7 @@ impl ChatSession {
 
         let mut outputs: IndexMap<u32, ChatReply> = IndexMap::new();
         let mut error_value: Option<serde_json::Value> = None;
+        let mut interrupted = false;
         let mut generated_tool_call_identifiers: Vec<Option<String>> = Vec::new();
 
         let mut instance = self.instance.lock().await;
@@ -296,6 +299,7 @@ impl ChatSession {
 
                     // send new output
                     if sender.send(Ok(outputs.values().cloned().collect())).is_err() {
+                        interrupted = true;
                         break;
                     }
                     if finish_reason.is_some() {
@@ -305,6 +309,7 @@ impl ChatSession {
                 Err(error) => {
                     error_value = Some(serde_json::json!({ "message": error.to_string() }));
                     let _ = sender.send(Err(error));
+                    interrupted = true;
                     break;
                 },
             }
@@ -323,6 +328,8 @@ impl ChatSession {
                 stats: last.stats.clone(),
             });
         }
+
+        (!interrupted).then(|| outputs.into_values().collect())
     }
 
     async fn execute_turn(
@@ -342,33 +349,13 @@ impl ChatSession {
         let mut tool_turns: u32 = 0;
         let mut next_input = input;
 
-        'turns: loop {
-            let (turn_sender, mut turn_receiver) =
-                mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
-            let turn_input = std::mem::take(&mut next_input);
-            let turn_config = config.clone();
-            let turn_cancel_token = cancel_token.clone();
-            let session = self.clone();
-            tokio::spawn(
-                async move { session.send_input(turn_sender, turn_input, turn_config, turn_cancel_token).await },
-            );
-
+        loop {
             // send message
-            let mut turn_replies: Vec<ChatReply> = Vec::new();
-            while let Some(result) = turn_receiver.recv().await {
-                match result {
-                    Ok(replies) => {
-                        turn_replies = replies;
-                        if sender.send(Ok(turn_replies.clone())).is_err() {
-                            break 'turns;
-                        }
-                    },
-                    Err(error) => {
-                        let _ = sender.send(Err(error));
-                        break 'turns;
-                    },
-                }
-            }
+            let turn_input = std::mem::take(&mut next_input);
+            let Some(turn_replies) = self.send_input(&sender, turn_input, config.clone(), cancel_token.clone()).await
+            else {
+                break;
+            };
 
             // check for tool calls and execute if needed
             if let Some(last_reply) = turn_replies.last()
