@@ -69,6 +69,7 @@ export type ChatSessionError =
   | { type: 'UnsupportedModel' }
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }
+  | { type: 'ToolTurnLimitExceeded', limit: number }
 
 export declare const enum ChatSessionState {
   Idle = 'Idle',
@@ -255,12 +256,18 @@ export declare class ChatReplyConfig {
   tokenLimit?: number
   samplingPolicy: SamplingPolicy
   grammar?: Grammar
-  constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar)
+  /**
+   * Maximum number of automatic tool-call turns per reply.
+   * `None` falls back to the session default.
+   */
+  toolTurnLimit?: number
+  constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar, toolTurnLimit?: number)
 
   static create(): ChatReplyConfig
   withTokenLimit(tokenLimit?: number | undefined | null): ChatReplyConfig
   withSamplingPolicy(samplingPolicy: SamplingPolicy): ChatReplyConfig
   withSamplingMethod(samplingMethod: SamplingMethod): ChatReplyConfig
+  withToolTurnLimit(toolTurnLimit?: number | undefined | null): ChatReplyConfig
   withGrammar(grammar?: Grammar | undefined | null): ChatReplyConfig
 }
 

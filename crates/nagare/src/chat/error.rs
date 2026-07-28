@@ -18,4 +18,8 @@ pub enum ChatSessionError {
     UnableToPerformOperationInCurrentState {},
     #[error("No response")]
     NoResponse {},
+    #[error("Tool turn limit exceeded: {limit}")]
+    ToolTurnLimitExceeded {
+        limit: u32,
+    },
 }

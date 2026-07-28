@@ -3760,6 +3760,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "proc-macros",
  "pyo3",
  "pyo3-async-runtimes",
  "pyo3-build-config",
@@ -3770,6 +3771,7 @@ dependencies = [
  "serde_json",
  "shoji",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio",
  "tokio-util",
  "tracing",
@@ -4673,8 +4675,10 @@ dependencies = [
 name = "proc-macros"
 version = "0.5.14"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
+ "serde_derive_internals",
  "syn 2.0.118",
 ]
 

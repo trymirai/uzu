@@ -57,6 +57,54 @@ pub fn execute_regex_find_all(
 }
 
 #[tracing::instrument(skip(input))]
+pub fn execute_split_top_level(
+    separator: char,
+    input: Value,
+) -> Result<Value, TransformError> {
+    let Value::String(text) = input else {
+        return Ok(Value::Null);
+    };
+
+    let mut values = Vec::new();
+    let mut start = 0;
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+
+    for (index, character) in text.char_indices() {
+        if let Some(quote_character) = quote {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == quote_character {
+                quote = None;
+            }
+            continue;
+        }
+
+        match character {
+            '"' | '\'' => quote = Some(character),
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => depth = depth.saturating_sub(1),
+            _ if character == separator && depth == 0 => {
+                if start < index {
+                    values.push(Value::String(text[start..index].to_string()));
+                }
+                start = index + character.len_utf8();
+            },
+            _ => {},
+        }
+    }
+
+    if start < text.len() {
+        values.push(Value::String(text[start..].to_string()));
+    }
+
+    Ok(Value::Array(values))
+}
+
+#[tracing::instrument(skip(input))]
 pub fn execute_parse_json(
     repair: bool,
     input: Value,

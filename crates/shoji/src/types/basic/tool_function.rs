@@ -8,7 +8,8 @@ use crate::types::basic::Value;
 pub struct ToolFunction {
     pub name: String,
     pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<Value>,
-    #[serde(rename = "return")]
+    #[serde(rename = "return", skip_serializing_if = "Option::is_none")]
     pub return_definition: Option<Value>,
 }
