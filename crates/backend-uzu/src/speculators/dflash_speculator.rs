@@ -15,8 +15,8 @@ use crate::{
     config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig, model::SpeculatorModelConfig},
     data_type::DataType,
     encodable_block::{
-        dflash::{DFlashDraft, DFlashDraftNewError},
-        embedding::{Embedding, EmbeddingError},
+        dflash::{DFlashDraft, DFlashDraftEncodeError, DFlashDraftNewError, DFlashDraftOutput},
+        embedding::Embedding,
         sampling::PRng,
         weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeInput},
     },
@@ -39,19 +39,12 @@ const MAX_CHILDREN_PER_NODE: usize = 8;
 pub enum DFlashTreeError<B: Backend> {
     #[error("backend error: {0}")]
     Backend(#[source] B::Error),
-    #[error("embedding error: {0}")]
-    Embedding(#[from] EmbeddingError<B>),
+    #[error("DFlash draft error: {0}")]
+    Draft(#[from] DFlashDraftEncodeError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverEncodeError<B>),
     #[error("invalid tree options")]
     InvalidOptions,
-}
-
-struct DFlashChainOutput<B: Backend> {
-    pool_ids: Allocation<B>,
-    pool_scores: Allocation<B>,
-    draft_logits: Allocation<B>,
-    draft_hidden: Allocation<B>,
 }
 
 #[derive(Debug, Error)]
@@ -68,11 +61,6 @@ pub enum DFlashSpeculatorLoadError<B: Backend> {
     Draft(#[from] DFlashDraftNewError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverNewError<B>),
-    #[error("DFlash mask_token_id {mask_token_id} is outside vocabulary size {vocab_size}")]
-    InvalidMaskTokenId {
-        mask_token_id: u64,
-        vocab_size: usize,
-    },
 }
 
 pub struct DFlashSpeculator<B: Backend> {
@@ -90,14 +78,6 @@ impl<B: Backend> DFlashSpeculator<B> {
         let config: SpeculatorModelConfig =
             serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
         let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
-        let draft_config = &config.draft_config;
-        if draft_config.mask_token_id >= draft_config.vocab_size as u64 {
-            return Err(DFlashSpeculatorLoadError::InvalidMaskTokenId {
-                mask_token_id: draft_config.mask_token_id,
-                vocab_size: draft_config.vocab_size,
-            });
-        }
-
         let data_type = DataType::BF16;
 
         let weights_file = File::open(model_path.join("model.safetensors"))?;
@@ -161,16 +141,16 @@ impl<B: Backend> DFlashSpeculator<B> {
         {
             return Err(DFlashTreeError::InvalidOptions);
         }
-        let block_size = self.model.block_size();
-        let target_model_dim = self.config.draft_config.model_dim;
         let vocab_size = self.config.draft_config.vocab_size;
-        let pool_size =
+        let target_model_dim = self.config.draft_config.model_dim;
+        let candidates_per_row =
             self.config.weaver_config.as_ref().map_or(1, |config| config.candidate_pool_size.min(vocab_size));
         if target_output_token as usize >= vocab_size
-            || pool_size == 0
-            || options.children_per_node > pool_size
-            || target_embedding.vocab_size() != self.config.draft_config.vocab_size
+            || candidates_per_row == 0
+            || options.children_per_node > candidates_per_row
+            || target_embedding.vocab_size() != vocab_size
             || target_embedding.model_dim() != target_model_dim
+            || target_output_norm.size() != target_model_dim * DataType::BF16.size_in_bytes()
             || self.config.weaver_config.as_ref().is_some_and(|config| config.target_model_dim != target_model_dim)
         {
             return Err(DFlashTreeError::InvalidOptions);
@@ -178,21 +158,10 @@ impl<B: Backend> DFlashSpeculator<B> {
         let root_position = state.context_length();
 
         let mut encoder = Encoder::new(&*self.context).map_err(DFlashTreeError::Backend)?;
-        let DFlashChainOutput {
-            pool_ids,
-            pool_scores,
-            draft_logits,
+        let DFlashDraftOutput {
+            candidates,
             draft_hidden,
-        } = self.encode_dflash_chain(
-            &mut encoder,
-            state,
-            target_output_norm,
-            target_output_token,
-            target_embedding,
-            block_size,
-            target_model_dim,
-            pool_size,
-        )?;
+        } = self.model.encode_draft(state, target_output_token, target_embedding, candidates_per_row, &mut encoder)?;
 
         if let Some(weaver) = self.weaver.as_ref() {
             let max_depth = self.config.weaver_config.as_ref().expect("a Weaver implies a Weaver config").max_depth;
@@ -203,10 +172,10 @@ impl<B: Backend> DFlashSpeculator<B> {
                     target_hidden: target_output_norm,
                     draft_hidden: &draft_hidden,
                     target_embedding,
-                    candidate_ids: &pool_ids,
-                    candidate_scores: &pool_scores,
-                    candidate_rows: block_size - 1,
-                    candidates_per_row: pool_size,
+                    candidate_ids: &candidates.ids,
+                    candidate_scores: &candidates.scores,
+                    candidate_rows: candidates.rows,
+                    candidates_per_row: candidates.candidates_per_row,
                     depth_seeds: &depth_seeds,
                     root_token_id: target_output_token,
                     tree_budget: options.budget,
@@ -218,9 +187,7 @@ impl<B: Backend> DFlashSpeculator<B> {
             )?;
             let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
             let nodes = tree.decode();
-            drop(pool_ids);
-            drop(pool_scores);
-            drop(draft_logits);
+            drop(candidates);
             drop(draft_hidden);
             drop(completed);
             return Ok(Self::finish_tree(
@@ -233,10 +200,10 @@ impl<B: Backend> DFlashSpeculator<B> {
         }
 
         let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
-        let pool_id_values = pool_ids.copyout::<u32>();
-        drop(pool_ids);
-        drop(pool_scores);
-        drop(draft_logits);
+        let candidate_rows = candidates.rows;
+        let candidates_per_row = candidates.candidates_per_row;
+        let candidate_id_values = candidates.ids.copyout::<u32>();
+        drop(candidates);
         drop(draft_hidden);
         drop(completed);
 
@@ -245,8 +212,8 @@ impl<B: Backend> DFlashSpeculator<B> {
             depth: 0,
             children: Vec::new(),
         }];
-        for depth in 0..options.budget.min(block_size.saturating_sub(1)) {
-            let token = pool_id_values[depth * pool_size];
+        for depth in 0..options.budget.min(candidate_rows) {
+            let token = candidate_id_values[depth * candidates_per_row];
             let parent = nodes.len() - 1;
             let index = nodes.len();
             nodes.push(ProposalNode {
@@ -263,50 +230,6 @@ impl<B: Backend> DFlashSpeculator<B> {
             #[cfg(grammar)]
             grammar,
         ))
-    }
-
-    fn encode_dflash_chain(
-        &self,
-        encoder: &mut Encoder<B>,
-        state: &mut DFlashState<B>,
-        target_output_norm: &Allocation<B>,
-        target_output_token: u32,
-        target_embedding: &Embedding<B>,
-        block_size: usize,
-        target_model_dim: usize,
-        pool_size: usize,
-    ) -> Result<DFlashChainOutput<B>, DFlashTreeError<B>> {
-        if target_output_norm.size() != target_model_dim * DataType::BF16.size_in_bytes() {
-            return Err(DFlashTreeError::InvalidOptions);
-        }
-
-        let mut noise_ids =
-            encoder.allocate_constant(block_size * DataType::U32.size_in_bytes()).map_err(DFlashTreeError::Backend)?;
-        let mut noise = vec![self.config.draft_config.mask_token_id as u32; block_size];
-        noise[0] = target_output_token;
-        noise_ids.copyin(&noise);
-        let token_embeddings = target_embedding.encode_lookup(&noise_ids, block_size, encoder)?;
-        let draft_hidden =
-            self.model.encode_block(state, token_embeddings, encoder).map_err(DFlashTreeError::Backend)?;
-        // The first block row is the target's output token; only the lookahead rows are ranked.
-        let row_bytes = target_embedding.model_dim() * DataType::BF16.size_in_bytes();
-        let mut lookahead_hidden =
-            encoder.allocate_scratch((block_size - 1) * row_bytes).map_err(DFlashTreeError::Backend)?;
-        encoder.encode_copy(&draft_hidden, row_bytes..block_size * row_bytes, &mut lookahead_hidden, ..);
-        let draft_logits =
-            target_embedding.encode_readout(block_size - 1, &lookahead_hidden, DataType::F32, encoder)?;
-        let (pool_ids, pool_scores) = self
-            .model
-            .encode_top_k(&draft_logits, block_size - 1, pool_size, encoder)
-            .map_err(DFlashTreeError::Backend)?;
-        drop(noise_ids);
-        drop(lookahead_hidden);
-        Ok(DFlashChainOutput {
-            pool_ids,
-            pool_scores,
-            draft_logits,
-            draft_hidden,
-        })
     }
 
     fn finish_tree(
