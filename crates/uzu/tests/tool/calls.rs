@@ -1,9 +1,10 @@
 #![cfg(not(target_family = "wasm"))]
 
+use schemars::JsonSchema;
 use serde::Serialize;
 use uzu::{
     engine::{Engine, EngineConfig},
-    session::tool::{func_def::ToolDescriptor, schema::UzuToolSchema, uzu_tool_function},
+    session::tool::{func_def::ToolDescriptor, uzu_tool_function},
     types::{
         basic::{SamplingMethod, SamplingPolicy},
         session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatRole},
@@ -11,7 +12,7 @@ use uzu::{
 };
 
 /// A geographic coordinate.
-#[derive(Serialize, UzuToolSchema)]
+#[derive(Serialize, JsonSchema)]
 struct Coordinate {
     /// Latitude in decimal degrees.
     latitude: f64,
@@ -20,14 +21,14 @@ struct Coordinate {
 }
 
 /// The current temperature at the requested location.
-#[derive(Serialize, UzuToolSchema)]
+#[derive(Serialize, JsonSchema)]
 struct Temperature {
     /// Current temperature in degrees Celsius.
     temperature: f64,
 }
 
 /// The current time.
-#[derive(Serialize, UzuToolSchema)]
+#[derive(Serialize, JsonSchema)]
 struct Time {
     /// Current time.
     time: String,

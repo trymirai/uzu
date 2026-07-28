@@ -88,7 +88,27 @@ fn coerce_to_schema(
 ) -> serde_json::Value {
     use serde_json::Value as Json;
 
-    match schema.get("type").and_then(Json::as_str) {
+    if let Some(branches) = schema.get("anyOf").and_then(Json::as_array)
+        && branches.len() == 2
+        && branches.iter().any(|branch| branch.get("type").and_then(Json::as_str) == Some("null"))
+        && let Some(non_null_schema) =
+            branches.iter().find(|branch| branch.get("type").and_then(Json::as_str) != Some("null"))
+    {
+        return coerce_to_schema(value, non_null_schema);
+    }
+
+    let schema_type = match schema.get("type") {
+        Some(Json::String(schema_type)) => Some(schema_type.as_str()),
+        Some(Json::Array(schema_types))
+            if schema_types.len() == 2
+                && schema_types.iter().any(|schema_type| schema_type.as_str() == Some("null")) =>
+        {
+            schema_types.iter().filter_map(Json::as_str).find(|schema_type| *schema_type != "null")
+        },
+        _ => None,
+    };
+
+    match schema_type {
         Some("object") => match value {
             Json::Object(map) => Json::Object(
                 map.into_iter()

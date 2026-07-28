@@ -3766,6 +3766,7 @@ dependencies = [
  "pyo3-build-config",
  "pyo3-stub-gen",
  "reqwest 0.13.4",
+ "schemars 1.2.1",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
@@ -4678,7 +4679,6 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "serde_derive_internals",
  "syn 2.0.118",
 ]
 
