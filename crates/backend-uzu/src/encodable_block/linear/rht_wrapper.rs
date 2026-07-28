@@ -4,8 +4,11 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Context, DeviceCapabilities, Encoder,
-        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
-        kernel::{HadamardTransformKernel, Kernels, RHTQuantizeActivationsKernel, matmul::MatmulA},
+        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        kernel::{
+            ActivationTransform,
+            matmul::{MatmulA, MatmulPath},
+        },
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
@@ -81,14 +84,9 @@ fn weights_need_group_sums(quantization_spec: &AnyWeightMatrixSpec) -> bool {
     )
 }
 
-struct SymmetricInt8Preparation<B: Backend> {
-    kernel: <B::Kernels as Kernels>::RHTQuantizeActivationsKernel,
-    emit_group_sums: bool,
-}
-
 pub struct RHTLinearWrapper<B: Backend> {
-    input_hadamard_kernel: <B::Kernels as Kernels>::HadamardTransformKernel,
-    symmetric_int8_preparation: Option<SymmetricInt8Preparation<B>>,
+    input_transform: ActivationTransform<B>,
+    quantize_transform: Option<ActivationTransform<B>>,
     input_factors: Allocation<B>,
     inner_linear: LinearMatmul<B>,
     input_dimension: usize,
@@ -128,14 +126,10 @@ impl<B: Backend> RHTLinearWrapper<B> {
         let quantized_weights_tree = weights_tree.subtree("quantized")?;
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
-        let input_hadamard_kernel = <B::Kernels as Kernels>::HadamardTransformKernel::new(
-            context,
-            input_data_type,
-            HadamardTransformOrder::Input,
-        )
-        .map_err(RHTLinearWrapperError::BackendError)?;
+        let input_transform =
+            ActivationTransform::input_rht(context, input_data_type).map_err(RHTLinearWrapperError::BackendError)?;
 
-        let symmetric_int8_preparation = if int8_activations_eligible::<B>(
+        let quantize_transform = if int8_activations_eligible::<B>(
             context,
             &quantization_spec,
             input_dimension,
@@ -144,12 +138,13 @@ impl<B: Backend> RHTLinearWrapper<B> {
         ) {
             let emit_group_sums = weights_need_group_sums(&quantization_spec);
             Some(
-                <B::Kernels as Kernels>::RHTQuantizeActivationsKernel::new(context, input_data_type, emit_group_sums)
-                    .map(|kernel| SymmetricInt8Preparation {
-                        kernel,
-                        emit_group_sums,
-                    })
-                    .map_err(RHTLinearWrapperError::BackendError)?,
+                ActivationTransform::quantize(
+                    context,
+                    input_data_type,
+                    HADAMARD_TRANSFORM_BLOCK_SIZE as u32,
+                    emit_group_sums,
+                )
+                .map_err(RHTLinearWrapperError::BackendError)?,
             )
         } else {
             None
@@ -167,13 +162,13 @@ impl<B: Backend> RHTLinearWrapper<B> {
             has_biases.then_some(parameter_tree),
             Some(output_factors),
         )?;
-        if symmetric_int8_preparation.is_some() {
+        if quantize_transform.is_some() {
             inner_linear.sign_convert_quantized_weights_for_int8_activations();
         }
 
         Ok(Self {
-            input_hadamard_kernel,
-            symmetric_int8_preparation,
+            input_transform,
+            quantize_transform,
             input_factors,
             inner_linear,
             input_dimension,
@@ -188,25 +183,30 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        if let Some(preparation) = &self.symmetric_int8_preparation {
+        let path = self.inner_linear.select_path(batch_dim, encoder.context());
+        if path == MatmulPath::Gemm
+            && let Some(quantize_transform) = &self.quantize_transform
+        {
             let groups_per_row = self.input_dimension.div_ceil(HADAMARD_TRANSFORM_BLOCK_SIZE);
+            let mut fp_scratch =
+                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::BF16))?;
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::F32))?;
-            let mut group_sums = preparation
-                .emit_group_sums
+            let emit_group_sums = quantize_transform.emit_group_sums();
+            let mut group_sums = emit_group_sums
                 .then(|| encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::I32)))
                 .transpose()?;
 
-            preparation.kernel.encode(
+            quantize_transform.encode_quantize(
                 &input,
+                &mut fp_scratch,
                 &mut values,
                 &mut scales,
                 group_sums.as_mut(),
                 &self.input_factors,
                 batch_dim as u32,
                 self.input_dimension as u32,
-                HADAMARD_TRANSFORM_BLOCK_SIZE as u32,
                 encoder,
             );
             return self.inner_linear.encode_with_a(
@@ -220,14 +220,21 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             );
         }
 
-        let mut input = input;
-        self.input_hadamard_kernel.encode(
-            &mut input,
+        let data_type = self.inner_linear.input_data_type();
+        let mut transformed =
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], data_type))?;
+        let mut q_scratch = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], data_type))?;
+        let mut scales_scratch = encoder.allocate_scratch(size_for_shape(&[batch_dim, 1], data_type))?;
+        self.input_transform.encode_fp(
+            &input,
+            &mut transformed,
+            &mut q_scratch,
+            &mut scales_scratch,
             &self.input_factors,
             self.input_dimension as u32,
             batch_dim as u32,
             encoder,
         );
-        self.inner_linear.encode(input, batch_dim, encoder)
+        self.inner_linear.encode(transformed, batch_dim, encoder)
     }
 }

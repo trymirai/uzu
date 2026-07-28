@@ -3,13 +3,9 @@
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
-use super::RHTQuantizeActivationsMetalKernel;
 use crate::{
     backends::{
-        common::{
-            Backend, Context, Encoder,
-            kernel::{Kernels, RHTQuantizeActivationsKernel},
-        },
+        common::{Backend, Context, Encoder, kernel::ActivationTransform},
         cpu::Cpu,
         metal::{Metal, MetalContext},
     },
@@ -38,47 +34,48 @@ fn rht_quantize_matches_cpu() {
 
     let metal = MetalContext::new().expect("metal");
     let cpu = <Cpu as Backend>::Context::new().expect("cpu");
-    let mut metal_values = alloc_allocation::<Metal, i8>(&metal, rows * columns);
-    let mut metal_scales = alloc_allocation::<Metal, f32>(&metal, rows * groups);
-    let mut cpu_values = alloc_allocation::<Cpu, i8>(&cpu, rows * columns);
-    let mut cpu_scales = alloc_allocation::<Cpu, f32>(&cpu, rows * groups);
-    let mut metal_group_sums = alloc_allocation::<Metal, i32>(&metal, rows * groups);
-    let mut cpu_group_sums = alloc_allocation::<Cpu, i32>(&cpu, rows * groups);
+    let mut metal_values = alloc_allocation::<Metal, i8>(metal.as_ref(), rows * columns);
+    let mut metal_scales = alloc_allocation::<Metal, f32>(metal.as_ref(), rows * groups);
+    let mut cpu_values = alloc_allocation::<Cpu, i8>(cpu.as_ref(), rows * columns);
+    let mut cpu_scales = alloc_allocation::<Cpu, f32>(cpu.as_ref(), rows * groups);
+    let mut metal_group_sums = alloc_allocation::<Metal, i32>(metal.as_ref(), rows * groups);
+    let mut cpu_group_sums = alloc_allocation::<Cpu, i32>(cpu.as_ref(), rows * groups);
+    let mut metal_fp_scratch = alloc_allocation::<Metal, f32>(metal.as_ref(), rows * columns);
+    let mut cpu_fp_scratch = alloc_allocation::<Cpu, f32>(cpu.as_ref(), rows * columns);
 
-    let metal_input = alloc_allocation_with_data::<Metal, f32>(&metal, &input_data);
-    let metal_factors = alloc_allocation_with_data::<Metal, i32>(&metal, &factors_data);
-    let cpu_input = alloc_allocation_with_data::<Cpu, f32>(&cpu, &input_data);
-    let cpu_factors = alloc_allocation_with_data::<Cpu, i32>(&cpu, &factors_data);
+    let metal_input = alloc_allocation_with_data::<Metal, f32>(metal.as_ref(), &input_data);
+    let metal_factors = alloc_allocation_with_data::<Metal, i32>(metal.as_ref(), &factors_data);
+    let cpu_input = alloc_allocation_with_data::<Cpu, f32>(cpu.as_ref(), &input_data);
+    let cpu_factors = alloc_allocation_with_data::<Cpu, i32>(cpu.as_ref(), &factors_data);
 
-    let metal_kernel = RHTQuantizeActivationsMetalKernel::new(&metal, DataType::F32, true).expect("metal prepare");
-    let cpu_kernel =
-        <<Cpu as Backend>::Kernels as Kernels>::RHTQuantizeActivationsKernel::new(&cpu, DataType::F32, true)
-            .expect("cpu prepare");
+    let metal_kernel =
+        ActivationTransform::quantize(metal.as_ref(), DataType::F32, group_size, true).expect("metal prepare");
+    let cpu_kernel = ActivationTransform::quantize(cpu.as_ref(), DataType::F32, group_size, true).expect("cpu prepare");
 
-    let mut metal_enc = Encoder::<Metal>::new(&metal).expect("metal encoder");
-    metal_kernel.encode(
+    let mut metal_enc = Encoder::<Metal>::new(metal.as_ref()).expect("metal encoder");
+    metal_kernel.encode_quantize(
         &metal_input,
+        &mut metal_fp_scratch,
         &mut metal_values,
         &mut metal_scales,
         Some(&mut metal_group_sums),
         &metal_factors,
         rows as u32,
         columns as u32,
-        group_size,
         &mut metal_enc,
     );
     metal_enc.end_encoding().submit().wait_until_completed().unwrap();
 
-    let mut cpu_enc = Encoder::<Cpu>::new(&cpu).expect("cpu encoder");
-    cpu_kernel.encode(
+    let mut cpu_enc = Encoder::<Cpu>::new(cpu.as_ref()).expect("cpu encoder");
+    cpu_kernel.encode_quantize(
         &cpu_input,
+        &mut cpu_fp_scratch,
         &mut cpu_values,
         &mut cpu_scales,
         Some(&mut cpu_group_sums),
         &cpu_factors,
         rows as u32,
         columns as u32,
-        group_size,
         &mut cpu_enc,
     );
     cpu_enc.end_encoding().submit().wait_until_completed().unwrap();

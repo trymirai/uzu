@@ -5,9 +5,9 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder},
+        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
-            HadamardTransformKernel, Kernels,
+            ActivationTransform, Kernels,
             matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
@@ -31,8 +31,8 @@ pub enum QLoRALinearWrapperError<B: Backend> {
 
 pub struct QLoRALinearWrapper<B: Backend> {
     base_linear: LinearMatmul<B>,
-    input_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
-    output_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
+    input_hadamard: Option<(ActivationTransform<B>, Allocation<B>)>,
+    output_hadamard: Option<(ActivationTransform<B>, Allocation<B>)>,
     adapter_down_kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     adapter_up_kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     adapter_down: Allocation<B>,
@@ -93,21 +93,13 @@ impl<B: Backend> QLoRALinearWrapper<B> {
                 .read_allocation()?;
             (
                 Some((
-                    <B::Kernels as Kernels>::HadamardTransformKernel::new(
-                        context,
-                        input_data_type,
-                        HadamardTransformOrder::Input,
-                    )
-                    .map_err(QLoRALinearWrapperError::BackendError)?,
+                    ActivationTransform::input_rht(context, input_data_type)
+                        .map_err(QLoRALinearWrapperError::BackendError)?,
                     input_factors,
                 )),
                 Some((
-                    <B::Kernels as Kernels>::HadamardTransformKernel::new(
-                        context,
-                        output_data_type,
-                        HadamardTransformOrder::Output,
-                    )
-                    .map_err(QLoRALinearWrapperError::BackendError)?,
+                    ActivationTransform::output_rht(context, output_data_type)
+                        .map_err(QLoRALinearWrapperError::BackendError)?,
                     output_factors,
                 )),
             )
@@ -198,9 +190,14 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         let base_input = if let Some((input_hadamard_kernel, input_factors)) = &self.input_hadamard {
             let mut base_input =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dim], self.input_data_type))?;
-            encoder.encode_copy(&input, .., &mut base_input, ..);
-            input_hadamard_kernel.encode(
+            let mut q_scratch =
+                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dim], self.input_data_type))?;
+            let mut scales_scratch = encoder.allocate_scratch(size_for_shape(&[batch_dim, 1], self.input_data_type))?;
+            input_hadamard_kernel.encode_fp(
+                &input,
                 &mut base_input,
+                &mut q_scratch,
+                &mut scales_scratch,
                 input_factors,
                 self.input_dim as u32,
                 batch_dim as u32,
@@ -241,13 +238,23 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         }
 
         if let Some((output_hadamard_kernel, output_factors)) = &self.output_hadamard {
-            output_hadamard_kernel.encode(
-                &mut output,
+            let mut transformed =
+                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.weights_data_type))?;
+            let mut q_scratch =
+                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.weights_data_type))?;
+            let mut scales_scratch =
+                encoder.allocate_scratch(size_for_shape(&[batch_dim, 1], self.weights_data_type))?;
+            output_hadamard_kernel.encode_fp(
+                &output,
+                &mut transformed,
+                &mut q_scratch,
+                &mut scales_scratch,
                 output_factors,
                 self.output_dim as u32,
                 batch_dim as u32,
                 encoder,
             );
+            output = transformed;
         }
 
         Ok(output)
