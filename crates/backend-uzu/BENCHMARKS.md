@@ -24,8 +24,9 @@ baselines side by side.
 
 ## Available benchmark groups
 
-The Cargo bench target is `main`. Its source lives at
-`crates/backend-uzu/benches/main.rs`.
+Benchmarks live inside the `backend-uzu` library test target (registered
+with `#[uzu_bench]` under `crates/backend-uzu/tests/unit/`), so the Cargo
+target is `--lib`.
 
 | Group id                                | Filter                              |
 |-----------------------------------------|-------------------------------------|
@@ -57,7 +58,7 @@ resolve relative to the package dir:
 ```bash
 CRITERION_HOME="$PWD/target/criterion/m2_max" cargo bench \
   -p backend-uzu \
-  --bench main -- "Metal/Kernel/Matmul" \
+  --lib -- "Metal/Kernel/Matmul" \
   --save-baseline matmul_baseline_m2_max
 ```
 
@@ -89,7 +90,7 @@ cargo dinghy \
   -d "$DEVICE" \
   -e CRITERION_HOME=target/criterion/a19 \
   --copy-back "Documents/target=$(pwd)/target" \
-  bench -p backend-uzu --bench main -- \
+  bench -p backend-uzu --lib -- \
     "Metal/Kernel/Matmul" \
     --save-baseline matmul_baseline_a19
 ```

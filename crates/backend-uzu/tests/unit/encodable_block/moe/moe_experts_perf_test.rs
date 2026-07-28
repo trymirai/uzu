@@ -3,13 +3,12 @@ use std::time::Instant;
 use half::bf16;
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use test_runner::for_each_non_cpu_backend;
 
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock};
 use crate::{
     backends::common::{Backend, Encoder},
     data_type::DataType,
-    tests::helpers::{alloc_allocation_with_data, create_context},
+    tests::helpers::{alloc_allocation_with_data, create_context, for_each_non_cpu_backend},
 };
 
 fn build_offsets(

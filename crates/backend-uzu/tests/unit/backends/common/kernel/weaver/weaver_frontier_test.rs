@@ -1,5 +1,4 @@
 use proc_macros::uzu_test;
-use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     backends::{
@@ -10,7 +9,7 @@ use crate::{
         },
         cpu::Cpu,
     },
-    tests::helpers::{alloc_allocation_with_data, allocation_to_vec, create_context},
+    tests::helpers::{alloc_allocation_with_data, allocation_to_vec, create_context, for_each_non_cpu_backend},
 };
 
 fn select<B: Backend>() -> Vec<u32> {
