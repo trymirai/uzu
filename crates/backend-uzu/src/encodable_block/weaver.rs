@@ -69,7 +69,7 @@ struct CandidateBatch<'a, B: Backend> {
     depth_seeds: &'a Allocation<B>,
 }
 
-pub(crate) struct CandidatePool<'a, B: Backend> {
+pub struct CandidatePool<'a, B: Backend> {
     ids: &'a Allocation<B>,
     logits: &'a Allocation<B>,
     depth_count: usize,
@@ -77,7 +77,7 @@ pub(crate) struct CandidatePool<'a, B: Backend> {
 }
 
 impl<'a, B: Backend> CandidatePool<'a, B> {
-    pub(crate) fn new(
+    pub fn new(
         ids: &'a Allocation<B>,
         logits: &'a Allocation<B>,
         depth_count: usize,
@@ -92,7 +92,7 @@ impl<'a, B: Backend> CandidatePool<'a, B> {
     }
 }
 
-pub(crate) struct WeaverInputs<'a, B: Backend> {
+pub struct WeaverInputs<'a, B: Backend> {
     target_hidden: &'a Allocation<B>,
     draft_hidden: &'a Allocation<B>,
     target_embedding: &'a Embedding<B>,
@@ -102,7 +102,7 @@ pub(crate) struct WeaverInputs<'a, B: Backend> {
 }
 
 impl<'a, B: Backend> WeaverInputs<'a, B> {
-    pub(crate) fn new(
+    pub fn new(
         target_hidden: &'a Allocation<B>,
         draft_hidden: &'a Allocation<B>,
         target_embedding: &'a Embedding<B>,
@@ -121,14 +121,14 @@ impl<'a, B: Backend> WeaverInputs<'a, B> {
     }
 }
 
-pub(crate) struct TreeShape {
+pub struct TreeShape {
     budget: usize,
     frontier_width: usize,
     children_per_node: usize,
 }
 
 impl TreeShape {
-    pub(crate) fn new(
+    pub fn new(
         budget: usize,
         frontier_width: usize,
         children_per_node: usize,
@@ -141,23 +141,23 @@ impl TreeShape {
     }
 }
 
-pub(crate) struct EncodedWeaverTree<B: Backend> {
+pub struct EncodedWeaverTree<B: Backend> {
     packed_tree: Allocation<B>,
 }
 
-pub(crate) struct ProposalNode {
-    pub(crate) token_id: u32,
-    pub(crate) depth: usize,
-    pub(crate) child_indices: Vec<usize>,
+pub struct ProposalNode {
+    pub token_id: u32,
+    pub depth: usize,
+    pub child_indices: Vec<usize>,
 }
 
 impl<B: Backend> EncodedWeaverTree<B> {
-    pub(crate) fn read_nodes(self) -> Vec<ProposalNode> {
+    pub fn read_nodes(self) -> Vec<ProposalNode> {
         nodes_from_packed_tree(&self.packed_tree.copyout::<u32>())
     }
 }
 
-pub(crate) struct Weaver<B: Backend> {
+pub struct Weaver<B: Backend> {
     token_embedding_norm: Normalization<B>,
     token_embedding_projection: Box<dyn Linear<B>>,
     hidden_state_norm: Normalization<B>,
@@ -229,7 +229,7 @@ pub enum WeaverEncodeError<B: Backend> {
 }
 
 impl<B: Backend> Weaver<B> {
-    pub(crate) fn new(
+    pub fn new(
         context: &B::Context,
         config: &WeaverConfig,
         parameter_tree: &ParameterTree<B>,
@@ -347,7 +347,7 @@ impl<B: Backend> Weaver<B> {
         })
     }
 
-    pub(crate) fn encode_tree(
+    pub fn encode_tree(
         &self,
         inputs: WeaverInputs<'_, B>,
         shape: TreeShape,
