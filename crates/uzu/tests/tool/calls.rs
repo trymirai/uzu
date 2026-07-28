@@ -117,10 +117,7 @@ async fn run_tool_calls_test(
         println!("Prompt: {}", case.prompt);
 
         let mut session = engine.chat(model.clone(), ChatConfig::default()).await.unwrap();
-        session
-            .add_tool_function_definitions(case.tools.iter().map(|definition| definition()).collect())
-            .await
-            .unwrap();
+        session.add_tool_descriptors(case.tools.iter().map(|definition| definition()).collect()).await.unwrap();
 
         let mut messages = Vec::new();
         if with_system_message {
