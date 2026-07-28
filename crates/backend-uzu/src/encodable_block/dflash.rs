@@ -44,8 +44,8 @@ impl<B: Backend> DFlashState<B> {
 }
 
 pub(crate) struct DFlashDraft<B: Backend> {
-    context_projection: Box<dyn Linear<B>>,
-    context_norm: Normalization<B>,
+    target_feature_projection: Box<dyn Linear<B>>,
+    projected_feature_norm: Normalization<B>,
     layers: Box<[DFlashDraftLayer<B>]>,
     output_norm: Normalization<B>,
     top_k: <B::Kernels as Kernels>::RadixTopKSmall,
@@ -54,7 +54,7 @@ pub(crate) struct DFlashDraft<B: Backend> {
     max_context_length: usize,
     block_size: usize,
     mask_token_id: u32,
-    target_feature_width: usize,
+    target_feature_input_dim: usize,
     data_type: DataType,
 }
 
@@ -66,8 +66,8 @@ pub(crate) struct DFlashDraftOutput<B: Backend> {
 
 struct DFlashDraftLayer<B: Backend> {
     attention: Attention<B>,
-    input_norm: Normalization<B>,
-    post_attention_norm: Normalization<B>,
+    pre_attention_norm: Normalization<B>,
+    pre_mlp_norm: Normalization<B>,
     mlp: Box<dyn Mlp<B>>,
 }
 
@@ -124,7 +124,7 @@ impl<B: Backend> DFlashDraft<B> {
             ));
         }
 
-        let context_projection = <dyn Linear<B>>::new(
+        let target_feature_projection = <dyn Linear<B>>::new(
             config.model_dim * config.target_layer_ids.len(),
             [config.model_dim],
             false,
@@ -132,7 +132,7 @@ impl<B: Backend> DFlashDraft<B> {
             data_type,
             &parameter_tree.subtree("context_projection")?,
         )?;
-        let context_norm = plain_norm(
+        let projected_feature_norm = plain_norm(
             context,
             config.model_dim,
             &config.context_norm_config,
@@ -171,8 +171,8 @@ impl<B: Backend> DFlashDraft<B> {
             .map_err(DFlashDraftNewError::Backend)?;
 
         Ok(Self {
-            context_projection,
-            context_norm,
+            target_feature_projection,
+            projected_feature_norm,
             layers,
             output_norm,
             top_k,
@@ -181,7 +181,7 @@ impl<B: Backend> DFlashDraft<B> {
             max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
             mask_token_id: config.mask_token_id as u32,
-            target_feature_width: config.model_dim * config.target_layer_ids.len(),
+            target_feature_input_dim: config.model_dim * config.target_layer_ids.len(),
             data_type,
         })
     }
@@ -216,7 +216,7 @@ impl<B: Backend> DFlashDraft<B> {
         }
 
         let num_tokens = accepted_indices.len();
-        let expected_feature_count = self.target_feature_width / self.model_dim;
+        let expected_feature_count = self.target_feature_input_dim / self.model_dim;
         assert_eq!(target_features.len(), expected_feature_count);
         let layer_feature_bytes = self.model_dim * self.data_type.size_in_bytes();
         assert!(target_features.iter().all(|features| features.size() % layer_feature_bytes == 0));
@@ -225,7 +225,7 @@ impl<B: Backend> DFlashDraft<B> {
         assert!(context_length <= self.max_context_length, "DFlash context exceeds configured RoPE capacity");
 
         let mut projection_input =
-            encoder.allocate_scratch(num_tokens * self.target_feature_width * self.data_type.size_in_bytes())?;
+            encoder.allocate_scratch(num_tokens * self.target_feature_input_dim * self.data_type.size_in_bytes())?;
         for (layer_index, features) in target_features.iter().enumerate() {
             for (token_index, &accepted_index) in accepted_indices.iter().enumerate() {
                 let source_start = accepted_index * layer_feature_bytes;
@@ -239,31 +239,32 @@ impl<B: Backend> DFlashDraft<B> {
                 );
             }
         }
-        let projected = self.context_projection.encode(projection_input, num_tokens, encoder)?;
-        let projected = self.context_norm.encode(&projected, 0, num_tokens, None, encoder)?;
+        let projected_features = self.target_feature_projection.encode(projection_input, num_tokens, encoder)?;
+        let normalized_features =
+            self.projected_feature_norm.encode(&projected_features, 0, num_tokens, None, encoder)?;
         let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, encoder)?;
 
         let layer_count = self.layers.len();
-        let mut projected = Some(projected);
-        for (index, (layer, state_layer)) in self.layers.iter().zip(state.layer_states.iter_mut()).enumerate() {
-            state_layer.prepare(state.context_length, num_tokens, encoder.context())?;
-            let layer_input = if index + 1 == layer_count {
-                projected.take().expect("projected available for last layer")
+        let mut normalized_features = Some(normalized_features);
+        for (index, (layer, attention_state)) in self.layers.iter().zip(state.layer_states.iter_mut()).enumerate() {
+            attention_state.prepare(state.context_length, num_tokens, encoder.context())?;
+            let kv_input = if index + 1 == layer_count {
+                normalized_features.take().expect("normalized features available for last layer")
             } else {
-                let source = projected.as_ref().expect("projected available");
-                let mut layer_input = encoder.allocate_scratch(source.size())?;
-                encoder.encode_copy(source, .., &mut layer_input, ..);
-                layer_input
+                let source = normalized_features.as_ref().expect("normalized features available");
+                let mut kv_input = encoder.allocate_scratch(source.size())?;
+                encoder.encode_copy(source, .., &mut kv_input, ..);
+                kv_input
             };
-            layer.attention.append_kv(layer_input, Some(&rope), num_tokens, state_layer, encoder)?;
+            layer.attention.append_kv(kv_input, Some(&rope), num_tokens, attention_state, encoder)?;
         }
 
         state.context_length += num_tokens;
         Ok(())
     }
 
-    pub(crate) fn encode_block(
+    pub(crate) fn encode_hidden(
         &self,
         state: &mut DFlashState<B>,
         token_embeddings: Allocation<B>,
@@ -287,18 +288,18 @@ impl<B: Backend> DFlashDraft<B> {
 
         let mut hidden = token_embeddings;
         let mut residual = encoder.allocate_scratch(hidden.size())?;
-        for (layer, state_layer) in self.layers.iter().zip(state.layer_states.iter_mut()) {
-            state_layer.prepare(state.context_length, batch_dim, encoder.context())?;
-            let normalized = layer.input_norm.encode(&hidden, 0, batch_dim, Some(&mut residual), encoder)?;
+        for (layer, attention_state) in self.layers.iter().zip(state.layer_states.iter_mut()) {
+            attention_state.prepare(state.context_length, batch_dim, encoder.context())?;
+            let normalized = layer.pre_attention_norm.encode(&hidden, 0, batch_dim, Some(&mut residual), encoder)?;
             let attention_output = layer.attention.encode(
                 normalized,
                 Some(&rope),
                 &batch_topology,
-                Some(MaybeMut::Mut(state_layer)),
+                Some(MaybeMut::Mut(attention_state)),
                 encoder,
             )?;
             let normalized =
-                layer.post_attention_norm.encode(&attention_output, 0, batch_dim, Some(&mut residual), encoder)?;
+                layer.pre_mlp_norm.encode(&attention_output, 0, batch_dim, Some(&mut residual), encoder)?;
             hidden = layer.mlp.encode(normalized, batch_dim, encoder)?;
         }
 
@@ -321,7 +322,7 @@ impl<B: Backend> DFlashDraft<B> {
         token_ids.copyin(&tokens);
 
         let token_embeddings = target_embedding.encode_lookup(&token_ids, self.block_size, encoder)?;
-        let hidden = self.encode_block(state, token_embeddings, encoder).map_err(EmbeddingError::BackendError)?;
+        let hidden = self.encode_hidden(state, token_embeddings, encoder).map_err(EmbeddingError::BackendError)?;
 
         // The first block row is the target's output token; only the lookahead rows are ranked.
         let lookahead_rows = self.block_size - 1;
@@ -331,7 +332,7 @@ impl<B: Backend> DFlashDraft<B> {
         encoder.encode_copy(&hidden, row_bytes..self.block_size * row_bytes, &mut lookahead_hidden, ..);
         let logits = target_embedding.encode_readout(lookahead_rows, &lookahead_hidden, DataType::F32, encoder)?;
         let (candidate_ids, candidate_scores) = self
-            .encode_top_k(&logits, lookahead_rows, candidate_count, encoder)
+            .encode_candidates(&logits, lookahead_rows, candidate_count, encoder)
             .map_err(EmbeddingError::BackendError)?;
         drop(logits);
         drop(token_ids);
@@ -344,7 +345,7 @@ impl<B: Backend> DFlashDraft<B> {
         })
     }
 
-    pub(crate) fn encode_top_k(
+    pub(crate) fn encode_candidates(
         &self,
         logits: &Allocation<B>,
         rows: usize,
@@ -388,7 +389,7 @@ impl<B: Backend> DFlashDraftLayer<B> {
             &parameter_tree.subtree("attention")?,
             context,
         )?;
-        let input_norm = Normalization::new(
+        let pre_attention_norm = Normalization::new(
             model_dim,
             None,
             if layer_index == 0 {
@@ -402,7 +403,7 @@ impl<B: Backend> DFlashDraftLayer<B> {
             &parameter_tree.subtree("input_norm")?,
             context,
         )?;
-        let post_attention_norm = Normalization::new(
+        let pre_mlp_norm = Normalization::new(
             model_dim,
             None,
             ShortcutMode::Add,
@@ -417,8 +418,8 @@ impl<B: Backend> DFlashDraftLayer<B> {
             <dyn Mlp<B>>::new(&mlp_config, model_dim, hidden_dim, context, &parameter_tree.subtree("mlp")?, data_type)?;
         Ok(Self {
             attention,
-            input_norm,
-            post_attention_norm,
+            pre_attention_norm,
+            pre_mlp_norm,
             mlp,
         })
     }
