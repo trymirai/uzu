@@ -72,9 +72,10 @@ impl BenchmarkData {
         seed: u64,
     ) -> Self {
         let group_size = HADAMARD_TRANSFORM_BLOCK_SIZE as u32;
-        let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed);
+        let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed)
+            .with_prepared_a();
 
-        let weights_u8 = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
+        let weights_u8 = alloc_allocation_with_data::<Metal, u32>(context, &input.weights_with_signed_codes());
         let weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
         let activations = alloc_allocation_with_data::<Metal, bf16>(context, &input.x);
         let rht: Vec<i32> = (0..k)

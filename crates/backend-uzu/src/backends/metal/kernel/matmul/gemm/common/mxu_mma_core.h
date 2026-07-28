@@ -400,11 +400,11 @@ struct MxuMmaCore {
 
         uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> chunk_products;
         if constexpr (BITS == 4 && ALIGNED_N) {
-          Ops::template fragment_mma_int8_device_weights<Ops::MatmulMode::multiply, metal::int4b_format>(
+          Ops::template fragment_matmul_int8_device_weights<metal::int4b_format>(
               chunk_products,
               activation_tile,
               b_packed_simdgroup + (k_element_offset >> 1),
-              b_row_stride_bytes * 2
+              b_row_stride_bytes
           );
         } else {
           auto right_tile = load_int8_weight_tile<ALIGNED_N>(

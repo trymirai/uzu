@@ -217,16 +217,13 @@ impl<B: Backend> LinearMatmul<B> {
         else {
             return;
         };
-        let midpoint_mask: u8 = match mode {
-            QuantizationMode::U4 => 0x88,
-            QuantizationMode::U8 => 0x80,
-            QuantizationMode::I8 => return,
+        let Some(sign_flip_mask) = mode.weight_codes_sign_flip_mask() else {
+            return;
         };
-        let mut codes: Vec<u8> = self.weights.copyout();
-        for code in &mut codes {
-            *code ^= midpoint_mask;
-        }
-        self.weights.copyin(&codes);
+        let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
+        let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(self.weights.as_slice_mut());
+        words.iter_mut().for_each(|word| *word ^= broadcast_mask);
+        prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
     }
 
     pub(super) fn encode_with_a(

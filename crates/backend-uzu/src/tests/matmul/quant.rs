@@ -138,16 +138,12 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         self
     }
 
-    fn weights_for_upload(&self) -> Vec<u32> {
+    pub(crate) fn weights_with_signed_codes(&self) -> Vec<u32> {
         let mut words = self.w_packed.clone();
-        if self.prepared_a.is_some() {
-            let midpoint_mask: u32 = match self.mode {
-                QuantizationMode::U4 => 0x8888_8888,
-                QuantizationMode::U8 | QuantizationMode::I8 => 0x8080_8080,
-            };
-            for word in &mut words {
-                *word ^= midpoint_mask;
-            }
+        let sign_flip_mask = self.prepared_a.is_some().then(|| self.mode.weight_codes_sign_flip_mask()).flatten();
+        if let Some(mask) = sign_flip_mask {
+            let broadcast_mask = u32::from(mask) * 0x0101_0101;
+            words.iter_mut().for_each(|word| *word ^= broadcast_mask);
         }
         words
     }
@@ -179,7 +175,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         input: &QuantInput<T>,
     ) -> Self {
         Self {
-            w: alloc_allocation_with_data::<B, u32>(context, &input.weights_for_upload()),
+            w: alloc_allocation_with_data::<B, u32>(context, &input.weights_with_signed_codes()),
             scales: alloc_allocation_with_data::<B, T>(context, &input.scales),
             zp: input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(context, zp)),
             bias: input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(context, b)),
