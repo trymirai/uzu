@@ -15,7 +15,7 @@ use crate::{
     config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig, model::SpeculatorModelConfig},
     data_type::DataType,
     encodable_block::{
-        dflash::{DFlashDraft, DFlashDraftNewError},
+        dflash::{DFlashDraft, DFlashDraftNewError, DFlashDraftOutput},
         embedding::{Embedding, EmbeddingError},
         sampling::PRng,
         weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeInput},
@@ -45,12 +45,6 @@ pub enum DFlashTreeError<B: Backend> {
     Weaver(#[from] WeaverEncodeError<B>),
     #[error("invalid tree options")]
     InvalidOptions,
-}
-
-struct DFlashChainOutput<B: Backend> {
-    pool_ids: Allocation<B>,
-    pool_scores: Allocation<B>,
-    draft_hidden: Allocation<B>,
 }
 
 #[derive(Debug, Error)]
@@ -175,22 +169,16 @@ impl<B: Backend> DFlashSpeculator<B> {
             return Err(DFlashTreeError::InvalidOptions);
         }
         let root_position = state.context_length();
+        if target_output_norm.size() != target_model_dim * DataType::BF16.size_in_bytes() {
+            return Err(DFlashTreeError::InvalidOptions);
+        }
 
         let mut encoder = Encoder::new(&*self.context).map_err(DFlashTreeError::Backend)?;
-        let DFlashChainOutput {
-            pool_ids,
-            pool_scores,
-            draft_hidden,
-        } = self.encode_dflash_chain(
-            &mut encoder,
-            state,
-            target_output_norm,
-            target_output_token,
-            target_embedding,
-            block_size,
-            target_model_dim,
-            pool_size,
-        )?;
+        let DFlashDraftOutput {
+            candidate_ids: pool_ids,
+            candidate_scores: pool_scores,
+            hidden: draft_hidden,
+        } = self.model.encode_draft(state, target_output_token, target_embedding, pool_size, &mut encoder)?;
 
         if let Some(weaver) = self.weaver.as_ref() {
             let max_depth = self.config.weaver_config.as_ref().expect("a Weaver implies a Weaver config").max_depth;
@@ -259,50 +247,6 @@ impl<B: Backend> DFlashSpeculator<B> {
             #[cfg(grammar)]
             grammar,
         ))
-    }
-
-    fn encode_dflash_chain(
-        &self,
-        encoder: &mut Encoder<B>,
-        state: &mut DFlashState<B>,
-        target_output_norm: &Allocation<B>,
-        target_output_token: u32,
-        target_embedding: &Embedding<B>,
-        block_size: usize,
-        target_model_dim: usize,
-        pool_size: usize,
-    ) -> Result<DFlashChainOutput<B>, DFlashTreeError<B>> {
-        if target_output_norm.size() != target_model_dim * DataType::BF16.size_in_bytes() {
-            return Err(DFlashTreeError::InvalidOptions);
-        }
-
-        let mut noise_ids =
-            encoder.allocate_constant(block_size * DataType::U32.size_in_bytes()).map_err(DFlashTreeError::Backend)?;
-        let mut noise = vec![self.config.draft_config.mask_token_id as u32; block_size];
-        noise[0] = target_output_token;
-        noise_ids.copyin(&noise);
-        let token_embeddings = target_embedding.encode_lookup(&noise_ids, block_size, encoder)?;
-        let draft_hidden =
-            self.model.encode_block(state, token_embeddings, encoder).map_err(DFlashTreeError::Backend)?;
-        // The first block row is the target's output token; only the lookahead rows are ranked.
-        let row_bytes = target_embedding.model_dim() * DataType::BF16.size_in_bytes();
-        let mut lookahead_hidden =
-            encoder.allocate_scratch((block_size - 1) * row_bytes).map_err(DFlashTreeError::Backend)?;
-        encoder.encode_copy(&draft_hidden, row_bytes..block_size * row_bytes, &mut lookahead_hidden, ..);
-        let draft_logits =
-            target_embedding.encode_readout(block_size - 1, &lookahead_hidden, DataType::F32, encoder)?;
-        let (pool_ids, pool_scores) = self
-            .model
-            .encode_top_k(&draft_logits, block_size - 1, pool_size, encoder)
-            .map_err(DFlashTreeError::Backend)?;
-        drop(draft_logits);
-        drop(noise_ids);
-        drop(lookahead_hidden);
-        Ok(DFlashChainOutput {
-            pool_ids,
-            pool_scores,
-            draft_hidden,
-        })
     }
 
     fn finish_tree(

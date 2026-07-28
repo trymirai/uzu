@@ -14,6 +14,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError},
         mixer::{
             Mixer, MixerState,
@@ -52,8 +53,15 @@ pub(crate) struct DFlashDraft<B: Backend> {
     model_dim: usize,
     max_context_length: usize,
     block_size: usize,
+    mask_token_id: u32,
     target_feature_width: usize,
     data_type: DataType,
+}
+
+pub(crate) struct DFlashDraftOutput<B: Backend> {
+    pub(crate) candidate_ids: Allocation<B>,
+    pub(crate) candidate_scores: Allocation<B>,
+    pub(crate) hidden: Allocation<B>,
 }
 
 struct DFlashDraftLayer<B: Backend> {
@@ -172,6 +180,7 @@ impl<B: Backend> DFlashDraft<B> {
             model_dim: config.model_dim,
             max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
+            mask_token_id: config.mask_token_id as u32,
             target_feature_width: config.model_dim * config.target_layer_ids.len(),
             data_type,
         })
@@ -294,6 +303,45 @@ impl<B: Backend> DFlashDraft<B> {
         }
 
         self.output_norm.encode(&hidden, 0, batch_dim, Some(&mut residual), encoder)
+    }
+
+    pub(crate) fn encode_draft(
+        &self,
+        state: &mut DFlashState<B>,
+        target_output_token: u32,
+        target_embedding: &Embedding<B>,
+        candidate_count: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<DFlashDraftOutput<B>, EmbeddingError<B>> {
+        let mut token_ids = encoder
+            .allocate_constant(self.block_size * DataType::U32.size_in_bytes())
+            .map_err(EmbeddingError::BackendError)?;
+        let mut tokens = vec![self.mask_token_id; self.block_size];
+        tokens[0] = target_output_token;
+        token_ids.copyin(&tokens);
+
+        let token_embeddings = target_embedding.encode_lookup(&token_ids, self.block_size, encoder)?;
+        let hidden = self.encode_block(state, token_embeddings, encoder).map_err(EmbeddingError::BackendError)?;
+
+        // The first block row is the target's output token; only the lookahead rows are ranked.
+        let lookahead_rows = self.block_size - 1;
+        let row_bytes = target_embedding.model_dim() * DataType::BF16.size_in_bytes();
+        let mut lookahead_hidden =
+            encoder.allocate_scratch(lookahead_rows * row_bytes).map_err(EmbeddingError::BackendError)?;
+        encoder.encode_copy(&hidden, row_bytes..self.block_size * row_bytes, &mut lookahead_hidden, ..);
+        let logits = target_embedding.encode_readout(lookahead_rows, &lookahead_hidden, DataType::F32, encoder)?;
+        let (candidate_ids, candidate_scores) = self
+            .encode_top_k(&logits, lookahead_rows, candidate_count, encoder)
+            .map_err(EmbeddingError::BackendError)?;
+        drop(logits);
+        drop(token_ids);
+        drop(lookahead_hidden);
+
+        Ok(DFlashDraftOutput {
+            candidate_ids,
+            candidate_scores,
+            hidden,
+        })
     }
 
     pub(crate) fn encode_top_k(
