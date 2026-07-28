@@ -131,7 +131,7 @@ impl<B: Backend> Classifier<B> {
             .collect::<Box<[TrieNode]>>();
         let hidden = self
             .transformer
-            .encode(hidden, None, &BatchTopology::new(&nodes, true), Some(0..batch_dim), None, encoder, &[])
+            .encode(hidden, None, &BatchTopology::new(&nodes, true), Some(0..batch_dim), None, None, encoder)
             .map_err(ClassifierError::Backend)?
             .output
             .unwrap();

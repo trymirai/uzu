@@ -192,6 +192,31 @@ fn test_token_stream_parser_llama3_multiple_tool_calls() {
 }
 
 #[test]
+fn test_token_stream_parser_llama3_tool_call_with_semicolon_argument() {
+    let suite = llama3_suite();
+    let data = TestData {
+        prompt: "<|start_header_id|>user<|end_header_id|>\n\nSearch<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n".into(),
+        completion: "<|python_tag|>{\"name\": \"search\", \"parameters\": {\"query\": \"a;b\"}}<|eom_id|>".into(),
+    };
+
+    run_parser_test(
+        &suite,
+        &data,
+        &TestExpectations {
+            framing: None,
+            reduction: None,
+            extraction: suite.expect_extraction(json!([
+                {"role": "user", "content": [{"type": "$text", "value": "\n\nSearch"}]},
+                {"role": "assistant", "content": [
+                    {"type": "$text", "value": "\n\n"},
+                    {"type": "tool_call", "value": {"name": "search", "arguments": {"query": "a;b"}}}
+                ]}
+            ])),
+        },
+    );
+}
+
+#[test]
 fn test_token_stream_parser_llama3_builtin_tool_call() {
     let suite = llama3_suite();
     let data = TestData {

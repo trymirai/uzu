@@ -12,6 +12,7 @@ use crate::{
     },
     engine::Engine,
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
+    speculators::dflash_speculator::{DFlashSpeculator, DFlashSpeculatorLoadError},
 };
 
 pub mod state;
@@ -23,9 +24,11 @@ pub mod grammar;
 pub struct LanguageModel<B: Backend> {
     context: Arc<B::Context>,
     decoder: Decoder<B>,
+    speculator: Option<DFlashSpeculator<B>>,
     sampling: Sampling<B>,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
+    #[cfg(grammar)]
     vocab_size: usize,
 }
 
@@ -43,6 +46,8 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("Decoder error: {0}")]
     Decoder(#[from] DecoderError<B>),
+    #[error("Speculator error: {0}")]
+    Speculator(#[from] DFlashSpeculatorLoadError<B>),
 }
 
 impl<B: Backend> Engine<B> {
@@ -56,9 +61,14 @@ impl<B: Backend> Engine<B> {
         let weights_file = File::open(model_path.join("model.safetensors"))?;
         let weight_loader = ParameterLoader::new(&weights_file, &*self.context)?;
 
-        self.build_language_model(config, &weight_loader)
+        // TODO
+        let speculator_path = model_path.join("speculator");
+        let speculator_path = speculator_path.exists().then_some(speculator_path);
+
+        self.build_language_model(config, &weight_loader, speculator_path.as_deref())
     }
 
+    // TODO: better design
     pub fn load_language_model_random(
         &self,
         config_path: &Path,
@@ -70,13 +80,14 @@ impl<B: Backend> Engine<B> {
         let header_file = File::open(header_path)?;
         let weight_loader = ParameterLoader::new_random(&header_file, &*self.context, seed)?;
 
-        self.build_language_model(config, &weight_loader)
+        self.build_language_model(config, &weight_loader, None)
     }
 
     fn build_language_model(
         &self,
         config: LanguageModelConfig,
         weight_loader: &ParameterLoader<B>,
+        speculator_path: Option<&Path>,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
         let context = self.context.clone();
 
@@ -89,6 +100,15 @@ impl<B: Backend> Engine<B> {
             data_type,
         )?;
 
+        assert!(
+            speculator_path.is_none() || decoder.speculation_supported(),
+            "attempted to load speculator for a model that doesn't support one"
+        );
+
+        let speculator = speculator_path
+            .map(|speculator_path| DFlashSpeculator::load(speculator_path, context.clone()))
+            .transpose()?;
+
         let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);
 
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&context)
@@ -98,24 +118,23 @@ impl<B: Backend> Engine<B> {
 
         let generation_config = config.generation_config;
 
+        #[cfg(grammar)]
         let vocab_size = config.decoder_config.vocab_size;
 
         Ok(LanguageModel {
             context,
             decoder,
+            speculator,
             sampling,
             context_ring_update,
             generation_config,
+            #[cfg(grammar)]
             vocab_size,
         })
     }
 }
 
 impl<B: Backend> LanguageModel<B> {
-    pub(crate) fn embedding(&self) -> &crate::encodable_block::embedding::Embedding<B> {
-        self.decoder.embedding()
-    }
-
     pub fn max_context_length(&self) -> Option<usize> {
         self.decoder.max_context_length()
     }

@@ -24,9 +24,9 @@ baselines side by side.
 
 ## Available benchmark groups
 
-Kernel benchmark groups live in the lib test target (use `--lib`). The
-session and language-model groups live in the `main` bench target; its
-source lives at `crates/backend-uzu/benches/main.rs`.
+Benchmarks live inside the `backend-uzu` library test target (registered
+with `#[uzu_bench]` under `crates/backend-uzu/tests/unit/`), so the Cargo
+target is `--lib`.
 
 | Group id                                | Filter                              |
 |-----------------------------------------|-------------------------------------|

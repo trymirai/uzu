@@ -1,17 +1,21 @@
 use half::bf16;
 use proc_macros::uzu_test;
-use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     backends::{
-        common::{Backend, Encoder, Kernels, kernel::WeaverTopChildrenKernel},
+        common::{Backend, Encoder, Kernels, gpu_types::weaver::MetadataIdx, kernel::WeaverTopChildrenKernel},
         cpu::Cpu,
     },
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, create_context},
+    tests::helpers::{
+        alloc_allocation, alloc_allocation_with_data, allocation_to_vec, create_context, for_each_non_cpu_backend,
+    },
 };
 
 const CANDIDATES: usize = 512;
 const CHILDREN: usize = 8;
+const VOCAB_SIZE: u32 = 131_072;
+const DEPTHS: [u32; 3] = [0, 1, 2];
+const DEPTH_SEEDS: [u64; 3] = [0x9E3779B97F4A7C15, 0xD1B54A32D192ED03, 0x2545F4914F6CDD1D];
 
 fn top_children<B: Backend>(
     residual: &[bf16],
@@ -22,10 +26,17 @@ fn top_children<B: Backend>(
     assert_eq!(residual.len(), rows * CANDIDATES);
     assert_eq!(candidate_logits.len(), rows * CANDIDATES);
     assert_eq!(ids.len(), rows * CANDIDATES);
+    assert!(rows <= DEPTHS.len());
     let context = create_context::<B>();
     let residual = alloc_allocation_with_data::<B, bf16>(&context, residual);
     let candidate_logits = alloc_allocation_with_data::<B, f32>(&context, candidate_logits);
     let ids = alloc_allocation_with_data::<B, u32>(&context, ids);
+    let depth_seeds = alloc_allocation_with_data::<B, u64>(&context, &DEPTH_SEEDS);
+    let mut metadata_values = vec![0u32; rows * MetadataIdx::COUNT];
+    for row in 0..rows {
+        metadata_values[MetadataIdx::Depth as usize * rows + row] = DEPTHS[row];
+    }
+    let node_metadata = alloc_allocation_with_data::<B, u32>(&context, &metadata_values);
     let mut output_token_ids = alloc_allocation::<B, u32>(&context, rows * CHILDREN);
     let mut output_model_logprobs = alloc_allocation::<B, f32>(&context, rows * CHILDREN);
     let kernel = <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(&context).unwrap();
@@ -34,11 +45,14 @@ fn top_children<B: Backend>(
         &residual,
         &candidate_logits,
         &ids,
+        &depth_seeds,
+        &node_metadata,
         &mut output_token_ids,
         &mut output_model_logprobs,
         rows as u32,
         CANDIDATES as u32,
         CHILDREN as u32,
+        VOCAB_SIZE,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();

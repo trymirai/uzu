@@ -623,3 +623,81 @@ fn a8w_mxu_output_bias_parity_bf16(
         0.8,
     );
 }
+
+fn run_widened_f32<B: Backend>(
+    context: &B::Context,
+    input: &QuantInput<bf16>,
+) -> Vec<f32> {
+    use crate::{
+        backends::common::kernel::matmul::{MatmulA, MatmulB},
+        data_type::DataType,
+        tests::helpers::alloc_allocation,
+    };
+    let buffers = QuantBuffers::<B, bf16>::allocate(context, input);
+    let mut y = alloc_allocation::<B, f32>(context, (input.m as usize) * (input.n as usize));
+    let mut matmul =
+        <<B as Backend>::Kernels as Kernels>::MatmulKernel::new(context, DataType::BF16, DataType::BF16, DataType::F32)
+            .expect("MatmulKernel widened");
+    let b: MatmulB<'_, B> = match input.quant_method {
+        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+            b: &buffers.w,
+            scales: &buffers.scales,
+            biases: buffers.bias.as_ref().expect("bias buffer"),
+            mode: input.mode,
+            group_size: input.group_size,
+        },
+        QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
+            b: &buffers.w,
+            scales: &buffers.scales,
+            zero_points: buffers.zp.as_ref().expect("zp buffer"),
+            mode: input.mode,
+            group_size: input.group_size,
+        },
+        QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
+            b: &buffers.w,
+            scales: &buffers.scales,
+            mode: input.mode,
+            group_size: input.group_size,
+        },
+    };
+    let mut encoder = Encoder::<B>::new(context).expect("encoder");
+    matmul
+        .encode(
+            crate::backends::common::kernel::matmul::MatmulArguments {
+                a: MatmulA::FullPrecision {
+                    values: &buffers.x,
+                    offset: 0,
+                },
+                b,
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut y,
+                d_transform: MatmulDOps::none(),
+                gather_indices: None,
+                m: input.m,
+                n: input.n,
+                k: input.k,
+            },
+            &mut encoder,
+        )
+        .expect("widened encode failed");
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    allocation_to_vec::<B, f32>(&y)
+}
+
+#[rstest]
+#[test_attr(uzu_test)]
+#[case::gemv_m1(1)]
+#[case::gemv_m4(4)]
+#[case::gemm_m31(31)]
+fn parity_widened_f32_output(#[case] m: usize) {
+    // Mirrors the dflash draft-chain readout: quantized LM head (4-bit ZP,
+    // group 32), BF16 input, widened F32 output.
+    let (k, n, gs) = (5120usize, 32768usize, 32u32);
+    let context = MetalContext::new().expect("Metal context");
+    let input = QuantInput::<bf16>::new(m, k, n, gs, 4, QuantizationMethod::ScaleZeroPoint, 0);
+    let cpu_context = <Cpu as Backend>::Context::new().expect("Cpu context");
+    let reference = run_widened_f32::<Cpu>(&cpu_context, &input);
+    let actual = run_widened_f32::<Metal>(&context, &input);
+    assert_parity::<f32>(&format!("widened f32 m={m}"), &reference, &actual, 0.05, 0.4);
+}

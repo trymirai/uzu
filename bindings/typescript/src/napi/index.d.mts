@@ -69,6 +69,7 @@ export type ChatSessionError =
   | { type: 'UnsupportedModel' }
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }
+  | { type: 'ToolTurnLimitExceeded', limit: number }
 
 export declare const enum ChatSessionState {
   Idle = 'Idle',
@@ -113,13 +114,11 @@ export declare class CancelToken {
 export declare class ChatConfig {
   contextLength: ContextLength
   samplingSeed: SamplingSeed
-  speculationPreset?: ChatSpeculationPreset
-  constructor(contextLength: ContextLength, samplingSeed: SamplingSeed, speculationPreset?: ChatSpeculationPreset)
+  constructor(contextLength: ContextLength, samplingSeed: SamplingSeed)
 
   static create(): ChatConfig
   withContextLength(contextLength: ContextLength): ChatConfig
   withSamplingSeed(samplingSeed: SamplingSeed): ChatConfig
-  withSpeculationPreset(speculationPreset?: ChatSpeculationPreset | undefined | null): ChatConfig
 }
 
 export declare class ChatContentBlockAudio {
@@ -257,12 +256,18 @@ export declare class ChatReplyConfig {
   tokenLimit?: number
   samplingPolicy: SamplingPolicy
   grammar?: Grammar
-  constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar)
+  /**
+   * Maximum number of automatic tool-call turns per reply.
+   * `None` falls back to the session default.
+   */
+  toolTurnLimit?: number
+  constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar, toolTurnLimit?: number)
 
   static create(): ChatReplyConfig
   withTokenLimit(tokenLimit?: number | undefined | null): ChatReplyConfig
   withSamplingPolicy(samplingPolicy: SamplingPolicy): ChatReplyConfig
   withSamplingMethod(samplingMethod: SamplingMethod): ChatReplyConfig
+  withToolTurnLimit(toolTurnLimit?: number | undefined | null): ChatReplyConfig
   withGrammar(grammar?: Grammar | undefined | null): ChatReplyConfig
 }
 
@@ -322,21 +327,6 @@ export declare class ChatRoleTool {
 }
 
 export declare class ChatRoleUser {
-
-  constructor()
-}
-
-export declare class ChatSpeculationPresetClassification {
-  feature: Feature
-  constructor(feature: Feature)
-}
-
-export declare class ChatSpeculationPresetGeneralChat {
-
-  constructor()
-}
-
-export declare class ChatSpeculationPresetSummarization {
 
   constructor()
 }
@@ -738,9 +728,6 @@ export declare const enum ChatReplyFinishReason {
 
 export type ChatRole =
   ChatRoleUser | ChatRoleAssistant | ChatRoleSystem | ChatRoleDeveloper | ChatRoleTool | ChatRoleCustom
-
-export type ChatSpeculationPreset =
-  ChatSpeculationPresetGeneralChat | ChatSpeculationPresetSummarization | ChatSpeculationPresetClassification
 
 export interface ClassificationOutputProbabilities {
   values: Record<string, number>

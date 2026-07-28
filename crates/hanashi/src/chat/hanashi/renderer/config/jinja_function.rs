@@ -5,6 +5,8 @@ use std::{
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
+use crate::chat::hanashi::renderer::STRFTIME_NOW_FUNCTION_NAME;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum JinjaFunction {
     StrftimeNow,
@@ -15,7 +17,7 @@ impl FromStr for JinjaFunction {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "strftime_now" => Ok(JinjaFunction::StrftimeNow),
+            name if name == STRFTIME_NOW_FUNCTION_NAME => Ok(JinjaFunction::StrftimeNow),
             other => Err(format!("Unknown jinja function: {other}")),
         }
     }
@@ -27,7 +29,7 @@ impl Display for JinjaFunction {
         formatter: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
         let name = match self {
-            JinjaFunction::StrftimeNow => "strftime_now",
+            JinjaFunction::StrftimeNow => STRFTIME_NOW_FUNCTION_NAME,
         };
         write!(formatter, "{name}")
     }

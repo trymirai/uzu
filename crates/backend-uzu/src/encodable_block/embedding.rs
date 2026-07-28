@@ -5,9 +5,10 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
-        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
+        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder, QuantizationMethod, QuantizationMode},
         kernel::{
-            FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel, QuantizedEmbeddingLookupKernel,
+            FullPrecisionEmbeddingLookupKernel, HadamardTransformKernel, LogitSoftCapKernel,
+            QuantizedEmbeddingLookupKernel,
             matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
@@ -85,7 +86,13 @@ enum UntiedEmbeddingReadoutType<B: Backend> {
         zero_points_or_biases: Option<Allocation<B>>,
         readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
         readout_config: ReadoutQuantConfig,
+        input_hadamard: Option<InputHadamard<B>>,
     },
+}
+
+struct InputHadamard<B: Backend> {
+    factors: Allocation<B>,
+    kernel: <B::Kernels as Kernels>::HadamardTransformKernel,
 }
 
 enum EmbeddingTying<B: Backend> {
@@ -338,6 +345,52 @@ impl<B: Backend> Embedding<B> {
                             lookup,
                         }
                     },
+                    AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                        quantization_spec,
+                        adapter_spec: None,
+                        incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+                        incoherence_processing_mode: IncoherenceProcessingMode::Output,
+                        ..
+                    }) => {
+                        let (embedding_quantization_mode, group_size, quantization_method) =
+                            input_quantization_from_spec(*quantization_spec)?;
+                        let quantized_tree = input_embedding_tree.subtree("quantized")?;
+                        let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
+                            &quantized_tree,
+                            vocab_size as usize,
+                            model_dim as usize,
+                            data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
+
+                        let incoherence_signs_tree = input_embedding_tree.subtree("incoherence_signs")?;
+                        let output_hadamard_factors = Some(
+                            incoherence_signs_tree
+                                .leaf("output_signs")?
+                                .validate(&[model_dim as usize], DataType::I32)?
+                                .read_allocation()?,
+                        );
+                        let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
+                            context,
+                            data_type,
+                            group_size as u32,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            true,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
+
+                        UntiedEmbeddingLookupType::Quantized {
+                            weights,
+                            scales,
+                            zero_points_or_biases,
+                            quantization_method,
+                            output_hadamard_factors,
+                            lookup,
+                        }
+                    },
                     spec => return Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
                 };
 
@@ -389,6 +442,62 @@ impl<B: Backend> Embedding<B> {
                             zero_points_or_biases,
                             readout,
                             readout_config,
+                            input_hadamard: None,
+                        }
+                    },
+                    AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                        quantization_spec,
+                        adapter_spec: None,
+                        incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+                        incoherence_processing_mode: IncoherenceProcessingMode::Input,
+                        ..
+                    }) => {
+                        let (embedding_quantization_mode, group_size, quantization_method) =
+                            output_quantization_from_spec(*quantization_spec)?;
+                        let quantized_tree = output_embedding_tree.subtree("quantized")?;
+                        let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
+                            &quantized_tree,
+                            vocab_size as usize,
+                            model_dim as usize,
+                            data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
+                        let (readout, readout_config) = quantized_readout(
+                            context,
+                            data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
+
+                        // Input-side incoherence is applied privately to the readout
+                        // input: the shared hidden state must stay untransformed
+                        // (e.g. for the speculator).
+                        let incoherence_signs_tree = output_embedding_tree.subtree("incoherence_signs")?;
+                        let factors = incoherence_signs_tree
+                            .leaf("input_signs")?
+                            .validate(&[model_dim as usize], DataType::I32)?
+                            .read_allocation()?;
+                        let kernel = <B::Kernels as Kernels>::HadamardTransformKernel::new(
+                            context,
+                            data_type,
+                            HadamardTransformOrder::Input,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
+                        let input_hadamard = Some(InputHadamard {
+                            factors,
+                            kernel,
+                        });
+
+                        UntiedEmbeddingReadoutType::Quantized {
+                            weights,
+                            scales,
+                            zero_points_or_biases,
+                            readout,
+                            readout_config,
+                            input_hadamard,
                         }
                     },
                     spec => return Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
@@ -525,6 +634,17 @@ impl<B: Backend> Embedding<B> {
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
         assert!(batch_dim > 0, "Embedding readout requires at least one row");
         let native_output = output_data_type == self.data_type;
+        let input_hadamard = match &self.tying {
+            EmbeddingTying::Untied {
+                output_ty:
+                    UntiedEmbeddingReadoutType::Quantized {
+                        input_hadamard,
+                        ..
+                    },
+                ..
+            } => input_hadamard.as_ref(),
+            _ => None,
+        };
         let mut output_allocation = encoder
             .allocate_scratch(size_for_shape(&[batch_dim, self.vocab_size as usize], output_data_type))
             .map_err(EmbeddingError::BackendError)?;
@@ -598,58 +718,54 @@ impl<B: Backend> Embedding<B> {
                         zero_points_or_biases,
                         readout,
                         readout_config,
+                        ..
                     },
             } => {
-                let b: MatmulB<'_, B> = match readout_config.method {
-                    QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
-                        b: weights,
-                        scales,
-                        biases: zero_points_or_biases.as_ref().expect("ScaleBias quantization requires biases"),
-                        mode: readout_config.mode,
-                        group_size: readout_config.group_size,
+                let b = quantized_matmul_b(weights, scales, zero_points_or_biases.as_ref(), readout_config);
+                let mut rht_input: Option<Allocation<B>> = None;
+                let a = match input_hadamard {
+                    Some(input_hadamard) => {
+                        let mut transformed =
+                            encoder.allocate_scratch(input_allocation.size()).map_err(EmbeddingError::BackendError)?;
+                        encoder.encode_copy(input_allocation, .., &mut transformed, ..);
+                        input_hadamard.kernel.encode(
+                            &mut transformed,
+                            &input_hadamard.factors,
+                            self.model_dim,
+                            batch_dim as u32,
+                            encoder,
+                        );
+                        rht_input.insert(transformed)
                     },
-                    QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
-                        b: weights,
-                        scales,
-                        zero_points: zero_points_or_biases
-                            .as_ref()
-                            .expect("ScaleZeroPoint quantization requires zero_points"),
-                        mode: readout_config.mode,
-                        group_size: readout_config.group_size,
-                    },
-                    QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
-                        b: weights,
-                        scales,
-                        mode: readout_config.mode,
-                        group_size: readout_config.group_size,
-                    },
+                    None => input_allocation,
                 };
-                if !native_output {
-                    return Err(EmbeddingError::UnsupportedConfiguration(
-                        "widened readout requires full-precision LM-head weights".to_string(),
-                    ));
-                }
-                readout
-                    .lock()
-                    .encode(
-                        MatmulArguments {
-                            a: MatmulA::FullPrecision {
-                                values: input_allocation,
-                                offset: 0,
-                            },
-                            b,
-                            b_leading_dimension: None,
-                            b_transpose: true,
-                            d: &mut output_allocation,
-                            d_transform: MatmulDOps::none(),
-                            gather_indices: None,
-                            m: batch_dim as u32,
-                            n: self.vocab_size,
-                            k: self.model_dim,
-                        },
-                        encoder,
+                let arguments = MatmulArguments {
+                    a: MatmulA::FullPrecision {
+                        values: a,
+                        offset: 0,
+                    },
+                    b,
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    d: &mut output_allocation,
+                    d_transform: MatmulDOps::none(),
+                    gather_indices: None,
+                    m: batch_dim as u32,
+                    n: self.vocab_size,
+                    k: self.model_dim,
+                };
+                if native_output {
+                    readout.lock().encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
+                } else {
+                    let mut widened = <B::Kernels as Kernels>::MatmulKernel::new(
+                        encoder.context(),
+                        self.data_type,
+                        self.data_type,
+                        output_data_type,
                     )
                     .map_err(EmbeddingError::BackendError)?;
+                    widened.encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
+                }
             },
         };
 
@@ -668,7 +784,7 @@ impl<B: Backend> Embedding<B> {
     }
 
     /// Per-row candidate readout via the GEMV B-row gather: `out[r][j] == dense[r][token_ids[r][j]]`,
-    /// soft-capped when configured, one dispatch. Full-precision weights; caller guarantees `token_ids < vocab_size`.
+    /// soft-capped when configured, one dispatch. Caller guarantees `token_ids < vocab_size`.
     pub(crate) fn encode_readout_sparse(
         &self,
         input: &Allocation<B>,
@@ -678,7 +794,7 @@ impl<B: Backend> Embedding<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
         assert!(rows > 0 && ids_per_row > 0);
-        let (weights, readout) = match &self.tying {
+        let (b, readout, input_hadamard) = match &self.tying {
             EmbeddingTying::Tied {
                 ty:
                     TiedEmbeddingType::FullPrecision {
@@ -686,7 +802,13 @@ impl<B: Backend> Embedding<B> {
                         readout,
                         ..
                     },
-            } => (weights, readout),
+            } => (
+                MatmulB::FullPrecision {
+                    b: weights,
+                },
+                readout,
+                None,
+            ),
             EmbeddingTying::Untied {
                 output_ty:
                     UntiedEmbeddingReadoutType::FullPrecision {
@@ -694,17 +816,62 @@ impl<B: Backend> Embedding<B> {
                         readout,
                     },
                 ..
-            } => (weights, readout),
-            _ => {
-                return Err(EmbeddingError::UnsupportedConfiguration(
-                    "fused sparse readout requires full-precision embedding weights".to_string(),
-                ));
-            },
+            } => (
+                MatmulB::FullPrecision {
+                    b: weights,
+                },
+                readout,
+                None,
+            ),
+            EmbeddingTying::Tied {
+                ty:
+                    TiedEmbeddingType::Quantized {
+                        weights,
+                        scales,
+                        zero_points_or_biases,
+                        readout,
+                        readout_config,
+                        ..
+                    },
+            } => (quantized_matmul_b(weights, scales, zero_points_or_biases.as_ref(), readout_config), readout, None),
+            EmbeddingTying::Untied {
+                output_ty:
+                    UntiedEmbeddingReadoutType::Quantized {
+                        weights,
+                        scales,
+                        zero_points_or_biases,
+                        readout,
+                        readout_config,
+                        input_hadamard,
+                    },
+                ..
+            } => (
+                quantized_matmul_b(weights, scales, zero_points_or_biases.as_ref(), readout_config),
+                readout,
+                input_hadamard.as_ref(),
+            ),
         };
 
         let mut output = encoder
             .allocate_scratch(size_for_shape(&[rows, ids_per_row], self.data_type))
             .map_err(EmbeddingError::BackendError)?;
+
+        let mut rht_input: Option<Allocation<B>> = None;
+        let a = match input_hadamard {
+            Some(input_hadamard) => {
+                let mut transformed = encoder.allocate_scratch(input.size()).map_err(EmbeddingError::BackendError)?;
+                encoder.encode_copy(input, .., &mut transformed, ..);
+                input_hadamard.kernel.encode(
+                    &mut transformed,
+                    &input_hadamard.factors,
+                    self.model_dim,
+                    rows as u32,
+                    encoder,
+                );
+                rht_input.insert(transformed)
+            },
+            None => input,
+        };
 
         let soft_cap = self.logit_soft_cap.as_ref().map(|cap| cap.value);
         readout
@@ -712,12 +879,10 @@ impl<B: Backend> Embedding<B> {
             .encode(
                 MatmulArguments {
                     a: MatmulA::FullPrecision {
-                        values: input,
+                        values: a,
                         offset: 0,
                     },
-                    b: MatmulB::FullPrecision {
-                        b: weights,
-                    },
+                    b,
                     b_leading_dimension: None,
                     b_transpose: true,
                     d: &mut output,
@@ -735,6 +900,36 @@ impl<B: Backend> Embedding<B> {
             .map_err(EmbeddingError::BackendError)?;
 
         Ok(output)
+    }
+}
+
+fn quantized_matmul_b<'a, B: Backend>(
+    weights: &'a Allocation<B>,
+    scales: &'a Allocation<B>,
+    zero_points_or_biases: Option<&'a Allocation<B>>,
+    readout_config: &ReadoutQuantConfig,
+) -> MatmulB<'a, B> {
+    match readout_config.method {
+        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+            b: weights,
+            scales,
+            biases: zero_points_or_biases.expect("ScaleBias quantization requires biases"),
+            mode: readout_config.mode,
+            group_size: readout_config.group_size,
+        },
+        QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
+            b: weights,
+            scales,
+            zero_points: zero_points_or_biases.expect("ScaleZeroPoint quantization requires zero_points"),
+            mode: readout_config.mode,
+            group_size: readout_config.group_size,
+        },
+        QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
+            b: weights,
+            scales,
+            mode: readout_config.mode,
+            group_size: readout_config.group_size,
+        },
     }
 }
 

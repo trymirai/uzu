@@ -52,6 +52,7 @@ bindings-wasm = [
 [dependencies]
 bindings-types.workspace = true
 bindings.workspace = true
+proc-macros.workspace = true
 shoji.workspace = true
 hanashi.workspace = true
 serde.workspace = true
@@ -63,6 +64,7 @@ indexmap.workspace = true
 reqwest.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
+tokenizers.workspace = true
 tokio = { workspace = true, features = ["full"] }
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }

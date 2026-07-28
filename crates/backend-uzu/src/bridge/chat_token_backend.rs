@@ -21,6 +21,7 @@ use shoji::{
     },
     types::session::chat::{ChatConfig, ChatReplyConfig},
 };
+#[cfg(grammar)]
 use tokenizers::Tokenizer;
 use tokio_util::sync::CancellationToken;
 
@@ -30,17 +31,16 @@ use crate::{
     backends::common::Backend,
     bridge::{
         chat_token_state::UzuChatTokenBackendInstanceState,
-        helpers::{error_stream, get_max_context_length, get_sampling_method, get_speculator},
+        helpers::{error_stream, get_max_context_length, get_sampling_method},
     },
     engine::{
         Engine,
         language_model::{
             LanguageModel,
             state::LanguageModelState,
-            stream::{LanguageModelStream, LanguageModelStreamOptions, LanguageModelStreamSpeculatorOptions},
+            stream::{LanguageModelStream, LanguageModelStreamOptions},
         },
     },
-    speculators::speculator::Speculator,
 };
 
 pub struct UzuChatTokenBackendInstance<B: Backend> {
@@ -48,9 +48,8 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     model: Arc<Mutex<LanguageModel<B>>>,
     config: ChatConfig,
     #[cfg(grammar)]
-    tokenizer: Tokenizer,
+    tokenizer: Arc<Tokenizer>,
     stop_token_ids: Vec<i32>,
-    speculator: Option<(Box<dyn Speculator>, usize)>,
     max_context_length: Option<usize>,
 }
 
@@ -58,20 +57,13 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
     pub fn new(
         model_path: String,
         config: ChatConfig,
-        tokenizer: &Tokenizer,
+        #[cfg(grammar)] tokenizer: Arc<Tokenizer>,
     ) -> Result<Self, BackendError> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
         let model = engine.load_language_model(&model_path).map_err(|err| err.to_string())?;
 
         let stop_token_ids = model.generation_config().stop_token_ids.iter().map(|id| *id as i32).collect();
-
-        let speculator = if let Some(preset) = config.speculation_preset.as_ref() {
-            get_speculator(preset, tokenizer)?
-        } else {
-            None
-        };
-
         let max_context_length = get_max_context_length(&model, config.context_length.clone());
 
         Ok(Self {
@@ -79,9 +71,8 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             model: Arc::new(Mutex::new(model)),
             config,
             #[cfg(grammar)]
-            tokenizer: tokenizer.clone(),
+            tokenizer,
             stop_token_ids,
-            speculator,
             max_context_length,
         })
     }
@@ -128,7 +119,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         #[cfg(grammar)]
         let grammar = if let Some(grammar_config) = config.grammar {
-            match get_grammar(grammar_config, &self.tokenizer, &self.stop_token_ids) {
+            match get_grammar(grammar_config, self.tokenizer.as_ref(), &self.stop_token_ids) {
                 Ok(grammar) => Some(grammar),
                 Err(err) => {
                     return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));
@@ -146,11 +137,6 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             sampling_method: get_sampling_method::<B>(&model_guard, &config.sampling_policy),
             #[cfg(grammar)]
             grammar,
-            speculator: self.speculator.as_ref().map(|(speculator, budget)| LanguageModelStreamSpeculatorOptions {
-                speculator: speculator.as_ref(),
-                speculation_budget: *budget,
-                trie_creation_config: Default::default(),
-            }),
         };
 
         let stream = match model_guard.stream(input, &mut state_guard, options) {

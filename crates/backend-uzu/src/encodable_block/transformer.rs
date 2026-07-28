@@ -28,7 +28,7 @@ pub struct TransformerState<B: Backend> {
 
 pub struct TransformerEncodeOutput<B: Backend> {
     pub output: Option<Allocation<B>>,
-    pub hidden_features: Box<[Allocation<B>]>,
+    pub hidden_features: Option<Box<[Allocation<B>]>>,
 }
 
 impl<B: Backend> TransformerState<B> {
@@ -224,19 +224,20 @@ impl<B: Backend> Transformer<B> {
         per_layer_inputs: Option<&Allocation<B>>,
         batch_dim: &BatchTopology,
         output_range: Option<Range<usize>>,
+        hidden_feature_layer_indices: Option<&[usize]>,
         mut state: Option<&mut TransformerState<B>>,
         encoder: &mut Encoder<B>,
-        hidden_feature_layer_indices: &[usize],
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
         let mut hidden = input;
-        let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_empty() {
+        let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
         } else {
             self.layers.len()
         };
 
         let mut shortcut = encoder.allocate_scratch(hidden.size())?;
-        let mut hidden_features = (0..hidden_feature_layer_indices.len()).map(|_| None).collect::<Vec<_>>();
+        let mut hidden_features =
+            hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
         let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
         let token_positions =
@@ -276,23 +277,30 @@ impl<B: Backend> Transformer<B> {
                 encoder,
             )?;
 
-            for (feature_index, &layer_index) in hidden_feature_layer_indices.iter().enumerate() {
-                if layer_index == layer.layer_index {
-                    let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
-                    hidden_features[feature_index] = Some(feature);
+            if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
+                for (feature_index, &layer_index) in indices.iter().enumerate() {
+                    if layer_index == layer.layer_index {
+                        let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
+                        hidden_features[feature_index] = Some(feature);
+                    }
                 }
             }
         }
 
-        let hidden_features: Box<[Allocation<B>]> = hidden_features
-            .into_iter()
-            .enumerate()
-            .map(|(feature_index, feature)| {
-                feature.unwrap_or_else(|| {
-                    panic!("requested hidden feature for missing layer {}", hidden_feature_layer_indices[feature_index])
+        let hidden_features = hidden_features.map(|hidden_features| {
+            hidden_features
+                .into_iter()
+                .enumerate()
+                .map(|(feature_index, feature)| {
+                    feature.unwrap_or_else(|| {
+                        panic!(
+                            "requested hidden feature for missing layer {}",
+                            hidden_feature_layer_indices.unwrap()[feature_index]
+                        )
+                    })
                 })
-            })
-            .collect();
+                .collect::<Box<[_]>>()
+        });
 
         let Some(output_range) = output_range else {
             return Ok(TransformerEncodeOutput {

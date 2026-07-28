@@ -13,6 +13,9 @@ use shoji::types::{basic::Token, session::chat::ChatMessage};
 use crate::chat::hanashi::messages::rendered::Message as RenderedMessage;
 
 pub static TEMPLATE_NAME: &str = "chat_template";
+pub static STRFTIME_NOW_FUNCTION_NAME: &str = "strftime_now";
+pub static RAISE_EXCEPTION_FUNCTION_NAME: &str = "raise_exception";
+pub static TOJSON_FILTER_NAME: &str = "tojson";
 
 pub struct Renderer {
     config: RendererConfig,
@@ -43,8 +46,8 @@ impl Renderer {
                 },
             );
         }
-        environment.add_function("raise_exception", raise_exception);
-        environment.add_filter("tojson", to_json);
+        environment.add_function(RAISE_EXCEPTION_FUNCTION_NAME, raise_exception);
+        environment.add_filter(TOJSON_FILTER_NAME, to_json);
         environment
             .add_template(TEMPLATE_NAME, self.config.jinja.template.as_str())
             .map_err(|_| Error::InvalidTemplate)?;

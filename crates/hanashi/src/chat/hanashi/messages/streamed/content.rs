@@ -7,6 +7,10 @@ use shoji::types::{
 
 use crate::chat::hanashi::messages::streamed::Section;
 
+const NAME_KEY: &str = "name";
+const VALUE_KEY: &str = "value";
+const RETURN_KEY: &str = "return";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Content {
@@ -38,6 +42,7 @@ impl Content {
                 let mut reasoning_parts: Vec<String> = Vec::new();
                 let mut text_parts: Vec<String> = Vec::new();
                 let mut tool_calls: Vec<ChatContentBlock> = Vec::new();
+                let mut tool_call_results: Vec<ChatContentBlock> = Vec::new();
 
                 for section in sections {
                     match section {
@@ -50,21 +55,39 @@ impl Content {
                         Section::ToolCall {
                             value: Some(value),
                         } => {
-                            let block = match serde_json::from_value::<ToolCall>(value.clone()) {
-                                Ok(tool_call) => ChatContentBlock::ToolCall {
-                                    value: tool_call,
+                            match serde_json::from_value::<ToolCall>(value.clone()) {
+                                Ok(value) => tool_calls.push(ChatContentBlock::ToolCall {
+                                    value,
+                                }),
+                                // Llama 3.2 may echo a result as a pseudo call such as `{"time":"17:03","return":"time"}`.
+                                // Only treat that positively identified shape as text;
+                                // malformed calls must remain candidates so the turn retains its ToolCalls finish reason.
+                                Err(_) => {
+                                    if is_tool_call_result_echo(&value) {
+                                        text_parts.push(value.to_string());
+                                    } else {
+                                        tool_calls.push(ChatContentBlock::ToolCallCandidate {
+                                            value: value.into(),
+                                        });
+                                    }
                                 },
-                                Err(_) => ChatContentBlock::ToolCallCandidate {
-                                    value: value.into(),
-                                },
-                            };
-                            tool_calls.push(block);
+                            }
                         },
                         Section::ToolCall {
                             value: None,
                         } => {
                             tool_calls.push(ChatContentBlock::ToolCallCandidate {
                                 value: Value::Null.into(),
+                            });
+                        },
+                        Section::ToolCallResult {
+                            value: Some(value),
+                        } => {
+                            let (name, value) = tool_call_result_parts(value);
+                            tool_call_results.push(ChatContentBlock::ToolCallResult {
+                                identifier: None,
+                                name,
+                                value: value.into(),
                             });
                         },
                         _ => {},
@@ -85,8 +108,37 @@ impl Content {
                     });
                 }
                 blocks.extend(tool_calls);
+                blocks.extend(tool_call_results);
                 blocks
             },
         }
+    }
+}
+
+fn is_tool_call_result_echo(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    let Some(Value::String(returned_field)) = object.get(RETURN_KEY) else {
+        return false;
+    };
+    returned_field != RETURN_KEY && object.contains_key(returned_field)
+}
+
+// Parsers may emit tool results as `{"name": ..., "value": ...}` (e.g. functiongemma, gemma-4);
+// renderers need the function name to reproduce the `response:<name>{...}` form.
+fn tool_call_result_parts(value: Value) -> (Option<String>, Value) {
+    match value {
+        Value::Object(mut map)
+            if map.len() == 2 && map.get(NAME_KEY).is_some_and(Value::is_string) && map.contains_key(VALUE_KEY) =>
+        {
+            let name = match map.remove(NAME_KEY) {
+                Some(Value::String(name)) => Some(name),
+                _ => None,
+            };
+            let value = map.remove(VALUE_KEY).unwrap_or(Value::Null);
+            (name, value)
+        },
+        other => (None, other),
     }
 }

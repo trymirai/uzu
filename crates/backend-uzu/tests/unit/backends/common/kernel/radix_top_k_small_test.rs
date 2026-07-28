@@ -2,7 +2,6 @@
 use std::time::Instant;
 
 use proc_macros::uzu_test;
-use test_runner::for_each_non_cpu_backend;
 
 #[cfg(backend = "metal")]
 use crate::backends::metal::Metal;
@@ -11,7 +10,9 @@ use crate::{
         common::{Backend, Encoder, Kernels, kernel::radix_top_k_small::RadixTopKSmall},
         cpu::Cpu,
     },
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, create_context},
+    tests::helpers::{
+        alloc_allocation, alloc_allocation_with_data, allocation_to_vec, create_context, for_each_non_cpu_backend,
+    },
 };
 
 const TARGET_COLUMNS: usize = 248_320;

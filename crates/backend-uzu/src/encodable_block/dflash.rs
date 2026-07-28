@@ -3,19 +3,17 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
-        gpu_types::trie::TrieNode,
-        kernel::{TensorAddSwapKernel, radix_top_k_small::RadixTopKSmall},
+        Allocation, Backend, Encoder, Kernels, gpu_types::trie::TrieNode, kernel::radix_top_k_small::RadixTopKSmall,
     },
     config::{
         dflash::{DFlashDraftConfig, DFlashDraftLayerConfig},
         mlp::AnyMLPConfig,
-        normalization::NormalizationConfig,
         rope::AnyRoPEConfig,
     },
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError},
         mixer::{
             Mixer, MixerState,
@@ -36,18 +34,17 @@ pub struct DFlashState<B: Backend> {
     layer_states: Box<[AttentionState<B>]>,
     context_length: usize,
     context_capacity: usize,
-    target_output_norm: Option<Allocation<B>>,
 }
 
 impl<B: Backend> DFlashState<B> {
-    pub(crate) fn target_output_norm(&self) -> Option<&Allocation<B>> {
-        self.target_output_norm.as_ref()
+    pub fn context_length(&self) -> usize {
+        self.context_length
     }
 }
 
-pub(crate) struct DFlashDraft<B: Backend> {
-    context_projection: Box<dyn Linear<B>>,
-    context_norm: Normalization<B>,
+pub struct DFlashDraft<B: Backend> {
+    target_feature_projection: Box<dyn Linear<B>>,
+    projected_feature_norm: Normalization<B>,
     layers: Box<[DFlashDraftLayer<B>]>,
     output_norm: Normalization<B>,
     top_k: <B::Kernels as Kernels>::RadixTopKSmall,
@@ -55,16 +52,28 @@ pub(crate) struct DFlashDraft<B: Backend> {
     model_dim: usize,
     max_context_length: usize,
     block_size: usize,
-    target_feature_width: usize,
+    mask_token_id: u32,
+    target_feature_input_dim: usize,
     data_type: DataType,
+}
+
+pub struct DFlashDraftOutput<B: Backend> {
+    pub candidates: TopKCandidates<B>,
+    pub draft_hidden: Allocation<B>,
+}
+
+pub struct TopKCandidates<B: Backend> {
+    pub ids: Allocation<B>,
+    pub scores: Allocation<B>,
+    pub rows: usize,
+    pub candidates_per_row: usize,
 }
 
 struct DFlashDraftLayer<B: Backend> {
     attention: Attention<B>,
-    input_norm: Normalization<B>,
-    post_attention_norm: Normalization<B>,
+    pre_attention_norm: Normalization<B>,
+    pre_mlp_norm: Normalization<B>,
     mlp: Box<dyn Mlp<B>>,
-    residual_add: <B::Kernels as Kernels>::TensorAddSwapKernel,
 }
 
 #[derive(Debug, Error)]
@@ -85,32 +94,23 @@ pub enum DFlashDraftNewError<B: Backend> {
     InvalidAttentionConfig(&'static str),
 }
 
-fn plain_norm<B: Backend>(
-    context: &B::Context,
-    model_dim: usize,
-    config: &NormalizationConfig,
-    parameter_tree: &ParameterTree<B>,
-    data_type: DataType,
-) -> Result<Normalization<B>, NormalizationNewError<B>> {
-    Normalization::new(
-        model_dim,
-        None,
-        ShortcutMode::None,
-        PostLayerScalar::None,
-        data_type,
-        config,
-        parameter_tree,
-        context,
-    )
+#[derive(Debug, Error)]
+pub enum DFlashDraftEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Embedding error: {0}")]
+    Embedding(#[from] EmbeddingError<B>),
 }
 
 impl<B: Backend> DFlashDraft<B> {
-    pub(crate) fn new(
+    pub fn new(
         context: &B::Context,
         config: &DFlashDraftConfig,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, DFlashDraftNewError<B>> {
+        let vocab_size = config.vocab_size as u32;
+        let mask_token_id = config.mask_token_id as u32;
         if config.layer_configs.is_empty() {
             return Err(DFlashDraftNewError::InvalidAttentionConfig("at least one DFlash layer is required"));
         }
@@ -120,7 +120,7 @@ impl<B: Backend> DFlashDraft<B> {
             ));
         }
 
-        let context_projection = <dyn Linear<B>>::new(
+        let target_feature_projection = <dyn Linear<B>>::new(
             config.model_dim * config.target_layer_ids.len(),
             [config.model_dim],
             false,
@@ -128,12 +128,15 @@ impl<B: Backend> DFlashDraft<B> {
             data_type,
             &parameter_tree.subtree("context_projection")?,
         )?;
-        let context_norm = plain_norm(
-            context,
+        let projected_feature_norm = Normalization::new(
             config.model_dim,
+            None,
+            ShortcutMode::None,
+            PostLayerScalar::None,
+            data_type,
             &config.context_norm_config,
             &parameter_tree.subtree("context_norm")?,
-            data_type,
+            context,
         )?;
         let layers_tree = parameter_tree.subtree("layers")?;
         let layers = config
@@ -143,6 +146,7 @@ impl<B: Backend> DFlashDraft<B> {
             .map(|(index, layer_config)| {
                 DFlashDraftLayer::new(
                     context,
+                    index,
                     config.model_dim,
                     config.hidden_dim,
                     layer_config,
@@ -152,19 +156,22 @@ impl<B: Backend> DFlashDraft<B> {
                 )
             })
             .collect::<Result<Box<[_]>, DFlashDraftNewError<B>>>()?;
-        let output_norm = plain_norm(
-            context,
+        let output_norm = Normalization::new(
             config.model_dim,
+            None,
+            ShortcutMode::Add,
+            PostLayerScalar::None,
+            data_type,
             &config.output_norm_config,
             &parameter_tree.subtree("output_norm")?,
-            data_type,
+            context,
         )?;
-        let top_k = <B::Kernels as Kernels>::RadixTopKSmall::new(context, config.vocab_size as u32)
-            .map_err(DFlashDraftNewError::Backend)?;
+        let top_k =
+            <B::Kernels as Kernels>::RadixTopKSmall::new(context, vocab_size).map_err(DFlashDraftNewError::Backend)?;
 
         Ok(Self {
-            context_projection,
-            context_norm,
+            target_feature_projection,
+            projected_feature_norm,
             layers,
             output_norm,
             top_k,
@@ -172,12 +179,13 @@ impl<B: Backend> DFlashDraft<B> {
             model_dim: config.model_dim,
             max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
-            target_feature_width: config.model_dim * config.target_layer_ids.len(),
+            mask_token_id,
+            target_feature_input_dim: config.model_dim * config.target_layer_ids.len(),
             data_type,
         })
     }
 
-    pub(crate) fn empty_state(
+    pub fn empty_state(
         &self,
         context_capacity: usize,
         context: &B::Context,
@@ -192,76 +200,71 @@ impl<B: Backend> DFlashDraft<B> {
             layer_states,
             context_length: 0,
             context_capacity,
-            target_output_norm: None,
         })
     }
 
-    pub(crate) fn append_state(
+    pub fn append_state(
         &self,
         state: &mut DFlashState<B>,
         target_features: &[Allocation<B>],
-        num_tokens: usize,
-        target_output_norm: &Allocation<B>,
+        accepted_indices: &[usize],
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        if num_tokens == 0 {
+        if accepted_indices.is_empty() {
             return Ok(());
         }
 
-        let expected_feature_count = self.target_feature_width / self.model_dim;
-        assert_eq!(target_features.len(), expected_feature_count);
-        let row_size = self.model_dim * self.data_type.size_in_bytes();
-        let layer_feature_size = num_tokens * self.model_dim * self.data_type.size_in_bytes();
-        assert!(target_features.iter().all(|features| features.size() == layer_feature_size));
-        assert_eq!(target_output_norm.size(), row_size);
+        let num_tokens = accepted_indices.len();
+        let captured_layer_count = self.target_feature_input_dim / self.model_dim;
+        assert_eq!(target_features.len(), captured_layer_count);
+        let layer_feature_bytes = self.model_dim * self.data_type.size_in_bytes();
+        assert!(target_features.iter().all(|features| features.size() % layer_feature_bytes == 0));
         let context_length = state.context_length + num_tokens;
         assert!(context_length <= state.context_capacity, "DFlash state capacity exceeded");
         assert!(context_length <= self.max_context_length, "DFlash context exceeds configured RoPE capacity");
 
-        let mut projection_input =
-            encoder.allocate_scratch(num_tokens * self.target_feature_width * self.data_type.size_in_bytes())?;
-        let layer_feature_bytes = self.model_dim * self.data_type.size_in_bytes();
+        let mut packed_target_features =
+            encoder.allocate_scratch(num_tokens * self.target_feature_input_dim * self.data_type.size_in_bytes())?;
         for (layer_index, features) in target_features.iter().enumerate() {
-            for token_index in 0..num_tokens {
-                let source_start = token_index * layer_feature_bytes;
+            for (token_index, &accepted_index) in accepted_indices.iter().enumerate() {
+                let source_start = accepted_index * layer_feature_bytes;
+                assert!(source_start + layer_feature_bytes <= features.size(), "accepted index out of feature bounds");
                 let destination_start = (token_index * target_features.len() + layer_index) * layer_feature_bytes;
                 encoder.encode_copy(
                     features,
                     source_start..source_start + layer_feature_bytes,
-                    &mut projection_input,
+                    &mut packed_target_features,
                     destination_start..destination_start + layer_feature_bytes,
                 );
             }
         }
-        let mut stored_hidden = encoder.context().create_allocation(row_size, AllocationType::Global)?;
-        encoder.encode_copy(target_output_norm, .., &mut stored_hidden, ..);
-        state.target_output_norm = Some(stored_hidden);
-
-        let projected = self.context_projection.encode(projection_input, num_tokens, encoder)?;
-        let projected = self.context_norm.encode(&projected, 0, num_tokens, None, encoder)?;
+        let projected_features = self.target_feature_projection.encode(packed_target_features, num_tokens, encoder)?;
+        let normalized_features =
+            self.projected_feature_norm.encode(&projected_features, 0, num_tokens, None, encoder)?;
         let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, encoder)?;
 
-        let layer_count = self.layers.len();
-        let mut projected = Some(projected);
-        for (index, (layer, state_layer)) in self.layers.iter().zip(state.layer_states.iter_mut()).enumerate() {
-            state_layer.prepare(state.context_length, num_tokens, encoder.context())?;
-            let layer_input = if index + 1 == layer_count {
-                projected.take().expect("projected available for last layer")
+        let dflash_layer_count = self.layers.len();
+        let mut normalized_features = Some(normalized_features);
+        for (layer_index, (layer, attention_state)) in self.layers.iter().zip(state.layer_states.iter_mut()).enumerate()
+        {
+            attention_state.prepare(state.context_length, num_tokens, encoder.context())?;
+            let kv_input = if layer_index + 1 == dflash_layer_count {
+                normalized_features.take().expect("normalized features available for last layer")
             } else {
-                let source = projected.as_ref().expect("projected available");
-                let mut layer_input = encoder.allocate_scratch(source.size())?;
-                encoder.encode_copy(source, .., &mut layer_input, ..);
-                layer_input
+                let source = normalized_features.as_ref().expect("normalized features available");
+                let mut kv_input = encoder.allocate_scratch(source.size())?;
+                encoder.encode_copy(source, .., &mut kv_input, ..);
+                kv_input
             };
-            layer.attention.append_kv(layer_input, Some(&rope), num_tokens, state_layer, encoder)?;
+            layer.attention.append_kv(kv_input, Some(&rope), num_tokens, attention_state, encoder)?;
         }
 
         state.context_length += num_tokens;
         Ok(())
     }
 
-    pub(crate) fn encode_block(
+    fn encode_hidden(
         &self,
         state: &mut DFlashState<B>,
         token_embeddings: Allocation<B>,
@@ -284,58 +287,88 @@ impl<B: Backend> DFlashDraft<B> {
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, encoder)?;
 
         let mut hidden = token_embeddings;
-        for (layer, state_layer) in self.layers.iter().zip(state.layer_states.iter_mut()) {
-            state_layer.prepare(state.context_length, batch_dim, encoder.context())?;
-            let normalized = layer.input_norm.encode(&hidden, 0, batch_dim, None, encoder)?;
-            let mut attention_output = layer.attention.encode(
+        let mut residual = encoder.allocate_scratch(hidden.size())?;
+        for (layer, attention_state) in self.layers.iter().zip(state.layer_states.iter_mut()) {
+            attention_state.prepare(state.context_length, batch_dim, encoder.context())?;
+            let normalized = layer.pre_attention_norm.encode(&hidden, 0, batch_dim, Some(&mut residual), encoder)?;
+            let attention_output = layer.attention.encode(
                 normalized,
                 Some(&rope),
                 &batch_topology,
-                Some(MaybeMut::Mut(state_layer)),
+                Some(MaybeMut::Mut(attention_state)),
                 encoder,
             )?;
-            let mut attention_residual = encoder.allocate_scratch(hidden.size())?;
-            encoder.encode_copy(&hidden, .., &mut attention_residual, ..);
-            layer.residual_add.encode(
-                &mut attention_residual,
-                &mut attention_output,
-                (batch_dim * self.model_dim) as u32,
-                encoder,
-            );
-            let normalized = layer.post_attention_norm.encode(&attention_residual, 0, batch_dim, None, encoder)?;
-            let mut mlp_output = layer.mlp.encode(normalized, batch_dim, encoder)?;
-
-            let mut output = encoder.allocate_scratch(hidden.size())?;
-            encoder.encode_copy(&attention_residual, .., &mut output, ..);
-            layer.residual_add.encode(&mut output, &mut mlp_output, (batch_dim * self.model_dim) as u32, encoder);
-            hidden = output;
+            let normalized =
+                layer.pre_mlp_norm.encode(&attention_output, 0, batch_dim, Some(&mut residual), encoder)?;
+            hidden = layer.mlp.encode(normalized, batch_dim, encoder)?;
         }
 
-        self.output_norm.encode(&hidden, 0, batch_dim, None, encoder)
+        self.output_norm.encode(&hidden, 0, batch_dim, Some(&mut residual), encoder)
     }
 
-    pub(crate) fn encode_top_k(
+    pub fn encode_draft(
+        &self,
+        state: &mut DFlashState<B>,
+        target_output_token: u32,
+        target_embedding: &Embedding<B>,
+        candidate_count: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<DFlashDraftOutput<B>, DFlashDraftEncodeError<B>> {
+        let mut token_ids = encoder
+            .allocate_constant(self.block_size * DataType::U32.size_in_bytes())
+            .map_err(DFlashDraftEncodeError::Backend)?;
+        let mut tokens = vec![self.mask_token_id; self.block_size];
+        tokens[0] = target_output_token;
+        token_ids.copyin(&tokens);
+
+        let token_embeddings = target_embedding.encode_lookup(&token_ids, self.block_size, encoder)?;
+        let draft_hidden =
+            self.encode_hidden(state, token_embeddings, encoder).map_err(DFlashDraftEncodeError::Backend)?;
+
+        // The first block row is the target's output token; only the lookahead rows are ranked.
+        let lookahead_rows = self.block_size - 1;
+        let row_bytes = target_embedding.model_dim() * DataType::BF16.size_in_bytes();
+        let mut lookahead_hidden =
+            encoder.allocate_scratch(lookahead_rows * row_bytes).map_err(DFlashDraftEncodeError::Backend)?;
+        encoder.encode_copy(&draft_hidden, row_bytes..self.block_size * row_bytes, &mut lookahead_hidden, ..);
+        let logits = target_embedding.encode_readout(lookahead_rows, &lookahead_hidden, DataType::F32, encoder)?;
+        let candidates = self
+            .encode_candidates(&logits, lookahead_rows, candidate_count, encoder)
+            .map_err(DFlashDraftEncodeError::Backend)?;
+        drop(logits);
+        drop(token_ids);
+        drop(lookahead_hidden);
+
+        Ok(DFlashDraftOutput {
+            candidates,
+            draft_hidden,
+        })
+    }
+
+    fn encode_candidates(
         &self,
         logits: &Allocation<B>,
         rows: usize,
         k: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
+    ) -> Result<TopKCandidates<B>, B::Error> {
         assert!(k > 0 && k <= RADIX_TOP_K_MAX);
         let mut ids = encoder.allocate_scratch(size_for_shape(&[rows, k], DataType::U32))?;
         let mut scores = encoder.allocate_scratch(size_for_shape(&[rows, k], DataType::F32))?;
         self.top_k.encode(logits, &mut ids, &mut scores, rows as u32, k as u32, encoder)?;
-        Ok((ids, scores))
-    }
-
-    pub(crate) fn block_size(&self) -> usize {
-        self.block_size
+        Ok(TopKCandidates {
+            ids,
+            scores,
+            rows,
+            candidates_per_row: k,
+        })
     }
 }
 
 impl<B: Backend> DFlashDraftLayer<B> {
     fn new(
         context: &B::Context,
+        layer_index: usize,
         model_dim: usize,
         hidden_dim: usize,
         config: &DFlashDraftLayerConfig,
@@ -357,32 +390,38 @@ impl<B: Backend> DFlashDraftLayer<B> {
             &parameter_tree.subtree("attention")?,
             context,
         )?;
-        let input_norm = plain_norm(
-            context,
+        let pre_attention_norm = Normalization::new(
             model_dim,
+            None,
+            if layer_index == 0 {
+                ShortcutMode::Copy
+            } else {
+                ShortcutMode::Add
+            },
+            PostLayerScalar::None,
+            data_type,
             &config.input_norm_config,
             &parameter_tree.subtree("input_norm")?,
-            data_type,
-        )?;
-        let post_attention_norm = plain_norm(
             context,
+        )?;
+        let pre_mlp_norm = Normalization::new(
             model_dim,
+            None,
+            ShortcutMode::Add,
+            PostLayerScalar::None,
+            data_type,
             &config.post_attention_norm_config,
             &parameter_tree.subtree("post_attention_norm")?,
-            data_type,
+            context,
         )?;
         let mlp_config = AnyMLPConfig::DenseMLPConfig(config.mlp_config.clone());
         let (mlp, _) =
             <dyn Mlp<B>>::new(&mlp_config, model_dim, hidden_dim, context, &parameter_tree.subtree("mlp")?, data_type)?;
-        let residual_add = <B::Kernels as Kernels>::TensorAddSwapKernel::new(context, data_type)
-            .map_err(DFlashDraftNewError::Backend)?;
-
         Ok(Self {
             attention,
-            input_norm,
-            post_attention_norm,
+            pre_attention_norm,
+            pre_mlp_norm,
             mlp,
-            residual_add,
         })
     }
 }

@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
-use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::ArrayElement,
@@ -11,7 +10,7 @@ use crate::{
         common::{Backend, Context, Encoder, Kernels, kernel::SigmoidGateKernel},
         cpu::Cpu,
     },
-    tests::helpers::{alloc_allocation_with_data, allocation_to_vec},
+    tests::helpers::{alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
 };
 
 struct Config {

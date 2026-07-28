@@ -419,6 +419,22 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -1255,6 +1271,8 @@ public enum ChatSessionError: Swift.Error, Equatable, Hashable, Codable, Foundat
     case UnsupportedModel
     case UnableToPerformOperationInCurrentState
     case NoResponse
+    case ToolTurnLimitExceeded(limit: UInt32
+    )
 
     
 
@@ -1293,6 +1311,9 @@ public struct FfiConverterTypeChatSessionError: FfiConverterRustBuffer {
         case 3: return .UnsupportedModel
         case 4: return .UnableToPerformOperationInCurrentState
         case 5: return .NoResponse
+        case 6: return .ToolTurnLimitExceeded(
+            limit: try FfiConverterUInt32.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1326,6 +1347,11 @@ public struct FfiConverterTypeChatSessionError: FfiConverterRustBuffer {
         case .NoResponse:
             writeInt(&buf, Int32(5))
         
+        
+        case let .ToolTurnLimitExceeded(limit):
+            writeInt(&buf, Int32(6))
+            FfiConverterUInt32.write(limit, into: &buf)
+            
         }
     }
 }

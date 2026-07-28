@@ -15,10 +15,10 @@ use crate::{
     encodable_block::batch_topology::BatchTopology,
 };
 
+#[cfg(backend = "cpu")]
 mod gumbel;
 mod prng;
 
-pub use gumbel::speculator_sample;
 #[cfg(backend = "cpu")]
 pub use gumbel::{gumbel_float, revidx};
 pub use prng::PRng;
