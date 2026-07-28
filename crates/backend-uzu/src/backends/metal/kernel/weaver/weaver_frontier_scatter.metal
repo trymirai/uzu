@@ -10,7 +10,7 @@ PUBLIC KERNEL(WeaverFrontierScatter)(
     const device uint* node_metadata,
     const device uint* node_valid,
     const device uint* child_ids,
-    const device float* child_model_logprobs,
+    const device float* child_logprobs,
     device uint* frontier,
     constant uint& frontier_capacity,
     constant uint& tree_slot_count,
@@ -36,7 +36,7 @@ PUBLIC KERNEL(WeaverFrontierScatter)(
     return;
   }
 
-  const float logprob = child_model_logprobs[row * children_per_node + child];
+  const float logprob = child_logprobs[row * children_per_node + child];
   const float cumulative_logprob =
       as_type<float>(packed_tree[uint(TreeIdx::PathLogprobBits) * tree_slot_count + parent]) + logprob;
 

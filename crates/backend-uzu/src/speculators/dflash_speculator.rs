@@ -168,20 +168,24 @@ impl<B: Backend> DFlashSpeculator<B> {
             let depth_seeds =
                 (0..max_depth).map(|depth| prng.derive((root_position + depth) as u64)).collect::<Box<[u64]>>();
             let tree = weaver.encode_tree(
-                WeaverInputs::new(
-                    target_output_norm,
-                    &draft_hidden,
+                WeaverInputs {
+                    target_hidden: target_output_norm,
+                    draft_hidden: &draft_hidden,
                     target_embedding,
-                    CandidatePool::new(
-                        &candidates.ids,
-                        &candidates.scores,
-                        candidates.rows,
-                        candidates.candidates_per_row,
-                    ),
-                    &depth_seeds,
-                    target_output_token,
-                ),
-                TreeShape::new(options.budget, options.frontier_width, options.children_per_node),
+                    candidates: CandidatePool {
+                        ids: &candidates.ids,
+                        logits: &candidates.scores,
+                        depth_count: candidates.rows,
+                        candidates_per_depth: candidates.candidates_per_row,
+                    },
+                    depth_seeds: &depth_seeds,
+                    root_token_id: target_output_token,
+                },
+                TreeShape {
+                    budget: options.budget,
+                    frontier_width: options.frontier_width,
+                    children_per_node: options.children_per_node,
+                },
                 &self.context,
                 &mut encoder,
             )?;

@@ -19,7 +19,7 @@ pub fn weaver_frontier_scatter(
     node_metadata: *const u32,
     node_valid: *const u32,
     child_ids: *const u32,
-    child_model_logprobs: *const f32,
+    child_logprobs: *const f32,
     frontier: *mut u32,
     frontier_capacity: u32,
     tree_slot_count: u32,
@@ -37,8 +37,7 @@ pub fn weaver_frontier_scatter(
     };
     let node_valid = unsafe { std::slice::from_raw_parts(node_valid, node_count) };
     let child_ids = unsafe { std::slice::from_raw_parts(child_ids, node_count * children_per_node) };
-    let child_model_logprobs =
-        unsafe { std::slice::from_raw_parts(child_model_logprobs, node_count * children_per_node) };
+    let child_logprobs = unsafe { std::slice::from_raw_parts(child_logprobs, node_count * children_per_node) };
     let frontier = unsafe { std::slice::from_raw_parts_mut(frontier, FrontierIdx::COUNT * frontier_capacity) };
 
     for index in 0..node_count * children_per_node {
@@ -51,7 +50,7 @@ pub fn weaver_frontier_scatter(
         if parent >= tree_slot_count || slot >= frontier_capacity {
             continue;
         }
-        let logprob = child_model_logprobs[index];
+        let logprob = child_logprobs[index];
         let cumulative_logprob =
             f32::from_bits(packed_tree[TreeIdx::PathLogprobBits as usize * tree_slot_count + parent]) + logprob;
         frontier[FrontierIdx::TokenId as usize * frontier_capacity + slot] = child_ids[index];

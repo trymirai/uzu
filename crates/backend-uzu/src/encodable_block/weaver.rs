@@ -31,7 +31,7 @@ const DATA_TYPE: DataType = DataType::BF16;
 
 struct TopKChildren<B: Backend> {
     token_ids: Allocation<B>,
-    model_logprobs: Allocation<B>,
+    logprobs: Allocation<B>,
 }
 
 struct PrefixLayerOutput<B: Backend> {
@@ -70,75 +70,25 @@ struct CandidateBatch<'a, B: Backend> {
 }
 
 pub struct CandidatePool<'a, B: Backend> {
-    ids: &'a Allocation<B>,
-    logits: &'a Allocation<B>,
-    depth_count: usize,
-    candidates_per_depth: usize,
-}
-
-impl<'a, B: Backend> CandidatePool<'a, B> {
-    pub fn new(
-        ids: &'a Allocation<B>,
-        logits: &'a Allocation<B>,
-        depth_count: usize,
-        candidates_per_depth: usize,
-    ) -> Self {
-        Self {
-            ids,
-            logits,
-            depth_count,
-            candidates_per_depth,
-        }
-    }
+    pub ids: &'a Allocation<B>,
+    pub logits: &'a Allocation<B>,
+    pub depth_count: usize,
+    pub candidates_per_depth: usize,
 }
 
 pub struct WeaverInputs<'a, B: Backend> {
-    target_hidden: &'a Allocation<B>,
-    draft_hidden: &'a Allocation<B>,
-    target_embedding: &'a Embedding<B>,
-    candidates: CandidatePool<'a, B>,
-    depth_seeds: &'a [u64],
-    root_token_id: u32,
-}
-
-impl<'a, B: Backend> WeaverInputs<'a, B> {
-    pub fn new(
-        target_hidden: &'a Allocation<B>,
-        draft_hidden: &'a Allocation<B>,
-        target_embedding: &'a Embedding<B>,
-        candidates: CandidatePool<'a, B>,
-        depth_seeds: &'a [u64],
-        root_token_id: u32,
-    ) -> Self {
-        Self {
-            target_hidden,
-            draft_hidden,
-            target_embedding,
-            candidates,
-            depth_seeds,
-            root_token_id,
-        }
-    }
+    pub target_hidden: &'a Allocation<B>,
+    pub draft_hidden: &'a Allocation<B>,
+    pub target_embedding: &'a Embedding<B>,
+    pub candidates: CandidatePool<'a, B>,
+    pub depth_seeds: &'a [u64],
+    pub root_token_id: u32,
 }
 
 pub struct TreeShape {
-    budget: usize,
-    frontier_width: usize,
-    children_per_node: usize,
-}
-
-impl TreeShape {
-    pub fn new(
-        budget: usize,
-        frontier_width: usize,
-        children_per_node: usize,
-    ) -> Self {
-        Self {
-            budget,
-            frontier_width,
-            children_per_node,
-        }
-    }
+    pub budget: usize,
+    pub frontier_width: usize,
+    pub children_per_node: usize,
 }
 
 pub struct EncodedWeaverTree<B: Backend> {
@@ -474,7 +424,7 @@ impl<B: Backend> Weaver<B> {
                 &node_metadata,
                 &node_valid,
                 &selected_children.token_ids,
-                &selected_children.model_logprobs,
+                &selected_children.logprobs,
                 &mut frontier,
                 frontier_capacity as u32,
                 tree_slot_count as u32,
@@ -655,7 +605,7 @@ impl<B: Backend> Weaver<B> {
         let mut token_ids = encoder
             .allocate_scratch(size_for_shape(&[nodes.count, children_per_node], DataType::U32))
             .map_err(WeaverEncodeError::Backend)?;
-        let mut model_logprobs = encoder
+        let mut logprobs = encoder
             .allocate_scratch(size_for_shape(&[nodes.count, children_per_node], DataType::F32))
             .map_err(WeaverEncodeError::Backend)?;
         self.top_children.encode(
@@ -665,7 +615,7 @@ impl<B: Backend> Weaver<B> {
             candidates.depth_seeds,
             nodes.metadata,
             &mut token_ids,
-            &mut model_logprobs,
+            &mut logprobs,
             nodes.count as u32,
             candidates.candidates_per_node as u32,
             children_per_node as u32,
@@ -674,7 +624,7 @@ impl<B: Backend> Weaver<B> {
         );
         Ok(TopKChildren {
             token_ids,
-            model_logprobs,
+            logprobs,
         })
     }
 }
@@ -935,11 +885,6 @@ impl<B: Backend> WeaverLayer<B> {
 }
 
 fn nodes_from_packed_tree(packed_tree: &[u32]) -> Vec<ProposalNode> {
-    assert!(
-        packed_tree.len().is_multiple_of(TreeIdx::COUNT),
-        "packed tree must contain {} equal-length fields",
-        TreeIdx::COUNT
-    );
     let tree_slot_count = packed_tree.len() / TreeIdx::COUNT;
     let field = |field: TreeIdx, slot: usize| packed_tree[field as usize * tree_slot_count + slot];
     let mut slot_to_node_index = vec![usize::MAX; tree_slot_count];
