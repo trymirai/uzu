@@ -319,8 +319,11 @@ impl<B: Backend> Weaver<B> {
             return Err(WeaverEncodeError::InvalidTreeInput);
         }
 
-        let prefix_cache = self.encode_prefix(inputs.target_hidden, inputs.draft_hidden, lookahead_count, encoder)?;
-        let mut node_cache = self.create_node_expansion_kv_cache(tree_slot_count, context)?;
+        let prefix_cache = self
+            .encode_prefix(inputs.target_hidden, inputs.draft_hidden, lookahead_count, encoder)
+            .map_err(WeaverEncodeError::Backend)?;
+        let mut node_cache =
+            self.create_node_expansion_kv_cache(tree_slot_count, context).map_err(WeaverEncodeError::Backend)?;
 
         let mut tree_init = vec![0u32; TreeIdx::COUNT * tree_slot_count];
         for slot in 0..tree_slot_count {
@@ -445,14 +448,13 @@ impl<B: Backend> Weaver<B> {
         draft_hidden: &Allocation<B>,
         lookahead_count: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<PrefixKvCache<B>, WeaverEncodeError<B>> {
+    ) -> Result<PrefixKvCache<B>, B::Error> {
         assert!((1..=self.max_depth).contains(&lookahead_count));
         let token_count = lookahead_count + 1;
         let hidden_row_bytes = self.target_model_dim * DATA_TYPE.size_in_bytes();
 
-        let mut prefix_hidden = encoder
-            .allocate_scratch(size_for_shape(&[token_count, self.target_model_dim], DATA_TYPE))
-            .map_err(WeaverEncodeError::Backend)?;
+        let mut prefix_hidden =
+            encoder.allocate_scratch(size_for_shape(&[token_count, self.target_model_dim], DATA_TYPE))?;
         encoder.encode_copy(target_hidden, 0..hidden_row_bytes, &mut prefix_hidden, 0..hidden_row_bytes);
         encoder.encode_copy(
             draft_hidden,
@@ -460,14 +462,8 @@ impl<B: Backend> Weaver<B> {
             &mut prefix_hidden,
             hidden_row_bytes..token_count * hidden_row_bytes,
         );
-        let normalized_prefix = self
-            .hidden_state_norm
-            .encode(&prefix_hidden, 0, token_count, None, encoder)
-            .map_err(WeaverEncodeError::Backend)?;
-        let mut residual_input = self
-            .hidden_state_projection
-            .encode(normalized_prefix, token_count, encoder)
-            .map_err(WeaverEncodeError::Backend)?;
+        let normalized_prefix = self.hidden_state_norm.encode(&prefix_hidden, 0, token_count, None, encoder)?;
+        let mut residual_input = self.hidden_state_projection.encode(normalized_prefix, token_count, encoder)?;
         let position_elements = lookahead_count * self.model_dim;
         self.prefix_position_add.encode(
             None::<&Allocation<B>>,
@@ -479,23 +475,18 @@ impl<B: Backend> Weaver<B> {
             encoder,
         );
         let (last_layer, preceding_layers) = self.layers.split_last().expect("Weaver must have at least one layer");
-        let mut residual_state = encoder.allocate_scratch(residual_input.size()).map_err(WeaverEncodeError::Backend)?;
+        let mut residual_state = encoder.allocate_scratch(residual_input.size())?;
         let mut prefix_layers = Vec::with_capacity(self.layers.len());
         for layer in preceding_layers {
             let PrefixLayerOutput {
                 mlp_delta,
                 kv_cache,
-            } = layer
-                .encode_prefix_tokens(residual_input, &mut residual_state, token_count, encoder)
-                .map_err(WeaverEncodeError::Backend)?;
+            } = layer.encode_prefix_tokens(residual_input, &mut residual_state, token_count, encoder)?;
             prefix_layers.push(kv_cache);
             residual_input = mlp_delta;
         }
         prefix_layers.push(
-            last_layer
-                .encode_prefix_attention(&residual_input, &mut residual_state, token_count, encoder)
-                .map_err(WeaverEncodeError::Backend)?
-                .kv_cache,
+            last_layer.encode_prefix_attention(&residual_input, &mut residual_state, token_count, encoder)?.kv_cache,
         );
         Ok(PrefixKvCache {
             layers: prefix_layers.into_boxed_slice(),
@@ -507,11 +498,11 @@ impl<B: Backend> Weaver<B> {
         &self,
         capacity: usize,
         context: &B::Context,
-    ) -> Result<NodeExpansionKvCache<B>, WeaverEncodeError<B>> {
+    ) -> Result<NodeExpansionKvCache<B>, B::Error> {
         assert!(capacity > 0, "Weaver node capacity must be positive");
         let kv_size = size_for_shape(&[2, capacity, self.model_dim], DATA_TYPE);
         let layers = (0..self.layers.len())
-            .map(|_| context.create_allocation(kv_size, AllocationType::Global).map_err(WeaverEncodeError::Backend))
+            .map(|_| context.create_allocation(kv_size, AllocationType::Global))
             .collect::<Result<Box<[_]>, _>>()?;
         Ok(NodeExpansionKvCache {
             layers,
