@@ -1,10 +1,11 @@
 #![cfg(not(target_family = "wasm"))]
 
-use nagare::tool::{func_def::ToolDescriptor, schema::UzuToolSchema, uzu_tool_function};
+use nagare::tool::{func_def::ToolDescriptor, uzu_tool_function};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The current weather at the requested location.
-#[derive(Serialize, UzuToolSchema)]
+#[derive(Serialize, JsonSchema)]
 struct Weather {
     /// Temperature in degrees Celsius.
     temperature: f64,
@@ -44,8 +45,16 @@ async fn check_generated_definition() {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "latitude": { "type": "number", "description": "Latitude in decimal degrees." },
-                "longitude": { "type": "number", "description": "Longitude in decimal degrees." }
+                "latitude": {
+                    "type": "number",
+                    "format": "double",
+                    "description": "Latitude in decimal degrees."
+                },
+                "longitude": {
+                    "type": "number",
+                    "format": "double",
+                    "description": "Longitude in decimal degrees."
+                }
             },
             "required": ["latitude", "longitude"]
         })
@@ -58,10 +67,17 @@ async fn check_generated_definition() {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "temperature": { "type": "number", "description": "Temperature in degrees Celsius." },
-                "summary": { "type": "string", "description": "Optional human-readable summary." }
+                "temperature": {
+                    "type": "number",
+                    "format": "double",
+                    "description": "Temperature in degrees Celsius."
+                },
+                "summary": {
+                    "type": ["string", "null"],
+                    "description": "Optional human-readable summary."
+                }
             },
-            "required": ["temperature"],
+            "required": ["temperature", "summary"],
             "description": "The current weather at the requested location."
         })
     );
@@ -83,7 +99,7 @@ async fn check_generated_definition() {
 }
 
 /// A geographic coordinate.
-#[derive(Serialize, Deserialize, UzuToolSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 struct Coordinate {
     /// Latitude in decimal degrees.
     latitude: f64,
@@ -92,7 +108,7 @@ struct Coordinate {
 }
 
 /// A weather forecast request.
-#[derive(Deserialize, UzuToolSchema)]
+#[derive(Deserialize, JsonSchema)]
 struct ForecastRequest {
     /// Location to forecast.
     location: Coordinate,
@@ -101,7 +117,7 @@ struct ForecastRequest {
 }
 
 /// The forecast for a single day.
-#[derive(Serialize, UzuToolSchema)]
+#[derive(Serialize, JsonSchema)]
 struct DayForecast {
     /// Temperature in degrees Celsius.
     temperature: f64,
@@ -110,7 +126,7 @@ struct DayForecast {
 }
 
 /// A forecast for the requested location.
-#[derive(Serialize, UzuToolSchema)]
+#[derive(Serialize, JsonSchema)]
 struct Forecast {
     location: Coordinate,
     /// Forecasts per day.
@@ -138,8 +154,16 @@ async fn structured_input_and_output() {
     assert_eq!(definition.description, "Get the weather forecast for a location.");
 
     let coordinate_properties = serde_json::json!({
-        "latitude": { "type": "number", "description": "Latitude in decimal degrees." },
-        "longitude": { "type": "number", "description": "Longitude in decimal degrees." }
+        "latitude": {
+            "type": "number",
+            "format": "double",
+            "description": "Latitude in decimal degrees."
+        },
+        "longitude": {
+            "type": "number",
+            "format": "double",
+            "description": "Longitude in decimal degrees."
+        }
     });
 
     let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
@@ -158,7 +182,12 @@ async fn structured_input_and_output() {
                             // The field doc overrides the struct-level description of `Coordinate`.
                             "description": "Location to forecast."
                         },
-                        "days": { "type": "integer", "description": "Number of days ahead." }
+                        "days": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0,
+                            "description": "Number of days ahead."
+                        }
                     },
                     "required": ["location", "days"],
                     "description": "A weather forecast request."
@@ -187,8 +216,16 @@ async fn structured_input_and_output() {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "temperature": { "type": "number", "description": "Temperature in degrees Celsius." },
-                            "rain_probability": { "type": "number", "description": "Chance of rain from 0 to 1." }
+                            "temperature": {
+                                "type": "number",
+                                "format": "double",
+                                "description": "Temperature in degrees Celsius."
+                            },
+                            "rain_probability": {
+                                "type": "number",
+                                "format": "double",
+                                "description": "Chance of rain from 0 to 1."
+                            }
                         },
                         "required": ["temperature", "rain_probability"],
                         "description": "The forecast for a single day."
@@ -232,7 +269,7 @@ async fn structured_input_and_output() {
     assert!(error.to_string().contains("request"), "unexpected error: {error}");
 }
 
-#[derive(Serialize, Deserialize, UzuToolSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct UserLookup {
     #[serde(rename = "id")]
@@ -265,7 +302,12 @@ async fn serde_field_attributes_match_generated_schema() {
                     "properties": {
                         "id": { "type": "string" },
                         "displayName": { "type": "string" },
-                        "maxResults": { "type": "integer" }
+                        "maxResults": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0,
+                            "default": 0
+                        }
                     },
                     "required": ["id", "displayName"]
                 }
@@ -291,7 +333,7 @@ async fn serde_field_attributes_match_generated_schema() {
     assert_eq!(result, serde_json::json!("00123:Ada:0"));
 }
 
-#[derive(Deserialize, UzuToolSchema)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct StrictRequest {
     query: String,
@@ -355,8 +397,8 @@ async fn primitive_input_and_output() {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "a": { "type": "integer", "description": "The first addend." },
-                "b": { "type": "integer", "description": "The second addend." }
+                "a": { "type": "integer", "format": "int64", "description": "The first addend." },
+                "b": { "type": "integer", "format": "int64", "description": "The second addend." }
             },
             "required": ["a", "b"]
         })
@@ -364,10 +406,113 @@ async fn primitive_input_and_output() {
 
     let return_definition: serde_json::Value =
         serde_json::from_str(&definition.return_definition.as_ref().unwrap().json).unwrap();
-    assert_eq!(return_definition, serde_json::json!({ "type": "integer" }));
+    assert_eq!(return_definition, serde_json::json!({ "type": "integer", "format": "int64" }));
 
     let result: serde_json::Value =
         definition.execute(serde_json::json!({ "a": 40, "b": 2 }).into()).await.unwrap().try_into().unwrap();
+    assert_eq!(result, serde_json::json!(42));
+}
+
+#[uzu_tool_function]
+fn increment_optional(value: Option<i64>) -> Option<i64> {
+    value.map(|value| value + 1)
+}
+
+#[tokio::test]
+async fn nullable_argument_schema_is_coerced() {
+    let definition: ToolDescriptor = increment_optional.into();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
+    assert_eq!(
+        parameters,
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "value": {
+                    "type": ["integer", "null"],
+                    "format": "int64"
+                }
+            },
+            "required": []
+        })
+    );
+
+    let result: serde_json::Value =
+        definition.execute(serde_json::json!({ "value": "41" }).into()).await.unwrap().try_into().unwrap();
+    assert_eq!(result, serde_json::json!(42));
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+struct AsymmetricValue {
+    #[serde(skip_serializing)]
+    input_only: String,
+    #[serde(skip_deserializing)]
+    output_only: String,
+}
+
+#[uzu_tool_function]
+fn transform_asymmetric(value: AsymmetricValue) -> AsymmetricValue {
+    AsymmetricValue {
+        output_only: value.input_only.clone(),
+        ..value
+    }
+}
+
+#[test]
+fn input_and_output_use_separate_serde_contracts() {
+    let definition: ToolDescriptor = transform_asymmetric.into();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
+    let input_schema = &parameters["properties"]["value"];
+    assert!(input_schema["properties"].get("input_only").is_some());
+    assert!(input_schema["properties"].get("output_only").is_none());
+    assert_eq!(input_schema["required"], serde_json::json!(["input_only"]));
+
+    let output_schema: serde_json::Value =
+        serde_json::from_str(&definition.return_definition.as_ref().unwrap().json).unwrap();
+    assert!(output_schema["properties"].get("input_only").is_none());
+    assert!(output_schema["properties"].get("output_only").is_some());
+    assert_eq!(output_schema["required"], serde_json::json!(["output_only"]));
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct RecursiveRequest {
+    value: String,
+    count: i64,
+    child: Option<Box<RecursiveRequest>>,
+}
+
+#[uzu_tool_function]
+fn recursive_count(request: RecursiveRequest) -> i64 {
+    let child_count = request.child.map_or(0, |child| recursive_count::call(*child));
+    let _ = request.value;
+    request.count + child_count
+}
+
+#[tokio::test]
+async fn recursive_parameter_references_and_coercion_use_the_nested_parameter_root() {
+    let definition: ToolDescriptor = recursive_count.into();
+    let parameters: serde_json::Value = serde_json::from_str(&definition.parameters.as_ref().unwrap().json).unwrap();
+
+    assert_eq!(parameters["properties"]["request"]["properties"]["child"]["anyOf"][0]["$ref"], "#/properties/request");
+
+    let result: serde_json::Value = definition
+        .execute(
+            serde_json::json!({
+                "request": {
+                    "value": "root",
+                    "count": 1,
+                    "child": {
+                        "value": "leaf",
+                        "count": "41",
+                        "child": null
+                    }
+                }
+            })
+            .into(),
+        )
+        .await
+        .unwrap()
+        .try_into()
+        .unwrap();
     assert_eq!(result, serde_json::json!(42));
 }
 

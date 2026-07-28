@@ -1,4 +1,5 @@
-use nagare::tool::{func_def::ErrorFuture, schema::UzuToolSchema, uzu_tool_closure, uzu_tool_function};
+use nagare::tool::{func_def::ErrorFuture, uzu_tool_closure, uzu_tool_function};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use shoji::types::{
     basic::{SamplingMethod, SamplingPolicy},
@@ -7,7 +8,7 @@ use shoji::types::{
 use uzu::engine::{Engine, EngineConfig};
 
 /// A geographic coordinate.
-#[derive(Serialize, Deserialize, UzuToolSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 struct Coordinate {
     /// Latitude in decimal degrees.
     latitude: f64,
