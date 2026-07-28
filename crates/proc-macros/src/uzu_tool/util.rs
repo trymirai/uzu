@@ -99,22 +99,30 @@ pub fn parameters_tokens(
     let properties = params.iter().map(|param| {
         let name = param.ident.unraw().to_string();
         let ty = &param.ty;
-        let schema = quote!(<#ty as #nagare::tool::schema::ToolSchema>::json_schema());
+        let schema = quote!(
+            #nagare::tool::schema::tool_schema::<#ty>(
+                #nagare::tool::schema::SchemaContract::Input,
+            )
+        );
         if param.description.is_empty() {
             quote!((#name, #schema))
         } else {
             let description = &param.description;
-            quote!((#name, #schema.with_description(#description)))
+            quote!((
+                #name,
+                #nagare::tool::schema::with_description(#schema, #description),
+            ))
         }
     });
     let required = params.iter().filter(|param| param.required).map(|param| param.ident.unraw().to_string());
     quote! {
         ::core::option::Option::Some(
-            #nagare::tool::schema::JsonSchema::object(
-                [#(#properties),*],
-                ::std::vec::Vec::<&str>::from([#(#required),*]),
+            #nagare::tool::schema::schema_value(
+                #nagare::tool::schema::object_schema(
+                    [#(#properties),*],
+                    ::std::vec::Vec::<&str>::from([#(#required),*]),
+                ),
             )
-            .to_value(),
         )
     }
 }
@@ -142,7 +150,11 @@ pub fn return_definition_tokens(
 ) -> TokenStream2 {
     match ok_type {
         Some(ty) => quote! {
-            ::core::option::Option::Some(<#ty as #nagare::tool::schema::ToolSchema>::json_schema().to_value())
+            ::core::option::Option::Some(
+                #nagare::tool::schema::tool_schema_value::<#ty>(
+                    #nagare::tool::schema::SchemaContract::Output,
+                ),
+            )
         },
         None => quote!(::core::option::Option::None),
     }

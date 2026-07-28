@@ -30,7 +30,11 @@ async fn closure_with_captured_state() {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "amount": { "type": "integer", "description": "Amount to add to the total." }
+                "amount": {
+                    "type": "integer",
+                    "format": "int64",
+                    "description": "Amount to add to the total."
+                }
             },
             "required": ["amount"]
         })
@@ -38,7 +42,7 @@ async fn closure_with_captured_state() {
 
     let return_definition: serde_json::Value =
         serde_json::from_str(&definition.return_definition.as_ref().unwrap().json).unwrap();
-    assert_eq!(return_definition, serde_json::json!({ "type": "integer" }));
+    assert_eq!(return_definition, serde_json::json!({ "type": "integer", "format": "int64" }));
 
     let result: serde_json::Value =
         definition.execute(serde_json::json!({ "amount": 40 }).into()).await.unwrap().try_into().unwrap();
@@ -81,7 +85,7 @@ async fn async_closure_with_optional_parameter() {
             "properties": {
                 "name": { "type": "string", "description": "Name of the person to greet." },
                 "punctuation": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": "Optional punctuation to end the greeting with."
                 }
             },
@@ -117,7 +121,7 @@ async fn result_closure_propagates_errors() {
 
     let return_definition: serde_json::Value =
         serde_json::from_str(&definition.return_definition.as_ref().unwrap().json).unwrap();
-    assert_eq!(return_definition, serde_json::json!({ "type": "number" }));
+    assert_eq!(return_definition, serde_json::json!({ "type": "number", "format": "double" }));
 
     let result: serde_json::Value = definition
         .execute(serde_json::json!({ "dividend": 10.0, "divisor": 4.0 }).into())
