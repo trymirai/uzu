@@ -43,7 +43,7 @@ impl<B: Backend> DFlashState<B> {
     }
 }
 
-pub(crate) struct DFlashDraft<B: Backend> {
+pub struct DFlashDraft<B: Backend> {
     target_feature_projection: Box<dyn Linear<B>>,
     projected_feature_norm: Normalization<B>,
     layers: Box<[DFlashDraftLayer<B>]>,
@@ -58,16 +58,16 @@ pub(crate) struct DFlashDraft<B: Backend> {
     data_type: DataType,
 }
 
-pub(crate) struct DFlashDraftOutput<B: Backend> {
-    pub(crate) candidates: TopKCandidates<B>,
-    pub(crate) draft_hidden: Allocation<B>,
+pub struct DFlashDraftOutput<B: Backend> {
+    pub candidates: TopKCandidates<B>,
+    pub draft_hidden: Allocation<B>,
 }
 
-pub(crate) struct TopKCandidates<B: Backend> {
-    pub(crate) ids: Allocation<B>,
-    pub(crate) scores: Allocation<B>,
-    pub(crate) rows: usize,
-    pub(crate) candidates_per_row: usize,
+pub struct TopKCandidates<B: Backend> {
+    pub ids: Allocation<B>,
+    pub scores: Allocation<B>,
+    pub rows: usize,
+    pub candidates_per_row: usize,
 }
 
 struct DFlashDraftLayer<B: Backend> {
@@ -93,13 +93,6 @@ pub enum DFlashDraftNewError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("invalid DFlash attention config: {0}")]
     InvalidAttentionConfig(&'static str),
-    #[error("DFlash vocabulary size {0} does not fit u32")]
-    InvalidVocabularySize(usize),
-    #[error("DFlash mask_token_id {mask_token_id} is outside vocabulary size {vocab_size}")]
-    InvalidMaskTokenId {
-        mask_token_id: u64,
-        vocab_size: usize,
-    },
 }
 
 #[derive(Debug, Error)]
@@ -110,25 +103,6 @@ pub enum DFlashDraftEncodeError<B: Backend> {
     Embedding(#[from] EmbeddingError<B>),
 }
 
-fn plain_norm<B: Backend>(
-    context: &B::Context,
-    model_dim: usize,
-    config: &NormalizationConfig,
-    parameter_tree: &ParameterTree<B>,
-    data_type: DataType,
-) -> Result<Normalization<B>, NormalizationNewError<B>> {
-    Normalization::new(
-        model_dim,
-        None,
-        ShortcutMode::None,
-        PostLayerScalar::None,
-        data_type,
-        config,
-        parameter_tree,
-        context,
-    )
-}
-
 impl<B: Backend> DFlashDraft<B> {
     pub(crate) fn new(
         context: &B::Context,
@@ -136,14 +110,8 @@ impl<B: Backend> DFlashDraft<B> {
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, DFlashDraftNewError<B>> {
-        let vocab_size = u32::try_from(config.vocab_size)
-            .map_err(|_| DFlashDraftNewError::InvalidVocabularySize(config.vocab_size))?;
-        let mask_token_id = u32::try_from(config.mask_token_id).ok().filter(|&token| token < vocab_size).ok_or(
-            DFlashDraftNewError::InvalidMaskTokenId {
-                mask_token_id: config.mask_token_id,
-                vocab_size: config.vocab_size,
-            },
-        )?;
+        let vocab_size = config.vocab_size as u32;
+        let mask_token_id = config.mask_token_id as u32;
         if config.layer_configs.is_empty() {
             return Err(DFlashDraftNewError::InvalidAttentionConfig("at least one DFlash layer is required"));
         }
@@ -161,12 +129,15 @@ impl<B: Backend> DFlashDraft<B> {
             data_type,
             &parameter_tree.subtree("context_projection")?,
         )?;
-        let projected_feature_norm = plain_norm(
-            context,
+        let projected_feature_norm = Normalization::new(
             config.model_dim,
+            None,
+            ShortcutMode::None,
+            PostLayerScalar::None,
+            data_type,
             &config.context_norm_config,
             &parameter_tree.subtree("context_norm")?,
-            data_type,
+            context,
         )?;
         let layers_tree = parameter_tree.subtree("layers")?;
         let layers = config
