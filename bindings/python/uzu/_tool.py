@@ -152,7 +152,7 @@ class UzuToolFunction[**P, R]:
 
     def _encode_result(self, result: object) -> str:
         validated = self._return_adapter.validate_python(result)
-        return self._return_adapter.dump_json(validated).decode()
+        return self._return_adapter.dump_json(validated, by_alias=True).decode()
 
 
 class _ToolInvocation:

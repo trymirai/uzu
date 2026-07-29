@@ -42,6 +42,10 @@ class Weather(BaseModel):
     summary: Annotated[str | None, "Optional human-readable summary."]
 
 
+class AliasedResult(BaseModel):
+    value: int = Field(serialization_alias="answer")
+
+
 @uzu_tool_function
 def get_forecast(
     request: Annotated[ForecastRequest, "Request supplied to the forecast service."],
@@ -86,6 +90,11 @@ def reserved_parameter_names(
 @uzu_tool_function
 def unhashable_return_metadata() -> Annotated[int, {"tag": "x"}]:
     return 42
+
+
+@uzu_tool_function
+def get_aliased_result() -> AliasedResult:
+    return AliasedResult(value=1)
 
 
 def _resolve_reference(
@@ -161,6 +170,17 @@ def test_sync_tool_constructs_and_serializes_pydantic_models() -> None:
         "temperature": 51.4,
         "summary": None,
     }
+
+
+def test_return_serialization_uses_schema_aliases() -> None:
+    schema = get_aliased_result.return_schema
+    assert schema is not None
+    assert set(schema["properties"]) == {"answer"}
+    assert schema["required"] == ["answer"]
+
+    result = get_aliased_result._invoke_json("{}")
+    assert isinstance(result, str)
+    assert json.loads(result) == {"answer": 1}
 
 
 def test_required_nullable_parameter_cannot_be_omitted() -> None:
