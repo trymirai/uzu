@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import collections.abc
 import functools
 import inspect
@@ -98,7 +99,7 @@ class UzuToolFunction[**P, R]:
                 visited=set(),
             )
 
-        functools.update_wrapper(self, function)
+        functools.update_wrapper(self, function, updated=())
 
     def __call__(
         self,
@@ -146,9 +147,37 @@ class UzuToolFunction[**P, R]:
         result = self._invoke_json(arguments_json)
         return await result if inspect.isawaitable(result) else result
 
+    def _new_json_invocation(self, arguments_json: str) -> _ToolInvocation:
+        return _ToolInvocation(self, arguments_json)
+
     def _encode_result(self, result: object) -> str:
         validated = self._return_adapter.validate_python(result)
         return self._return_adapter.dump_json(validated).decode()
+
+
+class _ToolInvocation:
+    def __init__(
+        self,
+        tool: UzuToolFunction,
+        arguments_json: str,
+    ) -> None:
+        self._tool = tool
+        self._arguments_json = arguments_json
+        self._cancelled = False
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._task: asyncio.Task[object] | None = None
+
+    async def run(self) -> str:
+        self._loop = asyncio.get_running_loop()
+        self._task = asyncio.current_task()
+        if self._cancelled:
+            raise asyncio.CancelledError
+        return await self._tool._invoke_json_on_loop(self._arguments_json)  # noqa: SLF001
+
+    def cancel(self) -> None:
+        self._cancelled = True
+        if self._loop is not None and self._task is not None:
+            self._loop.call_soon_threadsafe(self._task.cancel)
 
 
 @overload

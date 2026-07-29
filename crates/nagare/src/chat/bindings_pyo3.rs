@@ -1,4 +1,9 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use pyo3::{Bound, Py, PyAny, PyErr, PyResult, Python, types::PyAnyMethods};
 use shoji::types::basic::{ToolFunction, Value};
@@ -7,6 +12,37 @@ use super::ChatSession;
 use crate::tool::func_def::{ErrorFuture, ToolDescriptor};
 
 type PythonFuture = Pin<Box<dyn Future<Output = PyResult<Py<PyAny>>> + Send>>;
+
+struct PythonInvocation {
+    future: PythonFuture,
+    cancellation: Option<Py<PyAny>>,
+}
+
+impl Future for PythonInvocation {
+    type Output = PyResult<Py<PyAny>>;
+
+    fn poll(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Self::Output> {
+        let result = self.future.as_mut().poll(context);
+        if result.is_ready() {
+            self.cancellation = None;
+        }
+        result
+    }
+}
+
+impl Drop for PythonInvocation {
+    fn drop(&mut self) {
+        let Some(cancellation) = self.cancellation.take() else {
+            return;
+        };
+        let _ = Python::try_attach(|py| {
+            let _ = cancellation.bind(py).call_method0("cancel");
+        });
+    }
+}
 
 #[pyo3_stub_gen::derive::gen_stub_pymethods]
 #[pyo3::pymethods]
@@ -88,15 +124,18 @@ async fn call_python_tool(
     tool: Arc<Py<PyAny>>,
     arguments: Value,
 ) -> Result<Value, ErrorFuture> {
-    let future = Python::attach(|py| -> PyResult<PythonFuture> {
-        // Creating this coroutine does not invoke the tool. Its body runs on the
-        // reply's Python loop and context once `into_future_with_locals` schedules it.
+    let invocation = Python::attach(|py| -> PyResult<PythonInvocation> {
         let task_locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
-        let invocation = tool.bind(py).call_method1("_invoke_json_on_loop", (arguments.json,))?;
-        Ok(Box::pin(pyo3_async_runtimes::into_future_with_locals(&task_locals, invocation)?))
+        let cancellation = tool.bind(py).call_method1("_new_json_invocation", (arguments.json,))?;
+        let awaitable = cancellation.call_method0("run")?;
+        let future = Box::pin(pyo3_async_runtimes::into_future_with_locals(&task_locals, awaitable)?);
+        Ok(PythonInvocation {
+            future,
+            cancellation: Some(cancellation.unbind()),
+        })
     })
     .map_err(python_error)?;
-    let result = future.await.map_err(python_error)?;
+    let result = invocation.await.map_err(python_error)?;
 
     let json = Python::attach(|py| result.extract::<String>(py)).map_err(python_error)?;
     let value = serde_json::from_str::<serde_json::Value>(&json)?;

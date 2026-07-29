@@ -257,6 +257,56 @@ def test_return_annotation_can_have_unhashable_metadata() -> None:
     assert unhashable_return_metadata._invoke_json("{}") == "42"
 
 
+def test_wrapper_metadata_does_not_replace_tool_state() -> None:
+    def target(value: int) -> int:
+        return value
+
+    target.__dict__.update(
+        {
+            "_function": lambda value: value + 100,
+            "description": "Wrong description.",
+            "name": "wrong_name",
+            "parameters_schema": {"wrong": True},
+        }
+    )
+    tool = uzu_tool_function(target, name="configured_name", description="Configured description.")
+
+    assert tool.name == "configured_name"
+    assert tool.description == "Configured description."
+    assert tool.parameters_schema is not None
+    assert set(tool.parameters_schema["properties"]) == {"value"}
+    assert tool._invoke_json('{"value":5}') == "5"
+
+
+def test_cancelling_invocation_cancels_async_python_tool() -> None:
+    async def run() -> None:
+        started = asyncio.Event()
+        cleaned_up = asyncio.Event()
+        side_effect = False
+
+        @uzu_tool_function
+        async def waiting_tool() -> None:
+            nonlocal side_effect
+            started.set()
+            try:
+                await asyncio.Event().wait()
+                side_effect = True
+            finally:
+                cleaned_up.set()
+
+        invocation = waiting_tool._new_json_invocation("{}")
+        task = asyncio.create_task(invocation.run())
+        await started.wait()
+        await asyncio.to_thread(invocation.cancel)
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(cleaned_up.wait(), timeout=1)
+        assert not side_effect
+
+    asyncio.run(run())
+
+
 def test_configured_decorator_overrides_name_and_description() -> None:
     assert add_node_values.name == "sum_values"
     assert add_node_values.description == "Add all node values."
