@@ -83,6 +83,11 @@ def reserved_parameter_names(
     }
 
 
+@uzu_tool_function
+def unhashable_return_metadata() -> Annotated[int, {"tag": "x"}]:
+    return 42
+
+
 def _resolve_reference(
     root: dict[str, object],
     schema: dict[str, object],
@@ -244,6 +249,12 @@ def test_parameters_can_use_reserved_base_model_names() -> None:
         "model_config": 7,
         "model_dump": "ready",
     }
+
+
+def test_return_annotation_can_have_unhashable_metadata() -> None:
+    assert unhashable_return_metadata.return_schema is not None
+    assert unhashable_return_metadata.return_schema["type"] == "integer"
+    assert unhashable_return_metadata._invoke_json("{}") == "42"
 
 
 def test_configured_decorator_overrides_name_and_description() -> None:

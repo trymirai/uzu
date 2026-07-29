@@ -88,7 +88,7 @@ class UzuToolFunction[**P, R]:
         return_annotation = annotations.get("return", self._signature.return_annotation)
         self._return_adapter = TypeAdapter(Any if return_annotation is _EMPTY else return_annotation)
         self.return_schema: dict[str, object] | None = None
-        if return_annotation not in {_EMPTY, None, _NONE_TYPE}:
+        if return_annotation is not _EMPTY and return_annotation is not None and return_annotation is not _NONE_TYPE:
             self.return_schema = self._return_adapter.json_schema(mode="serialization")
             _apply_annotated_descriptions(
                 return_annotation,
