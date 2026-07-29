@@ -11,7 +11,7 @@ use crate::{
             },
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, routing::MatmulShape},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
             },
         },
         metal::{
@@ -135,7 +135,7 @@ impl GemmKernel {
             _ => {},
         }
         matches!(
-            self.select_mxu_tiling_shape(shape, b_prologue),
+            self.select_mxu_tiling_shape(shape, b_prologue, false),
             Some(GemmTiling::Tile16x32x256_Simdgroups1x1 | GemmTiling::Tile16x128x256_Simdgroups1x4)
         )
     }
@@ -144,25 +144,14 @@ impl GemmKernel {
         &self,
         arguments: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
     ) -> bool {
-        let shape = MatmulShape {
-            m: arguments.m,
-            n: arguments.n,
-            k: arguments.k,
-            b_transpose: arguments.b_transpose,
-            b_leading_dimension: arguments.b_leading_dimension,
-            is_quant: !matches!(arguments.b, MatmulB::FullPrecision { .. }),
-            b_bits: arguments.b.bits_per_b(),
-            b_group_size: arguments.b.group_size(),
-            gathered: arguments.gather_indices.is_some(),
-            d_transform: arguments.d_transform.mask(),
-        };
-        self.should_skip_gemv_for_mxu_shape(&shape, arguments.b.b_prologue())
+        self.should_skip_gemv_for_mxu_shape(&MatmulShape::from_arguments(arguments), arguments.b.b_prologue())
     }
 
     fn select_mxu_tiling_shape(
         &self,
         shape: &MatmulShape,
         b_prologue: GemmBPrologueKind,
+        int8_activations: bool,
     ) -> Option<GemmTiling> {
         if ![self.weights_data_type, self.input_data_type, self.output_data_type]
             .into_iter()
@@ -182,7 +171,10 @@ impl GemmKernel {
                     return None;
                 }
                 let group_size = shape.b_group_size.unwrap_or(0);
-                let tiling = select_mxu_quant_tiling(shape.m, shape.n, shape.k, group_size, false);
+                let tiling = select_mxu_quant_tiling(shape.m, shape.n, shape.k, group_size, int8_activations);
+                if int8_activations {
+                    return (group_size != 0 && shape.k.is_multiple_of(group_size)).then_some(tiling);
+                }
                 shape.k.is_multiple_of(tiling.block_k()).then_some(tiling)
             },
         }
@@ -192,43 +184,11 @@ impl GemmKernel {
         &self,
         arguments: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
     ) -> Option<GemmTiling> {
-        if ![self.weights_data_type, self.input_data_type, self.output_data_type]
-            .into_iter()
-            .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32))
-        {
-            return None;
-        }
-
-        match &arguments.b {
-            MatmulB::FullPrecision {
-                ..
-            } => Some(if arguments.b_transpose {
-                select_mxu_tiling(arguments.m, arguments.n, arguments.k)
-            } else {
-                select_base_mxu_tiling(arguments.m, arguments.n)
-            }),
-            MatmulB::ScaleBiasDequant {
-                ..
-            }
-            | MatmulB::ScaleZeroPointDequant {
-                ..
-            }
-            | MatmulB::ScaleSymmetricDequant {
-                ..
-            } => {
-                if !arguments.b_transpose || arguments.b_leading_dimension.is_some() {
-                    return None;
-                }
-                let group_size = arguments.b.group_size().unwrap_or(0);
-                let int8_activations = arguments.a.prologue_kind() == GemmAPrologueKind::Int8Symmetric;
-                let tiling =
-                    select_mxu_quant_tiling(arguments.m, arguments.n, arguments.k, group_size, int8_activations);
-                if int8_activations {
-                    return (group_size != 0 && arguments.k.is_multiple_of(group_size)).then_some(tiling);
-                }
-                arguments.k.is_multiple_of(tiling.block_k()).then_some(tiling)
-            },
-        }
+        self.select_mxu_tiling_shape(
+            &MatmulShape::from_arguments(arguments),
+            arguments.b.b_prologue(),
+            arguments.a.prologue_kind() == GemmAPrologueKind::Int8Symmetric,
+        )
     }
 
     pub fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
@@ -737,7 +697,7 @@ impl GemmKernel {
         {
             let mut src = encoder.allocate_scratch(slice_bytes)?;
             encoder.encode_copy(&*d, .., &mut src, ..);
-            self.output_rht.encode_fp(&src, &mut *d, factors, n, m, encoder);
+            self.output_rht.encode_fp(&src, &mut *d, factors, m, n, encoder);
         }
         Ok(())
     }

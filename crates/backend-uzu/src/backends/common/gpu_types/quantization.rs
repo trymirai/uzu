@@ -33,8 +33,8 @@ impl QuantizationMode {
     pub fn weight_codes_sign_flip_mask(&self) -> Option<u8> {
         match self {
             QuantizationMode::U4 => Some(0x88),
-            QuantizationMode::U8 => Some(0x80),
             QuantizationMode::I8 => None,
+            QuantizationMode::U8 => Some(0x80),
         }
     }
 }

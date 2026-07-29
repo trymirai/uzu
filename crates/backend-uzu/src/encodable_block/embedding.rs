@@ -7,7 +7,8 @@ use crate::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
         kernel::{
-            FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel, QuantizedEmbeddingLookupKernel,
+            ActivationTransform, FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel,
+            QuantizedEmbeddingLookupKernel,
             matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
@@ -91,7 +92,7 @@ enum UntiedEmbeddingReadoutType<B: Backend> {
 
 struct InputHadamard<B: Backend> {
     factors: Allocation<B>,
-    kernel: crate::backends::common::kernel::ActivationTransform<B>,
+    kernel: ActivationTransform<B>,
 }
 
 enum EmbeddingTying<B: Backend> {
@@ -480,8 +481,7 @@ impl<B: Backend> Embedding<B> {
                             .validate(&[model_dim as usize], DataType::I32)?
                             .read_allocation()?;
                         let kernel =
-                            crate::backends::common::kernel::ActivationTransform::input_rht(context, data_type)
-                                .map_err(EmbeddingError::BackendError)?;
+                            ActivationTransform::input_rht(context, data_type).map_err(EmbeddingError::BackendError)?;
                         let input_hadamard = Some(InputHadamard {
                             factors,
                             kernel,
@@ -727,8 +727,8 @@ impl<B: Backend> Embedding<B> {
                             input_allocation,
                             &mut transformed,
                             &input_hadamard.factors,
-                            self.model_dim,
                             batch_dim as u32,
+                            self.model_dim,
                             encoder,
                         );
                         rht_input.insert(transformed)
@@ -860,8 +860,8 @@ impl<B: Backend> Embedding<B> {
                     input,
                     &mut transformed,
                     &input_hadamard.factors,
-                    self.model_dim,
                     rows as u32,
+                    self.model_dim,
                     encoder,
                 );
                 rht_input.insert(transformed)

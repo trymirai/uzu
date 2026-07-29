@@ -194,8 +194,8 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 &input,
                 &mut base_input,
                 input_factors,
-                self.input_dim as u32,
                 batch_dim as u32,
+                self.input_dim as u32,
                 encoder,
             );
             base_input
@@ -238,8 +238,8 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 &output,
                 &mut transformed,
                 output_factors,
-                self.output_dim as u32,
                 batch_dim as u32,
+                self.output_dim as u32,
                 encoder,
             );
             output = transformed;

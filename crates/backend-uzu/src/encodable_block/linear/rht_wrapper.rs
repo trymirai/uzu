@@ -158,7 +158,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             Some(output_factors),
         )?;
         if quantize_transform.is_some() {
-            inner_linear.sign_convert_quantized_weights_for_int8_activations();
+            inner_linear.to_signed_weight_codes();
         }
 
         Ok(Self {
@@ -211,15 +211,13 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             );
         }
 
-        let data_type = self.inner_linear.input_data_type();
-        let mut transformed =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], data_type))?;
+        let mut transformed = encoder.allocate_scratch(input.size())?;
         self.input_transform.encode_fp(
             &input,
             &mut transformed,
             &self.input_factors,
-            self.input_dimension as u32,
             batch_dim as u32,
+            self.input_dimension as u32,
             encoder,
         );
         self.inner_linear.encode(transformed, batch_dim, encoder)

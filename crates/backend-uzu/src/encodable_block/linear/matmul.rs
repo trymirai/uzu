@@ -5,7 +5,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmBPrologueKind},
+        gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             Kernels,
             matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulPath, MatmulShape},
@@ -48,7 +48,6 @@ pub struct LinearMatmul<B: Backend> {
     biases: Option<Allocation<B>>,
     input_dim: usize,
     output_dim: usize,
-    input_data_type: DataType,
     output_data_type: DataType,
     mode: Mode<B>,
 }
@@ -87,7 +86,6 @@ impl<B: Backend> LinearMatmul<B> {
             biases,
             input_dim,
             output_dim,
-            input_data_type,
             output_data_type,
             mode: Mode::FullPrecision,
         })
@@ -182,7 +180,6 @@ impl<B: Backend> LinearMatmul<B> {
             biases,
             input_dim,
             output_dim,
-            input_data_type,
             output_data_type,
             mode: Mode::Quantized {
                 method: quantization_method,
@@ -214,7 +211,7 @@ fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
-    pub(super) fn sign_convert_quantized_weights_for_int8_activations(&mut self) {
+    pub(super) fn to_signed_weight_codes(&mut self) {
         let Mode::Quantized {
             mode,
             signed_codes,
@@ -245,29 +242,14 @@ impl<B: Backend> LinearMatmul<B> {
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
-        let b = self.matmul_b();
-
-        let rht_factors = match &self.mode {
-            Mode::Quantized {
-                output_hadamard_factors: Some(factors),
-                ..
-            } => Some(factors),
-            _ => None,
-        };
-        let d_transform = MatmulDOps {
-            bias: self.biases.as_ref(),
-            rht_factors,
-            ..MatmulDOps::none()
-        };
-
         self.kernel.lock().encode(
             MatmulArguments {
                 a,
-                b,
+                b: self.matmul_b(),
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut output,
-                d_transform,
+                d_transform: self.d_ops(),
                 gather_indices: None,
                 m: batch_dim as u32,
                 n: self.output_dim as u32,
@@ -278,9 +260,7 @@ impl<B: Backend> LinearMatmul<B> {
 
         Ok(output)
     }
-}
 
-impl<B: Backend> LinearMatmul<B> {
     fn matmul_b(&self) -> MatmulB<'_, B> {
         match &self.mode {
             Mode::FullPrecision => MatmulB::FullPrecision {
@@ -324,12 +304,8 @@ impl<B: Backend> LinearMatmul<B> {
         }
     }
 
-    fn matmul_shape(
-        &self,
-        batch_dim: usize,
-    ) -> (MatmulShape, GemmBPrologueKind) {
-        let b = self.matmul_b();
-        let d_transform = MatmulDOps {
+    fn d_ops(&self) -> MatmulDOps<'_, B> {
+        MatmulDOps {
             bias: self.biases.as_ref(),
             rht_factors: match &self.mode {
                 Mode::Quantized {
@@ -339,38 +315,27 @@ impl<B: Backend> LinearMatmul<B> {
                 _ => None,
             },
             ..MatmulDOps::none()
-        };
+        }
+    }
+
+    pub(super) fn select_path(
+        &self,
+        batch_dim: usize,
+        context: &B::Context,
+    ) -> MatmulPath {
+        let b = self.matmul_b();
         let shape = MatmulShape {
             m: batch_dim as u32,
             n: self.output_dim as u32,
             k: self.input_dim as u32,
             b_transpose: true,
             b_leading_dimension: None,
-            is_quant: !matches!(b, MatmulB::FullPrecision { .. }),
             b_bits: b.bits_per_b(),
             b_group_size: b.group_size(),
             gathered: false,
-            d_transform: d_transform.mask(),
+            d_transform: self.d_ops().mask(),
         };
-        (shape, b.b_prologue())
-    }
-
-    pub(super) fn input_data_type(&self) -> DataType {
-        self.input_data_type
-    }
-
-    /// Reports the path the backend will actually take, so callers never assume a
-    /// dispatch that does not happen. There is deliberately no `NATIVE_INT8_MATMUL`
-    /// shortcut here: the only caller gates on `quantize_transform`, which
-    /// `int8_activations_eligible` already leaves as `None` without that capability,
-    /// so devices lacking MXU keep the existing FP-activation path.
-    pub(super) fn select_path(
-        &self,
-        batch_dim: usize,
-        context: &B::Context,
-    ) -> MatmulPath {
-        let (shape, b_prologue) = self.matmul_shape(batch_dim);
-        self.kernel.lock().select_path(&shape, b_prologue, context)
+        self.kernel.lock().select_path(&shape, b.b_prologue(), context)
     }
 }
 

@@ -12,7 +12,7 @@ use crate::{
                 HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
-            kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, routing::MatmulShape},
+            kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
         },
         metal::{Metal, context::MetalContext, device_tier::DeviceTier, kernel::GemvMetalKernel},
     },
@@ -55,8 +55,7 @@ impl GemvSpecialization {
         if !shape.b_transpose {
             return None;
         }
-        let is_quant = shape.is_quant;
-        let gathered = shape.gathered;
+        let is_quant = b_prologue != GemmBPrologueKind::FullPrecision;
         let bad_leading_dimension = if is_quant {
             shape.b_leading_dimension.is_some()
         } else {
@@ -114,7 +113,7 @@ impl GemvSpecialization {
             k_split: tile.k_split,
             results_per_simdgroup: tile.results_per_simdgroup,
             num_simdgroups: tile.num_simdgroups,
-            gathered,
+            gathered: shape.gathered,
             signed_codes: false,
         })
     }
@@ -129,28 +128,17 @@ impl GemvSpecialization {
         if !matches!(args.a, MatmulA::FullPrecision { .. }) {
             return None;
         }
-        let shape = MatmulShape {
-            m: args.m,
-            n: args.n,
-            k: args.k,
-            b_transpose: args.b_transpose,
-            b_leading_dimension: args.b_leading_dimension,
-            is_quant: !matches!(args.b, MatmulB::FullPrecision { .. }),
-            b_bits: args.b.bits_per_b(),
-            b_group_size: args.b.group_size(),
-            gathered: args.gather_indices.is_some(),
-            d_transform: args.d_transform.mask(),
-        };
-        let mut specialization = Self::select_shape(
-            &shape,
-            args.b.b_prologue(),
-            weights_data_type,
-            input_data_type,
-            output_data_type,
-            device_tier,
-        )?;
-        specialization.signed_codes = args.b.signed_codes();
-        Some(specialization)
+        Some(GemvSpecialization {
+            signed_codes: args.b.signed_codes(),
+            ..Self::select_shape(
+                &MatmulShape::from_arguments(args),
+                args.b.b_prologue(),
+                weights_data_type,
+                input_data_type,
+                output_data_type,
+                device_tier,
+            )?
+        })
     }
 }
 
