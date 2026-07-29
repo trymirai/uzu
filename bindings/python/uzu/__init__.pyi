@@ -5,6 +5,7 @@ import builtins
 import collections.abc
 import enum
 import typing
+from uzu._tool import UzuToolFunction, uzu_tool_function
 __all__ = [
     "CancelToken",
     "ChatConfig",
@@ -84,7 +85,9 @@ __all__ = [
     "ToolFunction",
     "ToolNamespace",
     "TranslationPayload",
+    "UzuToolFunction",
     "Value",
+    "uzu_tool_function",
 ]
 
 @typing.final
@@ -414,6 +417,8 @@ class ChatRole:
 
 @typing.final
 class ChatSession:
+    def add_tool(self, tool: UzuToolFunction[..., typing.Any]) -> collections.abc.Awaitable[None]: ...
+    def add_tools(self, tools: collections.abc.Sequence[UzuToolFunction[..., typing.Any]]) -> collections.abc.Awaitable[None]: ...
     def state(self) -> collections.abc.Awaitable[ChatSessionState]: ...
     def messages(self) -> collections.abc.Awaitable[builtins.list[ChatMessage]]: ...
     def reset(self) -> collections.abc.Awaitable[None]: ...

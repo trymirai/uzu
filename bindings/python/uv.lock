@@ -211,20 +211,20 @@ wheels = [
 [[package]]
 name = "uzu"
 source = { editable = "." }
+dependencies = [
+    { name = "pydantic" },
+]
 
 [package.optional-dependencies]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
-examples = [
-    { name = "pydantic" },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "pydantic", marker = "extra == 'examples'", specifier = ">=2.13.3" },
+    { name = "pydantic", specifier = ">=2.13.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.4" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.0" },
 ]
-provides-extras = ["dev", "examples"]
+provides-extras = ["dev"]

@@ -27,6 +27,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dynamic = ["version"]
+dependencies = ["pydantic>=2.13.3"]
 
 [project.urls]
 Homepage = "https://trymirai.com"
@@ -35,7 +36,6 @@ Issues = "https://github.com/trymirai/uzu/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3.4", "ruff>=0.14.0"]
-examples = ["pydantic>=2.13.3"]
 
 [tool.maturin]
 features = ["bindings-pyo3"]

@@ -1,3 +1,5 @@
+#[cfg(feature = "bindings-pyo3")]
+mod bindings_pyo3;
 mod error;
 pub mod message;
 pub mod token;
