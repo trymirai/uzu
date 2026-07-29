@@ -13,8 +13,8 @@ fn top_k_score_key(score: f32) -> u32 {
     }
 }
 
-#[kernel(WeaverFrontierScatter)]
-pub fn weaver_frontier_scatter(
+#[kernel(WeaverFrontierInsertChildren)]
+pub fn weaver_frontier_insert_children(
     packed_tree: *const u32,
     node_metadata: *const u32,
     node_valid: *const u32,

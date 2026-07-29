@@ -5,7 +5,7 @@
 
 using namespace metal;
 
-PUBLIC KERNEL(WeaverFrontierScatter)(
+PUBLIC KERNEL(WeaverFrontierInsertChildren)(
     const device uint* packed_tree,
     const device uint* node_metadata,
     const device uint* node_valid,

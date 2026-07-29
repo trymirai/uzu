@@ -9,7 +9,7 @@ use crate::{
         },
         kernel::{
             ActivationKernel, AncestorAttentionKernel, AttentionPrepareKernel, TensorAddBiasKernel,
-            WeaverFrontierScatterKernel, WeaverFrontierSelectKernel, WeaverTopChildrenKernel,
+            WeaverFrontierInsertChildrenKernel, WeaverFrontierSelectKernel, WeaverTopChildrenKernel,
         },
     },
     config::{normalization::NormalizationConfig, weaver::WeaverConfig},
@@ -119,7 +119,7 @@ pub struct Weaver<B: Backend> {
     node_position_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
     top_children: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
     frontier_select: <B::Kernels as Kernels>::WeaverFrontierSelectKernel,
-    frontier_scatter: <B::Kernels as Kernels>::WeaverFrontierScatterKernel,
+    frontier_insert_children: <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel,
     model_dim: usize,
     target_model_dim: usize,
     max_depth: usize,
@@ -273,8 +273,8 @@ impl<B: Backend> Weaver<B> {
             <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context).map_err(WeaverNewError::Backend)?;
         let frontier_select =
             <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(context).map_err(WeaverNewError::Backend)?;
-        let frontier_scatter =
-            <B::Kernels as Kernels>::WeaverFrontierScatterKernel::new(context).map_err(WeaverNewError::Backend)?;
+        let frontier_insert_children = <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel::new(context)
+            .map_err(WeaverNewError::Backend)?;
         Ok(Self {
             token_embedding_norm,
             token_embedding_projection,
@@ -288,7 +288,7 @@ impl<B: Backend> Weaver<B> {
             node_position_add,
             top_children,
             frontier_select,
-            frontier_scatter,
+            frontier_insert_children,
             model_dim: config.model_dim,
             target_model_dim: config.target_model_dim,
             max_depth: config.max_depth,
@@ -422,7 +422,7 @@ impl<B: Backend> Weaver<B> {
                 inputs.target_embedding,
                 encoder,
             )?;
-            self.frontier_scatter.encode(
+            self.frontier_insert_children.encode(
                 &packed_tree,
                 &node_metadata,
                 &node_valid,
