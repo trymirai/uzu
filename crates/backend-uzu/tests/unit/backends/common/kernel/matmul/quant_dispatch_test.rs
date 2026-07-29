@@ -542,7 +542,7 @@ fn signed_weights_full_precision_activations_parity_bf16(
 ) {
     let context = MetalContext::new().expect("Metal context");
     let (m, n, group_size) = (2usize, 128usize, 32u32);
-    let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0).with_prepared_a();
+    let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0).with_signed_weight_codes();
     let reference_input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0);
     let reference = run_quant_cpu::<bf16>(&reference_input);
 

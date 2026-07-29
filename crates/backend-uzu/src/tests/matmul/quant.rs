@@ -42,6 +42,7 @@ pub struct QuantInput<T: ArrayElement + Float> {
     pub group_size: u32,
     pub quant_method: QuantizationMethod,
     pub mode: QuantizationMode,
+    pub signed_codes: bool,
     pub prepared_a: Option<PreparedInt8A>,
 }
 
@@ -99,11 +100,18 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             group_size,
             quant_method,
             mode: mode_for_bits(bits),
+            signed_codes: false,
             prepared_a: None,
         }
     }
 
+    pub fn with_signed_weight_codes(mut self) -> Self {
+        self.signed_codes = true;
+        self
+    }
+
     pub fn with_prepared_a(mut self) -> Self {
+        self.signed_codes = true;
         let group_size = HADAMARD_TRANSFORM_BLOCK_SIZE;
         let rows = self.m as usize;
         let columns = self.k as usize;
@@ -140,7 +148,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
 
     pub(crate) fn weights_with_signed_codes(&self) -> Vec<u32> {
         let mut words = self.w_packed.clone();
-        let sign_flip_mask = self.prepared_a.is_some().then(|| self.mode.weight_codes_sign_flip_mask()).flatten();
+        let sign_flip_mask = self.signed_codes.then(|| self.mode.weight_codes_sign_flip_mask()).flatten();
         if let Some(mask) = sign_flip_mask {
             let broadcast_mask = u32::from(mask) * 0x0101_0101;
             words.iter_mut().for_each(|word| *word ^= broadcast_mask);
@@ -205,7 +213,7 @@ fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
     biases: Option<&'a Allocation<B>>,
     input: &QuantInput<T>,
 ) -> MatmulB<'a, B> {
-    let signed_codes = input.prepared_a.is_some();
+    let signed_codes = input.signed_codes;
     match input.quant_method {
         QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
             b: w,

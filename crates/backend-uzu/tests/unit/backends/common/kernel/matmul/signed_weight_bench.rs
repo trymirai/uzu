@@ -7,17 +7,21 @@ use half::bf16;
 use proc_macros::uzu_bench;
 
 use crate::{
-    backends::metal::{GemvDispatch, GemvSpecialization, Metal},
+    backends::{
+        common::gpu_types::QuantizationMethod,
+        metal::{GemvDispatch, GemvSpecialization, Metal},
+    },
     data_type::DataType,
     tests::{
         cold_pool::ColdPool,
         matmul::{QuantBuffers, QuantInput, iter_encode_loop_named, quant_arguments_full_precision_a},
+        util::shared_metal_context,
     },
 };
 
 #[uzu_bench]
 fn bench_signed_weight_gemv(c: &mut Criterion) {
-    let context = crate::tests::util::shared_metal_context();
+    let context = shared_metal_context();
     let device_tier = context.device_tier();
     let (m, k, n, group_size) = (1usize, 4096usize, 4096usize, 64u32);
 
@@ -30,17 +34,9 @@ fn bench_signed_weight_gemv(c: &mut Criterion) {
         group.throughput(Throughput::Elements((m * k * n) as u64));
 
         for signed_codes in [false, true] {
-            let input = QuantInput::<bf16>::new(
-                m,
-                k,
-                n,
-                group_size,
-                bits,
-                crate::backends::common::gpu_types::QuantizationMethod::ScaleZeroPoint,
-                42,
-            );
+            let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleZeroPoint, 42);
             let input = if signed_codes {
-                input.with_prepared_a()
+                input.with_signed_weight_codes()
             } else {
                 input
             };
