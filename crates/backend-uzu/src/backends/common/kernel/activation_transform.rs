@@ -1,13 +1,10 @@
 use crate::backends::common::{
-    Allocation, Backend, Encoder, Kernels,
-    gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
-    kernel::ActivationTransformKernel,
+    Allocation, Backend, Encoder, Kernels, gpu_types::ActivationTransformOp, kernel::ActivationTransformKernel,
 };
 
 pub struct ActivationTransform<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationTransformKernel,
     ops: ActivationTransformOp,
-    group_size: u32,
 }
 
 impl<B: Backend> ActivationTransform<B> {
@@ -15,14 +12,12 @@ impl<B: Backend> ActivationTransform<B> {
         context: &B::Context,
         data_type: crate::data_type::DataType,
         ops: ActivationTransformOp,
-        group_size: u32,
     ) -> Result<Self, B::Error> {
         let ops = ops.validate();
         let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(context, data_type, ops)?;
         Ok(Self {
             kernel,
             ops,
-            group_size,
         })
     }
 
@@ -30,20 +25,19 @@ impl<B: Backend> ActivationTransform<B> {
         context: &B::Context,
         data_type: crate::data_type::DataType,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, ActivationTransformOp::INPUT_RHT, HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
+        Self::new(context, data_type, ActivationTransformOp::INPUT_RHT)
     }
 
     pub fn output_rht(
         context: &B::Context,
         data_type: crate::data_type::DataType,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, ActivationTransformOp::OUTPUT_RHT, HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
+        Self::new(context, data_type, ActivationTransformOp::OUTPUT_RHT)
     }
 
     pub fn quantize(
         context: &B::Context,
         data_type: crate::data_type::DataType,
-        group_size: u32,
         emit_group_sums: bool,
     ) -> Result<Self, B::Error> {
         let ops = if emit_group_sums {
@@ -51,18 +45,15 @@ impl<B: Backend> ActivationTransform<B> {
         } else {
             ActivationTransformOp::INPUT_RHT | ActivationTransformOp::QUANTIZE
         };
-        Self::new(context, data_type, ops, group_size)
+        Self::new(context, data_type, ops)
     }
 
     /// FP Hadamard (input- or output-order depending on construction).
-    /// `input` and `output` must be distinct buffers. The two scratch buffers are
-    /// placeholders for the quantized outputs this mode does not write.
+    /// `input` and `output` must be distinct buffers.
     pub fn encode_fp(
         &self,
         input: &Allocation<B>,
         output: &mut Allocation<B>,
-        q_scratch: &mut Allocation<B>,
-        scales_scratch: &mut Allocation<B>,
         rht_factors: &Allocation<B>,
         element_count: u32,
         batch_size: u32,
@@ -71,14 +62,13 @@ impl<B: Backend> ActivationTransform<B> {
         assert!(!self.ops.contains(ActivationTransformOp::QUANTIZE));
         self.kernel.encode(
             input,
-            output,
-            q_scratch,
-            scales_scratch,
+            Some(output),
+            None::<&mut Allocation<B>>,
+            None::<&mut Allocation<B>>,
             None::<&mut Allocation<B>>,
             rht_factors,
             batch_size,
             element_count,
-            self.group_size,
             encoder,
         );
     }
@@ -87,7 +77,6 @@ impl<B: Backend> ActivationTransform<B> {
     pub fn encode_quantize(
         &self,
         input: &Allocation<B>,
-        fp_scratch: &mut Allocation<B>,
         q_out: &mut Allocation<B>,
         scales_out: &mut Allocation<B>,
         group_sums_out: Option<&mut Allocation<B>>,
@@ -99,14 +88,13 @@ impl<B: Backend> ActivationTransform<B> {
         assert!(self.ops.contains(ActivationTransformOp::QUANTIZE));
         self.kernel.encode(
             input,
-            fp_scratch,
-            q_out,
-            scales_out,
+            None::<&mut Allocation<B>>,
+            Some(q_out),
+            Some(scales_out),
             group_sums_out,
             rht_factors,
             batch_size,
             element_count,
-            self.group_size,
             encoder,
         );
     }

@@ -190,14 +190,9 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         let base_input = if let Some((input_hadamard_kernel, input_factors)) = &self.input_hadamard {
             let mut base_input =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dim], self.input_data_type))?;
-            let mut q_scratch =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dim], self.input_data_type))?;
-            let mut scales_scratch = encoder.allocate_scratch(size_for_shape(&[batch_dim, 1], self.input_data_type))?;
             input_hadamard_kernel.encode_fp(
                 &input,
                 &mut base_input,
-                &mut q_scratch,
-                &mut scales_scratch,
                 input_factors,
                 self.input_dim as u32,
                 batch_dim as u32,
@@ -240,15 +235,9 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         if let Some((output_hadamard_kernel, output_factors)) = &self.output_hadamard {
             let mut transformed =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.weights_data_type))?;
-            let mut q_scratch =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.weights_data_type))?;
-            let mut scales_scratch =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim, 1], self.weights_data_type))?;
             output_hadamard_kernel.encode_fp(
                 &output,
                 &mut transformed,
-                &mut q_scratch,
-                &mut scales_scratch,
                 output_factors,
                 self.output_dim as u32,
                 batch_dim as u32,

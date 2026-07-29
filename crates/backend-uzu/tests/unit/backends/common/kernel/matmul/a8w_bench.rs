@@ -55,9 +55,6 @@ struct BenchmarkData {
     a_working: Allocation<Metal>,
     a_int8: Allocation<Metal>,
     a_scales: Allocation<Metal>,
-    fp_scratch: Allocation<Metal>,
-    q_scratch: Allocation<Metal>,
-    scales_scratch: Allocation<Metal>,
     m: u32,
     k: u32,
     n: u32,
@@ -101,9 +98,6 @@ impl BenchmarkData {
             a_working: alloc_allocation::<Metal, bf16>(context, m * k),
             a_int8: alloc_allocation::<Metal, i8>(context, m * k),
             a_scales: alloc_allocation::<Metal, f32>(context, m * groups),
-            fp_scratch: alloc_allocation::<Metal, bf16>(context, m * k),
-            q_scratch: alloc_allocation::<Metal, i8>(context, m * k),
-            scales_scratch: alloc_allocation::<Metal, f32>(context, m * groups),
             m: m as u32,
             k: k as u32,
             n: n as u32,
@@ -160,7 +154,6 @@ fn encode_step(
         BenchPath::A8GemmMxu => {
             prepare.encode_quantize(
                 &data.activations,
-                &mut data.fp_scratch,
                 &mut data.a_int8,
                 &mut data.a_scales,
                 None::<&mut Allocation<Metal>>,
@@ -194,30 +187,12 @@ fn encode_step(
             matmul.gemm.encode_dispatch_path(args, GemmDispatchPath::Mxu, encoder).expect("a8 gemm mxu encode");
         },
         BenchPath::Bf16GemmMxu => {
-            hadamard.encode_fp(
-                &data.activations,
-                &mut data.a_working,
-                &mut data.q_scratch,
-                &mut data.scales_scratch,
-                &data.rht_factors,
-                data.k,
-                data.m,
-                encoder,
-            );
+            hadamard.encode_fp(&data.activations, &mut data.a_working, &data.rht_factors, data.k, data.m, encoder);
             let args = data.bf16_arguments(output);
             matmul.gemm.encode_dispatch_path(args, GemmDispatchPath::Mxu, encoder).expect("bf16 gemm mxu encode");
         },
         BenchPath::Bf16Gemv => {
-            hadamard.encode_fp(
-                &data.activations,
-                &mut data.a_working,
-                &mut data.q_scratch,
-                &mut data.scales_scratch,
-                &data.rht_factors,
-                data.k,
-                data.m,
-                encoder,
-            );
+            hadamard.encode_fp(&data.activations, &mut data.a_working, &data.rht_factors, data.k, data.m, encoder);
             let args = data.bf16_arguments(output);
             let spec = GemvSpecialization::select(&args, DataType::BF16, DataType::BF16, DataType::BF16, device_tier)
                 .expect("bf16 gemv specialization");
@@ -295,8 +270,7 @@ fn bench_a8w(c: &mut Criterion) {
     }
     let device_tier = context.device_tier();
 
-    let prepare = MetalPrepare::quantize(&context, DataType::BF16, HADAMARD_TRANSFORM_BLOCK_SIZE as u32, false)
-        .expect("prepare kernel");
+    let prepare = MetalPrepare::quantize(&context, DataType::BF16, false).expect("prepare kernel");
     let hadamard = MetalHadamard::input_rht(&context, DataType::BF16).expect("hadamard kernel");
 
     for bits in [8u32, 4u32] {

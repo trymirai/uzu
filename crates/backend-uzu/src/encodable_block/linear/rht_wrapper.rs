@@ -138,13 +138,8 @@ impl<B: Backend> RHTLinearWrapper<B> {
         ) {
             let emit_group_sums = weights_need_group_sums(&quantization_spec);
             Some(
-                ActivationTransform::quantize(
-                    context,
-                    input_data_type,
-                    HADAMARD_TRANSFORM_BLOCK_SIZE as u32,
-                    emit_group_sums,
-                )
-                .map_err(RHTLinearWrapperError::BackendError)?,
+                ActivationTransform::quantize(context, input_data_type, emit_group_sums)
+                    .map_err(RHTLinearWrapperError::BackendError)?,
             )
         } else {
             None
@@ -183,13 +178,10 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let path = self.inner_linear.select_path(batch_dim, encoder.context());
-        if path == MatmulPath::Gemm
-            && let Some(quantize_transform) = &self.quantize_transform
+        if let Some(quantize_transform) = &self.quantize_transform
+            && self.inner_linear.select_path(batch_dim, encoder.context()) == MatmulPath::Gemm
         {
             let groups_per_row = self.input_dimension.div_ceil(HADAMARD_TRANSFORM_BLOCK_SIZE);
-            let mut fp_scratch =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::BF16))?;
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::F32))?;
@@ -200,7 +192,6 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
 
             quantize_transform.encode_quantize(
                 &input,
-                &mut fp_scratch,
                 &mut values,
                 &mut scales,
                 group_sums.as_mut(),
@@ -223,13 +214,9 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         let data_type = self.inner_linear.input_data_type();
         let mut transformed =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], data_type))?;
-        let mut q_scratch = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], data_type))?;
-        let mut scales_scratch = encoder.allocate_scratch(size_for_shape(&[batch_dim, 1], data_type))?;
         self.input_transform.encode_fp(
             &input,
             &mut transformed,
-            &mut q_scratch,
-            &mut scales_scratch,
             &self.input_factors,
             self.input_dimension as u32,
             batch_dim as u32,

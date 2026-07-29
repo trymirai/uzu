@@ -14,28 +14,23 @@ use crate::{
 #[variants(T, f32, bf16)]
 pub fn activation_transform<T: ArrayElement + Float>(
     input: *const T,
-    #[allow(unused)] fp_out: *mut T,
-    #[allow(unused)] q_out: *mut i8,
-    #[allow(unused)] scales_out: *mut f32,
+    #[optional(!ops.contains(ActivationTransformOp::QUANTIZE))] fp_out: Option<*mut T>,
+    #[optional(ops.contains(ActivationTransformOp::QUANTIZE))] q_out: Option<*mut i8>,
+    #[optional(ops.contains(ActivationTransformOp::QUANTIZE))] scales_out: Option<*mut f32>,
     #[optional(ops.contains(ActivationTransformOp::GROUP_SUMS))] group_sums_out: Option<*mut i32>,
     rht_factors: *const i32,
     batch_size: u32,
     element_count: u32,
-    group_size: u32,
     #[specialize] ops: ActivationTransformOp,
 ) {
     let ops = ops.validate();
     let rows = batch_size as usize;
     let columns = element_count as usize;
-    let group_size = group_size as usize;
     let input_rht = ops.contains(ActivationTransformOp::INPUT_RHT);
     let quantize = ops.contains(ActivationTransformOp::QUANTIZE);
     assert!(columns.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
-    if quantize {
-        assert!(group_size > 0 && columns.is_multiple_of(group_size));
-    }
 
-    let groups = columns.div_ceil(group_size.max(1));
+    let groups = columns.div_ceil(HADAMARD_TRANSFORM_BLOCK_SIZE);
     let mut transformed = vec![0.0f32; columns];
     for row in 0..rows {
         let row_offset = row * columns;
@@ -66,9 +61,11 @@ pub fn activation_transform<T: ArrayElement + Float>(
         }
 
         if quantize {
+            let q_out = q_out.expect("quantized transform requires q_out");
+            let scales_out = scales_out.expect("quantized transform requires scales_out");
             for group in 0..groups {
-                let start = group * group_size;
-                let end = (start + group_size).min(columns);
+                let start = group * HADAMARD_TRANSFORM_BLOCK_SIZE;
+                let end = (start + HADAMARD_TRANSFORM_BLOCK_SIZE).min(columns);
                 let slice = &transformed[start..end];
                 let divisor = min_max_symmetric_divisor(slice);
                 unsafe { *scales_out.add(row * groups + group) = divisor };
@@ -83,6 +80,7 @@ pub fn activation_transform<T: ArrayElement + Float>(
                 }
             }
         } else {
+            let fp_out = fp_out.expect("FP transform requires fp_out");
             for index in 0..columns {
                 unsafe {
                     *fp_out.add(row_offset + index) = <T as NumCast>::from(transformed[index]).unwrap();

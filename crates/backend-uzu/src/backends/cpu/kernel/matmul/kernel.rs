@@ -296,9 +296,7 @@ impl MatmulKernel for MatmulCpuKernel {
             let elem_bytes = (m_u * n_u) * output_data_type.size_in_bytes();
             let mut src = encoder.allocate_scratch(elem_bytes)?;
             encoder.encode_copy(&*d, .., &mut src, ..);
-            let mut q_scratch = encoder.allocate_scratch(elem_bytes)?;
-            let mut scales_scratch = encoder.allocate_scratch(std::mem::size_of::<f32>())?;
-            self.output_rht.encode_fp(&src, &mut *d, &mut q_scratch, &mut scales_scratch, factors, n, m, encoder);
+            self.output_rht.encode_fp(&src, &mut *d, factors, n, m, encoder);
             if let Some(bias) = bias_alloc {
                 let output_length = m.checked_mul(n).expect("matmul output length must fit in u32");
                 self.bias_add.encode(

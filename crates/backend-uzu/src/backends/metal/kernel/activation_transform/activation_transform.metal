@@ -13,14 +13,13 @@ template <typename T>
 VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(ActivationTransform)(
     const device T* input,
-    device T* fp_out,
-    device int8_t* q_out,
-    device float* scales_out,
+    device T* fp_out OPTIONAL(!ops.contains(ActivationTransformOp::QUANTIZE)),
+    device int8_t* q_out OPTIONAL(ops.contains(ActivationTransformOp::QUANTIZE)),
+    device float* scales_out OPTIONAL(ops.contains(ActivationTransformOp::QUANTIZE)),
     device int32_t* group_sums_out OPTIONAL(ops.contains(ActivationTransformOp::GROUP_SUMS)),
     const device int32_t* rht_factors,
     constant uint& batch_size,
     constant uint& element_count,
-    constant uint& group_size,
     const ActivationTransformOp ops SPECIALIZE,
     uint block_index GROUPS(element_count.div_ceil(METAL_SIMD_SIZE)),
     uint batch_index GROUPS(batch_size),
@@ -43,7 +42,7 @@ PUBLIC KERNEL(ActivationTransform)(
     const int8_t code = static_cast<int8_t>(clamp(round(value / scale), -SYM_QMAX, SYM_QMAX));
     q_out[element_index] = code;
 
-    const uint group_index = batch_index * (element_count / group_size) + block_index;
+    const uint group_index = batch_index * (element_count / METAL_SIMD_SIZE) + block_index;
     if (lane_index == 0) {
       scales_out[group_index] = scale;
     }

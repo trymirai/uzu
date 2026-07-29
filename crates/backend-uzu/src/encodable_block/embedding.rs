@@ -723,16 +723,9 @@ impl<B: Backend> Embedding<B> {
                     Some(input_hadamard) => {
                         let mut transformed =
                             encoder.allocate_scratch(input_allocation.size()).map_err(EmbeddingError::BackendError)?;
-                        let mut q_scratch =
-                            encoder.allocate_scratch(input_allocation.size()).map_err(EmbeddingError::BackendError)?;
-                        let mut scales_scratch = encoder
-                            .allocate_scratch(crate::array::size_for_shape(&[batch_dim, 1], self.data_type))
-                            .map_err(EmbeddingError::BackendError)?;
                         input_hadamard.kernel.encode_fp(
                             input_allocation,
                             &mut transformed,
-                            &mut q_scratch,
-                            &mut scales_scratch,
                             &input_hadamard.factors,
                             self.model_dim,
                             batch_dim as u32,
@@ -863,15 +856,9 @@ impl<B: Backend> Embedding<B> {
         let a = match input_hadamard {
             Some(input_hadamard) => {
                 let mut transformed = encoder.allocate_scratch(input.size()).map_err(EmbeddingError::BackendError)?;
-                let mut q_scratch = encoder.allocate_scratch(input.size()).map_err(EmbeddingError::BackendError)?;
-                let mut scales_scratch = encoder
-                    .allocate_scratch(crate::array::size_for_shape(&[rows, 1], self.data_type))
-                    .map_err(EmbeddingError::BackendError)?;
                 input_hadamard.kernel.encode_fp(
                     input,
                     &mut transformed,
-                    &mut q_scratch,
-                    &mut scales_scratch,
                     &input_hadamard.factors,
                     self.model_dim,
                     rows as u32,

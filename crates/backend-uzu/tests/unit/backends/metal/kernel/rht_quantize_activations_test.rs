@@ -13,8 +13,7 @@ use crate::{
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
 
-#[uzu_test]
-fn rht_quantize_matches_cpu() {
+fn check_rht_quantize(emit_group_sums: bool) {
     let rows = 5usize;
     let columns = 96usize;
     let group_size = 32u32;
@@ -38,27 +37,23 @@ fn rht_quantize_matches_cpu() {
     let mut metal_scales = alloc_allocation::<Metal, f32>(metal.as_ref(), rows * groups);
     let mut cpu_values = alloc_allocation::<Cpu, i8>(cpu.as_ref(), rows * columns);
     let mut cpu_scales = alloc_allocation::<Cpu, f32>(cpu.as_ref(), rows * groups);
-    let mut metal_group_sums = alloc_allocation::<Metal, i32>(metal.as_ref(), rows * groups);
-    let mut cpu_group_sums = alloc_allocation::<Cpu, i32>(cpu.as_ref(), rows * groups);
-    let mut metal_fp_scratch = alloc_allocation::<Metal, f32>(metal.as_ref(), rows * columns);
-    let mut cpu_fp_scratch = alloc_allocation::<Cpu, f32>(cpu.as_ref(), rows * columns);
-
+    let mut metal_group_sums = emit_group_sums.then(|| alloc_allocation::<Metal, i32>(metal.as_ref(), rows * groups));
+    let mut cpu_group_sums = emit_group_sums.then(|| alloc_allocation::<Cpu, i32>(cpu.as_ref(), rows * groups));
     let metal_input = alloc_allocation_with_data::<Metal, f32>(metal.as_ref(), &input_data);
     let metal_factors = alloc_allocation_with_data::<Metal, i32>(metal.as_ref(), &factors_data);
     let cpu_input = alloc_allocation_with_data::<Cpu, f32>(cpu.as_ref(), &input_data);
     let cpu_factors = alloc_allocation_with_data::<Cpu, i32>(cpu.as_ref(), &factors_data);
 
     let metal_kernel =
-        ActivationTransform::quantize(metal.as_ref(), DataType::F32, group_size, true).expect("metal prepare");
-    let cpu_kernel = ActivationTransform::quantize(cpu.as_ref(), DataType::F32, group_size, true).expect("cpu prepare");
+        ActivationTransform::quantize(metal.as_ref(), DataType::F32, emit_group_sums).expect("metal prepare");
+    let cpu_kernel = ActivationTransform::quantize(cpu.as_ref(), DataType::F32, emit_group_sums).expect("cpu prepare");
 
     let mut metal_enc = Encoder::<Metal>::new(metal.as_ref()).expect("metal encoder");
     metal_kernel.encode_quantize(
         &metal_input,
-        &mut metal_fp_scratch,
         &mut metal_values,
         &mut metal_scales,
-        Some(&mut metal_group_sums),
+        metal_group_sums.as_mut(),
         &metal_factors,
         rows as u32,
         columns as u32,
@@ -69,10 +64,9 @@ fn rht_quantize_matches_cpu() {
     let mut cpu_enc = Encoder::<Cpu>::new(cpu.as_ref()).expect("cpu encoder");
     cpu_kernel.encode_quantize(
         &cpu_input,
-        &mut cpu_fp_scratch,
         &mut cpu_values,
         &mut cpu_scales,
-        Some(&mut cpu_group_sums),
+        cpu_group_sums.as_mut(),
         &cpu_factors,
         rows as u32,
         columns as u32,
@@ -88,16 +82,28 @@ fn rht_quantize_matches_cpu() {
     }
     assert!(mv.iter().zip(&cv).all(|(a, e)| (*a as i32 - *e as i32).abs() <= 1));
 
-    let mrs = allocation_to_vec::<Metal, i32>(&metal_group_sums);
-    let crs = allocation_to_vec::<Cpu, i32>(&cpu_group_sums);
-    for (codes, sums, label) in [(&mv, &mrs, "metal"), (&cv, &crs, "cpu")] {
-        for row in 0..rows {
-            for group in 0..groups {
-                let start = row * columns + group * group_size as usize;
-                let expected: i32 = codes[start..start + group_size as usize].iter().map(|code| *code as i32).sum();
-                assert_eq!(sums[row * groups + group], expected, "{label} group_sum r{row} g{group}");
+    if let (Some(metal_group_sums), Some(cpu_group_sums)) = (&metal_group_sums, &cpu_group_sums) {
+        let mrs = allocation_to_vec::<Metal, i32>(metal_group_sums);
+        let crs = allocation_to_vec::<Cpu, i32>(cpu_group_sums);
+        for (codes, sums, label) in [(&mv, &mrs, "metal"), (&cv, &crs, "cpu")] {
+            for row in 0..rows {
+                for group in 0..groups {
+                    let start = row * columns + group * group_size as usize;
+                    let expected: i32 = codes[start..start + group_size as usize].iter().map(|code| *code as i32).sum();
+                    assert_eq!(sums[row * groups + group], expected, "{label} group_sum r{row} g{group}");
+                }
             }
         }
+        assert!(mrs.iter().zip(&crs).all(|(a, e)| (a - e).abs() <= group_size as i32));
     }
-    assert!(mrs.iter().zip(&crs).all(|(a, e)| (a - e).abs() <= group_size as i32));
+}
+
+#[uzu_test]
+fn rht_quantize_with_group_sums_matches_cpu() {
+    check_rht_quantize(true);
+}
+
+#[uzu_test]
+fn rht_quantize_without_group_sums_matches_cpu() {
+    check_rht_quantize(false);
 }

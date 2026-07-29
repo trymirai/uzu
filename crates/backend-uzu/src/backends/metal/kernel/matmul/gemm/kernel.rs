@@ -753,9 +753,7 @@ impl GemmKernel {
         {
             let mut src = encoder.allocate_scratch(slice_bytes)?;
             encoder.encode_copy(&*d, .., &mut src, ..);
-            let mut q_scratch = encoder.allocate_scratch(slice_bytes)?;
-            let mut scales_scratch = encoder.allocate_scratch(std::mem::size_of::<f32>())?;
-            self.output_rht.encode_fp(&src, &mut *d, &mut q_scratch, &mut scales_scratch, factors, n, m, encoder);
+            self.output_rht.encode_fp(&src, &mut *d, factors, n, m, encoder);
         }
         Ok(())
     }
