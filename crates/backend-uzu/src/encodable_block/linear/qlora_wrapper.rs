@@ -233,8 +233,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         }
 
         if let Some((output_hadamard_kernel, output_factors)) = &self.output_hadamard {
-            let mut transformed =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.weights_data_type))?;
+            let mut transformed = encoder.allocate_scratch(output.size())?;
             output_hadamard_kernel.encode_fp(
                 &output,
                 &mut transformed,
