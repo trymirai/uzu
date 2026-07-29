@@ -1,5 +1,3 @@
-// Included inside MxuFragmentOps; not a standalone header.
-
 // MPP has no valid 16x16x16 op; fragment_mma pairs fragments into 16x32.
 template <
     MatmulMode MODE,

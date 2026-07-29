@@ -1,5 +1,3 @@
-// Included inside MxuFragmentOps; not a standalone header.
-
 template <typename RightElement, class OutputFragment, class LeftFragment>
 METAL_FUNC static void fragment_matmul_int8_device_weights(
     thread OutputFragment& output,
@@ -36,6 +34,8 @@ METAL_FUNC static void fragment_matmul_int8_device_weights(
       load_paired_vectors(cooperative_left, left.fragment_at(row, 0), left.fragment_at(row, 1));
 
       RightTensor right_tensor(
+          // MPP rejects const-qualified tensor element types even though the
+          // right operand is read-only during matmul.
           reinterpret_cast<RightPointer>(
               const_cast<device uchar*>(right_signed_codes + int(col * FRAGMENT_COLS) * right_row_stride_bytes)
           ),

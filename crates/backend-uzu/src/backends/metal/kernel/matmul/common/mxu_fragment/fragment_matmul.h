@@ -1,5 +1,3 @@
-// Included inside MxuFragmentOps; not a standalone header.
-
 template <
     MatmulMode MODE,
     bool transpose_a,

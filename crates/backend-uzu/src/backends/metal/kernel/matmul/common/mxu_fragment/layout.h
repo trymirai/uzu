@@ -1,5 +1,3 @@
-// Included inside MxuFragmentOps; not a standalone header.
-
 UZU_CONST ushort FRAGMENT_ROWS = MXU_MMA_ROWS;
 UZU_CONST ushort FRAGMENT_COLS = MXU_MMA_COLS;
 UZU_CONST bool READ_TRANSPOSE_SWAPS_SOURCE_STRIDES = false;

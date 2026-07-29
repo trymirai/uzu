@@ -1,5 +1,3 @@
-// Included inside MxuFragmentOps; not a standalone header.
-
 template <typename CooperativeTensor, typename U>
 METAL_FUNC static void load_paired_vectors(
     thread CooperativeTensor& cooperative,

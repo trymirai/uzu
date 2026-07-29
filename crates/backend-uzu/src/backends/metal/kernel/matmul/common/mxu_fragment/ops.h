@@ -1,12 +1,9 @@
 #pragma once
 
-#include <metal_simdgroup>
-#include <metal_simdgroup_matrix>
 #include <metal_stdlib>
 
 #include "../../../common/integral_constant.h"
 #include "../../../common/thread_context.h"
-using namespace uzu;
 
 #include "../defines.h"
 #include "../loader.h"
