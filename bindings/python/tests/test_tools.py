@@ -72,6 +72,17 @@ def current_runtime_state() -> dict[str, int | str]:
     }
 
 
+@uzu_tool_function
+def reserved_parameter_names(
+    model_config: Annotated[int, "Configuration number."],
+    model_dump: Annotated[str, "Dump label."],
+) -> dict[str, int | str]:
+    return {
+        "model_config": model_config,
+        "model_dump": model_dump,
+    }
+
+
 def _resolve_reference(
     root: dict[str, object],
     schema: dict[str, object],
@@ -217,6 +228,22 @@ def test_sync_tool_trampoline_runs_on_python_loop_and_context() -> None:
             _TOOL_CONTEXT.reset(token)
 
     asyncio.run(run())
+
+
+def test_parameters_can_use_reserved_base_model_names() -> None:
+    parameters = reserved_parameter_names.parameters_schema
+    assert parameters is not None
+    assert parameters["required"] == ["model_config", "model_dump"]
+    assert set(parameters["properties"]) == {"model_config", "model_dump"}
+    assert parameters["properties"]["model_config"]["description"] == "Configuration number."
+    assert parameters["properties"]["model_dump"]["description"] == "Dump label."
+
+    result = reserved_parameter_names._invoke_json('{"model_config":7,"model_dump":"ready"}')
+    assert isinstance(result, str)
+    assert json.loads(result) == {
+        "model_config": 7,
+        "model_dump": "ready",
+    }
 
 
 def test_configured_decorator_overrides_name_and_description() -> None:

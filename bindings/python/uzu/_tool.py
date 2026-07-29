@@ -44,6 +44,7 @@ class UzuToolFunction[**P, R]:
             raise TypeError(f"unable to resolve annotations for tool {name!r}: {error}") from error
 
         fields: dict[str, tuple[object, object]] = {}
+        self._argument_fields: dict[str, str] = {}
         for parameter in self._signature.parameters.values():
             if parameter.kind in {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.VAR_POSITIONAL}:
                 raise TypeError(f"tool {name!r} cannot use positional-only or variadic positional parameters")
@@ -54,10 +55,18 @@ class UzuToolFunction[**P, R]:
             if annotation is _EMPTY:
                 raise TypeError(f"parameter {parameter.name!r} of tool {name!r} must have a type annotation")
 
-            if annotation_description := _annotation_description(annotation):
-                annotation = Annotated[annotation, Field(description=annotation_description)]
+            field_metadata = (
+                Field(alias=parameter.name, description=annotation_description)
+                if (annotation_description := _annotation_description(annotation))
+                else Field(alias=parameter.name)
+            )
+            annotation = Annotated[annotation, field_metadata]
             default = ... if parameter.default is _EMPTY else parameter.default
-            fields[parameter.name] = (annotation, default)
+            internal_name = f"uzu_argument_{len(fields)}"
+            while hasattr(BaseModel, internal_name):
+                internal_name += "_"
+            fields[internal_name] = (annotation, default)
+            self._argument_fields[parameter.name] = internal_name
 
         self._arguments_model: type[BaseModel] | None = None
         self.parameters_schema: dict[str, object] | None = None
@@ -119,7 +128,10 @@ class UzuToolFunction[**P, R]:
             kwargs: dict[str, object] = {}
         else:
             arguments = self._arguments_model.model_validate_json(arguments_json)
-            kwargs = {name: getattr(arguments, name) for name in self._signature.parameters}
+            kwargs = {
+                parameter_name: getattr(arguments, internal_name)
+                for parameter_name, internal_name in self._argument_fields.items()
+            }
 
         result = self._function(**kwargs)
         if inspect.isawaitable(result):
