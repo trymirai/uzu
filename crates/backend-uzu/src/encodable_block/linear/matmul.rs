@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Context, DeviceCapabilities, Encoder,
+        Allocation, Backend, Encoder,
         gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmBPrologueKind},
         kernel::{
             Kernels,
@@ -359,14 +359,16 @@ impl<B: Backend> LinearMatmul<B> {
         self.input_data_type
     }
 
+    /// Reports the path the backend will actually take, so callers never assume a
+    /// dispatch that does not happen. There is deliberately no `NATIVE_INT8_MATMUL`
+    /// shortcut here: the only caller gates on `quantize_transform`, which
+    /// `int8_activations_eligible` already leaves as `None` without that capability,
+    /// so devices lacking MXU keep the existing FP-activation path.
     pub(super) fn select_path(
         &self,
         batch_dim: usize,
         context: &B::Context,
     ) -> MatmulPath {
-        if !context.device_capabilities().contains(DeviceCapabilities::NATIVE_INT8_MATMUL) {
-            return MatmulPath::Gemv;
-        }
         let (shape, b_prologue) = self.matmul_shape(batch_dim);
         self.kernel.lock().select_path(&shape, b_prologue, context)
     }
