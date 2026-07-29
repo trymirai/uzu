@@ -528,18 +528,20 @@ fn a8w_mxu_parity_bf16(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::w4_sym(4u32, QuantizationMethod::ScaleSymmetric)]
-#[case::w4_bias(4u32, QuantizationMethod::ScaleBias)]
-#[case::w4_zp(4u32, QuantizationMethod::ScaleZeroPoint)]
-#[case::w8_sym(8u32, QuantizationMethod::ScaleSymmetric)]
-#[case::w8_bias(8u32, QuantizationMethod::ScaleBias)]
-#[case::w8_zp(8u32, QuantizationMethod::ScaleZeroPoint)]
+#[case::w4_sym(4u32, QuantizationMethod::ScaleSymmetric, 256usize)]
+#[case::w4_bias(4u32, QuantizationMethod::ScaleBias, 256usize)]
+#[case::w4_zp(4u32, QuantizationMethod::ScaleZeroPoint, 256usize)]
+#[case::w8_sym(8u32, QuantizationMethod::ScaleSymmetric, 256usize)]
+#[case::w8_bias(8u32, QuantizationMethod::ScaleBias, 256usize)]
+#[case::w8_zp(8u32, QuantizationMethod::ScaleZeroPoint, 256usize)]
+#[case::w8_zp_tail(8u32, QuantizationMethod::ScaleZeroPoint, 224usize)]
 fn signed_weights_full_precision_activations_parity_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
+    #[case] k: usize,
 ) {
     let context = MetalContext::new().expect("Metal context");
-    let (m, k, n, group_size) = (2usize, 256usize, 128usize, 32u32);
+    let (m, n, group_size) = (2usize, 128usize, 32u32);
     let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0).with_prepared_a();
     let reference_input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0);
     let reference = run_quant_cpu::<bf16>(&reference_input);

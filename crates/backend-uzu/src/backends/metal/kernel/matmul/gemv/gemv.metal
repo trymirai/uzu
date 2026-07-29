@@ -68,11 +68,11 @@ KERNEL(Gemv)(
     const constant uint& batch_size,
     const constant float& ab_scale,
     const constant uint& group_count_x,
-    const constant uint& weight_codes_sign_flip_mask,
     const constant float& soft_cap
         OPTIONAL(output_transform.contains(GemmDTransform::SOFT_CAP)),
     const GemmDTransform output_transform SPECIALIZE,
     const bool gathered SPECIALIZE,
+    const bool signed_codes SPECIALIZE,
     threadgroup float shared_results[NUM_SIMDGROUPS * RESULTS_PER_SIMDGROUP],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(group_count_x),
@@ -86,7 +86,16 @@ KERNEL(Gemv)(
       OutputTile<K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::make(out_block_idx, simd_group, out_vec_size);
   d += batch_idx * out_vec_size + tile.out_row;
 
-  BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED>::accumulate(
+  BSource<
+      BT,
+      AT,
+      U,
+      B_PROLOGUE,
+      GROUP_SIZE,
+      BITS,
+      K_SPLIT,
+      RESULTS_PER_SIMDGROUP,
+      INPUT_ALIGNED>::accumulate(
       result,
       b,
       scales,
@@ -101,7 +110,7 @@ KERNEL(Gemv)(
       batch_idx,
       simd_lane,
       tile.k_slice,
-      weight_codes_sign_flip_mask
+      signed_codes
   );
 
   Reduce<U, K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::run(

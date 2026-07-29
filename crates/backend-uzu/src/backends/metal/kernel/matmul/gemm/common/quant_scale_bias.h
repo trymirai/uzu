@@ -48,13 +48,13 @@ struct QuantizedBlockLoaderScaleBias {
   const device uint8_t* src;
   const device T* scales;
   const device T* biases;
-  const uint sign_flip_mask;
+  const bool signed_codes;
 
   QuantizedBlockLoaderScaleBias(
       const device uint8_t* src_,
       const device T* scales_,
       const device T* biases_,
-      const uint sign_flip_mask_,
+      const bool signed_codes_,
       const int src_leading_dim_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
@@ -72,7 +72,7 @@ struct QuantizedBlockLoaderScaleBias {
         dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION + tile_col_index * pack_factor),
         src(src_ + tile_row_index * src_leading_dim_ * bytes_per_pack / pack_factor + tile_col_index * bytes_per_pack),
         scales(scales_ + tile_row_index * src_leading_dim_ / GROUP_SIZE),
-        biases(biases_ + tile_row_index * src_leading_dim_ / GROUP_SIZE), sign_flip_mask(sign_flip_mask_) {}
+        biases(biases_ + tile_row_index * src_leading_dim_ / GROUP_SIZE), signed_codes(signed_codes_) {}
 
   void load_unsafe() const {
     if constexpr (TILE_HAS_IDLE_THREADS) {
@@ -84,7 +84,7 @@ struct QuantizedBlockLoaderScaleBias {
     T scale = *scales;
     T bias = *biases;
     for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, sign_flip_mask);
+      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, signed_codes);
     }
   }
 
@@ -114,7 +114,7 @@ struct QuantizedBlockLoaderScaleBias {
     T scale = *scales;
     T bias = *biases;
     for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, sign_flip_mask);
+      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, signed_codes);
     }
   }
 

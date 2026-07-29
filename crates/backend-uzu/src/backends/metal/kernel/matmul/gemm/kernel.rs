@@ -87,6 +87,7 @@ impl GemmKernel {
                     specialization.a_prologue,
                     specialization.output_transform,
                     specialization.alignment,
+                    specialization.signed_codes,
                 )?;
                 Ok(entry.insert(kernel))
             },
@@ -383,7 +384,7 @@ impl GemmKernel {
                             b_prologue,
                             bits_per_b,
                             group_size,
-                            0,
+                            false,
                             split_k,
                             output_transform,
                             output_bias,
@@ -410,7 +411,6 @@ impl GemmKernel {
                     aligned_inner_iterations: k / tiling.block_k(),
                     use_morton,
                     ab_scale,
-                    weight_codes_sign_flip_mask: 0,
                 };
 
                 let specialization = GemmSpecialization {
@@ -424,6 +424,7 @@ impl GemmKernel {
                     bits_per_b,
                     group_size,
                     a_prologue: GemmAPrologueKind::FullPrecision,
+                    signed_codes: false,
                 };
                 specialization.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -455,15 +456,6 @@ impl GemmKernel {
             | MatmulB::ScaleSymmetricDequant {
                 ..
             }) => {
-                let weight_codes_sign_flip_mask: u32 = if weights_signed_codes {
-                    match bits_per_b {
-                        Some(4) => 0x88,
-                        Some(8) => 0x80,
-                        _ => 0,
-                    }
-                } else {
-                    0
-                };
                 let (weights, scales, biases, zero_points) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,
@@ -530,16 +522,7 @@ impl GemmKernel {
                 };
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
-                let params = quant_params(
-                    m,
-                    n,
-                    k,
-                    tiling,
-                    use_mxu,
-                    group_size.unwrap_or(0),
-                    ab_scale,
-                    weight_codes_sign_flip_mask,
-                );
+                let params = quant_params(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), ab_scale);
                 let group_count_x = n.div_ceil(tiling.block_n());
                 let group_count_y = m.div_ceil(tiling.block_m());
 
@@ -583,7 +566,7 @@ impl GemmKernel {
                         b_prologue,
                         bits_per_b,
                         group_size,
-                        weight_codes_sign_flip_mask,
+                        weights_signed_codes,
                         split_k,
                         output_transform,
                         output_bias,
@@ -602,6 +585,7 @@ impl GemmKernel {
                         bits_per_b,
                         group_size,
                         a_prologue,
+                        signed_codes: weights_signed_codes,
                     };
                     specialization.validate()?;
                     let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -665,7 +649,7 @@ impl GemmKernel {
         b_prologue: GemmBPrologueKind,
         bits_per_b: Option<u32>,
         group_size: Option<u32>,
-        weight_codes_sign_flip_mask: u32,
+        signed_codes: bool,
         split_k: u32,
         output_transform: GemmDTransform,
         output_bias: Option<&Allocation<Metal>>,
@@ -690,6 +674,7 @@ impl GemmKernel {
             bits_per_b,
             group_size,
             a_prologue,
+            signed_codes,
         };
         part_spec.validate()?;
 
@@ -709,7 +694,6 @@ impl GemmKernel {
             aligned_inner_iterations: kp / k_step,
             use_morton: false,
             ab_scale: 1.0,
-            weight_codes_sign_flip_mask,
         };
         let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
         part_kernel.encode(
@@ -798,7 +782,6 @@ fn quant_params(
     use_mxu: bool,
     group_size: u32,
     ab_scale: f32,
-    weight_codes_sign_flip_mask: u32,
 ) -> GemmParams {
     GemmParams {
         M: m,
@@ -812,7 +795,6 @@ fn quant_params(
         aligned_inner_iterations: split_k_step(tiling, use_mxu, group_size, false).map_or(0, |step| k / step),
         use_morton: false,
         ab_scale,
-        weight_codes_sign_flip_mask,
     }
 }
 

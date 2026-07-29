@@ -79,10 +79,11 @@ METAL_FUNC char4 unpack_signed_nibbles_to_int8(uint packed) {
 }
 
 template <typename U, int N, int bits>
-inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local, uint sign_flip_mask) {
+inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local, const bool signed_codes) {
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
-  if (bits == 4) {
+  if constexpr (bits == 4) {
+    const uint8_t sign_flip_mask = signed_codes ? 0x88u : 0u;
     U s0 = scale;
     U s1 = scale / static_cast<U>(16.0f);
     for (int i = 0; i < (N / 2); i++) {
@@ -90,9 +91,17 @@ inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* 
       w_local[2 * i] = s0 * (word & 0x0f) + bias;
       w_local[2 * i + 1] = s1 * (word & 0xf0) + bias;
     }
-  } else if (bits == 8) {
-    for (int i = 0; i < N; i++) {
-      w_local[i] = scale * (w[i] ^ uint8_t(sign_flip_mask)) + bias;
+  } else if constexpr (bits == 8) {
+    if (signed_codes) {
+      const device int8_t* signed_weights = reinterpret_cast<const device int8_t*>(w);
+      const U adjusted_bias = bias + scale * U(128);
+      for (int i = 0; i < N; i++) {
+        w_local[i] = scale * U(signed_weights[i]) + adjusted_bias;
+      }
+    } else {
+      for (int i = 0; i < N; i++) {
+        w_local[i] = scale * U(w[i]) + bias;
+      }
     }
   }
 }
@@ -103,9 +112,10 @@ inline void dequantize<bfloat, 8, 4>(
     bfloat scale,
     bfloat bias,
     threadgroup bfloat* w_local,
-    uint sign_flip_mask
+    const bool signed_codes
 ) {
-  const uint32_t packed = (*reinterpret_cast<const device uint32_t*>(w)) ^ (sign_flip_mask * 0x01010101u);
+  const uint32_t packed_mask = signed_codes ? 0x88888888u : 0u;
+  const uint32_t packed = (*reinterpret_cast<const device uint32_t*>(w)) ^ packed_mask;
   const bfloat4 lo = bfloat4(as_type<uchar4>(packed & 0x0f0f0f0fu)) * scale + bias;
   const bfloat4 hi = bfloat4(as_type<uchar4>(packed & 0xf0f0f0f0u)) * (scale * bfloat(0.0625f)) + bias;
 

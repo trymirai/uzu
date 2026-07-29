@@ -40,6 +40,7 @@ pub(crate) struct GemvSpecialization {
     results_per_simdgroup: u32,
     num_simdgroups: u32,
     gathered: bool,
+    signed_codes: bool,
 }
 
 impl GemvSpecialization {
@@ -114,6 +115,7 @@ impl GemvSpecialization {
             results_per_simdgroup: tile.results_per_simdgroup,
             num_simdgroups: tile.num_simdgroups,
             gathered,
+            signed_codes: false,
         })
     }
 
@@ -139,14 +141,16 @@ impl GemvSpecialization {
             gathered: args.gather_indices.is_some(),
             d_transform: args.d_transform.mask(),
         };
-        Self::select_shape(
+        let mut specialization = Self::select_shape(
             &shape,
             args.b.b_prologue(),
             weights_data_type,
             input_data_type,
             output_data_type,
             device_tier,
-        )
+        )?;
+        specialization.signed_codes = args.b.signed_codes();
+        Some(specialization)
     }
 }
 
@@ -201,6 +205,7 @@ impl GemvDispatch {
                     specialization.num_simdgroups,
                     specialization.output_transform,
                     specialization.gathered,
+                    specialization.signed_codes,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -268,7 +273,6 @@ impl GemvDispatch {
                     m,
                     ab_scale,
                     group_count_x,
-                    0,
                     soft_cap,
                     encoder,
                 );
@@ -282,15 +286,6 @@ impl GemvDispatch {
             | MatmulB::ScaleSymmetricDequant {
                 ..
             }) => {
-                let weight_codes_sign_flip_mask: u32 = if quant_b.signed_codes() {
-                    match quant_b.bits_per_b() {
-                        Some(4) => 0x88,
-                        Some(8) => 0x80,
-                        _ => 0,
-                    }
-                } else {
-                    0
-                };
                 let (weights, scales, zero_points, biases) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,
@@ -328,7 +323,6 @@ impl GemvDispatch {
                     m,
                     ab_scale,
                     group_count_x,
-                    weight_codes_sign_flip_mask,
                     soft_cap,
                     encoder,
                 );

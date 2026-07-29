@@ -31,7 +31,7 @@ struct QuantizedBSource {
       uint out_row,
       uint batch_idx,
       uint simd_lane,
-      uint sign_flip_mask
+      const bool signed_codes
   ) {
     constexpr uint pack_factor = get_pack_factor<BITS, 32>();
     constexpr uint bytes_per_pack = get_bytes_per_pack<BITS, 32>();
@@ -59,7 +59,7 @@ struct QuantizedBSource {
 
     uint k = 0;
     for (; k + block_size <= in_vec_size; k += block_size) {
-      U input_sum = load_vector<AT, U, values_per_thread, BITS>(input, input_values);
+      U input_sum = load_vector<AT, U, values_per_thread, BITS>(input, input_values, signed_codes);
 
       RowParams row_params;
       row_state.load(row_params, gather_indices, gathered, batch_idx, out_vec_size, out_row);
@@ -73,7 +73,7 @@ struct QuantizedBSource {
             row_params.scale[row],
             row_params.offset[row],
             input_sum,
-            sign_flip_mask
+            signed_codes
         );
       }
 
@@ -103,7 +103,7 @@ struct QuantizedBSource {
               row_params.offset[row],
               input_sum,
               remaining,
-              sign_flip_mask
+              signed_codes
           );
         }
       }

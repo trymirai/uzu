@@ -33,7 +33,7 @@ struct BSource {
       uint batch_idx,
       uint simd_lane,
       uint k_slice,
-      uint sign_flip_mask
+      const bool signed_codes
   ) {
     if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
       FullPrecisionBSource<BT, AT, U, RESULTS_PER_SIMDGROUP, K_SPLIT, INPUT_ALIGNED>::accumulate(
@@ -50,7 +50,15 @@ struct BSource {
           k_slice
       );
     } else {
-      QuantizedBSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED>::accumulate(
+      QuantizedBSource<
+          BT,
+          AT,
+          U,
+          B_PROLOGUE,
+          GROUP_SIZE,
+          BITS,
+          RESULTS_PER_SIMDGROUP,
+          INPUT_ALIGNED>::accumulate(
           result,
           b,
           scales,
@@ -64,7 +72,7 @@ struct BSource {
           out_row,
           batch_idx,
           simd_lane,
-          sign_flip_mask
+          signed_codes
       );
     }
   }
