@@ -1,13 +1,17 @@
 # ruff: noqa: SLF001
 
 import asyncio
+import contextvars
 import json
+import threading
 from typing import Annotated, Literal
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
 
 from uzu import ChatSession, UzuToolFunction, uzu_tool_function
+
+_TOOL_CONTEXT = contextvars.ContextVar[str]("tool_context")
 
 
 class Coordinate(BaseModel):
@@ -57,6 +61,15 @@ def get_forecast(
 async def add_node_values(root: Node) -> int:
     await asyncio.sleep(0)
     return root.value + sum(child.value for child in root.children)
+
+
+@uzu_tool_function
+def current_runtime_state() -> dict[str, int | str]:
+    return {
+        "context": _TOOL_CONTEXT.get(),
+        "loop": id(asyncio.get_running_loop()),
+        "thread": threading.get_ident(),
+    }
 
 
 def _resolve_reference(
@@ -153,7 +166,7 @@ def test_required_nullable_parameter_cannot_be_omitted() -> None:
 
 def test_async_tool_constructs_recursive_pydantic_model() -> None:
     async def run() -> None:
-        result = add_node_values._invoke_json(
+        result = await add_node_values._invoke_json_on_loop(
             json.dumps(
                 {
                     "root": {
@@ -171,8 +184,7 @@ def test_async_tool_constructs_recursive_pydantic_model() -> None:
                 }
             )
         )
-        assert not isinstance(result, str)
-        assert json.loads(await result) == 6
+        assert json.loads(result) == 6
 
     asyncio.run(run())
 
@@ -181,6 +193,30 @@ def test_async_tool_constructs_recursive_pydantic_model() -> None:
     root_property = parameters["properties"]["root"]
     root = _resolve_reference(parameters, root_property)
     assert root["properties"]["children"]["items"]["$ref"] == "#/$defs/Node"
+
+
+def test_sync_tool_trampoline_runs_on_python_loop_and_context() -> None:
+    async def run() -> None:
+        loop = asyncio.get_running_loop()
+        loop_thread = threading.get_ident()
+        token = _TOOL_CONTEXT.set("reply-context")
+        try:
+            worker_thread, invocation = await asyncio.to_thread(
+                lambda: (
+                    threading.get_ident(),
+                    current_runtime_state._invoke_json_on_loop("{}"),
+                )
+            )
+            assert worker_thread != loop_thread
+            assert json.loads(await invocation) == {
+                "context": "reply-context",
+                "loop": id(loop),
+                "thread": loop_thread,
+            }
+        finally:
+            _TOOL_CONTEXT.reset(token)
+
+    asyncio.run(run())
 
 
 def test_configured_decorator_overrides_name_and_description() -> None:

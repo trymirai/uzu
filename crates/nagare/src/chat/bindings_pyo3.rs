@@ -1,20 +1,12 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
-use pyo3::{
-    Bound, Py, PyAny, PyErr, PyResult, Python,
-    types::{PyAnyMethods, PyString},
-};
+use pyo3::{Bound, Py, PyAny, PyErr, PyResult, Python, types::PyAnyMethods};
 use shoji::types::basic::{ToolFunction, Value};
 
 use super::ChatSession;
 use crate::tool::func_def::{ErrorFuture, ToolDescriptor};
 
 type PythonFuture = Pin<Box<dyn Future<Output = PyResult<Py<PyAny>>> + Send>>;
-
-enum PythonCall {
-    Ready(Py<PyAny>),
-    Awaitable(PythonFuture),
-}
 
 #[pyo3_stub_gen::derive::gen_stub_pymethods]
 #[pyo3::pymethods]
@@ -96,30 +88,15 @@ async fn call_python_tool(
     tool: Arc<Py<PyAny>>,
     arguments: Value,
 ) -> Result<Value, ErrorFuture> {
-    let call = Python::attach(|py| -> PyResult<PythonCall> {
-        let result = tool.bind(py).call_method1("_invoke_json", (arguments.json,))?;
-        if result.is_instance_of::<PyString>() {
-            return Ok(PythonCall::Ready(result.unbind()));
-        }
-
-        let inspect = pyo3::types::PyModule::import(py, "inspect")?;
-        if inspect.call_method1("isawaitable", (&result,))?.is_truthy()? {
-            // The turn task carries the locals captured by the Python reply invocation.
-            let task_locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
-            let future = pyo3_async_runtimes::into_future_with_locals(&task_locals, result)?;
-            Ok(PythonCall::Awaitable(Box::pin(future)))
-        } else {
-            Err(pyo3::exceptions::PyTypeError::new_err(
-                "decorated tool invocation must return JSON text or an awaitable producing JSON text",
-            ))
-        }
+    let future = Python::attach(|py| -> PyResult<PythonFuture> {
+        // Creating this coroutine does not invoke the tool. Its body runs on the
+        // reply's Python loop and context once `into_future_with_locals` schedules it.
+        let task_locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
+        let invocation = tool.bind(py).call_method1("_invoke_json_on_loop", (arguments.json,))?;
+        Ok(Box::pin(pyo3_async_runtimes::into_future_with_locals(&task_locals, invocation)?))
     })
     .map_err(python_error)?;
-
-    let result = match call {
-        PythonCall::Ready(result) => result,
-        PythonCall::Awaitable(future) => future.await.map_err(python_error)?,
-    };
+    let result = future.await.map_err(python_error)?;
 
     let json = Python::attach(|py| result.extract::<String>(py)).map_err(python_error)?;
     let value = serde_json::from_str::<serde_json::Value>(&json)?;

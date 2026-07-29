@@ -130,6 +130,10 @@ class UzuToolFunction[**P, R]:
             return finish()
         return self._encode_result(result)
 
+    async def _invoke_json_on_loop(self, arguments_json: str) -> str:
+        result = self._invoke_json(arguments_json)
+        return await result if inspect.isawaitable(result) else result
+
     def _encode_result(self, result: object) -> str:
         validated = self._return_adapter.validate_python(result)
         return self._return_adapter.dump_json(validated).decode()
