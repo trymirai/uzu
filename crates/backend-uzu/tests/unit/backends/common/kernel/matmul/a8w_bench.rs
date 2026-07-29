@@ -27,8 +27,6 @@ use crate::{
 };
 
 type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
-type MetalPrepare = ActivationTransform<Metal>;
-type MetalHadamard = ActivationTransform<Metal>;
 
 #[derive(Clone, Copy)]
 enum BenchPath {
@@ -48,7 +46,7 @@ impl BenchPath {
 }
 
 struct BenchmarkData {
-    weights_u8: Allocation<Metal>,
+    weights: Allocation<Metal>,
     weight_scales: Allocation<Metal>,
     activations: Allocation<Metal>,
     rht_factors: Allocation<Metal>,
@@ -75,7 +73,7 @@ impl BenchmarkData {
         let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed)
             .with_prepared_a();
 
-        let weights_u8 = alloc_allocation_with_data::<Metal, u32>(context, &input.weights_with_signed_codes());
+        let weights = alloc_allocation_with_data::<Metal, u32>(context, &input.weights_with_signed_codes());
         let weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
         let activations = alloc_allocation_with_data::<Metal, bf16>(context, &input.x);
         let rht: Vec<i32> = (0..k)
@@ -91,7 +89,7 @@ impl BenchmarkData {
 
         let groups = k / group_size as usize;
         Self {
-            weights_u8,
+            weights,
             weight_scales,
             activations,
             rht_factors,
@@ -120,7 +118,7 @@ impl BenchmarkData {
                 offset: 0,
             },
             b: MatmulB::ScaleSymmetricDequant {
-                b: &self.weights_u8,
+                b: &self.weights,
                 scales: &self.weight_scales,
                 mode: self.mode,
                 group_size: self.group_size,
@@ -143,8 +141,8 @@ fn encode_step(
     path: BenchPath,
     data: &mut BenchmarkData,
     output: &mut Allocation<Metal>,
-    prepare: &MetalPrepare,
-    hadamard: &MetalHadamard,
+    prepare: &ActivationTransform<Metal>,
+    hadamard: &ActivationTransform<Metal>,
     matmul: &mut MetalMatmul,
     gemv: &mut GemvDispatch,
     device_tier: DeviceTier,
@@ -169,7 +167,7 @@ fn encode_step(
                     group_sums: None,
                 },
                 b: MatmulB::ScaleSymmetricDequant {
-                    b: &data.weights_u8,
+                    b: &data.weights,
                     scales: &data.weight_scales,
                     mode: data.mode,
                     group_size: data.group_size,
@@ -187,12 +185,12 @@ fn encode_step(
             matmul.gemm.encode_dispatch_path(args, GemmDispatchPath::Mxu, encoder).expect("a8 gemm mxu encode");
         },
         BenchPath::Bf16GemmMxu => {
-            hadamard.encode_fp(&data.activations, &mut data.a_working, &data.rht_factors, data.k, data.m, encoder);
+            hadamard.encode_fp(&data.activations, &mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
             let args = data.bf16_arguments(output);
             matmul.gemm.encode_dispatch_path(args, GemmDispatchPath::Mxu, encoder).expect("bf16 gemm mxu encode");
         },
         BenchPath::Bf16Gemv => {
-            hadamard.encode_fp(&data.activations, &mut data.a_working, &data.rht_factors, data.k, data.m, encoder);
+            hadamard.encode_fp(&data.activations, &mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
             let args = data.bf16_arguments(output);
             let spec = GemvSpecialization::select(&args, DataType::BF16, DataType::BF16, DataType::BF16, device_tier)
                 .expect("bf16 gemv specialization");
@@ -205,8 +203,8 @@ fn bench_bits(
     c: &mut Criterion,
     context: &MetalContext,
     device_tier: DeviceTier,
-    prepare: &MetalPrepare,
-    hadamard: &MetalHadamard,
+    prepare: &ActivationTransform<Metal>,
+    hadamard: &ActivationTransform<Metal>,
     bits: u32,
 ) {
     let mut matmul = <MetalMatmul as MatmulKernel>::new(context, DataType::BF16, DataType::BF16, DataType::BF16)
@@ -270,8 +268,8 @@ fn bench_a8w(c: &mut Criterion) {
     }
     let device_tier = context.device_tier();
 
-    let prepare = MetalPrepare::quantize(&context, DataType::BF16, false).expect("prepare kernel");
-    let hadamard = MetalHadamard::input_rht(&context, DataType::BF16).expect("hadamard kernel");
+    let prepare = ActivationTransform::<Metal>::quantize(&context, DataType::BF16, false).expect("prepare kernel");
+    let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16).expect("hadamard kernel");
 
     for bits in [8u32, 4u32] {
         bench_bits(c, &context, device_tier, &prepare, &hadamard, bits);
