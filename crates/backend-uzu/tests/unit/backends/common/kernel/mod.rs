@@ -1,4 +1,5 @@
 mod activation_test;
+mod activation_transform_test;
 mod attention;
 mod embedding;
 mod gated_act_mul_test;
