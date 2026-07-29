@@ -162,14 +162,14 @@ impl ChatSession {
         self.instance.lock().await.peak_memory_usage()
     }
 
-    pub async fn add_tool_descriptor(
+    pub async fn add_tool(
         &mut self,
         descriptor: impl Into<ToolDescriptor>,
     ) -> Result<(), ChatSessionError> {
-        self.add_tool_descriptors(vec![descriptor.into()]).await
+        self.add_tools(vec![descriptor.into()]).await
     }
 
-    pub async fn add_tool_descriptors(
+    pub async fn add_tools(
         &mut self,
         descriptors: Vec<ToolDescriptor>,
     ) -> Result<(), ChatSessionError> {
