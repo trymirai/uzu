@@ -22,7 +22,7 @@ pub mod stream;
 pub mod grammar;
 
 pub struct LanguageModel<B: Backend> {
-    context: Arc<B::Context>,
+    engine: Arc<Engine<B>>,
     decoder: Decoder<B>,
     speculator: Option<DFlashSpeculator<B>>,
     sampling: Sampling<B>,
@@ -52,7 +52,7 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
 
 impl<B: Backend> Engine<B> {
     pub fn load_language_model(
-        &self,
+        self: &Arc<Self>,
         model_path: &Path,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
         let config: LanguageModelConfig =
@@ -70,7 +70,7 @@ impl<B: Backend> Engine<B> {
 
     // TODO: better design
     pub fn load_language_model_random(
-        &self,
+        self: &Arc<Self>,
         config_path: &Path,
         header_path: &Path,
         seed: u64,
@@ -84,17 +84,15 @@ impl<B: Backend> Engine<B> {
     }
 
     fn build_language_model(
-        &self,
+        self: &Arc<Self>,
         config: LanguageModelConfig,
         weight_loader: &ParameterLoader<B>,
         speculator_path: Option<&Path>,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
-        let context = self.context.clone();
-
         let data_type = DataType::BF16;
 
         let decoder = Decoder::new(
-            context.as_ref(),
+            self.context.as_ref(),
             &config.decoder_config,
             &weight_loader.tree().subtree("decoder")?,
             data_type,
@@ -106,12 +104,12 @@ impl<B: Backend> Engine<B> {
         );
 
         let speculator = speculator_path
-            .map(|speculator_path| DFlashSpeculator::load(speculator_path, context.clone()))
+            .map(|speculator_path| DFlashSpeculator::load(speculator_path, self.context.clone()))
             .transpose()?;
 
         let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);
 
-        let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&context)
+        let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
         weight_loader.tree().assert_all_tensors_validated()?;
@@ -122,7 +120,7 @@ impl<B: Backend> Engine<B> {
         let vocab_size = config.decoder_config.vocab_size;
 
         Ok(LanguageModel {
-            context,
+            engine: self.clone(),
             decoder,
             speculator,
             sampling,
@@ -143,7 +141,7 @@ impl<B: Backend> LanguageModel<B> {
         let max_context_length = self.max_context_length();
 
         // TODO: This is not the correct way to do it, there should be a real memory model
-        if self.context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS) {
+        if self.engine.context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS) {
             // We just assume that all mixers use sparse if it's available to make max context free until it's actually used
             // Currenlty true for all mixers in uzu:
             // - full attention uses sparse if it's available to make max context free until it's actually used
