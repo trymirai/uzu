@@ -30,6 +30,7 @@ pub struct MetalCompiler {
     source_directory: PathBuf,
     gpu_types_directory: PathBuf,
     output_directory: PathBuf,
+    metallib_compressed: bool,
     toolchain: MetalToolchain,
 }
 
@@ -44,6 +45,11 @@ impl MetalCompiler {
         fs::create_dir_all(&output_directory)
             .with_context(|| format!("cannot create {}", output_directory.display()))?;
 
+        let metallib_compressed = match env::var("OPT_LEVEL").context("missing OPT_LEVEL")?.as_str() {
+            "0" | "1" | "2" => false, // treat opt-level 0/1/2 as debug/test build where size doesn't matter
+            _ => true,                // treat everything else (3,s,z) as release build where size matters
+        };
+
         let toolchain = MetalToolchain::from_env_with_include_dir(Some(gpu_types_directory.clone()))
             .context("cannot create toolchain")?;
 
@@ -51,6 +57,7 @@ impl MetalCompiler {
             source_directory,
             gpu_types_directory,
             output_directory,
+            metallib_compressed,
             toolchain,
         })
     }
@@ -77,6 +84,11 @@ impl MetalCompiler {
 
         let object_file = output_base_path.with_extension("air");
         let metallib_file = output_base_path.with_extension("metallib");
+        let metallib_maybe_compressed_file = if self.metallib_compressed {
+            metallib_file.with_added_extension("zst")
+        } else {
+            metallib_file.clone()
+        };
         let bindgen_file = output_base_path.with_extension("rs");
         let cached_file = output_base_path.with_extension("cached");
 
@@ -144,21 +156,41 @@ impl MetalCompiler {
                 }
             }
 
+            if self.metallib_compressed {
+                let metallib_file = metallib_file.clone();
+                let metallib_compressed_file = metallib_maybe_compressed_file.clone();
+
+                tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    let metallib_source = fs::read(&metallib_file)?;
+                    let metallib_compressed = zstd::encode_all(metallib_source.as_slice(), 22)?;
+                    fs::write(&metallib_compressed_file, &metallib_compressed)?;
+                    Ok(())
+                })
+                .await??;
+            };
+
             let library_const =
                 format_ident!("MTLB_{}", blake3::hash(source_path_relative_str.as_bytes()).to_hex().to_uppercase());
-            let metallib_file_str = metallib_file.to_str().context("metallib path is not utf-8")?;
+            let metallib_maybe_compressed_file_str =
+                metallib_maybe_compressed_file.to_str().context("metallib path is not utf-8")?;
 
             let bindings = kernel_infos
                 .iter()
                 .map(|kernel| {
-                    super::bindgen::bindgen(kernel, &specialize_indices, enum_paths, &library_const)
-                        .with_context(|| format!("cannot generate bindings for {}", kernel.name))
-                        .map(|(tokens, _associated_type)| tokens)
+                    super::bindgen::bindgen(
+                        kernel,
+                        &specialize_indices,
+                        enum_paths,
+                        &library_const,
+                        self.metallib_compressed,
+                    )
+                    .with_context(|| format!("cannot generate bindings for {}", kernel.name))
+                    .map(|(tokens, _associated_type)| tokens)
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
 
             let tokens = quote! {
-                const #library_const: &[u8] = include_bytes!(#metallib_file_str);
+                const #library_const: &[u8] = include_bytes!(#metallib_maybe_compressed_file_str);
 
                 #(#bindings)*
             };

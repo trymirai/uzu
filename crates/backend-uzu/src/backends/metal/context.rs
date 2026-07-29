@@ -64,12 +64,22 @@ impl MetalContext {
     fn library(
         &self,
         data: &'static [u8],
+        compressed: bool,
     ) -> Result<Retained<ProtocolObject<dyn MTLLibrary>>, MetalError> {
         // `data` always comes from an `include_bytes!` constant, so its address is a stable, unique key.
         let key = data.as_ptr() as usize;
         if let Some(library) = self.library_cache.lock().get(&key) {
             return Ok(library.clone());
         }
+
+        let maybe_uncompressed_data_owned;
+        let data = if compressed {
+            maybe_uncompressed_data_owned = zstd::decode_all(data).map_err(MetalError::CannotDecompressLibrary)?;
+
+            &maybe_uncompressed_data_owned
+        } else {
+            data
+        };
 
         let library = self
             .device
@@ -83,6 +93,7 @@ impl MetalContext {
     pub fn compute_pipeline_state(
         &self,
         library_data: &'static [u8],
+        library_compressed: bool,
         cache_key: &str,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
@@ -91,7 +102,8 @@ impl MetalContext {
             return Ok(pipeline.clone());
         }
 
-        let pipeline = self.library(library_data)?.compute_pipeline_state(function_name, constants)?;
+        let pipeline =
+            self.library(library_data, library_compressed)?.compute_pipeline_state(function_name, constants)?;
         self.pipeline_cache.lock().insert(cache_key.to_string(), pipeline.clone());
 
         Ok(pipeline)
