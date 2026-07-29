@@ -216,7 +216,7 @@ impl Context for MetalContext {
         let capture_manager = MTLCaptureManager::shared_capture_manager();
         let capture_descriptor = MTLCaptureDescriptor::new();
         capture_descriptor.set_destination(MTLCaptureDestination::GPUTraceDocument);
-        capture_descriptor.set_output_path(Some(trace_path));
+        capture_descriptor.set_output_path(Some(&trace_path.with_added_extension("gputrace")));
 
         self.command_queue.set_label(Some("uzu_command_queue"));
         capture_descriptor.set_capture_object(Some(self.command_queue.as_ref()));
