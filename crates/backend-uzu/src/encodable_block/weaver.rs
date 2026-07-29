@@ -9,8 +9,7 @@ use crate::{
         },
         kernel::{
             ActivationKernel, AncestorAttentionKernel, AttentionPrepareKernel, TensorAddBiasKernel,
-            WeaverFrontierScatterKernel, WeaverFrontierSelectKernel, WeaverNodeCacheWriteKernel,
-            WeaverTopChildrenKernel,
+            WeaverFrontierScatterKernel, WeaverFrontierSelectKernel, WeaverTopChildrenKernel,
         },
     },
     config::{normalization::NormalizationConfig, weaver::WeaverConfig},
@@ -133,7 +132,6 @@ struct WeaverLayer<B: Backend> {
     attention_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     prefix_attention: AttentionCores<B>,
     ancestor_attention: <B::Kernels as Kernels>::AncestorAttentionKernel,
-    node_cache_write: <B::Kernels as Kernels>::WeaverNodeCacheWriteKernel,
     out_projection: Box<dyn Linear<B>>,
 
     // MLP
@@ -712,8 +710,6 @@ impl<B: Backend> WeaverLayer<B> {
         let ancestor_attention =
             <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim as u32, num_heads as u32)
                 .map_err(WeaverNewError::Backend)?;
-        let node_cache_write = <B::Kernels as Kernels>::WeaverNodeCacheWriteKernel::new(context, DATA_TYPE)
-            .map_err(WeaverNewError::Backend)?;
         Ok(Self {
             qkv_projection,
             out_projection,
@@ -725,7 +721,6 @@ impl<B: Backend> WeaverLayer<B> {
             down_projection,
             activation,
             ancestor_attention,
-            node_cache_write,
             attention_scale,
             model_dim,
             hidden_dim,
@@ -825,27 +820,17 @@ impl<B: Backend> WeaverLayer<B> {
             encoder.allocate_scratch(size_for_shape(&[nodes.count, self.model_dim], DATA_TYPE))?;
         self.ancestor_attention.encode(
             prefix_kv,
-            &*node_kv_cache,
+            node_kv_cache,
             &current_qkv,
             nodes.ancestor_indices,
             ancestor_counts,
+            tree_slot_indices,
             &mut attention_output,
             nodes.count as u32,
             prefix_length as u32,
             nodes.ancestor_stride as u32,
             node_capacity,
             self.attention_scale,
-            encoder,
-        );
-        // Separate dispatch so the node arena is read-only above; the encoder
-        // serializes it after the attention that reads the ancestor slots.
-        self.node_cache_write.encode(
-            &current_qkv,
-            node_kv_cache,
-            tree_slot_indices,
-            self.model_dim as u32,
-            node_capacity,
-            (nodes.count * 2 * self.model_dim) as u32,
             encoder,
         );
         self.encode_post_attention(attention_output, residual_state, nodes.count, encoder)
