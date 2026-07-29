@@ -10,6 +10,7 @@ pub trait Backend: Debug + Clone + Send + Sync + 'static {
     type Kernels: Kernels<Backend = Self>;
     type Error: Error + Debug;
 
+    const NAME: &'static str;
     const MIN_ALLOCATION_ALIGNMENT: usize;
     const MAX_ALLOCATION_ALIGNMENT: usize;
     const ALLOCATION_GRANULARITY: usize;
