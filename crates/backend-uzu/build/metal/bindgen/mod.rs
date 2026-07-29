@@ -18,6 +18,7 @@ pub fn bindgen(
     specialize_indices: &SpecializeBaseIndices,
     enum_paths: &EnumPaths,
     library_const: &proc_macro2::Ident,
+    library_compressed: bool,
 ) -> Result<(TokenStream, Option<TokenStream>)> {
     let kernel_name = kernel.name.as_ref();
     let trait_name = format_ident!("{}Kernel", kernel_name);
@@ -96,7 +97,7 @@ pub fn bindgen(
             ) -> Result<Self, MetalError> {
                 let entry_name = #entry_name;
                 #function_constants_initialization
-                let pipeline = context.compute_pipeline_state(#library_const, #cache_key, &entry_name, #function_constants_argument)?;
+                let pipeline = context.compute_pipeline_state(#library_const, #library_compressed, #cache_key, &entry_name, #function_constants_argument)?;
                 Ok(Self {
                     pipeline
                     #(, #conditional_buffer_initializers)*

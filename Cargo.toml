@@ -78,6 +78,7 @@ objc2-core-foundation = "0.3.2"
 objc2-io-kit = { version = "0.3.2", default-features = false, features = ["libc", "ps"] }
 objc2-security = "0.3.2"
 obfstr = "0.4.4"
+zstd = "0.13.3"
 metal = { package = "mtl-rs", version = "0.1.14" }
 block2 = "0.6"
 bytemuck = "1.23"

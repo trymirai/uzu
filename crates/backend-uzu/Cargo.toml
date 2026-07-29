@@ -22,8 +22,9 @@ metal = [
     "dep:tempfile",
     "dep:serde_json",
     "dep:objc2",
-    "dep:metal",
     "dep:obfstr",
+    "dep:zstd",
+    "dep:metal",
 ]
 
 grammar = ["dep:xgrammar", "dep:schemars"]
@@ -50,6 +51,7 @@ rhai.workspace = true
 clang-ast = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["unbounded_depth"], optional = true }
+zstd = { workspace = true, optional = true }
 
 [dependencies]
 proc-macros.workspace = true
@@ -77,8 +79,9 @@ tokio-util.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }
-metal = { workspace = true, optional = true }
 obfstr = { workspace = true, optional = true }
+zstd = { workspace = true, optional = true }
+metal = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 xgrammar = { workspace = true, optional = true }
