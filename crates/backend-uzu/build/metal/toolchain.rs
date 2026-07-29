@@ -266,13 +266,13 @@ impl MetalToolchain {
 
     pub async fn link(
         &self,
-        objects: impl IntoIterator<Item = impl AsRef<Path>>,
+        object: impl AsRef<Path>,
         output: impl AsRef<Path>,
     ) -> anyhow::Result<Option<Box<str>>> {
         let link_output = self
             .xcrun()
             .arg("metallib")
-            .args(objects.into_iter().map(|p| p.as_ref().as_os_str().to_owned()))
+            .arg(object.as_ref())
             .arg("-o")
             .arg(output.as_ref())
             .output()

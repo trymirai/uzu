@@ -25,7 +25,7 @@ mod tensor_add_swap;
 mod tensor_copy;
 mod weaver;
 
-include!(concat!(env!("OUT_DIR"), "/cpu/dsl.rs"));
+include!(concat!(env!("OUT_DIR"), "/cpu.rs"));
 
 pub struct CpuKernels;
 
