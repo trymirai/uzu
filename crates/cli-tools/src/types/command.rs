@@ -257,7 +257,17 @@ impl Command {
     }
 
     pub fn uv_sync() -> Self {
-        Self::new("uv").with_argument("sync").with_argument("--reinstall")
+        Self::uv_sync_params(false)
+    }
+
+    pub fn uv_sync_params(no_install_project: bool) -> Self {
+        let mut cmd = Self::new("uv").with_argument("sync");
+        if no_install_project {
+            cmd = cmd.with_argument("--no-install-project")
+        } else {
+            cmd = cmd.with_argument("--reinstall")
+        }
+        cmd
     }
 
     pub fn uv_venv() -> Self {
