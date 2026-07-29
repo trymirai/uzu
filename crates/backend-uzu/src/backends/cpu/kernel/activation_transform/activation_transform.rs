@@ -23,14 +23,12 @@ pub fn activation_transform<T: ArrayElement + Float>(
     element_count: u32,
     #[specialize] ops: ActivationTransformOp,
 ) {
-    let ops = ops.validate();
     let rows = batch_size as usize;
     let columns = element_count as usize;
     let input_rht = ops.contains(ActivationTransformOp::INPUT_RHT);
     let quantize = ops.contains(ActivationTransformOp::QUANTIZE);
-    assert!(columns.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
 
-    let groups = columns.div_ceil(HADAMARD_TRANSFORM_BLOCK_SIZE);
+    let groups = columns / HADAMARD_TRANSFORM_BLOCK_SIZE;
     let mut transformed = vec![0.0f32; columns];
     for row in 0..rows {
         let row_offset = row * columns;
@@ -65,7 +63,7 @@ pub fn activation_transform<T: ArrayElement + Float>(
             let scales_out = scales_out.expect("quantized transform requires scales_out");
             for group in 0..groups {
                 let start = group * HADAMARD_TRANSFORM_BLOCK_SIZE;
-                let end = (start + HADAMARD_TRANSFORM_BLOCK_SIZE).min(columns);
+                let end = start + HADAMARD_TRANSFORM_BLOCK_SIZE;
                 let slice = &transformed[start..end];
                 let divisor = min_max_symmetric_divisor(slice);
                 unsafe { *scales_out.add(row * groups + group) = divisor };

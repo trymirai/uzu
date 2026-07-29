@@ -25,8 +25,6 @@ PUBLIC KERNEL(ActivationTransform)(
     uint batch_index GROUPS(batch_size),
     uint lane_index THREADS(METAL_SIMD_SIZE)
 ) {
-  // The host guarantees element_count is a multiple of METAL_SIMD_SIZE, so one
-  // dispatched block maps to exactly one Hadamard block and one scale group.
   const uint factor_index = block_index * METAL_SIMD_SIZE + lane_index;
   const uint element_index = batch_index * element_count + factor_index;
 

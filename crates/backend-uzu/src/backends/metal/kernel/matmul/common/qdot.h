@@ -14,7 +14,6 @@ namespace gemm {
 // 2^-(BITS*k). qdot then reads the matching nibble/byte in place (value =
 // q * 2^(BITS*k)); the factors cancel, so the dot product is unchanged. All
 // factors are powers of two, so this is bit-exact.
-// Signed int8 weights are already directly loadable and need no pre-scaling.
 template <typename T, typename U, int VALUES_PER_THREAD, int BITS>
 METAL_FUNC U load_vector(const device T* x, thread U* x_thread, const bool signed_codes) {
   using U4 = vec<U, 4>;
