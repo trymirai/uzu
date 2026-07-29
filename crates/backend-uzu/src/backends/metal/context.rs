@@ -21,7 +21,6 @@ use super::{
     Metal,
     device_tier::{DeviceTier, device_tier_for_device},
     error::MetalError,
-    kernel,
     metal_extensions::{DeviceExt, LibraryPipelineExtensions},
 };
 use crate::backends::{
@@ -40,7 +39,7 @@ pub struct MetalContext {
     timeline_value: AtomicU64,
     allocator: Arc<Allocator<Metal>>,
     peak_memory_usage: AtomicUsize,
-    library: Retained<ProtocolObject<dyn MTLLibrary>>,
+    library_cache: Mutex<HashMap<usize, Retained<ProtocolObject<dyn MTLLibrary>>>>,
     pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: Mutex<MetalSparseHeapPool>,
     device_tier: DeviceTier,
@@ -62,8 +61,28 @@ impl MetalContext {
         self.peak_memory_usage.fetch_max(self.device.current_allocated_size(), Ordering::Relaxed);
     }
 
+    fn library(
+        &self,
+        data: &'static [u8],
+    ) -> Result<Retained<ProtocolObject<dyn MTLLibrary>>, MetalError> {
+        // `data` always comes from an `include_bytes!` constant, so its address is a stable, unique key.
+        let key = data.as_ptr() as usize;
+        if let Some(library) = self.library_cache.lock().get(&key) {
+            return Ok(library.clone());
+        }
+
+        let library = self
+            .device
+            .new_library_with_data(data)
+            .map_err(|nserror| MetalError::CannotCreateLibrary(nserror.to_string()))?;
+        self.library_cache.lock().insert(key, library.clone());
+
+        Ok(library)
+    }
+
     pub fn compute_pipeline_state(
         &self,
+        library_data: &'static [u8],
         cache_key: &str,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
@@ -72,7 +91,7 @@ impl MetalContext {
             return Ok(pipeline.clone());
         }
 
-        let pipeline = self.library.compute_pipeline_state(function_name, constants)?;
+        let pipeline = self.library(library_data)?.compute_pipeline_state(function_name, constants)?;
         self.pipeline_cache.lock().insert(cache_key.to_string(), pipeline.clone());
 
         Ok(pipeline)
@@ -123,10 +142,6 @@ impl Context for MetalContext {
 
         let command_queue4 = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?;
 
-        let library = device
-            .new_library_with_data(kernel::MTLB)
-            .map_err(|nserror| MetalError::CannotCreateLibrary(nserror.to_string()))?;
-
         let gpu_core_count = device.gpu_core_count();
         let device_tier = device_tier_for_device(gpu_core_count, device.as_ref());
         let page_size = MTLSparsePageSize::KB256;
@@ -144,7 +159,7 @@ impl Context for MetalContext {
             timeline_value: AtomicU64::new(0),
             allocator: Allocator::new(weak_self.clone()),
             peak_memory_usage: AtomicUsize::new(0),
-            library,
+            library_cache: Mutex::new(HashMap::new()),
             pipeline_cache: Mutex::new(HashMap::new()),
             sparse_heap_pool: Mutex::new(sparse_pool),
             device_tier,

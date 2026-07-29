@@ -11,12 +11,13 @@ use quote::{format_ident, quote};
 
 use self::host_expression_rewriter::HostExpressionRewriter;
 use super::{ast::MetalKernelInfo, wrapper::SpecializeBaseIndices};
-use crate::common::{enum_paths::EnumPaths, mangling::dynamic_mangle};
+use crate::common::{enum_paths::EnumPaths, kernel::Kernel, mangling::dynamic_mangle};
 
 pub fn bindgen(
     kernel: &MetalKernelInfo,
     specialize_indices: &SpecializeBaseIndices,
     enum_paths: &EnumPaths,
+    library_const: &proc_macro2::Ident,
 ) -> Result<(TokenStream, Option<TokenStream>)> {
     let kernel_name = kernel.name.as_ref();
     let trait_name = format_ident!("{}Kernel", kernel_name);
@@ -95,7 +96,7 @@ pub fn bindgen(
             ) -> Result<Self, MetalError> {
                 let entry_name = #entry_name;
                 #function_constants_initialization
-                let pipeline = context.compute_pipeline_state(#cache_key, &entry_name, #function_constants_argument)?;
+                let pipeline = context.compute_pipeline_state(#library_const, #cache_key, &entry_name, #function_constants_argument)?;
                 Ok(Self {
                     pipeline
                     #(, #conditional_buffer_initializers)*
@@ -120,4 +121,47 @@ pub fn bindgen(
     };
 
     Ok((kernel_tokens, trait_wiring.associated_type))
+}
+
+pub fn bindgen_global(kernels: &[(impl AsRef<std::path::Path>, &[Kernel])]) -> Result<TokenStream> {
+    let includes = kernels.iter().map(|(path, _kernels)| {
+        let path = path.as_ref().to_str().expect("bindings path is not utf-8");
+
+        quote! {
+            include!(#path);
+        }
+    });
+
+    let associated_types = kernels.iter().flat_map(|(_path, kernels)| kernels.iter()).map(|kernel| {
+        let trait_name = format_ident!("{}Kernel", kernel.name.as_ref());
+        let struct_name = format_ident!("{}MetalKernel", kernel.name.as_ref());
+
+        quote! {
+            type #trait_name = #struct_name;
+        }
+    });
+
+    let tokens = quote! {
+        use metal::{MTLComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues, MTLSize};
+        use objc2::{rc::Retained, runtime::ProtocolObject};
+
+        use crate::backends::common::BufferGpuAddressRangeExt;
+        use crate::backends::metal::{
+            context::MetalContext,
+            error::MetalError,
+            metal_extensions::{
+                ComputeEncoderSetValue, FunctionConstantValuesSetValue, MetalDataTypeExt,
+            },
+        };
+
+        #(#includes)*
+
+        macro_rules! autogen_kernels {
+            () => {
+                #(#associated_types)*
+            }
+        }
+    };
+
+    Ok(tokens)
 }

@@ -14,9 +14,7 @@ pub mod gdn;
 pub mod matmul;
 mod radix_top_k_small;
 
-pub const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
-
-include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
+include!(concat!(env!("OUT_DIR"), "/metal.rs"));
 
 pub struct MetalKernels;
 
