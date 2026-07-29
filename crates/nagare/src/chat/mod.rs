@@ -162,25 +162,18 @@ impl ChatSession {
         self.instance.lock().await.peak_memory_usage()
     }
 
-    pub async fn add_tool_function(
+    pub async fn add_tool(
         &mut self,
-        function: impl Into<ToolDescriptor>,
+        descriptor: impl Into<ToolDescriptor>,
     ) -> Result<(), ChatSessionError> {
-        self.add_tool_function_definitions(vec![function.into()]).await
+        self.add_tools(vec![descriptor.into()]).await
     }
 
-    pub async fn add_tool_descriptor(
+    pub async fn add_tools(
         &mut self,
-        definition: ToolDescriptor,
+        descriptors: Vec<ToolDescriptor>,
     ) -> Result<(), ChatSessionError> {
-        self.add_tool_function_definitions(vec![definition]).await
-    }
-
-    pub async fn add_tool_function_definitions(
-        &mut self,
-        definitions: Vec<ToolDescriptor>,
-    ) -> Result<(), ChatSessionError> {
-        if definitions.is_empty() {
+        if descriptors.is_empty() {
             return Ok(());
         }
         let Some(registry) = self.tool_registry.as_ref() else {
@@ -193,8 +186,8 @@ impl ChatSession {
         // an incoming name must displace a stale caller-provided declaration too
         let owned_namespaces = {
             let mut registry_guard = registry.lock().await;
-            for def in definitions {
-                registry_guard.add_function(def)
+            for desc in descriptors {
+                registry_guard.add_function(desc)
             }
             registry_guard.get_namespaces()
         };

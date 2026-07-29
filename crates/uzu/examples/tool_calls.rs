@@ -35,9 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut session = engine.chat(model, ChatConfig::default()).await?;
-    session.add_tool_function(get_current_location).await?;
+    session.add_tool(get_current_location).await?;
     session
-        .add_tool_descriptor(uzu_tool_closure! {
+        .add_tool(uzu_tool_closure! {
             /// Returns temperature in provided location
             get_current_temperature: |
                 /// Latitude in decimal degrees.
