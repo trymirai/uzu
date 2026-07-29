@@ -5,7 +5,7 @@ use crate::{
         common::{
             Backend, Encoder, Kernels,
             gpu_types::weaver::{FrontierIdx, MetadataIdx, TreeIdx},
-            kernel::{WeaverFrontierScatterKernel, WeaverFrontierSelectKernel},
+            kernel::{WeaverFrontierInsertChildrenKernel, WeaverFrontierSelectKernel},
         },
         cpu::Cpu,
     },
@@ -77,7 +77,7 @@ fn select<B: Backend>() -> Vec<u32> {
         .collect()
 }
 
-fn scatter<B: Backend>() -> Vec<u32> {
+fn insert_children<B: Backend>() -> Vec<u32> {
     let context = create_context::<B>();
     let mut tree = vec![0; TreeIdx::COUNT * 4];
     tree[TreeIdx::PathLogprobBits as usize * 4..(TreeIdx::PathLogprobBits as usize + 1) * 4]
@@ -91,7 +91,7 @@ fn scatter<B: Backend>() -> Vec<u32> {
     let ids = alloc_allocation_with_data::<B, u32>(&context, &(10..19).collect::<Vec<_>>());
     let scores = alloc_allocation_with_data::<B, f32>(&context, &[-0.1, -0.2, -0.3, 8.0, 8.0, 8.0, 0.1, 0.2, 0.3]);
     let mut frontier = alloc_allocation_with_data::<B, u32>(&context, &[42; FrontierIdx::COUNT * 16]);
-    let kernel = <B::Kernels as Kernels>::WeaverFrontierScatterKernel::new(&context).unwrap();
+    let kernel = <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel::new(&context).unwrap();
     let mut encoder = Encoder::new(context.as_ref()).unwrap();
     kernel.encode(&tree, &metadata, &valid, &ids, &scores, &mut frontier, 16, 4, 3, 3, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -102,6 +102,6 @@ fn scatter<B: Backend>() -> Vec<u32> {
 fn weaver_frontier_kernels_match_cpu() {
     for_each_non_cpu_backend!(|B| {
         assert_eq!(select::<B>(), select::<Cpu>());
-        assert_eq!(scatter::<B>(), scatter::<Cpu>());
+        assert_eq!(insert_children::<B>(), insert_children::<Cpu>());
     });
 }

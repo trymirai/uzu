@@ -3,14 +3,13 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, AllocationType, AsBufferRangeMut, Backend, Context, Encoder, Kernels,
+        Allocation, AsBufferRangeMut, Backend, Encoder, Kernels,
         gpu_types::weaver::{
             CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_NO_WINNER, FrontierIdx, MetadataIdx, TreeIdx,
         },
         kernel::{
             ActivationKernel, AncestorAttentionKernel, AttentionPrepareKernel, TensorAddBiasKernel,
-            WeaverFrontierScatterKernel, WeaverFrontierSelectKernel, WeaverNodeCacheWriteKernel,
-            WeaverTopChildrenKernel,
+            WeaverFrontierInsertChildrenKernel, WeaverFrontierSelectKernel, WeaverTopChildrenKernel,
         },
     },
     config::{normalization::NormalizationConfig, weaver::WeaverConfig},
@@ -120,7 +119,7 @@ pub struct Weaver<B: Backend> {
     node_position_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
     top_children: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
     frontier_select: <B::Kernels as Kernels>::WeaverFrontierSelectKernel,
-    frontier_scatter: <B::Kernels as Kernels>::WeaverFrontierScatterKernel,
+    frontier_insert_children: <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel,
     model_dim: usize,
     target_model_dim: usize,
     max_depth: usize,
@@ -133,7 +132,6 @@ struct WeaverLayer<B: Backend> {
     attention_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     prefix_attention: AttentionCores<B>,
     ancestor_attention: <B::Kernels as Kernels>::AncestorAttentionKernel,
-    node_cache_write: <B::Kernels as Kernels>::WeaverNodeCacheWriteKernel,
     out_projection: Box<dyn Linear<B>>,
 
     // MLP
@@ -275,8 +273,8 @@ impl<B: Backend> Weaver<B> {
             <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context).map_err(WeaverNewError::Backend)?;
         let frontier_select =
             <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(context).map_err(WeaverNewError::Backend)?;
-        let frontier_scatter =
-            <B::Kernels as Kernels>::WeaverFrontierScatterKernel::new(context).map_err(WeaverNewError::Backend)?;
+        let frontier_insert_children = <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel::new(context)
+            .map_err(WeaverNewError::Backend)?;
         Ok(Self {
             token_embedding_norm,
             token_embedding_projection,
@@ -290,7 +288,7 @@ impl<B: Backend> Weaver<B> {
             node_position_add,
             top_children,
             frontier_select,
-            frontier_scatter,
+            frontier_insert_children,
             model_dim: config.model_dim,
             target_model_dim: config.target_model_dim,
             max_depth: config.max_depth,
@@ -301,7 +299,6 @@ impl<B: Backend> Weaver<B> {
         &self,
         inputs: WeaverInputs<'_, B>,
         shape: TreeShape,
-        context: &B::Context,
         encoder: &mut Encoder<B>,
     ) -> Result<EncodedWeaverTree<B>, WeaverEncodeError<B>> {
         let tree_slot_count = shape.budget + 1;
@@ -323,7 +320,7 @@ impl<B: Backend> Weaver<B> {
             .encode_prefix(inputs.target_hidden, inputs.draft_hidden, lookahead_count, encoder)
             .map_err(WeaverEncodeError::Backend)?;
         let mut node_cache =
-            self.create_node_expansion_kv_cache(tree_slot_count, context).map_err(WeaverEncodeError::Backend)?;
+            self.create_node_expansion_kv_cache(tree_slot_count, encoder).map_err(WeaverEncodeError::Backend)?;
 
         let mut tree_init = vec![0u32; TreeIdx::COUNT * tree_slot_count];
         for slot in 0..tree_slot_count {
@@ -395,6 +392,9 @@ impl<B: Backend> Weaver<B> {
                     encoder,
                 );
             }
+            if batch_start_slot + batch_node_count == tree_slot_count {
+                break; // packed-tree slots filled
+            }
             let (batch_candidate_ids, batch_candidate_logits) = if batch_start_slot == 0 {
                 (inputs.candidates.ids, inputs.candidates.logits)
             } else {
@@ -413,7 +413,7 @@ impl<B: Backend> Weaver<B> {
                 candidates_per_node: inputs.candidates.candidates_per_depth,
                 depth_seeds: &depth_seeds,
             };
-            let selected_children = self.encode_node_expansion(
+            let top_children = self.encode_node_expansion(
                 &prefix_cache,
                 &nodes,
                 &candidates,
@@ -422,12 +422,12 @@ impl<B: Backend> Weaver<B> {
                 inputs.target_embedding,
                 encoder,
             )?;
-            self.frontier_scatter.encode(
+            self.frontier_insert_children.encode(
                 &packed_tree,
                 &node_metadata,
                 &node_valid,
-                &selected_children.token_ids,
-                &selected_children.logprobs,
+                &top_children.token_ids,
+                &top_children.logprobs,
                 &mut frontier,
                 frontier_capacity as u32,
                 tree_slot_count as u32,
@@ -497,13 +497,12 @@ impl<B: Backend> Weaver<B> {
     fn create_node_expansion_kv_cache(
         &self,
         capacity: usize,
-        context: &B::Context,
+        encoder: &mut Encoder<B>,
     ) -> Result<NodeExpansionKvCache<B>, B::Error> {
         assert!(capacity > 0, "Weaver node capacity must be positive");
         let kv_size = size_for_shape(&[2, capacity, self.model_dim], DATA_TYPE);
-        let layers = (0..self.layers.len())
-            .map(|_| context.create_allocation(kv_size, AllocationType::Global))
-            .collect::<Result<Box<[_]>, _>>()?;
+        let layers =
+            (0..self.layers.len()).map(|_| encoder.allocate_scratch(kv_size)).collect::<Result<Box<[_]>, _>>()?;
         Ok(NodeExpansionKvCache {
             layers,
             capacity: capacity as u32,
@@ -711,8 +710,6 @@ impl<B: Backend> WeaverLayer<B> {
         let ancestor_attention =
             <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim as u32, num_heads as u32)
                 .map_err(WeaverNewError::Backend)?;
-        let node_cache_write = <B::Kernels as Kernels>::WeaverNodeCacheWriteKernel::new(context, DATA_TYPE)
-            .map_err(WeaverNewError::Backend)?;
         Ok(Self {
             qkv_projection,
             out_projection,
@@ -724,7 +721,6 @@ impl<B: Backend> WeaverLayer<B> {
             down_projection,
             activation,
             ancestor_attention,
-            node_cache_write,
             attention_scale,
             model_dim,
             hidden_dim,
@@ -780,9 +776,7 @@ impl<B: Backend> WeaverLayer<B> {
         let mut queries =
             encoder.allocate_scratch(size_for_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE))?;
         let kv_plane_bytes = size_for_shape(&[token_count, self.model_dim], DATA_TYPE);
-        let mut kv_cache = encoder
-            .context()
-            .create_allocation(size_for_shape(&[2, token_count, self.model_dim], DATA_TYPE), AllocationType::Global)?;
+        let mut kv_cache = encoder.allocate_scratch(size_for_shape(&[2, token_count, self.model_dim], DATA_TYPE))?;
         let (keys, values) = kv_cache.as_buffer_range_mut().split_at(kv_plane_bytes);
         self.attention_prepare.encode(
             &qkv,
@@ -826,27 +820,17 @@ impl<B: Backend> WeaverLayer<B> {
             encoder.allocate_scratch(size_for_shape(&[nodes.count, self.model_dim], DATA_TYPE))?;
         self.ancestor_attention.encode(
             prefix_kv,
-            &*node_kv_cache,
+            node_kv_cache,
             &current_qkv,
             nodes.ancestor_indices,
             ancestor_counts,
+            tree_slot_indices,
             &mut attention_output,
             nodes.count as u32,
             prefix_length as u32,
             nodes.ancestor_stride as u32,
             node_capacity,
             self.attention_scale,
-            encoder,
-        );
-        // Separate dispatch so the node arena is read-only above; the encoder
-        // serializes it after the attention that reads the ancestor slots.
-        self.node_cache_write.encode(
-            &current_qkv,
-            node_kv_cache,
-            tree_slot_indices,
-            self.model_dim as u32,
-            node_capacity,
-            (nodes.count * 2 * self.model_dim) as u32,
             encoder,
         );
         self.encode_post_attention(attention_output, residual_state, nodes.count, encoder)

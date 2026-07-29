@@ -186,7 +186,6 @@ impl<B: Backend> DFlashSpeculator<B> {
                     frontier_width: options.frontier_width,
                     children_per_node: options.children_per_node,
                 },
-                &self.context,
                 &mut encoder,
             )?;
             let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;

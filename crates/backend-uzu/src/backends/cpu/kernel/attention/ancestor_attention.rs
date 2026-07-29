@@ -7,10 +7,11 @@ use super::attention_single_pass::attention_single_pass;
 #[variants(HEAD_DIM, 128)]
 fn ancestor_attention<const HEAD_DIM: u32>(
     prefix_kv: *const bf16,
-    node_kv: *const bf16,
+    node_kv: *mut bf16,
     current_qkv: *const bf16,
     ancestor_indices: *const u32,
     ancestor_counts: *const u32,
+    node_indices: *const u32,
     output: *mut bf16,
     rows: u32,
     prefix_length: u32,
@@ -91,6 +92,19 @@ fn ancestor_attention<const HEAD_DIM: u32>(
                 false,
                 false,
             );
+            if node_capacity > 0 {
+                let node = (*node_indices.add(row) as usize).min(last_node);
+                std::ptr::copy_nonoverlapping(
+                    current_row.add(KEY_COMPONENT * model_dim),
+                    node_kv.add(node * model_dim),
+                    model_dim,
+                );
+                std::ptr::copy_nonoverlapping(
+                    current_row.add(VALUE_COMPONENT * model_dim),
+                    node_kv.add(node_capacity * model_dim + node * model_dim),
+                    model_dim,
+                );
+            }
         }
     }
 }
