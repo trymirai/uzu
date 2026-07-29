@@ -1,6 +1,18 @@
 use crate::backends::common::{
-    Allocation, Backend, Encoder, Kernels, gpu_types::ActivationTransformOp, kernel::ActivationTransformKernel,
+    Allocation, Backend, Encoder, Kernels,
+    gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
+    kernel::ActivationTransformKernel,
 };
+
+/// Every backend transforms one 32-element Hadamard block per SIMD group, and the
+/// quantized path derives its group index from `element_count / 32`. A row width that
+/// is not a multiple of the block size would desync that index and run off the row.
+fn assert_row_width(element_count: u32) {
+    assert!(
+        (element_count as usize).is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE),
+        "activation transform requires element_count ({element_count}) to be a multiple of {HADAMARD_TRANSFORM_BLOCK_SIZE}"
+    );
+}
 
 pub struct ActivationTransform<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationTransformKernel,
@@ -60,6 +72,7 @@ impl<B: Backend> ActivationTransform<B> {
         encoder: &mut Encoder<B>,
     ) {
         assert!(!self.ops.contains(ActivationTransformOp::QUANTIZE));
+        assert_row_width(element_count);
         self.kernel.encode(
             input,
             Some(output),
@@ -86,6 +99,7 @@ impl<B: Backend> ActivationTransform<B> {
         encoder: &mut Encoder<B>,
     ) {
         assert!(self.ops.contains(ActivationTransformOp::QUANTIZE));
+        assert_row_width(element_count);
         self.kernel.encode(
             input,
             None::<&mut Allocation<B>>,
