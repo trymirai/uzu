@@ -50,15 +50,7 @@ struct BSource {
           k_slice
       );
     } else {
-      QuantizedBSource<
-          BT,
-          AT,
-          U,
-          B_PROLOGUE,
-          GROUP_SIZE,
-          BITS,
-          RESULTS_PER_SIMDGROUP,
-          INPUT_ALIGNED>::accumulate(
+      QuantizedBSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED>::accumulate(
           result,
           b,
           scales,

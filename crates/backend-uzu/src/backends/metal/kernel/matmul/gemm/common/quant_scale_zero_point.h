@@ -146,13 +146,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       for (int i = 0; i < READS_PER_THREAD; i++) {
         int pack_index = tile_col_index + i;
         if (pack_index < valid_packs) {
-          dequantize<T, pack_factor, BITS>(
-              src + i * bytes_per_pack,
-              scale,
-              bias,
-              dst + i * pack_factor,
-              signed_codes
-          );
+          dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, signed_codes);
 
           if (pack_index == valid_packs - 1) {
             int remaining = valid_cols - pack_index * pack_factor;

@@ -86,16 +86,7 @@ KERNEL(Gemv)(
       OutputTile<K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::make(out_block_idx, simd_group, out_vec_size);
   d += batch_idx * out_vec_size + tile.out_row;
 
-  BSource<
-      BT,
-      AT,
-      U,
-      B_PROLOGUE,
-      GROUP_SIZE,
-      BITS,
-      K_SPLIT,
-      RESULTS_PER_SIMDGROUP,
-      INPUT_ALIGNED>::accumulate(
+  BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED>::accumulate(
       result,
       b,
       scales,

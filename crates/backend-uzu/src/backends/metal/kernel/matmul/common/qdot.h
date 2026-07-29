@@ -48,8 +48,7 @@ METAL_FUNC U load_vector_safe(const device T* x, thread U* x_thread, int N) {
 }
 
 template <typename U, int VALUES_PER_THREAD, int BITS>
-METAL_FUNC U
-qdot(const device uint8_t* w, const thread U* x_thread, U scale, U bias, U sum, const bool signed_codes) {
+METAL_FUNC U qdot(const device uint8_t* w, const thread U* x_thread, U scale, U bias, U sum, const bool signed_codes) {
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 supported");
 
   U accumulator = 0;
@@ -82,8 +81,7 @@ qdot(const device uint8_t* w, const thread U* x_thread, U scale, U bias, U sum, 
       for (int i = 0; i < (VALUES_PER_THREAD / 4); i++) {
         // Keep each byte in place. Lane k is b_k * 256^k, while the
         // matching activation lane was pre-divided by 256^k.
-        const uint4 lanes =
-            uint4(weight_words[i]) & uint4(0x000000ffu, 0x0000ff00u, 0x00ff0000u, 0xff000000u);
+        const uint4 lanes = uint4(weight_words[i]) & uint4(0x000000ffu, 0x0000ff00u, 0x00ff0000u, 0xff000000u);
         accumulator += dot(x_vec4[i], U4(float4(lanes)));
       }
     }
@@ -94,15 +92,7 @@ qdot(const device uint8_t* w, const thread U* x_thread, U scale, U bias, U sum, 
 
 template <typename U, int VALUES_PER_THREAD, int BITS>
 METAL_FUNC U
-qdot_safe(
-    const device uint8_t* w,
-    const thread U* x_thread,
-    U scale,
-    U bias,
-    U sum,
-    int N,
-    const bool signed_codes
-) {
+qdot_safe(const device uint8_t* w, const thread U* x_thread, U scale, U bias, U sum, int N, const bool signed_codes) {
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 supported");
 
   U accumulator = 0;
