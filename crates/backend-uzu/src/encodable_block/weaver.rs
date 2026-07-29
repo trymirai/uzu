@@ -395,6 +395,9 @@ impl<B: Backend> Weaver<B> {
                     encoder,
                 );
             }
+            if batch_start_slot + batch_node_count == tree_slot_count {
+                break; // packed-tree slots filled
+            }
             let (batch_candidate_ids, batch_candidate_logits) = if batch_start_slot == 0 {
                 (inputs.candidates.ids, inputs.candidates.logits)
             } else {
@@ -413,7 +416,7 @@ impl<B: Backend> Weaver<B> {
                 candidates_per_node: inputs.candidates.candidates_per_depth,
                 depth_seeds: &depth_seeds,
             };
-            let selected_children = self.encode_node_expansion(
+            let top_children = self.encode_node_expansion(
                 &prefix_cache,
                 &nodes,
                 &candidates,
@@ -426,8 +429,8 @@ impl<B: Backend> Weaver<B> {
                 &packed_tree,
                 &node_metadata,
                 &node_valid,
-                &selected_children.token_ids,
-                &selected_children.logprobs,
+                &top_children.token_ids,
+                &top_children.logprobs,
                 &mut frontier,
                 frontier_capacity as u32,
                 tree_slot_count as u32,
