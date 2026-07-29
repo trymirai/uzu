@@ -1,6 +1,6 @@
 use anyhow::{Context, bail};
 use quote::quote;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::common::{
     expr_rewrite::rewrite_paths_with,
@@ -121,25 +121,25 @@ fn annotation_from_ast_node(annotation_node: MetalAstNode) -> anyhow::Result<Box
         .collect()
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy)]
 pub enum MetalBufferAccess {
     Read,
     ReadWrite,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MetalConstantType {
     Scalar,
     Array(Option<Box<str>>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MetalGroupsType {
     Direct(Box<str>),
     Indirect,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MetalArgumentType {
     Buffer(MetalBufferAccess),
     Constant((Box<str>, MetalConstantType)),
@@ -151,13 +151,12 @@ pub enum MetalArgumentType {
     ThreadContext,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct MetalArgument {
     pub name: ArgumentName,
     pub c_type: Box<str>,
     pub argument_type: MetalArgumentType,
     pub condition: Option<Box<str>>,
-    pub source: Box<str>,
 }
 
 pub fn shared_element_type(c_type: &str) -> &str {
@@ -254,7 +253,6 @@ impl MetalArgument {
             c_type,
             argument_type,
             condition,
-            source,
         })
     }
 
@@ -396,13 +394,13 @@ fn parse_argument_type(
     bail!("cannot parse c type: {}", c_type);
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub enum MetalTemplateParameterType {
     Type,
     Value(Box<str>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct MetalTemplateParameter {
     pub name: Box<str>,
     pub ty: MetalTemplateParameterType,
@@ -421,7 +419,7 @@ impl MetalTemplateParameter {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct MetalKernelInfo {
     pub public: bool,
     pub name: KernelName,

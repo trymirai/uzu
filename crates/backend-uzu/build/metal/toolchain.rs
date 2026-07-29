@@ -102,18 +102,21 @@ impl MetalToolchain {
         let sdk = MetalSdk::from_env().context("cannot get sdk")?;
         let std = MetalStd::Metal4_0;
 
-        let opt_flags = match env::var("OPT_LEVEL").context("missing OPT_LEVEL")?.as_str() {
-            "0" => {
-                [
-                    OsString::from("-O1"), // matmul kernels compiled with -O0 are broken and require a reboot to unfreeze the os
-                    OsString::from("-gline-tables-only"), // debug with line tables only
-                    OsString::from("-frecord-sources"), // include source code
-                ]
-                .into()
-            },
-            "1" => [OsString::from("-O1")].into(),
-            _ => [OsString::from("-O2")].into(), // treat levels 2,3,s,z as O2 for metal
+        let opt_level_flags = match env::var("OPT_LEVEL").context("missing OPT_LEVEL")?.as_str() {
+            "0" => vec![OsString::from("-O1")], // matmul kernels compiled with -O0 are broken and require a reboot to unfreeze the os
+            _ => vec![OsString::from("-O2")],   // treat levels everything else (1,2,3,s,z) as O2 for metal
         };
+
+        let debug_flags = match env::var("DEBUG").context("missing DEBUG")?.as_str() {
+            "false" => vec![],
+            "true" => vec![
+                OsString::from("-gline-tables-only"), // debug with line tables only
+                OsString::from("-frecord-sources"),   // include source code
+            ],
+            debug => bail!("Unknown DEBUG value {debug}"),
+        };
+
+        let opt_flags = [opt_level_flags, debug_flags].concat().into_boxed_slice();
 
         let extra_options = Box::new([OsString::from(format!("-m{}-version-min={}", sdk.os(), std.min_os()))]);
 
@@ -263,13 +266,13 @@ impl MetalToolchain {
 
     pub async fn link(
         &self,
-        objects: impl IntoIterator<Item = impl AsRef<Path>>,
+        object: impl AsRef<Path>,
         output: impl AsRef<Path>,
     ) -> anyhow::Result<Option<Box<str>>> {
         let link_output = self
             .xcrun()
             .arg("metallib")
-            .args(objects.into_iter().map(|p| p.as_ref().as_os_str().to_owned()))
+            .arg(object.as_ref())
             .arg("-o")
             .arg(output.as_ref())
             .output()

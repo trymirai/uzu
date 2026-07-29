@@ -78,6 +78,7 @@ objc2-core-foundation = "0.3.2"
 objc2-io-kit = { version = "0.3.2", default-features = false, features = ["libc", "ps"] }
 objc2-security = "0.3.2"
 obfstr = "0.4.4"
+zstd = "0.13.3"
 metal = { package = "mtl-rs", version = "0.1.14" }
 block2 = "0.6"
 bytemuck = "1.23"
@@ -229,8 +230,14 @@ forward-cfgs = ["backend", "grammar"]
 uzu_test = "dinghy_apple_runner_macros::test_case"
 uzu_bench = "dinghy_apple_runner_macros::bench_case"
 
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.dev.build-override]
-opt-level = 3
+opt-level = 2
 
 [profile.release]
 lto = "thin"

@@ -39,7 +39,7 @@ impl<B: Backend> LanguageModel<B> {
 
         let transformer_state = self
             .decoder
-            .create_empty_state(max_context_length, &self.context)
+            .create_empty_state(max_context_length, &self.engine.context)
             .map_err(LanguageModelCreateEmptyStateError::Backend)?;
 
         let speculator_state = self
