@@ -28,6 +28,7 @@ struct Runner<B: Backend> {
     current_qkv: Allocation<B>,
     ancestor_indices: Allocation<B>,
     ancestor_counts: Allocation<B>,
+    node_indices: Allocation<B>,
     output: Allocation<B>,
     rows: u32,
     prefix_length: u32,
@@ -52,6 +53,7 @@ impl<B: Backend> Runner<B> {
                 .collect::<Vec<_>>()
         };
         let first_output_node = nodes - rows;
+        let node_indices = (first_output_node..nodes).map(|node| node as u32).collect::<Vec<_>>();
         let ancestor_counts = (0..rows).map(|row| (row % (ancestor_stride + 1)) as u32).collect::<Vec<_>>();
         let mut ancestor_indices = vec![0; rows * ancestor_stride];
         for row in 0..rows {
@@ -71,6 +73,7 @@ impl<B: Backend> Runner<B> {
             current_qkv: alloc_allocation_with_data::<B, bf16>(&context, &values(rows * qkv_width, 29)),
             ancestor_indices: alloc_allocation_with_data::<B, u32>(&context, &ancestor_indices),
             ancestor_counts: alloc_allocation_with_data::<B, u32>(&context, &ancestor_counts),
+            node_indices: alloc_allocation_with_data::<B, u32>(&context, &node_indices),
             output: alloc_allocation::<B, bf16>(&context, rows * NUM_HEADS as usize * HEAD_DIM),
             context,
             kernel,
@@ -89,10 +92,11 @@ impl<B: Backend> Runner<B> {
         for _ in 0..repetitions {
             self.kernel.encode(
                 &self.prefix_kv,
-                &self.node_kv,
+                &mut self.node_kv,
                 &self.current_qkv,
                 &self.ancestor_indices,
                 &self.ancestor_counts,
+                &self.node_indices,
                 &mut self.output,
                 self.rows,
                 self.prefix_length,
@@ -109,18 +113,17 @@ impl<B: Backend> Runner<B> {
 #[uzu_test]
 fn ancestor_attention_matches_cpu() {
     let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16);
-    let initial_nodes = allocation_to_vec::<Cpu, bf16>(&cpu.node_kv);
     cpu.encode(1);
     let expected_output = allocation_to_vec::<Cpu, bf16>(&cpu.output);
-
-    assert_eq!(allocation_to_vec::<Cpu, bf16>(&cpu.node_kv), initial_nodes);
+    let expected_node_kv = allocation_to_vec::<Cpu, bf16>(&cpu.node_kv);
 
     let mut metal = Runner::<Metal>::new(4, 5, 3, 16);
     metal.encode(1);
     let actual_output = allocation_to_vec::<Metal, bf16>(&metal.output);
+    let actual_node_kv = allocation_to_vec::<Metal, bf16>(&metal.node_kv);
 
     assert_eq_float(&expected_output, &actual_output, 0.02, "AncestorAttention output");
-    assert_eq!(allocation_to_vec::<Metal, bf16>(&metal.node_kv), initial_nodes);
+    assert_eq!(actual_node_kv, expected_node_kv);
 }
 
 #[uzu_test]
