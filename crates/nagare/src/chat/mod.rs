@@ -573,7 +573,11 @@ impl ChatSession {
         let cancel_token = cancel_token_to_return.inner().clone();
         let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
         let session = self.clone();
-        tokio::spawn(async move { session.execute_turn(sender, input, config, cancel_token).await });
+        let turn = async move { session.execute_turn(sender, input, config, cancel_token).await };
+        #[cfg(feature = "bindings-pyo3")]
+        bindings_pyo3::spawn_with_current_task_locals(turn);
+        #[cfg(not(feature = "bindings-pyo3"))]
+        tokio::spawn(turn);
         ChatSessionStream {
             receiver: Arc::new(Mutex::new(receiver)),
             cancel_token: cancel_token_to_return,

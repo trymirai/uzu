@@ -37,8 +37,7 @@ impl ChatSession {
         )]
         tool: Py<PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let task_locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
-        let descriptor = descriptor_from_python(py, tool, task_locals)?;
+        let descriptor = descriptor_from_python(py, tool)?;
         let mut session = self.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(
@@ -65,11 +64,8 @@ impl ChatSession {
         )]
         tools: Vec<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let task_locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
-        let descriptors = tools
-            .into_iter()
-            .map(|tool| descriptor_from_python(py, tool, task_locals.clone()))
-            .collect::<PyResult<Vec<_>>>()?;
+        let descriptors =
+            tools.into_iter().map(|tool| descriptor_from_python(py, tool)).collect::<PyResult<Vec<_>>>()?;
         let mut session = self.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -81,7 +77,6 @@ impl ChatSession {
 fn descriptor_from_python(
     py: Python<'_>,
     tool: Py<PyAny>,
-    task_locals: pyo3_async_runtimes::TaskLocals,
 ) -> PyResult<ToolDescriptor> {
     let tool_function: ToolFunction = tool.bind(py).call_method0("_native_definition")?.extract()?;
     let tool = Arc::new(tool);
@@ -92,15 +87,13 @@ fn descriptor_from_python(
         tool_function.return_definition,
         Box::new(move |arguments| {
             let tool = Arc::clone(&tool);
-            let task_locals = task_locals.clone();
-            Box::new(call_python_tool(tool, task_locals, arguments))
+            Box::new(call_python_tool(tool, arguments))
         }),
     ))
 }
 
 async fn call_python_tool(
     tool: Arc<Py<PyAny>>,
-    task_locals: pyo3_async_runtimes::TaskLocals,
     arguments: Value,
 ) -> Result<Value, ErrorFuture> {
     let call = Python::attach(|py| -> PyResult<PythonCall> {
@@ -111,6 +104,8 @@ async fn call_python_tool(
 
         let inspect = pyo3::types::PyModule::import(py, "inspect")?;
         if inspect.call_method1("isawaitable", (&result,))?.is_truthy()? {
+            // The turn task carries the locals captured by the Python reply invocation.
+            let task_locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
             let future = pyo3_async_runtimes::into_future_with_locals(&task_locals, result)?;
             Ok(PythonCall::Awaitable(Box::pin(future)))
         } else {
@@ -133,4 +128,17 @@ async fn call_python_tool(
 
 fn python_error(error: PyErr) -> ErrorFuture {
     error.to_string().into()
+}
+
+pub(super) fn spawn_with_current_task_locals<F>(future: F) -> tokio::task::JoinHandle<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    // `future_into_py` scopes the exported reply future with its Python loop and
+    // context. Preserve that scope when the core session detaches the turn.
+    let task_locals = Python::try_attach(|py| pyo3_async_runtimes::tokio::get_current_locals(py).ok()).flatten();
+    match task_locals {
+        Some(task_locals) => tokio::spawn(pyo3_async_runtimes::tokio::scope(task_locals, future)),
+        None => tokio::spawn(future),
+    }
 }
