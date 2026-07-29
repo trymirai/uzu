@@ -46,6 +46,16 @@ class AliasedResult(BaseModel):
     value: int = Field(serialization_alias="answer")
 
 
+class Cat(BaseModel):
+    kind: Literal["cat"]
+    lives: Annotated[int, "Lives remaining."]
+
+
+class Dog(BaseModel):
+    kind: Literal["dog"]
+    tricks: Annotated[list[str], "Tricks the dog knows."]
+
+
 @uzu_tool_function
 def get_forecast(
     request: Annotated[ForecastRequest, "Request supplied to the forecast service."],
@@ -97,6 +107,11 @@ def get_aliased_result() -> AliasedResult:
     return AliasedResult(value=1)
 
 
+@uzu_tool_function
+def describe_pet(pet: Annotated[Cat | Dog, Field(discriminator="kind")]) -> str:
+    return pet.kind
+
+
 def _resolve_reference(
     root: dict[str, object],
     schema: dict[str, object],
@@ -138,6 +153,17 @@ def test_decorator_builds_schema_from_function_and_pydantic_metadata() -> None:
     assert properties["note"]["description"] == "Required nullable note."
     assert properties["unit"]["description"] == "Temperature unit."
     assert properties["unit"]["default"] == "celsius"
+
+
+def test_discriminated_union_schema_includes_annotated_field_descriptions() -> None:
+    parameters = describe_pet.parameters_schema
+    assert parameters is not None
+
+    pet = parameters["properties"]["pet"]
+    assert "oneOf" in pet
+    cat, dog = (_resolve_reference(parameters, branch) for branch in pet["oneOf"])
+    assert cat["properties"]["lives"]["description"] == "Lives remaining."
+    assert dog["properties"]["tricks"]["description"] == "Tricks the dog knows."
 
 
 def test_pydantic_return_schema_uses_docstrings_and_field_metadata() -> None:

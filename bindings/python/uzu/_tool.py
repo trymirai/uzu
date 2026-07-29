@@ -249,6 +249,8 @@ def _apply_annotated_descriptions(  # noqa: PLR0911
 
     if origin in {typing.Union, types.UnionType}:
         branches = schema.get("anyOf")
+        if not isinstance(branches, list):
+            branches = schema.get("oneOf")
         if isinstance(branches, list):
             for member, branch in zip(arguments, branches, strict=False):
                 if isinstance(branch, dict):
