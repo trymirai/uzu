@@ -188,12 +188,14 @@ fn encode_step(
             matmul.gemm.encode_dispatch_path(args, GemmDispatchPath::Mxu, encoder).expect("a8 gemm mxu encode");
         },
         BenchPath::Bf16GemmMxu => {
-            hadamard.encode_fp(&data.activations, &mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
+            encoder.encode_copy(&data.activations, .., &mut data.a_working, ..);
+            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
             let args = data.bf16_arguments(output);
             matmul.gemm.encode_dispatch_path(args, GemmDispatchPath::Mxu, encoder).expect("bf16 gemm mxu encode");
         },
         BenchPath::Bf16Gemv => {
-            hadamard.encode_fp(&data.activations, &mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
+            encoder.encode_copy(&data.activations, .., &mut data.a_working, ..);
+            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
             let args = data.bf16_arguments(output);
             let spec = GemvSpecialization::select_shape(
                 &MatmulShape::from_arguments(&args),
@@ -278,7 +280,7 @@ fn bench_a8w(c: &mut Criterion) {
     let device_tier = context.device_tier();
 
     let prepare = ActivationTransform::<Metal>::quantize(&context, DataType::BF16, false).expect("prepare kernel");
-    let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, false).expect("hadamard kernel");
+    let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, true).expect("hadamard kernel");
 
     for bits in [8u32, 4u32] {
         bench_bits(c, &context, device_tier, &prepare, &hadamard, bits);
