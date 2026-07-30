@@ -545,25 +545,7 @@ fn signed_weights_full_precision_activations_parity_bf16(
     let reference = run_quant_cpu::<bf16>(&reference_input);
 
     for (label, path) in [("gemv", None), ("simdgroup", Some(GemmDispatchPath::Simdgroup))] {
-        let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-        let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
-            &context,
-            bf16::data_type(),
-            bf16::data_type(),
-            bf16::data_type(),
-        )
-        .expect("MatmulMetalKernel");
-        let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
-        let args = quant_arguments(&mut buffers, &input);
-        match path {
-            None => matmul.encode(args, &mut encoder).expect("matmul encode failed"),
-            Some(gemm_path) => matmul
-                .gemm
-                .encode_dispatch_path(args, gemm_path, &mut encoder)
-                .expect("gemm encode_dispatch_path failed"),
-        }
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
-        let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
+        let actual = run_quant_metal::<bf16>(&context, &input, path);
         assert_parity::<bf16>(
             &format!("signed weights FP-A {label} bits={bits} method={method:?}"),
             &reference,
