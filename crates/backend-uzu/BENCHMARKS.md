@@ -35,7 +35,6 @@ target is `--lib`.
 | `Metal/Kernel/A8W/w4`, `.../w8`         | `Metal/Kernel/A8W`                  |
 | `Metal/Kernel/UnifiedQuantizedGemm/...` | `Metal/Kernel/UnifiedQuantizedGemm` |
 | `Metal/Kernel/Gemv/...`                 | `Metal/Kernel/Gemv`                 |
-| `Metal/Kernel/SignedWeightGemv/...`     | `Metal/Kernel/SignedWeightGemv`     |
 | `Metal/Kernel/Qwen3Layers/...`          | `Metal/Kernel/Qwen3Layers`          |
 | `Metal/Kernel/RMSNorm`                  | `Metal/Kernel/RMSNorm`              |
 | `Metal/Kernel/Sampling/Argmax`          | `Metal/Kernel/Sampling/Argmax`      |
