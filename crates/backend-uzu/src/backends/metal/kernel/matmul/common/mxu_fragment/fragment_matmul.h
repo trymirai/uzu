@@ -1,5 +1,5 @@
 template <
-    MatmulMode MODE,
+    bool ACCUMULATE,
     bool transpose_a,
     bool transpose_b,
     class OutputFragment,
@@ -32,11 +32,10 @@ METAL_FUNC static void fragment_matmul(
   constexpr bool pair_output_rows = (cols == 1 && rows % 2 == 0);
 
   auto matmul_paired_outputs = [&](ushort row, ushort col, ushort depth_index, auto use_multiply_accumulate) {
-    constexpr auto matmul_mode =
-        decltype(use_multiply_accumulate)::value ? MatmulMode::multiply_accumulate : MatmulMode::multiply;
+    constexpr bool matmul_accumulate = decltype(use_multiply_accumulate)::value;
     if constexpr (pair_output_rows) {
       matmul<
-          matmul_mode,
+          matmul_accumulate,
           typename OutputFragment::ElementType,
           typename LeftFragment::ElementType,
           typename RightFragment::ElementType,
@@ -52,7 +51,7 @@ METAL_FUNC static void fragment_matmul(
       );
     } else {
       matmul<
-          matmul_mode,
+          matmul_accumulate,
           typename OutputFragment::ElementType,
           typename LeftFragment::ElementType,
           typename RightFragment::ElementType,
@@ -77,11 +76,11 @@ METAL_FUNC static void fragment_matmul(
   for (ushort row = 0; row < rows; row += output_row_step) {
     METAL_PRAGMA_UNROLL
     for (ushort col = 0; col < output_col_count; col += output_col_step) {
-      if constexpr (MODE == MatmulMode::multiply) {
+      if constexpr (!ACCUMULATE) {
         matmul_paired_outputs(row, col, 0, metal::bool_constant<false>{});
       }
       METAL_PRAGMA_UNROLL
-      for (ushort depth_index = MODE == MatmulMode::multiply_accumulate ? 0 : 1; depth_index < depth; ++depth_index) {
+      for (ushort depth_index = ACCUMULATE ? 0 : 1; depth_index < depth; ++depth_index) {
         matmul_paired_outputs(row, col, depth_index, metal::bool_constant<true>{});
       }
     }
@@ -94,7 +93,7 @@ METAL_FUNC static void fragment_mma(
     thread LeftFragment& left,
     thread RightFragment& right
 ) {
-  fragment_matmul<MatmulMode::multiply_accumulate, transpose_a, transpose_b>(output, left, right);
+  fragment_matmul<true, transpose_a, transpose_b>(output, left, right);
 }
 
 template <bool transpose_a, bool transpose_b, class OutputFragment, class LeftFragment, class RightFragment>
@@ -104,5 +103,5 @@ METAL_FUNC static void fragment_mm(
     thread RightFragment& right
 ) {
   // MXU relaxed multiply is slightly faster than multiply_accumulate for pure matmul.
-  fragment_matmul<MatmulMode::multiply, transpose_a, transpose_b>(output, left, right);
+  fragment_matmul<false, transpose_a, transpose_b>(output, left, right);
 }
