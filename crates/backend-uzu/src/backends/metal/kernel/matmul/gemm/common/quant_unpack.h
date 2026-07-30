@@ -83,13 +83,21 @@ inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* 
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   if constexpr (bits == 4) {
-    const uint8_t sign_flip_mask = signed_codes ? 0x88u : 0u;
     U s0 = scale;
     U s1 = scale / static_cast<U>(16.0f);
-    for (int i = 0; i < (N / 2); i++) {
-      const uint8_t word = w[i] ^ uint8_t(sign_flip_mask);
-      w_local[2 * i] = s0 * (word & 0x0f) + bias;
-      w_local[2 * i + 1] = s1 * (word & 0xf0) + bias;
+    // Keep the mask a literal in each arm; a value derived from the function
+    // constant inside the loop defeats vectorization of the unpack.
+    if (signed_codes) {
+      for (int i = 0; i < (N / 2); i++) {
+        const uint8_t word = w[i] ^ uint8_t(0x88u);
+        w_local[2 * i] = s0 * (word & 0x0f) + bias;
+        w_local[2 * i + 1] = s1 * (word & 0xf0) + bias;
+      }
+    } else {
+      for (int i = 0; i < (N / 2); i++) {
+        w_local[2 * i] = s0 * (w[i] & 0x0f) + bias;
+        w_local[2 * i + 1] = s1 * (w[i] & 0xf0) + bias;
+      }
     }
   } else if constexpr (bits == 8) {
     if (signed_codes) {
@@ -104,29 +112,6 @@ inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* 
       }
     }
   }
-}
-
-template <>
-inline void dequantize<bfloat, 8, 4>(
-    const device uint8_t* w,
-    bfloat scale,
-    bfloat bias,
-    threadgroup bfloat* w_local,
-    const bool signed_codes
-) {
-  const uint32_t packed_mask = signed_codes ? 0x88888888u : 0u;
-  const uint32_t packed = (*reinterpret_cast<const device uint32_t*>(w)) ^ packed_mask;
-  const bfloat4 lo = bfloat4(as_type<uchar4>(packed & 0x0f0f0f0fu)) * scale + bias;
-  const bfloat4 hi = bfloat4(as_type<uchar4>(packed & 0xf0f0f0f0u)) * (scale * bfloat(0.0625f)) + bias;
-
-  w_local[0] = lo.x;
-  w_local[1] = hi.x;
-  w_local[2] = lo.y;
-  w_local[3] = hi.y;
-  w_local[4] = lo.z;
-  w_local[5] = hi.z;
-  w_local[6] = lo.w;
-  w_local[7] = hi.w;
 }
 
 } // namespace gemm
