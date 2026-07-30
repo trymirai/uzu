@@ -2,9 +2,7 @@ use half::bf16;
 use num_traits::{Float, NumCast};
 use proc_macros::kernel;
 
-use super::{
-    super::hadamard_transform::hadamard_transform::hadamard_transform, min_max_symmetric_divisor, quantize_symmetric_i8,
-};
+use super::{hadamard_transform, min_max_symmetric_divisor, quantize_symmetric_i8};
 use crate::{
     array::ArrayElement,
     backends::common::gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
