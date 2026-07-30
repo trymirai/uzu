@@ -1,3 +1,5 @@
+#[cfg(feature = "bindings-napi")]
+mod bindings_napi;
 #[cfg(feature = "bindings-pyo3")]
 mod bindings_pyo3;
 mod error;
