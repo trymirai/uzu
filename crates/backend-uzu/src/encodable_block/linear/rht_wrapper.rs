@@ -158,7 +158,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             Some(output_factors),
         )?;
         if quantize_transform.is_some() {
-            inner_linear.to_signed_weight_codes();
+            inner_linear.make_weight_codes_signed();
         }
 
         Ok(Self {

@@ -211,7 +211,7 @@ fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
-    pub(super) fn to_signed_weight_codes(&mut self) {
+    pub(super) fn make_weight_codes_signed(&mut self) {
         let Mode::Quantized {
             mode,
             signed_codes,
