@@ -139,10 +139,14 @@ impl GemmKernel {
         )
     }
 
+    /// Int8 activations always have an MXU tiling, so callers short-circuit before asking.
     fn mxu_tiling_for(
         &self,
         shape: &MatmulShape,
     ) -> Option<GemmTiling> {
+        if !shape.a_full_precision {
+            return None;
+        }
         if ![self.weights_data_type, self.input_data_type, self.output_data_type]
             .into_iter()
             .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32))
