@@ -1,3 +1,5 @@
+#[cfg(feature = "bindings-napi")]
+mod bindings_napi;
 mod error;
 pub mod message;
 pub mod token;
