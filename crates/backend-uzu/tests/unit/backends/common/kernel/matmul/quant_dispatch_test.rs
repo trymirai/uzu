@@ -26,7 +26,7 @@ use crate::{
     },
     tests::{
         helpers::allocation_to_vec,
-        matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, run_quant_metal},
+        matmul::{QuantBuffers, QuantInput, quant_arguments, quant_b_variant, run_quant_cpu, run_quant_metal},
     },
 };
 
@@ -678,41 +678,13 @@ fn run_widened_f32<B: Backend>(
     context: &B::Context,
     input: &QuantInput<bf16>,
 ) -> Vec<f32> {
-    use crate::{
-        backends::common::kernel::matmul::{MatmulA, MatmulB},
-        data_type::DataType,
-        tests::helpers::alloc_allocation,
-    };
+    use crate::{backends::common::kernel::matmul::MatmulA, data_type::DataType, tests::helpers::alloc_allocation};
     let buffers = QuantBuffers::<B, bf16>::allocate(context, input);
     let mut y = alloc_allocation::<B, f32>(context, (input.m as usize) * (input.n as usize));
     let mut matmul =
         <<B as Backend>::Kernels as Kernels>::MatmulKernel::new(context, DataType::BF16, DataType::BF16, DataType::F32)
             .expect("MatmulKernel widened");
-    let b: MatmulB<'_, B> = match input.quant_method {
-        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
-            b: &buffers.w,
-            scales: &buffers.scales,
-            biases: buffers.bias.as_ref().expect("bias buffer"),
-            mode: input.mode,
-            group_size: input.group_size,
-            signed_codes: input.prepared_a.is_some(),
-        },
-        QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
-            b: &buffers.w,
-            scales: &buffers.scales,
-            zero_points: buffers.zp.as_ref().expect("zp buffer"),
-            mode: input.mode,
-            group_size: input.group_size,
-            signed_codes: input.prepared_a.is_some(),
-        },
-        QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
-            b: &buffers.w,
-            scales: &buffers.scales,
-            mode: input.mode,
-            group_size: input.group_size,
-            signed_codes: input.prepared_a.is_some(),
-        },
-    };
+    let b = quant_b_variant(&buffers.w, &buffers.scales, buffers.zp.as_ref(), buffers.bias.as_ref(), input);
     let mut encoder = Encoder::<B>::new(context).expect("encoder");
     matmul
         .encode(

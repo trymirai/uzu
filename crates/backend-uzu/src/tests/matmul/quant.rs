@@ -206,7 +206,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
     }
 }
 
-fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
+pub fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
     w: &'a Allocation<B>,
     scales: &'a Allocation<B>,
     zero_points: Option<&'a Allocation<B>>,
