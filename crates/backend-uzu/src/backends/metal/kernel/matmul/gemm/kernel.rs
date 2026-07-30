@@ -52,7 +52,7 @@ impl GemmKernel {
         output_data_type: DataType,
     ) -> Result<Self, MetalError> {
         let bias_add = TensorAddBiasMetalKernel::new(context, output_data_type, weights_data_type, true, false)?;
-        let output_rht = ActivationTransform::output_rht(context, output_data_type)?;
+        let output_rht = ActivationTransform::output_rht(context, output_data_type, true)?;
         let kernel = Self {
             weights_data_type,
             input_data_type,
@@ -670,9 +670,7 @@ impl GemmKernel {
         if output_transform.contains(GemmDTransform::RHT)
             && let Some(factors) = rht_factors
         {
-            let mut src = encoder.allocate_scratch(slice_bytes)?;
-            encoder.encode_copy(&*d, .., &mut src, ..);
-            self.output_rht.encode_fp(&src, &mut *d, factors, m, n, encoder);
+            self.output_rht.encode_fp_in_place(&mut *d, factors, m, n, encoder);
         }
         Ok(())
     }

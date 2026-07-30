@@ -480,8 +480,8 @@ impl<B: Backend> Embedding<B> {
                             .leaf("input_signs")?
                             .validate(&[model_dim as usize], DataType::I32)?
                             .read_allocation()?;
-                        let kernel =
-                            ActivationTransform::input_rht(context, data_type).map_err(EmbeddingError::BackendError)?;
+                        let kernel = ActivationTransform::input_rht(context, data_type, false)
+                            .map_err(EmbeddingError::BackendError)?;
                         let input_hadamard = Some(InputHadamard {
                             factors,
                             kernel,

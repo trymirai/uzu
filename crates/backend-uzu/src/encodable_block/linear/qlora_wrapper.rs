@@ -93,12 +93,12 @@ impl<B: Backend> QLoRALinearWrapper<B> {
                 .read_allocation()?;
             (
                 Some((
-                    ActivationTransform::input_rht(context, input_data_type)
+                    ActivationTransform::input_rht(context, input_data_type, false)
                         .map_err(QLoRALinearWrapperError::BackendError)?,
                     input_factors,
                 )),
                 Some((
-                    ActivationTransform::output_rht(context, output_data_type)
+                    ActivationTransform::output_rht(context, output_data_type, true)
                         .map_err(QLoRALinearWrapperError::BackendError)?,
                     output_factors,
                 )),
@@ -233,16 +233,13 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         }
 
         if let Some((output_hadamard_kernel, output_factors)) = &self.output_hadamard {
-            let mut transformed = encoder.allocate_scratch(output.size())?;
-            output_hadamard_kernel.encode_fp(
-                &output,
-                &mut transformed,
+            output_hadamard_kernel.encode_fp_in_place(
+                &mut output,
                 output_factors,
                 batch_dim as u32,
                 self.output_dim as u32,
                 encoder,
             );
-            output = transformed;
         }
 
         Ok(output)

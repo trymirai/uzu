@@ -12,7 +12,7 @@ UZU_CONST float SYM_QMAX = 127.0;
 template <typename T>
 VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(ActivationTransform)(
-    const device T* input,
+    const device T* input OPTIONAL(!in_place),
     device T* fp_out OPTIONAL(ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht),
     device int8_t* q_out OPTIONAL(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums),
     device float* scales_out OPTIONAL(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums),
@@ -21,10 +21,15 @@ PUBLIC KERNEL(ActivationTransform)(
     constant uint& batch_size,
     constant uint& element_count,
     const ActivationTransformOp ops SPECIALIZE,
+    const bool in_place SPECIALIZE,
     uint block_index GROUPS(element_count.div_ceil(METAL_SIMD_SIZE)),
     uint batch_index GROUPS(batch_size),
     uint lane_index THREADS(METAL_SIMD_SIZE)
 ) {
+  if (in_place) {
+    input = reinterpret_cast<const device T*>(fp_out);
+  }
+
   const bool input_rht = ops != ActivationTransformOp::OutputRht;
   const bool quantize = ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums;
   const uint factor_index = block_index * METAL_SIMD_SIZE + lane_index;

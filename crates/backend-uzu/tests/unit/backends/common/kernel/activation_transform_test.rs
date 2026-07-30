@@ -71,32 +71,40 @@ fn run<T: ArrayElement + Float, B: Backend>(
     factors: &[i32],
     channel_count: usize,
     order: TransformOrder,
+    in_place: bool,
 ) -> Vec<T> {
     let context = B::Context::new().expect("context");
     let kernel = match order {
-        TransformOrder::Input => ActivationTransform::<B>::input_rht(context.as_ref(), T::data_type()),
-        TransformOrder::Output => ActivationTransform::<B>::output_rht(context.as_ref(), T::data_type()),
+        TransformOrder::Input => ActivationTransform::<B>::input_rht(context.as_ref(), T::data_type(), in_place),
+        TransformOrder::Output => ActivationTransform::<B>::output_rht(context.as_ref(), T::data_type(), in_place),
     }
     .expect("activation transform");
 
-    let input = alloc_allocation_with_data::<B, T>(context.as_ref(), data);
+    let mut input = alloc_allocation_with_data::<B, T>(context.as_ref(), data);
     let mut output = alloc_allocation::<B, T>(context.as_ref(), data.len());
     let factors = alloc_allocation_with_data::<B, i32>(context.as_ref(), factors);
+    let batch_count = (data.len() / channel_count) as u32;
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
-    kernel.encode_fp(
-        &input,
-        &mut output,
-        &factors,
-        (data.len() / channel_count) as u32,
-        channel_count as u32,
-        &mut encoder,
-    );
+    if in_place {
+        kernel.encode_fp_in_place(&mut input, &factors, batch_count, channel_count as u32, &mut encoder);
+    } else {
+        kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut encoder);
+    }
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-    allocation_to_vec(&output)
+    allocation_to_vec(if in_place {
+        &input
+    } else {
+        &output
+    })
 }
 
 fn check<T: ArrayElement + Float + Debug>(tolerance: f64) {
-    for order in [TransformOrder::Input, TransformOrder::Output] {
+    for (order, in_place) in [
+        (TransformOrder::Input, false),
+        (TransformOrder::Input, true),
+        (TransformOrder::Output, false),
+        (TransformOrder::Output, true),
+    ] {
         for (batch_count, channel_count) in [(1, 32), (1, 64), (1, 128), (4, 32), (4, 256), (2, 2048)] {
             let data_f64: Vec<f64> =
                 (0..batch_count * channel_count).map(|index| ((index as f64) * 0.1).sin() * 2.0).collect();
@@ -113,14 +121,14 @@ fn check<T: ArrayElement + Float + Debug>(tolerance: f64) {
             let data: Vec<T> = data_f64.iter().map(|&value| T::from(value).unwrap()).collect();
 
             for_each_backend!(|B| {
-                let actual = run::<T, B>(&data, &factors, channel_count, order);
+                let actual = run::<T, B>(&data, &factors, channel_count, order, in_place);
                 for (index, (actual_value, &expected_value)) in actual.iter().zip(&expected).enumerate() {
                     let actual_value = actual_value.to_f64().unwrap();
                     let error = (actual_value - expected_value).abs();
                     assert!(
                         error <= (expected_value.abs() * tolerance).max(tolerance),
-                        "{order:?} mismatch at {index} for batch={batch_count}, channels={channel_count}: \
-                         actual={actual_value}, expected={expected_value}, error={error}"
+                        "{order:?} (in_place={in_place}) mismatch at {index} for batch={batch_count}, \
+                         channels={channel_count}: actual={actual_value}, expected={expected_value}, error={error}"
                     );
                 }
             });

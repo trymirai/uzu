@@ -11,7 +11,7 @@ use crate::{
 #[kernel(ActivationTransform)]
 #[variants(T, f32, bf16)]
 pub fn activation_transform<T: ArrayElement + Float>(
-    input: *const T,
+    #[optional(!in_place)] input: Option<*const T>,
     #[optional(ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht)] fp_out: Option<
         *mut T,
     >,
@@ -24,7 +24,12 @@ pub fn activation_transform<T: ArrayElement + Float>(
     batch_size: u32,
     element_count: u32,
     #[specialize] ops: ActivationTransformOp,
+    #[specialize] in_place: bool,
 ) {
+    let input = match in_place {
+        true => fp_out.expect("in-place transform requires fp_out"),
+        false => input.expect("out-of-place transform requires input"),
+    };
     let rows = batch_size as usize;
     let columns = element_count as usize;
     let input_rht = ops != ActivationTransformOp::OutputRht;

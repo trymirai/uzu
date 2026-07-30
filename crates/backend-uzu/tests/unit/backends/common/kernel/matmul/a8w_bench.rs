@@ -278,7 +278,7 @@ fn bench_a8w(c: &mut Criterion) {
     let device_tier = context.device_tier();
 
     let prepare = ActivationTransform::<Metal>::quantize(&context, DataType::BF16, false).expect("prepare kernel");
-    let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16).expect("hadamard kernel");
+    let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, false).expect("hadamard kernel");
 
     for bits in [8u32, 4u32] {
         bench_bits(c, &context, device_tier, &prepare, &hadamard, bits);

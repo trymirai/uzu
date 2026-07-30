@@ -17,6 +17,7 @@ fn assert_row_width(element_count: u32) {
 pub struct ActivationTransform<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationTransformKernel,
     ops: ActivationTransformOp,
+    in_place: bool,
 }
 
 impl<B: Backend> ActivationTransform<B> {
@@ -24,26 +25,30 @@ impl<B: Backend> ActivationTransform<B> {
         context: &B::Context,
         data_type: DataType,
         ops: ActivationTransformOp,
+        in_place: bool,
     ) -> Result<Self, B::Error> {
-        let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(context, data_type, ops)?;
+        let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(context, data_type, ops, in_place)?;
         Ok(Self {
             kernel,
             ops,
+            in_place,
         })
     }
 
     pub fn input_rht(
         context: &B::Context,
         data_type: DataType,
+        in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, ActivationTransformOp::InputRht)
+        Self::new(context, data_type, ActivationTransformOp::InputRht, in_place)
     }
 
     pub fn output_rht(
         context: &B::Context,
         data_type: DataType,
+        in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, ActivationTransformOp::OutputRht)
+        Self::new(context, data_type, ActivationTransformOp::OutputRht, in_place)
     }
 
     pub fn quantize(
@@ -56,7 +61,7 @@ impl<B: Backend> ActivationTransform<B> {
         } else {
             ActivationTransformOp::Quantize
         };
-        Self::new(context, data_type, ops)
+        Self::new(context, data_type, ops, false)
     }
 
     /// `input` and `output` must be distinct buffers.
@@ -69,11 +74,34 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         encoder: &mut Encoder<B>,
     ) {
-        assert!(!self.quantizes());
+        assert!(!self.quantizes() && !self.in_place);
         assert_row_width(element_count);
         self.kernel.encode(
-            input,
+            Some(input),
             Some(output),
+            None::<&mut Allocation<B>>,
+            None::<&mut Allocation<B>>,
+            None::<&mut Allocation<B>>,
+            rht_factors,
+            batch_size,
+            element_count,
+            encoder,
+        );
+    }
+
+    pub fn encode_fp_in_place(
+        &self,
+        data: &mut Allocation<B>,
+        rht_factors: &Allocation<B>,
+        batch_size: u32,
+        element_count: u32,
+        encoder: &mut Encoder<B>,
+    ) {
+        assert!(!self.quantizes() && self.in_place);
+        assert_row_width(element_count);
+        self.kernel.encode(
+            None::<&Allocation<B>>,
+            Some(data),
             None::<&mut Allocation<B>>,
             None::<&mut Allocation<B>>,
             None::<&mut Allocation<B>>,
@@ -98,7 +126,7 @@ impl<B: Backend> ActivationTransform<B> {
         assert!(self.quantizes());
         assert_row_width(element_count);
         self.kernel.encode(
-            input,
+            Some(input),
             None::<&mut Allocation<B>>,
             Some(q_out),
             Some(scales_out),

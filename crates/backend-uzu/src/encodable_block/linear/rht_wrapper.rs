@@ -126,8 +126,8 @@ impl<B: Backend> RHTLinearWrapper<B> {
         let quantized_weights_tree = weights_tree.subtree("quantized")?;
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
-        let input_transform =
-            ActivationTransform::input_rht(context, input_data_type).map_err(RHTLinearWrapperError::BackendError)?;
+        let input_transform = ActivationTransform::input_rht(context, input_data_type, true)
+            .map_err(RHTLinearWrapperError::BackendError)?;
 
         let quantize_transform = if int8_activations_eligible::<B>(
             context,
@@ -211,15 +211,14 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             );
         }
 
-        let mut transformed = encoder.allocate_scratch(input.size())?;
-        self.input_transform.encode_fp(
-            &input,
-            &mut transformed,
+        let mut input = input;
+        self.input_transform.encode_fp_in_place(
+            &mut input,
             &self.input_factors,
             batch_dim as u32,
             self.input_dimension as u32,
             encoder,
         );
-        self.inner_linear.encode(transformed, batch_dim, encoder)
+        self.inner_linear.encode(input, batch_dim, encoder)
     }
 }
