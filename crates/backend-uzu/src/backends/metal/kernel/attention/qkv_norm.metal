@@ -20,8 +20,7 @@ PUBLIC KERNEL(QKVNorm)(
     const device ScaleT* scales OPTIONAL(!scale_free),
     device OutputT* qkv_output,
     constant uint& batch_size,
-    constant uint& num_q_heads,
-    constant uint& num_kv_heads,
+    constant uint& total_heads,
     constant uint& head_dim,
     constant float& epsilon,
     constant float& scale_offset,
@@ -41,13 +40,8 @@ PUBLIC KERNEL(QKVNorm)(
   if (head_count == 0u || head_dim == 0u)
     return;
 
-  const uint total_heads_in_buffer = num_q_heads + 2u * num_kv_heads;
-  const uint logical_head_idx = head_offset + head_idx;
-  if (logical_head_idx >= total_heads_in_buffer)
-    return;
-
   const ulong slice_offset =
-      (ulong)batch_idx * (ulong)total_heads_in_buffer * (ulong)head_dim + (ulong)logical_head_idx * (ulong)head_dim;
+      (ulong)batch_idx * (ulong)total_heads * (ulong)head_dim + (ulong)(head_offset + head_idx) * (ulong)head_dim;
 
   const device InputT* input_data = qkv_input + slice_offset;
   const device ScaleT* scales_data = scales;

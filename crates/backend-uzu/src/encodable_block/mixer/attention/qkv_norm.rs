@@ -119,42 +119,50 @@ impl<B: Backend> QKVNorm<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        if let Some(query) = &self.query {
-            self.encode_head(query, qkv, batch_dim, 0, self.num_q_heads as u32, encoder);
-        }
-        if let Some(key) = &self.key {
-            self.encode_head(key, qkv, batch_dim, self.num_q_heads as u32, self.num_kv_heads as u32, encoder);
-        }
-        if let Some(value) = &self.value {
-            let value_offset = (self.num_q_heads + self.num_kv_heads) as u32;
-            self.encode_head(value, qkv, batch_dim, value_offset, self.num_kv_heads as u32, encoder);
-        }
-        Ok(())
+        self.encode_packed(qkv, batch_dim, self.num_q_heads, encoder)
     }
 
-    fn encode_head(
+    pub fn encode_key_value(
         &self,
-        head: &Head<B>,
-        qkv: &mut Allocation<B>,
+        key_value: &mut Allocation<B>,
         batch_dim: usize,
-        range_start: u32,
-        range_end: u32,
         encoder: &mut Encoder<B>,
-    ) {
-        head.kernel.encode(
-            None::<&Allocation<B>>,
-            head.scales.as_ref(),
-            &mut *qkv,
-            batch_dim as u32,
-            self.num_q_heads as u32,
-            self.num_kv_heads as u32,
-            self.head_dim as u32,
-            head.config.epsilon,
-            head.config.scale_offset.unwrap_or(0.0),
-            range_start,
-            range_end,
-            head.config.upcast_mode == UpcastMode::FullLayer,
-            encoder,
-        );
+    ) -> Result<(), B::Error> {
+        self.encode_packed(key_value, batch_dim, 0, encoder)
+    }
+
+    fn encode_packed(
+        &self,
+        buffer: &mut Allocation<B>,
+        batch_dim: usize,
+        q_heads: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        let kv = self.num_kv_heads;
+        let total_heads = q_heads + 2 * kv;
+        let heads = [(&self.query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
+        for (head, head_offset, head_count) in heads {
+            let Some(head) = head else {
+                continue;
+            };
+            if head_count == 0 {
+                continue;
+            }
+            head.kernel.encode(
+                None::<&Allocation<B>>,
+                head.scales.as_ref(),
+                &mut *buffer,
+                batch_dim as u32,
+                total_heads as u32,
+                self.head_dim as u32,
+                head.config.epsilon,
+                head.config.scale_offset.unwrap_or(0.0),
+                head_offset as u32,
+                head_count as u32,
+                head.config.upcast_mode == UpcastMode::FullLayer,
+                encoder,
+            );
+        }
+        Ok(())
     }
 }
