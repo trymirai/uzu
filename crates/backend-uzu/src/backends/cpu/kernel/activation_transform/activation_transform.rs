@@ -14,10 +14,14 @@ use crate::{
 #[variants(T, f32, bf16)]
 pub fn activation_transform<T: ArrayElement + Float>(
     input: *const T,
-    #[optional(!ops.contains(ActivationTransformOp::QUANTIZE))] fp_out: Option<*mut T>,
-    #[optional(ops.contains(ActivationTransformOp::QUANTIZE))] q_out: Option<*mut i8>,
-    #[optional(ops.contains(ActivationTransformOp::QUANTIZE))] scales_out: Option<*mut f32>,
-    #[optional(ops.contains(ActivationTransformOp::GROUP_SUMS))] group_sums_out: Option<*mut i32>,
+    #[optional(ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht)] fp_out: Option<
+        *mut T,
+    >,
+    #[optional(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)]
+    q_out: Option<*mut i8>,
+    #[optional(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)]
+    scales_out: Option<*mut f32>,
+    #[optional(ops == ActivationTransformOp::QuantizeWithGroupSums)] group_sums_out: Option<*mut i32>,
     rht_factors: *const i32,
     batch_size: u32,
     element_count: u32,
@@ -25,8 +29,8 @@ pub fn activation_transform<T: ArrayElement + Float>(
 ) {
     let rows = batch_size as usize;
     let columns = element_count as usize;
-    let input_rht = ops.contains(ActivationTransformOp::INPUT_RHT);
-    let quantize = ops.contains(ActivationTransformOp::QUANTIZE);
+    let input_rht = ops != ActivationTransformOp::OutputRht;
+    let quantize = matches!(ops, ActivationTransformOp::Quantize | ActivationTransformOp::QuantizeWithGroupSums);
 
     let groups = columns / HADAMARD_TRANSFORM_BLOCK_SIZE;
     let mut transformed = vec![0.0f32; columns];

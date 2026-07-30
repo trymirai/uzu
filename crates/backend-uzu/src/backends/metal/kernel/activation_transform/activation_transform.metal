@@ -13,10 +13,10 @@ template <typename T>
 VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(ActivationTransform)(
     const device T* input,
-    device T* fp_out OPTIONAL(!ops.contains(ActivationTransformOp::QUANTIZE)),
-    device int8_t* q_out OPTIONAL(ops.contains(ActivationTransformOp::QUANTIZE)),
-    device float* scales_out OPTIONAL(ops.contains(ActivationTransformOp::QUANTIZE)),
-    device int32_t* group_sums_out OPTIONAL(ops.contains(ActivationTransformOp::GROUP_SUMS)),
+    device T* fp_out OPTIONAL(ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht),
+    device int8_t* q_out OPTIONAL(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums),
+    device float* scales_out OPTIONAL(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums),
+    device int32_t* group_sums_out OPTIONAL(ops == ActivationTransformOp::QuantizeWithGroupSums),
     const device int32_t* rht_factors,
     constant uint& batch_size,
     constant uint& element_count,
@@ -25,17 +25,19 @@ PUBLIC KERNEL(ActivationTransform)(
     uint batch_index GROUPS(batch_size),
     uint lane_index THREADS(METAL_SIMD_SIZE)
 ) {
+  const bool input_rht = ops != ActivationTransformOp::OutputRht;
+  const bool quantize = ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums;
   const uint factor_index = block_index * METAL_SIMD_SIZE + lane_index;
   const uint element_index = batch_index * element_count + factor_index;
 
   float value = static_cast<float>(input[element_index]);
-  if (ops.contains(ActivationTransformOp::INPUT_RHT)) {
+  if (input_rht) {
     value = simdgroup_input_random_hadamard_transform(lane_index, value, rht_factors[factor_index]);
   } else {
     value = simdgroup_output_random_hadamard_transform(lane_index, value, rht_factors[factor_index]);
   }
 
-  if (ops.contains(ActivationTransformOp::QUANTIZE)) {
+  if (quantize) {
     const float magnitude = max(fabs(simd_min(value)), fabs(simd_max(value)));
     const float scale = isfinite(magnitude) && magnitude > 0.0f ? magnitude / SYM_QMAX : 1.0f;
 
@@ -47,7 +49,7 @@ PUBLIC KERNEL(ActivationTransform)(
       scales_out[group_index] = scale;
     }
 
-    if (ops.contains(ActivationTransformOp::GROUP_SUMS)) {
+    if (ops == ActivationTransformOp::QuantizeWithGroupSums) {
       const int group_sum = simd_sum(int(code));
       if (lane_index == 0) {
         group_sums_out[group_index] = group_sum;

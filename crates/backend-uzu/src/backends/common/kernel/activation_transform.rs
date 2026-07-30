@@ -25,7 +25,6 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         ops: ActivationTransformOp,
     ) -> Result<Self, B::Error> {
-        let ops = ops.validate();
         let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(context, data_type, ops)?;
         Ok(Self {
             kernel,
@@ -37,14 +36,14 @@ impl<B: Backend> ActivationTransform<B> {
         context: &B::Context,
         data_type: DataType,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, ActivationTransformOp::INPUT_RHT)
+        Self::new(context, data_type, ActivationTransformOp::InputRht)
     }
 
     pub fn output_rht(
         context: &B::Context,
         data_type: DataType,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, ActivationTransformOp::OUTPUT_RHT)
+        Self::new(context, data_type, ActivationTransformOp::OutputRht)
     }
 
     pub fn quantize(
@@ -52,8 +51,11 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         emit_group_sums: bool,
     ) -> Result<Self, B::Error> {
-        let mut ops = ActivationTransformOp::INPUT_RHT | ActivationTransformOp::QUANTIZE;
-        ops.set(ActivationTransformOp::GROUP_SUMS, emit_group_sums);
+        let ops = if emit_group_sums {
+            ActivationTransformOp::QuantizeWithGroupSums
+        } else {
+            ActivationTransformOp::Quantize
+        };
         Self::new(context, data_type, ops)
     }
 
@@ -67,7 +69,7 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         encoder: &mut Encoder<B>,
     ) {
-        assert!(!self.ops.contains(ActivationTransformOp::QUANTIZE));
+        assert!(!self.quantizes());
         assert_row_width(element_count);
         self.kernel.encode(
             input,
@@ -93,7 +95,7 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         encoder: &mut Encoder<B>,
     ) {
-        assert!(self.ops.contains(ActivationTransformOp::QUANTIZE));
+        assert!(self.quantizes());
         assert_row_width(element_count);
         self.kernel.encode(
             input,
@@ -108,7 +110,11 @@ impl<B: Backend> ActivationTransform<B> {
         );
     }
 
+    fn quantizes(&self) -> bool {
+        matches!(self.ops, ActivationTransformOp::Quantize | ActivationTransformOp::QuantizeWithGroupSums)
+    }
+
     pub fn emit_group_sums(&self) -> bool {
-        self.ops.contains(ActivationTransformOp::GROUP_SUMS)
+        self.ops == ActivationTransformOp::QuantizeWithGroupSums
     }
 }
