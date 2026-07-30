@@ -1,3 +1,5 @@
+#[cfg(feature = "bindings-pyo3")]
+mod bindings_pyo3;
 mod error;
 pub mod message;
 pub mod token;
@@ -162,25 +164,18 @@ impl ChatSession {
         self.instance.lock().await.peak_memory_usage()
     }
 
-    pub async fn add_tool_function(
+    pub async fn add_tool(
         &mut self,
-        function: impl Into<ToolDescriptor>,
+        descriptor: impl Into<ToolDescriptor>,
     ) -> Result<(), ChatSessionError> {
-        self.add_tool_function_definitions(vec![function.into()]).await
+        self.add_tools(vec![descriptor.into()]).await
     }
 
-    pub async fn add_tool_descriptor(
+    pub async fn add_tools(
         &mut self,
-        definition: ToolDescriptor,
+        descriptors: Vec<ToolDescriptor>,
     ) -> Result<(), ChatSessionError> {
-        self.add_tool_function_definitions(vec![definition]).await
-    }
-
-    pub async fn add_tool_function_definitions(
-        &mut self,
-        definitions: Vec<ToolDescriptor>,
-    ) -> Result<(), ChatSessionError> {
-        if definitions.is_empty() {
+        if descriptors.is_empty() {
             return Ok(());
         }
         let Some(registry) = self.tool_registry.as_ref() else {
@@ -193,8 +188,8 @@ impl ChatSession {
         // an incoming name must displace a stale caller-provided declaration too
         let owned_namespaces = {
             let mut registry_guard = registry.lock().await;
-            for def in definitions {
-                registry_guard.add_function(def)
+            for desc in descriptors {
+                registry_guard.add_function(desc)
             }
             registry_guard.get_namespaces()
         };
@@ -578,7 +573,11 @@ impl ChatSession {
         let cancel_token = cancel_token_to_return.inner().clone();
         let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
         let session = self.clone();
-        tokio::spawn(async move { session.execute_turn(sender, input, config, cancel_token).await });
+        let turn = async move { session.execute_turn(sender, input, config, cancel_token).await };
+        #[cfg(feature = "bindings-pyo3")]
+        bindings_pyo3::spawn_with_current_task_locals(turn);
+        #[cfg(not(feature = "bindings-pyo3"))]
+        tokio::spawn(turn);
         ChatSessionStream {
             receiver: Arc::new(Mutex::new(receiver)),
             cancel_token: cancel_token_to_return,
