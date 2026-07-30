@@ -13,7 +13,7 @@ use crate::{
             gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
             kernel::{
                 ActivationTransform, Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulShape},
             },
         },
         metal::{DeviceTier, GemmDispatchPath, GemvDispatch, GemvSpecialization, Metal, MetalContext},
@@ -195,8 +195,14 @@ fn encode_step(
         BenchPath::Bf16Gemv => {
             hadamard.encode_fp(&data.activations, &mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
             let args = data.bf16_arguments(output);
-            let spec = GemvSpecialization::select(&args, DataType::BF16, DataType::BF16, DataType::BF16, device_tier)
-                .expect("bf16 gemv specialization");
+            let spec = GemvSpecialization::select_shape(
+                &MatmulShape::from_arguments(&args),
+                DataType::BF16,
+                DataType::BF16,
+                DataType::BF16,
+                device_tier,
+            )
+            .expect("bf16 gemv specialization");
             gemv.encode(args, spec, encoder).expect("bf16 gemv encode");
         },
     }
@@ -225,8 +231,8 @@ fn bench_bits(
         let mut output = alloc_allocation::<Metal, bf16>(context, m * n);
         let shape_label = format!("{layer}_m{m}_k{k}_n{n}");
 
-        let gemv_eligible = GemvSpecialization::select(
-            &data.bf16_arguments(&mut output),
+        let gemv_eligible = GemvSpecialization::select_shape(
+            &MatmulShape::from_arguments(&data.bf16_arguments(&mut output)),
             DataType::BF16,
             DataType::BF16,
             DataType::BF16,

@@ -1,15 +1,21 @@
-use super::MatmulArguments;
-use crate::backends::common::{Backend, BufferArg, gpu_types::gemm::GemmDTransform};
+use super::{MatmulA, MatmulArguments};
+use crate::backends::common::{
+    Backend, BufferArg,
+    gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct MatmulShape {
     pub m: u32,
     pub n: u32,
     pub k: u32,
     pub b_transpose: bool,
     pub b_leading_dimension: Option<u32>,
+    pub b_prologue: GemmBPrologueKind,
     pub b_bits: Option<u32>,
     pub b_group_size: Option<u32>,
+    pub signed_codes: bool,
+    pub a_full_precision: bool,
     pub gathered: bool,
     pub d_transform: GemmDTransform,
 }
@@ -24,11 +30,18 @@ impl MatmulShape {
             k: arguments.k,
             b_transpose: arguments.b_transpose,
             b_leading_dimension: arguments.b_leading_dimension,
+            b_prologue: arguments.b.b_prologue(),
             b_bits: arguments.b.bits_per_b(),
             b_group_size: arguments.b.group_size(),
+            signed_codes: arguments.b.signed_codes(),
+            a_full_precision: matches!(arguments.a, MatmulA::FullPrecision { .. }),
             gathered: arguments.gather_indices.is_some(),
             d_transform: arguments.d_transform.mask(),
         }
+    }
+
+    pub fn is_quant(&self) -> bool {
+        self.b_prologue != GemmBPrologueKind::FullPrecision
     }
 }
 

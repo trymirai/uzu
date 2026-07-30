@@ -1,7 +1,6 @@
 use crate::{
     backends::common::{
         Backend, BufferArg, Encoder, Kernels,
-        gpu_types::gemm::GemmBPrologueKind,
         kernel::matmul::{
             arguments::MatmulArguments,
             routing::{MatmulPath, MatmulShape},
@@ -29,7 +28,6 @@ pub trait MatmulKernel: Sized + Send + Sync {
     fn select_path(
         &self,
         _shape: &MatmulShape,
-        _b_prologue: GemmBPrologueKind,
         _context: &<Self::Backend as Backend>::Context,
     ) -> MatmulPath {
         MatmulPath::Gemm

@@ -108,10 +108,9 @@ impl GemmKernel {
         }
     }
 
-    pub(crate) fn should_skip_gemv_for_mxu_shape(
+    pub(crate) fn should_skip_gemv_for_mxu(
         &self,
         shape: &MatmulShape,
-        b_prologue: GemmBPrologueKind,
     ) -> bool {
         if shape.gathered {
             // TODO: gathered GEMM
@@ -135,22 +134,14 @@ impl GemmKernel {
             _ => {},
         }
         matches!(
-            self.mxu_tiling_for(shape, b_prologue),
+            self.mxu_tiling_for(shape),
             Some(GemmTiling::Tile16x32x256_Simdgroups1x1 | GemmTiling::Tile16x128x256_Simdgroups1x4)
         )
-    }
-
-    pub(crate) fn should_skip_gemv_for_mxu<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
-        &self,
-        arguments: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
-    ) -> bool {
-        self.should_skip_gemv_for_mxu_shape(&MatmulShape::from_arguments(arguments), arguments.b.b_prologue())
     }
 
     fn mxu_tiling_for(
         &self,
         shape: &MatmulShape,
-        b_prologue: GemmBPrologueKind,
     ) -> Option<GemmTiling> {
         if ![self.weights_data_type, self.input_data_type, self.output_data_type]
             .into_iter()
@@ -159,7 +150,7 @@ impl GemmKernel {
             return None;
         }
 
-        match b_prologue {
+        match shape.b_prologue {
             GemmBPrologueKind::FullPrecision => Some(if shape.b_transpose {
                 mxu_tiling(shape.m, shape.n, shape.k)
             } else {
@@ -182,8 +173,7 @@ impl GemmKernel {
     ) -> Result<(), MetalError> {
         let int8_activations = arguments.a.prologue_kind() == GemmAPrologueKind::Int8Symmetric;
         let path = if encoder.context().device.supports_mxu()
-            && (int8_activations
-                || self.mxu_tiling_for(&MatmulShape::from_arguments(&arguments), arguments.b.b_prologue()).is_some())
+            && (int8_activations || self.mxu_tiling_for(&MatmulShape::from_arguments(&arguments)).is_some())
         {
             GemmDispatchPath::Mxu
         } else {

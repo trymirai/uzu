@@ -46,16 +46,15 @@ pub(crate) struct GemvSpecialization {
 impl GemvSpecialization {
     pub(crate) fn select_shape(
         shape: &MatmulShape,
-        b_prologue: GemmBPrologueKind,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
         device_tier: DeviceTier,
     ) -> Option<GemvSpecialization> {
-        if !shape.b_transpose {
+        if !shape.b_transpose || !shape.a_full_precision {
             return None;
         }
-        let is_quant = b_prologue != GemmBPrologueKind::FullPrecision;
+        let is_quant = shape.is_quant();
         let bad_leading_dimension = if is_quant {
             shape.b_leading_dimension.is_some()
         } else {
@@ -105,7 +104,7 @@ impl GemvSpecialization {
             policy::fp_tile(shape.m, shape.n, shape.k, input_aligned, device_tier)
         };
         Some(Self {
-            b_prologue,
+            b_prologue: shape.b_prologue,
             group_size: shape.b_group_size.unwrap_or(0),
             bits,
             output_transform: shape.d_transform,
@@ -114,30 +113,7 @@ impl GemvSpecialization {
             results_per_simdgroup: tile.results_per_simdgroup,
             num_simdgroups: tile.num_simdgroups,
             gathered: shape.gathered,
-            signed_codes: false,
-        })
-    }
-
-    pub(crate) fn select<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
-        args: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
-        weights_data_type: DataType,
-        input_data_type: DataType,
-        output_data_type: DataType,
-        device_tier: DeviceTier,
-    ) -> Option<GemvSpecialization> {
-        if !matches!(args.a, MatmulA::FullPrecision { .. }) {
-            return None;
-        }
-        Some(GemvSpecialization {
-            signed_codes: args.b.signed_codes(),
-            ..Self::select_shape(
-                &MatmulShape::from_arguments(args),
-                args.b.b_prologue(),
-                weights_data_type,
-                input_data_type,
-                output_data_type,
-                device_tier,
-            )?
+            signed_codes: shape.signed_codes,
         })
     }
 }

@@ -330,12 +330,15 @@ impl<B: Backend> LinearMatmul<B> {
             k: self.input_dim as u32,
             b_transpose: true,
             b_leading_dimension: None,
+            b_prologue: b.b_prologue(),
             b_bits: b.bits_per_b(),
             b_group_size: b.group_size(),
+            signed_codes: b.signed_codes(),
+            a_full_precision: true,
             gathered: false,
             d_transform: self.d_ops().mask(),
         };
-        self.kernel.lock().select_path(&shape, b.b_prologue(), context)
+        self.kernel.lock().select_path(&shape, context)
     }
 }
 
