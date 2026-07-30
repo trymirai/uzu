@@ -2,6 +2,8 @@ import * as z from 'zod';
 
 import { NativeTool, ToolFunction, Value } from './napi/index';
 
+const CANCELLED_INVOCATION_RETENTION_MS = 30_000;
+
 export interface UzuToolContext {
     readonly signal: AbortSignal;
 }
@@ -43,12 +45,22 @@ export class UzuToolFunction<
         const parametersSchema = z.toJSONSchema(options.parameters);
         const returnSchema = z.toJSONSchema(options.returns);
         const activeInvocations = new Map<string, AbortController>();
-        const cancelledInvocations = new Set<string>();
+        const cancelledInvocations = new Map<string, ReturnType<typeof setTimeout>>();
+
+        const takeCancellation = (invocationId: string): boolean => {
+            const expiration = cancelledInvocations.get(invocationId);
+            if (expiration === undefined) {
+                return false;
+            }
+            clearTimeout(expiration);
+            cancelledInvocations.delete(invocationId);
+            return true;
+        };
 
         const invokeJson = async (argumentsJson: string, invocationId: string): Promise<string> => {
             const controller = new AbortController();
             activeInvocations.set(invocationId, controller);
-            if (cancelledInvocations.delete(invocationId)) {
+            if (takeCancellation(invocationId)) {
                 controller.abort();
             }
 
@@ -62,16 +74,28 @@ export class UzuToolFunction<
                 return serializeResult(result);
             } finally {
                 activeInvocations.delete(invocationId);
-                cancelledInvocations.delete(invocationId);
+                takeCancellation(invocationId);
             }
         };
         const cancel = (invocationId: string): void => {
             const controller = activeInvocations.get(invocationId);
             if (controller) {
                 controller.abort();
-            } else {
-                cancelledInvocations.add(invocationId);
+                return;
             }
+
+            // Invocation and cancellation use separate nonblocking native callbacks, so
+            // cancellation can arrive before invocation starts. Retain it briefly for
+            // that case, but expire IDs from callbacks that arrive after completion.
+            const expiration = setTimeout(() => {
+                cancelledInvocations.delete(invocationId);
+            }, CANCELLED_INVOCATION_RETENTION_MS);
+            expiration.unref?.();
+            const previousExpiration = cancelledInvocations.get(invocationId);
+            if (previousExpiration !== undefined) {
+                clearTimeout(previousExpiration);
+            }
+            cancelledInvocations.set(invocationId, expiration);
         };
 
         super(
