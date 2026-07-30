@@ -27,7 +27,10 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dynamic = ["version"]
-dependencies = ["pydantic>=2.13.3"]
+dependencies = [
+    "docstring-parser>=0.17.0",
+    "pydantic>=2.13.3",
+]
 
 [project.urls]
 Homepage = "https://trymirai.com"

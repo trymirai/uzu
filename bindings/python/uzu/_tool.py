@@ -9,6 +9,7 @@ import types
 import typing
 from typing import Annotated, Any, Literal, overload
 
+from docstring_parser import parse as parse_docstring
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, create_model
 
 _EMPTY = inspect.Parameter.empty
@@ -36,7 +37,8 @@ class UzuToolFunction[**P, R]:
 
         self._function = function
         self.name = name
-        self.description = description if description is not None else inspect.getdoc(function) or ""
+        inferred_description, argument_descriptions = _docstring_hints(function)
+        self.description = description if description is not None else inferred_description
         self._signature = inspect.signature(function)
 
         try:
@@ -56,9 +58,15 @@ class UzuToolFunction[**P, R]:
             if annotation is _EMPTY:
                 raise TypeError(f"parameter {parameter.name!r} of tool {name!r} must have a type annotation")
 
+            annotation_description = _annotation_description(annotation)
+            field_description = (
+                annotation_description
+                if annotation_description is not None
+                else argument_descriptions.get(parameter.name)
+            )
             field_metadata = (
-                Field(alias=parameter.name, description=annotation_description)
-                if (annotation_description := _annotation_description(annotation))
+                Field(alias=parameter.name, description=field_description)
+                if field_description is not None
                 else Field(alias=parameter.name)
             )
             annotation = Annotated[annotation, field_metadata]
@@ -212,6 +220,19 @@ def uzu_tool_function[**P, R](
     return decorate if function is None else decorate(function)
 
 
+def _docstring_hints(target: object) -> tuple[str, dict[str, str]]:
+    docstring = inspect.getdoc(target)
+    if docstring is None:
+        return "", {}
+
+    parsed = parse_docstring(docstring)
+    description = "\n\n".join(part for part in (parsed.short_description, parsed.long_description) if part)
+    parameter_descriptions = {
+        parameter.arg_name: parameter.description for parameter in parsed.params if parameter.description
+    }
+    return description, parameter_descriptions
+
+
 def _annotation_description(annotation: object) -> str | None:
     if typing.get_origin(annotation) is not typing.Annotated:
         return None
@@ -327,12 +348,15 @@ def _apply_annotated_descriptions(  # noqa: PLR0911
         annotations = typing.get_type_hints(annotation, include_extras=True)
     except (NameError, TypeError):
         annotations = {name: field.annotation for name, field in annotation.model_fields.items()}
+    _, field_descriptions = _docstring_hints(annotation)
 
     for name, field in annotation.model_fields.items():
         field_annotation = annotations.get(name, field.annotation)
         alias = field.serialization_alias if mode == "serialization" else field.validation_alias
         field_schema = properties.get(alias if isinstance(alias, str) else name)
         if isinstance(field_schema, dict):
+            if description := field_descriptions.get(name):
+                field_schema.setdefault("description", description)
             _apply_annotated_descriptions(
                 field_annotation,
                 field_schema,

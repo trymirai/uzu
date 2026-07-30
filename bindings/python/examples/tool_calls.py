@@ -16,26 +16,33 @@ from uzu import (
 
 
 class Coordinate(BaseModel):
-    """A geographic coordinate."""
+    """A geographic coordinate.
 
-    latitude: Annotated[float, "Latitude in decimal degrees."]
+    Attributes:
+        latitude: Latitude in decimal degrees.
+        longitude: Longitude in decimal degrees.
+    """
+
+    latitude: float
     longitude: Annotated[float, "Longitude in decimal degrees."]
 
 
-@uzu_tool_function(
-    name="get_location",
-    description="Return the current location in coordinates"
-)
+@uzu_tool_function(name="get_location", description="Return the current location in coordinates")
 def get_current_location() -> Coordinate:
     return Coordinate(latitude=51.5074, longitude=-0.1278)
 
 
 @uzu_tool_function
 def get_current_temperature(
-    latitude: Annotated[float, "Latitude in decimal degrees."],
+    latitude: float,
     longitude: Annotated[float, "Longitude in decimal degrees."],
 ) -> float:
-    """Return the temperature at the provided coordinates."""
+    """Return the temperature at the provided coordinates.
+
+    Args:
+        latitude: Latitude in decimal degrees.
+        longitude: This is overridden by the Annotated description.
+    """
     _ = latitude, longitude
     return 25.0
 
@@ -57,9 +64,7 @@ async def main() -> None:
         ChatMessage.system().with_text("You are a helpful assistant"),
         ChatMessage.user().with_text("What temperature is it now at my location?"),
     ]
-    config = ChatReplyConfig.create().with_sampling_policy(
-        SamplingPolicy.Custom(method=SamplingMethod.Greedy())
-    )
+    config = ChatReplyConfig.create().with_sampling_policy(SamplingPolicy.Custom(method=SamplingMethod.Greedy()))
     replies = await session.reply(messages, config)
     if replies:
         message = replies[-1].message

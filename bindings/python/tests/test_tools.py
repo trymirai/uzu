@@ -42,6 +42,18 @@ class Weather(BaseModel):
     summary: Annotated[str | None, "Optional human-readable summary."]
 
 
+class DocstringCoordinate(BaseModel):
+    """A coordinate documented through its class docstring.
+
+    Attributes:
+        latitude: Latitude from the class docstring.
+        longitude: This must not replace explicit field metadata.
+    """
+
+    latitude: float
+    longitude: float = Field(description="Explicit longitude description.")
+
+
 class AliasedResult(BaseModel):
     value: int = Field(serialization_alias="answer")
 
@@ -112,6 +124,22 @@ def describe_pet(pet: Annotated[Cat | Dog, Field(discriminator="kind")]) -> str:
     return pet.kind
 
 
+@uzu_tool_function
+def locate(
+    coordinate: DocstringCoordinate,
+    label: Annotated[str, "Explicit label description."],
+) -> None:
+    """Locate a named coordinate.
+
+    The coordinate and label are validated before use.
+
+    Args:
+        coordinate: Coordinate from the function docstring.
+        label: This must not replace the Annotated description.
+    """
+    _ = coordinate, label
+
+
 def _resolve_reference(
     root: dict[str, object],
     schema: dict[str, object],
@@ -153,6 +181,20 @@ def test_decorator_builds_schema_from_function_and_pydantic_metadata() -> None:
     assert properties["note"]["description"] == "Required nullable note."
     assert properties["unit"]["description"] == "Temperature unit."
     assert properties["unit"]["default"] == "celsius"
+
+
+def test_docstrings_describe_tool_arguments_and_model_fields() -> None:
+    assert locate.description == ("Locate a named coordinate.\n\nThe coordinate and label are validated before use.")
+
+    parameters = locate.parameters_schema
+    assert parameters is not None
+    properties = parameters["properties"]
+    assert properties["coordinate"]["description"] == "Coordinate from the function docstring."
+    assert properties["label"]["description"] == "Explicit label description."
+
+    coordinate = _resolve_reference(parameters, properties["coordinate"])
+    assert coordinate["properties"]["latitude"]["description"] == "Latitude from the class docstring."
+    assert coordinate["properties"]["longitude"]["description"] == "Explicit longitude description."
 
 
 def test_discriminated_union_schema_includes_annotated_field_descriptions() -> None:
