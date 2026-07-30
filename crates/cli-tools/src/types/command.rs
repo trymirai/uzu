@@ -300,11 +300,7 @@ impl Command {
     }
 
     pub fn uv_python_file(path: PathBuf) -> Self {
-        Self::new("uv")
-            .with_argument("run")
-            .with_arguments(vec!["--extra".to_string(), "examples".to_string()])
-            .with_argument("python")
-            .with_argument(&path.to_string_lossy())
+        Self::new("uv").with_argument("run").with_argument("python").with_argument(&path.to_string_lossy())
     }
 
     pub fn maturin_build(
