@@ -46,7 +46,7 @@ impl BenchPath {
 }
 
 struct BenchmarkData {
-    weights: Allocation<Metal>,
+    unsigned_weights: Allocation<Metal>,
     signed_weights: Allocation<Metal>,
     weight_scales: Allocation<Metal>,
     activations: Allocation<Metal>,
@@ -74,8 +74,8 @@ impl BenchmarkData {
         let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed)
             .with_prepared_a();
 
-        let weights = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
-        let signed_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.weights_with_signed_codes());
+        let unsigned_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
+        let signed_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.weights_for_upload());
         let weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
         let activations = alloc_allocation_with_data::<Metal, bf16>(context, &input.x);
         let rht: Vec<i32> = (0..k)
@@ -91,7 +91,7 @@ impl BenchmarkData {
 
         let groups = k / group_size as usize;
         Self {
-            weights,
+            unsigned_weights,
             signed_weights,
             weight_scales,
             activations,
@@ -121,7 +121,7 @@ impl BenchmarkData {
                 offset: 0,
             },
             b: MatmulB::ScaleSymmetricDequant {
-                b: &self.weights,
+                b: &self.unsigned_weights,
                 scales: &self.weight_scales,
                 mode: self.mode,
                 group_size: self.group_size,

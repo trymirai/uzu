@@ -146,7 +146,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         self
     }
 
-    pub(crate) fn weights_with_signed_codes(&self) -> Vec<u32> {
+    pub(crate) fn weights_for_upload(&self) -> Vec<u32> {
         let mut words = self.w_packed.clone();
         let sign_flip_mask = self.signed_codes.then(|| self.mode.weight_codes_sign_flip_mask()).flatten();
         if let Some(mask) = sign_flip_mask {
@@ -183,7 +183,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         input: &QuantInput<T>,
     ) -> Self {
         Self {
-            w: alloc_allocation_with_data::<B, u32>(context, &input.weights_with_signed_codes()),
+            w: alloc_allocation_with_data::<B, u32>(context, &input.weights_for_upload()),
             scales: alloc_allocation_with_data::<B, T>(context, &input.scales),
             zp: input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(context, zp)),
             bias: input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(context, b)),
@@ -274,36 +274,6 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
     MatmulArguments {
         a,
         b,
-        b_leading_dimension: None,
-        b_transpose: true,
-        d: y,
-        d_transform: MatmulDOps::none(),
-        gather_indices: None,
-        m: input.m,
-        n: input.n,
-        k: input.k,
-    }
-}
-
-pub fn quant_arguments_full_precision_a<'a, B: Backend, T: ArrayElement + Float>(
-    buffers: &'a mut QuantBuffers<B, T>,
-    input: &QuantInput<T>,
-) -> MatmulArguments<'a, 'a, 'a, B> {
-    let QuantBuffers {
-        w,
-        scales,
-        zp,
-        bias,
-        x,
-        y,
-        ..
-    } = buffers;
-    MatmulArguments {
-        a: MatmulA::FullPrecision {
-            values: x,
-            offset: 0,
-        },
-        b: quant_b_variant(w, scales, zp.as_ref(), bias.as_ref(), input),
         b_leading_dimension: None,
         b_transpose: true,
         d: y,

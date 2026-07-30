@@ -26,9 +26,7 @@ use crate::{
     },
     tests::{
         helpers::allocation_to_vec,
-        matmul::{
-            QuantBuffers, QuantInput, quant_arguments, quant_arguments_full_precision_a, run_quant_cpu, run_quant_metal,
-        },
+        matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, run_quant_metal},
     },
 };
 
@@ -556,7 +554,7 @@ fn signed_weights_full_precision_activations_parity_bf16(
         )
         .expect("MatmulMetalKernel");
         let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
-        let args = quant_arguments_full_precision_a(&mut buffers, &input);
+        let args = quant_arguments(&mut buffers, &input);
         match path {
             None => matmul.encode(args, &mut encoder).expect("matmul encode failed"),
             Some(gemm_path) => matmul
