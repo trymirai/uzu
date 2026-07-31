@@ -3750,6 +3750,7 @@ dependencies = [
 name = "nagare"
 version = "0.5.14"
 dependencies = [
+ "async-trait",
  "bindings",
  "bindings-types",
  "chrono",

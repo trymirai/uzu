@@ -156,8 +156,10 @@ impl LanguageBackend for SwiftLanguageBackend {
         // matches PackageDescription's Target initializer (name, dependencies, path, ...).
         let target_paths = [
             (r"\.target\(", "Uzu", "bindings/swift/Sources/Uzu"),
+            (r"\.macro\(", "UzuMacros", "bindings/swift/Sources/UzuMacros"),
             (r"\.executableTarget\(", "Examples", "bindings/swift/Sources/Examples"),
             (r"\.testTarget\(", "UzuTests", "bindings/swift/Tests/UzuTests"),
+            (r"\.testTarget\(", "UzuMacrosTests", "bindings/swift/Tests/UzuMacrosTests"),
         ];
         let mut body = body;
         for (target_kind, name, source_path) in target_paths {
