@@ -1327,6 +1327,17 @@ public struct ChatReplyStats: Equatable, Hashable, Codable {
     }
 
     
+    /**
+     * Energy spent per processed token, counting both input and output tokens.
+     */
+public func joulesPerToken() -> Double?  {
+    return try!  FfiConverterOptionDouble.lift(try! rustCall() {
+    uniffi_shoji_fn_method_chatreplystats_joules_per_token(
+            FfiConverterTypeChatReplyStats_lower(self),$0
+    )
+})
+}
+    
 public func tokensCount() -> UInt32?  {
     return try!  FfiConverterOptionUInt32.lift(try! rustCall() {
     uniffi_shoji_fn_method_chatreplystats_tokens_count(

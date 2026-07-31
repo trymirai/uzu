@@ -208,6 +208,10 @@ fn chat_reply_stats_component(
         .as_ref()
         .map(|power| format!("{:.2} J", power.energy_joules))
         .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let energy_per_token = stats
+        .joules_per_token()
+        .map(|joules_per_token| format!("{joules_per_token:.3} J/tok"))
+        .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let duration = format!("{:.2} s", stats.duration);
 
     element! {
@@ -241,6 +245,10 @@ fn chat_reply_stats_component(
             )
             Text(
                 content: format!("total energy: {energy}"),
+                color: subtitle_color,
+            )
+            Text(
+                content: format!("energy per token: {energy_per_token}"),
                 color: subtitle_color,
             )
             Text(

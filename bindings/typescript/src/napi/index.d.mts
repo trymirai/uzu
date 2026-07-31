@@ -305,6 +305,8 @@ export declare class ChatReplyStats {
   powerStats?: ChatReplyPowerStats
   constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountOutput?: number, memoryUsedBytes?: number, speculatorStats?: ChatReplySpeculatorStats, powerStats?: ChatReplyPowerStats)
   get tokensCount(): number | null
+  /** Energy spent per processed token, counting both input and output tokens. */
+  get joulesPerToken(): number | null
 }
 
 export declare class ChatRoleAssistant {

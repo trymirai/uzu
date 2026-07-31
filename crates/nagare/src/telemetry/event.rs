@@ -2,6 +2,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use shoji::types::session::chat::ChatReplyStats;
 
+/// Reply stats plus the metrics `ChatReplyStats` exposes as getters, which serde
+/// would otherwise leave out of the reported payload.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryStats {
+    #[serde(flatten)]
+    pub stats: ChatReplyStats,
+    pub joules_per_token: Option<f64>,
+}
+
+impl From<ChatReplyStats> for TelemetryStats {
+    fn from(stats: ChatReplyStats) -> Self {
+        Self {
+            joules_per_token: stats.joules_per_token(),
+            stats,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event_name", content = "payload", rename_all = "snake_case")]
 pub enum TelemetryEvent {
@@ -16,7 +34,7 @@ pub enum TelemetryEvent {
     },
     ModelInferenceFinished {
         model_id: String,
-        stats: ChatReplyStats,
+        stats: TelemetryStats,
     },
     ModelInferenceFailed {
         error: Value,
