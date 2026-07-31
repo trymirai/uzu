@@ -45,6 +45,8 @@ impl<B: Backend> DFlashState<B> {
 pub struct DFlashDraft<B: Backend> {
     target_feature_projection: Box<dyn Linear<B>>,
     projected_feature_norm: Normalization<B>,
+    state_kv_projection: Box<dyn Linear<B>>,
+    layer_kv_dim: usize,
     layers: Box<[DFlashDraftLayer<B>]>,
     output_norm: Normalization<B>,
     top_k: <B::Kernels as Kernels>::RadixTopKSmall,
@@ -119,7 +121,6 @@ impl<B: Backend> DFlashDraft<B> {
                 "DFlash block_size must be in 1..=attention suffix capacity",
             ));
         }
-
         let target_feature_projection = <dyn Linear<B>>::new(
             config.model_dim * config.target_layer_ids.len(),
             [config.model_dim],
@@ -139,6 +140,16 @@ impl<B: Backend> DFlashDraft<B> {
             context,
         )?;
         let layers_tree = parameter_tree.subtree("layers")?;
+        let layer_kv_dim =
+            2 * config.layer_configs[0].attention_config.num_groups * config.layer_configs[0].attention_config.head_dim;
+        let state_kv_projection = <dyn Linear<B>>::new(
+            config.model_dim,
+            [config.layer_configs.len() * layer_kv_dim],
+            false,
+            context,
+            data_type,
+            &parameter_tree.subtree("state_kv_projection")?,
+        )?;
         let layers = config
             .layer_configs
             .iter()
@@ -172,6 +183,8 @@ impl<B: Backend> DFlashDraft<B> {
         Ok(Self {
             target_feature_projection,
             projected_feature_norm,
+            state_kv_projection,
+            layer_kv_dim,
             layers,
             output_norm,
             top_k,
@@ -244,20 +257,27 @@ impl<B: Backend> DFlashDraft<B> {
         let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, encoder)?;
 
-        let dflash_layer_count = self.layers.len();
-        let mut normalized_features = Some(normalized_features);
-        for (layer_index, (layer, attention_state)) in self.layers.iter().zip(state.layer_states.iter_mut()).enumerate()
+        let projected_kv = self.state_kv_projection.encode(normalized_features, num_tokens, encoder)?;
+        let layer_kv_bytes = self.layer_kv_dim * self.data_type.size_in_bytes();
+        let kv_chunk = |chunk_index: usize| chunk_index * layer_kv_bytes..(chunk_index + 1) * layer_kv_bytes;
+        let mut layer_key_values = (0..self.layers.len())
+            .map(|_| encoder.allocate_scratch(num_tokens * layer_kv_bytes))
+            .collect::<Result<Box<[_]>, _>>()?;
+        for (layer_index, key_value) in layer_key_values.iter_mut().enumerate() {
+            for token_index in 0..num_tokens {
+                encoder.encode_copy(
+                    &projected_kv,
+                    kv_chunk(token_index * self.layers.len() + layer_index),
+                    key_value,
+                    kv_chunk(token_index),
+                );
+            }
+        }
+        for ((layer, attention_state), key_value) in
+            self.layers.iter().zip(state.layer_states.iter_mut()).zip(layer_key_values)
         {
             attention_state.prepare(state.context_length, num_tokens, encoder.context())?;
-            let kv_input = if layer_index + 1 == dflash_layer_count {
-                normalized_features.take().expect("normalized features available for last layer")
-            } else {
-                let source = normalized_features.as_ref().expect("normalized features available");
-                let mut kv_input = encoder.allocate_scratch(source.size())?;
-                encoder.encode_copy(source, .., &mut kv_input, ..);
-                kv_input
-            };
-            layer.attention.append_kv(kv_input, Some(&rope), num_tokens, attention_state, encoder)?;
+            layer.attention.append_projected_kv(key_value, &rope, num_tokens, attention_state, encoder)?;
         }
 
         state.context_length += num_tokens;
@@ -376,12 +396,6 @@ impl<B: Backend> DFlashDraftLayer<B> {
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, DFlashDraftNewError<B>> {
-        if config.attention_config.is_causal {
-            return Err(DFlashDraftNewError::InvalidAttentionConfig("DFlash attention must be non-causal"));
-        }
-        if config.attention_config.is_kv_sharing {
-            return Err(DFlashDraftNewError::InvalidAttentionConfig("DFlash attention must not use KV sharing"));
-        }
         let (attention, _) = Attention::new(
             model_dim,
             data_type,
