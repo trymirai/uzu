@@ -10,6 +10,7 @@ export const ChatSessionStream = cjs.ChatSessionStream;
 export const ChatSessionStreamChunkError = cjs.ChatSessionStreamChunkError;
 export const ChatSessionStreamChunkReplies = cjs.ChatSessionStreamChunkReplies;
 export const ClassificationSession = cjs.ClassificationSession;
+export const NativeTool = cjs.NativeTool;
 export const TextToSpeechSession = cjs.TextToSpeechSession;
 export const TextToSpeechSessionStream = cjs.TextToSpeechSessionStream;
 export const TextToSpeechSessionStreamChunkError = cjs.TextToSpeechSessionStreamChunkError;

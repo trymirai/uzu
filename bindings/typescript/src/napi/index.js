@@ -513,6 +513,7 @@ module.exports.ChatSessionStream = nativeBinding.ChatSessionStream
 module.exports.ChatSessionStreamChunkError = nativeBinding.ChatSessionStreamChunkError
 module.exports.ChatSessionStreamChunkReplies = nativeBinding.ChatSessionStreamChunkReplies
 module.exports.ClassificationSession = nativeBinding.ClassificationSession
+module.exports.NativeTool = nativeBinding.NativeTool
 module.exports.TextToSpeechSession = nativeBinding.TextToSpeechSession
 module.exports.TextToSpeechSessionStream = nativeBinding.TextToSpeechSessionStream
 module.exports.TextToSpeechSessionStreamChunkError = nativeBinding.TextToSpeechSessionStreamChunkError
