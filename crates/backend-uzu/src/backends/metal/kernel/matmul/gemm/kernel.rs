@@ -4,14 +4,14 @@ use super::specialization::GemmSpecialization;
 use crate::{
     backends::{
         common::{
-            Allocation, Backend, BufferArg, Encoder,
+            Allocation, BufferArg, Encoder,
             gpu_types::{
-                GemmParams, HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder,
+                GemmParams, HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
             },
             kernel::{
-                HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
+                ActivationTransform, TensorAddBiasKernel,
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
             },
         },
         metal::{
@@ -40,7 +40,7 @@ pub struct GemmKernel {
     output_data_type: DataType,
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
     pub bias_add: TensorAddBiasMetalKernel,
-    pub hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
+    output_rht: ActivationTransform<Metal>,
     split_k_reduce: HashMap<GemmDTransform, GemmSplitKReduceMetalKernel>,
 }
 
@@ -52,18 +52,14 @@ impl GemmKernel {
         output_data_type: DataType,
     ) -> Result<Self, MetalError> {
         let bias_add = TensorAddBiasMetalKernel::new(context, output_data_type, weights_data_type, true, false)?;
-        let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
-            context,
-            output_data_type,
-            HadamardTransformOrder::Output,
-        )?;
+        let output_rht = ActivationTransform::output_rht(context, output_data_type, true)?;
         let kernel = Self {
             weights_data_type,
             input_data_type,
             output_data_type,
             kernels: HashMap::new(),
             bias_add,
-            hadamard,
+            output_rht,
             split_k_reduce: HashMap::new(),
         };
         Ok(kernel)
@@ -91,6 +87,7 @@ impl GemmKernel {
                     specialization.a_prologue,
                     specialization.output_transform,
                     specialization.alignment,
+                    specialization.signed_codes,
                 )?;
                 Ok(entry.insert(kernel))
             },
@@ -111,29 +108,25 @@ impl GemmKernel {
         }
     }
 
-    pub(crate) fn should_skip_gemv_for_mxu<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+    pub(crate) fn should_skip_gemv_for_mxu(
         &self,
-        arguments: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
+        shape: &MatmulShape,
     ) -> bool {
-        if arguments.gather_indices.is_some() {
+        if shape.gathered {
             // TODO: gathered GEMM
             return false;
         }
-        match (
-            arguments.m,
-            arguments.n == arguments.k,
-            (self.weights_data_type, self.input_data_type, self.output_data_type),
-        ) {
+        match (shape.m, shape.n == shape.k, (self.weights_data_type, self.input_data_type, self.output_data_type)) {
             (4, true, (DataType::F32, DataType::F32, DataType::F32))
             | (5, _, (DataType::BF16, DataType::BF16, DataType::BF16)) => return false,
             _ => {},
         }
-        match arguments.m {
+        match shape.m {
             0..=3 => return false,
             4 => {
                 // The M4 MXU tile only uses a quarter of its rows; avoid it for wide-N shapes.
-                let small_enough_for_mxu = arguments.n <= 6144 && arguments.k <= 9728;
-                let k_dominates = arguments.k > 3_u32.saturating_mul(arguments.n);
+                let small_enough_for_mxu = shape.n <= 6144 && shape.k <= 9728;
+                let k_dominates = shape.k > 3_u32.saturating_mul(shape.n);
                 if !(small_enough_for_mxu || k_dominates) {
                     return false;
                 }
@@ -141,15 +134,19 @@ impl GemmKernel {
             _ => {},
         }
         matches!(
-            self.select_mxu_tiling(arguments),
+            self.mxu_tiling_for(shape),
             Some(GemmTiling::Tile16x32x256_Simdgroups1x1 | GemmTiling::Tile16x128x256_Simdgroups1x4)
         )
     }
 
-    fn select_mxu_tiling<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+    /// Int8 activations always have an MXU tiling, so callers short-circuit before asking.
+    fn mxu_tiling_for(
         &self,
-        arguments: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
+        shape: &MatmulShape,
     ) -> Option<GemmTiling> {
+        if !shape.a_full_precision {
+            return None;
+        }
         if ![self.weights_data_type, self.input_data_type, self.output_data_type]
             .into_iter()
             .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32))
@@ -157,34 +154,18 @@ impl GemmKernel {
             return None;
         }
 
-        match &arguments.b {
-            MatmulB::FullPrecision {
-                ..
-            } => Some(if arguments.b_transpose {
-                select_mxu_tiling(arguments.m, arguments.n, arguments.k)
+        match shape.b_prologue {
+            GemmBPrologueKind::FullPrecision => Some(if shape.b_transpose {
+                mxu_tiling(shape.m, shape.n, shape.k)
             } else {
-                select_base_mxu_tiling(arguments.m, arguments.n)
+                mxu_tiling_by_mn(shape.m, shape.n)
             }),
-            MatmulB::ScaleBiasDequant {
-                ..
-            }
-            | MatmulB::ScaleZeroPointDequant {
-                ..
-            }
-            | MatmulB::ScaleSymmetricDequant {
-                ..
-            } => {
-                if !arguments.b_transpose || arguments.b_leading_dimension.is_some() {
+            _ => {
+                if !shape.b_transpose || shape.b_leading_dimension.is_some() {
                     return None;
                 }
-                let group_size = arguments.b.group_size().unwrap_or(0);
-                let int8_activations = arguments.a.prologue_kind() == GemmAPrologueKind::Int8Symmetric;
-                let tiling =
-                    select_mxu_quant_tiling(arguments.m, arguments.n, arguments.k, group_size, int8_activations);
-                if int8_activations {
-                    return (group_size != 0 && arguments.k.is_multiple_of(group_size)).then_some(tiling);
-                }
-                arguments.k.is_multiple_of(tiling.block_k()).then_some(tiling)
+                let tiling = mxu_quant_tiling(shape.m, shape.n, shape.k, shape.b_group_size.unwrap_or(0), false);
+                shape.k.is_multiple_of(tiling.block_k()).then_some(tiling)
             },
         }
     }
@@ -194,9 +175,9 @@ impl GemmKernel {
         arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        let int8_activations = arguments.a.prologue_kind() == GemmAPrologueKind::Int8Symmetric;
         let path = if encoder.context().device.supports_mxu()
-            && (arguments.a.prologue_kind() == GemmAPrologueKind::Int8Symmetric
-                || self.select_mxu_tiling(&arguments).is_some())
+            && (int8_activations || self.mxu_tiling_for(&MatmulShape::from_arguments(&arguments)).is_some())
         {
             GemmDispatchPath::Mxu
         } else {
@@ -253,6 +234,7 @@ impl GemmKernel {
         let b_prologue = arguments.b.b_prologue();
         let bits_per_b = arguments.b.bits_per_b();
         let group_size = arguments.b.group_size();
+        let weights_signed_codes = arguments.b.signed_codes();
 
         let MatmulArguments {
             a,
@@ -286,12 +268,12 @@ impl GemmKernel {
 
                 let tiling = if use_mxu {
                     if b_transpose {
-                        select_mxu_tiling(m, n, k)
+                        mxu_tiling(m, n, k)
                     } else {
-                        select_base_mxu_tiling(m, n)
+                        mxu_tiling_by_mn(m, n)
                     }
                 } else {
-                    select_simdgroup_tiling(m, n, k)
+                    simdgroup_tiling(m, n, k)
                 };
 
                 let threadgroups_per_row = n.div_ceil(tiling.block_n());
@@ -341,6 +323,7 @@ impl GemmKernel {
                             b_prologue,
                             bits_per_b,
                             group_size,
+                            false,
                             split_k,
                             output_transform,
                             output_bias,
@@ -380,6 +363,7 @@ impl GemmKernel {
                     bits_per_b,
                     group_size,
                     a_prologue: GemmAPrologueKind::FullPrecision,
+                    signed_codes: false,
                 };
                 specialization.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -444,7 +428,14 @@ impl GemmKernel {
                         scales: activation_scales,
                         group_sums: activation_group_sums,
                     } => {
-                        validate_int8_activation_arguments(use_mxu, k, b_prologue, bits_per_b, group_size)?;
+                        validate_int8_activation_arguments(
+                            use_mxu,
+                            weights_signed_codes,
+                            k,
+                            b_prologue,
+                            bits_per_b,
+                            group_size,
+                        )?;
                         if output_transform.contains(GemmDTransform::SOFT_CAP) {
                             return Err(MatmulError::UnsupportedDOp {
                                 bit: GemmDTransform::SOFT_CAP,
@@ -464,9 +455,9 @@ impl GemmKernel {
                 };
 
                 let tiling = if use_mxu {
-                    select_mxu_quant_tiling(m, n, k, group_size.unwrap_or(0), a_is_int8)
+                    mxu_quant_tiling(m, n, k, group_size.unwrap_or(0), a_is_int8)
                 } else {
-                    select_quant_tiling(m, n, group_size.unwrap_or(0))
+                    simdgroup_quant_tiling(m, n, group_size.unwrap_or(0))
                 };
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
@@ -514,6 +505,7 @@ impl GemmKernel {
                         b_prologue,
                         bits_per_b,
                         group_size,
+                        weights_signed_codes,
                         split_k,
                         output_transform,
                         output_bias,
@@ -532,6 +524,7 @@ impl GemmKernel {
                         bits_per_b,
                         group_size,
                         a_prologue,
+                        signed_codes: weights_signed_codes,
                     };
                     specialization.validate()?;
                     let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -595,6 +588,7 @@ impl GemmKernel {
         b_prologue: GemmBPrologueKind,
         bits_per_b: Option<u32>,
         group_size: Option<u32>,
+        signed_codes: bool,
         split_k: u32,
         output_transform: GemmDTransform,
         output_bias: Option<&Allocation<Metal>>,
@@ -619,6 +613,7 @@ impl GemmKernel {
             bits_per_b,
             group_size,
             a_prologue,
+            signed_codes,
         };
         part_spec.validate()?;
 
@@ -679,7 +674,7 @@ impl GemmKernel {
         if output_transform.contains(GemmDTransform::RHT)
             && let Some(factors) = rht_factors
         {
-            self.hadamard.encode(&mut *d, factors, n, m, encoder);
+            self.output_rht.encode_fp_in_place(&mut *d, factors, m, n, encoder);
         }
         Ok(())
     }
@@ -687,6 +682,7 @@ impl GemmKernel {
 
 fn validate_int8_activation_arguments(
     use_mxu: bool,
+    weights_signed_codes: bool,
     k: u32,
     b_prologue: GemmBPrologueKind,
     bits_per_b: Option<u32>,
@@ -694,6 +690,7 @@ fn validate_int8_activation_arguments(
 ) -> Result<(), MetalError> {
     let weight_gs_ok = matches!(weight_group_size, Some(32 | 64 | 128));
     let compatible = use_mxu
+        && weights_signed_codes
         && matches!(
             b_prologue,
             GemmBPrologueKind::ScaleSymmetricDequant
@@ -707,7 +704,7 @@ fn validate_int8_activation_arguments(
     if !compatible {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
-            reason: "symmetric int8 activations require MXU and unsigned 4/8-bit quantized weights with group size 32/64/128",
+            reason: "symmetric int8 activations require MXU and signed 4/8-bit quantized weight codes with group size 32/64/128",
         }
         .into());
     }
@@ -802,7 +799,7 @@ fn select_split_k(
     split_k
 }
 
-pub(crate) fn select_simdgroup_tiling(
+pub(crate) fn simdgroup_tiling(
     m: u32,
     n: u32,
     k: u32,
@@ -814,7 +811,7 @@ pub(crate) fn select_simdgroup_tiling(
     }
 }
 
-pub(crate) fn select_mxu_tiling(
+pub(crate) fn mxu_tiling(
     m: u32,
     n: u32,
     k: u32,
@@ -828,15 +825,15 @@ pub(crate) fn select_mxu_tiling(
             };
         }
         return if m < 16 {
-            select_small_m_mxu_tiling(n, k)
+            mxu_tiling_small_m(n, k)
         } else {
-            select_base_mxu_tiling(m, n)
+            mxu_tiling_by_mn(m, n)
         };
     }
-    select_base_mxu_tiling(m, n)
+    mxu_tiling_by_mn(m, n)
 }
 
-fn select_base_mxu_tiling(
+fn mxu_tiling_by_mn(
     m: u32,
     n: u32,
 ) -> GemmTiling {
@@ -851,7 +848,7 @@ fn select_base_mxu_tiling(
     }
 }
 
-fn select_small_m_mxu_tiling(
+fn mxu_tiling_small_m(
     n: u32,
     k: u32,
 ) -> GemmTiling {
@@ -867,7 +864,7 @@ fn select_small_m_mxu_tiling(
     GemmTiling::Tile32x64x256_Simdgroups2x2
 }
 
-pub(crate) fn select_mxu_quant_tiling(
+pub(crate) fn mxu_quant_tiling(
     m: u32,
     n: u32,
     k: u32,
@@ -875,9 +872,9 @@ pub(crate) fn select_mxu_quant_tiling(
     int8_activations: bool,
 ) -> GemmTiling {
     let tiling = if int8_activations {
-        select_mxu_tiling(m, n, k)
+        mxu_tiling(m, n, k)
     } else {
-        select_base_mxu_tiling(m, n)
+        mxu_tiling_by_mn(m, n)
     };
     if tiling.fits_quant_group_size(group_size) {
         tiling
@@ -886,7 +883,7 @@ pub(crate) fn select_mxu_quant_tiling(
     }
 }
 
-pub(crate) fn select_quant_tiling(
+pub(crate) fn simdgroup_quant_tiling(
     m: u32,
     n: u32,
     group_size: u32,

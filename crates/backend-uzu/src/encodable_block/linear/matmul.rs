@@ -8,7 +8,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             Kernels,
-            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulPath, MatmulShape},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout, int_spec::IntSpec, mlx_spec::MLXSpec},
@@ -38,6 +38,7 @@ enum Mode<B: Backend> {
         scales: Allocation<B>,
         zero_points_or_biases: Option<Allocation<B>>,
         output_hadamard_factors: Option<Allocation<B>>,
+        signed_codes: bool,
     },
 }
 
@@ -187,6 +188,7 @@ impl<B: Backend> LinearMatmul<B> {
                 scales,
                 zero_points_or_biases,
                 output_hadamard_factors,
+                signed_codes: false,
             },
         })
     }
@@ -209,6 +211,28 @@ fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
+    pub(super) fn make_weight_codes_signed(&mut self) {
+        let Mode::Quantized {
+            mode,
+            signed_codes,
+            ..
+        } = &mut self.mode
+        else {
+            return;
+        };
+        if *signed_codes {
+            return;
+        }
+        let Some(sign_flip_mask) = mode.weight_codes_sign_flip_mask() else {
+            return;
+        };
+        let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
+        let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(self.weights.as_slice_mut());
+        words.iter_mut().for_each(|word| *word ^= broadcast_mask);
+        prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
+        *signed_codes = true;
+    }
+
     pub(super) fn encode_with_a(
         &self,
         a: MatmulA<'_, B>,
@@ -218,64 +242,14 @@ impl<B: Backend> LinearMatmul<B> {
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
-        let b = match &self.mode {
-            Mode::FullPrecision => MatmulB::FullPrecision {
-                b: &self.weights,
-            },
-            Mode::Quantized {
-                method,
-                mode,
-                group_size,
-                scales,
-                zero_points_or_biases,
-                ..
-            } => match method {
-                QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
-                    b: &self.weights,
-                    scales,
-                    biases: zero_points_or_biases.as_ref().expect("ScaleBias quantization requires biases"),
-                    mode: *mode,
-                    group_size: *group_size,
-                },
-                QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
-                    b: &self.weights,
-                    scales,
-                    zero_points: zero_points_or_biases
-                        .as_ref()
-                        .expect("ScaleZeroPoint quantization requires zero_points"),
-                    mode: *mode,
-                    group_size: *group_size,
-                },
-                QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
-                    b: &self.weights,
-                    scales,
-                    mode: *mode,
-                    group_size: *group_size,
-                },
-            },
-        };
-
-        let rht_factors = match &self.mode {
-            Mode::Quantized {
-                output_hadamard_factors: Some(factors),
-                ..
-            } => Some(factors),
-            _ => None,
-        };
-        let d_transform = MatmulDOps {
-            bias: self.biases.as_ref(),
-            rht_factors,
-            ..MatmulDOps::none()
-        };
-
         self.kernel.lock().encode(
             MatmulArguments {
                 a,
-                b,
+                b: self.matmul_b(),
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut output,
-                d_transform,
+                d_transform: self.d_ops(),
                 gather_indices: None,
                 m: batch_dim as u32,
                 n: self.output_dim as u32,
@@ -285,6 +259,86 @@ impl<B: Backend> LinearMatmul<B> {
         )?;
 
         Ok(output)
+    }
+
+    fn matmul_b(&self) -> MatmulB<'_, B> {
+        match &self.mode {
+            Mode::FullPrecision => MatmulB::FullPrecision {
+                b: &self.weights,
+            },
+            Mode::Quantized {
+                method,
+                mode,
+                group_size,
+                scales,
+                zero_points_or_biases,
+                signed_codes,
+                ..
+            } => match method {
+                QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+                    b: &self.weights,
+                    scales,
+                    biases: zero_points_or_biases.as_ref().expect("ScaleBias quantization requires biases"),
+                    mode: *mode,
+                    group_size: *group_size,
+                    signed_codes: *signed_codes,
+                },
+                QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
+                    b: &self.weights,
+                    scales,
+                    zero_points: zero_points_or_biases
+                        .as_ref()
+                        .expect("ScaleZeroPoint quantization requires zero_points"),
+                    mode: *mode,
+                    group_size: *group_size,
+                    signed_codes: *signed_codes,
+                },
+                QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
+                    b: &self.weights,
+                    scales,
+                    mode: *mode,
+                    group_size: *group_size,
+                    signed_codes: *signed_codes,
+                },
+            },
+        }
+    }
+
+    fn d_ops(&self) -> MatmulDOps<'_, B> {
+        MatmulDOps {
+            bias: self.biases.as_ref(),
+            rht_factors: match &self.mode {
+                Mode::Quantized {
+                    output_hadamard_factors: Some(factors),
+                    ..
+                } => Some(factors),
+                _ => None,
+            },
+            ..MatmulDOps::none()
+        }
+    }
+
+    pub(super) fn select_path(
+        &self,
+        batch_dim: usize,
+        context: &B::Context,
+    ) -> MatmulPath {
+        let b = self.matmul_b();
+        let shape = MatmulShape {
+            m: batch_dim as u32,
+            n: self.output_dim as u32,
+            k: self.input_dim as u32,
+            b_transpose: true,
+            b_leading_dimension: None,
+            b_prologue: b.b_prologue(),
+            b_bits: b.bits_per_b(),
+            b_group_size: b.group_size(),
+            signed_codes: b.signed_codes(),
+            a_full_precision: true,
+            gathered: false,
+            d_transform: self.d_ops().mask(),
+        };
+        self.kernel.lock().select_path(&shape, context)
     }
 }
 

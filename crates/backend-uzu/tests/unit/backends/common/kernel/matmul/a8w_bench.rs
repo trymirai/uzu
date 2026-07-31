@@ -10,10 +10,10 @@ use crate::{
     backends::{
         common::{
             Allocation, Backend, Encoder,
-            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder, QuantizationMethod, QuantizationMode},
+            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
             kernel::{
-                HadamardTransformKernel, Kernels, RHTQuantizeActivationsKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                ActivationTransform, Kernels,
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulShape},
             },
         },
         metal::{DeviceTier, GemmDispatchPath, GemvDispatch, GemvSpecialization, Metal, MetalContext},
@@ -27,8 +27,6 @@ use crate::{
 };
 
 type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
-type MetalPrepare = <<Metal as Backend>::Kernels as Kernels>::RHTQuantizeActivationsKernel;
-type MetalHadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel;
 
 #[derive(Clone, Copy)]
 enum BenchPath {
@@ -48,7 +46,8 @@ impl BenchPath {
 }
 
 struct BenchmarkData {
-    weights_u8: Allocation<Metal>,
+    unsigned_weights: Allocation<Metal>,
+    signed_weights: Allocation<Metal>,
     weight_scales: Allocation<Metal>,
     activations: Allocation<Metal>,
     rht_factors: Allocation<Metal>,
@@ -72,9 +71,11 @@ impl BenchmarkData {
         seed: u64,
     ) -> Self {
         let group_size = HADAMARD_TRANSFORM_BLOCK_SIZE as u32;
-        let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed);
+        let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed)
+            .with_prepared_a();
 
-        let weights_u8 = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
+        let unsigned_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
+        let signed_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.weights_for_upload());
         let weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
         let activations = alloc_allocation_with_data::<Metal, bf16>(context, &input.x);
         let rht: Vec<i32> = (0..k)
@@ -90,7 +91,8 @@ impl BenchmarkData {
 
         let groups = k / group_size as usize;
         Self {
-            weights_u8,
+            unsigned_weights,
+            signed_weights,
             weight_scales,
             activations,
             rht_factors,
@@ -119,10 +121,11 @@ impl BenchmarkData {
                 offset: 0,
             },
             b: MatmulB::ScaleSymmetricDequant {
-                b: &self.weights_u8,
+                b: &self.unsigned_weights,
                 scales: &self.weight_scales,
                 mode: self.mode,
                 group_size: self.group_size,
+                signed_codes: false,
             },
             b_leading_dimension: None,
             b_transpose: true,
@@ -141,8 +144,8 @@ fn encode_step(
     path: BenchPath,
     data: &mut BenchmarkData,
     output: &mut Allocation<Metal>,
-    prepare: &MetalPrepare,
-    hadamard: &MetalHadamard,
+    prepare: &ActivationTransform<Metal>,
+    hadamard: &ActivationTransform<Metal>,
     matmul: &mut MetalMatmul,
     gemv: &mut GemvDispatch,
     device_tier: DeviceTier,
@@ -150,7 +153,7 @@ fn encode_step(
 ) {
     match path {
         BenchPath::A8GemmMxu => {
-            prepare.encode(
+            prepare.encode_quantize(
                 &data.activations,
                 &mut data.a_int8,
                 &mut data.a_scales,
@@ -158,7 +161,6 @@ fn encode_step(
                 &data.rht_factors,
                 data.m,
                 data.k,
-                HADAMARD_TRANSFORM_BLOCK_SIZE as u32,
                 encoder,
             );
             let args: MatmulArguments<'_, '_, '_, Metal, &Allocation<Metal>> = MatmulArguments {
@@ -168,10 +170,11 @@ fn encode_step(
                     group_sums: None,
                 },
                 b: MatmulB::ScaleSymmetricDequant {
-                    b: &data.weights_u8,
+                    b: &data.signed_weights,
                     scales: &data.weight_scales,
                     mode: data.mode,
                     group_size: data.group_size,
+                    signed_codes: true,
                 },
                 b_leading_dimension: None,
                 b_transpose: true,
@@ -186,16 +189,22 @@ fn encode_step(
         },
         BenchPath::Bf16GemmMxu => {
             encoder.encode_copy(&data.activations, .., &mut data.a_working, ..);
-            hadamard.encode(&mut data.a_working, &data.rht_factors, data.k, data.m, encoder);
+            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
             let args = data.bf16_arguments(output);
             matmul.gemm.encode_dispatch_path(args, GemmDispatchPath::Mxu, encoder).expect("bf16 gemm mxu encode");
         },
         BenchPath::Bf16Gemv => {
             encoder.encode_copy(&data.activations, .., &mut data.a_working, ..);
-            hadamard.encode(&mut data.a_working, &data.rht_factors, data.k, data.m, encoder);
+            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
             let args = data.bf16_arguments(output);
-            let spec = GemvSpecialization::select(&args, DataType::BF16, DataType::BF16, DataType::BF16, device_tier)
-                .expect("bf16 gemv specialization");
+            let spec = GemvSpecialization::select_shape(
+                &MatmulShape::from_arguments(&args),
+                DataType::BF16,
+                DataType::BF16,
+                DataType::BF16,
+                device_tier,
+            )
+            .expect("bf16 gemv specialization");
             gemv.encode(args, spec, encoder).expect("bf16 gemv encode");
         },
     }
@@ -205,8 +214,8 @@ fn bench_bits(
     c: &mut Criterion,
     context: &MetalContext,
     device_tier: DeviceTier,
-    prepare: &MetalPrepare,
-    hadamard: &MetalHadamard,
+    prepare: &ActivationTransform<Metal>,
+    hadamard: &ActivationTransform<Metal>,
     bits: u32,
 ) {
     let mut matmul = <MetalMatmul as MatmulKernel>::new(context, DataType::BF16, DataType::BF16, DataType::BF16)
@@ -224,8 +233,8 @@ fn bench_bits(
         let mut output = alloc_allocation::<Metal, bf16>(context, m * n);
         let shape_label = format!("{layer}_m{m}_k{k}_n{n}");
 
-        let gemv_eligible = GemvSpecialization::select(
-            &data.bf16_arguments(&mut output),
+        let gemv_eligible = GemvSpecialization::select_shape(
+            &MatmulShape::from_arguments(&data.bf16_arguments(&mut output)),
             DataType::BF16,
             DataType::BF16,
             DataType::BF16,
@@ -270,11 +279,8 @@ fn bench_a8w(c: &mut Criterion) {
     }
     let device_tier = context.device_tier();
 
-    let prepare =
-        <MetalPrepare as RHTQuantizeActivationsKernel>::new(&context, DataType::BF16, false).expect("prepare kernel");
-    let hadamard =
-        <MetalHadamard as HadamardTransformKernel>::new(&context, DataType::BF16, HadamardTransformOrder::Input)
-            .expect("hadamard kernel");
+    let prepare = ActivationTransform::<Metal>::quantize(&context, DataType::BF16, false).expect("prepare kernel");
+    let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, true).expect("hadamard kernel");
 
     for bits in [8u32, 4u32] {
         bench_bits(c, &context, device_tier, &prepare, &hadamard, bits);

@@ -16,6 +16,7 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
         biases: &'a Allocation<B>,
         mode: QuantizationMode,
         group_size: u32,
+        signed_codes: bool,
     },
     ScaleZeroPointDequant {
         b: &'a Allocation<B>,
@@ -23,12 +24,14 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
         zero_points: &'a Allocation<B>,
         mode: QuantizationMode,
         group_size: u32,
+        signed_codes: bool,
     },
     ScaleSymmetricDequant {
         b: &'a Allocation<B>,
         scales: &'a Allocation<B>,
         mode: QuantizationMode,
         group_size: u32,
+        signed_codes: bool,
     },
 }
 
@@ -87,6 +90,26 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
                 group_size,
                 ..
             } => Some(*group_size),
+        }
+    }
+
+    pub fn signed_codes(&self) -> bool {
+        match self {
+            Self::FullPrecision {
+                ..
+            } => false,
+            Self::ScaleBiasDequant {
+                signed_codes,
+                ..
+            }
+            | Self::ScaleZeroPointDequant {
+                signed_codes,
+                ..
+            }
+            | Self::ScaleSymmetricDequant {
+                signed_codes,
+                ..
+            } => *signed_codes,
         }
     }
 }

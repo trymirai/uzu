@@ -18,7 +18,7 @@ use crate::{
         },
         cpu::{
             Cpu,
-            kernel::rht_quantize_activations::{min_max_symmetric_divisor, quantize_symmetric_i8},
+            kernel::activation_transform::{min_max_symmetric_divisor, quantize_symmetric_i8},
         },
     },
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
@@ -42,6 +42,7 @@ pub struct QuantInput<T: ArrayElement + Float> {
     pub group_size: u32,
     pub quant_method: QuantizationMethod,
     pub mode: QuantizationMode,
+    pub signed_codes: bool,
     pub prepared_a: Option<PreparedInt8A>,
 }
 
@@ -99,11 +100,18 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             group_size,
             quant_method,
             mode: mode_for_bits(bits),
+            signed_codes: false,
             prepared_a: None,
         }
     }
 
+    pub fn with_signed_weight_codes(mut self) -> Self {
+        self.signed_codes = true;
+        self
+    }
+
     pub fn with_prepared_a(mut self) -> Self {
+        self.signed_codes = true;
         let group_size = HADAMARD_TRANSFORM_BLOCK_SIZE;
         let rows = self.m as usize;
         let columns = self.k as usize;
@@ -138,8 +146,14 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         self
     }
 
-    fn weights_for_upload(&self) -> Vec<u32> {
-        self.w_packed.clone()
+    pub(crate) fn weights_for_upload(&self) -> Vec<u32> {
+        let mut words = self.w_packed.clone();
+        let sign_flip_mask = self.signed_codes.then(|| self.mode.weight_codes_sign_flip_mask()).flatten();
+        if let Some(mask) = sign_flip_mask {
+            let broadcast_mask = u32::from(mask) * 0x0101_0101;
+            words.iter_mut().for_each(|word| *word ^= broadcast_mask);
+        }
+        words
     }
 
     pub(crate) fn weight_buffer_bytes(&self) -> usize {
@@ -192,51 +206,77 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
     }
 }
 
+pub fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
+    w: &'a Allocation<B>,
+    scales: &'a Allocation<B>,
+    zero_points: Option<&'a Allocation<B>>,
+    biases: Option<&'a Allocation<B>>,
+    input: &QuantInput<T>,
+) -> MatmulB<'a, B> {
+    let signed_codes = input.signed_codes;
+    match input.quant_method {
+        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+            b: w,
+            scales,
+            biases: biases.expect("bias buffer"),
+            mode: input.mode,
+            group_size: input.group_size,
+            signed_codes,
+        },
+        QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
+            b: w,
+            scales,
+            zero_points: zero_points.expect("zp buffer"),
+            mode: input.mode,
+            group_size: input.group_size,
+            signed_codes,
+        },
+        QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
+            b: w,
+            scales,
+            mode: input.mode,
+            group_size: input.group_size,
+            signed_codes,
+        },
+    }
+}
+
 pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
     buffers: &'a mut QuantBuffers<B, T>,
     input: &QuantInput<T>,
 ) -> MatmulArguments<'a, 'a, 'a, B> {
-    let b_variant = match input.quant_method {
-        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
-            b: &buffers.w,
-            scales: &buffers.scales,
-            biases: buffers.bias.as_ref().expect("bias buffer"),
-            mode: input.mode,
-            group_size: input.group_size,
-        },
-        QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
-            b: &buffers.w,
-            scales: &buffers.scales,
-            zero_points: buffers.zp.as_ref().expect("zp buffer"),
-            mode: input.mode,
-            group_size: input.group_size,
-        },
-        QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
-            b: &buffers.w,
-            scales: &buffers.scales,
-            mode: input.mode,
-            group_size: input.group_size,
-        },
-    };
+    let QuantBuffers {
+        w,
+        scales,
+        zp,
+        bias,
+        x,
+        prepared_a,
+        prepared_a_scales,
+        prepared_a_group_sums,
+        y,
+        ..
+    } = buffers;
+    let b = quant_b_variant(w, scales, zp.as_ref(), bias.as_ref(), input);
     let a = match &input.prepared_a {
         Some(_) => MatmulA::Int8Symmetric {
-            values: buffers.prepared_a.as_ref().expect("prepared activation buffer"),
-            scales: buffers.prepared_a_scales.as_ref().expect("prepared activation scales"),
+            values: prepared_a.as_ref().expect("prepared activation buffer"),
+            scales: prepared_a_scales.as_ref().expect("prepared activation scales"),
             // Symmetric weights carry no correction term, so the GEMM never reads these.
             group_sums: (input.quant_method != QuantizationMethod::ScaleSymmetric)
-                .then(|| buffers.prepared_a_group_sums.as_ref().expect("prepared activation row sums")),
+                .then(|| prepared_a_group_sums.as_ref().expect("prepared activation row sums")),
         },
         None => MatmulA::FullPrecision {
-            values: &buffers.x,
+            values: x,
             offset: 0,
         },
     };
     MatmulArguments {
         a,
-        b: b_variant,
+        b,
         b_leading_dimension: None,
         b_transpose: true,
-        d: &mut buffers.y,
+        d: y,
         d_transform: MatmulDOps::none(),
         gather_indices: None,
         m: input.m,

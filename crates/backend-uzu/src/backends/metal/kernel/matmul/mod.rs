@@ -7,7 +7,7 @@ use crate::{
     backends::{
         common::{
             BufferArg, Encoder,
-            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
+            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulPath, MatmulShape},
         },
         metal::{Metal, context::MetalContext, error::MetalError, metal_extensions::DeviceExt},
     },
@@ -20,6 +20,25 @@ pub struct MatmulMetalKernel {
     weights_data_type: DataType,
     input_data_type: DataType,
     output_data_type: DataType,
+}
+
+impl MatmulMetalKernel {
+    fn gemv_specialization(
+        &self,
+        shape: &MatmulShape,
+        context: &MetalContext,
+    ) -> Option<GemvSpecialization> {
+        if context.device.supports_mxu() && self.gemm.should_skip_gemv_for_mxu(shape) {
+            return None;
+        }
+        GemvSpecialization::select_shape(
+            shape,
+            self.weights_data_type,
+            self.input_data_type,
+            self.output_data_type,
+            context.device_tier(),
+        )
+    }
 }
 
 impl MatmulKernel for MatmulMetalKernel {
@@ -49,21 +68,25 @@ impl MatmulKernel for MatmulMetalKernel {
         })
     }
 
+    fn select_path(
+        &self,
+        shape: &MatmulShape,
+        context: &MetalContext,
+    ) -> MatmulPath {
+        if self.gemv_specialization(shape, context).is_some() {
+            MatmulPath::Gemv
+        } else {
+            MatmulPath::Gemm
+        }
+    }
+
     fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         &mut self,
         arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        let skip_gemv = encoder.context().device.supports_mxu() && self.gemm.should_skip_gemv_for_mxu(&arguments);
-        if !skip_gemv
-            && let Some(gemv) = GemvSpecialization::select(
-                &arguments,
-                self.weights_data_type,
-                self.input_data_type,
-                self.output_data_type,
-                encoder.context().device_tier(),
-            )
-        {
+        let shape = MatmulShape::from_arguments(&arguments);
+        if let Some(gemv) = self.gemv_specialization(&shape, encoder.context()) {
             return self.gemv.encode(arguments, gemv, encoder).map_err(MetalError::from);
         }
 

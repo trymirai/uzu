@@ -21,7 +21,7 @@ use crate::{
     tests::{
         assert::assert_eq_float,
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
-        matmul::{QuantBuffers, QuantInput},
+        matmul::{QuantBuffers, QuantInput, quant_b_variant},
     },
 };
 
@@ -249,28 +249,8 @@ fn gemv_gather() {
             let context = <B as Backend>::Context::new().expect("context");
             let buffers = QuantBuffers::<B, bf16>::allocate(&context, &input);
             let ids_alloc = alloc_allocation_with_data::<B, u32>(&context, &ids);
-            let variant = || match method {
-                QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
-                    b: &buffers.w,
-                    scales: &buffers.scales,
-                    biases: buffers.bias.as_ref().expect("bias buffer"),
-                    mode: input.mode,
-                    group_size: input.group_size,
-                },
-                QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
-                    b: &buffers.w,
-                    scales: &buffers.scales,
-                    zero_points: buffers.zp.as_ref().expect("zp buffer"),
-                    mode: input.mode,
-                    group_size: input.group_size,
-                },
-                QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
-                    b: &buffers.w,
-                    scales: &buffers.scales,
-                    mode: input.mode,
-                    group_size: input.group_size,
-                },
-            };
+            let variant =
+                || quant_b_variant(&buffers.w, &buffers.scales, buffers.zp.as_ref(), buffers.bias.as_ref(), &input);
             (
                 run_gemv::<B, bf16>(&context, &buffers.x, variant(), None, m, vocab, k, None),
                 run_gemv::<B, bf16>(&context, &buffers.x, variant(), Some(&ids_alloc), m, ids_per_row, k, None),

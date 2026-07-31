@@ -3,6 +3,7 @@
 //! These `#[repr(C)]` structs are the source of truth. The build system uses
 //! cbindgen to generate C headers for Metal shaders.
 
+pub mod activation_transform;
 pub mod activation_type;
 pub mod argmax;
 pub mod attention;
@@ -16,6 +17,7 @@ pub mod ring;
 pub mod trie;
 pub mod weaver;
 
+pub use activation_transform::*;
 pub use activation_type::*;
 pub use argmax::*;
 pub use attention::*;

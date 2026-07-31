@@ -32,6 +32,7 @@ target is `--lib`.
 |-----------------------------------------|-------------------------------------|
 | `Metal/Kernel/Matmul/GEMM`              | `Metal/Kernel/Matmul/GEMM`          |
 | `Metal/Kernel/Matmul/GEMM_MXU`          | `Metal/Kernel/Matmul/GEMM_MXU`      |
+| `Metal/Kernel/A8W/w4`, `.../w8`         | `Metal/Kernel/A8W`                  |
 | `Metal/Kernel/UnifiedQuantizedGemm/...` | `Metal/Kernel/UnifiedQuantizedGemm` |
 | `Metal/Kernel/Gemv/...`                 | `Metal/Kernel/Gemv`                 |
 | `Metal/Kernel/Qwen3Layers/...`          | `Metal/Kernel/Qwen3Layers`          |
@@ -72,31 +73,39 @@ directory.
 Run one benchmark group at a time to avoid the iOS watchdog killing the
 app.
 
+Set `IPHONEOS_DEPLOYMENT_TARGET` (value from `platforms.toml` `[envs]`)
+for all iOS builds; without it the link step fails with undefined
+symbols (e.g. `___chkstk_darwin`) because objects are built for a newer
+SDK than the default deployment target.
+
 Key flags:
 
-- `-e CRITERION_HOME=target/criterion/a19` — on-device env var. Path is
+- `-e CRITERION_HOME=criterion/a19` — on-device env var. Path is
   relative to the app's cwd (`Documents/`), so this becomes
-  `Documents/target/criterion/a19/` on device.
-- `--copy-back "Documents/target=$(pwd)/target"` — after the run,
-  `cargo-dinghy` pulls `Documents/target` from the device into your
-  repo's `target/`. `$(pwd)` is required (absolute DST) because the
+  `Documents/criterion/a19/` on device. Keep it directly under
+  `Documents/` — nested parents (e.g. `Documents/target/`) do not exist
+  on a fresh install and the pre-run sync cannot create them.
+- `--sync-dirs "$(pwd)/target/criterion=Documents/criterion"` —
+  syncs the criterion tree between host and device before and after the
+  run, so results written on device land back in the repo's
+  `target/criterion/`. `$(pwd)` is required (absolute path) because the
   cargo runner is launched with cwd set to the package dir, not the
   workspace root.
 
 ```bash
 DEVICE=<DEVICE_ID>
 
-cargo dinghy \
+IPHONEOS_DEPLOYMENT_TARGET=26.4 cargo dinghy \
   -d "$DEVICE" \
-  -e CRITERION_HOME=target/criterion/a19 \
-  --copy-back "Documents/target=$(pwd)/target" \
+  -e CRITERION_HOME=criterion/a19 \
+  --sync-dirs "$(pwd)/target/criterion=Documents/criterion" \
   bench -p backend-uzu --lib -- \
     "Metal/Kernel/Matmul" \
     --save-baseline matmul_baseline_a19
 ```
 
-After the run completes you'll have
-`target/criterion/a19/Metal/Kernel/Matmul/<GEMM|GEMM_MXU>/…/matmul_baseline_a19/`
+On-device criterion sanitizes group path separators, so results land in
+`target/criterion/a19/Metal_Kernel_Matmul_<GEMM|GEMM_MXU>/…/`
 on the host, next to any `m2_max/` baselines.
 
 ## Viewing reports

@@ -72,6 +72,7 @@ KERNEL(Gemv)(
         OPTIONAL(output_transform.contains(GemmDTransform::SOFT_CAP)),
     const GemmDTransform output_transform SPECIALIZE,
     const bool gathered SPECIALIZE,
+    const bool signed_codes SPECIALIZE,
     threadgroup float shared_results[NUM_SIMDGROUPS * RESULTS_PER_SIMDGROUP],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(group_count_x),
@@ -99,7 +100,8 @@ KERNEL(Gemv)(
       tile.out_row,
       batch_idx,
       simd_lane,
-      tile.k_slice
+      tile.k_slice,
+      signed_codes
   );
 
   Reduce<U, K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::run(
