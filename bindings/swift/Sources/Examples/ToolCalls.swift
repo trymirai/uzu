@@ -22,7 +22,7 @@ private func getCurrentLocation() -> Coordinate {
 /// - Parameters:
 ///   - latitude: Latitude in decimal degrees.
 ///   - longitude: Longitude in decimal degrees.
-@UzuToolFunction(name: "get_current_temperature")
+@UzuToolFunction
 private func getCurrentTemperature(
     latitude: Double,
     longitude: Double
