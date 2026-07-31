@@ -5,7 +5,7 @@
 #include "../../../hadamard_transform/hadamard_transform.h"
 #include "../../common/fragment.h"
 #include "gemm_rht.h"
-#include "../../common/mxu_fragment_ops.h"
+#include "../../common/mxu_fragment/ops.h"
 #include "../../common/mxu_gemm_loop.h"
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
@@ -215,7 +215,7 @@ struct MxuMmaCore {
               const ushort packed = *reinterpret_cast<const device ushort*>(
                   b_packed_simdgroup + int(row) * b_row_stride_bytes + (k_base >> 1)
               );
-              codes = unpack_nibbles_to_int8(uint(packed));
+              codes = unpack_signed_nibbles_to_int8(uint(packed));
             }
             weight_vector[element_base + 0] = codes.x;
             weight_vector[element_base + 1] = codes.y;
@@ -234,11 +234,6 @@ struct MxuMmaCore {
         right_src = right_src.bounded(simdgroup_limit_n, SIMDGROUP_BLOCK_K);
       }
       right_tile.load_from(simd_lane_id, right_src);
-      thread int8_t* right_codes = right_tile.elements();
-      METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < right_tile.ELEMENTS_PER_FRAGMENT; ++i) {
-        right_codes[i] = unbias_uint8_to_int8(as_type<uchar>(right_codes[i]));
-      }
     }
     return right_tile;
   }
@@ -404,15 +399,24 @@ struct MxuMmaCore {
         );
 
         uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> chunk_products;
-        auto right_tile = load_int8_weight_tile<ALIGNED_N>(
-            b_packed_simdgroup,
-            k_element_offset,
-            b_row_stride_bytes,
-            simdgroup_limit_n,
-            position,
-            thread_context.simd_lane_id
-        );
-        Ops::template fragment_mm<false, true>(chunk_products, activation_tile, right_tile);
+        if constexpr (BITS == 4 && ALIGNED_N) {
+          Ops::template fragment_matmul_int8_device_weights<metal::int4b_format>(
+              chunk_products,
+              activation_tile,
+              b_packed_simdgroup + (k_element_offset >> 1),
+              b_row_stride_bytes
+          );
+        } else {
+          auto right_tile = load_int8_weight_tile<ALIGNED_N>(
+              b_packed_simdgroup,
+              k_element_offset,
+              b_row_stride_bytes,
+              simdgroup_limit_n,
+              position,
+              thread_context.simd_lane_id
+          );
+          Ops::template fragment_mm<false, true>(chunk_products, activation_tile, right_tile);
+        }
 
         const uint act_group_index = k_offset_act_groups + uint(weight_group * act_chunks_per_weight_group + act_chunk);
         ActivationLineCache activation_scales;
@@ -475,6 +479,7 @@ struct MxuMmaCore {
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
       GemmDTransform output_transform,
+      const bool signed_codes,
       const device BT* scales,
       const device BT* biases,
       const device uint8_t* zero_points,
@@ -624,6 +629,7 @@ struct MxuMmaCore {
                               weights_block,
                               scales_offset,
                               biases_offset,
+                              signed_codes,
                               k_elements,
                               b_shared,
                               thread_context.simdgroup_index,
@@ -638,6 +644,7 @@ struct MxuMmaCore {
                               weights_block,
                               scales_offset,
                               zero_points_row_start,
+                              signed_codes,
                               k_elements,
                               groups_per_row,
                               b_shared,
@@ -649,6 +656,7 @@ struct MxuMmaCore {
                               weights_block,
                               scales_offset,
                               nullptr,
+                              signed_codes,
                               k_elements,
                               groups_per_row,
                               b_shared,

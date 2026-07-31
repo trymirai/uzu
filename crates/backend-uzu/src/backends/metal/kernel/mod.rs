@@ -28,7 +28,3 @@ impl Kernels for MetalKernels {
     type MatmulKernel = matmul::MatmulMetalKernel;
     type RadixTopKSmall = radix_top_k_small::MetalRadixTopKSmall;
 }
-
-#[cfg(test)]
-#[path = "../../../../tests/unit/backends/metal/kernel/rht_quantize_activations_test.rs"]
-mod rht_quantize_activations_test;

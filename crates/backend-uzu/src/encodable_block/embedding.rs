@@ -5,9 +5,9 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
-        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder, QuantizationMethod, QuantizationMode},
+        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
         kernel::{
-            FullPrecisionEmbeddingLookupKernel, HadamardTransformKernel, LogitSoftCapKernel,
+            ActivationTransform, FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel,
             QuantizedEmbeddingLookupKernel,
             matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
@@ -92,7 +92,7 @@ enum UntiedEmbeddingReadoutType<B: Backend> {
 
 struct InputHadamard<B: Backend> {
     factors: Allocation<B>,
-    kernel: <B::Kernels as Kernels>::HadamardTransformKernel,
+    kernel: ActivationTransform<B>,
 }
 
 enum EmbeddingTying<B: Backend> {
@@ -480,12 +480,8 @@ impl<B: Backend> Embedding<B> {
                             .leaf("input_signs")?
                             .validate(&[model_dim as usize], DataType::I32)?
                             .read_allocation()?;
-                        let kernel = <B::Kernels as Kernels>::HadamardTransformKernel::new(
-                            context,
-                            data_type,
-                            HadamardTransformOrder::Input,
-                        )
-                        .map_err(EmbeddingError::BackendError)?;
+                        let kernel = ActivationTransform::input_rht(context, data_type, false)
+                            .map_err(EmbeddingError::BackendError)?;
                         let input_hadamard = Some(InputHadamard {
                             factors,
                             kernel,
@@ -727,12 +723,12 @@ impl<B: Backend> Embedding<B> {
                     Some(input_hadamard) => {
                         let mut transformed =
                             encoder.allocate_scratch(input_allocation.size()).map_err(EmbeddingError::BackendError)?;
-                        encoder.encode_copy(input_allocation, .., &mut transformed, ..);
-                        input_hadamard.kernel.encode(
+                        input_hadamard.kernel.encode_fp(
+                            input_allocation,
                             &mut transformed,
                             &input_hadamard.factors,
-                            self.model_dim,
                             batch_dim as u32,
+                            self.model_dim,
                             encoder,
                         );
                         rht_input.insert(transformed)
@@ -860,12 +856,12 @@ impl<B: Backend> Embedding<B> {
         let a = match input_hadamard {
             Some(input_hadamard) => {
                 let mut transformed = encoder.allocate_scratch(input.size()).map_err(EmbeddingError::BackendError)?;
-                encoder.encode_copy(input, .., &mut transformed, ..);
-                input_hadamard.kernel.encode(
+                input_hadamard.kernel.encode_fp(
+                    input,
                     &mut transformed,
                     &input_hadamard.factors,
-                    self.model_dim,
                     rows as u32,
+                    self.model_dim,
                     encoder,
                 );
                 rht_input.insert(transformed)
@@ -916,6 +912,7 @@ fn quantized_matmul_b<'a, B: Backend>(
             biases: zero_points_or_biases.expect("ScaleBias quantization requires biases"),
             mode: readout_config.mode,
             group_size: readout_config.group_size,
+            signed_codes: false,
         },
         QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
             b: weights,
@@ -923,12 +920,14 @@ fn quantized_matmul_b<'a, B: Backend>(
             zero_points: zero_points_or_biases.expect("ScaleZeroPoint quantization requires zero_points"),
             mode: readout_config.mode,
             group_size: readout_config.group_size,
+            signed_codes: false,
         },
         QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
             b: weights,
             scales,
             mode: readout_config.mode,
             group_size: readout_config.group_size,
+            signed_codes: false,
         },
     }
 }

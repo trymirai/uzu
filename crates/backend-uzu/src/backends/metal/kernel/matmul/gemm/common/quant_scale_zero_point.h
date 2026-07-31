@@ -52,11 +52,13 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   const device T* scales;
   const device T* scales_row_start;
   const device uint8_t* zero_points_row_start;
+  const bool signed_codes;
 
   QuantizedBlockLoaderScaleZeroPoint(
       const device uint8_t* src_,
       const device T* scales_,
       const device uint8_t* zero_points_row_start_,
+      const bool signed_codes_,
       const int src_leading_dim_,
       const int groups_per_row_,
       threadgroup T* dst_,
@@ -82,7 +84,8 @@ struct QuantizedBlockLoaderScaleZeroPoint {
                 : (REDUCTION_DIMENSION == 1 ? (zero_points_row_start_ +
                                                tile_row_index * zero_point_row_stride<ushort(BITS)>(groups_per_row_))
                                             : zero_points_row_start_)
-        ) {}
+        ),
+        signed_codes(signed_codes_) {}
 
   inline void current_scale_bias(thread T& out_scale, thread T& out_bias) const {
     uint zero_point_value;
@@ -115,7 +118,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
     T bias;
     current_scale_bias(scale, bias);
     for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, signed_codes);
     }
   }
 
@@ -143,7 +146,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       for (int i = 0; i < READS_PER_THREAD; i++) {
         int pack_index = tile_col_index + i;
         if (pack_index < valid_packs) {
-          dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+          dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, signed_codes);
 
           if (pack_index == valid_packs - 1) {
             int remaining = valid_cols - pack_index * pack_factor;
@@ -172,7 +175,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       T bias;
       current_scale_bias(scale, bias);
       for (int i = 0; i < READS_PER_THREAD; i++) {
-        dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+        dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, signed_codes);
       }
     }
   }

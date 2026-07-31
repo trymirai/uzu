@@ -3,9 +3,9 @@ use crate::{
     backends::{
         common::{
             Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
-            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, HadamardTransformOrder, QuantizationMode},
+            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMode},
             kernel::{
-                HadamardTransformKernel, TensorAddBiasKernel,
+                ActivationTransform, TensorAddBiasKernel,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
@@ -19,7 +19,7 @@ pub struct MatmulCpuKernel {
     weights_data_type: DataType,
     input_data_type: DataType,
     output_data_type: DataType,
-    hadamard: <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel,
+    output_rht: ActivationTransform<Cpu>,
     bias_add: <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel,
 }
 
@@ -37,11 +37,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 return Err(MatmulError::<Cpu>::UnsupportedDataType(data_type).into());
             }
         }
-        let hadamard = <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
-            context,
-            output_data_type,
-            HadamardTransformOrder::Output,
-        )?;
+        let output_rht = ActivationTransform::output_rht(context, output_data_type, true)?;
         let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(
             context,
             output_data_type,
@@ -53,7 +49,7 @@ impl MatmulKernel for MatmulCpuKernel {
             weights_data_type,
             input_data_type,
             output_data_type,
-            hadamard,
+            output_rht,
             bias_add,
         })
     }
@@ -232,21 +228,20 @@ impl MatmulKernel for MatmulCpuKernel {
                                     biases,
                                     bits,
                                     group_size,
+                                    signed_codes,
                                 } => {
                                     let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
                                     let weight_linear_index = b_col * k_u + inner;
-                                    let quantized_value = if *bits == 4 {
-                                        let word_index = weight_linear_index / pack_factor;
-                                        let bit_offset = (weight_linear_index % pack_factor) * 4;
-                                        let w = weights.as_ptr() as *const u32;
-                                        let nibble = ((w.add(word_index).read_unaligned() >> bit_offset) & 0xF) as u8;
-                                        f32::from(nibble)
-                                    } else {
-                                        let word_index = weight_linear_index / pack_factor;
-                                        let bit_offset = (weight_linear_index % pack_factor) * 8;
-                                        let w = weights.as_ptr() as *const u32;
-                                        ((w.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as f32
-                                    };
+                                    let word_index = weight_linear_index / pack_factor;
+                                    let bit_offset = (weight_linear_index % pack_factor) * *bits;
+                                    let weights_words = weights.as_ptr() as *const u32;
+                                    let word = weights_words.add(word_index).read_unaligned();
+                                    let code_mask = (1u32 << bits) - 1;
+                                    let mut weight_code = ((word >> bit_offset) & code_mask) as u8;
+                                    if *signed_codes {
+                                        weight_code ^= 1u8 << (bits - 1);
+                                    }
+                                    let quantized_value = f32::from(weight_code);
                                     let group_index = inner / group_size;
                                     let scale = read_f32(
                                         scales.as_ptr(),
@@ -298,7 +293,7 @@ impl MatmulKernel for MatmulCpuKernel {
         });
 
         if let Some(factors) = post_rht {
-            self.hadamard.encode(&mut *d, factors, n, m, encoder);
+            self.output_rht.encode_fp_in_place(&mut *d, factors, m, n, encoder);
             if let Some(bias) = bias_alloc {
                 let output_length = m.checked_mul(n).expect("matmul output length must fit in u32");
                 self.bias_add.encode(

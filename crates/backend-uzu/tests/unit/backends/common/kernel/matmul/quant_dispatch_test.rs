@@ -26,7 +26,7 @@ use crate::{
     },
     tests::{
         helpers::allocation_to_vec,
-        matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, run_quant_metal},
+        matmul::{QuantBuffers, QuantInput, quant_arguments, quant_b_variant, run_quant_cpu, run_quant_metal},
     },
 };
 
@@ -526,6 +526,38 @@ fn a8w_mxu_parity_bf16(
 
 #[rstest]
 #[test_attr(uzu_test)]
+#[case::w4_sym(4u32, QuantizationMethod::ScaleSymmetric, 256usize)]
+#[case::w4_bias(4u32, QuantizationMethod::ScaleBias, 256usize)]
+#[case::w4_zp(4u32, QuantizationMethod::ScaleZeroPoint, 256usize)]
+#[case::w8_sym(8u32, QuantizationMethod::ScaleSymmetric, 256usize)]
+#[case::w8_bias(8u32, QuantizationMethod::ScaleBias, 256usize)]
+#[case::w8_zp(8u32, QuantizationMethod::ScaleZeroPoint, 256usize)]
+#[case::w8_zp_tail(8u32, QuantizationMethod::ScaleZeroPoint, 224usize)]
+fn signed_weights_full_precision_activations_parity_bf16(
+    #[case] bits: u32,
+    #[case] method: QuantizationMethod,
+    #[case] k: usize,
+) {
+    let context = MetalContext::new().expect("Metal context");
+    let (m, n, group_size) = (2usize, 128usize, 32u32);
+    let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0).with_signed_weight_codes();
+    let reference_input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0);
+    let reference = run_quant_cpu::<bf16>(&reference_input);
+
+    for (label, path) in [("gemv", None), ("simdgroup", Some(GemmDispatchPath::Simdgroup))] {
+        let actual = run_quant_metal::<bf16>(&context, &input, path);
+        assert_parity::<bf16>(
+            &format!("signed weights FP-A {label} bits={bits} method={method:?}"),
+            &reference,
+            &actual,
+            0.05,
+            0.5,
+        );
+    }
+}
+
+#[rstest]
+#[test_attr(uzu_test)]
 #[case::w4_bias(4u32, false)]
 #[case::w8_bias(8u32, false)]
 #[case::w4_rht_bias(4u32, true)]
@@ -628,38 +660,13 @@ fn run_widened_f32<B: Backend>(
     context: &B::Context,
     input: &QuantInput<bf16>,
 ) -> Vec<f32> {
-    use crate::{
-        backends::common::kernel::matmul::{MatmulA, MatmulB},
-        data_type::DataType,
-        tests::helpers::alloc_allocation,
-    };
+    use crate::{backends::common::kernel::matmul::MatmulA, data_type::DataType, tests::helpers::alloc_allocation};
     let buffers = QuantBuffers::<B, bf16>::allocate(context, input);
     let mut y = alloc_allocation::<B, f32>(context, (input.m as usize) * (input.n as usize));
     let mut matmul =
         <<B as Backend>::Kernels as Kernels>::MatmulKernel::new(context, DataType::BF16, DataType::BF16, DataType::F32)
             .expect("MatmulKernel widened");
-    let b: MatmulB<'_, B> = match input.quant_method {
-        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
-            b: &buffers.w,
-            scales: &buffers.scales,
-            biases: buffers.bias.as_ref().expect("bias buffer"),
-            mode: input.mode,
-            group_size: input.group_size,
-        },
-        QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
-            b: &buffers.w,
-            scales: &buffers.scales,
-            zero_points: buffers.zp.as_ref().expect("zp buffer"),
-            mode: input.mode,
-            group_size: input.group_size,
-        },
-        QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
-            b: &buffers.w,
-            scales: &buffers.scales,
-            mode: input.mode,
-            group_size: input.group_size,
-        },
-    };
+    let b = quant_b_variant(&buffers.w, &buffers.scales, buffers.zp.as_ref(), buffers.bias.as_ref(), input);
     let mut encoder = Encoder::<B>::new(context).expect("encoder");
     matmul
         .encode(

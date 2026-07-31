@@ -1,10 +1,13 @@
 use crate::backends::common::Backend;
 
+pub mod activation_transform;
 pub mod attention_gemm;
 pub mod delta_net_chunked_prefill;
 pub mod delta_net_tree_verify;
 pub mod matmul;
 pub mod radix_top_k_small;
+
+pub use activation_transform::ActivationTransform;
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 
