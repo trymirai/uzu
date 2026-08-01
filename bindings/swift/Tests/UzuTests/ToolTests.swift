@@ -33,10 +33,19 @@ private struct GetCurrentTemperatureTool: Tool {
     }
 }
 
+private struct EchoTool: Tool {
+    let description = "Echo the provided text."
+    let parameters = String.generationSchema
+
+    func call(arguments: String) async throws -> String {
+        arguments
+    }
+}
+
 final class ToolTests: XCTestCase {
     func testFoundationModelsToolBuildsDefinitionAndInvokesHandler() async throws {
         let tool = GetCurrentTemperatureTool()
-        let definition = foundationModelsToolDefinition(for: tool)
+        let definition = try foundationModelsToolDefinition(for: tool)
 
         XCTAssertEqual(definition.name, "get_current_temperature")
         XCTAssertEqual(definition.description, "Return the temperature at the provided coordinates.")
@@ -54,7 +63,7 @@ final class ToolTests: XCTestCase {
 
     func testFoundationModelsToolSupportsEmptyArgumentsAndStructuredOutput() async throws {
         let tool = GetCurrentLocationTool()
-        let definition = foundationModelsToolDefinition(for: tool)
+        let definition = try foundationModelsToolDefinition(for: tool)
 
         XCTAssertEqual(definition.name, "GetCurrentLocationTool")
 
@@ -63,5 +72,16 @@ final class ToolTests: XCTestCase {
         let result = try JSONDecoder().decode(Coordinate.self, from: Data(resultJson.utf8))
         XCTAssertEqual(result.latitude, 51.5074)
         XCTAssertEqual(result.longitude, -0.1278)
+    }
+
+    func testFoundationModelsToolRejectsNonObjectArgumentsSchema() throws {
+        let tool = EchoTool()
+
+        XCTAssertThrowsError(try foundationModelsToolDefinition(for: tool)) { error in
+            XCTAssertEqual(
+                error as? FoundationModelsToolError,
+                .parametersMustBeObject(toolName: "EchoTool")
+            )
+        }
     }
 }
