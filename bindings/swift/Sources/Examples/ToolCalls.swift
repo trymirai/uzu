@@ -10,25 +10,24 @@ private struct Coordinate: Codable, Sendable {
     let longitude: Double
 }
 
-@UzuToolFunction(
-    name: "get_current_location",
-    description: "Return the current location in coordinates."
-)
-private func getCurrentLocation() -> Coordinate {
-    Coordinate(latitude: 51.5074, longitude: -0.1278)
+private struct GetCurrentLocationTool: Tool {
+    let description = "Return the current location in coordinates."
+
+    @Generable
+    struct Arguments {}
+
+    func call(arguments: Arguments) async throws -> Coordinate {
+        Coordinate(latitude: 51.5074, longitude: -0.1278)
+    }
 }
 
-/// Return the temperature at the provided coordinates.
-/// - Parameters:
-///   - latitude: Latitude in decimal degrees.
-///   - longitude: Longitude in decimal degrees.
-@UzuToolFunction
-private func getCurrentTemperature(
-    latitude: Double,
-    longitude: Double
-) -> Double {
-    _ = (latitude, longitude)
-    return 25.0
+private struct GetCurrentTemperatureTool: Tool {
+    let description = "Return the temperature at the provided coordinates."
+
+    func call(arguments: Coordinate) async throws -> Double {
+        _ = arguments
+        return 25.0
+    }
 }
 
 public func runToolCalls() async throws {
@@ -41,8 +40,8 @@ public func runToolCalls() async throws {
     }
 
     let session = try await engine.chat(model: model, config: .create())
-    try await session.addTool(getCurrentLocationTool)
-    try await session.addTool(getCurrentTemperatureTool)
+    try await session.addTool(GetCurrentLocationTool())
+    try await session.addTool(GetCurrentTemperatureTool())
 
     let messages = [
         ChatMessage.system().withText(text: "You are a helpful assistant"),

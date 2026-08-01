@@ -4,139 +4,64 @@ import XCTest
 @testable import Uzu
 
 @Generable
-private struct AdditionArguments: Codable, Sendable {
-    let left: Int
-    let right: Int
+private struct Coordinate: Codable, Sendable {
+    @Guide(description: "Latitude in decimal degrees.")
+    let latitude: Double
+
+    @Guide(description: "Longitude in decimal degrees.")
+    let longitude: Double
 }
 
-@Sendable private func addReference(_ arguments: AdditionArguments) -> Int {
-    arguments.left + arguments.right
+@Generable
+private struct EmptyInput {}
+
+private struct GetCurrentLocationTool: Tool {
+    let description = "Return the current location in coordinates."
+
+    func call(arguments: EmptyInput) async throws -> Coordinate {
+        Coordinate(latitude: 51.5074, longitude: -0.1278)
+    }
 }
 
-private enum ExpectedToolError: Swift.Error {
-    case failed
-}
+private struct GetCurrentTemperatureTool: Tool {
+    let name = "get_current_temperature"
+    let description = "Return the temperature at the provided coordinates."
 
-@Sendable private func throwingReference(_ arguments: AdditionArguments) throws -> Int {
-    _ = arguments
-    throw ExpectedToolError.failed
-}
-
-/// Return a greeting, or no result when no name is provided.
-@UzuToolFunction(name: "optional_greeting")
-private func optionalGreeting(name: String?) -> String? {
-    name.map { "Hello, \($0)!" }
+    func call(arguments: Coordinate) async throws -> Double {
+        _ = arguments
+        return 25.0
+    }
 }
 
 final class ToolTests: XCTestCase {
-    func testTypedToolBuildsDefinitionAndInvokesHandler() async throws {
-        let tool = UzuToolDescriptor<AdditionArguments, Int>(
-            name: "add",
-            description: "Add two integers",
-            parameters: AdditionArguments.self,
-            returning: Int.self
-        ) { arguments in
-            arguments.left + arguments.right
-        }
+    func testFoundationModelsToolBuildsDefinitionAndInvokesHandler() async throws {
+        let tool = GetCurrentTemperatureTool()
+        let definition = foundationModelsToolDefinition(for: tool)
 
-        XCTAssertEqual(tool.definition.name, "add")
-        XCTAssertEqual(tool.definition.description, "Add two integers")
+        XCTAssertEqual(definition.name, "get_current_temperature")
+        XCTAssertEqual(definition.description, "Return the temperature at the provided coordinates.")
 
-        let parameters = try XCTUnwrap(tool.definition.parameters)
+        let parameters = try XCTUnwrap(definition.parameters)
         let schema = try JSONSerialization.jsonObject(with: Data(parameters.json.utf8)) as? [String: Any]
         XCTAssertEqual(schema?["type"] as? String, "object")
 
-        let resultJson = try await tool.invoke(argumentsJson: #"{"left":20,"right":22}"#)
-        XCTAssertEqual(resultJson, "42")
-        let result = try await tool.invoke(AdditionArguments(left: 10, right: 5))
-        XCTAssertEqual(result, 15)
-    }
-
-    func testFunctionReferencesAndErrors() async throws {
-        let add = UzuToolDescriptor<AdditionArguments, Int>(
-            name: "add_reference",
-            parameters: AdditionArguments.self,
-            returning: Int.self,
-            handler: addReference
+        let handler = FoundationModelsToolHandler(tool: tool)
+        let resultJson = try await handler.invokeJson(
+            argumentsJson: #"{"latitude":51.5074,"longitude":-0.1278}"#
         )
-        let result = try await add.invoke(AdditionArguments(left: 19, right: 23))
-        XCTAssertEqual(result, 42)
-
-        let failing = UzuToolDescriptor<AdditionArguments, Int>(
-            name: "throwing_reference",
-            parameters: AdditionArguments.self,
-            returning: Int.self,
-            handler: throwingReference
-        )
-        do {
-            _ = try await failing.invoke(AdditionArguments(left: 1, right: 2))
-            XCTFail("Expected the function reference to throw")
-        } catch is ExpectedToolError {
-        } catch {
-            XCTFail("Unexpected error: \(error)")
-        }
+        XCTAssertEqual(resultJson, "25")
     }
 
-    func testMacroSupportsOptionalParametersAndResults() async throws {
-        XCTAssertEqual(optionalGreetingTool.definition.name, "optional_greeting")
-        XCTAssertEqual(
-            optionalGreetingTool.definition.description,
-            "Return a greeting, or no result when no name is provided."
-        )
+    func testFoundationModelsToolSupportsEmptyArgumentsAndStructuredOutput() async throws {
+        let tool = GetCurrentLocationTool()
+        let definition = foundationModelsToolDefinition(for: tool)
 
-        let greeting = try await optionalGreetingTool.invoke(argumentsJson: #"{"name":"Ada"}"#)
-        XCTAssertEqual(greeting, #""Hello, Ada!""#)
+        XCTAssertEqual(definition.name, "GetCurrentLocationTool")
 
-        let noGreeting = try await optionalGreetingTool.invoke(argumentsJson: #"{"name":null}"#)
-        XCTAssertEqual(noGreeting, "null")
-        XCTAssertTrue(optionalGreetingTool.definition.returnDefinition?.json.contains("anyOf") == true)
-    }
-
-    func testParameterlessToolAcceptsOnlyEmptyArguments() async throws {
-        let tool = UzuToolDescriptor<Void, String>(
-            name: "current_location",
-            returning: String.self
-        ) {
-            "London"
-        }
-
-        let resultJson = try await tool.invoke(argumentsJson: "{}")
-        XCTAssertEqual(resultJson, #""London""#)
-
-        do {
-            _ = try await tool.invoke(argumentsJson: #"{"unexpected":true}"#)
-            XCTFail("Expected non-empty arguments to fail")
-        } catch let error as UzuToolError {
-            guard case .unexpectedArguments = error else {
-                return XCTFail("Unexpected tool error: \(error)")
-            }
-        }
-    }
-
-    func testVoidResultIsEncodedAsNull() async throws {
-        let tool = UzuToolDescriptor<AdditionArguments, Void>(
-            name: "record_addition",
-            parameters: AdditionArguments.self
-        ) { _ in }
-
-        XCTAssertNil(tool.definition.returnDefinition)
-        let resultJson = try await tool.invoke(argumentsJson: #"{"left":1,"right":2}"#)
-        XCTAssertEqual(resultJson, "null")
-    }
-
-    func testRawToolUsesValueJson() async throws {
-        let definition = ToolFunction(
-            name: "echo",
-            description: "Echo JSON",
-            parameters: Value(json: #"{"type":"object"}"#),
-            returnDefinition: Value(json: #"{}"#)
-        )
-        let tool = UzuRawToolFunction(definition: definition) { arguments in
-            arguments
-        }
-
-        let json = #"{"message":"hello"}"#
-        let resultJson = try await tool.invoke(argumentsJson: json)
-        XCTAssertEqual(resultJson, json)
+        let handler = FoundationModelsToolHandler(tool: tool)
+        let resultJson = try await handler.invokeJson(argumentsJson: "{}")
+        let result = try JSONDecoder().decode(Coordinate.self, from: Data(resultJson.utf8))
+        XCTAssertEqual(result.latitude, 51.5074)
+        XCTAssertEqual(result.longitude, -0.1278)
     }
 }

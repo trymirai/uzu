@@ -1,5 +1,4 @@
 // swift-tools-version: 5.9
-import CompilerPluginSupport
 import PackageDescription
 
 let package = Package(
@@ -13,8 +12,7 @@ let package = Package(
         .executable(name: "examples", targets: ["Examples"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.6.1"),
-        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0-latest"),
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.6.1")
     ],
     targets: [
         .binaryTarget(
@@ -23,7 +21,7 @@ let package = Package(
         ),
         .target(
             name: "Uzu",
-            dependencies: ["uzu", "UzuMacros", "UzuMetalIOSimulatorStubs"],
+            dependencies: ["uzu", "UzuMetalIOSimulatorStubs"],
             linkerSettings: [
                 .linkedLibrary("c++"),
                 .linkedFramework("SystemConfiguration"),
@@ -31,15 +29,6 @@ let package = Package(
                 .linkedFramework("MetalPerformanceShadersGraph"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
-            ]
-        ),
-        .macro(
-            name: "UzuMacros",
-            dependencies: [
-                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
-                .product(name: "SwiftSyntax", package: "swift-syntax"),
-                .product(name: "SwiftSyntaxBuilder", package: "swift-syntax"),
-                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
             ]
         ),
         .target(
@@ -57,13 +46,6 @@ let package = Package(
         .testTarget(
             name: "UzuTests",
             dependencies: ["Uzu"],
-        ),
-        .testTarget(
-            name: "UzuMacrosTests",
-            dependencies: [
-                "UzuMacros",
-                .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
-            ]
         ),
     ]
 )
