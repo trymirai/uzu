@@ -24,8 +24,8 @@ enum ReplyStatsFormat {
         measurement.string(from: Measurement(value: joules, unit: UnitEnergy.joules))
     }
 
-    static func energyPerToken(joules: Double, tokens: Int) -> String {
-        let value = number.string(from: NSNumber(value: joules / Double(tokens))) ?? placeholder
+    static func energyPerToken(_ joulesPerToken: Double) -> String {
+        let value = number.string(from: NSNumber(value: joulesPerToken)) ?? placeholder
         return "\(value) J/tok"
     }
 

@@ -324,7 +324,7 @@ impl ChatSession {
         } else if let Some(last) = outputs.values().last() {
             self.telemetry.report(TelemetryEvent::ModelInferenceFinished {
                 model_id: self.model_id.clone(),
-                stats: last.stats.clone(),
+                stats: last.stats.clone().into(),
             });
         }
 

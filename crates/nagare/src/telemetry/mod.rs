@@ -8,5 +8,5 @@ mod telemetry;
 mod worker;
 
 pub use context::{TelemetryContext, TelemetryDevice};
-pub use event::TelemetryEvent;
+pub use event::{TelemetryEvent, TelemetryStats};
 pub use telemetry::Telemetry;
