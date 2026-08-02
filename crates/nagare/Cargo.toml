@@ -22,6 +22,7 @@ bindings = [
 bindings-uniffi = [
     "bindings-types/bindings-uniffi",
     "shoji/bindings-uniffi",
+    "dep:async-trait",
     "dep:uniffi",
 ]
 bindings-napi = [
@@ -68,6 +69,7 @@ tokio-util.workspace = true
 tokenizers.workspace = true
 tokio = { workspace = true, features = ["full"] }
 uniffi = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
