@@ -13,7 +13,7 @@ use crate::engine::language_model::grammar::Grammar;
 use crate::{
     backends::common::{
         Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferPending, Context,
+        CommandBufferPending, Context, DeviceCapabilities, GlobalBufferInitializer,
         capture_matcher::{CAPTURE_MATCHER, CaptureMatcherSpan},
         gpu_types::trie::TrieNode as GpuTrieNode,
         kernel::ContextRingUpdateKernel,
@@ -40,6 +40,7 @@ enum ForwardPassChaining<B: Backend> {
 impl<B: Backend> ForwardPassChaining<B> {
     async fn resolve<'a>(
         &'a mut self,
+        readback: &mut Option<impl Future<Output = Result<Vec<u32>, B::Error>> + Send>,
         tokens: &mut Vec<u64>,
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
     ) -> Result<(u64, Option<&'a B::ScratchBuffer>), LanguageModelStreamError<B>> {
@@ -53,7 +54,13 @@ impl<B: Backend> ForwardPassChaining<B> {
                 for pending in replace(&mut in_flight.pending, Box::new([])) {
                     pending.wait_until_completed().await.map_err(LanguageModelStreamError::Backend)?;
                 }
-                let output_tokens = in_flight.output_tokens.as_slice::<u32>();
+                let readback_tokens;
+                let output_tokens = if let Some(readback) = readback.take() {
+                    readback_tokens = readback.await.map_err(LanguageModelStreamError::Backend)?;
+                    &readback_tokens
+                } else {
+                    in_flight.output_tokens.as_slice::<u32>()
+                };
                 assert_eq!(output_tokens.len(), 1);
                 let token_id = output_tokens[0] as u64;
                 let output_norm = in_flight.output_norm.take();
@@ -168,7 +175,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             let mut context_ring = model
                 .engine
                 .context
-                .create_buffer(size_for_shape(&[2 + suffix_repetition_length], DataType::U32))
+                .create_buffer_initializer(size_for_shape(&[2 + suffix_repetition_length], DataType::U32))
                 .map_err(LanguageModelStreamError::Backend)?;
 
             let state_tokens_range = Range::from(
@@ -184,7 +191,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     .collect::<Box<[_]>>(),
             );
 
-            Some(context_ring)
+            Some(context_ring.end_initialization())
         } else {
             None
         };
@@ -374,6 +381,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
     }
 
     pub async fn generate(&mut self) -> Result<Option<u64>, LanguageModelStreamError<B>> {
+        let context = &self.model.engine.context;
+        let globals_cpu_accessible =
+            context.device_capabilities().contains(DeviceCapabilities::GLOBAL_BUFFERS_CPU_ACCESSIBLE);
         let (mut prev_output, acceptance): (
             ForwardPassChaining<B>,
             Option<(<B::CommandBuffer as CommandBuffer>::Encoding, Option<CaptureMatcherSpan>)>,
@@ -403,12 +413,17 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     for pending in forward_pass_pending.pending {
                         pending.wait_until_completed().await.map_err(LanguageModelStreamError::Backend)?;
                     }
-                    let sampled_tokens = forward_pass_pending
-                        .output_tokens
-                        .as_slice::<u32>()
-                        .iter()
-                        .map(|x| *x as u64)
-                        .collect::<Box<[u64]>>();
+                    let readback_tokens;
+                    let sampled_tokens = if globals_cpu_accessible {
+                        forward_pass_pending.output_tokens.as_slice::<u32>()
+                    } else {
+                        readback_tokens = context
+                            .copyout::<u32>(&*forward_pass_pending.output_tokens)
+                            .await
+                            .map_err(LanguageModelStreamError::Backend)?;
+                        &readback_tokens
+                    };
+                    let sampled_tokens = sampled_tokens.iter().map(|token| u64::from(*token)).collect::<Box<[u64]>>();
                     let flat_trie = forward_pass_pending.input_trie.linearize();
                     let full = flat_trie.accept(
                         &sampled_tokens,
@@ -517,6 +532,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             DecodingState::Closed => return Ok(None),
         };
 
+        let readback_buffer = match &prev_output {
+            ForwardPassChaining::InFlight(pending) if !globals_cpu_accessible => Some(pending.output_tokens.clone()),
+            _ => None,
+        };
+        let mut output_readback = readback_buffer.as_deref().map(|buffer| context.copyout::<u32>(buffer));
+
         let context_length = self.model_state.transformer_state.context_length();
 
         if self.model_state.max_context_length.is_some_and(|max_context_length| context_length >= max_context_length) {
@@ -524,6 +545,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             return Ok(Some(
                 prev_output
                     .resolve(
+                        &mut output_readback,
                         &mut self.model_state.tokens,
                         #[cfg(grammar)]
                         self.options.grammar.as_mut(),
@@ -550,6 +572,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             && let (root_token, Some(output_norm)) = {
                 let resolved = prev_output
                     .resolve(
+                        &mut output_readback,
                         &mut self.model_state.tokens,
                         #[cfg(grammar)]
                         self.options.grammar.as_mut(),
@@ -666,7 +689,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     )
                     .map_err(LanguageModelStreamError::Backend)?;
 
-                prev_output.resolve(&mut self.model_state.tokens, Some(grammar)).await?;
+                prev_output.resolve(&mut output_readback, &mut self.model_state.tokens, Some(grammar)).await?;
                 if grammar.next_bitmask(bitmask.as_slice_mut()) {
                     (Some(bitmask), command_buffer)
                 } else {
@@ -781,6 +804,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         Ok(Some(
             prev_output
                 .resolve(
+                    &mut output_readback,
                     &mut self.model_state.tokens,
                     #[cfg(grammar)]
                     self.options.grammar.as_mut(),
@@ -834,7 +858,15 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         .map_err(LanguageModelStreamError::Backend)?;
                 }
 
-                Some(in_flight.output_tokens.as_slice::<u32>()[0] as u64)
+                let context = &self.model.engine.context;
+                Some(if context.device_capabilities().contains(DeviceCapabilities::GLOBAL_BUFFERS_CPU_ACCESSIBLE) {
+                    in_flight.output_tokens.as_slice::<u32>()[0] as u64
+                } else {
+                    context
+                        .copyout::<u32>(in_flight.output_tokens.subrange(..size_of::<u32>()))
+                        .await
+                        .map_err(LanguageModelStreamError::Backend)?[0] as u64
+                })
             },
             DecodingState::Accepting {
                 full,
@@ -894,6 +926,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
 impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
     fn drop(&mut self) {
-        block_on(self.close()).unwrap();
+        if self.model.engine.context.device_capabilities().contains(DeviceCapabilities::GLOBAL_BUFFERS_CPU_ACCESSIBLE) {
+            block_on(self.close()).unwrap();
+        }
     }
 }

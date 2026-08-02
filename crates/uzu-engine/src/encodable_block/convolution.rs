@@ -29,13 +29,13 @@ pub struct SeparableCausalConv<B: Backend> {
 }
 
 impl<B: Backend> SeparableCausalConv<B> {
-    pub fn new(
+    pub async fn new(
         model_dim: u32,
         kernel_size: u32,
         group_size: u32,
         data_type: DataType,
         config: &SeparableCausalConvConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, ConvolutionNewError<B>> {
         assert!(model_dim.is_multiple_of(4));
@@ -43,12 +43,13 @@ impl<B: Backend> SeparableCausalConv<B> {
         assert!(model_dim.is_multiple_of(group_size));
         assert_eq!(data_type, DataType::BF16, "SeparableCausalConv only supports BF16");
 
-        let weights = parameter_tree.read_buffer("weights", &[model_dim, kernel_size], DataType::BF16)?;
+        let weights = parameter_tree.read_buffer("weights", &[model_dim, kernel_size], DataType::BF16).await?;
 
-        let biases = config
-            .has_biases
-            .then(|| parameter_tree.read_buffer("biases", &[model_dim], DataType::BF16))
-            .transpose()?;
+        let biases = if config.has_biases {
+            Some(parameter_tree.read_buffer("biases", &[model_dim], DataType::BF16).await?)
+        } else {
+            None
+        };
 
         let kernel = <B::Kernels as Kernels>::SeparableCausalConvKernel::new(
             context,

@@ -1,11 +1,4 @@
-use std::{
-    cmp::min,
-    collections::HashMap,
-    fs::File,
-    io::{self, BufReader},
-    path::Path,
-    sync::Arc,
-};
+use std::{cmp::min, collections::HashMap, io, path::Path, sync::Arc};
 
 use derive_more::Debug;
 use half::bf16;
@@ -19,12 +12,14 @@ use tokenizers::Tokenizer;
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+        DeviceCapabilities,
     },
     config::{model::classifier_model::ClassifierModelConfig, token_codec::AnyTokenCodecConfig},
     data_type::DataType,
     encodable_block::classifier::{Classifier as ClassifierEncodable, ClassifierError as ClassifierEncodableError},
     engine::Engine,
     safetensors::{ParameterLoader, ParameterLoaderError},
+    utils::file,
 };
 
 pub struct ClassifierModel<B: Backend> {
@@ -51,26 +46,25 @@ pub enum EngineLoadClassifierError<B: Backend> {
 }
 
 impl<B: Backend> Engine<B> {
-    pub fn load_classifier_model(
+    pub async fn load_classifier_model(
         &self,
         model_path: &Path,
     ) -> Result<ClassifierModel<B>, EngineLoadClassifierError<B>> {
         let context = self.context.clone();
 
-        let config: ClassifierModelConfig =
-            serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
+        let config: ClassifierModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
 
         let data_type = DataType::BF16;
 
-        let weights_file = File::open(model_path.join("model.safetensors"))?;
-        let weight_loader = ParameterLoader::new(&weights_file, context.as_ref())?;
+        let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), context.as_ref()).await?;
 
         let classifier = ClassifierEncodable::new(
             data_type,
             &config.classifier_config,
             &weight_loader.tree().subtree("classifier"),
             context.as_ref(),
-        )?;
+        )
+        .await?;
 
         let output_labels = if let Some(output_labels) = config.classifier_config.output_labels {
             assert!(output_labels.len() as u32 == config.classifier_config.num_labels);
@@ -81,7 +75,7 @@ impl<B: Backend> Engine<B> {
 
         weight_loader.assert_all_tensors_read()?;
 
-        let tokenizer = Arc::new(Tokenizer::from_file(model_path.join("tokenizer.json"))?);
+        let tokenizer = Arc::new(Tokenizer::from_bytes(file::read(model_path.join("tokenizer.json")).await?)?);
         let token_codec_config = config.token_codec_config;
 
         Ok(ClassifierModel {
@@ -173,7 +167,12 @@ impl<B: Backend> ClassifierModel<B> {
 
         assert!(self.data_type == DataType::BF16);
 
-        let logits_bf16: Vec<bf16> = output_buffer.copyout::<bf16>();
+        let logits_bf16 =
+            if self.context.device_capabilities().contains(DeviceCapabilities::GLOBAL_BUFFERS_CPU_ACCESSIBLE) {
+                output_buffer.copyout::<bf16>()
+            } else {
+                self.context.copyout::<bf16>(&output_buffer).await.map_err(ClassifierModelClassifyError::Backend)?
+            };
         let count = min(self.output_labels.len(), logits_bf16.len());
 
         let mut logits: Vec<f32> = vec![0.0f32; count];

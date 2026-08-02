@@ -58,7 +58,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
     ) -> Result<Self, BackendError> {
         let engine = Engine::<B>::new().await.map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
-        let model = engine.load_language_model(&model_path).map_err(|err| err.to_string())?;
+        let model = engine.load_language_model(&model_path).await.map_err(|err| err.to_string())?;
 
         let generation_config = model.generation_config();
         let stop_token_ids = generation_config.stop_token_ids.iter().map(|id| *id as i32).collect();
@@ -170,30 +170,32 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         let metrics = stream.metrics().clone();
         let inner = stream::unfold(
-            (stream, 0, cancel_token.child_token()),
-            move |(mut stream, mut tokens_generated, cancel_token)| async move {
-                if cancel_token.is_cancelled() {
-                    return None;
-                }
-
-                let output = if token_limit.is_some_and(|token_limit| tokens_generated >= token_limit) {
-                    cancel_token.cancel();
-                    Ok(TokenStreamOutput::LimitReached)
+            (Some(stream), 0, cancel_token.child_token()),
+            move |(stream, mut tokens_generated, cancel_token)| async move {
+                let mut stream = stream?;
+                let (mut output, finished) = if cancel_token.is_cancelled() {
+                    (None, true)
+                } else if token_limit.is_some_and(|token_limit| tokens_generated >= token_limit) {
+                    (Some(Ok(TokenStreamOutput::LimitReached)), true)
                 } else {
                     match stream.generate().await {
                         Ok(Some(token)) => {
                             tokens_generated += 1;
-                            Ok(TokenStreamOutput::Token(token))
+                            (Some(Ok(TokenStreamOutput::Token(token))), self.stop_token_ids.contains(&(token as i32)))
                         },
-                        Ok(None) => return None,
-                        Err(error) => {
-                            cancel_token.cancel();
-                            Err(BackendError::from(error.to_string()))
-                        },
+                        Ok(None) => (None, true),
+                        Err(error) => (Some(Err(BackendError::from(error.to_string()))), true),
                     }
                 };
+                if finished {
+                    cancel_token.cancel();
+                    if let Err(error) = stream.close().await {
+                        output = Some(Err(BackendError::from(error.to_string())));
+                    }
+                }
                 let metrics = stream.metrics().clone();
-                Some(((output, metrics), (stream, tokens_generated, cancel_token)))
+                output
+                    .map(|output| ((output, metrics), ((!finished).then_some(stream), tokens_generated, cancel_token)))
             },
         );
 

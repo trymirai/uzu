@@ -21,7 +21,7 @@ fn bench_model_loading(c: &mut Criterion) {
                 let model_path = get_test_model_path();
                 let engine = block_on(Engine::<B>::new()).unwrap();
                 // TODO: This should flush caches (maybe both cold/hot benchmarks?)
-                engine.load_language_model(&model_path).unwrap();
+                block_on(engine.load_language_model(&model_path)).unwrap();
             });
         });
     });
