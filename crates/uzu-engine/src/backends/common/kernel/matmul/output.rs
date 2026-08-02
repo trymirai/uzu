@@ -1,7 +1,9 @@
+#[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
 use thiserror::Error;
 
 use crate::backends::common::{Backend, BufferMut, kernel::matmul::MatmulDOps};
 
+#[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
 #[derive(Debug, Error)]
 #[error("Unsupported output row stride {stride} for {columns} columns on path {path}")]
 pub struct MatmulOutputError {
@@ -29,6 +31,7 @@ impl<'d, B: Backend, T: BufferMut<Backend = B>> MatmulOutput<'d, B, T> {
         }
     }
 
+    #[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
     pub(crate) fn into_contiguous(
         self,
         columns: u32,

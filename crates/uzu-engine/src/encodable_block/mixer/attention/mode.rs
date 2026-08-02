@@ -1,6 +1,6 @@
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, GpuBuffer,
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionPrepareInt8Kernel, AttentionPrepareKernel,
             FullPrecisionInput, Int8Input,
@@ -26,8 +26,8 @@ use crate::{
 
 enum KVBuffers<'a, B: Backend> {
     BF16 {
-        keys: MaybeMut<'a, dyn Buffer<Backend = B>>,
-        values: MaybeMut<'a, dyn Buffer<Backend = B>>,
+        keys: MaybeMut<'a, dyn GpuBuffer<Backend = B>>,
+        values: MaybeMut<'a, dyn GpuBuffer<Backend = B>>,
     },
     Int8(MaybeMut<'a, Int8KV<B>>),
 }
@@ -220,8 +220,8 @@ impl<B: Backend> Attention<B> {
     fn prepare_bf16(
         &self,
         qkvg: impl BufferRef<Backend = B>,
-        keys: &mut MaybeMut<'_, dyn Buffer<Backend = B>>,
-        values: &mut MaybeMut<'_, dyn Buffer<Backend = B>>,
+        keys: &mut MaybeMut<'_, dyn GpuBuffer<Backend = B>>,
+        values: &mut MaybeMut<'_, dyn GpuBuffer<Backend = B>>,
         kv_token_offset: u32,
         num_q_heads: u32,
         rope: Option<&PrecalculatedRoPE<B>>,

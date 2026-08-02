@@ -558,6 +558,7 @@ impl Engine {
         if Path::new(&path).is_dir() {
             let backend = UzuLlmBackend::new();
             return LocalRegistry::model_at_path(Path::new(&path), backend.identifier(), backend.version())
+                .await
                 .map(Some)
                 .map_err(EngineError::from);
         }

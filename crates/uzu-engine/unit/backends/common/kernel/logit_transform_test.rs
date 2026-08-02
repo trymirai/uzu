@@ -35,7 +35,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(
     kernel.encode(&mut logits_buffer, logits.len() as u32, scale, soft_cap.unwrap_or(0.0), &mut command_buffer);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    buffer_to_vec::<B, T>(&logits_buffer)
+    buffer_to_vec::<B, T>(&context, &logits_buffer)
 }
 
 fn test_logit_transform<T: DataTypeRepr + Float + Display>(

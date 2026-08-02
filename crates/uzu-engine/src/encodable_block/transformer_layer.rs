@@ -58,7 +58,7 @@ struct TransformerLayerConv<B: Backend> {
     pre_conv: SeparableCausalConv<B>,
     kernel_projection: Box<dyn Linear<B>>,
     post_conv: SeparableCausalConv<B>,
-    input_rht: Option<(ActivationTransform<B>, B::GlobalBuffer)>,
+    input_rht: Option<(ActivationTransform<B>, B::GlobalGpuBuffer)>,
     coefficient_count: u32,
 }
 
@@ -79,12 +79,12 @@ pub struct TransformerLayer<B: Backend> {
 }
 
 impl<B: Backend> TransformerLayerConv<B> {
-    fn new(
+    async fn new(
         model_dim: u32,
         data_type: DataType,
-        input_hadamard_factors: Option<B::GlobalBuffer>,
+        input_hadamard_factors: Option<B::GlobalGpuBuffer>,
         config: &TransformerLayerConvConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, TransformerLayerError<B>> {
         let pre_conv = SeparableCausalConv::new(
@@ -95,7 +95,8 @@ impl<B: Backend> TransformerLayerConv<B> {
             &config.conv_config,
             &parameter_tree.subtree("pre_conv"),
             context,
-        )?;
+        )
+        .await?;
         let post_conv = SeparableCausalConv::new(
             model_dim,
             config.conv_kernel_size,
@@ -104,7 +105,8 @@ impl<B: Backend> TransformerLayerConv<B> {
             &config.conv_config,
             &parameter_tree.subtree("post_conv"),
             context,
-        )?;
+        )
+        .await?;
 
         let coefficient_count = config.conv_kernel_size * (model_dim / config.conv_group_size);
         let projection_dim = coefficient_count * 2;
@@ -115,7 +117,8 @@ impl<B: Backend> TransformerLayerConv<B> {
             false,
             &parameter_tree.subtree("kernel_projection"),
             context,
-        )?;
+        )
+        .await?;
 
         let input_rht = input_hadamard_factors
             .map(|factors| ActivationTransform::input_rht(context, data_type, true).map(|kernel| (kernel, factors)))
@@ -171,14 +174,14 @@ impl<B: Backend> TransformerLayerConv<B> {
 }
 
 impl<B: Backend> TransformerLayer<B> {
-    pub fn new(
+    pub async fn new(
         model_dim: u32,
         hidden_dim: u32,
         num_layers: u32,
         layer_index: u32,
         data_type: DataType,
         layer_config: &TransformerLayerConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, TransformerLayerError<B>> {
         let post_layer_scalar = if layer_config.has_post_layer_scalar {
@@ -187,8 +190,7 @@ impl<B: Backend> TransformerLayer<B> {
                     layer_index,
                 });
             }
-            let scalar =
-                dispatch_dtype!(|(T: data_type)| parameter_tree.read_slice::<T>("post_layer_scalar", &[1])?[0].as_());
+            let scalar = dispatch_dtype!(|(T: data_type)| parameter_tree.read_slice::<T>("post_layer_scalar", &[1]).await?[0].as_());
             Some(scalar)
         } else {
             None
@@ -208,38 +210,45 @@ impl<B: Backend> TransformerLayer<B> {
             &layer_config.mixer_config,
             &parameter_tree.subtree("mixer"),
             context,
-        )?;
+        )
+        .await?;
 
         let (mixer_conv, mixer_hadamard_factors) = match &layer_config.mixer_conv_config {
             Some(config) => (
-                Some(TransformerLayerConv::new(
-                    model_dim,
-                    data_type,
-                    mixer_hadamard_factors,
-                    config,
-                    &parameter_tree.subtree("mixer_conv"),
-                    context,
-                )?),
+                Some(
+                    TransformerLayerConv::new(
+                        model_dim,
+                        data_type,
+                        mixer_hadamard_factors,
+                        config,
+                        &parameter_tree.subtree("mixer_conv"),
+                        context,
+                    )
+                    .await?,
+                ),
                 None,
             ),
             None => (None, mixer_hadamard_factors),
         };
 
         let pre_mixer_norm = if let Some(pre_mixer_norm_config) = &layer_config.pre_mixer_norm_config {
-            Some(Normalization::new(
-                model_dim,
-                data_type,
-                mixer_hadamard_factors,
-                if layer_index > 0 {
-                    ShortcutMode::Add
-                } else {
-                    ShortcutMode::Copy
-                },
-                PostLayerScalar::None,
-                pre_mixer_norm_config,
-                &parameter_tree.subtree("pre_mixer_norm"),
-                context,
-            )?)
+            Some(
+                Normalization::new(
+                    model_dim,
+                    data_type,
+                    mixer_hadamard_factors,
+                    if layer_index > 0 {
+                        ShortcutMode::Add
+                    } else {
+                        ShortcutMode::Copy
+                    },
+                    PostLayerScalar::None,
+                    pre_mixer_norm_config,
+                    &parameter_tree.subtree("pre_mixer_norm"),
+                    context,
+                )
+                .await?,
+            )
         } else {
             if layer_index != 0 || mixer_hadamard_factors.is_some() {
                 return Err(TransformerLayerError::MissingPreMixerNormConfig);
@@ -248,16 +257,19 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         let post_mixer_norm = if let Some(norm_config) = &layer_config.post_mixer_norm_config {
-            Some(Normalization::new(
-                model_dim,
-                data_type,
-                None,
-                ShortcutMode::None,
-                PostLayerScalar::None,
-                norm_config,
-                &parameter_tree.subtree("post_mixer_norm"),
-                context,
-            )?)
+            Some(
+                Normalization::new(
+                    model_dim,
+                    data_type,
+                    None,
+                    ShortcutMode::None,
+                    PostLayerScalar::None,
+                    norm_config,
+                    &parameter_tree.subtree("post_mixer_norm"),
+                    context,
+                )
+                .await?,
+            )
         } else {
             None
         };
@@ -269,18 +281,22 @@ impl<B: Backend> TransformerLayer<B> {
             &layer_config.mlp_config,
             &parameter_tree.subtree("mlp"),
             context,
-        )?;
+        )
+        .await?;
 
         let (mlp_conv, mlp_input_hadamard_factors) = match &layer_config.mlp_conv_config {
             Some(config) => (
-                Some(TransformerLayerConv::new(
-                    model_dim,
-                    data_type,
-                    mlp_input_hadamard_factors,
-                    config,
-                    &parameter_tree.subtree("mlp_conv"),
-                    context,
-                )?),
+                Some(
+                    TransformerLayerConv::new(
+                        model_dim,
+                        data_type,
+                        mlp_input_hadamard_factors,
+                        config,
+                        &parameter_tree.subtree("mlp_conv"),
+                        context,
+                    )
+                    .await?,
+                ),
                 None,
             ),
             None => (None, mlp_input_hadamard_factors),
@@ -295,36 +311,45 @@ impl<B: Backend> TransformerLayer<B> {
             &layer_config.pre_mlp_norm_config,
             &parameter_tree.subtree("pre_mlp_norm"),
             context,
-        )?;
+        )
+        .await?;
 
         let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
-            Some(Normalization::new(
-                model_dim,
-                data_type,
-                None,
-                ShortcutMode::None,
-                output_scalar,
-                norm_config,
-                &parameter_tree.subtree("post_mlp_norm"),
-                context,
-            )?)
+            Some(
+                Normalization::new(
+                    model_dim,
+                    data_type,
+                    None,
+                    ShortcutMode::None,
+                    output_scalar,
+                    norm_config,
+                    &parameter_tree.subtree("post_mlp_norm"),
+                    context,
+                )
+                .await?,
+            )
         } else {
             None
         };
 
-        let ple_projection = layer_config.ple_config.as_ref().map(|ple_config| {
+        let ple_projection = if let Some(ple_config) = &layer_config.ple_config {
             let ple_loader = parameter_tree.subtree("ple");
-            PerLayerEmbeddingProjection::new(
-                model_dim,
-                num_layers,
-                data_type,
-                post_layer_scalar.unwrap_or(1.0),
-                ple_config,
-                &ple_loader,
-                context,
+            Some(
+                PerLayerEmbeddingProjection::new(
+                    model_dim,
+                    num_layers,
+                    data_type,
+                    post_layer_scalar.unwrap_or(1.0),
+                    ple_config,
+                    &ple_loader,
+                    context,
+                )
+                .await
+                .expect("Failed to create per-layer embedding projection"),
             )
-            .expect("Failed to create per-layer embedding projection")
-        });
+        } else {
+            None
+        };
 
         Ok(Self {
             layer_index,

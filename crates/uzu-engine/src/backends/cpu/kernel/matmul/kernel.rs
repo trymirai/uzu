@@ -1,7 +1,7 @@
 use crate::{
     backends::{
         common::{
-            Backend, BufferCpuAccessible, BufferMut, BufferRef, Kernels,
+            Backend, BufferMut, BufferRef, CpuBuffer, Kernels,
             gpu_types::quantization::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,

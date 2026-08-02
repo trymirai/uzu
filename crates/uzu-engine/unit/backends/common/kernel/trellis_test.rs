@@ -68,9 +68,9 @@ fn run<B: Backend>(
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     (
-        buffer_to_vec::<B, i8>(&activations),
-        buffer_to_vec::<B, f32>(&column_group_sums),
-        buffer_to_vec::<B, f32>(&scales),
+        buffer_to_vec::<B, i8>(&context, &activations),
+        buffer_to_vec::<B, f32>(&context, &column_group_sums),
+        buffer_to_vec::<B, f32>(&context, &scales),
     )
 }
 

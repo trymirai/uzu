@@ -10,7 +10,7 @@ use uzu_engine_macros::uzu_bench;
 use crate::{
     backends::{
         common::{
-            Backend, BufferMut, CommandBufferEncoding, Context, Kernels,
+            Backend, CommandBufferEncoding, Context, CpuBuffer, Kernels,
             kernel::delta_net_tree_verify::DeltaNetTreeVerify,
         },
         metal::Metal,

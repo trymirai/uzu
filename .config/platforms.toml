@@ -71,7 +71,7 @@ capabilities_supported = ["grammar"]
 capabilities_default = ["grammar"]
 
 [targets."wasm32-unknown-unknown"]
-backend = "cpu"
+backend = "webgpu"
 aliases = ["wasm"]
 capabilities_supported = []
 capabilities_default = []

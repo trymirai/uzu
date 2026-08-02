@@ -1,4 +1,6 @@
-use std::{range::Range, sync::Arc};
+use std::{os::raw::c_void, ptr::NonNull, range::Range, sync::Arc};
+
+use crate::backends::common::{Buffer, CpuBuffer, GpuBuffer};
 
 struct BumpAllocatorPage<T> {
     page: Arc<T>,
@@ -8,13 +10,18 @@ struct BumpAllocatorPage<T> {
 
 pub struct BumpAllocator<T> {
     min_page_size: usize,
+    page_size_alignment: usize,
     pages: Vec<BumpAllocatorPage<T>>,
 }
 
 impl<T> BumpAllocator<T> {
-    pub fn new(min_page_size: usize) -> Self {
+    pub fn new(
+        min_page_size: usize,
+        page_size_alignment: usize,
+    ) -> Self {
         Self {
             min_page_size,
+            page_size_alignment,
             pages: Vec::new(),
         }
     }
@@ -22,11 +29,10 @@ impl<T> BumpAllocator<T> {
     pub fn allocate<E>(
         &mut self,
         size: usize,
+        alignment: usize,
         upstream: impl FnOnce(usize) -> Result<T, E>,
     ) -> Result<BumpAllocation<T>, E> {
         assert!(size > 0);
-
-        let alignment = usize::min(size, 64).next_power_of_two();
 
         if let Some(page) = self.pages.last_mut()
             && let page_offset_aligned = page.offset.next_multiple_of(alignment)
@@ -40,7 +46,7 @@ impl<T> BumpAllocator<T> {
             return Ok(allocation);
         }
 
-        let new_page_size = usize::max(size, self.min_page_size);
+        let new_page_size = usize::max(size, self.min_page_size).next_multiple_of(self.page_size_alignment);
         let new_page = Arc::new(upstream(new_page_size)?);
         self.pages.push(BumpAllocatorPage {
             page: new_page.clone(),
@@ -71,5 +77,21 @@ impl<T> BumpAllocation<T> {
 
     pub fn range(&self) -> Range<usize> {
         self.range
+    }
+}
+
+impl<T: Buffer> Buffer for BumpAllocation<T> {
+    type Backend = T::Backend;
+
+    fn size(&self) -> usize {
+        self.range().iter().len()
+    }
+}
+
+impl<T: GpuBuffer> GpuBuffer for BumpAllocation<T> {}
+
+impl<T: CpuBuffer> CpuBuffer for BumpAllocation<T> {
+    fn cpu_ptr(&self) -> NonNull<c_void> {
+        unsafe { self.page().cpu_ptr().byte_add(self.range().start) }
     }
 }

@@ -107,44 +107,41 @@ pub struct Transformer<B: Backend> {
 }
 
 impl<B: Backend> Transformer<B> {
-    pub fn new(
+    pub async fn new(
         data_type: DataType,
-        output_norm_hadamard_factors: Option<B::GlobalBuffer>,
+        output_norm_hadamard_factors: Option<B::GlobalGpuBuffer>,
         transformer_config: &TransformerConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, TransformerNewError<B>> {
         let mut ropes: Vec<AnyRoPEConfig> = Vec::new();
 
         let num_layers = transformer_config.layer_configs.len() as u32;
-        let layers = transformer_config
-            .layer_configs
-            .iter()
-            .zip(0u32..)
-            .map(|(layer_config, layer_index)| {
-                let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index));
+        let mut layers = Vec::with_capacity(num_layers as usize);
+        for (layer_config, layer_index) in transformer_config.layer_configs.iter().zip(0u32..) {
+            let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index));
 
-                let rope = layer_config.rope_config.as_ref().map(|layer_rope_config| {
-                    ropes.iter().position(|rope_config| rope_config == layer_rope_config).unwrap_or_else(|| {
-                        ropes.push(layer_rope_config.clone());
-                        ropes.len() - 1
-                    })
-                });
+            let rope = layer_config.rope_config.as_ref().map(|layer_rope_config| {
+                ropes.iter().position(|rope_config| rope_config == layer_rope_config).unwrap_or_else(|| {
+                    ropes.push(layer_rope_config.clone());
+                    ropes.len() - 1
+                })
+            });
 
-                let layer = TransformerLayer::new(
-                    transformer_config.model_dim,
-                    transformer_config.hidden_dim,
-                    num_layers,
-                    layer_index,
-                    data_type,
-                    layer_config,
-                    &layer_loader,
-                    context,
-                )?;
+            let layer = TransformerLayer::new(
+                transformer_config.model_dim,
+                transformer_config.hidden_dim,
+                num_layers,
+                layer_index,
+                data_type,
+                layer_config,
+                &layer_loader,
+                context,
+            )
+            .await?;
 
-                Ok((layer, rope))
-            })
-            .collect::<Result<Box<[_]>, TransformerNewError<B>>>()?;
+            layers.push((layer, rope));
+        }
 
         let output_norm = Normalization::new(
             transformer_config.model_dim,
@@ -155,14 +152,15 @@ impl<B: Backend> Transformer<B> {
             &transformer_config.output_norm_config,
             &parameter_tree.subtree("output_norm"),
             context,
-        )?;
+        )
+        .await?;
 
         let residual_add = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, false)
             .map_err(TransformerNewError::Backend)?;
 
         Ok(Self {
             ropes: ropes.into_boxed_slice(),
-            layers,
+            layers: layers.into_boxed_slice(),
             output_norm,
             model_dim: transformer_config.model_dim,
             residual_add,

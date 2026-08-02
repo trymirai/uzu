@@ -2,8 +2,8 @@ use crate::backends::common::{Backend, gpu_types::gemm::GemmDTransform};
 
 pub struct MatmulDOps<'a, B: Backend> {
     pub ab_scale: f32,
-    pub bias: Option<&'a B::GlobalBuffer>,
-    pub rht_factors: Option<&'a B::GlobalBuffer>,
+    pub bias: Option<&'a B::GlobalGpuBuffer>,
+    pub rht_factors: Option<&'a B::GlobalGpuBuffer>,
     pub soft_cap: Option<f32>,
 }
 

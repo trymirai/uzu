@@ -46,11 +46,11 @@ pub struct PerLayerEmbedding<B: Backend> {
 }
 
 impl<B: Backend> PerLayerEmbedding<B> {
-    pub fn new(
+    pub async fn new(
         model_dim: u32,
         data_type: DataType,
         config: &PLEModelConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
         let total_ple_dim = config.num_layers * config.ple_dim;
@@ -61,7 +61,8 @@ impl<B: Backend> PerLayerEmbedding<B> {
             data_type,
             &parameter_tree.subtree("token_embedding"),
             context,
-        )?;
+        )
+        .await?;
 
         let model_projection = <dyn Linear<B>>::new(
             model_dim,
@@ -70,7 +71,8 @@ impl<B: Backend> PerLayerEmbedding<B> {
             false,
             &parameter_tree.subtree("model_projection"),
             context,
-        )?;
+        )
+        .await?;
 
         let scale_squared = config.model_projection_scale * config.model_projection_scale;
         let projection_norm_config = {
@@ -87,7 +89,8 @@ impl<B: Backend> PerLayerEmbedding<B> {
             &projection_norm_config,
             &parameter_tree.subtree("projection_norm"),
             context,
-        )?;
+        )
+        .await?;
 
         let add_scale = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, false)
             .map_err(PerLayerEmbeddingError::BackendError)?;
@@ -173,23 +176,18 @@ pub struct PerLayerEmbeddingProjection<B: Backend> {
 }
 
 impl<B: Backend> PerLayerEmbeddingProjection<B> {
-    pub fn new(
+    pub async fn new(
         model_dim: u32,
         num_layers: u32,
         data_type: DataType,
         post_layer_scalar: f32,
         config: &PLELayerConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
-        let gate = <dyn Linear<B>>::new(
-            model_dim,
-            config.ple_dim,
-            data_type,
-            false,
-            &parameter_tree.subtree("gate"),
-            context,
-        )?;
+        let gate =
+            <dyn Linear<B>>::new(model_dim, config.ple_dim, data_type, false, &parameter_tree.subtree("gate"), context)
+                .await?;
         let projection = <dyn Linear<B>>::new(
             config.ple_dim,
             model_dim,
@@ -197,7 +195,8 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             false,
             &parameter_tree.subtree("projection"),
             context,
-        )?;
+        )
+        .await?;
         let norm = Normalization::new(
             model_dim,
             data_type,
@@ -207,7 +206,8 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             &config.norm_config,
             &parameter_tree.subtree("norm"),
             context,
-        )?;
+        )
+        .await?;
 
         let activation_alpha = config.activation.alpha();
         let settings = GatedActMulSettings {
@@ -272,7 +272,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             &gate_out,
             Some(per_layer_input),
             &mut activated,
-            None::<&B::GlobalBuffer>,
+            None::<&B::GlobalGpuBuffer>,
             self.ple_dim,
             batch_dim,
             layer_index * self.ple_dim,

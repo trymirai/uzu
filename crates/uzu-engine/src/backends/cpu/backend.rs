@@ -9,7 +9,7 @@ use crate::backends::{
         },
     },
     cpu::{
-        buffer::{dense::CpuBuffer, sparse::CpuSparseBuffer},
+        buffer::{dense::CpuDenseBuffer, sparse::CpuSparseBuffer},
         command_buffer::{CpuCommandBuffer, CpuCommandBufferEncoding},
         context::CpuContext,
         error::CpuError,
@@ -24,11 +24,12 @@ impl Backend for Cpu {
     type Context = CpuContext;
     type CommandBuffer = CpuCommandBuffer;
     type DebugGroupSpan<'a> = &'a mut CpuCommandBufferEncoding;
-    type GlobalBuffer = CpuBuffer;
-    type ConstantBuffer = BumpAllocation<Self::GlobalBuffer>;
-    type ScratchBuffer = PoolAllocation<Self::GlobalBuffer>;
+    type GlobalGpuBuffer = CpuDenseBuffer;
+    type GlobalBufferCpuGpu = CpuDenseBuffer;
+    type ConstantBuffer = BumpAllocation<CpuDenseBuffer>;
+    type ScratchBuffer = PoolAllocation<CpuDenseBuffer>;
     type SparseBuffer = CpuSparseBuffer;
-    type AllocationPool = PoolAllocator<Self::GlobalBuffer>;
+    type AllocationPool = PoolAllocator<CpuDenseBuffer>;
     type CaptureSpan = Infallible;
     type Kernels = CpuKernels;
     type Error = CpuError;

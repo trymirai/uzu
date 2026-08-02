@@ -1,14 +1,17 @@
 use std::{error::Error, ops::DerefMut};
 
-use super::{CommandBuffer, ConstantBuffer, Context, GlobalBuffer, Kernels, ScratchBuffer, SparseBuffer};
+use super::{
+    Buffer, CommandBuffer, Context, CpuBuffer, GlobalBufferCpuGpu, GlobalGpuBuffer, GpuBuffer, Kernels, SparseBuffer,
+};
 
 pub trait Backend: Clone + Send + Sync + 'static {
     type Context: Context<Backend = Self>;
     type CommandBuffer: CommandBuffer<Backend = Self>;
     type DebugGroupSpan<'a>: DerefMut<Target = <Self::CommandBuffer as CommandBuffer>::Encoding> + 'a;
-    type GlobalBuffer: GlobalBuffer<Backend = Self>;
-    type ConstantBuffer: ConstantBuffer<Backend = Self>;
-    type ScratchBuffer: ScratchBuffer<Backend = Self>;
+    type GlobalGpuBuffer: GlobalGpuBuffer<Backend = Self>;
+    type GlobalBufferCpuGpu: GlobalBufferCpuGpu<Backend = Self>;
+    type ConstantBuffer: Buffer<Backend = Self> + GpuBuffer + CpuBuffer;
+    type ScratchBuffer: GpuBuffer<Backend = Self>;
     type SparseBuffer: SparseBuffer<Backend = Self>;
     type AllocationPool: Send + Sync;
     type CaptureSpan: Send + Sync;

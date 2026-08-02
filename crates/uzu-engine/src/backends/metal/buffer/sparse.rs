@@ -8,7 +8,7 @@ use metal::{
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::backends::{
-    common::{Buffer, SparseBuffer},
+    common::{Buffer, GpuBuffer, SparseBuffer},
     metal::{
         Metal, context::MetalContext, error::MetalError, heaps::MetalHeapPage, metal_extensions::SparsePageSizeExt,
     },
@@ -65,6 +65,8 @@ impl Buffer for MetalSparseBuffer {
         self.capacity
     }
 }
+
+impl GpuBuffer for MetalSparseBuffer {}
 
 impl SparseBuffer for MetalSparseBuffer {
     fn map(

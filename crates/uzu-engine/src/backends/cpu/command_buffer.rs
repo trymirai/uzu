@@ -13,7 +13,7 @@ use crate::{
         },
         cpu::{
             Cpu,
-            buffer::{CpuBufferExt, dense::CpuBuffer},
+            buffer::{CpuBufferExt, dense::CpuDenseBuffer},
             context::CpuContext,
             error::CpuError,
         },
@@ -34,16 +34,16 @@ impl CommandBuffer for CpuCommandBuffer {
 
 pub struct CpuCommandBufferEncoding {
     commands: Vec<Box<dyn FnOnce() + Send>>,
-    constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
+    constant_allocator: BumpAllocator<CpuDenseBuffer>,
     allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
     context: Arc<CpuContext>,
 }
 
 impl CpuCommandBufferEncoding {
     pub fn new(
-        constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
-        allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
         context: Arc<CpuContext>,
+        constant_allocator: BumpAllocator<CpuDenseBuffer>,
+        allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
     ) -> CpuCommandBufferEncoding {
         CpuCommandBufferEncoding {
             commands: Vec::new(),
@@ -72,14 +72,15 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         &mut self,
         size: usize,
     ) -> Result<<Cpu as Backend>::ConstantBuffer, CpuError> {
-        self.constant_allocator.allocate(size, |size| Ok(CpuBuffer::new(size)))
+        let alignment = usize::min(size, 64).next_power_of_two();
+        self.constant_allocator.allocate(size, alignment, |size| Ok(CpuDenseBuffer::new(size)))
     }
 
     fn allocate_scratch(
         &mut self,
         size: usize,
     ) -> Result<<Cpu as Backend>::ScratchBuffer, CpuError> {
-        self.allocation_pool.allocate(size, |size| Ok(CpuBuffer::new(size)))
+        self.allocation_pool.allocate(size, |size| Ok(CpuDenseBuffer::new(size)))
     }
 
     fn encode_copy(
@@ -126,7 +127,7 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
     }
 
     fn with_timestamps(self) -> Self {
-        panic!("the CPU backend does not record timestamps")
+        unimplemented!()
     }
 
     fn end_encoding(self) -> CpuCommandBufferExecutable {
@@ -142,7 +143,7 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
 pub struct CpuCommandBufferExecutable {
     commands: Vec<Box<dyn FnOnce() + Send>>,
-    constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
+    constant_allocator: BumpAllocator<CpuDenseBuffer>,
     allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
     context: Arc<CpuContext>,
 }
@@ -203,11 +204,11 @@ pub struct CpuCommandBufferCompleted {
 impl CommandBufferCompleted for CpuCommandBufferCompleted {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn gpu_execution_time(&self) -> Duration {
-        self.gpu_execution_time
+    fn gpu_execution_time(&self) -> Option<Duration> {
+        Some(self.gpu_execution_time)
     }
 
     fn timestamps(&self) -> &[TimestampSpan] {
-        &[]
+        unimplemented!()
     }
 }

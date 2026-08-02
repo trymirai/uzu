@@ -5,21 +5,18 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::{
     backends::{
-        common::{Backend, Buffer},
+        common::{Backend, GpuBuffer},
         metal::Metal,
     },
     utils::downcast::downcast_ref,
 };
 
-pub mod constant;
 pub mod dense;
-pub mod global;
-pub mod scratch;
 pub mod sparse;
 
-pub(super) trait MetalBufferExt: Buffer<Backend = Metal> {
+pub(super) trait MetalBufferExt: GpuBuffer<Backend = Metal> {
     fn downcast(&self) -> (&Retained<ProtocolObject<dyn MTLBuffer>>, usize) {
-        if let Some(buffer) = downcast_ref::<<Metal as Backend>::GlobalBuffer>(self) {
+        if let Some(buffer) = downcast_ref::<<Metal as Backend>::GlobalGpuBuffer>(self) {
             (buffer.page().mtl_buffer(), buffer.range().start)
         } else if let Some(buffer) = downcast_ref::<<Metal as Backend>::ConstantBuffer>(self) {
             let (page, offset) = buffer.page().downcast();
@@ -49,4 +46,4 @@ pub(super) trait MetalBufferExt: Buffer<Backend = Metal> {
     }
 }
 
-impl<T: Buffer<Backend = Metal> + ?Sized> MetalBufferExt for T {}
+impl<T: GpuBuffer<Backend = Metal> + ?Sized> MetalBufferExt for T {}

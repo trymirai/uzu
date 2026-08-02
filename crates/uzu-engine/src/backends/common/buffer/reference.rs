@@ -3,42 +3,21 @@ use std::{
     range::Range,
 };
 
-use bytemuck::{AnyBitPattern, NoUninit};
-
-use crate::backends::common::{Backend, Buffer, BufferCpuAccessible};
+use crate::backends::common::{Backend, GpuBuffer};
 
 // TODO: revisit as_slice/copy bounds and remove horrible unsafe metal kernel argument copyin hack
 // TODO: also I'm not a big fan of this implementation. The implementation can be clean when BufferRef is on T
 // TODO: but then &(impl BufferRef + ?Sized) everywhere it's used is much worse than a slightly messy trait system
 
-pub trait BufferRef: Copy {
+pub trait BufferRef: Copy + Send {
     type Backend: Backend;
-    type Buffer: Buffer<Backend = Self::Backend> + ?Sized;
+    type Buffer: GpuBuffer<Backend = Self::Backend> + ?Sized;
 
     fn size(&self) -> usize;
 
     fn parts<'a>(self) -> (&'a Self::Buffer, Range<usize>)
     where
         Self: 'a;
-
-    fn as_slice<'a, T: AnyBitPattern>(self) -> &'a [T]
-    where
-        Self::Buffer: BufferCpuAccessible,
-        Self: 'a,
-    {
-        let (buffer, range) = self.parts();
-        let bytes = unsafe {
-            std::slice::from_raw_parts(buffer.cpu_ptr().as_ptr().cast::<u8>().add(range.start), range.iter().len())
-        };
-        bytemuck::cast_slice(bytes)
-    }
-
-    fn copyout<T: AnyBitPattern>(self) -> Vec<T>
-    where
-        Self::Buffer: BufferCpuAccessible,
-    {
-        self.as_slice().to_vec()
-    }
 
     fn subrange<'a>(
         self,
@@ -55,9 +34,9 @@ pub trait BufferRef: Copy {
     }
 }
 
-pub trait BufferMut: Sized {
+pub trait BufferMut: Sized + Send {
     type Backend: Backend;
-    type Buffer: Buffer<Backend = Self::Backend> + ?Sized;
+    type Buffer: GpuBuffer<Backend = Self::Backend> + ?Sized;
 
     fn size(&self) -> usize;
 
@@ -68,28 +47,6 @@ pub trait BufferMut: Sized {
     fn reborrow(&mut self) -> impl BufferMut<Backend = Self::Backend, Buffer = Self::Buffer>;
 
     fn as_ref(&self) -> impl BufferRef<Backend = Self::Backend, Buffer = Self::Buffer>;
-
-    #[expect(clippy::wrong_self_convention)]
-    fn as_slice_mut<'a, T: NoUninit + AnyBitPattern>(self) -> &'a mut [T]
-    where
-        Self::Buffer: BufferCpuAccessible,
-        Self: 'a,
-    {
-        let (buffer, range) = self.parts();
-        let bytes = unsafe {
-            std::slice::from_raw_parts_mut(buffer.cpu_ptr().as_ptr().cast::<u8>().add(range.start), range.iter().len())
-        };
-        bytemuck::cast_slice_mut(bytes)
-    }
-
-    fn copyin(
-        self,
-        data: &[impl NoUninit + AnyBitPattern],
-    ) where
-        Self::Buffer: BufferCpuAccessible,
-    {
-        self.as_slice_mut().copy_from_slice(data);
-    }
 
     fn subrange_mut<'a>(
         self,
@@ -128,19 +85,19 @@ pub trait BufferMut: Sized {
     }
 }
 
-pub struct Subbuffer<'a, B: Buffer + ?Sized, const MUTABLE: bool> {
+pub struct Subbuffer<'a, B: GpuBuffer + ?Sized, const MUTABLE: bool> {
     buffer: &'a B,
     range: Range<usize>,
 }
 
-impl<B: Buffer + ?Sized> Clone for Subbuffer<'_, B, false> {
+impl<B: GpuBuffer + ?Sized> Clone for Subbuffer<'_, B, false> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<B: Buffer + ?Sized> Copy for Subbuffer<'_, B, false> {}
+impl<B: GpuBuffer + ?Sized> Copy for Subbuffer<'_, B, false> {}
 
-impl<B: Buffer + ?Sized> BufferRef for Subbuffer<'_, B, false> {
+impl<B: GpuBuffer + ?Sized> BufferRef for Subbuffer<'_, B, false> {
     type Backend = B::Backend;
     type Buffer = B;
 
@@ -156,7 +113,7 @@ impl<B: Buffer + ?Sized> BufferRef for Subbuffer<'_, B, false> {
     }
 }
 
-impl<B: Buffer + ?Sized> BufferMut for Subbuffer<'_, B, true> {
+impl<B: GpuBuffer + ?Sized> BufferMut for Subbuffer<'_, B, true> {
     type Backend = B::Backend;
     type Buffer = B;
 

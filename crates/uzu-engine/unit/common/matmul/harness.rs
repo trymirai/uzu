@@ -108,7 +108,14 @@ pub fn run<B: Backend, T: DataTypeRepr + Float>(
     input: &Input<T>,
     encode: impl for<'a> FnOnce(
         &mut <B::Kernels as Kernels>::MatmulKernel,
-        MatmulArguments<'a, B, &'a B::GlobalBuffer, &'a B::GlobalBuffer, &'a mut B::GlobalBuffer, &'a B::GlobalBuffer>,
+        MatmulArguments<
+            'a,
+            B,
+            &'a B::GlobalGpuBuffer,
+            &'a B::GlobalGpuBuffer,
+            &'a mut B::GlobalGpuBuffer,
+            &'a B::GlobalGpuBuffer,
+        >,
         &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ),
 ) -> Vec<T> {
@@ -120,7 +127,7 @@ pub fn run<B: Backend, T: DataTypeRepr + Float>(
     let b_buffer = create_buffer_with_data::<B, T>(context, &input.b);
     let a_buffer = create_buffer_with_data::<B, T>(context, &input.a);
     let mut d_buffer =
-        context.create_buffer(m as usize * n as usize * std::mem::size_of::<T>()).expect("create d buffer");
+        context.create_buffer_gpu(m as usize * n as usize * std::mem::size_of::<T>()).expect("create d buffer");
     let rht_buffer = input.rht_factors.as_ref().map(|factors| create_buffer_with_data::<B, i32>(context, factors));
     let bias_buffer = input.bias.as_ref().map(|bias| create_buffer_with_data::<B, T>(context, bias));
 
@@ -153,7 +160,7 @@ pub fn run<B: Backend, T: DataTypeRepr + Float>(
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<B, T>(&d_buffer)
+    buffer_to_vec::<B, T>(context, &d_buffer)
 }
 
 pub fn cpu_reference<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {

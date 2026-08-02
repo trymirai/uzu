@@ -1,4 +1,4 @@
-use std::{fs::File, io::BufReader, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use derive_more::Debug;
 use thiserror::Error;
@@ -58,22 +58,22 @@ pub enum ResolveModelTypeError {
     UnableToDeserializeConfig(#[from] serde_json::Error),
 }
 
-pub fn resolve_model_type(model_path: &Path) -> Result<ModelType, ResolveModelTypeError> {
-    Ok(match read_model_config(model_path)? {
+pub async fn resolve_model_type(model_path: &Path) -> Result<ModelType, ResolveModelTypeError> {
+    Ok(match read_model_config(model_path).await? {
         AnyModelConfig::LanguageModelConfig(_) => ModelType::LanguageModel,
         AnyModelConfig::ClassifierModelConfig(_) => ModelType::Classifier,
     })
 }
 
-pub fn resolve_model_sampling_method(model_path: &Path) -> Result<Option<SamplingMethod>, ResolveModelTypeError> {
-    Ok(match read_model_config(model_path)? {
+pub async fn resolve_model_sampling_method(model_path: &Path) -> Result<Option<SamplingMethod>, ResolveModelTypeError> {
+    Ok(match read_model_config(model_path).await? {
         AnyModelConfig::LanguageModelConfig(config) => Some(config.generation_config.default_sampling_method()),
         AnyModelConfig::ClassifierModelConfig(_) => None,
     })
 }
 
-pub fn resolve_model_context_length(model_path: &Path) -> Result<Option<u32>, ResolveModelTypeError> {
-    let transformer = match read_model_config(model_path)? {
+pub async fn resolve_model_context_length(model_path: &Path) -> Result<Option<u32>, ResolveModelTypeError> {
+    let transformer = match read_model_config(model_path).await? {
         AnyModelConfig::LanguageModelConfig(config) => config.decoder_config.transformer_config,
         AnyModelConfig::ClassifierModelConfig(_) => return Ok(None),
     };
@@ -85,7 +85,7 @@ pub fn resolve_model_context_length(model_path: &Path) -> Result<Option<u32>, Re
         .min())
 }
 
-fn read_model_config(model_path: &Path) -> Result<AnyModelConfig, ResolveModelTypeError> {
-    let file = File::open(model_path.join("config.json"))?;
-    Ok(serde_json::from_reader(BufReader::new(file))?)
+async fn read_model_config(model_path: &Path) -> Result<AnyModelConfig, ResolveModelTypeError> {
+    let bytes = crate::utils::file::read(model_path.join("config.json")).await?;
+    Ok(serde_json::from_slice(&bytes)?)
 }

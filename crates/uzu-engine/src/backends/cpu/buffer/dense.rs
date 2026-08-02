@@ -5,17 +5,17 @@ use std::{
 };
 
 use crate::backends::{
-    common::{Buffer, BufferCpuAccessible, GlobalBuffer},
+    common::{Buffer, CpuBuffer, GlobalBufferCpuGpu, GlobalGpuBuffer, GpuBuffer},
     cpu::Cpu,
 };
 
 #[derive(Debug)]
-pub struct CpuBuffer {
+pub struct CpuDenseBuffer {
     ptr: NonNull<c_void>,
     layout: Layout,
 }
 
-impl CpuBuffer {
+impl CpuDenseBuffer {
     pub(in crate::backends::cpu) fn new(size: usize) -> Self {
         assert!(size > 0, "CPU buffer size must be nonzero");
         let layout = Layout::from_size_align(size, 64).expect("invalid CPU buffer layout");
@@ -28,16 +28,16 @@ impl CpuBuffer {
 }
 
 // The allocation has a stable address; callers synchronize access through buffer borrows and command buffers.
-unsafe impl Send for CpuBuffer {}
-unsafe impl Sync for CpuBuffer {}
+unsafe impl Send for CpuDenseBuffer {}
+unsafe impl Sync for CpuDenseBuffer {}
 
-impl Drop for CpuBuffer {
+impl Drop for CpuDenseBuffer {
     fn drop(&mut self) {
         unsafe { dealloc(self.ptr.as_ptr().cast(), self.layout) };
     }
 }
 
-impl Buffer for CpuBuffer {
+impl Buffer for CpuDenseBuffer {
     type Backend = Cpu;
 
     fn size(&self) -> usize {
@@ -45,10 +45,18 @@ impl Buffer for CpuBuffer {
     }
 }
 
-impl BufferCpuAccessible for CpuBuffer {
+impl GpuBuffer for CpuDenseBuffer {}
+
+impl CpuBuffer for CpuDenseBuffer {
     fn cpu_ptr(&self) -> NonNull<c_void> {
         self.ptr
     }
 }
 
-impl GlobalBuffer for CpuBuffer {}
+impl GlobalGpuBuffer for CpuDenseBuffer {}
+
+impl GlobalBufferCpuGpu for CpuDenseBuffer {
+    fn handoff(self) -> Self {
+        self
+    }
+}

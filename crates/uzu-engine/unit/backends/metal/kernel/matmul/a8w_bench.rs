@@ -51,16 +51,16 @@ impl BenchPath {
 }
 
 struct BenchmarkData {
-    unsigned_weights: <Metal as Backend>::GlobalBuffer,
-    a8_weights: <Metal as Backend>::GlobalBuffer,
-    weight_scales: <Metal as Backend>::GlobalBuffer,
+    unsigned_weights: <Metal as Backend>::GlobalGpuBuffer,
+    a8_weights: <Metal as Backend>::GlobalGpuBuffer,
+    weight_scales: <Metal as Backend>::GlobalGpuBuffer,
     /// The `[G, N]` scale plane the A8 MXU route reads.
-    group_major_weight_scales: <Metal as Backend>::GlobalBuffer,
-    activations: <Metal as Backend>::GlobalBuffer,
-    rht_factors: <Metal as Backend>::GlobalBuffer,
-    a_working: <Metal as Backend>::GlobalBuffer,
-    a_int8: <Metal as Backend>::GlobalBuffer,
-    a_scales: <Metal as Backend>::GlobalBuffer,
+    group_major_weight_scales: <Metal as Backend>::GlobalGpuBuffer,
+    activations: <Metal as Backend>::GlobalGpuBuffer,
+    rht_factors: <Metal as Backend>::GlobalGpuBuffer,
+    a_working: <Metal as Backend>::GlobalGpuBuffer,
+    a_int8: <Metal as Backend>::GlobalGpuBuffer,
+    a_scales: <Metal as Backend>::GlobalGpuBuffer,
     m: u32,
     k: u32,
     n: u32,
@@ -85,8 +85,9 @@ impl BenchmarkData {
         let a8_weights = input.weights_for_upload();
         let a8_weights = create_buffer_with_data::<Metal, u32>(context, &a8_weights);
         let weight_scales = create_buffer_with_data::<Metal, bf16>(context, &input.scales);
-        let mut group_major_weight_scales = create_buffer_with_data::<Metal, bf16>(context, &input.scales);
-        transpose_metadata(group_major_weight_scales.as_slice_mut(), n, k.div_ceil(group_size), 16);
+        let mut group_major_weight_scales = input.scales.clone();
+        transpose_metadata(bytemuck::cast_slice_mut(&mut group_major_weight_scales), n, k.div_ceil(group_size), 16);
+        let group_major_weight_scales = create_buffer_with_data::<Metal, bf16>(context, &group_major_weight_scales);
         let activations = create_buffer_with_data::<Metal, bf16>(context, &input.x);
         let rht: Vec<i32> = (0..k)
             .map(|index| {
@@ -128,10 +129,10 @@ impl BenchmarkData {
     ) -> MatmulArguments<
         'a,
         Metal,
-        &'a <Metal as Backend>::GlobalBuffer,
-        &'a <Metal as Backend>::GlobalBuffer,
+        &'a <Metal as Backend>::GlobalGpuBuffer,
+        &'a <Metal as Backend>::GlobalGpuBuffer,
         D,
-        &'a <Metal as Backend>::GlobalBuffer,
+        &'a <Metal as Backend>::GlobalGpuBuffer,
     > {
         MatmulArguments {
             a: MatmulA::FullPrecision {
@@ -174,44 +175,45 @@ fn encode_step(
                 &data.activations,
                 &mut data.a_int8,
                 &mut data.a_scales,
-                None::<&mut <Metal as Backend>::GlobalBuffer>,
+                None::<&mut <Metal as Backend>::GlobalGpuBuffer>,
                 &data.rht_factors,
                 data.m,
                 data.k,
                 command_buffer,
             );
-            let args =
-                MatmulArguments::<Metal, _, &<Metal as Backend>::GlobalBuffer, _, &<Metal as Backend>::GlobalBuffer> {
-                    a: MatmulA::Int8Symmetric {
-                        values: &data.a_int8,
-                        scales: &data.a_scales,
-                        group_sums: None,
-                        scale_group_size: 128,
-                        code_layout: Int8CodeLayout::for_right_bits(DataType::from(data.mode).size_in_bits() as u32)
-                            .expect("W4/W8 benchmark"),
-                    },
-                    b: MatmulB::Quantized(QuantizedB {
-                        codes: &data.a8_weights,
-                        scales: &data.group_major_weight_scales,
-                        correction: QuantizedCorrection::Symmetric,
-                        params: QuantParams::new(
-                            QuantParamsLayout::GroupOutput,
-                            data.n,
-                            data.k.div_ceil(data.group_size),
-                        ),
-                        mode: data.mode,
-                        group_size: data.group_size,
-                        signed_codes: !matches!(data.mode, QuantizationMode::U4),
-                        weights_layout: GemmBLayout::RowMajor,
-                    }),
-                    b_leading_dimension: None,
-                    b_transpose: true,
-                    output: MatmulOutput::new(output, MatmulDOps::none()),
-                    gather_indices: None,
-                    m: data.m,
-                    n: data.n,
-                    k: data.k,
-                };
+            let args = MatmulArguments::<
+                Metal,
+                _,
+                &<Metal as Backend>::GlobalGpuBuffer,
+                _,
+                &<Metal as Backend>::GlobalGpuBuffer,
+            > {
+                a: MatmulA::Int8Symmetric {
+                    values: &data.a_int8,
+                    scales: &data.a_scales,
+                    group_sums: None,
+                    scale_group_size: 128,
+                    code_layout: Int8CodeLayout::for_right_bits(DataType::from(data.mode).size_in_bits() as u32)
+                        .expect("W4/W8 benchmark"),
+                },
+                b: MatmulB::Quantized(QuantizedB {
+                    codes: &data.a8_weights,
+                    scales: &data.group_major_weight_scales,
+                    correction: QuantizedCorrection::Symmetric,
+                    params: QuantParams::new(QuantParamsLayout::GroupOutput, data.n, data.k.div_ceil(data.group_size)),
+                    mode: data.mode,
+                    group_size: data.group_size,
+                    signed_codes: !matches!(data.mode, QuantizationMode::U4),
+                    weights_layout: GemmBLayout::RowMajor,
+                }),
+                b_leading_dimension: None,
+                b_transpose: true,
+                output: MatmulOutput::new(output, MatmulDOps::none()),
+                gather_indices: None,
+                m: data.m,
+                n: data.n,
+                k: data.k,
+            };
             matmul.encode_with_gemm_engine(args, GemmEngine::Mxu, command_buffer).expect("a8 gemm mxu encode");
         },
         BenchPath::Bf16GemmMxu => {

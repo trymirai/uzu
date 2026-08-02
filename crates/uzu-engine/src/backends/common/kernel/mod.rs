@@ -1,4 +1,4 @@
-#[cfg(backend = "cpu")]
+#[cfg(any(backend = "webgpu", backend = "cpu"))]
 use std::{convert::Infallible, marker::PhantomData};
 
 use crate::backends::common::Backend;
@@ -36,7 +36,7 @@ pub trait Kernels: Sized {
     type RadixTopKSmall: radix_top_k_small::RadixTopKSmall<Backend = Self::Backend>;
 }
 
-#[cfg(backend = "cpu")]
+#[cfg(any(backend = "webgpu", backend = "cpu"))]
 pub struct Unsupported<B: Backend> {
     never: Infallible,
     _marker: PhantomData<fn() -> B>,

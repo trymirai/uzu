@@ -161,7 +161,7 @@ pub fn bindgen_global(kernels: &[(impl AsRef<std::path::Path>, &[Kernel])]) -> R
         use objc2::{rc::Retained, runtime::ProtocolObject};
 
         use crate::backends::{
-            common::{BufferRef, CommandBufferEncoding, BufferMut},
+            common::{BufferRef, CommandBufferEncoding, CpuBuffer},
             metal::{
                 context::MetalContext,
                 error::MetalError,

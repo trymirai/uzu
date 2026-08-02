@@ -75,7 +75,7 @@ fn get_output<B: Backend, T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<f32>
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
-    buffer_to_vec(&packed)
+    buffer_to_vec(&*context, &packed)
 }
 
 fn test_internal<T: DataTypeRepr + Float + Debug + Display>(

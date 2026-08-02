@@ -62,7 +62,7 @@ fn bench_gemm(c: &mut Criterion) {
                                 b_leading_dimension: None,
                                 b_transpose: true,
                                 output: MatmulOutput::new(&mut d, MatmulDOps::none()),
-                                gather_indices: None::<&<Metal as Backend>::GlobalBuffer>,
+                                gather_indices: None::<&<Metal as Backend>::GlobalGpuBuffer>,
                                 m,
                                 n,
                                 k,

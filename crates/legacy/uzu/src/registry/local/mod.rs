@@ -20,14 +20,14 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub(crate) fn model_at_path(
+    pub(crate) async fn model_at_path(
         path: &Path,
         backend_identifier: String,
         backend_version: String,
     ) -> Result<Model, RegistryError> {
         let registry =
             Self::new(Config::new(backend_identifier, backend_version, path.to_string_lossy().into_owned()))?;
-        registry.model(Path::new(&registry.config.path))
+        registry.model(Path::new(&registry.config.path)).await
     }
 
     pub fn new(mut config: Config) -> Result<Self, RegistryError> {
@@ -55,7 +55,7 @@ impl RegistryTrait for Registry {
         Box::pin(async {
             let path = Path::new(&self.config.path);
             if path.join("config.json").is_file() {
-                return Ok(vec![self.model(path)?]);
+                return Ok(vec![self.model(path).await?]);
             }
 
             let entries = fs::read_dir(path).map_err(|error| RegistryError::UnableToGetModels {
@@ -74,7 +74,7 @@ impl RegistryTrait for Registry {
                 if !file_type.is_dir() {
                     continue;
                 }
-                match self.model(&path) {
+                match self.model(&path).await {
                     Ok(model) => models.push(model),
                     Err(error) => {
                         tracing::warn!(?error, path = %path.display(), "skipping invalid local model");
@@ -88,7 +88,7 @@ impl RegistryTrait for Registry {
 }
 
 impl Registry {
-    fn model(
+    async fn model(
         &self,
         path: &Path,
     ) -> Result<Model, RegistryError> {
@@ -96,6 +96,7 @@ impl Registry {
             message: format!("Invalid local model path: {}", path.display()),
         })?;
         let specialization = resolve_model_type(path)
+            .await
             .map(|model_type| match model_type {
                 ModelType::LanguageModel => ModelSpecialization::Chat {},
                 ModelType::Classifier => ModelSpecialization::Classification {},

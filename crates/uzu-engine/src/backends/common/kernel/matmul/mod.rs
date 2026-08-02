@@ -13,7 +13,9 @@ pub use matmul_a::{Int8CodeLayout, MatmulA};
 pub use matmul_b::{MatmulB, QuantizedB, QuantizedCorrection};
 #[cfg(backend = "metal")]
 pub use matmul_b::{TRELLIS_CODES_TAIL_BYTES, TrellisFormat};
-pub use output::{MatmulOutput, MatmulOutputError};
+pub use output::MatmulOutput;
+#[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
+pub use output::MatmulOutputError;
 pub use routing::{ActivationFormat, MatmulShape};
 
 use crate::backends::common::{

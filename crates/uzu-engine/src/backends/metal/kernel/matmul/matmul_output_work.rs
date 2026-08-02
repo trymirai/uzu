@@ -32,7 +32,7 @@ impl MatmulOutputWork {
         &self,
         output: impl BufferMut<Backend = Metal>,
         factors: impl BufferRef<Backend = Metal>,
-        bias: Option<&<Metal as Backend>::GlobalBuffer>,
+        bias: Option<&<Metal as Backend>::GlobalGpuBuffer>,
         m: u32,
         n: u32,
         command_buffer: &mut MetalCommandBufferEncoding,

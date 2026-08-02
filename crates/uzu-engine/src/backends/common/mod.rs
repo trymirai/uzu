@@ -11,12 +11,9 @@ mod timestamp_span;
 
 pub use backend::Backend;
 pub use buffer::{
-    Buffer,
-    constant::ConstantBuffer,
-    cpu_accessible::BufferCpuAccessible,
-    global::GlobalBuffer,
+    Buffer, CpuBuffer, GpuBuffer,
+    global::{GlobalBufferCpuGpu, GlobalGpuBuffer},
     reference::{BufferMut, BufferRef},
-    scratch::ScratchBuffer,
     sparse::SparseBuffer,
 };
 pub use command_buffer::{

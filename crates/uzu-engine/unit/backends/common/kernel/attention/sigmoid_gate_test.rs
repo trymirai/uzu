@@ -51,7 +51,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    buffer_to_vec(&output)
+    buffer_to_vec(&*context, &output)
 }
 
 fn run_test<T: DataTypeRepr + Float + Debug>(config: &Config) {

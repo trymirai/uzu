@@ -46,14 +46,14 @@ fn has_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
 }
 
 impl<B: Backend> RHTLinearWrapper<B> {
-    pub(super) fn new(
+    pub(super) async fn new(
         input_dimension: u32,
         output_dimension: u32,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
         has_biases: bool,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
@@ -71,9 +71,10 @@ impl<B: Backend> RHTLinearWrapper<B> {
             has_biases,
             parameter_tree,
             context,
-        )?;
+        )
+        .await?;
         let activation_quantization =
-            inner_linear.prepare_a8_matmul(context).map_err(RHTLinearWrapperError::BackendError)?;
+            inner_linear.optimize_weights_layout(context).map_err(RHTLinearWrapperError::BackendError)?;
         Self::build_self_contained(
             input_data_type,
             LinearInputPreparation {
@@ -85,7 +86,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )
     }
 
-    pub(super) fn try_new_with_input_preparation(
+    pub(super) async fn try_new_with_input_preparation(
         input_dimension: u32,
         output_dimension: u32,
         weights_data_type: DataType,
@@ -93,7 +94,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         output_data_type: DataType,
         has_biases: bool,
         allow_prequantized_activation: bool,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Option<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>)>, RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
@@ -111,11 +112,12 @@ impl<B: Backend> RHTLinearWrapper<B> {
             has_biases,
             parameter_tree,
             context,
-        )?;
+        )
+        .await?;
         let input_preparation = LinearInputPreparation {
             rht_signs,
             activation_quantization: inner_linear
-                .prepare_a8_matmul(context)
+                .optimize_weights_layout(context)
                 .map_err(RHTLinearWrapperError::BackendError)?,
         };
         if input_preparation.activation_quantization.is_some() && !allow_prequantized_activation {
@@ -126,22 +128,23 @@ impl<B: Backend> RHTLinearWrapper<B> {
         }
     }
 
-    fn load_inner_with_output_rht(
+    async fn load_inner_with_output_rht(
         input_dimension: u32,
         output_dimension: u32,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
         has_biases: bool,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(B::GlobalBuffer, LinearMatmul<B>), RHTLinearWrapperError<B>> {
+    ) -> Result<(B::GlobalGpuBuffer, LinearMatmul<B>), RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let quantized_weights_tree = weights_tree.subtree("quantized");
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        let rht_signs = weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dimension], DataType::I32)?;
+        let rht_signs =
+            weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dimension], DataType::I32).await?;
         let output_factors =
-            weights_tree.read_buffer("incoherence_signs.output_signs", &[output_dimension], DataType::I32)?;
+            weights_tree.read_buffer("incoherence_signs.output_signs", &[output_dimension], DataType::I32).await?;
         let inner_linear = LinearMatmul::load(
             input_dimension,
             output_dimension,
@@ -153,7 +156,8 @@ impl<B: Backend> RHTLinearWrapper<B> {
             &quantized_weights_tree,
             has_biases.then_some(parameter_tree),
             context,
-        )?;
+        )
+        .await?;
         Ok((rht_signs, inner_linear))
     }
 

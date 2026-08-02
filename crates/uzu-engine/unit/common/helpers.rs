@@ -4,8 +4,8 @@ use futures::executor::block_on;
 
 use crate::{
     backends::common::{
-        Backend, BufferCpuAccessible, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferPending, Context,
+        Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, CpuBuffer,
+        GlobalBufferCpuGpu,
     },
     data_type::DataTypeRepr,
 };
@@ -13,13 +13,13 @@ use crate::{
 /// Invokes `$body` once per available backend, with `$B` bound to each backend type.
 macro_rules! for_each_backend {
     (|$B:ident| $body:expr) => {{
-        {
-            type $B = crate::backends::cpu::Cpu;
-            $body
-        }
         #[cfg(backend = "metal")]
         {
             type $B = crate::backends::metal::Metal;
+            $body
+        }
+        {
+            type $B = crate::backends::cpu::Cpu;
             $body
         }
     }};
@@ -50,30 +50,33 @@ pub fn buffer_size_bytes<T>(elements_count: usize) -> usize {
 pub fn create_buffer<B: Backend, T>(
     context: &B::Context,
     elements_count: usize,
-) -> B::GlobalBuffer {
-    context.create_buffer(buffer_size_bytes::<T>(elements_count)).expect("Failed to create buffer")
+) -> B::GlobalGpuBuffer {
+    context.create_buffer_gpu(buffer_size_bytes::<T>(elements_count)).expect("Failed to create buffer")
 }
 
 pub fn create_buffer_with_data<B: Backend, T: DataTypeRepr>(
     context: &B::Context,
     data: &[T],
-) -> B::GlobalBuffer {
-    let mut buffer = context.create_buffer(buffer_size_bytes::<T>(data.len())).expect("Failed to create buffer");
+) -> B::GlobalGpuBuffer {
+    let mut buffer =
+        context.create_buffer_cpu_gpu(buffer_size_bytes::<T>(data.len())).expect("Failed to create buffer");
     buffer.copyin(data);
-    buffer
+    buffer.handoff()
 }
 
 pub fn buffer_to_vec<B: Backend, T: DataTypeRepr>(
-    buffer: impl BufferRef<Backend = B, Buffer: BufferCpuAccessible>
+    context: &B::Context,
+    buffer: impl BufferRef<Backend = B, Buffer = B::GlobalGpuBuffer>,
 ) -> Vec<T> {
-    buffer.copyout()
+    block_on(context.copyout(buffer)).expect("Failed to read buffer")
 }
 
 pub fn buffer_prefix_to_vec<B: Backend, T: DataTypeRepr>(
-    buffer: impl BufferRef<Backend = B, Buffer: BufferCpuAccessible>,
+    context: &B::Context,
+    buffer: impl BufferRef<Backend = B, Buffer = B::GlobalGpuBuffer>,
     elements_count: usize,
 ) -> Vec<T> {
-    let mut values = buffer_to_vec::<B, T>(buffer);
+    let mut values = buffer_to_vec::<B, T>(context, buffer);
     values.truncate(elements_count);
     values
 }
@@ -90,7 +93,7 @@ pub fn submit_command_buffer<E: CommandBufferEncoding>(command_buffer: E) {
 pub fn buffer_readback<B: Backend>(
     context: &B::Context,
     buffer: impl BufferRef<Backend = B>,
-) -> B::GlobalBuffer {
+) -> B::GlobalGpuBuffer {
     let mut output_buffer = create_buffer::<B, u8>(context, buffer.size());
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");

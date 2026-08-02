@@ -1,10 +1,17 @@
-use std::sync::{Arc, atomic::Ordering};
+use std::{
+    os::raw::c_void,
+    ptr::NonNull,
+    sync::{Arc, atomic::Ordering},
+};
 
 use metal::{MTLBuffer, MTLDevice, MTLDeviceExt, MTLResidencySet, MTLResourceOptions};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
 
-use crate::backends::metal::{context::MetalContext, error::MetalError};
+use crate::backends::{
+    common::{Buffer, CpuBuffer, GlobalBufferCpuGpu, GlobalGpuBuffer, GpuBuffer, allocator::block::BlockAllocation},
+    metal::{Metal, context::MetalContext, error::MetalError},
+};
 
 pub struct MetalDenseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
@@ -45,5 +52,29 @@ impl Drop for MetalDenseBuffer {
         let residency_set_locked = self.residency_set.lock();
         residency_set_locked.remove_allocation(self.buffer.as_ref());
         residency_set_locked.commit();
+    }
+}
+
+impl Buffer for MetalDenseBuffer {
+    type Backend = Metal;
+
+    fn size(&self) -> usize {
+        self.buffer.length()
+    }
+}
+
+impl GpuBuffer for MetalDenseBuffer {}
+
+impl CpuBuffer for MetalDenseBuffer {
+    fn cpu_ptr(&self) -> NonNull<c_void> {
+        self.buffer.contents()
+    }
+}
+
+impl GlobalGpuBuffer for BlockAllocation<MetalDenseBuffer> {}
+
+impl GlobalBufferCpuGpu for BlockAllocation<MetalDenseBuffer> {
+    fn handoff(self) -> Self {
+        self
     }
 }

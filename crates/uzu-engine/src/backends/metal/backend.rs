@@ -24,11 +24,12 @@ impl Backend for Metal {
     type Context = MetalContext;
     type CommandBuffer = MetalCommandBuffer;
     type DebugGroupSpan<'a> = MetalDebugGroupSpan<'a>;
-    type GlobalBuffer = BlockAllocation<MetalDenseBuffer>;
-    type ConstantBuffer = BumpAllocation<Self::GlobalBuffer>;
-    type ScratchBuffer = PoolAllocation<Self::GlobalBuffer>;
+    type GlobalGpuBuffer = BlockAllocation<MetalDenseBuffer>;
+    type GlobalBufferCpuGpu = BlockAllocation<MetalDenseBuffer>;
+    type ConstantBuffer = BumpAllocation<Self::GlobalGpuBuffer>;
+    type ScratchBuffer = PoolAllocation<Self::GlobalGpuBuffer>;
     type SparseBuffer = MetalSparseBuffer;
-    type AllocationPool = PoolAllocator<Self::GlobalBuffer>;
+    type AllocationPool = PoolAllocator<Self::GlobalGpuBuffer>;
     type CaptureSpan = MetalCaptureSpan;
     type Kernels = MetalKernels;
     type Error = MetalError;

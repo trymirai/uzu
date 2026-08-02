@@ -47,6 +47,50 @@
           hash = "sha256-vpSn2ZVUo5tNRgJ89KMBCmPE4JFefP70DfCarVagniU=";
         };
 
+        shader-slang-env = with pkgs; let
+          libenv =
+            {
+              darwin = "DYLD_FALLBACK_LIBRARY_PATH";
+              linux = "LD_LIBRARY_PATH";
+            }.${
+              stdenv.hostPlatform.parsed.kernel.name
+            };
+        in
+          makeSetupHook {
+            name = "shader-slang-env";
+            propagatedBuildInputs = [shader-slang];
+          }
+          (writeText "shader-slang-env.sh" ''
+            export SLANG_INCLUDE_DIR="${lib.getDev shader-slang}/include"
+            export SLANG_LIB_DIR="${lib.getLib shader-slang}/lib"
+            addToSearchPath ${libenv} "${lib.getLib shader-slang}/lib"
+          '');
+
+        bindgen-env = with pkgs;
+          makeSetupHook {name = "bindgen-env";}
+          (writeText "bindgen-env.sh" ''
+            export LIBCLANG_PATH="${lib.getLib libclang}/lib"
+            export BINDGEN_EXTRA_CLANG_ARGS="-isystem ${lib.getDev glibc}/include"
+          '');
+
+        vulkan-env = with pkgs;
+          makeSetupHook {name = "vulkan-env";}
+          (writeText "vulkan-env.sh" ''
+            addToSearchPath LD_LIBRARY_PATH "${lib.getLib vulkan-loader}/lib"
+            export VK_ADD_LAYER_PATH="${vulkan-validation-layers}/share/vulkan/explicit_layer.d"
+          '');
+
+        playwright-env = with pkgs;
+          makeSetupHook {
+            name = "playwright-env";
+            propagatedBuildInputs = [playwright-driver playwright-driver.browsers-chromium];
+          }
+          (writeText "playwright-env.sh" ''
+            export PLAYWRIGHT_BROWSERS_PATH="${playwright-driver.browsers-chromium}"
+            export PLAYWRIGHT_DRIVER_PATH="${playwright-driver}"
+            export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD="1"
+          '');
+
         hostToolchainBuildInputs = with pkgs; (lib.optionals stdenv.hostPlatform.isLinux [alsa-lib]);
         nixToolchainBuildInputs = hostToolchainBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [apple-sdk_26]);
 
@@ -56,10 +100,13 @@
         commonDevshellPackages = with pkgs;
           [
             nil
+            shader-slang-env
+            playwright-env
             uv
             maturin
             nodejs_26
             pnpm_12
+            wasm-bindgen-cli_0_2_129 # Keep in sync with Cargo.toml.
             wasmtime_36
             evcxr
             cargo-deny
@@ -71,6 +118,7 @@
             cargo-show-asm
             critcmp
           ]
+          ++ (with pkgs; lib.optionals stdenv.hostPlatform.isLinux [bindgen-env vulkan-env vulkan-tools shaderc spirv-tools lldb])
           ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [cargo-swift tuist]);
         hostToolchainDevshellPackages = commonDevshellPackages ++ [rustShimHostCC];
         nixToolchainDevshellPackages = commonDevshellPackages ++ [rustShimNixCC];

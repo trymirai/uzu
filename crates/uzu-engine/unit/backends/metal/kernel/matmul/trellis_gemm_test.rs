@@ -91,7 +91,7 @@ fn decode_level(
     (8 * field_sum + ((3 * (hash_byte & 15)) & 15)) as i32 - 54
 }
 
-type MetalBuffer = <Metal as Backend>::GlobalBuffer;
+type MetalBuffer = <Metal as Backend>::GlobalGpuBuffer;
 type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 
 const CODEBOOK: [f32; 5] = [0.0123, 0.3, -0.25, 0.125, -0.0625];
@@ -196,7 +196,7 @@ fn run_projection(
         .chunks_exact(row_bytes)
         .flat_map(|codes| (0..k).map(|column| decode_level(format, codes, k, column)))
         .collect();
-    let actual = buffer_to_vec::<Metal, u16>(&output);
+    let actual = buffer_to_vec::<Metal, u16>(context, &output);
     let stride = n + PADDING;
     for (index, &got) in actual.iter().enumerate() {
         let token = index / stride;

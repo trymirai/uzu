@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
-    fs::File,
-    io::{self, BufReader},
+    io,
     path::Path,
     sync::{Arc, mpsc::Sender},
 };
@@ -29,7 +28,10 @@ use crate::{
     },
     safetensors::{ParameterLoader, ParameterLoaderError},
     trie::TrieNode,
-    utils::timestamps::{record, wait},
+    utils::{
+        file,
+        timestamps::{record, wait},
+    },
 };
 
 #[derive(Debug, Error)]
@@ -93,13 +95,12 @@ pub struct DFlashTfmSpeculator<B: Backend> {
 }
 
 impl<B: Backend> DFlashTfmSpeculator<B> {
-    pub fn new(
+    pub async fn new(
         model_path: &Path,
         context: Arc<B::Context>,
     ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
-        let mut shapes = serde_json::from_reader::<_, HashMap<String, DFlashTfmTreeShape>>(BufReader::new(
-            File::open(model_path.join("shapes.json"))?,
-        ))?;
+        let mut shapes: HashMap<String, DFlashTfmTreeShape> =
+            serde_json::from_slice(&file::read(model_path.join("shapes.json")).await?)?;
 
         let Some(shape) = context
             .device_name()
@@ -111,27 +112,27 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let data_type = DataType::BF16;
 
-        let config: SpeculatorModelConfig =
-            serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
+        let config: SpeculatorModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
         let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
 
-        let weights_file = File::open(model_path.join("model.safetensors"))?;
-        let weight_loader = ParameterLoader::new(&weights_file, &*context)?;
+        let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*context).await?;
         let speculator_tree = weight_loader.tree().subtree("speculator");
 
-        let dflash = DFlash::new(data_type, &config.draft_config, &speculator_tree.subtree("draft_model"), &*context)?;
-        let weaver = config
-            .weaver_config
-            .as_ref()
-            .map(|weaver_config| {
+        let dflash =
+            DFlash::new(data_type, &config.draft_config, &speculator_tree.subtree("draft_model"), &*context).await?;
+        let weaver = if let Some(weaver_config) = &config.weaver_config {
+            Some(
                 Weaver::new(
                     config.draft_config.vocab_size,
                     weaver_config,
                     &speculator_tree.subtree("weaver"),
                     &*context,
                 )
-            })
-            .transpose()?;
+                .await?,
+            )
+        } else {
+            None
+        };
 
         weight_loader.assert_all_tensors_read()?;
 
@@ -266,7 +267,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         &dflash_output.logits,
                         None::<&B::ConstantBuffer>,
                         None::<&B::ConstantBuffer>,
-                        None::<&B::GlobalBuffer>,
+                        None::<&B::GlobalGpuBuffer>,
                         None::<&B::ConstantBuffer>,
                         &batch_topology,
                         (0..chain_length).into(),
@@ -276,7 +277,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     .map_err(DFlashTreeError::Backend)?;
                 let completed =
                     wait(command_buffer.end_encoding().submit(), timestamps).await.map_err(DFlashTreeError::Backend)?;
-                let tokens = sampled.copyout::<u32>();
+                let tokens = self.context.copyout::<u32>(&sampled).await.map_err(DFlashTreeError::Backend)?;
                 drop(completed);
                 nodes.extend(tokens.into_iter().zip(1u32..).map(|(token_id, depth)| ProposalNode {
                     token_id,
@@ -350,7 +351,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 )?;
                 let completed =
                     wait(command_buffer.end_encoding().submit(), timestamps).await.map_err(DFlashTreeError::Backend)?;
-                let nodes = tree.read_nodes();
+                let nodes = tree.read_nodes(&self.context).await.map_err(DFlashTreeError::Backend)?;
                 drop(completed);
                 nodes
             },

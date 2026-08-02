@@ -146,7 +146,7 @@ impl<B: Backend> ActivationTransform<B> {
         self.kernel.encode(
             Some(input),
             Some(output),
-            None::<&B::GlobalBuffer>,
+            None::<&B::GlobalGpuBuffer>,
             None::<&mut B::ScratchBuffer>,
             None::<&mut B::ScratchBuffer>,
             None::<&mut B::ScratchBuffer>,
@@ -161,7 +161,7 @@ impl<B: Backend> ActivationTransform<B> {
         &self,
         data: impl BufferMut<Backend = B>,
         rht_factors: impl BufferRef<Backend = B>,
-        bias: Option<&B::GlobalBuffer>,
+        bias: Option<&B::GlobalGpuBuffer>,
         batch_size: u32,
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -206,7 +206,7 @@ impl<B: Backend> ActivationTransform<B> {
         self.kernel.encode(
             Some(input),
             None::<&mut B::ScratchBuffer>,
-            None::<&B::GlobalBuffer>,
+            None::<&B::GlobalGpuBuffer>,
             Some(q_out),
             Some(scales_out),
             group_sums_out,

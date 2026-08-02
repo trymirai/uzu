@@ -8,7 +8,7 @@ use super::*;
 use crate::{
     backends::{
         common::{
-            Backend, BufferMut, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, CpuBuffer, Kernels,
             kernel::{DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel},
         },
         metal::Metal,
@@ -51,7 +51,7 @@ fn run_prefill(
     context: &MetalContext,
     in_proj_data: &[bf16],
     chunked: Option<&MetalDeltaNetChunkedPrefill>,
-    state: &mut <Metal as Backend>::GlobalBuffer,
+    state: &mut <Metal as Backend>::GlobalGpuBuffer,
 ) -> Vec<f32> {
     let suffix_len = in_proj_data.len() / TOTAL_PROJ_DIM;
     // a_log = ln U(1, 16) and dt_bias = softplus^-1(logU(1e-3, 1e-1)) as in Qwen3-Next
@@ -106,7 +106,7 @@ fn run_prefill(
             &dt_bias,
             &mut q,
             &mut k,
-            None::<&mut <Metal as Backend>::GlobalBuffer>,
+            None::<&mut <Metal as Backend>::GlobalGpuBuffer>,
             &mut beta,
             &mut decay,
             NUM_V_HEADS as u32,
@@ -137,7 +137,8 @@ fn run_prefill(
             );
     }
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<Metal, bf16>(&out).into_iter().map(f32::from).collect()
+    let out = crate::tests::helpers::buffer_readback::<Metal>(context, &out);
+    buffer_to_vec::<Metal, bf16>(context, &out).into_iter().map(f32::from).collect()
 }
 
 fn check(
@@ -156,7 +157,7 @@ fn check(
         .collect();
     let recurrent_out = run_prefill(context, in_proj, None, &mut recurrent_state);
     let (chunked_state, recurrent_state) =
-        (buffer_to_vec::<Metal, f32>(&chunked_state), buffer_to_vec::<Metal, f32>(&recurrent_state));
+        (buffer_to_vec::<Metal, f32>(context, &chunked_state), buffer_to_vec::<Metal, f32>(context, &recurrent_state));
 
     assert!(
         is_close::default().abs_tol(5e-3).rel_tol(1e-3).all_close(chunked_out, recurrent_out),
@@ -185,7 +186,7 @@ fn chunked_prefill_matches_recurrent_prefill() {
     let (warmup, tokens) = in_proj.split_at(WARMUP_TOKENS * TOTAL_PROJ_DIM);
     let mut state = create_buffer_with_data::<Metal, f32>(&context, &vec![0.0; NUM_V_HEADS * HEAD_V_DIM * HEAD_K_DIM]);
     run_prefill(&context, warmup, None, &mut state);
-    let state0 = buffer_to_vec::<Metal, f32>(&state);
+    let state0 = buffer_to_vec::<Metal, f32>(&context, &state);
     assert!(state0.iter().any(|value| *value != 0.0), "initial state is zero");
 
     for suffix_len in [2 * CHUNK_SIZE as usize + 1, 512, 1024] {

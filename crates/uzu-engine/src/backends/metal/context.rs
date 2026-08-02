@@ -17,7 +17,7 @@ use parking_lot::Mutex;
 
 use crate::backends::{
     common::{
-        Backend, Context, DeviceCapabilities,
+        Backend, BufferRef, Context, CpuBuffer, DeviceCapabilities,
         allocator::{block::BlockAllocator, pool::PoolAllocator},
         capture_matcher::CAPTURE_MATCHER,
     },
@@ -196,10 +196,17 @@ impl Context for MetalContext {
         MetalCommandBufferEncoding::new(self.weak_self.upgrade().unwrap(), name, allocation_pool)
     }
 
-    fn create_buffer(
+    fn create_buffer_gpu(
         &self,
         size: usize,
-    ) -> Result<<Metal as Backend>::GlobalBuffer, MetalError> {
+    ) -> Result<<Metal as Backend>::GlobalGpuBuffer, MetalError> {
+        self.block_allocator.allocate(size, |size| MetalDenseBuffer::new(&self.weak_self.upgrade().unwrap(), size))
+    }
+
+    fn create_buffer_cpu_gpu(
+        &self,
+        size: usize,
+    ) -> Result<<Metal as Backend>::GlobalBufferCpuGpu, MetalError> {
         self.block_allocator.allocate(size, |size| MetalDenseBuffer::new(&self.weak_self.upgrade().unwrap(), size))
     }
 
@@ -208,6 +215,17 @@ impl Context for MetalContext {
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
         MetalSparseBuffer::new(self.weak_self.upgrade().unwrap(), capacity)
+    }
+
+    async fn copyout<T: bytemuck::AnyBitPattern>(
+        &self,
+        buffer: impl BufferRef<Backend = Metal, Buffer = <Self::Backend as Backend>::GlobalGpuBuffer>,
+    ) -> Result<Vec<T>, MetalError> {
+        let (buffer, range) = buffer.parts();
+        let bytes = unsafe {
+            std::slice::from_raw_parts(buffer.cpu_ptr().as_ptr().cast::<u8>().add(range.start), range.iter().len())
+        };
+        Ok(bytemuck::cast_slice(bytes).to_vec())
     }
 
     fn create_allocation_pool(&self) -> Arc<<Metal as Backend>::AllocationPool> {
@@ -226,7 +244,7 @@ impl Context for MetalContext {
     }
 
     fn device_capabilities(&self) -> DeviceCapabilities {
-        let mut capabilities = DeviceCapabilities::empty();
+        let mut capabilities = DeviceCapabilities::GLOBAL_BUFFERS_CPU_ACCESSIBLE;
         if self.device.supports_placement_sparse_resources() {
             capabilities |= DeviceCapabilities::SPARSE_BUFFERS;
         }

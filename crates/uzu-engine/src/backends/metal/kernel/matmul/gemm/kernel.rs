@@ -110,7 +110,7 @@ impl GemmKernel {
     }
 
     pub fn prepare_gemm_b_layout(
-        weights: &mut <Metal as Backend>::GlobalBuffer,
+        weights: &mut <Metal as Backend>::GlobalGpuBuffer,
         rows: u32,
         k: u32,
         bits: u32,
@@ -495,8 +495,8 @@ impl GemmKernel {
             scales,
             biases,
             zero_points,
-            None::<&<Metal as Backend>::GlobalBuffer>,
-            None::<&<Metal as Backend>::GlobalBuffer>,
+            None::<&<Metal as Backend>::GlobalGpuBuffer>,
+            None::<&<Metal as Backend>::GlobalGpuBuffer>,
             a_int8,
             a_scales,
             a_group_sums,

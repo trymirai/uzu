@@ -1,3 +1,7 @@
-use crate::backends::common::{Backend, BufferCpuAccessible};
+use crate::backends::common::{Backend, CpuBuffer, GpuBuffer};
 
-pub trait GlobalBuffer: BufferCpuAccessible<Backend: Backend<GlobalBuffer = Self>> {}
+pub trait GlobalGpuBuffer: GpuBuffer<Backend: Backend<GlobalGpuBuffer = Self>> {}
+
+pub trait GlobalBufferCpuGpu: CpuBuffer<Backend: Backend<GlobalBufferCpuGpu = Self>> {
+    fn handoff(self) -> <Self::Backend as Backend>::GlobalGpuBuffer;
+}
