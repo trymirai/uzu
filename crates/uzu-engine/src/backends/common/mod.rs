@@ -14,7 +14,7 @@ pub use buffer::{
     Buffer,
     constant::ConstantBuffer,
     cpu_accessible::BufferCpuAccessible,
-    global::GlobalBuffer,
+    global::{GlobalBuffer, GlobalBufferInitializer},
     reference::{BufferMut, BufferRef},
     scratch::ScratchBuffer,
     sparse::SparseBuffer,

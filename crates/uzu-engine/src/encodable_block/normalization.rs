@@ -49,14 +49,14 @@ pub struct Normalization<B: Backend> {
 }
 
 impl<B: Backend> Normalization<B> {
-    pub fn new(
+    pub async fn new(
         element_count: u32,
         data_type: DataType,
         hadamard_factors: Option<B::GlobalBuffer>,
         shortcut_mode: ShortcutMode,
         post_layer_scalar: PostLayerScalar,
         config: &NormalizationConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, NormalizationNewError<B>> {
         let (copy_to_shortcut, residual_add) = match shortcut_mode {
@@ -65,14 +65,16 @@ impl<B: Backend> Normalization<B> {
             ShortcutMode::Add => (true, true),
         };
 
-        let scales = config
-            .has_scale
-            .then(|| parameter_tree.read_buffer("scales", &[element_count], DataType::F32))
-            .transpose()?;
-        let biases = config
-            .has_biases
-            .then(|| parameter_tree.read_buffer("biases", &[element_count], DataType::F32))
-            .transpose()?;
+        let scales = if config.has_scale {
+            Some(parameter_tree.read_buffer("scales", &[element_count], DataType::F32).await?)
+        } else {
+            None
+        };
+        let biases = if config.has_biases {
+            Some(parameter_tree.read_buffer("biases", &[element_count], DataType::F32).await?)
+        } else {
+            None
+        };
 
         let (scale_residual_sum, scale_output, post_layer_scalar_value) = match post_layer_scalar {
             PostLayerScalar::None => (false, false, 1.0),

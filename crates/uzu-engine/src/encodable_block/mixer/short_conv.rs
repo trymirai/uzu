@@ -100,11 +100,11 @@ pub enum ShortConvNewError<B: Backend> {
 }
 
 impl<B: Backend> ShortConv<B> {
-    pub fn new(
+    pub async fn new(
         hidden_dim: u32,
         data_type: DataType,
         config: &ShortConvConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<B::GlobalBuffer>), ShortConvNewError<B>> {
         let kernel_size = config.kernel_size;
@@ -122,7 +122,8 @@ impl<B: Backend> ShortConv<B> {
             false,
             &parameter_tree.subtree("in_projection"),
             context,
-        )?;
+        )
+        .await?;
 
         let out_projection = <dyn Linear<B>>::new(
             hidden_dim,
@@ -131,16 +132,17 @@ impl<B: Backend> ShortConv<B> {
             false,
             &parameter_tree.subtree("out_projection"),
             context,
-        )?;
+        )
+        .await?;
 
         let conv_tree = parameter_tree.subtree("conv");
 
         let conv_data_type = DataType::F32;
-        let conv_weight = conv_tree.read_buffer("weights", &[hidden_dim, kernel_size], conv_data_type)?;
+        let conv_weight = conv_tree.read_buffer("weights", &[hidden_dim, kernel_size], conv_data_type).await?;
 
         let has_bias = config.conv_config.has_biases;
         let conv_bias = if has_bias {
-            Some(conv_tree.read_buffer("biases", &[hidden_dim], conv_data_type)?)
+            Some(conv_tree.read_buffer("biases", &[hidden_dim], conv_data_type).await?)
         } else {
             None
         };

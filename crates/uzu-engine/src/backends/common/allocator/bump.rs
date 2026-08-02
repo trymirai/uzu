@@ -8,13 +8,18 @@ struct BumpAllocatorPage<T> {
 
 pub struct BumpAllocator<T> {
     min_page_size: usize,
+    page_size_alignment: usize,
     pages: Vec<BumpAllocatorPage<T>>,
 }
 
 impl<T> BumpAllocator<T> {
-    pub fn new(min_page_size: usize) -> Self {
+    pub fn new(
+        min_page_size: usize,
+        page_size_alignment: usize,
+    ) -> Self {
         Self {
             min_page_size,
+            page_size_alignment,
             pages: Vec::new(),
         }
     }
@@ -22,11 +27,10 @@ impl<T> BumpAllocator<T> {
     pub fn allocate<E>(
         &mut self,
         size: usize,
+        alignment: usize,
         upstream: impl FnOnce(usize) -> Result<T, E>,
     ) -> Result<BumpAllocation<T>, E> {
         assert!(size > 0);
-
-        let alignment = usize::min(size, 64).next_power_of_two();
 
         if let Some(page) = self.pages.last_mut()
             && let page_offset_aligned = page.offset.next_multiple_of(alignment)
@@ -40,7 +44,7 @@ impl<T> BumpAllocator<T> {
             return Ok(allocation);
         }
 
-        let new_page_size = usize::max(size, self.min_page_size);
+        let new_page_size = usize::max(size, self.min_page_size).next_multiple_of(self.page_size_alignment);
         let new_page = Arc::new(upstream(new_page_size)?);
         self.pages.push(BumpAllocatorPage {
             page: new_page.clone(),

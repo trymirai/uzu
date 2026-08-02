@@ -73,6 +73,12 @@ aliases = ["windows"]
 capabilities_supported = ["grammar"]
 capabilities_default = ["grammar"]
 
+[targets."wasm32-unknown-unknown"]
+backend = "webgpu"
+aliases = ["wasm"]
+capabilities_supported = []
+capabilities_default = []
+
 [targets."wasm32-wasip1-threads"]
 backend = "cpu"
 aliases = ["wasi"]

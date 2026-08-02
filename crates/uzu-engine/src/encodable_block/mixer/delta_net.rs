@@ -160,11 +160,11 @@ pub enum DeltaNetNewError<B: Backend> {
 }
 
 impl<B: Backend> DeltaNet<B> {
-    pub fn new(
+    pub async fn new(
         hidden_dim: u32,
         outer_data_type: DataType,
         config: &DeltaNetConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<B::GlobalBuffer>), DeltaNetNewError<B>> {
         if config.kernel_size != 4 {
@@ -207,14 +207,15 @@ impl<B: Backend> DeltaNet<B> {
                 false,
                 &parameter_tree.subtree("in_proj"),
                 context,
-            )?;
+            )
+            .await?;
 
         let conv_config = &config.conv_config;
         let conv_tree = parameter_tree.subtree("conv");
 
-        let conv_weight = conv_tree.read_buffer("weights", &[conv_dim, config.kernel_size], INNER_DATA_TYPE)?;
+        let conv_weight = conv_tree.read_buffer("weights", &[conv_dim, config.kernel_size], INNER_DATA_TYPE).await?;
         let conv_bias = if conv_config.has_biases {
-            Some(conv_tree.read_buffer("biases", &[conv_dim], INNER_DATA_TYPE)?)
+            Some(conv_tree.read_buffer("biases", &[conv_dim], INNER_DATA_TYPE).await?)
         } else {
             None
         };
@@ -239,9 +240,9 @@ impl<B: Backend> DeltaNet<B> {
         )
         .map_err(DeltaNetNewError::Backend)?;
 
-        let a_log = parameter_tree.read_buffer("a_log", &[config.num_heads], INNER_DATA_TYPE)?;
-        let dt_bias = parameter_tree.read_buffer("dt_bias", &[config.num_heads], INNER_DATA_TYPE)?;
-        let norm_weight = parameter_tree.read_buffer("norm.scales", &[config.value_head_dim], INNER_DATA_TYPE)?;
+        let a_log = parameter_tree.read_buffer("a_log", &[config.num_heads], INNER_DATA_TYPE).await?;
+        let dt_bias = parameter_tree.read_buffer("dt_bias", &[config.num_heads], INNER_DATA_TYPE).await?;
+        let norm_weight = parameter_tree.read_buffer("norm.scales", &[config.value_head_dim], INNER_DATA_TYPE).await?;
         let norm_epsilon = config.norm_config.epsilon;
         let delta_net_update =
             <B::Kernels as Kernels>::DeltaNetUpdateKernel::new(context, outer_data_type, config.head_dim)
@@ -305,7 +306,8 @@ impl<B: Backend> DeltaNet<B> {
             false,
             &parameter_tree.subtree("out_proj"),
             context,
-        )?;
+        )
+        .await?;
 
         Ok((
             Self {

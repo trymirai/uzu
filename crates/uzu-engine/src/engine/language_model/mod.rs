@@ -1,4 +1,4 @@
-use std::{fs::File, io, io::BufReader, path::Path, sync::Arc};
+use std::{io, path::Path, sync::Arc};
 
 use derive_more::Debug;
 use thiserror::Error;
@@ -15,6 +15,7 @@ use crate::{
     engine::Engine,
     safetensors::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
+    utils::file,
 };
 pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde::Unsupported};
 
@@ -56,21 +57,19 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
 }
 
 impl<B: Backend> Engine<B> {
-    pub fn load_language_model(
+    pub async fn load_language_model(
         self: &Arc<Self>,
         model_path: &Path,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
-        let config: LanguageModelConfig =
-            serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
+        let config: LanguageModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
 
-        let weights_file = File::open(model_path.join("model.safetensors"))?;
-        let weight_loader = ParameterLoader::new(&weights_file, &*self.context)?;
+        let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*self.context).await?;
 
         // TODO
         let speculator_path = model_path.join("speculator");
-        let speculator_path = speculator_path.exists().then_some(speculator_path);
+        let speculator_path = file::exists(&speculator_path).await.then_some(speculator_path);
 
-        let tokenizer = Arc::new(Tokenizer::from_file(model_path.join("tokenizer.json"))?);
+        let tokenizer = Arc::new(Tokenizer::from_bytes(file::read(model_path.join("tokenizer.json")).await?)?);
 
         let data_type = DataType::BF16;
 
@@ -79,18 +78,19 @@ impl<B: Backend> Engine<B> {
             &config.decoder_config,
             &weight_loader.tree().subtree("decoder"),
             self.context.as_ref(),
-        )?;
+        )
+        .await?;
 
         assert!(
             speculator_path.is_none() || decoder.speculation_supported(),
             "attempted to load speculator for a model that doesn't support one"
         );
 
-        let speculator = speculator_path
-            .as_deref()
-            .map(|speculator_path| DFlashTfmSpeculator::new(speculator_path, self.context.clone()))
-            .transpose()?
-            .flatten();
+        let speculator = if let Some(speculator_path) = speculator_path.as_deref() {
+            DFlashTfmSpeculator::new(speculator_path, self.context.clone()).await?
+        } else {
+            None
+        };
 
         let sampling = Sampling::new(config.decoder_config.vocab_size, data_type);
 

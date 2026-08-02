@@ -38,12 +38,12 @@ pub struct PredictionHead<B: Backend> {
 }
 
 impl<B: Backend> PredictionHead<B> {
-    pub fn new(
+    pub async fn new(
         hidden_dim: u32,
         num_labels: u32,
         data_type: DataType,
         config: &PredictionHeadConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, PredictionHeadError<B>> {
         let dense_projection = <dyn Linear<B>>::new(
@@ -53,7 +53,8 @@ impl<B: Backend> PredictionHead<B> {
             config.use_dense_bias,
             &parameter_tree.subtree("dense"),
             context,
-        )?;
+        )
+        .await?;
 
         let activation = config.activation.act_type();
         let activation_kernel = <B::Kernels as Kernels>::ActivationKernel::new(context, data_type, true)
@@ -68,10 +69,12 @@ impl<B: Backend> PredictionHead<B> {
             &config.normalization_config,
             &parameter_tree.subtree("norm"),
             context,
-        )?;
+        )
+        .await?;
 
         let readout =
-            <dyn Linear<B>>::new(hidden_dim, num_labels, data_type, true, &parameter_tree.subtree("readout"), context)?;
+            <dyn Linear<B>>::new(hidden_dim, num_labels, data_type, true, &parameter_tree.subtree("readout"), context)
+                .await?;
 
         Ok(Self {
             hidden_dim,

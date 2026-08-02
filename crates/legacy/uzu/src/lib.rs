@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "backend-webgpu", recursion_limit = "256")]
+
 #[cfg(feature = "bindings-uniffi")]
 uniffi::setup_scaffolding!();
 
