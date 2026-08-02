@@ -129,53 +129,32 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       }
     }
 
-    if constexpr (REDUCTION_DIMENSION == 1) {
-      if (tile_row_index >= src_tile_dim.x) {
-        for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
-          dst[i] = T(0);
-        }
-        return;
-      }
-
-      int valid_cols = src_tile_dim.y;
-      int valid_packs = (valid_cols + pack_factor - 1) / pack_factor;
-
-      T scale;
-      T bias;
-      current_scale_bias(scale, bias);
-      for (int i = 0; i < READS_PER_THREAD; i++) {
-        int pack_index = tile_col_index + i;
-        if (pack_index < valid_packs) {
-          dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, signed_codes);
-
-          if (pack_index == valid_packs - 1) {
-            int remaining = valid_cols - pack_index * pack_factor;
-            if (remaining < pack_factor) {
-              for (int r = remaining; r < pack_factor; ++r) {
-                dst[i * pack_factor + r] = T(0);
-              }
-            }
-          }
-        } else {
-          for (int j = 0; j < pack_factor; ++j) {
-            dst[i * pack_factor + j] = T(0);
-          }
-        }
+    if (tile_row_index >= src_tile_dim.y) {
+      for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
+        dst[i] = T(0);
       }
       return;
-    } else {
-      if (tile_row_index >= src_tile_dim.y) {
-        for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
-          dst[i] = T(0);
-        }
-        return;
-      }
+    }
 
-      T scale;
-      T bias;
-      current_scale_bias(scale, bias);
-      for (int i = 0; i < READS_PER_THREAD; i++) {
+    const int valid_cols = src_tile_dim.x;
+    const int valid_packs = (valid_cols + pack_factor - 1) / pack_factor;
+    T scale;
+    T bias;
+    current_scale_bias(scale, bias);
+    for (int i = 0; i < READS_PER_THREAD; i++) {
+      const int pack_index = tile_col_index + i;
+      if (pack_index < valid_packs) {
         dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, signed_codes);
+        if (pack_index == valid_packs - 1) {
+          const int remaining = valid_cols - pack_index * pack_factor;
+          for (int lane = remaining; lane < pack_factor; ++lane) {
+            dst[i * pack_factor + lane] = T(0);
+          }
+        }
+      } else {
+        for (int lane = 0; lane < pack_factor; ++lane) {
+          dst[i * pack_factor + lane] = T(0);
+        }
       }
     }
   }

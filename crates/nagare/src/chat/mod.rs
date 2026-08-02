@@ -29,6 +29,8 @@ use tokio::sync::{Mutex, mpsc, mpsc::UnboundedSender};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+#[cfg(feature = "bindings-uniffi")]
+use crate::tool::bindings_uniffi::ForeignTool;
 use crate::{
     telemetry::{Telemetry, TelemetryEvent},
     tool::{func_def::ToolDescriptor, registry::ToolRegistry},
@@ -501,6 +503,27 @@ impl ChatSession {
         } else {
             false
         }
+    }
+}
+
+#[cfg(feature = "bindings-uniffi")]
+#[uniffi::export(async_runtime = "tokio")]
+impl ChatSession {
+    pub async fn add_foreign_tool(
+        &self,
+        tool: Arc<ForeignTool>,
+    ) -> Result<(), ChatSessionError> {
+        let mut session = self.clone();
+        session.add_tool(tool.descriptor()).await
+    }
+
+    pub async fn add_foreign_tools(
+        &self,
+        tools: Vec<Arc<ForeignTool>>,
+    ) -> Result<(), ChatSessionError> {
+        let descriptors = tools.iter().map(|tool| tool.descriptor()).collect();
+        let mut session = self.clone();
+        session.add_tools(descriptors).await
     }
 }
 
