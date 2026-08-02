@@ -95,26 +95,32 @@ struct QuantizedBlockLoaderScaleBias {
       }
     }
 
-    if constexpr (REDUCTION_DIMENSION == 1) {
-      if (tile_row_index >= src_tile_dim.x) {
-        for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
-          dst[i] = T(0);
-        }
-        return;
+    if (tile_row_index >= src_tile_dim.y) {
+      for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
+        dst[i] = T(0);
       }
-    } else {
-      if (tile_row_index >= src_tile_dim.y) {
-        for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
-          dst[i] = T(0);
-        }
-        return;
-      }
+      return;
     }
 
+    const int valid_cols = src_tile_dim.x;
+    const int valid_packs = (valid_cols + pack_factor - 1) / pack_factor;
     T scale = *scales;
     T bias = *biases;
     for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, signed_codes);
+      const int pack_index = tile_col_index + i;
+      if (pack_index < valid_packs) {
+        dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, signed_codes);
+        if (pack_index == valid_packs - 1) {
+          const int remaining = valid_cols - pack_index * pack_factor;
+          for (int lane = remaining; lane < pack_factor; ++lane) {
+            dst[i * pack_factor + lane] = T(0);
+          }
+        }
+      } else {
+        for (int lane = 0; lane < pack_factor; ++lane) {
+          dst[i * pack_factor + lane] = T(0);
+        }
+      }
     }
   }
 

@@ -101,6 +101,10 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
 #[case::gs16_4bit_zp_decode(8, 256, 64, 16, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs64_4bit_zp_decode(8, 256, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs32_unaligned_n(64, 256, 96, 32, 4, QuantizationMethod::ScaleBias)]
+#[case::gs32_narrow_n_tail_zp(64, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs32_narrow_n_tail_mlx(64, 256, 72, 32, 4, QuantizationMethod::ScaleBias)]
+#[case::gs32_narrow_n_tail_sym(64, 256, 40, 32, 4, QuantizationMethod::ScaleSymmetric)]
+#[case::gs16_k_tail_mlx(64, 272, 64, 16, 4, QuantizationMethod::ScaleBias)]
 fn parity_bf16(
     #[case] m: usize,
     #[case] k: usize,
