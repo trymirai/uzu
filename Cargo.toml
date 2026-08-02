@@ -78,6 +78,7 @@ objc2-core-foundation = "0.3.2"
 objc2-io-kit = { version = "0.3.2", default-features = false, features = ["libc", "ps"] }
 obfstr = "0.4.4"
 metal = { package = "mtl-rs", version = "0.2.2" }
+wgpu = "30.0.1"
 block2 = "0.6"
 bytemuck = "1.23"
 bytesize = "2"
@@ -104,12 +105,16 @@ walkdir = "2.5"
 depfile = "0.1"
 tempfile = "3.24"
 clang-ast = "0.1"
+shader-slang = { git = "https://github.com/FloatyMonkey/slang-rs.git", rev = "f9c9eece467aa84f3be1aa1137426f59591095fc" }
+shader-slang-sys = { git = "https://github.com/FloatyMonkey/slang-rs.git", rev = "f9c9eece467aa84f3be1aa1137426f59591095fc" }
+naga = "30.0.1"
 rangemap = "1.7.1"
 parking_lot = "0.12"
 futures = "0.3"
 tokio = "1.49"
 tokio-stream = { version = "0.1.18", features = ["sync"] }
 tokio-util = { version = "0.7.17", default-features = false, features = ["rt"] }
+pollster = "1.0.1"
 blake3 = "1.8"
 quote = "1.0"
 proc-macro2 = "1.0"
@@ -134,6 +139,7 @@ tracing-tree = "0.4.1"
 tracing-appender = "0.2.4"
 llm_json = "1.0.2"
 futures-util = "0.3.31"
+async-fs = "2.2.0"
 http = "1.4.0"
 httparse = "1.10.1"
 stream_throttle = "0.5.1"

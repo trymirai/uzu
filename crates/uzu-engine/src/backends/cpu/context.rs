@@ -7,7 +7,8 @@ use std::{
 
 use crate::backends::{
     common::{
-        Backend, Context, DeviceCapabilities,
+        Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+        DeviceCapabilities,
         allocator::{bump::BumpAllocator, pool::PoolAllocator},
     },
     cpu::{Cpu, buffer::dense::CpuBuffer, command_buffer::CpuCommandBufferEncoding, error::CpuError},
@@ -45,12 +46,19 @@ impl Context for CpuContext {
         _name: Option<&str>,
         allocation_pool: Option<Arc<<Cpu as Backend>::AllocationPool>>,
     ) -> Result<CpuCommandBufferEncoding, CpuError> {
-        let constant_allocator = BumpAllocator::new(256 * 1024);
+        let constant_allocator = BumpAllocator::new(256 * 1024, 1);
         let allocation_pool = allocation_pool.unwrap_or_else(|| self.create_allocation_pool());
-        Ok(CpuCommandBufferEncoding::new(constant_allocator, allocation_pool, self.weak_self.upgrade().unwrap()))
+        Ok(CpuCommandBufferEncoding::new(self.weak_self.upgrade().unwrap(), constant_allocator, allocation_pool))
     }
 
     fn create_buffer(
+        &self,
+        size: usize,
+    ) -> Result<<Cpu as Backend>::GlobalBuffer, CpuError> {
+        Ok(CpuBuffer::new(size))
+    }
+
+    fn create_buffer_initializer(
         &self,
         size: usize,
     ) -> Result<<Cpu as Backend>::GlobalBuffer, CpuError> {
@@ -62,6 +70,14 @@ impl Context for CpuContext {
         _capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
         Err(CpuError::NotSupported)
+    }
+
+    async fn copyout<T: bytemuck::AnyBitPattern>(
+        &self,
+        buffer: impl BufferRef<Backend = Cpu, Buffer = CpuBuffer>,
+    ) -> Result<Vec<T>, CpuError> {
+        self.create_command_buffer(None, None)?.end_encoding().submit().wait_until_completed().await?;
+        Ok(buffer.copyout())
     }
 
     fn create_allocation_pool(&self) -> Arc<<Cpu as Backend>::AllocationPool> {
@@ -80,6 +96,6 @@ impl Context for CpuContext {
     }
 
     fn device_capabilities(&self) -> DeviceCapabilities {
-        DeviceCapabilities::empty()
+        DeviceCapabilities::GLOBAL_BUFFERS_CPU_ACCESSIBLE
     }
 }

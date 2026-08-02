@@ -48,24 +48,28 @@ pub struct LinearMatmul<B: Backend> {
     output_data_type: DataType,
 }
 
-fn load_biases<B: Backend>(
+async fn load_biases<B: Backend>(
     weights_data_type: DataType,
     output_data_type: DataType,
     output_dim: u32,
-    parameter_tree: Option<&ParameterTree<B>>,
+    parameter_tree: Option<&ParameterTree<'_, B>>,
 ) -> Result<Option<B::GlobalBuffer>, LinearMatmulError<B>> {
     if parameter_tree.is_some() && weights_data_type != output_data_type {
         return Err(LinearMatmulError::UnsupportedConfiguration(format!(
             "mixed precision linear with biases is not supported: weights={weights_data_type:?}, output={output_data_type:?}",
         )));
     }
-    Ok(parameter_tree.map(|tree| tree.read_buffer("biases", &[output_dim], weights_data_type)).transpose()?)
+    Ok(if let Some(tree) = parameter_tree {
+        Some(tree.read_buffer("biases", &[output_dim], weights_data_type).await?)
+    } else {
+        None
+    })
 }
 
 impl<B: Backend> LinearMatmul<B> {
     /// Loads a linear over any parsed spec — full precision, MLX or Int. Hybrid
     /// compositions live in the wrappers, not here.
-    pub fn load(
+    pub async fn load(
         input_dim: u32,
         output_dim: u32,
         weights_data_type: DataType,
@@ -73,8 +77,8 @@ impl<B: Backend> LinearMatmul<B> {
         output_data_type: DataType,
         spec: AnyWeightMatrixSpec,
         output_hadamard_factors: Option<B::GlobalBuffer>,
-        weights_tree: &ParameterTree<B>,
-        bias_tree: Option<&ParameterTree<B>>,
+        weights_tree: &ParameterTree<'_, B>,
+        bias_tree: Option<&ParameterTree<'_, B>>,
         context: &B::Context,
     ) -> Result<Self, LinearMatmulError<B>> {
         for data_type in [weights_data_type, input_data_type, output_data_type] {
@@ -84,14 +88,15 @@ impl<B: Backend> LinearMatmul<B> {
         }
 
         let matrix =
-            WeightMatrix::load(output_dim, input_dim, weights_data_type, spec, Layout::OutputInput, weights_tree)?;
+            WeightMatrix::load(output_dim, input_dim, weights_data_type, spec, Layout::OutputInput, weights_tree)
+                .await?;
         if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
             return Err(LinearMatmulError::UnsupportedConfiguration(
                 "fused output-hadamard factors require quantized weights".into(),
             ));
         }
 
-        let biases = load_biases(weights_data_type, output_data_type, output_dim, bias_tree)?;
+        let biases = load_biases(weights_data_type, output_data_type, output_dim, bias_tree).await?;
 
         let kernel =
             <B::Kernels as Kernels>::MatmulKernel::new(context, weights_data_type, input_data_type, output_data_type)

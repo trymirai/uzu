@@ -139,7 +139,7 @@ impl<B: Backend> Runner<B> {
                 &mut command_buffer,
             );
         }
-        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap().gpu_execution_time()
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap().gpu_execution_time().unwrap()
     }
 }
 

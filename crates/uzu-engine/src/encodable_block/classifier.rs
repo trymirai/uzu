@@ -47,10 +47,10 @@ pub struct Classifier<B: Backend> {
 }
 
 impl<B: Backend> Classifier<B> {
-    pub fn new(
+    pub async fn new(
         data_type: DataType,
         config: &ClassifierConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, ClassifierError<B>> {
         let (embedding, _) = Embedding::new(
@@ -60,7 +60,8 @@ impl<B: Backend> Classifier<B> {
             &config.embedding_config,
             &parameter_tree.subtree("embedding"),
             context,
-        )?;
+        )
+        .await?;
 
         let embedding_norm = Normalization::new(
             config.transformer_config.model_dim,
@@ -71,7 +72,8 @@ impl<B: Backend> Classifier<B> {
             &config.embedding_norm_config,
             &parameter_tree.subtree("embedding_norm"),
             context,
-        )?;
+        )
+        .await?;
 
         let transformer = Transformer::new(
             data_type,
@@ -79,7 +81,8 @@ impl<B: Backend> Classifier<B> {
             &config.transformer_config,
             &parameter_tree.subtree("transformer"),
             context,
-        )?;
+        )
+        .await?;
 
         if config.classifier_pooling != PoolingType::Mean {
             return Err(ClassifierError::UnsupportedConfiguration(format!(
@@ -97,7 +100,8 @@ impl<B: Backend> Classifier<B> {
             &config.prediction_head_config,
             &parameter_tree.subtree("prediction_head"),
             context,
-        )?;
+        )
+        .await?;
 
         Ok(Self {
             hidden_dim: config.hidden_dim,

@@ -5,10 +5,16 @@ use anyhow::Context;
 mod common;
 use common::{compiler::Compiler, envs, gpu_type_paths::GpuTypePaths, gpu_types::GpuTypes, traitgen::traitgen_all};
 
-mod cpu;
-
 #[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
+
+#[cfg(feature = "webgpu")]
+mod slang;
+
+#[cfg(feature = "webgpu")]
+mod webgpu;
+
+mod cpu;
 
 fn main() -> anyhow::Result<ExitCode> {
     println!("cargo::rerun-if-changed=build");
@@ -20,16 +26,21 @@ fn main() -> anyhow::Result<ExitCode> {
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH")?;
     let target_os = env::var("CARGO_CFG_TARGET_OS")?;
 
-    println!("cargo::rustc-check-cfg=cfg(backend, values(\"cpu\", \"metal\"))");
-
-    let backend_cpu = cfg!(feature = "cpu");
-    if backend_cpu {
-        println!("cargo::rustc-cfg=backend=\"cpu\"");
-    }
+    println!("cargo::rustc-check-cfg=cfg(backend, values(\"metal\", \"webgpu\", \"cpu\"))");
 
     let backend_metal = cfg!(feature = "metal") && matches!(target_os.as_ref(), "macos" | "ios" | "tvos" | "visionos");
     if backend_metal {
         println!("cargo::rustc-cfg=backend=\"metal\"");
+    }
+
+    let backend_webgpu = cfg!(feature = "webgpu");
+    if backend_webgpu {
+        println!("cargo::rustc-cfg=backend=\"webgpu\"");
+    }
+
+    let backend_cpu = cfg!(feature = "cpu");
+    if backend_cpu {
+        println!("cargo::rustc-cfg=backend=\"cpu\"");
     }
 
     let grammar = cfg!(feature = "grammar") && target_arch != "wasm32";
@@ -56,13 +67,18 @@ fn main() -> anyhow::Result<ExitCode> {
 
     let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
 
-    if backend_cpu {
-        compilers.push(Box::new(cpu::CpuCompiler::new()?));
-    }
-
     #[cfg(all(feature = "metal", target_os = "macos"))]
     if backend_metal {
         compilers.push(Box::new(metal::MetalCompiler::new()?));
+    }
+
+    #[cfg(feature = "webgpu")]
+    if backend_webgpu {
+        compilers.push(Box::new(slang::SlangCompiler::<webgpu::WebGPU>::new()?));
+    }
+
+    if backend_cpu {
+        compilers.push(Box::new(cpu::CpuCompiler::new()?));
     }
 
     if compilers.is_empty() {

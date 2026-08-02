@@ -94,7 +94,7 @@ impl MetalCommandBufferEncoding {
             .map_err(|error| MetalError::CannotCreateArgumentTable(error.to_string()))?;
         compute_encoder.set_argument_table(Some(&argument_table));
 
-        let constant_allocator = BumpAllocator::new(256 * 1024);
+        let constant_allocator = BumpAllocator::new(256 * 1024, 1);
 
         let allocation_pool = allocation_pool.unwrap_or_else(|| context.create_allocation_pool());
 
@@ -149,7 +149,8 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         &mut self,
         size: usize,
     ) -> Result<<Metal as Backend>::ConstantBuffer, MetalError> {
-        self.constant_allocator.as_mut().unwrap().allocate(size, |size| self.context.create_buffer(size))
+        let alignment = usize::min(size, 64).next_power_of_two();
+        self.constant_allocator.as_mut().unwrap().allocate(size, alignment, |size| self.context.create_buffer(size))
     }
 
     fn allocate_scratch(
@@ -344,7 +345,7 @@ pub struct MetalCommandBufferCompleted {
 impl CommandBufferCompleted for MetalCommandBufferCompleted {
     type CommandBuffer = MetalCommandBuffer;
 
-    fn gpu_execution_time(&self) -> Duration {
-        self.gpu_execution_time
+    fn gpu_execution_time(&self) -> Option<Duration> {
+        Some(self.gpu_execution_time)
     }
 }

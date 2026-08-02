@@ -109,5 +109,5 @@ pub trait CommandBufferPending: Send {
 pub trait CommandBufferCompleted: Send {
     type CommandBuffer: CommandBuffer<Completed = Self>;
 
-    fn gpu_execution_time(&self) -> Duration;
+    fn gpu_execution_time(&self) -> Option<Duration>;
 }

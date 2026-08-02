@@ -7,17 +7,19 @@ use std::{
     },
 };
 
+use futures::channel::mpsc;
 use metal::{
     MTL4CommandAllocator, MTL4CommandQueue, MTL4CommandQueueDescriptor, MTLCaptureTarget, MTLComputePipelineState,
     MTLDevice, MTLDeviceExt, MTLEvent, MTLEventExt, MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary,
-    MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
+    MTLResidencySet, MTLResidencySetDescriptor, MTLSharedEventExt, MTLSharedEventListener,
+    MTLSharedEventNotificationBlock, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
 
 use crate::backends::{
     common::{
-        Backend, Context, DeviceCapabilities,
+        Backend, BufferRef, Context, DeviceCapabilities,
         allocator::{block::BlockAllocator, pool::PoolAllocator},
         capture_matcher::CAPTURE_MATCHER,
     },
@@ -204,11 +206,38 @@ impl Context for MetalContext {
         self.block_allocator.allocate(size, |size| MetalDenseBuffer::new(&self.weak_self.upgrade().unwrap(), size))
     }
 
+    fn create_buffer_initializer(
+        &self,
+        size: usize,
+    ) -> Result<<Metal as Backend>::GlobalBuffer, MetalError> {
+        self.block_allocator.allocate(size, |size| MetalDenseBuffer::new(&self.weak_self.upgrade().unwrap(), size))
+    }
+
     fn create_sparse_buffer(
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
         MetalSparseBuffer::new(self.weak_self.upgrade().unwrap(), capacity)
+    }
+
+    fn copyout<T: bytemuck::AnyBitPattern>(
+        &self,
+        buffer: impl BufferRef<Backend = Metal, Buffer = <Self::Backend as Backend>::GlobalBuffer>,
+    ) -> impl Future<Output = Result<Vec<T>, <Self::Backend as Backend>::Error>> {
+        let (sender, mut receiver) = mpsc::unbounded();
+        let event = self.device.new_shared_event().unwrap();
+        event.notify_listener_at_value(
+            &MTLSharedEventListener::shared_listener(),
+            1,
+            &MTLSharedEventNotificationBlock::new(move |_, _| {
+                let _ = sender.unbounded_send(());
+            }),
+        );
+        self.command_queue.signal_event_value(event.as_ref(), 1);
+        async move {
+            receiver.recv().await.map_err(|_| MetalError::CommandBufferWait)?;
+            Ok(buffer.copyout())
+        }
     }
 
     fn create_allocation_pool(&self) -> Arc<<Metal as Backend>::AllocationPool> {
@@ -227,7 +256,7 @@ impl Context for MetalContext {
     }
 
     fn device_capabilities(&self) -> DeviceCapabilities {
-        let mut capabilities = DeviceCapabilities::empty();
+        let mut capabilities = DeviceCapabilities::GLOBAL_BUFFERS_CPU_ACCESSIBLE;
         if self.device.supports_placement_sparse_resources() {
             capabilities |= DeviceCapabilities::SPARSE_BUFFERS;
         }
