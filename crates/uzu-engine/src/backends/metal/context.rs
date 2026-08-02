@@ -227,7 +227,7 @@ impl Context for MetalContext {
     }
 
     fn device_capabilities(&self) -> DeviceCapabilities {
-        let mut capabilities = DeviceCapabilities::empty();
+        let mut capabilities = DeviceCapabilities::CPU_BUFFER_DIRECT_ACCESS;
         if self.device.supports_placement_sparse_resources() {
             capabilities |= DeviceCapabilities::SPARSE_BUFFERS;
         }

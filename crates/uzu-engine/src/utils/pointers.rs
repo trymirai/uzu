@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct SendPtr<T>(pub *const T);
 impl<T> SendPtr<T> {
     pub fn as_ptr(self) -> *const T {
@@ -13,6 +14,7 @@ impl<T> Clone for SendPtr<T> {
 }
 impl<T> Copy for SendPtr<T> {}
 
+#[derive(Debug)]
 pub struct SendPtrMut<T>(pub *mut T);
 impl<T> SendPtrMut<T> {
     pub fn as_ptr(self) -> *mut T {

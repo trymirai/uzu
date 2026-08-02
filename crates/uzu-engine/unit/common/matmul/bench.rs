@@ -32,6 +32,6 @@ pub fn iter_encode_loop_named<B: Backend, F>(
             encode(&mut command_buffer);
         }
         let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-        completed.gpu_execution_time()
+        completed.gpu_execution_time().unwrap()
     });
 }
