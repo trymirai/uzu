@@ -633,7 +633,7 @@ impl CpuCompiler {
         &self,
         objects: impl IntoIterator<Item = &'a (KernelPath, Box<[Kernel]>)> + Clone,
     ) -> anyhow::Result<()> {
-        let out_path = self.build_dir.join("dsl.rs");
+        let out_path = self.build_dir.with_extension("rs");
 
         let associated_types = objects.into_iter().flat_map(|(file_path, kernels)| {
             kernels.iter().map(|kernel| {

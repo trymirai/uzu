@@ -10,7 +10,7 @@ pub fn repetition_penalty<T: ArrayElement + Float + NumCast>(
     original_logits: *const T,
     logits_copy: *mut T,
     context_ring: *const u32,
-    token_ids: *const u64,
+    token_ids: *const u32,
     repetition_penalty: f32,
     suffix_repetition_length: u32,
     vocab_size: u32,

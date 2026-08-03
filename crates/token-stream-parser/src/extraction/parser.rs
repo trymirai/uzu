@@ -50,3 +50,14 @@ impl Parser for ExtractionParser {
         self.tree.reset();
     }
 }
+
+impl ExtractionParser {
+    /// Exposes `value` to every transformation pipeline as `$<name>`.
+    pub fn set_variable(
+        &mut self,
+        name: &str,
+        value: serde_json::Value,
+    ) {
+        self.tree.set_variable(name, value);
+    }
+}

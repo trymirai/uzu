@@ -12,6 +12,8 @@ pub enum ReductionParserGroup {
         open_token: TokenValue,
         close_tokens: Vec<TokenValue>,
         #[serde(default)]
+        closes_on_sibling: bool,
+        #[serde(default)]
         groups: Vec<ReductionParserGroup>,
     },
     Open {

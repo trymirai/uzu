@@ -8,8 +8,11 @@ use crate::{
     backends::{
         common::{
             Allocation, BufferArg, Encoder,
-            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-            kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
+            gpu_types::{
+                HADAMARD_TRANSFORM_BLOCK_SIZE,
+                gemm::{GemmBPrologueKind, GemmDTransform},
+            },
+            kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
         },
         metal::{Metal, context::MetalContext, device_tier::DeviceTier, kernel::GemvMetalKernel},
     },
@@ -21,6 +24,7 @@ static GEMV_MAX_BATCH: OnceLock<u32> = OnceLock::new();
 
 fn max_gemv_batch_threshold() -> u32 {
     *GEMV_MAX_BATCH.get_or_init(|| {
+        // TODO: remove magic env var
         std::env::var("UZU_GEMV_MAX_BATCH").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_GEMV_MAX_BATCH)
     })
 }
@@ -35,47 +39,51 @@ pub(crate) struct GemvSpecialization {
     k_split: u32,
     results_per_simdgroup: u32,
     num_simdgroups: u32,
+    gathered: bool,
+    signed_codes: bool,
 }
 
 impl GemvSpecialization {
-    pub(crate) fn select<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
-        args: &MatmulArguments<'a, 'b, 'd, Metal, TB>,
+    pub(crate) fn select_shape(
+        shape: &MatmulShape,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
         device_tier: DeviceTier,
     ) -> Option<GemvSpecialization> {
-        if !args.b_transpose {
+        if !shape.b_transpose || !shape.a_full_precision {
             return None;
         }
-        let is_quant = !matches!(args.b, MatmulB::FullPrecision { .. });
+        let is_quant = shape.is_quant();
         let bad_leading_dimension = if is_quant {
-            args.b_leading_dimension.is_some()
+            shape.b_leading_dimension.is_some()
         } else {
-            args.b_leading_dimension.is_some_and(|ld| ld != args.k)
+            shape.b_leading_dimension.is_some_and(|ld| ld != shape.k)
         };
         if bad_leading_dimension {
             return None;
         }
-        if args.d_transform.accumulate && !args.n.is_multiple_of(32) {
+        if shape.d_transform.contains(GemmDTransform::ACCUMULATE) && !shape.n.is_multiple_of(32) {
             return None;
         }
-        if args.d_transform.rht_factors.is_some() && !args.n.is_multiple_of(32) {
+        if shape.d_transform.contains(GemmDTransform::RHT)
+            && !shape.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
+        {
             return None;
         }
         if is_quant {
-            if args.n < DEFAULT_RESULTS_PER_SIMDGROUP || args.m >= 5 {
+            if shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m >= 5 {
                 return None;
             }
         } else {
             let mixed_precision = weights_data_type == DataType::F32
                 && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
-            if mixed_precision || args.n < DEFAULT_RESULTS_PER_SIMDGROUP || args.m > max_gemv_batch_threshold() {
+            if mixed_precision || shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > max_gemv_batch_threshold() {
                 return None;
             }
         }
 
-        let bits = args.b.bits_per_b().unwrap_or(0);
+        let bits = shape.b_bits.unwrap_or(0);
         let block_size = if !is_quant {
             FP_K_BLOCK
         } else if bits == 4 {
@@ -83,27 +91,29 @@ impl GemvSpecialization {
         } else {
             256
         };
-        let input_aligned = args.k.is_multiple_of(block_size);
-        let has_rht = args.d_transform.rht_factors.is_some();
+        let input_aligned = shape.k.is_multiple_of(block_size);
+        let has_rht = shape.d_transform.contains(GemmDTransform::RHT);
         let bf16_io = input_data_type == DataType::BF16 && output_data_type == DataType::BF16;
         let tile = if is_quant && bf16_io {
-            policy::quant_tile(args.m, args.n, args.k, bits, has_rht, device_tier)
+            policy::quant_tile(shape.m, shape.n, shape.k, bits, has_rht, device_tier)
         } else if is_quant || has_rht {
             // Non-bf16 quant IO and fp+RHT keep the default tile (the only
             // one instantiated for those modes).
             policy::DEFAULT_TILE
         } else {
-            policy::fp_tile(args.m, args.n, args.k, input_aligned, device_tier)
+            policy::fp_tile(shape.m, shape.n, shape.k, input_aligned, device_tier)
         };
         Some(Self {
-            b_prologue: args.b.b_prologue(),
-            group_size: args.b.group_size().unwrap_or(0),
+            b_prologue: shape.b_prologue,
+            group_size: shape.b_group_size.unwrap_or(0),
             bits,
-            output_transform: args.d_transform.mask(),
+            output_transform: shape.d_transform,
             input_aligned,
             k_split: tile.k_split,
             results_per_simdgroup: tile.results_per_simdgroup,
             num_simdgroups: tile.num_simdgroups,
+            gathered: shape.gathered,
+            signed_codes: shape.signed_codes,
         })
     }
 }
@@ -158,6 +168,8 @@ impl GemvDispatch {
                     specialization.results_per_simdgroup,
                     specialization.num_simdgroups,
                     specialization.output_transform,
+                    specialization.gathered,
+                    specialization.signed_codes,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -174,17 +186,28 @@ impl GemvDispatch {
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
         let rht_factors = arguments.d_transform.rht_factors;
+        let soft_cap = arguments.d_transform.soft_cap;
 
         let MatmulArguments {
             a,
-            a_offset,
             b,
             d,
             m,
             n,
             k,
+            gather_indices,
             ..
         } = arguments;
+        let MatmulA::FullPrecision {
+            values: a,
+            offset: a_offset,
+        } = a
+        else {
+            return Err(MatmulError::IncompatibleA {
+                path: "Gemv",
+                reason: "prepared int8 activations require GEMM",
+            });
+        };
 
         let group_count_x = n.div_ceil(rows_per_threadgroup(
             specialization.k_split,
@@ -208,11 +231,13 @@ impl GemvDispatch {
                     &mut *d,
                     output_bias,
                     rht_factors,
+                    gather_indices,
                     k,
                     n,
                     m,
                     ab_scale,
                     group_count_x,
+                    soft_cap,
                     encoder,
                 );
             },
@@ -256,11 +281,13 @@ impl GemvDispatch {
                     &mut *d,
                     output_bias,
                     rht_factors,
+                    gather_indices,
                     k,
                     n,
                     m,
                     ab_scale,
                     group_count_x,
+                    soft_cap,
                     encoder,
                 );
             },

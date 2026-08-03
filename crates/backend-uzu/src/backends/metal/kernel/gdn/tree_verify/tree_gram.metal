@@ -4,7 +4,7 @@
 #include "../../common/thread_context.h"
 #include "../../generated/trie.h"
 #include "../../matmul/common/fragment.h"
-#include "../../matmul/common/mxu_fragment_ops.h"
+#include "../../matmul/common/mxu_fragment/ops.h"
 #include "../../matmul/common/simdgroup_fragment_ops.h"
 #include "../common/gram.h"
 #include "../common/tri_inv.h"

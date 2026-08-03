@@ -26,24 +26,25 @@ inputs:
     description: "Install bindings requirements"
     required: false
     default: 'false'
-  linux:
-    description: "Install Linux system dependencies"
-    required: false
-    default: 'false'
 
 runs:
   using: composite
   steps:
-    - if: inputs.target != ''
+    - if: runner.os == 'Linux'
       run: |
-        if ! command -v rustup >/dev/null 2>&1; then
-          echo "rustup not installed, skipping target reset"
-          exit 0
-        fi
-        rustup self update >/dev/null
-        rustup target remove "${{ inputs.target }}" 2>/dev/null || true
-        rm -rf "$(rustc --print sysroot)/lib/rustlib/${{ inputs.target }}"
+        sudo apt-get update
+        sudo apt-get install -y libasound2-dev build-essential pkg-config cmake
       shell: bash
+
+    # - if: runner.os == 'Linux'
+    #   run: |
+    #     sudo mkdir -p /data/cargo
+    #     sudo chown runner:runner /data/cargo
+
+    #     mkdir -p ~/.cargo
+    #     rm -rf ~/.cargo/registry && ln -sfn /data/cargo/registry ~/.cargo/registry
+    #     rm -rf ~/.cargo/git && ln -sfn /data/cargo/git ~/.cargo/git
+    #   shell: bash
 
     - uses: dtolnay/rust-toolchain@stable
       with:
@@ -54,12 +55,11 @@ runs:
         targets: ${{ inputs.target }}
         components: ${{ inputs.linters == 'true' && 'rustfmt,clippy' || '' }}
 
-    - if: inputs.linux == 'true'
-      run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      shell: bash
-
+    # TODO: drop wasi when pure wasm is done and switch to latest
     - if: inputs.target == 'wasm32-wasip1-threads'
       uses: bytecodealliance/actions/wasmtime/setup@v1
+      with:
+        version: "46.0.0"
 
     - if: inputs.linters == 'true'
       run: |

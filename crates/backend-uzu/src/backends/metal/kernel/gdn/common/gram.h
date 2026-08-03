@@ -2,7 +2,7 @@
 
 #include "../../common/defines.h"
 #include "../../matmul/common/fragment.h"
-#include "../../matmul/common/mxu_fragment_ops.h"
+#include "../../matmul/common/mxu_fragment/ops.h"
 #include "../../matmul/common/simdgroup_fragment_ops.h"
 #include <metal_stdlib>
 

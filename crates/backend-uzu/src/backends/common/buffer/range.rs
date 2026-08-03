@@ -74,6 +74,26 @@ impl<'a, B: Buffer> BufferRangeMut<'a, B> {
         }
     }
 
+    pub fn split_at(
+        self,
+        byte_offset: usize,
+    ) -> (Self, Self) {
+        assert!(byte_offset <= self.range.len(), "split offset exceeds buffer range size");
+        let split = self.range.start + byte_offset;
+        let buffer = self.buffer;
+
+        (
+            Self {
+                buffer,
+                range: self.range.start..split,
+            },
+            Self {
+                buffer,
+                range: split..self.range.end,
+            },
+        )
+    }
+
     pub fn buffer(&self) -> &'a B {
         self.buffer
     }

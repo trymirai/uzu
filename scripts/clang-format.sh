@@ -45,7 +45,7 @@ if [[ "$MODE" == "check" ]]; then
   # Show diffs without writing
   FAILED=0
   for f in "${FILES[@]}"; do
-    if ! diff -u "$f" <(clang-format "$f"); then
+    if ! diff -u "$f" <(/opt/homebrew/bin/clang-format "$f"); then
       FAILED=1
     fi
   done

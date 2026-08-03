@@ -32,7 +32,6 @@ struct ChatView: View {
     // MARK: - State
     @State private var viewModel: ChatModel
     @FocusState private var inputFocused: Bool
-    @State private var turbo = false
 
     // MARK: - Stored Properties
     let identifier: String
@@ -75,36 +74,6 @@ struct ChatView: View {
         !viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var turboEnabled: Bool {
-        switch(viewModel.viewState) {
-        case .idle:
-            return true
-        case .loading, .generating, .error(_):
-            return false
-        }
-    }
-
-    @ViewBuilder
-    private var turboView: some View {
-        HStack(alignment: .center) {
-            Spacer()
-            Button(action: {
-                turbo.toggle()
-            }) {
-                HStack(alignment: .center, spacing: 8.0) {
-                    Text("Turbo")
-                        .font(.monoHeading14)
-                        .foregroundColor(MiraiAsset.primary.swiftUIColor)
-                    Image(symbol: turbo ? .checkmarkCircleFill : .circle)
-                        .font(.title24Light)
-                        .foregroundColor(MiraiAsset.primary.swiftUIColor)
-                }
-                .opacity(turboEnabled ? 1.0 : 0.5)
-            }
-        }
-        .padding(EdgeInsets(top: 0.0, leading: 16.0, bottom: 0.0, trailing: 16.0))
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
@@ -123,11 +92,6 @@ struct ChatView: View {
                 }
             }
             Divider()
-            if !viewModel.isCloud(engineWrapper: engineWrapper) {
-                Spacer(minLength: 16.0)
-                turboView
-                    .disabled(!turboEnabled)
-            }
             inputView
                 .padding()
         }
@@ -136,10 +100,7 @@ struct ChatView: View {
         #endif
         .toolbarRole(.editor)
         .onAppear {
-            viewModel.loadSession(using: engineWrapper, turbo: turbo)
-        }
-        .onChange(of: turbo) { _, _ in
-            viewModel.loadSession(using: engineWrapper, turbo: turbo)
+            viewModel.loadSession(using: engineWrapper)
         }
         .onDisappear {
             viewModel.tearDown()

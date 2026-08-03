@@ -10,8 +10,3 @@ pub enum TokenizerLocation {
         path: String,
     },
 }
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Context {
-    pub tokenizer_location: TokenizerLocation,
-}

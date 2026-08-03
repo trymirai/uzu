@@ -72,6 +72,7 @@
                 rustToolchain
                 cargo-deny
                 cargo-nextest
+                cargo-hack
                 cargo-expand
                 cargo-flamegraph
                 cargo-show-asm

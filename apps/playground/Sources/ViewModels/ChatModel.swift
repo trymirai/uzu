@@ -31,18 +31,10 @@ final class ChatModel {
         self.identifier = identifier
     }
 
-    @MainActor
-    func isCloud(engineWrapper: EngineObservableWrapper) -> Bool {
-        guard let model = engineWrapper.models.first(where: { $0.identifier == identifier }) else {
-            return false
-        }
-        return model.isRemote()
-    }
-
     // MARK: - Lifecycle
 
     @MainActor
-    func loadSession(using engineWrapper: EngineObservableWrapper, turbo: Bool) {
+    func loadSession(using engineWrapper: EngineObservableWrapper) {
         guard
             case .idle = viewState,
             let engine = engineWrapper.engine,
@@ -62,7 +54,7 @@ final class ChatModel {
             let session: ChatSession?
             let newState: ViewState
             do {
-                let config = turbo ? ChatConfig.create().withSpeculationPreset(speculationPreset: .generalChat) : ChatConfig.create()
+                let config = ChatConfig.create()
                 session = try await engine.chat(model: model, config: config)
                 newState = .idle
             } catch {

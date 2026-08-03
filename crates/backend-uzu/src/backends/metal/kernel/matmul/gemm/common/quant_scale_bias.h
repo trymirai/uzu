@@ -26,14 +26,14 @@ struct QuantizedBlockLoaderScaleBias {
   static_assert(GROUP_SIZE % THREADGROUP_TILE_COLS == 0, "Group size should be divisible by columns");
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 supported");
 
-  METAL_CONST short pack_factor = get_pack_factor<BITS, 8>();
-  METAL_CONST short bytes_per_pack = get_bytes_per_pack<BITS>();
-  METAL_CONST short THREADGROUP_TILE_COLS_PACKED = THREADGROUP_TILE_COLS / pack_factor;
-  METAL_CONST short READS_PER_THREAD = (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE)
-                                           ? 1
-                                           : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) / THREADGROUP_SIZE;
-  METAL_CONST short GROUP_STEPS_PER_BLOCK = GROUP_SIZE / THREADGROUP_TILE_COLS;
-  METAL_CONST bool TILE_HAS_IDLE_THREADS = THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
+  UZU_CONST short pack_factor = get_pack_factor<BITS, 8>();
+  UZU_CONST short bytes_per_pack = get_bytes_per_pack<BITS>();
+  UZU_CONST short THREADGROUP_TILE_COLS_PACKED = THREADGROUP_TILE_COLS / pack_factor;
+  UZU_CONST short READS_PER_THREAD = (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE)
+                                         ? 1
+                                         : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) / THREADGROUP_SIZE;
+  UZU_CONST short GROUP_STEPS_PER_BLOCK = GROUP_SIZE / THREADGROUP_TILE_COLS;
+  UZU_CONST bool TILE_HAS_IDLE_THREADS = THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
 
   const int src_leading_dim;
   const int tile_stride;
@@ -48,11 +48,13 @@ struct QuantizedBlockLoaderScaleBias {
   const device uint8_t* src;
   const device T* scales;
   const device T* biases;
+  const bool signed_codes;
 
   QuantizedBlockLoaderScaleBias(
       const device uint8_t* src_,
       const device T* scales_,
       const device T* biases_,
+      const bool signed_codes_,
       const int src_leading_dim_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
@@ -70,7 +72,7 @@ struct QuantizedBlockLoaderScaleBias {
         dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION + tile_col_index * pack_factor),
         src(src_ + tile_row_index * src_leading_dim_ * bytes_per_pack / pack_factor + tile_col_index * bytes_per_pack),
         scales(scales_ + tile_row_index * src_leading_dim_ / GROUP_SIZE),
-        biases(biases_ + tile_row_index * src_leading_dim_ / GROUP_SIZE) {}
+        biases(biases_ + tile_row_index * src_leading_dim_ / GROUP_SIZE), signed_codes(signed_codes_) {}
 
   void load_unsafe() const {
     if constexpr (TILE_HAS_IDLE_THREADS) {
@@ -82,7 +84,7 @@ struct QuantizedBlockLoaderScaleBias {
     T scale = *scales;
     T bias = *biases;
     for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, signed_codes);
     }
   }
 
@@ -93,26 +95,32 @@ struct QuantizedBlockLoaderScaleBias {
       }
     }
 
-    if constexpr (REDUCTION_DIMENSION == 1) {
-      if (tile_row_index >= src_tile_dim.x) {
-        for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
-          dst[i] = T(0);
-        }
-        return;
+    if (tile_row_index >= src_tile_dim.y) {
+      for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
+        dst[i] = T(0);
       }
-    } else {
-      if (tile_row_index >= src_tile_dim.y) {
-        for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
-          dst[i] = T(0);
-        }
-        return;
-      }
+      return;
     }
 
+    const int valid_cols = src_tile_dim.x;
+    const int valid_packs = (valid_cols + pack_factor - 1) / pack_factor;
     T scale = *scales;
     T bias = *biases;
     for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+      const int pack_index = tile_col_index + i;
+      if (pack_index < valid_packs) {
+        dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor, signed_codes);
+        if (pack_index == valid_packs - 1) {
+          const int remaining = valid_cols - pack_index * pack_factor;
+          for (int lane = remaining; lane < pack_factor; ++lane) {
+            dst[i * pack_factor + lane] = T(0);
+          }
+        }
+      } else {
+        for (int lane = 0; lane < pack_factor; ++lane) {
+          dst[i * pack_factor + lane] = T(0);
+        }
+      }
     }
   }
 

@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
+#include "../common/soft_cap.h"
 
 template <typename T>
 VARIANTS(T, float, bfloat)
@@ -9,6 +10,5 @@ PUBLIC KERNEL(LogitSoftCap)(
     constant float& soft_cap,
     const uint position AXIS(length, 256)
 ) {
-  const float value = float(logits[position]);
-  logits[position] = T(fast::tanh(value / soft_cap) * soft_cap);
+  logits[position] = uzu::apply_soft_cap<T>(logits[position], soft_cap);
 }

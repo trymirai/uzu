@@ -30,16 +30,16 @@ template <
     int BITS = 0,
     int GROUP_SIZE = 0>
 struct SimdgroupMmaCore {
-  METAL_CONST int THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
-  METAL_CONST int THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
-  METAL_CONST int THREADGROUP_BLOCK_K = gemm_tiling_block_k(GEMM_TILING);
-  METAL_CONST int SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(GEMM_TILING);
-  METAL_CONST int SIMDGROUPS_PER_COLUMN = gemm_tiling_simdgroups_per_column(GEMM_TILING);
-  METAL_CONST ushort PADDING_A = 16 / sizeof(AT);
-  METAL_CONST ushort PADDING_B = 16 / sizeof(BT);
-  METAL_CONST ushort SHARED_STRIDE_A = THREADGROUP_BLOCK_K + PADDING_A;
-  METAL_CONST ushort SHARED_STRIDE_B = (TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N) + PADDING_B;
-  METAL_CONST ushort THREADGROUP_THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
+  UZU_CONST int THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
+  UZU_CONST int THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
+  UZU_CONST int THREADGROUP_BLOCK_K = gemm_tiling_block_k(GEMM_TILING);
+  UZU_CONST int SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(GEMM_TILING);
+  UZU_CONST int SIMDGROUPS_PER_COLUMN = gemm_tiling_simdgroups_per_column(GEMM_TILING);
+  UZU_CONST ushort PADDING_A = 16 / sizeof(AT);
+  UZU_CONST ushort PADDING_B = 16 / sizeof(BT);
+  UZU_CONST ushort SHARED_STRIDE_A = THREADGROUP_BLOCK_K + PADDING_A;
+  UZU_CONST ushort SHARED_STRIDE_B = (TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N) + PADDING_B;
+  UZU_CONST ushort THREADGROUP_THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
 
   using ALoader = uzu::matmul::
       ThreadgroupLoader<AT, THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_K, SHARED_STRIDE_A, true, THREADGROUP_THREADS>;
@@ -202,6 +202,7 @@ struct SimdgroupMmaCore {
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
       GemmDTransform output_transform,
+      const bool signed_codes,
       const device BT* scales,
       const device BT* biases,
       const device uint8_t* zero_points,
@@ -273,6 +274,7 @@ struct SimdgroupMmaCore {
               weights_block,
               scales_offset,
               biases_offset,
+              signed_codes,
               k_elements,
               b_shared,
               thread_context.simdgroup_index,
@@ -286,6 +288,7 @@ struct SimdgroupMmaCore {
               weights_block,
               scales_offset,
               zero_points_row_start,
+              signed_codes,
               k_elements,
               groups_per_row,
               b_shared,
@@ -297,6 +300,7 @@ struct SimdgroupMmaCore {
               weights_block,
               scales_offset,
               nullptr,
+              signed_codes,
               k_elements,
               groups_per_row,
               b_shared,

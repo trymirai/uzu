@@ -2,6 +2,7 @@
 compile_error!("keisoku supports Apple platforms only (macOS and iOS)");
 
 mod device;
+#[cfg(target_os = "macos")]
 mod marker;
 mod metrics;
 mod sources;

@@ -3,6 +3,13 @@ use derive_more::Display;
 
 #[repr(C)]
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GemmAPrologueKind {
+    FullPrecision,
+    Int8Symmetric,
+}
+
+#[repr(C)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GemmBPrologueKind {
     FullPrecision,
     ScaleBiasDequant,
@@ -18,6 +25,7 @@ bitflags! {
         const ACCUMULATE = 1 << 1;
         const BIAS       = 1 << 2;
         const RHT        = 1 << 3;
+        const SOFT_CAP   = 1 << 4;
     }
 }
 

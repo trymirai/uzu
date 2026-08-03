@@ -2,11 +2,12 @@ use std::{
     any::Any,
     path::PathBuf,
     pin::Pin,
-    sync::MutexGuard,
+    sync::Arc,
     task::{Context, Poll},
 };
 
 use futures::Stream;
+use parking_lot::{Mutex, MutexGuard};
 use shoji::{
     traits::{
         State,
@@ -20,34 +21,35 @@ use shoji::{
     },
     types::session::chat::{ChatConfig, ChatReplyConfig},
 };
+#[cfg(grammar)]
 use tokenizers::Tokenizer;
 use tokio_util::sync::CancellationToken;
 
+#[cfg(grammar)]
+use crate::bridge::helpers::get_grammar;
 use crate::{
     backends::common::Backend,
     bridge::{
         chat_token_state::UzuChatTokenBackendInstanceState,
-        helpers::{error_stream, get_grammar, get_max_context_length, get_sampling_method, get_speculator},
-        sync_shared::SyncShared,
+        helpers::{error_stream, get_max_context_length, get_sampling_method},
     },
     engine::{
         Engine,
         language_model::{
             LanguageModel,
             state::LanguageModelState,
-            stream::{LanguageModelStream, LanguageModelStreamOptions, LanguageModelStreamSpeculatorOptions},
+            stream::{LanguageModelStream, LanguageModelStreamOptions},
         },
     },
-    speculators::speculator::Speculator,
 };
 
 pub struct UzuChatTokenBackendInstance<B: Backend> {
-    engine: SyncShared<Engine<B>>,
-    model: SyncShared<LanguageModel<B>>,
+    engine: Arc<Engine<B>>,
+    model: Arc<LanguageModel<B>>,
     config: ChatConfig,
-    tokenizer: Tokenizer,
+    #[cfg(grammar)]
+    tokenizer: Arc<Tokenizer>,
     stop_token_ids: Vec<i32>,
-    speculator: Option<(Box<dyn Speculator>, usize)>,
     max_context_length: Option<usize>,
 }
 
@@ -55,29 +57,22 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
     pub fn new(
         model_path: String,
         config: ChatConfig,
-        tokenizer: &Tokenizer,
+        #[cfg(grammar)] tokenizer: Arc<Tokenizer>,
     ) -> Result<Self, BackendError> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
         let model = engine.load_language_model(&model_path).map_err(|err| err.to_string())?;
 
         let stop_token_ids = model.generation_config().stop_token_ids.iter().map(|id| *id as i32).collect();
-
-        let speculator = if let Some(preset) = config.speculation_preset.as_ref() {
-            get_speculator(preset, tokenizer)?
-        } else {
-            None
-        };
-
         let max_context_length = get_max_context_length(&model, config.context_length.clone());
 
         Ok(Self {
-            engine: SyncShared::new(engine),
-            model: SyncShared::new(model),
+            engine,
+            model: Arc::new(model),
             config,
-            tokenizer: tokenizer.clone(),
+            #[cfg(grammar)]
+            tokenizer,
             stop_token_ids,
-            speculator,
             max_context_length,
         })
     }
@@ -91,9 +86,8 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
     fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn State>, BackendError>> + Send + '_>> {
         Box::pin(async move {
-            let model = self.model.lock().map_err(|err| BackendError::from(err.to_string()))?;
-            let max_context_length = get_max_context_length(&model, self.config.context_length.clone());
-            model
+            let max_context_length = get_max_context_length(&self.model, self.config.context_length.clone());
+            self.model
                 .create_empty_state(max_context_length)
                 .map_err(|err| BackendError::from(err.to_string()))
                 .map(|state| Box::new(UzuChatTokenBackendInstanceState::new(state)) as Box<dyn State>)
@@ -114,16 +108,16 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         >,
     > {
         let model = self.model.clone();
-        let model_guard = Box::pin(model.lock().unwrap());
 
         let state =
             (state as &mut dyn Any).downcast_mut::<UzuChatTokenBackendInstanceState<B>>().unwrap().value.clone();
-        let mut state_guard = Box::pin(state.lock().unwrap());
+        let mut state_guard = Box::pin(state.lock());
 
         let token_limit = config.token_limit.map(|count| count as usize);
 
+        #[cfg(grammar)]
         let grammar = if let Some(grammar_config) = config.grammar {
-            match get_grammar(grammar_config, &self.tokenizer, &self.stop_token_ids) {
+            match get_grammar(grammar_config, self.tokenizer.as_ref(), &self.stop_token_ids) {
                 Ok(grammar) => Some(grammar),
                 Err(err) => {
                     return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));
@@ -132,18 +126,18 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         } else {
             None
         };
+        #[cfg(not(grammar))]
+        if config.grammar.is_some() {
+            return Box::pin(NoMetricsStream::new(error_stream("Grammar is not supported by this build".to_string())));
+        }
 
         let options = LanguageModelStreamOptions {
-            sampling_method: get_sampling_method::<B>(&model_guard, &config.sampling_policy),
+            sampling_method: get_sampling_method::<B>(&self.model, &config.sampling_policy),
+            #[cfg(grammar)]
             grammar,
-            speculator: self.speculator.as_ref().map(|(speculator, budget)| LanguageModelStreamSpeculatorOptions {
-                speculator: speculator.as_ref(),
-                speculation_budget: *budget,
-                trie_creation_config: Default::default(),
-            }),
         };
 
-        let stream = match model_guard.stream(input, &mut state_guard, options) {
+        let stream = match self.model.stream(input, &mut state_guard, options) {
             Ok(iter) => iter,
             Err(err) => {
                 return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));
@@ -162,18 +156,12 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                 >(state_guard)
             },
             _state: state,
-            _model_guard: unsafe {
-                std::mem::transmute::<
-                    Pin<Box<MutexGuard<'_, LanguageModel<B>>>>,
-                    Pin<Box<MutexGuard<'a, LanguageModel<B>>>>,
-                >(model_guard)
-            },
             _model: model,
         })
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {
-        self.engine.lock().ok().and_then(|engine| engine.peak_memory_usage())
+        self.engine.peak_memory_usage()
     }
 }
 
@@ -195,9 +183,8 @@ struct UzuChatTokenStream<'a, B: Backend> {
     tokens_generated: usize,
     token_limit: Option<usize>,
     _state_guard: Pin<Box<MutexGuard<'a, LanguageModelState<B>>>>,
-    _state: SyncShared<LanguageModelState<B>>,
-    _model_guard: Pin<Box<MutexGuard<'a, LanguageModel<B>>>>,
-    _model: SyncShared<LanguageModel<B>>,
+    _state: Arc<Mutex<LanguageModelState<B>>>,
+    _model: Arc<LanguageModel<B>>,
 }
 
 impl<'a, B: Backend> UzuChatTokenStream<'a, B> {
@@ -248,5 +235,3 @@ impl<'a, B: Backend> InstanceStream for UzuChatTokenStream<'a, B> {
         Some(self.stream.metrics().clone())
     }
 }
-
-unsafe impl<'a, B: Backend> Send for UzuChatTokenStream<'a, B> {}

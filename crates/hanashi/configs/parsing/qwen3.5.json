@@ -21,6 +21,7 @@
                             {
                                 "type": "bounded",
                                 "name": "reasoning",
+                                "closes_on_sibling": true,
                                 "open_token": "<think>",
                                 "close_tokens": [
                                     "</think>"
@@ -32,6 +33,14 @@
                                 "open_token": "<tool_call>",
                                 "close_tokens": [
                                     "</tool_call>"
+                                ]
+                            },
+                            {
+                                "type": "bounded",
+                                "name": "tool_call_result",
+                                "open_token": "<tool_response>",
+                                "close_tokens": [
+                                    "</tool_response>"
                                 ]
                             }
                         ]

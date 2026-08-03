@@ -13,7 +13,5 @@ pub fn write_tokens(
     let parsed = syn::parse2(tokens.clone()).with_context(|| format!("cannot parse generated bindings: {}", tokens))?;
     fs::write(file, prettyplease::unparse(&parsed)).with_context(|| format!("cannot write file {}", file.display()))?;
 
-    std::process::Command::new("rustfmt").arg(file).status().context("rustfmt failed")?;
-
     Ok(())
 }

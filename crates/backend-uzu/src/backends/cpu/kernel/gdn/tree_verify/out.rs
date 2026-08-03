@@ -28,9 +28,7 @@ pub fn build_tree_out<QKT: ArrayElement + Float, OutputT: ArrayElement + Float>(
     #[allow(unused)]
     #[specialize]
     transposed_h0: bool,
-    #[allow(unused)]
-    #[specialize]
-    use_h0: bool,
+    #[specialize] use_h0: bool,
 ) {
     let batch_size = batch_size as usize;
     let tree_size = tree_size as usize;

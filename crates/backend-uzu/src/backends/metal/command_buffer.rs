@@ -1,4 +1,4 @@
-use std::{rc::Rc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use metal::{
     MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferStatus,
@@ -28,13 +28,13 @@ impl CommandBuffer for MetalCommandBuffer {
 
 pub struct MetalCommandBufferInitial {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-    context: Rc<MetalContext>,
+    context: Arc<MetalContext>,
 }
 
 impl MetalCommandBufferInitial {
     pub fn new(
         command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        context: Rc<MetalContext>,
+        context: Arc<MetalContext>,
     ) -> Self {
         Self {
             command_buffer,
@@ -64,7 +64,7 @@ enum MetalCommandBufferEncodingEncodingState {
 pub struct MetalCommandBufferEncoding {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     encoding_state: MetalCommandBufferEncodingEncodingState,
-    context: Rc<MetalContext>,
+    context: Arc<MetalContext>,
 }
 
 impl MetalCommandBufferEncoding {
@@ -169,7 +169,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
 pub struct MetalCommandBufferExecutable {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-    context: Rc<MetalContext>,
+    context: Arc<MetalContext>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {

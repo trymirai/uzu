@@ -127,5 +127,5 @@ pub fn read_metadata(file: &File) -> Result<(usize, HashMetadata), HeaderLoading
 }
 
 #[cfg(test)]
-#[path = "../../unit/parameters/safetensors_metadata.rs"]
+#[path = "../../tests/unit/parameters/safetensors_metadata.rs"]
 mod tests;

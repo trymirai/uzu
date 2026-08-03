@@ -257,7 +257,17 @@ impl Command {
     }
 
     pub fn uv_sync() -> Self {
-        Self::new("uv").with_argument("sync").with_argument("--reinstall")
+        Self::uv_sync_params(false)
+    }
+
+    pub fn uv_sync_params(no_install_project: bool) -> Self {
+        let mut cmd = Self::new("uv").with_argument("sync");
+        if no_install_project {
+            cmd = cmd.with_argument("--no-install-project")
+        } else {
+            cmd = cmd.with_argument("--reinstall")
+        }
+        cmd
     }
 
     pub fn uv_venv() -> Self {
@@ -290,11 +300,7 @@ impl Command {
     }
 
     pub fn uv_python_file(path: PathBuf) -> Self {
-        Self::new("uv")
-            .with_argument("run")
-            .with_arguments(vec!["--extra".to_string(), "examples".to_string()])
-            .with_argument("python")
-            .with_argument(&path.to_string_lossy())
+        Self::new("uv").with_argument("run").with_argument("python").with_argument(&path.to_string_lossy())
     }
 
     pub fn maturin_build(

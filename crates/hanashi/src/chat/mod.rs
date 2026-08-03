@@ -5,17 +5,16 @@ pub mod hanashi;
 pub mod harmony;
 mod state;
 
-pub use config::Config;
-pub use context::{Context, TokenizerLocation};
+pub use config::EncodingConfig;
+pub use context::TokenizerLocation;
 pub use error::Error;
 pub use hanashi::renderer::strftime_now;
 use shoji::types::{basic::TokenId, session::chat::ChatMessage};
 pub use state::{State, SynchronizationError, SynchronizationResult};
-use tokenizers::Tokenizer;
 
 use crate::{
     Encoding as EncodingTrait,
-    chat::{hanashi::Encoding as HanashiEncoding, harmony::Encoding as HarmonyEncoding},
+    chat::{hanashi::HanashiEncodingImpl, harmony::HarmonyEncodingImpl},
 };
 
 macro_rules! dispatch {
@@ -34,27 +33,16 @@ macro_rules! dispatch {
 }
 
 pub enum Encoding {
-    Hanashi(HanashiEncoding),
-    Harmony(HarmonyEncoding),
+    Hanashi(HanashiEncodingImpl),
+    Harmony(HarmonyEncodingImpl),
 }
 
 impl EncodingTrait for Encoding {
-    type Config = Config;
-    type Context = Context;
+    type Config = EncodingConfig;
     type Input = Vec<ChatMessage>;
     type Output = Vec<TokenId>;
     type State = State;
     type Error = Error;
-
-    fn new(
-        config: Self::Config,
-        context: Self::Context,
-    ) -> Result<Self, Self::Error> {
-        match config {
-            Config::Hanashi(config) => Ok(Encoding::Hanashi(HanashiEncoding::new(config, context)?)),
-            Config::Harmony(config) => Ok(Encoding::Harmony(HarmonyEncoding::new(config, context)?)),
-        }
-    }
 
     fn state(&self) -> &Self::State {
         dispatch!(infallible self, state)
@@ -78,7 +66,11 @@ impl EncodingTrait for Encoding {
         dispatch!(self, decode, value)
     }
 
-    fn tokenizer(&self) -> Option<&Tokenizer> {
-        dispatch!(infallible self, tokenizer)
+    fn supports_tool_calls(&self) -> bool {
+        dispatch!(infallible self, supports_tool_calls)
+    }
+
+    fn supports_multiple_tool_calls(&self) -> bool {
+        dispatch!(infallible self, supports_multiple_tool_calls)
     }
 }

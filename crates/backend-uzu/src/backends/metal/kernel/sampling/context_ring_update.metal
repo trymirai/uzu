@@ -7,7 +7,7 @@ using namespace uzu::ring;
 #define THREADGROUP_SIZE 256
 
 PUBLIC KERNEL(ContextRingUpdate)(
-    const device uint64_t* input,
+    const device uint32_t* input,
     device uint32_t* context_ring,
     const constant uint32_t& suffix_repetition_length,
     const constant uint32_t& input_length,
@@ -20,7 +20,7 @@ PUBLIC KERNEL(ContextRingUpdate)(
 
   for (uint32_t input_index = write_start + thread_index; input_index < input_length; input_index += THREADGROUP_SIZE) {
     const uint32_t slot = (ring.ring_offset + ring.ring_length + input_index) % suffix_repetition_length;
-    ring_tokens[slot] = static_cast<uint32_t>(input[input_index]);
+    ring_tokens[slot] = input[input_index];
   }
 
   threadgroup_barrier(mem_flags::mem_none);

@@ -1,7 +1,10 @@
 use crate::backends::{
     common::{
         Kernels,
-        gpu_types::gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_row},
+        gpu_types::{
+            gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_row},
+            weaver::{FRONTIER_SELECT_THREADS, TOP_CHILDREN_THREADS},
+        },
     },
     metal::Metal,
 };
@@ -9,10 +12,9 @@ use crate::backends::{
 pub mod attention;
 pub mod gdn;
 pub mod matmul;
+mod radix_top_k_small;
 
-pub const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
-
-include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
+include!(concat!(env!("OUT_DIR"), "/metal.rs"));
 
 pub struct MetalKernels;
 
@@ -24,4 +26,5 @@ impl Kernels for MetalKernels {
     type DeltaNetChunkedPrefill = gdn::chunked::MetalDeltaNetChunkedPrefill;
     type DeltaNetTreeVerify = gdn::tree_verify::MetalDeltaNetTreeVerify;
     type MatmulKernel = matmul::MatmulMetalKernel;
+    type RadixTopKSmall = radix_top_k_small::MetalRadixTopKSmall;
 }

@@ -4,7 +4,7 @@ mod command_buffer;
 mod context;
 mod dense_buffer;
 mod error;
-mod kernel;
+pub(crate) mod kernel;
 mod sparse;
 
 pub use backend::Cpu;

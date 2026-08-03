@@ -11,7 +11,10 @@ use crate::{
         TokenizerLocation,
         hanashi::{
             Error,
-            renderer::{TEMPLATE_NAME, raise_exception, to_json},
+            renderer::{
+                RAISE_EXCEPTION_FUNCTION_NAME, STRFTIME_NOW_FUNCTION_NAME, TEMPLATE_NAME, TOJSON_FILTER_NAME,
+                raise_exception, to_json,
+            },
         },
         strftime_now,
     },
@@ -67,9 +70,9 @@ impl ClassificationEncoding {
     ) -> Result<Vec<u32>, Error> {
         let mut environment = Environment::new();
         environment.set_unknown_method_callback(unknown_method_callback);
-        environment.add_function("strftime_now", strftime_now);
-        environment.add_function("raise_exception", raise_exception);
-        environment.add_filter("tojson", to_json);
+        environment.add_function(STRFTIME_NOW_FUNCTION_NAME, strftime_now);
+        environment.add_function(RAISE_EXCEPTION_FUNCTION_NAME, raise_exception);
+        environment.add_filter(TOJSON_FILTER_NAME, to_json);
         environment
             .add_template(TEMPLATE_NAME, config.prompt_template.as_str())
             .map_err(|_| Error::UnableToEncodeText)?;

@@ -11,14 +11,15 @@ using namespace metal;
 
 // TODO: Are numerics of subtract_mean fine?
 
-template <typename InputT, typename ScaleT, typename OutputT, typename AccumT>
+template <typename InputT, typename AffineT, typename OutputT, typename AccumT>
 VARIANTS(InputT, float, half, bfloat)
-VARIANTS(ScaleT, float, half, bfloat)
+VARIANTS(AffineT, float, half, bfloat)
 VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(AccumT, float)
 PUBLIC KERNEL(Normalization)(
     const device InputT* input OPTIONAL(!in_place),
-    const device ScaleT* scales,
+    const device AffineT* scales,
+    const device AffineT* biases OPTIONAL(has_biases),
     device OutputT* output,
     device InputT* shortcut OPTIONAL(copy_to_shortcut),
     const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
@@ -35,6 +36,7 @@ PUBLIC KERNEL(Normalization)(
     const bool use_hadamard SPECIALIZE,
     const bool scale_residual_sum SPECIALIZE,
     const bool scale_output SPECIALIZE,
+    const bool has_biases SPECIALIZE,
     threadgroup AccumT shared_sum[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
@@ -119,6 +121,10 @@ PUBLIC KERNEL(Normalization)(
       val = static_cast<OutputT>((x - mean) * rms_inv * scale);
     } else {
       val = static_cast<OutputT>((x - mean) * rms_inv) * static_cast<OutputT>(scale);
+    }
+
+    if (has_biases) {
+      val = static_cast<OutputT>(static_cast<AccumT>(val) + static_cast<AccumT>(biases[i]));
     }
 
     if (use_hadamard) {

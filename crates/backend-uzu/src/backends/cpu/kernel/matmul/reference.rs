@@ -22,6 +22,7 @@ pub(super) enum WeightData {
         biases: Option<SendPtr<u8>>,
         bits: usize,
         group_size: usize,
+        signed_codes: bool,
     },
 }
 
@@ -63,6 +64,7 @@ impl WeightData {
                 biases,
                 mode,
                 group_size,
+                signed_codes,
             } => WeightData::Quantized {
                 weights: alloc_ptr(weights),
                 scales: alloc_ptr(scales),
@@ -70,6 +72,7 @@ impl WeightData {
                 biases: Some(alloc_ptr(biases)),
                 bits: bits_of(mode),
                 group_size: group_size as usize,
+                signed_codes,
             },
             MatmulB::ScaleZeroPointDequant {
                 b: weights,
@@ -77,6 +80,7 @@ impl WeightData {
                 zero_points,
                 mode,
                 group_size,
+                signed_codes,
             } => WeightData::Quantized {
                 weights: alloc_ptr(weights),
                 scales: alloc_ptr(scales),
@@ -84,12 +88,14 @@ impl WeightData {
                 biases: None,
                 bits: bits_of(mode),
                 group_size: group_size as usize,
+                signed_codes,
             },
             MatmulB::ScaleSymmetricDequant {
                 b: weights,
                 scales,
                 mode,
                 group_size,
+                signed_codes,
             } => WeightData::Quantized {
                 weights: alloc_ptr(weights),
                 scales: alloc_ptr(scales),
@@ -97,6 +103,7 @@ impl WeightData {
                 biases: None,
                 bits: bits_of(mode),
                 group_size: group_size as usize,
+                signed_codes,
             },
         }
     }

@@ -18,10 +18,14 @@ nightly-harness = []
 [dependencies]
 criterion.workspace = true
 
+# Non-optional: the iOS `path.rs` (Documents dir via NSSearchPath) uses
+# objc2-foundation unconditionally, so it must be linked for on-device builds.
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
-objc2 = { workspace = true, optional = true }
-objc2-foundation = { workspace = true, optional = true }
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true }
 
-# GPU temperature for bench cooldown; keisoku is Apple-only.
-[target.'cfg(target_vendor = "apple")'.dependencies]
+# GPU temperature for bench cooldown. keisoku is macOS-only — its power /
+# IOReport subsystem does not build for iOS — and cooldown is a dev-machine
+# concern, so on-device (iOS) builds skip it (see metrics.rs stub).
+[target.'cfg(target_os = "macos")'.dependencies]
 keisoku.workspace = true

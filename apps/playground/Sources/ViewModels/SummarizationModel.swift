@@ -52,7 +52,7 @@ final class SummarizationModel {
             let session: ChatSession?
             let newState: ViewState
             do {
-                let config = ChatConfig.create().withSpeculationPreset(speculationPreset: .summarization)
+                let config = ChatConfig.create()
                 session = try await engine.chat(model: model, config: config)
                 newState = .idle
             } catch {
