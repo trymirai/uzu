@@ -11,6 +11,27 @@ using namespace uzu::matmul;
 #define COL_TILE 32u
 #define DIAG_BLOCK_SIZE 16u
 
+// q_norm/k_norm: [suffix_len, key_dim], g: [num_v_heads, suffix_len],
+// beta: [suffix_len, num_v_heads].
+// qk_scaled_out: [chunks, num_v_heads, CHUNK_SIZE, CHUNK_SIZE].
+// a_packed:      [chunks, num_v_heads, num_blocks, ceil(num_blocks/2),
+//                 DIAG_BLOCK_SIZE, 2*DIAG_BLOCK_SIZE].
+// a_inv:         [chunks, num_v_heads, num_blocks, DIAG_BLOCK_SIZE, DIAG_BLOCK_SIZE].
+//
+// Fuses the former Gram and ADiagInv kernels. One simdgroup owns one
+// (chunk, k-head, ROW_TILE x COL_TILE tile) and accumulates both K K^T and Q K^T for
+// that tile in registers, then per grouped v-head:
+//   - materializes A[row,col] = beta[row] * exp(g[row] - g[col]) * KK^T[row,col] for
+//     col < row and writes it as a packed column-pair block,
+//   - for the tile straddling the diagonal, copies the diagonal block into threadgroup
+//     memory and writes (I + A_diag)^-1 to a_inv,
+//   - writes the decay-scaled, causally masked Q K^T to qk_scaled_out.
+//
+// The fusion works because the tilings coincide: ROW_TILE == DIAG_BLOCK_SIZE and
+// COL_TILE == 2*DIAG_BLOCK_SIZE, so one Gram tile is exactly one packed A block. That
+// lets K K^T stay in registers instead of round-tripping through a device scratch
+// buffer, removing one dispatch plus the kk buffer and its write+read traffic.
+// MXU did not improve e2e vs simdgroup.
 template <uint HEAD_K_DIM, uint CHUNK_SIZE>
 VARIANTS(HEAD_K_DIM, 128)
 VARIANTS(CHUNK_SIZE, 32, 64)
@@ -41,6 +62,11 @@ KERNEL(DeltaNetChunkedGramA)(
   using RightFragment = OperandFragment<InputType, 1, COL_FRAGMENTS, Ops, ReadTranspose>;
 
   static_assert(HEAD_K_DIM % Ops::FRAGMENT_ROWS == 0, "HEAD_K_DIM must align to fragment K");
+  // The fusion relies on one Gram tile being exactly one packed A block, and on the
+  // unchecked a_packed store below covering a full tile.
+  static_assert(ROW_TILE == DIAG_BLOCK_SIZE, "row tile must match the A diagonal block");
+  static_assert(COL_TILE == 2 * DIAG_BLOCK_SIZE, "col tile must match an A column pair");
+  static_assert(CHUNK_SIZE % COL_TILE == 0, "chunk must divide into whole column pairs");
 
   constexpr uint col_tiles = (CHUNK_SIZE + COL_TILE - 1) / COL_TILE;
   constexpr uint num_blocks = (CHUNK_SIZE + DIAG_BLOCK_SIZE - 1) / DIAG_BLOCK_SIZE;
