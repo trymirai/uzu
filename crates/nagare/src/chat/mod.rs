@@ -541,7 +541,7 @@ impl ChatSession {
 
     #[bindings::export(Method(Getter))]
     pub async fn supports_tool_calls(&self) -> bool {
-        self.instance.lock().await.supports_tool_calls()
+        self.tool_registry.is_some()
     }
 
     #[bindings::export(Method)]
