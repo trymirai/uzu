@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
         io::stdout().flush()?;
     }
     println!();
@@ -102,7 +102,7 @@ async def main() -> None:
         return
 
     async for update in (await engine.download(model)).iterator():
-        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
     print()
 
     session = await engine.chat(model, ChatConfig.create())
@@ -207,7 +207,7 @@ async function main() {
     }
 
     for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${update.progress}`);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
     console.log();
 
@@ -267,7 +267,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
         io::stdout().flush()?;
     }
     println!();
@@ -331,7 +331,7 @@ async def main() -> None:
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
     print()
 
     messages = [
@@ -420,7 +420,7 @@ async function main() {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${update.progress}`);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
     console.log();
 
@@ -479,7 +479,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
         io::stdout().flush()?;
     }
     println!();
@@ -519,7 +519,7 @@ async def main() -> None:
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
     print()
 
     messages = [
@@ -594,7 +594,7 @@ async function main() {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${update.progress}`);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
     console.log();
 
@@ -659,7 +659,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
         io::stdout().flush()?;
     }
     println!();
@@ -734,7 +734,7 @@ async def main() -> None:
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
     print()
 
     schema_string = json.dumps(CountryList.model_json_schema())
@@ -838,7 +838,7 @@ async function main() {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${update.progress}`);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
     console.log();
 
@@ -887,7 +887,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
         io::stdout().flush()?;
     }
     println!();
@@ -921,7 +921,7 @@ async def main() -> None:
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
     print()
 
     messages = [ClassificationMessage.user("Hi")]
@@ -983,7 +983,7 @@ async function main() {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${update.progress}`);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
     console.log();
 
@@ -1047,7 +1047,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
         io::stdout().flush()?;
     }
     println!();
@@ -1150,7 +1150,7 @@ async def main() -> None:
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
     print()
 
     session = await engine.chat(model, ChatConfig.create())
@@ -1309,7 +1309,7 @@ async function main() {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${update.progress}`);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
     process.stdout.write('\n');
 

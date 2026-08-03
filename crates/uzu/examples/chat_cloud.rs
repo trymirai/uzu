@@ -16,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
         io::stdout().flush()?;
     }
     println!();

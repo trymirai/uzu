@@ -41,7 +41,7 @@ async function main() {
     }
 
     for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${update.progress}`);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
     console.log();
 
@@ -91,7 +91,7 @@ async function main() {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${update.progress}`);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
     console.log();
 
@@ -137,7 +137,7 @@ async function main() {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${update.progress}`);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
     console.log();
 
@@ -192,7 +192,7 @@ async function main() {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${update.progress}`);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
     console.log();
 
@@ -231,7 +231,7 @@ async function main() {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${update.progress}`);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
     console.log();
 
@@ -310,7 +310,7 @@ async function main() {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${update.progress}`);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
     process.stdout.write('\n');
 

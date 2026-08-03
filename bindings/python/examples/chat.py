@@ -18,7 +18,7 @@ async def main() -> None:
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
     print()
 
     messages = [
