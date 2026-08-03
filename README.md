@@ -34,6 +34,8 @@ uzu = { git = "https://github.com/trymirai/uzu", branch = "main", package = "uzu
 Run the code below:
 
 ```rust
+use std::io::{self, Write};
+
 use uzu::{
     engine::{Engine, EngineConfig},
     types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
@@ -44,11 +46,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_config = EngineConfig::default();
     let engine = Engine::new(engine_config).await?;
 
-    let model = engine.model("Qwen/Qwen3-0.6B".to_string()).await?.ok_or("Model not found")?;
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        println!("Download progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        io::stdout().flush()?;
     }
+    println!();
 
     let session = engine.chat(model, ChatConfig::default()).await?;
 
@@ -93,12 +97,13 @@ async def main() -> None:
     engine_config = EngineConfig.create()
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("Qwen/Qwen3-0.6B")
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
     if model is None:
         return
 
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress}")
+        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+    print()
 
     session = await engine.chat(model, ChatConfig.create())
 
@@ -139,19 +144,22 @@ dependencies: [
 Run the code below:
 
 ```swift
+import Foundation
 import Uzu
 
 public func runQuickStart() async throws {
     let engineConfig = EngineConfig.create()
     let engine = try await Engine.create(config: engineConfig)
     
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
         return
     }
     
     for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
     }
+    print()
     
     let session = try await engine.chat(model: model, config: .create())
     
@@ -193,14 +201,15 @@ async function main() {
     let engineConfig = EngineConfig.create();
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('Qwen/Qwen3-0.6B');
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     if (!model) {
         throw new Error('Model not found');
     }
 
     for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
+        process.stdout.write(`\rDownload progress: ${update.progress}`);
     }
+    console.log();
 
     let session = await engine.chat(model, ChatConfig.create());
 
@@ -242,6 +251,8 @@ In this example, we will download a model and get a reply to a specific list of 
 <summary>Rust</summary>
 
 ```rust
+use std::io::{self, Write};
+
 use uzu::{
     engine::{Engine, EngineConfig},
     session::chat::ChatSessionStreamChunk,
@@ -253,11 +264,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_config = EngineConfig::default();
     let engine = Engine::new(engine_config).await?;
 
-    let model = engine.model("Qwen/Qwen3-0.6B".to_string()).await?.ok_or("Model not found")?;
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        println!("Download progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        io::stdout().flush()?;
     }
+    println!();
 
     let messages = vec![
         ChatMessage::system().with_text("You are a helpful assistant".to_string()),
@@ -314,11 +327,12 @@ async def main() -> None:
     engine_config = EngineConfig.create()
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("Qwen/Qwen3-0.6B")
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress}")
+        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+    print()
 
     messages = [
         ChatMessage.system().with_text("You are a helpful assistant"),
@@ -351,18 +365,21 @@ if __name__ == "__main__":
 <summary>Swift</summary>
 
 ```swift
+import Foundation
 import Uzu
 
 public func runChat() async throws {
     let engineConfig = EngineConfig.create()
     let engine = try await Engine.create(config: engineConfig)
     
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
         return
     }
     for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
     }
+    print()
     
     let messages = [
         ChatMessage.system().withText(text: "You are a helpful assistant"),
@@ -398,13 +415,14 @@ async function main() {
     let engineConfig = EngineConfig.create();
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('Qwen/Qwen3-0.6B');
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     if (!model) {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
+        process.stdout.write(`\rDownload progress: ${update.progress}`);
     }
+    console.log();
 
     let messages = [
         ChatMessage.system().withText('You are a helpful assistant'),
@@ -443,6 +461,8 @@ In this example, we will get a reply to a specific list of messages from a cloud
 <summary>Rust</summary>
 
 ```rust
+use std::io::{self, Write};
+
 use uzu::{
     engine::{Engine, EngineConfig},
     types::{
@@ -456,7 +476,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_config = EngineConfig::default().with_openai_api_key("OPENAI_API_KEY".to_string());
     let engine = Engine::new(engine_config).await?;
 
-    let model = engine.model("gpt-5".to_string()).await?.ok_or("Model not found")?;
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
+    let downloader = engine.download(&model).await?;
+    while let Some(update) = downloader.next().await {
+        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        io::stdout().flush()?;
+    }
+    println!();
 
     let messages = vec![
         ChatMessage::system().with_reasoning_effort(ReasoningEffort::Low),
@@ -489,9 +515,12 @@ async def main() -> None:
     engine_config = EngineConfig.create().with_openai_api_key("OPENAI_API_KEY")
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("gpt-5")
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
     if model is None:
         raise RuntimeError("Model not found")
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+    print()
 
     messages = [
         ChatMessage.system().with_reasoning_effort(ReasoningEffort.Low),
@@ -516,15 +545,21 @@ if __name__ == "__main__":
 <summary>Swift</summary>
 
 ```swift
+import Foundation
 import Uzu
 
 public func runChatCloud() async throws {
     let engineConfig = EngineConfig.create().withOpenaiApiKey(openaiApiKey: "OPENAI_API_KEY")
     let engine = try await Engine.create(config: engineConfig)
     
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
         return
     }
+    for try await update in try await engine.download(model: model).iterator() {
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
+    }
+    print()
     
     let messages = [
         ChatMessage.system().withReasoningEffort(reasoningEffort: .low),
@@ -554,10 +589,14 @@ async function main() {
     let engineConfig = EngineConfig.create().withOpenaiApiKey('OPENAI_API_KEY');
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('gpt-5');
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     if (!model) {
         throw new Error('Model not found');
     }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${update.progress}`);
+    }
+    console.log();
 
     let messages = [
         ChatMessage.system().withReasoningEffort("Low" as ReasoningEffort),
@@ -589,6 +628,8 @@ Sometimes you want the generated output to be valid JSON with predefined fields.
 <summary>Rust</summary>
 
 ```rust
+use std::io::{self, Write};
+
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use uzu::{
@@ -615,11 +656,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_config = EngineConfig::default();
     let engine = Engine::new(engine_config).await?;
 
-    let model = engine.model("Qwen/Qwen3-0.6B".to_string()).await?.ok_or("Model not found")?;
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        println!("Download progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        io::stdout().flush()?;
     }
+    println!();
 
     let schema_string = serde_json::to_string(&schema_for!(CountryList))?;
     let messages = vec![
@@ -687,11 +730,12 @@ async def main() -> None:
     engine_config = EngineConfig.create()
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("Qwen/Qwen3-0.6B")
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress}")
+        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+    print()
 
     schema_string = json.dumps(CountryList.model_json_schema())
     messages = [
@@ -721,6 +765,7 @@ if __name__ == "__main__":
 <summary>Swift</summary>
 
 ```swift
+import Foundation
 import FoundationModels
 import Uzu
 
@@ -734,12 +779,14 @@ public func runChatStructuredOutput() async throws {
     let engineConfig = EngineConfig.create()
     let engine = try await Engine.create(config: engineConfig)
     
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
         return
     }
     for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
     }
+    print()
     
     let messages = [
         ChatMessage.system().withReasoningEffort(reasoningEffort: .disabled),
@@ -786,13 +833,14 @@ async function main() {
     let engineConfig = EngineConfig.create();
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('Qwen/Qwen3-0.6B');
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     if (!model) {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
+        process.stdout.write(`\rDownload progress: ${update.progress}`);
     }
+    console.log();
 
     let schema = z.toJSONSchema(CountryListType);
     let schemaString = JSON.stringify(schema);
@@ -824,6 +872,8 @@ In this example, we will use a classification model to determine whether the use
 <summary>Rust</summary>
 
 ```rust
+use std::io::{self, Write};
+
 use uzu::{
     engine::{Engine, EngineConfig},
     types::session::classification::ClassificationMessage,
@@ -834,11 +884,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_config = EngineConfig::default();
     let engine = Engine::new(engine_config).await?;
 
-    let model = engine.model("trymirai/chat-moderation-router".to_string()).await?.ok_or("Model not found")?;
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        println!("Download progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        io::stdout().flush()?;
     }
+    println!();
 
     let messages = vec![ClassificationMessage::user("Hi".to_string())];
 
@@ -865,11 +917,12 @@ async def main() -> None:
     engine_config = EngineConfig.create()
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("trymirai/chat-moderation-router")
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress}")
+        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+    print()
 
     messages = [ClassificationMessage.user("Hi")]
 
@@ -888,17 +941,20 @@ if __name__ == "__main__":
 <summary>Swift</summary>
 
 ```swift
+import Foundation
 import Uzu
 
 public func runClassification() async throws {
     let engine = try await Engine.create(config: .create())
     
-    guard let model = try await engine.model(identifier: "trymirai/chat-moderation-router") else {
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
         return
     }
     for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
     }
+    print()
     
     let messages = [
         ClassificationMessage.user(content: "Hi")
@@ -922,13 +978,14 @@ async function main() {
     let engineConfig = EngineConfig.create();
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('trymirai/chat-moderation-router');
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     if (!model) {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
+        process.stdout.write(`\rDownload progress: ${update.progress}`);
     }
+    console.log();
 
     let messages = [
         ClassificationMessage.user('Hi')
@@ -955,6 +1012,8 @@ This example shows how to use external tools:
 <summary>Rust</summary>
 
 ```rust
+use std::io::{self, Write};
+
 use nagare::tool::{func_def::ErrorFuture, uzu_tool_closure, uzu_tool_function};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -988,8 +1047,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        println!("Download progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        io::stdout().flush()?;
     }
+    println!();
 
     let mut session = engine.chat(model, ChatConfig::default()).await?;
     session.add_tool(get_current_location).await?;
@@ -1158,7 +1219,7 @@ public func runToolCalls() async throws {
         throw ToolCallsExampleError.modelNotFound
     }
     for try await update in try await engine.download(model: model).iterator() {
-        print(String(format: "\u{001B}[2K\nDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
         fflush(stdout)
     }
     print()

@@ -31,19 +31,22 @@ dependencies: [
 Run the code below:
 
 ```swift
+import Foundation
 import Uzu
 
 public func runQuickStart() async throws {
     let engineConfig = EngineConfig.create()
     let engine = try await Engine.create(config: engineConfig)
     
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
         return
     }
     
     for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
     }
+    print()
     
     let session = try await engine.chat(model: model, config: .create())
     
@@ -76,18 +79,21 @@ You can run any example via `cargo tools example` \<**swift**\> \<**chat** | **c
 In this example, we will download a model and get a reply to a specific list of messages:
 
 ```swift
+import Foundation
 import Uzu
 
 public func runChat() async throws {
     let engineConfig = EngineConfig.create()
     let engine = try await Engine.create(config: engineConfig)
     
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
         return
     }
     for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
     }
+    print()
     
     let messages = [
         ChatMessage.system().withText(text: "You are a helpful assistant"),
@@ -118,15 +124,21 @@ public func runChat() async throws {
 In this example, we will get a reply to a specific list of messages from a cloud model:
 
 ```swift
+import Foundation
 import Uzu
 
 public func runChatCloud() async throws {
     let engineConfig = EngineConfig.create().withOpenaiApiKey(openaiApiKey: "OPENAI_API_KEY")
     let engine = try await Engine.create(config: engineConfig)
     
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
         return
     }
+    for try await update in try await engine.download(model: model).iterator() {
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
+    }
+    print()
     
     let messages = [
         ChatMessage.system().withReasoningEffort(reasoningEffort: .low),
@@ -149,6 +161,7 @@ public func runChatCloud() async throws {
 Sometimes you want the generated output to be valid JSON with predefined fields. You can use `Grammar` to manually specify a JSON schema for the response you want to receive:
 
 ```swift
+import Foundation
 import FoundationModels
 import Uzu
 
@@ -162,12 +175,14 @@ public func runChatStructuredOutput() async throws {
     let engineConfig = EngineConfig.create()
     let engine = try await Engine.create(config: engineConfig)
     
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
         return
     }
     for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
     }
+    print()
     
     let messages = [
         ChatMessage.system().withReasoningEffort(reasoningEffort: .disabled),
@@ -191,17 +206,20 @@ public func runChatStructuredOutput() async throws {
 In this example, we will use a classification model to determine whether the user's input is safe from a moderation perspective:
 
 ```swift
+import Foundation
 import Uzu
 
 public func runClassification() async throws {
     let engine = try await Engine.create(config: .create())
     
-    guard let model = try await engine.model(identifier: "trymirai/chat-moderation-router") else {
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
         return
     }
     for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
     }
+    print()
     
     let messages = [
         ClassificationMessage.user(content: "Hi")
@@ -258,7 +276,7 @@ public func runToolCalls() async throws {
         throw ToolCallsExampleError.modelNotFound
     }
     for try await update in try await engine.download(model: model).iterator() {
-        print(String(format: "\u{001B}[2K\nDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
         fflush(stdout)
     }
     print()

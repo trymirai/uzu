@@ -1,3 +1,5 @@
+use std::io::{self, Write};
+
 use uzu::{
     engine::{Engine, EngineConfig},
     session::chat::ChatSessionStreamChunk,
@@ -9,11 +11,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_config = EngineConfig::default();
     let engine = Engine::new(engine_config).await?;
 
-    let model = engine.model("Qwen/Qwen3-0.6B".to_string()).await?.ok_or("Model not found")?;
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        println!("Download progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        io::stdout().flush()?;
     }
+    println!();
 
     let messages = vec![
         ChatMessage::system().with_text("You are a helpful assistant".to_string()),

@@ -1,3 +1,5 @@
+use std::io::{self, Write};
+
 use uzu::{
     engine::{Engine, EngineConfig},
     types::{
@@ -11,7 +13,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_config = EngineConfig::default().with_openai_api_key("OPENAI_API_KEY".to_string());
     let engine = Engine::new(engine_config).await?;
 
-    let model = engine.model("gpt-5".to_string()).await?.ok_or("Model not found")?;
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
+    let downloader = engine.download(&model).await?;
+    while let Some(update) = downloader.next().await {
+        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        io::stdout().flush()?;
+    }
+    println!();
 
     let messages = vec![
         ChatMessage::system().with_reasoning_effort(ReasoningEffort::Low),

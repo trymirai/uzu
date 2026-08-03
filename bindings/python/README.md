@@ -38,12 +38,13 @@ async def main() -> None:
     engine_config = EngineConfig.create()
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("Qwen/Qwen3-0.6B")
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
     if model is None:
         return
 
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress}")
+        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+    print()
 
     session = await engine.chat(model, ChatConfig.create())
 
@@ -95,11 +96,12 @@ async def main() -> None:
     engine_config = EngineConfig.create()
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("Qwen/Qwen3-0.6B")
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress}")
+        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+    print()
 
     messages = [
         ChatMessage.system().with_text("You are a helpful assistant"),
@@ -142,9 +144,12 @@ async def main() -> None:
     engine_config = EngineConfig.create().with_openai_api_key("OPENAI_API_KEY")
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("gpt-5")
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
     if model is None:
         raise RuntimeError("Model not found")
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+    print()
 
     messages = [
         ChatMessage.system().with_reasoning_effort(ReasoningEffort.Low),
@@ -203,11 +208,12 @@ async def main() -> None:
     engine_config = EngineConfig.create()
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("Qwen/Qwen3-0.6B")
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress}")
+        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+    print()
 
     schema_string = json.dumps(CountryList.model_json_schema())
     messages = [
@@ -245,11 +251,12 @@ async def main() -> None:
     engine_config = EngineConfig.create()
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("trymirai/chat-moderation-router")
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress}")
+        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+    print()
 
     messages = [ClassificationMessage.user("Hi")]
 

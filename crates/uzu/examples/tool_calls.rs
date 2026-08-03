@@ -1,3 +1,5 @@
+use std::io::{self, Write};
+
 use nagare::tool::{func_def::ErrorFuture, uzu_tool_closure, uzu_tool_function};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -31,8 +33,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        println!("Download progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {}", update.progress());
+        io::stdout().flush()?;
     }
+    println!();
 
     let mut session = engine.chat(model, ChatConfig::default()).await?;
     session.add_tool(get_current_location).await?;

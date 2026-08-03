@@ -35,14 +35,15 @@ async function main() {
     let engineConfig = EngineConfig.create();
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('Qwen/Qwen3-0.6B');
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     if (!model) {
         throw new Error('Model not found');
     }
 
     for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
+        process.stdout.write(`\rDownload progress: ${update.progress}`);
     }
+    console.log();
 
     let session = await engine.chat(model, ChatConfig.create());
 
@@ -85,13 +86,14 @@ async function main() {
     let engineConfig = EngineConfig.create();
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('Qwen/Qwen3-0.6B');
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     if (!model) {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
+        process.stdout.write(`\rDownload progress: ${update.progress}`);
     }
+    console.log();
 
     let messages = [
         ChatMessage.system().withText('You are a helpful assistant'),
@@ -130,10 +132,14 @@ async function main() {
     let engineConfig = EngineConfig.create().withOpenaiApiKey('OPENAI_API_KEY');
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('gpt-5');
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     if (!model) {
         throw new Error('Model not found');
     }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${update.progress}`);
+    }
+    console.log();
 
     let messages = [
         ChatMessage.system().withReasoningEffort("Low" as ReasoningEffort),
@@ -181,13 +187,14 @@ async function main() {
     let engineConfig = EngineConfig.create();
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('Qwen/Qwen3-0.6B');
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     if (!model) {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
+        process.stdout.write(`\rDownload progress: ${update.progress}`);
     }
+    console.log();
 
     let schema = z.toJSONSchema(CountryListType);
     let schemaString = JSON.stringify(schema);
@@ -219,13 +226,14 @@ async function main() {
     let engineConfig = EngineConfig.create();
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('trymirai/chat-moderation-router');
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     if (!model) {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
+        process.stdout.write(`\rDownload progress: ${update.progress}`);
     }
+    console.log();
 
     let messages = [
         ClassificationMessage.user('Hi')

@@ -38,7 +38,7 @@ public func runToolCalls() async throws {
         throw ToolCallsExampleError.modelNotFound
     }
     for try await update in try await engine.download(model: model).iterator() {
-        print(String(format: "\u{001B}[2K\nDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
         fflush(stdout)
     }
     print()
