@@ -49,14 +49,14 @@ const getCurrentTemperature = uzuToolFunction({
 
 async function main() {
     const engine = await Engine.create(EngineConfig.create());
-    const model = await engine.model('mlx-community/Qwen3.5-9B-MLX-8bit');
+    const model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     if (!model) {
         throw new Error('Model not found');
     }
-
     for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
+        process.stdout.write(`\rDownload progress: ${update.progress}`);
     }
+    process.stdout.write('\n');
 
     const session = await engine.chat(model, ChatConfig.create());
     await session.addTool(getCurrentLocation);
