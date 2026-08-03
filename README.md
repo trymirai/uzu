@@ -232,7 +232,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start**\>:
+You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start** | **tool-calls**\>:
 
 ### Chat
 
@@ -940,6 +940,338 @@ async function main() {
 }
 
 main().catch((error) => {
+    console.error(error);
+});
+```
+
+</details>
+
+
+### Tool calls
+
+This example shows how to use external tools:
+
+<details>
+<summary>Rust</summary>
+
+```rust
+use nagare::tool::{func_def::ErrorFuture, uzu_tool_closure, uzu_tool_function};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use shoji::types::{
+    basic::{SamplingMethod, SamplingPolicy},
+    session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+};
+use uzu::engine::{Engine, EngineConfig};
+
+/// A geographic coordinate.
+#[derive(Serialize, Deserialize, JsonSchema)]
+struct Coordinate {
+    /// Latitude in decimal degrees.
+    latitude: f64,
+    /// Longitude in decimal degrees.
+    longitude: f64,
+}
+
+/// Returns current location in coordinates
+#[uzu_tool_function]
+fn get_current_location() -> Result<Coordinate, ErrorFuture> {
+    Ok(Coordinate {
+        latitude: 51.5074,
+        longitude: -0.1278,
+    })
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let engine = Engine::new(EngineConfig::default()).await?;
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
+    let downloader = engine.download(&model).await?;
+    while let Some(update) = downloader.next().await {
+        println!("Download progress: {}", update.progress());
+    }
+
+    let mut session = engine.chat(model, ChatConfig::default()).await?;
+    session.add_tool(get_current_location).await?;
+    session
+        .add_tool(uzu_tool_closure! {
+            /// Returns temperature in provided location
+            get_current_temperature: |
+                /// Latitude in decimal degrees.
+                _latitude: f64,
+                /// Longitude in decimal degrees.
+                _longitude: f64
+            | -> Result<f64, ErrorFuture> {
+                Ok(25.0)
+            }
+        })
+        .await?;
+
+    let messages = vec![
+        ChatMessage::system().with_text("You are a helpful assistant".to_string()),
+        ChatMessage::user().with_text("What temperature is it now at my location?".to_string()),
+    ];
+
+    let config = ChatReplyConfig {
+        sampling_policy: SamplingPolicy::Custom {
+            method: SamplingMethod::Greedy {},
+        },
+        ..ChatReplyConfig::default()
+    };
+    let replies = session.reply(messages.clone(), config).await?;
+    if let Some(reply) = replies.last() {
+        println!("Reasoning: {}", reply.message.reasoning().unwrap_or_default());
+        println!("Text: {}", reply.message.text().unwrap_or_default());
+    }
+
+    Ok(())
+}
+```
+
+</details>
+
+<details>
+<summary>Python</summary>
+
+```python
+import asyncio
+from typing import Annotated
+
+from pydantic import BaseModel
+
+from uzu import (
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    SamplingMethod,
+    SamplingPolicy,
+    uzu_tool_function,
+)
+
+
+class Coordinate(BaseModel):
+    """A geographic coordinate.
+
+    Attributes:
+        latitude: Latitude in decimal degrees.
+        longitude: Longitude in decimal degrees.
+    """
+
+    latitude: float
+    longitude: Annotated[float, "Longitude in decimal degrees."]
+
+
+@uzu_tool_function(name="get_location", description="Return the current location in coordinates")
+def get_current_location() -> Coordinate:
+    return Coordinate(latitude=51.5074, longitude=-0.1278)
+
+
+@uzu_tool_function
+def get_current_temperature(
+    latitude: float,
+    longitude: Annotated[float, "Longitude in decimal degrees."],
+) -> float:
+    """Return the temperature at the provided coordinates.
+
+    Args:
+        latitude: Latitude in decimal degrees.
+        longitude: This is overridden by the Annotated description.
+    """
+    _ = latitude, longitude
+    return 25.0
+
+
+async def main() -> None:
+    engine = await Engine.create(EngineConfig.create())
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        raise RuntimeError("Model not found")
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+    print()
+
+    session = await engine.chat(model, ChatConfig.create())
+    await session.add_tool(get_current_location)
+    await session.add_tool(get_current_temperature)
+
+    messages = [
+        ChatMessage.system().with_text("You are a helpful assistant"),
+        ChatMessage.user().with_text("What temperature is it now at my location?"),
+    ]
+    config = ChatReplyConfig.create().with_sampling_policy(SamplingPolicy.Custom(method=SamplingMethod.Greedy()))
+    replies = await session.reply(messages, config)
+    if replies:
+        message = replies[-1].message
+        print(f"Reasoning: {message.reasoning or ''}")
+        print(f"Text: {message.text or ''}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+</details>
+
+<details>
+<summary>Swift</summary>
+
+```swift
+import Foundation
+import FoundationModels
+import Uzu
+
+@Generable
+private struct Coordinate: Codable, Sendable {
+    @Guide(description: "Latitude in decimal degrees.")
+    let latitude: Double
+
+    @Guide(description: "Longitude in decimal degrees.")
+    let longitude: Double
+}
+
+private struct GetCurrentLocation: Tool {
+    let description = "Returns current location in coordinates"
+
+    @Generable
+    struct Arguments {
+    }
+
+    func call(arguments: Arguments) async throws -> Coordinate {
+        Coordinate(latitude: 51.5074, longitude: -0.1278)
+    }
+}
+
+private struct GetCurrentTemperature: Tool {
+    let description = "Returns temperature in provided location"
+
+    func call(arguments: Coordinate) async throws -> Double {
+        _ = arguments
+        return 25.0
+    }
+}
+
+public func runToolCalls() async throws {
+    let engine = try await Engine.create(config: .create())
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
+        throw ToolCallsExampleError.modelNotFound
+    }
+    for try await update in try await engine.download(model: model).iterator() {
+        print(String(format: "\u{001B}[2K\nDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
+    }
+    print()
+
+    let session = try await engine.chat(model: model, config: .create())
+    try await session.addTool(GetCurrentLocation())
+    try await session.addTool(GetCurrentTemperature())
+
+    let messages = [
+        ChatMessage.system().withText(text: "You are a helpful assistant"),
+        ChatMessage.user().withText(text: "What temperature is it now at my location?"),
+    ]
+    let reply_config = ChatReplyConfig.create().withSamplingMethod(samplingMethod: .greedy)
+    let replies = try await session.reply(input: messages, config: reply_config)
+    guard let message = replies.last?.message else {
+        return
+    }
+
+    print("Reasoning: \(message.reasoning() ?? "")")
+    print("Text: \(message.text() ?? "")")
+}
+
+private enum ToolCallsExampleError: Swift.Error {
+    case modelNotFound
+}
+```
+
+</details>
+
+<details>
+<summary>TypeScript</summary>
+
+```ts
+import {
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    SamplingMethodGreedy,
+    SamplingPolicyCustom,
+    uzuToolFunction,
+} from '@trymirai/uzu';
+import * as z from 'zod';
+
+
+const Coordinate = z.object({
+    latitude: z.number().describe('Latitude in decimal degrees.'),
+    longitude: z.number().describe('Longitude in decimal degrees.'),
+});
+
+type Coordinate = z.infer<typeof Coordinate>;
+
+
+const getCurrentLocation = uzuToolFunction({
+    name: 'get_location',
+    description: 'Return the current location in coordinates',
+    parameters: z.object({}),
+    returns: Coordinate,
+    handler: (): Coordinate => ({
+        latitude: 51.5074,
+        longitude: -0.1278,
+    }),
+});
+
+
+async function calculateCurrentTemperature({latitude, longitude}: Coordinate): Promise<number> {
+    if (!Number.isFinite(Math.hypot(latitude, longitude))) {
+        throw new RangeError('Coordinates must be finite');
+    }
+    return 25;
+}
+
+const getCurrentTemperature = uzuToolFunction({
+    name: 'get_current_temperature',
+    description: 'Return the temperature at the provided coordinates',
+    parameters: Coordinate,
+    returns: z.number(),
+    handler: calculateCurrentTemperature,
+});
+
+
+async function main() {
+    const engine = await Engine.create(EngineConfig.create());
+    const model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${update.progress}`);
+    }
+    process.stdout.write('\n');
+
+    const session = await engine.chat(model, ChatConfig.create());
+    await session.addTool(getCurrentLocation);
+    await session.addTool(getCurrentTemperature);
+
+    const messages = [
+        ChatMessage.system().withText('You are a helpful assistant'),
+        ChatMessage.user().withText('What temperature is it now at my location?'),
+    ];
+    const config = ChatReplyConfig.create().withSamplingPolicy(
+        new SamplingPolicyCustom(new SamplingMethodGreedy()),
+    );
+    const replies = await session.reply(messages, config);
+    const message = replies[replies.length - 1]?.message;
+    if (message) {
+        console.log('Reasoning:', message.reasoning ?? '');
+        console.log('Text:', message.text ?? '');
+    }
+}
+
+main().catch((error: unknown) => {
     console.error(error);
 });
 ```

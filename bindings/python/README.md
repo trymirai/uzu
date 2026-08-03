@@ -72,7 +72,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-You can run any example via `cargo tools example` \<**python**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start**\>:
+You can run any example via `cargo tools example` \<**python**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start** | **tool-calls**\>:
 
 ### Chat
 
@@ -256,6 +256,89 @@ async def main() -> None:
     session = await engine.classification(model)
     output = await session.classify(messages)
     print(f"Output: {output.probabilities.values}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Tool calls
+
+This example shows how to use external tools:
+
+```python
+import asyncio
+from typing import Annotated
+
+from pydantic import BaseModel
+
+from uzu import (
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    SamplingMethod,
+    SamplingPolicy,
+    uzu_tool_function,
+)
+
+
+class Coordinate(BaseModel):
+    """A geographic coordinate.
+
+    Attributes:
+        latitude: Latitude in decimal degrees.
+        longitude: Longitude in decimal degrees.
+    """
+
+    latitude: float
+    longitude: Annotated[float, "Longitude in decimal degrees."]
+
+
+@uzu_tool_function(name="get_location", description="Return the current location in coordinates")
+def get_current_location() -> Coordinate:
+    return Coordinate(latitude=51.5074, longitude=-0.1278)
+
+
+@uzu_tool_function
+def get_current_temperature(
+    latitude: float,
+    longitude: Annotated[float, "Longitude in decimal degrees."],
+) -> float:
+    """Return the temperature at the provided coordinates.
+
+    Args:
+        latitude: Latitude in decimal degrees.
+        longitude: This is overridden by the Annotated description.
+    """
+    _ = latitude, longitude
+    return 25.0
+
+
+async def main() -> None:
+    engine = await Engine.create(EngineConfig.create())
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        raise RuntimeError("Model not found")
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress}", end="", flush=True)
+    print()
+
+    session = await engine.chat(model, ChatConfig.create())
+    await session.add_tool(get_current_location)
+    await session.add_tool(get_current_temperature)
+
+    messages = [
+        ChatMessage.system().with_text("You are a helpful assistant"),
+        ChatMessage.user().with_text("What temperature is it now at my location?"),
+    ]
+    config = ChatReplyConfig.create().with_sampling_policy(SamplingPolicy.Custom(method=SamplingMethod.Greedy()))
+    replies = await session.reply(messages, config)
+    if replies:
+        message = replies[-1].message
+        print(f"Reasoning: {message.reasoning or ''}")
+        print(f"Text: {message.text or ''}")
 
 
 if __name__ == "__main__":
