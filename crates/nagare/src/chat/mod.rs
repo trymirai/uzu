@@ -539,6 +539,11 @@ impl ChatSession {
         self.messages.lock().await.clone()
     }
 
+    #[bindings::export(Method(Getter))]
+    pub async fn supports_tool_calls(&self) -> bool {
+        self.instance.lock().await.supports_tool_calls()
+    }
+
     #[bindings::export(Method)]
     pub async fn reset(&self) -> Result<(), ChatSessionError> {
         {

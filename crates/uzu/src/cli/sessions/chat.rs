@@ -1,7 +1,11 @@
 use std::any::Any;
 
+use chrono::Local;
 use iocraft::prelude::*;
-use nagare::chat::{ChatSession, ChatSessionStreamChunk};
+use nagare::{
+    chat::{ChatSession, ChatSessionStreamChunk},
+    tool::uzu_tool_function,
+};
 use shoji::types::{
     basic::CancelToken,
     model::Model,
@@ -106,7 +110,15 @@ pub async fn ensure_session(
     }
 
     let engine = state.read().engine.clone();
-    let session = match engine.chat(model.clone(), ChatConfig::default()).await {
+    let session = match async {
+        let mut session = engine.chat(model.clone(), ChatConfig::default()).await?;
+        if session.supports_tool_calls().await {
+            session.add_tool(get_current_date_time).await?;
+        }
+        Ok::<_, anyhow::Error>(session)
+    }
+    .await
+    {
         Ok(session) => session,
         Err(error) => {
             let mut state = state.write();
@@ -221,4 +233,10 @@ fn chat_state_mut(state: &mut ApplicationState) -> Option<&mut ChatSessionState>
         .as_mut()
         .and_then(|model_state| model_state.session_state.as_deref_mut())
         .and_then(|session_state| session_state.as_any_mut().downcast_mut::<ChatSessionState>())
+}
+
+/// Returns current date and time in RFC 3339 format: YYYY-MM-DDTHH:MM:SSZ
+#[uzu_tool_function]
+fn get_current_date_time() -> String {
+    Local::now().to_rfc3339()
 }
