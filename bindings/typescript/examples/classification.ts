@@ -4,7 +4,7 @@ async function main() {
     let engineConfig = EngineConfig.create();
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    let model = await engine.model('trymirai/chat-moderation-router');
     if (!model) {
         throw new Error('Model not found');
     }

@@ -4,14 +4,10 @@ async function main() {
     let engineConfig = EngineConfig.create().withOpenaiApiKey('OPENAI_API_KEY');
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    let model = await engine.model('gpt-5');
     if (!model) {
         throw new Error('Model not found');
     }
-    for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
-    }
-    console.log();
 
     let messages = [
         ChatMessage.system().withReasoningEffort("Low" as ReasoningEffort),

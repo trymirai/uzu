@@ -4,7 +4,7 @@ import Uzu
 public func runClassification() async throws {
     let engine = try await Engine.create(config: .create())
     
-    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
+    guard let model = try await engine.model(identifier: "trymirai/chat-moderation-router") else {
         return
     }
     for try await update in try await engine.download(model: model).iterator() {

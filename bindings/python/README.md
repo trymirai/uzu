@@ -144,12 +144,9 @@ async def main() -> None:
     engine_config = EngineConfig.create().with_openai_api_key("OPENAI_API_KEY")
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    model = await engine.model("gpt-5")
     if model is None:
         raise RuntimeError("Model not found")
-    async for update in (await engine.download(model)).iterator():
-        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
-    print()
 
     messages = [
         ChatMessage.system().with_reasoning_effort(ReasoningEffort.Low),
@@ -251,7 +248,7 @@ async def main() -> None:
     engine_config = EngineConfig.create()
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    model = await engine.model("trymirai/chat-moderation-router")
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():

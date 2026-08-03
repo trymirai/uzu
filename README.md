@@ -461,8 +461,6 @@ In this example, we will get a reply to a specific list of messages from a cloud
 <summary>Rust</summary>
 
 ```rust
-use std::io::{self, Write};
-
 use uzu::{
     engine::{Engine, EngineConfig},
     types::{
@@ -476,13 +474,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_config = EngineConfig::default().with_openai_api_key("OPENAI_API_KEY".to_string());
     let engine = Engine::new(engine_config).await?;
 
-    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
-    let downloader = engine.download(&model).await?;
-    while let Some(update) = downloader.next().await {
-        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
-        io::stdout().flush()?;
-    }
-    println!();
+    let model = engine.model("gpt-5".to_string()).await?.ok_or("Model not found")?;
 
     let messages = vec![
         ChatMessage::system().with_reasoning_effort(ReasoningEffort::Low),
@@ -515,12 +507,9 @@ async def main() -> None:
     engine_config = EngineConfig.create().with_openai_api_key("OPENAI_API_KEY")
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    model = await engine.model("gpt-5")
     if model is None:
         raise RuntimeError("Model not found")
-    async for update in (await engine.download(model)).iterator():
-        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
-    print()
 
     messages = [
         ChatMessage.system().with_reasoning_effort(ReasoningEffort.Low),
@@ -545,21 +534,15 @@ if __name__ == "__main__":
 <summary>Swift</summary>
 
 ```swift
-import Foundation
 import Uzu
 
 public func runChatCloud() async throws {
     let engineConfig = EngineConfig.create().withOpenaiApiKey(openaiApiKey: "OPENAI_API_KEY")
     let engine = try await Engine.create(config: engineConfig)
     
-    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
+    guard let model = try await engine.model(identifier: "gpt-5") else {
         return
     }
-    for try await update in try await engine.download(model: model).iterator() {
-        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
-        fflush(stdout)
-    }
-    print()
     
     let messages = [
         ChatMessage.system().withReasoningEffort(reasoningEffort: .low),
@@ -589,14 +572,10 @@ async function main() {
     let engineConfig = EngineConfig.create().withOpenaiApiKey('OPENAI_API_KEY');
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    let model = await engine.model('gpt-5');
     if (!model) {
         throw new Error('Model not found');
     }
-    for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
-    }
-    console.log();
 
     let messages = [
         ChatMessage.system().withReasoningEffort("Low" as ReasoningEffort),
@@ -884,7 +863,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_config = EngineConfig::default();
     let engine = Engine::new(engine_config).await?;
 
-    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
+    let model = engine.model("trymirai/chat-moderation-router".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
         print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
@@ -917,7 +896,7 @@ async def main() -> None:
     engine_config = EngineConfig.create()
     engine = await Engine.create(engine_config)
 
-    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    model = await engine.model("trymirai/chat-moderation-router")
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
@@ -947,7 +926,7 @@ import Uzu
 public func runClassification() async throws {
     let engine = try await Engine.create(config: .create())
     
-    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
+    guard let model = try await engine.model(identifier: "trymirai/chat-moderation-router") else {
         return
     }
     for try await update in try await engine.download(model: model).iterator() {
@@ -978,7 +957,7 @@ async function main() {
     let engineConfig = EngineConfig.create();
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    let model = await engine.model('trymirai/chat-moderation-router');
     if (!model) {
         throw new Error('Model not found');
     }
