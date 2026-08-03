@@ -157,7 +157,8 @@ impl<B: Backend> DFlashSpeculator<B> {
         }
         let root_position = state.context_length();
 
-        let mut encoder = Encoder::new(&*self.context).map_err(DFlashTreeError::Backend)?;
+        let mut encoder =
+            Encoder::new_with_name(&*self.context, Some("speculator propose")).map_err(DFlashTreeError::Backend)?;
         let DFlashDraftOutput {
             candidates,
             draft_hidden,

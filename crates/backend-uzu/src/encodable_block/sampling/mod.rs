@@ -92,6 +92,8 @@ impl<B: Backend> Sampling<B> {
         sampling_range: Range<usize>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        encoder.push_debug_group("sampling");
+
         let (is_stochastic, temperature, top_k, top_p, min_p, repetition_penalty, suffix_repetition_length) =
             match sampling_method {
                 SamplingMethod::Greedy => (false, None, None, None, None, None, None),
@@ -184,6 +186,8 @@ impl<B: Backend> Sampling<B> {
             sampling_range.len() as u32,
             encoder,
         );
+
+        encoder.pop_debug_group();
 
         Ok(output)
     }

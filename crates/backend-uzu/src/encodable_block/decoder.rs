@@ -124,6 +124,8 @@ impl<B: Backend> Decoder<B> {
         state: &mut TransformerState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
+        encoder.push_debug_group("decoder");
+
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), encoder)?;
 
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
@@ -160,6 +162,8 @@ impl<B: Backend> Decoder<B> {
         } else {
             transformer_output.output
         };
+
+        encoder.pop_debug_group();
 
         Ok(DecoderEncodeOutput {
             logits,

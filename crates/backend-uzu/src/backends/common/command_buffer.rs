@@ -91,6 +91,13 @@ pub trait CommandBufferEncoding {
         before: AccessFlags,
     );
 
+    fn push_debug_group(
+        &mut self,
+        name: &str,
+    );
+
+    fn pop_debug_group(&mut self);
+
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }
 

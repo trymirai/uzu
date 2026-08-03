@@ -8,7 +8,8 @@ pub trait Context: Sized + Send + Sync {
     fn new() -> Result<Arc<Self>, <Self::Backend as Backend>::Error>;
 
     fn create_command_buffer(
-        &self
+        &self,
+        name: Option<&str>,
     ) -> Result<<<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Initial, <Self::Backend as Backend>::Error>;
 
     fn create_buffer(

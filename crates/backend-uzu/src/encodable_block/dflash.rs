@@ -227,6 +227,8 @@ impl<B: Backend> DFlashDraft<B> {
             return Ok(());
         }
 
+        encoder.push_debug_group("dflash append state");
+
         let num_tokens = accepted_indices.len();
         let captured_layer_count = self.target_feature_input_dim / self.model_dim;
         assert_eq!(target_features.len(), captured_layer_count);
@@ -281,6 +283,9 @@ impl<B: Backend> DFlashDraft<B> {
         }
 
         state.context_length += num_tokens;
+
+        encoder.pop_debug_group();
+
         Ok(())
     }
 
@@ -334,6 +339,8 @@ impl<B: Backend> DFlashDraft<B> {
         candidate_count: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<DFlashDraftOutput<B>, DFlashDraftEncodeError<B>> {
+        encoder.push_debug_group("dflash draft");
+
         let mut token_ids = encoder
             .allocate_constant(self.block_size * DataType::U32.size_in_bytes())
             .map_err(DFlashDraftEncodeError::Backend)?;
@@ -358,6 +365,8 @@ impl<B: Backend> DFlashDraft<B> {
         drop(logits);
         drop(token_ids);
         drop(lookahead_hidden);
+
+        encoder.pop_debug_group();
 
         Ok(DFlashDraftOutput {
             candidates,

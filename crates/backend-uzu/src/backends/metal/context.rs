@@ -11,8 +11,8 @@ use std::{
 use metal::MTLSharedEvent;
 use metal::{
     MTL4CommandQueue, MTL4CommandQueueExt, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager,
-    MTLCommandQueue, MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent,
-    MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
+    MTLCommandBufferExt, MTLCommandQueue, MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
+    MTLEvent, MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::{Mutex, MutexGuard};
@@ -210,11 +210,14 @@ impl Context for MetalContext {
         self.allocator.create_pool(reusable)
     }
 
-    fn create_command_buffer(&self) -> Result<MetalCommandBufferInitial, MetalError> {
-        Ok(MetalCommandBufferInitial::new(
-            self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
-            self.weak_self.upgrade().unwrap(), // never fails
-        ))
+    fn create_command_buffer(
+        &self,
+        name: Option<&str>,
+    ) -> Result<MetalCommandBufferInitial, MetalError> {
+        let command_buffer = self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?;
+        command_buffer.set_label(name);
+        let context = self.weak_self.upgrade().unwrap(); // never fails
+        Ok(MetalCommandBufferInitial::new(command_buffer, context))
     }
 
     fn create_sparse_buffer(

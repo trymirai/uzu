@@ -43,14 +43,22 @@ pub struct Encoder<'encoding, B: Backend> {
 
 impl<'encoding, B: Backend> Encoder<'encoding, B> {
     pub fn new(context: &'encoding B::Context) -> Result<Self, B::Error> {
-        Self::new_with_pool(context, Arc::new(context.create_allocation_pool(false)))
+        Self::new_with_name(context, None)
     }
 
-    pub fn new_with_pool(
+    pub fn new_with_name(
+        context: &'encoding B::Context,
+        name: Option<&str>,
+    ) -> Result<Self, B::Error> {
+        Self::new_with_pool_name(context, Arc::new(context.create_allocation_pool(false)), name)
+    }
+
+    pub fn new_with_pool_name(
         context: &'encoding B::Context,
         allocation_pool: Arc<AllocationPool<B>>,
+        name: Option<&str>,
     ) -> Result<Self, B::Error> {
-        let command_buffer = context.create_command_buffer()?.start_encoding();
+        let command_buffer = context.create_command_buffer(name)?.start_encoding();
         let hazard_tracker = HazardTracker::new();
 
         Ok(Self {
@@ -142,6 +150,17 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
             flags: AccessFlags::copy_write(),
         }]);
         self.command_buffer.encode_fill(dst_buffer_range, value);
+    }
+
+    pub fn push_debug_group(
+        &mut self,
+        name: &str,
+    ) {
+        self.command_buffer.push_debug_group(name);
+    }
+
+    pub fn pop_debug_group(&mut self) {
+        self.command_buffer.pop_debug_group();
     }
 
     pub fn access(
