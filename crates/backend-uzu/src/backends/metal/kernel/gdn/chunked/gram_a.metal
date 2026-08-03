@@ -128,8 +128,8 @@ KERNEL(DeltaNetChunkedGramA)(
 
     if (has_diag) {
       simdgroup_barrier(mem_flags::mem_threadgroup);
-      device float* a_inv_block =
-          a_inv + ((chunk_idx * num_v_heads + hv_idx) * num_blocks + row_tile_idx) * (DIAG_BLOCK_SIZE * DIAG_BLOCK_SIZE);
+      device float* a_inv_block = a_inv + ((chunk_idx * num_v_heads + hv_idx) * num_blocks + row_tile_idx) *
+                                              (DIAG_BLOCK_SIZE * DIAG_BLOCK_SIZE);
       invert_lower_triangular_block<DIAG_BLOCK_SIZE>(a_inv_block, diag_a_tile, valid_rows, lane);
       simdgroup_barrier(mem_flags::mem_threadgroup);
     }
