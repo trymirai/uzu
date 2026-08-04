@@ -15,6 +15,7 @@
 #include "quant_scale_bias.h"
 #include "quant_scale_zero_point.h"
 #include "../../common/quant_unpack.h"
+#include "quantized_right_operand.h"
 
 using namespace metal;
 
@@ -187,57 +188,6 @@ struct MxuMmaCore {
     return left_tile;
   }
 
-  template <bool ALIGNED_N>
-  static METAL_FUNC uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps<>> load_int8_weight_tile(
-      const device uint8_t* b_packed_simdgroup,
-      const int k_element_offset,
-      const int b_row_stride_bytes,
-      const short simdgroup_limit_n,
-      const short2 position,
-      const ushort simd_lane_id
-  ) {
-    using Ops = uzu::matmul::MxuFragmentOps<>;
-    uzu::matmul::Fragment<int8_t, TILES_N, TILES_K, Ops> right_tile;
-    if constexpr (BITS == 4) {
-      METAL_PRAGMA_UNROLL
-      for (ushort tile_n = 0; tile_n < TILES_N; ++tile_n) {
-        METAL_PRAGMA_UNROLL
-        for (ushort tile_k = 0; tile_k < TILES_K; ++tile_k) {
-          thread auto& weight_vector = right_tile.fragment_at(tile_n, tile_k);
-          METAL_PRAGMA_UNROLL
-          for (ushort thread_row = 0; thread_row < Ops::THREAD_ELEMENT_ROWS; ++thread_row) {
-            const short row =
-                short(tile_n * Ops::FRAGMENT_ROWS) + position.y + short(thread_row * Ops::THREAD_ELEMENT_ROW_STRIDE);
-            const ushort element_base = thread_row * Ops::THREAD_ELEMENT_COLS;
-            char4 codes = char4(0);
-            if (ALIGNED_N || row < simdgroup_limit_n) {
-              const int k_base = k_element_offset + int(tile_k * Ops::FRAGMENT_COLS) + int(position.x);
-              const ushort packed = *reinterpret_cast<const device ushort*>(
-                  b_packed_simdgroup + int(row) * b_row_stride_bytes + (k_base >> 1)
-              );
-              codes = unpack_signed_nibbles_to_int8(uint(packed));
-            }
-            weight_vector[element_base + 0] = codes.x;
-            weight_vector[element_base + 1] = codes.y;
-            weight_vector[element_base + 2] = codes.z;
-            weight_vector[element_base + 3] = codes.w;
-          }
-        }
-      }
-    } else {
-      static_assert(BITS == 8, "symmetric int8 activations only support 4-bit or 8-bit weights");
-      auto right_src = uzu::matmul::fragment_source(
-          reinterpret_cast<const device int8_t*>(b_packed_simdgroup) + k_element_offset,
-          b_row_stride_bytes
-      );
-      if constexpr (!ALIGNED_N) {
-        right_src = right_src.bounded(simdgroup_limit_n, SIMDGROUP_BLOCK_K);
-      }
-      right_tile.load_from(simd_lane_id, right_src);
-    }
-    return right_tile;
-  }
-
   // Per-thread cache holding one value per distinct fragment row (or column) line
   // a thread owns, addressable either by slot or by offset from the thread origin.
   template <ushort TILES, ushort SLOTS_PER_TILE, ushort FRAGMENT_EXTENT, ushort SLOT_STRIDE>
@@ -399,24 +349,16 @@ struct MxuMmaCore {
         );
 
         uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> chunk_products;
-        if constexpr (BITS == 4 && ALIGNED_N) {
-          Ops::template fragment_matmul_int8_device_weights<metal::int4b_format>(
-              chunk_products,
-              activation_tile,
-              b_packed_simdgroup + (k_element_offset >> 1),
-              b_row_stride_bytes
-          );
-        } else {
-          auto right_tile = load_int8_weight_tile<ALIGNED_N>(
-              b_packed_simdgroup,
-              k_element_offset,
-              b_row_stride_bytes,
-              simdgroup_limit_n,
-              position,
-              thread_context.simd_lane_id
-          );
-          Ops::template fragment_mm<false, true>(chunk_products, activation_tile, right_tile);
-        }
+        using RightFormat = IntegerFormat<BITS, Signedness::Signed>;
+        auto right = QuantizedRightOperand<RightFormat, ALIGNED_N, TILES_N, TILES_K, SIMDGROUP_BLOCK_K>::make(
+            b_packed_simdgroup,
+            k_element_offset,
+            b_row_stride_bytes,
+            simdgroup_limit_n,
+            position,
+            thread_context.simd_lane_id
+        );
+        Ops::template fragment_mm<false, true>(chunk_products, activation_tile, right);
 
         const uint act_group_index = k_offset_act_groups + uint(weight_group * act_chunks_per_weight_group + act_chunk);
         ActivationLineCache activation_scales;

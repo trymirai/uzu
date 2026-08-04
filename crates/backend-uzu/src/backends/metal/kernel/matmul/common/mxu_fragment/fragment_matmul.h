@@ -1,3 +1,47 @@
+// MPP has no valid 16x16x16 op; fragment_mma pairs fragments into 16x32.
+template <
+    bool ACCUMULATE,
+    typename CType,
+    typename AType,
+    typename BType,
+    bool transpose_a,
+    bool transpose_b,
+    typename MarshalInputs>
+METAL_FUNC static void matmul(
+    thread ThreadVector<CType>& output_0,
+    thread ThreadVector<CType>& output_1,
+    MarshalInputs marshal_inputs
+) {
+  constexpr auto descriptor = mpp::tensor_ops::matmul2d_descriptor(
+      FRAGMENT_ROWS,
+      2 * FRAGMENT_COLS,
+      FRAGMENT_COLS,
+      transpose_a,
+      transpose_b,
+      RELAXED,
+      ACCUMULATE ? MatmulMode::multiply_accumulate : MatmulMode::multiply
+  );
+
+  mpp::tensor_ops::matmul2d<descriptor, metal::execution_simdgroup> matmul_op;
+
+  auto cooperative_left = matmul_op.template get_left_input_cooperative_tensor<AType, BType, CType>();
+  auto cooperative_right = matmul_op.template get_right_input_cooperative_tensor<AType, BType, CType>();
+  auto cooperative_output = matmul_op.template get_destination_cooperative_tensor<
+      decltype(cooperative_left),
+      decltype(cooperative_right),
+      CType>();
+
+  marshal_inputs(cooperative_left, cooperative_right);
+
+  if constexpr (ACCUMULATE) {
+    load_paired_vectors(cooperative_output, output_0, output_1);
+  }
+
+  matmul_op.run(cooperative_left, cooperative_right, cooperative_output);
+
+  store_paired_vectors(cooperative_output, output_0, output_1);
+}
+
 template <
     bool ACCUMULATE,
     bool transpose_a,
@@ -34,6 +78,10 @@ METAL_FUNC static void fragment_matmul(
   auto matmul_paired_outputs = [&](ushort row, ushort col, ushort depth_index, auto use_multiply_accumulate) {
     constexpr bool matmul_accumulate = decltype(use_multiply_accumulate)::value;
     if constexpr (pair_output_rows) {
+      static_assert(RELAXED, "strict MXU row-pairing is not implemented");
+      const thread auto& left_row_0 = left.fragment_at(row, depth_index, transpose_left);
+      const thread auto& left_row_1 = left.fragment_at(row + 1, depth_index, transpose_left);
+      const thread auto& right_operand = right.fragment_at(depth_index, col, transpose_right);
       matmul<
           matmul_accumulate,
           typename OutputFragment::ElementType,
@@ -43,13 +91,18 @@ METAL_FUNC static void fragment_matmul(
           transpose_b>(
           output.fragment_at(row, col),
           output.fragment_at(row + 1, col),
-          left.fragment_at(row, depth_index, transpose_left),
-          left.fragment_at(row + 1, depth_index, transpose_left),
-          transpose_left,
-          right.fragment_at(depth_index, col, transpose_right),
-          transpose_right
+          [&](thread auto& cooperative_left, thread auto& cooperative_right) {
+            load_paired_vectors(cooperative_left, left_row_0, left_row_1);
+            METAL_PRAGMA_UNROLL
+            for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
+              cooperative_right[i] = right_operand[i];
+            }
+          }
       );
     } else {
+      const thread auto& left_operand = left.fragment_at(row, depth_index, transpose_left);
+      const thread auto& right_col_0 = right.fragment_at(depth_index, col, transpose_right);
+      const thread auto& right_col_1 = right.fragment_at(depth_index, col + 1, transpose_right);
       matmul<
           matmul_accumulate,
           typename OutputFragment::ElementType,
@@ -59,11 +112,13 @@ METAL_FUNC static void fragment_matmul(
           transpose_b>(
           output.fragment_at(row, col),
           output.fragment_at(row, col + 1),
-          left.fragment_at(row, depth_index, transpose_left),
-          transpose_left,
-          right.fragment_at(depth_index, col, transpose_right),
-          right.fragment_at(depth_index, col + 1, transpose_right),
-          transpose_right
+          [&](thread auto& cooperative_left, thread auto& cooperative_right) {
+            METAL_PRAGMA_UNROLL
+            for (ushort i = 0; i < ELEMENTS_PER_THREAD; i++) {
+              cooperative_left[i] = left_operand[i];
+            }
+            load_paired_vectors(cooperative_right, right_col_0, right_col_1);
+          }
       );
     }
   };
