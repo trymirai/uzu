@@ -29,7 +29,10 @@ async function main() {
     let stream = await session.replyWithStream(messages, ChatReplyConfig.create());
     let message: ChatMessage | undefined;
     for await (const chunk of stream) {
-        if (chunk instanceof ChatSessionStreamChunkError) {
+        if (chunk instanceof ChatSessionStreamChunkReplies) {
+            message = chunk.replies[0]?.message;
+            console.log('Generated tokens: ', chunk.replies[0]?.stats.tokensCountOutput);
+        } else if (chunk instanceof ChatSessionStreamChunkError) {
             console.error('Error: ', chunk.error);
         }
     }
