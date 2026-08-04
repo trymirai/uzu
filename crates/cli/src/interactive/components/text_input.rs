@@ -6,7 +6,7 @@ use std::{
 use iocraft::prelude::*;
 use tokio::sync::watch;
 
-use crate::cli::components::RenderedText;
+use crate::interactive::components::RenderedText;
 
 const ENTER_SUBMIT_DELAY: Duration = Duration::from_millis(50);
 

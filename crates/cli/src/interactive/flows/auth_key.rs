@@ -2,7 +2,7 @@ use iocraft::prelude::*;
 use unicode_width::UnicodeWidthStr;
 use uzu::settings::SettingKind;
 
-use crate::cli::{
+use crate::interactive::{
     components::{ApplicationState, InputType, TextInput, TextInputFocus},
     flows::{Flow, FlowEvent},
     helpers::SYMBOL_INPUT_RESULT,

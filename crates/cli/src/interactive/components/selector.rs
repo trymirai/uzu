@@ -1,7 +1,7 @@
 use iocraft::prelude::*;
 use unicode_width::UnicodeWidthStr;
 
-use crate::cli::{components::Gradient, helpers::ColorRgb};
+use crate::interactive::{components::Gradient, helpers::ColorRgb};
 
 const ICON_SELECTED: &str = "[x]";
 const ICON_UNSELECTED: &str = "[ ]";

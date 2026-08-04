@@ -1,6 +1,6 @@
 use iocraft::prelude::*;
 
-use crate::cli::{
+use crate::interactive::{
     components::{ApplicationState, Selector, SelectorItem, SelectorStyle, Theme},
     flows::{Flow, FlowEvent},
 };

@@ -1,6 +1,6 @@
 use iocraft::{prelude::*, taffy::style::Style};
 
-use crate::cli::helpers::ColorRgb;
+use crate::interactive::helpers::ColorRgb;
 
 #[with_layout_style_props]
 #[non_exhaustive]

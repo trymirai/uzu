@@ -1,6 +1,6 @@
 use iocraft::prelude::*;
 
-use crate::cli::{
+use crate::interactive::{
     components::{ApplicationState, Gradient},
     helpers::ColorRgb,
 };

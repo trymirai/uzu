@@ -1,6 +1,6 @@
 use iocraft::prelude::*;
 
-use crate::cli::components::ApplicationState;
+use crate::interactive::components::ApplicationState;
 
 const DEFAULT_LABEL: &str = "Loading...";
 

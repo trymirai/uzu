@@ -4,7 +4,7 @@ pub mod text_to_speech;
 
 use std::any::Any;
 
-use crate::cli::components::HistoryCellType;
+use crate::interactive::components::HistoryCellType;
 
 pub trait SessionState: Any + Send + Sync {
     fn as_any(&self) -> &dyn Any;

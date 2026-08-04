@@ -4,7 +4,7 @@ use uzu::engine::config::{
     KEY_OPENAI_API_KEY, KEY_OPENROUTER_API_KEY, KEY_XAI_API_KEY,
 };
 
-use crate::cli::{
+use crate::interactive::{
     components::{ApplicationState, Selector, SelectorItem, SelectorStyle},
     flows::{
         Flow, FlowEvent,

@@ -12,7 +12,7 @@ use shoji::types::{
     session::chat::{ChatConfig, ChatMessage, ChatReply, ChatReplyConfig},
 };
 
-use crate::cli::{
+use crate::interactive::{
     components::{ApplicationState, HistoryCellType},
     helpers::HINT_SESSION_INTERRUPT,
     sessions::SessionState,

@@ -2,7 +2,7 @@ use backend_uzu::VERSION;
 use indoc::indoc;
 use iocraft::prelude::*;
 
-use crate::cli::components::ApplicationState;
+use crate::interactive::components::ApplicationState;
 
 const LOGO: &str = indoc! {r"
   _ __ ___   (_)  _ __   __ _  (_)

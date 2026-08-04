@@ -4,7 +4,7 @@ use iocraft::prelude::*;
 use shoji::types::model::Model;
 use uzu::storage::types::DownloadState;
 
-use crate::cli::{
+use crate::interactive::{
     components::{ApplicationState, Loading, ModelCapabilities, ModelState, Selector, SelectorItem, SelectorStyle},
     flows::{Flow, FlowEvent},
 };

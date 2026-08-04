@@ -6,7 +6,7 @@ use uzu::{
     storage::types::{DownloadPhase, DownloadState},
 };
 
-use crate::cli::{
+use crate::interactive::{
     components::{
         CommandInput, HistoryCell, HistoryCellType, Logo, ModelCapabilities, Preferences, SelectedModel, Theme,
     },

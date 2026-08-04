@@ -4,7 +4,7 @@ use iocraft::prelude::*;
 use nagare::classification::ClassificationSession;
 use shoji::types::{model::Model, session::classification::ClassificationMessage};
 
-use crate::cli::{
+use crate::interactive::{
     components::{ApplicationState, HistoryCellType},
     sessions::SessionState,
 };

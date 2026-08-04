@@ -4,7 +4,7 @@ use iocraft::prelude::*;
 use tokio_stream::StreamExt;
 use uzu::storage::types::DownloadPhase;
 
-use crate::cli::components::{ApplicationState, ModelCapabilities, ProgressBar, ThinkingSupport};
+use crate::interactive::components::{ApplicationState, ModelCapabilities, ProgressBar, ThinkingSupport};
 
 const DOWNLOAD_PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_millis(150);
 

@@ -191,7 +191,7 @@ impl ModelCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::components::preferences::ThinkingPreference;
+    use crate::interactive::components::preferences::ThinkingPreference;
 
     #[test]
     fn toggle_emits_explicit_effort_each_state() {

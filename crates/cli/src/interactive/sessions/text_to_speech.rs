@@ -5,7 +5,7 @@ use nagare::text_to_speech::{TextToSpeechSession, TextToSpeechSessionStreamChunk
 use shoji::types::{basic::CancelToken, model::Model, session::text_to_speech::TextToSpeechStats};
 use uzu::player::Player;
 
-use crate::cli::{
+use crate::interactive::{
     components::{ApplicationState, HistoryCellType},
     helpers::HINT_SESSION_INTERRUPT,
     sessions::SessionState,

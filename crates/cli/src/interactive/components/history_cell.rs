@@ -5,7 +5,7 @@ use shoji::types::session::{
     text_to_speech::TextToSpeechStats,
 };
 
-use crate::cli::{
+use crate::interactive::{
     components::ApplicationState,
     helpers::{SYMBOL_COMMAND, SYMBOL_INPUT, SYMBOL_INPUT_RESULT, SYMBOL_LONG_DASH},
 };

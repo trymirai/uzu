@@ -2,7 +2,7 @@ use indexmap::IndexSet;
 use iocraft::prelude::*;
 use shoji::types::model::ModelFamily;
 
-use crate::cli::{
+use crate::interactive::{
     components::{ApplicationState, Loading, Selector, SelectorItem, SelectorStyle},
     flows::{Flow, FlowEvent, ModelsFlow},
 };

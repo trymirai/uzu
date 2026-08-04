@@ -3,7 +3,7 @@ use std::sync::Arc;
 use iocraft::prelude::*;
 use shoji::types::model::{Model, ModelRegistry};
 
-use crate::cli::{
+use crate::interactive::{
     components::{ApplicationState, Loading, Selector, SelectorItem, SelectorStyle},
     flows::{Flow, FlowEvent, ModelFamiliesFlow, ModelsFlow},
 };
