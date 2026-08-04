@@ -11,10 +11,10 @@
 #include "../generated/gemm.h"
 #include "block_geometry.h"
 #include "gemm_tiling.h"
-#include "quant_pack.h"
+#include "../../common/quant_pack.h"
 #include "quant_scale_bias.h"
 #include "quant_scale_zero_point.h"
-#include "quant_unpack.h"
+#include "../../common/quant_unpack.h"
 
 using namespace metal;
 
