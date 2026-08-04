@@ -441,6 +441,30 @@ fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterBool : FfiConverter {
+    typealias FfiType = Int8
+    typealias SwiftType = Bool
+
+    public static func lift(_ value: Int8) throws -> Bool {
+        return value != 0
+    }
+
+    public static func lower(_ value: Bool) -> Int8 {
+        return value ? 1 : 0
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Bool {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Bool, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -497,6 +521,8 @@ public protocol ChatSessionProtocol: AnyObject, Sendable {
     func reset() async throws 
     
     func state() async  -> ChatSessionState
+    
+    func supportsToolCalls() async  -> Bool
     
 }
 open class ChatSession: ChatSessionProtocol, @unchecked Sendable {
@@ -669,6 +695,24 @@ open func state()async  -> ChatSessionState  {
             completeFunc: ffi_nagare_rust_future_complete_rust_buffer,
             freeFunc: ffi_nagare_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeChatSessionState_lift,
+            errorHandler: nil
+            
+        )
+}
+    
+open func supportsToolCalls()async  -> Bool  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nagare_fn_method_chatsession_supports_tool_calls(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_nagare_rust_future_poll_i8,
+            completeFunc: ffi_nagare_rust_future_complete_i8,
+            freeFunc: ffi_nagare_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
             errorHandler: nil
             
         )
@@ -2612,6 +2656,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_chatsession_state() != 61854) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nagare_checksum_method_chatsession_supports_tool_calls() != 55549) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_chatsessionstream_cancel_token() != 18598) {
