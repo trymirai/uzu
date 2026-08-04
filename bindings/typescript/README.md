@@ -80,7 +80,15 @@ You can run any example via `cargo tools example` \<**typescript**\> \<**chat** 
 In this example, we will download a model and get a reply to a specific list of messages:
 
 ```ts
-import { ChatConfig, ChatMessage, ChatReplyConfig, ChatSessionStreamChunkError, ChatSessionStreamChunkReplies, Engine, EngineConfig } from '@trymirai/uzu';
+import {
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    ChatSessionStreamChunkError,
+    ChatSessionStreamChunkReplies,
+    Engine,
+    EngineConfig
+} from '@trymirai/uzu';
 
 async function main() {
     let engineConfig = EngineConfig.create();

@@ -409,7 +409,15 @@ public func runChat() async throws {
 <summary>TypeScript</summary>
 
 ```ts
-import { ChatConfig, ChatMessage, ChatReplyConfig, ChatSessionStreamChunkError, ChatSessionStreamChunkReplies, Engine, EngineConfig } from '@trymirai/uzu';
+import {
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    ChatSessionStreamChunkError,
+    ChatSessionStreamChunkReplies,
+    Engine,
+    EngineConfig
+} from '@trymirai/uzu';
 
 async function main() {
     let engineConfig = EngineConfig.create();
@@ -506,7 +514,6 @@ from uzu import ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig, 
 async def main() -> None:
     engine_config = EngineConfig.create().with_openai_api_key("OPENAI_API_KEY")
     engine = await Engine.create(engine_config)
-
     model = await engine.model("gpt-5")
     if model is None:
         raise RuntimeError("Model not found")
