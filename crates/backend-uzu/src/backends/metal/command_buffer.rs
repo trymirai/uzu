@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use metal::{
     MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferStatus,
-    MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLCommandEncoder, MTLCommandEncoderExt, MTLCommandQueue, MTLComputeCommandEncoder,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -81,9 +81,10 @@ impl MetalCommandBufferEncoding {
     pub(super) fn ensure_compute(&mut self) -> &mut Retained<ProtocolObject<dyn MTLComputeCommandEncoder>> {
         if !matches!(self.encoding_state, MetalCommandBufferEncodingEncodingState::Compute(_)) {
             self.ensure_none();
-            self.encoding_state = MetalCommandBufferEncodingEncodingState::Compute(
-                self.command_buffer.compute_command_encoder().expect("Failed to create compute command encoder"),
-            );
+            let compute_encoder =
+                self.command_buffer.compute_command_encoder().expect("Failed to create compute command encoder");
+            compute_encoder.set_label(self.command_buffer.label().as_deref());
+            self.encoding_state = MetalCommandBufferEncodingEncodingState::Compute(compute_encoder);
         }
 
         let MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) = &mut self.encoding_state else {
@@ -155,6 +156,17 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         _after: AccessFlags,
         _before: AccessFlags,
     ) {
+    }
+
+    fn push_debug_group(
+        &mut self,
+        name: &str,
+    ) {
+        self.command_buffer.push_debug_group(name);
+    }
+
+    fn pop_debug_group(&mut self) {
+        self.command_buffer.pop_debug_group();
     }
 
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {

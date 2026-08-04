@@ -201,8 +201,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let mut encoder = Encoder::<B>::new_with_pool(&model.engine.context, allocation_pool.clone())
-                .map_err(LanguageModelStreamError::Backend)?;
+            let mut encoder =
+                Encoder::<B>::new_with_pool_name(&model.engine.context, allocation_pool.clone(), Some("prefill"))
+                    .map_err(LanguageModelStreamError::Backend)?;
 
             let mut output_tokens = None;
             let mut output_norm = None;
@@ -432,9 +433,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         let accepted_token_indicies = full.iter().map(|(i, _, _)| *i).collect::<Box<[usize]>>();
                         let accepted_input_token_ids = full.iter().map(|(_, t, _)| *t).collect::<Box<[u64]>>();
                         let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
-                        let mut encoder =
-                            Encoder::<B>::new_with_pool(&self.model.engine.context, self.allocation_pool.clone())
-                                .map_err(LanguageModelStreamError::Backend)?;
+                        let mut encoder = Encoder::<B>::new_with_pool_name(
+                            &self.model.engine.context,
+                            self.allocation_pool.clone(),
+                            Some("decode"),
+                        )
+                        .map_err(LanguageModelStreamError::Backend)?;
                         self.model_state
                             .transformer_state
                             .encode_accept(&accepted_token_indicies, &mut encoder)
@@ -460,6 +464,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         };
                         if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length()
                         {
+                            encoder.push_debug_group("update repetition penalty ring");
                             let mut accepted_input_token_ids_const = encoder
                                 .allocate_constant(full.len() * DataType::U32.size_in_bytes())
                                 .map_err(LanguageModelStreamError::Backend)?;
@@ -476,6 +481,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                                 full.len() as u32,
                                 &mut encoder,
                             );
+                            encoder.pop_debug_group();
                         }
                         self.model_state.tokens.extend(accepted_output_token_ids);
                         (
@@ -523,7 +529,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         let mut encoder = if let Some(encoder) = encoder {
             encoder
         } else {
-            Encoder::<B>::new_with_pool(&self.model.engine.context, self.allocation_pool.clone())
+            Encoder::<B>::new_with_pool_name(&self.model.engine.context, self.allocation_pool.clone(), Some("decode"))
                 .map_err(LanguageModelStreamError::Backend)?
         };
 
@@ -540,8 +546,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 self.options.grammar.as_mut(),
             )? {
             pending.push(encoder.end_encoding().submit());
-            encoder = Encoder::<B>::new_with_pool(&self.model.engine.context, self.allocation_pool.clone())
-                .map_err(LanguageModelStreamError::Backend)?;
+            encoder = Encoder::<B>::new_with_pool_name(
+                &self.model.engine.context,
+                self.allocation_pool.clone(),
+                Some("decode"),
+            )
+            .map_err(LanguageModelStreamError::Backend)?;
             let trie = speculator.propose_tree(
                 self.model_state.speculator_state.as_mut().unwrap(),
                 output_norm,
@@ -608,8 +618,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             if chain_copy.is_some() {
                 pending.push(encoder.end_encoding().submit());
 
-                let mut encoder = Encoder::<B>::new_with_pool(&self.model.engine.context, self.allocation_pool.clone())
-                    .map_err(LanguageModelStreamError::Backend)?;
+                let mut encoder = Encoder::<B>::new_with_pool_name(
+                    &self.model.engine.context,
+                    self.allocation_pool.clone(),
+                    Some("decode"),
+                )
+                .map_err(LanguageModelStreamError::Backend)?;
 
                 let mut bitmask = encoder
                     .allocate_constant(
@@ -763,8 +777,12 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                 }
 
                 if !in_flight.full_accept {
-                    let mut encoder =
-                        Encoder::<B>::new_with_pool(&self.model.engine.context, self.allocation_pool.clone()).unwrap();
+                    let mut encoder = Encoder::<B>::new_with_pool_name(
+                        &self.model.engine.context,
+                        self.allocation_pool.clone(),
+                        Some("drop accept"),
+                    )
+                    .unwrap();
                     self.model_state.transformer_state.encode_accept(&[0], &mut encoder).unwrap();
                     if let Some(speculator) = self.model.speculator.as_ref() {
                         speculator
@@ -789,8 +807,12 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
             } => {
                 assert!(num_accepted > 0 && num_accepted < full.len());
 
-                let mut encoder =
-                    Encoder::<B>::new_with_pool(&self.model.engine.context, self.allocation_pool.clone()).unwrap();
+                let mut encoder = Encoder::<B>::new_with_pool_name(
+                    &self.model.engine.context,
+                    self.allocation_pool.clone(),
+                    Some("drop accept"),
+                )
+                .unwrap();
                 let accepted_token_indicies =
                     full.iter().take(num_accepted + 1).map(|(i, _, _)| *i).collect::<Box<[usize]>>();
                 self.model_state.transformer_state.encode_accept(&accepted_token_indicies, &mut encoder).unwrap();
