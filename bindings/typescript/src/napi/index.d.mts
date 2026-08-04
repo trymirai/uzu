@@ -5,6 +5,7 @@ export declare class ChatSession {
   addTools(tools: Array<NativeTool>): Promise<undefined>
   get state(): Promise<ChatSessionState>
   get messages(): Promise<Array<ChatMessage>>
+  get supportsToolCalls(): Promise<boolean>
   reset(): Promise<void>
   reply(input: Array<ChatMessage>, config: ChatReplyConfig): Promise<Array<ChatReply>>
   replyWithStream(input: Array<ChatMessage>, config: ChatReplyConfig): Promise<ChatSessionStream>
