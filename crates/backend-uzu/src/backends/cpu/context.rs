@@ -54,7 +54,10 @@ impl Context for CpuContext {
         self.allocator.create_pool(reusable)
     }
 
-    fn create_command_buffer(&self) -> Result<CpuCommandBufferInitial, CpuError> {
+    fn create_command_buffer(
+        &self,
+        _name: Option<&str>,
+    ) -> Result<CpuCommandBufferInitial, CpuError> {
         Ok(CpuCommandBufferInitial::new(self.command_queue.clone()))
     }
 

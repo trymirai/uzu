@@ -301,6 +301,7 @@ impl<B: Backend> Weaver<B> {
         shape: TreeShape,
         encoder: &mut Encoder<B>,
     ) -> Result<EncodedWeaverTree<B>, WeaverEncodeError<B>> {
+        encoder.push_debug_group("dflash weaver");
         let tree_slot_count = shape.budget + 1;
         let frontier_capacity = tree_slot_count * shape.children_per_node;
         let lookahead_count = self.max_depth.min(inputs.candidates.depth_count);
@@ -437,6 +438,7 @@ impl<B: Backend> Weaver<B> {
             );
             batch_start_slot += batch_node_count;
         }
+        encoder.pop_debug_group();
         Ok(EncodedWeaverTree {
             packed_tree,
         })

@@ -58,6 +58,8 @@ impl<B: Backend> TransformerState<B> {
         accepted_indices: &[usize],
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
+        encoder.push_debug_group("transformer accept");
+
         for layer_state in &mut self.layer_states {
             let TransformerLayerStateType::Owned(layer_state) = layer_state else {
                 continue;
@@ -67,6 +69,8 @@ impl<B: Backend> TransformerState<B> {
         }
 
         self.context_length += accepted_indices.len();
+
+        encoder.pop_debug_group();
 
         Ok(())
     }
