@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use shoji::types::basic::{ReasoningEffort, SamplingMethod, SamplingPolicy};
-
-use crate::settings::{SettingKind, Settings, SettingsError};
+use uzu::settings::{SettingKind, Settings, SettingsError};
 
 const SETTINGS_PREFERENCES: &str = "cli_preferences";
 

@@ -2,9 +2,9 @@ use std::path::Path;
 
 use serde_json::Value;
 use shoji::types::{basic::ReasoningEffort, model::Model};
+use uzu::engine::Engine;
 
 use super::preferences::{ThinkingPreference, cycle};
-use crate::engine::Engine;
 
 const LEVELS: [ReasoningEffort; 5] = [
     ReasoningEffort::Default,

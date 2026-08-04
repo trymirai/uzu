@@ -3,14 +3,12 @@ use std::any::Any;
 use iocraft::prelude::*;
 use nagare::text_to_speech::{TextToSpeechSession, TextToSpeechSessionStreamChunk};
 use shoji::types::{basic::CancelToken, model::Model, session::text_to_speech::TextToSpeechStats};
+use uzu::player::Player;
 
-use crate::{
-    cli::{
-        components::{ApplicationState, HistoryCellType},
-        helpers::HINT_SESSION_INTERRUPT,
-        sessions::SessionState,
-    },
-    player::Player,
+use crate::cli::{
+    components::{ApplicationState, HistoryCellType},
+    helpers::HINT_SESSION_INTERRUPT,
+    sessions::SessionState,
 };
 
 #[derive(Clone)]

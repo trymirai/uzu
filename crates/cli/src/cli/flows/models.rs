@@ -2,13 +2,11 @@ use std::collections::HashMap;
 
 use iocraft::prelude::*;
 use shoji::types::model::Model;
+use uzu::storage::types::DownloadState;
 
-use crate::{
-    cli::{
-        components::{ApplicationState, Loading, ModelCapabilities, ModelState, Selector, SelectorItem, SelectorStyle},
-        flows::{Flow, FlowEvent},
-    },
-    storage::types::DownloadState,
+use crate::cli::{
+    components::{ApplicationState, Loading, ModelCapabilities, ModelState, Selector, SelectorItem, SelectorStyle},
+    flows::{Flow, FlowEvent},
 };
 
 pub struct ModelsFlow {

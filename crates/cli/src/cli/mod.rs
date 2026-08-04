@@ -7,13 +7,11 @@ use std::io::IsTerminal;
 
 use components::{Application, Preferences, Theme};
 use iocraft::prelude::*;
-
-use crate::{
+use uzu::{
     engine::{Engine, EngineConfig, EngineError},
     settings::SettingsError,
 };
 
-#[bindings::export(Error)]
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum CliError {
@@ -27,7 +25,6 @@ pub enum CliError {
     },
 }
 
-#[bindings::export(Class)]
 #[derive(Clone)]
 pub struct CliApplication {
     engine: Engine,
@@ -79,16 +76,9 @@ impl CliApplication {
     }
 }
 
-#[bindings::export(Implementation)]
 impl CliApplication {
-    #[bindings::export(Method(Factory))]
     pub async fn create(config: EngineConfig) -> Result<Self, CliError> {
         let engine = Engine::new(config).await?;
         Ok(Self::new(engine))
-    }
-
-    #[bindings::export(Method)]
-    pub async fn run(&self) -> Result<(), CliError> {
-        self.run_with_model(None).await
     }
 }

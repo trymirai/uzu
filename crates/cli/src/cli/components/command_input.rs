@@ -1,15 +1,11 @@
 use iocraft::prelude::*;
 use unicode_width::UnicodeWidthStr;
+use uzu::storage::types::DownloadPhase;
 
-use crate::{
-    cli::{
-        components::{ApplicationState, InputType, Selector, SelectorItem, SelectorStyle, TextInput, TextInputFocus},
-        flows::Command,
-        helpers::{
-            HINT_COMMANDS, HINT_SEND, HINT_STORAGE_DELETE, HINT_STORAGE_PAUSE_RESUME, SYMBOL_COMMAND, SYMBOL_INPUT,
-        },
-    },
-    storage::types::DownloadPhase,
+use crate::cli::{
+    components::{ApplicationState, InputType, Selector, SelectorItem, SelectorStyle, TextInput, TextInputFocus},
+    flows::Command,
+    helpers::{HINT_COMMANDS, HINT_SEND, HINT_STORAGE_DELETE, HINT_STORAGE_PAUSE_RESUME, SYMBOL_COMMAND, SYMBOL_INPUT},
 };
 
 const SAFE_PADDING: u16 = 1;

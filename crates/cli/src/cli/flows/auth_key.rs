@@ -1,13 +1,11 @@
 use iocraft::prelude::*;
 use unicode_width::UnicodeWidthStr;
+use uzu::settings::SettingKind;
 
-use crate::{
-    cli::{
-        components::{ApplicationState, InputType, TextInput, TextInputFocus},
-        flows::{Flow, FlowEvent},
-        helpers::SYMBOL_INPUT_RESULT,
-    },
-    settings::SettingKind,
+use crate::cli::{
+    components::{ApplicationState, InputType, TextInput, TextInputFocus},
+    flows::{Flow, FlowEvent},
+    helpers::SYMBOL_INPUT_RESULT,
 };
 
 const SAFE_PADDING: u16 = 1;

@@ -1,9 +1,7 @@
 use iocraft::prelude::*;
+use uzu::settings::{SettingKind, Settings, SettingsError};
 
-use crate::{
-    cli::helpers::ColorRgb,
-    settings::{SettingKind, Settings, SettingsError},
-};
+use crate::cli::helpers::ColorRgb;
 
 const SETTINGS_THEME: &str = "theme";
 

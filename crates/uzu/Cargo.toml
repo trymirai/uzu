@@ -12,11 +12,11 @@ license.workspace = true
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
-default = ["backend-cpu", "backend-metal", "capability-grammar", "capability-cli"]
+default = ["backend-cpu", "backend-metal", "capability-grammar"]
 backend-cpu = ["backend-uzu/cpu"]
 backend-metal = ["backend-uzu/metal"]
 capability-grammar = ["backend-uzu/grammar"]
-capability-cli = ["dep:iocraft", "dep:indoc"]
+capability-cli = []
 bindings = [
     "bindings-uniffi",
     "bindings-napi",
@@ -65,8 +65,6 @@ kiban.workspace = true
 shoji.workspace = true
 anyhow.workspace = true
 bitflags.workspace = true
-unicode-segmentation.workspace = true
-unicode-width.workspace = true
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }
@@ -80,8 +78,6 @@ wasm-bindgen-futures = { workspace = true, optional = true }
 tsify = { workspace = true, optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-iocraft = { workspace = true, optional = true }
-indoc = { workspace = true, optional = true }
 backend-remote.workspace = true
 nagare.workspace = true
 download-manager.workspace = true

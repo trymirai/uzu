@@ -1,18 +1,18 @@
 use iocraft::prelude::*;
 use shoji::types::model::Model;
-
-use crate::{
-    cli::{
-        components::{
-            CommandInput, HistoryCell, HistoryCellType, Logo, ModelCapabilities, Preferences, SelectedModel, Theme,
-        },
-        flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
-        helpers::SYMBOL_COMMAND,
-        sessions::{self, SessionState},
-    },
+use uzu::{
     engine::Engine,
     settings::Settings,
     storage::types::{DownloadPhase, DownloadState},
+};
+
+use crate::cli::{
+    components::{
+        CommandInput, HistoryCell, HistoryCellType, Logo, ModelCapabilities, Preferences, SelectedModel, Theme,
+    },
+    flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
+    helpers::SYMBOL_COMMAND,
+    sessions::{self, SessionState},
 };
 
 const HISTORY_LIMIT: usize = 20;

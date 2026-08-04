@@ -33,7 +33,6 @@ __all__ = [
     "ClassificationSession",
     "ClassificationSessionState",
     "ClassificationStats",
-    "CliApplication",
     "ContextLength",
     "Device",
     "DownloadManagerType",
@@ -519,12 +518,6 @@ class ClassificationStats:
     @property
     def confidence(self) -> builtins.float: ...
     def __new__(cls, preprocessing_duration: builtins.float, forward_pass_duration: builtins.float, postprocessing_duration: builtins.float, total_duration: builtins.float, tokens_count: builtins.int, tokens_per_second: builtins.float, predicted_label: builtins.str, confidence: builtins.float) -> ClassificationStats: ...
-
-@typing.final
-class CliApplication:
-    @staticmethod
-    def create(config: EngineConfig) -> collections.abc.Awaitable[CliApplication]: ...
-    def run(self) -> collections.abc.Awaitable[None]: ...
 
 class ContextLength:
     @typing.final

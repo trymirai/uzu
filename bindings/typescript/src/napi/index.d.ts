@@ -808,11 +808,6 @@ export type ToolDescription =
 
 export type TranslationPayload =
   TranslationPayloadText | TranslationPayloadImage
-export declare class CliApplication {
-  run(): Promise<void>
-  static create(config: EngineConfig): Promise<CliApplication>
-}
-
 export declare class Device {
   osName?: string
   cpuName?: string
@@ -974,11 +969,6 @@ export declare class Settings {
   load(kind: SettingKind, key: string): string | null
   clear(): void
 }
-
-export type CliError =
-  | { type: 'Engine', field0: EngineError }
-  | { type: 'Settigs', field0: SettingsError }
-  | { type: 'RenderingError', message: string }
 
 export type DeviceError =
   | { type: 'UnsupportedDevice' }

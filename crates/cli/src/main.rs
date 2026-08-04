@@ -2,6 +2,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod bench;
+#[cfg(feature = "capability-cli")]
+mod cli;
 mod server;
 
 #[derive(Parser)]
@@ -54,7 +56,9 @@ async fn main() -> Result<()> {
 
 #[cfg(feature = "capability-cli")]
 async fn run_interactive(model: Option<String>) -> Result<()> {
-    use uzu::{cli::CliApplication, engine::EngineConfig};
+    use uzu::engine::EngineConfig;
+
+    use crate::cli::CliApplication;
 
     let engine_config = EngineConfig::default().with_application_identifier("com.trymirai.cli".to_string());
     let application = CliApplication::create(engine_config).await?;

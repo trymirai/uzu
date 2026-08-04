@@ -2,7 +2,7 @@ use backend_uzu::VERSION;
 use indoc::indoc;
 use iocraft::prelude::*;
 
-use crate::{cli::components::ApplicationState, device::home_path};
+use crate::cli::components::ApplicationState;
 
 const LOGO: &str = indoc! {r"
   _ __ ___   (_)  _ __   __ _  (_)
@@ -12,7 +12,7 @@ const LOGO: &str = indoc! {r"
 
 fn about_text() -> String {
     let current_path = std::env::current_dir().ok();
-    let home_path = home_path();
+    let home_path = dirs::home_dir();
 
     let mut lines = vec![
         format!("v{}", VERSION),
