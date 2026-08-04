@@ -8,7 +8,7 @@ METAL_FUNC static auto make_tensor_view(
   using Element = typename Format::TensorElement;
   using RightTensor = tensor<device Element, extents<int, tile_k, tile_n>, tensor_inline>;
 
-  const array<int, 2> right_strides = {1, right_row_stride_bytes * Format::elements_per_byte};
+  const array<int, 2> right_strides = {1, right_row_stride_bytes * Format::ELEMENTS_PER_BYTE};
 
   return RightTensor(
       const_cast<typename Format::MutableDevicePointer>(tile_base),
@@ -17,13 +17,13 @@ METAL_FUNC static auto make_tensor_view(
   );
 }
 
-template <bool transpose_a, bool transpose_b, class OutputFragment, class LeftFragment, typename Format>
+template <bool transpose_left, bool transpose_right, class OutputFragment, class LeftFragment, typename Format>
 METAL_FUNC static void fragment_mm(
     thread OutputFragment& output,
     thread LeftFragment& left,
     const DeviceTensorOperand<Format> right
 ) {
-  static_assert(!transpose_a && transpose_b, "device-tensor leaf: only A x B^T is implemented");
+  static_assert(!transpose_left && transpose_right, "device-tensor leaf: only left x right^T is implemented");
   static_assert(
       metal::is_same_v<typename LeftFragment::ElementType, typename Format::UnpackedElement>,
       "device-tensor leaf: integer operand signedness must match"

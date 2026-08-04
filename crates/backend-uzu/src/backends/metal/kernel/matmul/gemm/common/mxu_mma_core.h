@@ -11,11 +11,16 @@
 #include "../generated/gemm.h"
 #include "block_geometry.h"
 #include "gemm_tiling.h"
+#include "integer_source.h"
 #include "../../common/quant_pack.h"
 #include "quant_scale_bias.h"
 #include "quant_scale_zero_point.h"
 #include "../../common/quant_unpack.h"
-#include "quantized_right_operand.h"
+#include "quantized/metadata.h"
+#include "quantized/loader.h"
+#include "quantized/slice.h"
+#include "quantized/source.h"
+#include "schedules/selector.h"
 
 using namespace metal;
 
@@ -23,16 +28,22 @@ namespace uzu {
 namespace gemm {
 
 template <
-    typename AT,
-    typename BT,
-    typename DT,
+    typename LeftElementType,
+    typename RightElementType,
+    typename OutputElementType,
     GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
     GemmBPrologueKind B_PROLOGUE = GemmBPrologueKind::FullPrecision,
-    int BITS = 0,
-    int GROUP_SIZE = 0,
+    ushort BITS = 0,
+    ushort GROUP_SIZE = 0,
     GemmAPrologueKind A_PROLOGUE = GemmAPrologueKind::FullPrecision>
 struct MxuMmaCore {
+  using LeftType = LeftElementType;
+  using RightType = RightElementType;
+  using OutputType = OutputElementType;
+  using FragmentOps = uzu::matmul::MxuFragmentOps<>;
+  using Schedule = typename schedules::ScheduleFor<A_PROLOGUE, B_PROLOGUE, BITS, GROUP_SIZE>::type;
+  static_assert(BITS == 0 || BITS == 4 || BITS == 8, "GEMM weight bits must be 0, 4, or 8");
   UZU_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   UZU_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
   UZU_CONST ushort SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(GEMM_TILING);
@@ -40,6 +51,7 @@ struct MxuMmaCore {
   UZU_CONST ushort SIMDGROUP_BLOCK_M = THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
   UZU_CONST ushort SIMDGROUP_BLOCK_N = THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN;
   UZU_CONST ushort SIMDGROUP_BLOCK_K = static_cast<ushort>(MXU_SIMDGROUP_BLOCK_K);
+  UZU_CONST bool TRANSPOSE_RIGHT = TRANSPOSE_B;
   UZU_CONST ushort THREADGROUP_BLOCK_K_FP = gemm_tiling_block_k(GEMM_TILING);
   static_assert(
       THREADGROUP_BLOCK_K_FP % SIMDGROUP_BLOCK_K == 0,
@@ -50,7 +62,7 @@ struct MxuMmaCore {
   UZU_CONST ushort TILES_K = SIMDGROUP_BLOCK_K / uzu::matmul::MxuFragmentOps<>::FRAGMENT_ROWS;
 
   UZU_CONST ushort QUANT_BK = (B_PROLOGUE == GemmBPrologueKind::FullPrecision) ? 0 : GROUP_SIZE;
-  UZU_CONST ushort PADDING_B = 16 / sizeof(BT);
+  UZU_CONST ushort PADDING_B = 16 / sizeof(RightElementType);
   UZU_CONST ushort SHARED_STRIDE_B = (QUANT_BK > 0) ? (QUANT_BK + PADDING_B) : 1;
   UZU_CONST ushort THREADGROUP_THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
   static_assert(
@@ -64,373 +76,25 @@ struct MxuMmaCore {
 
   using AccumulatorType = float;
 
-  using BLoaderScaleBias = QuantizedBlockLoaderScaleBias<
-      BT,
-      THREADGROUP_BLOCK_N,
-      (QUANT_BK > 0) ? QUANT_BK : 1,
-      SHARED_STRIDE_B,
-      1,
-      THREADGROUP_THREADS,
-      (GROUP_SIZE > 0) ? GROUP_SIZE : 1,
-      (BITS > 0) ? BITS : 4>;
-  using BLoaderScaleZeroPoint = QuantizedBlockLoaderScaleZeroPoint<
-      BT,
-      THREADGROUP_BLOCK_N,
-      (QUANT_BK > 0) ? QUANT_BK : 1,
-      SHARED_STRIDE_B,
-      1,
-      THREADGROUP_THREADS,
-      (GROUP_SIZE > 0) ? GROUP_SIZE : 1,
-      (BITS > 0) ? BITS : 4>;
-  using BLoaderScaleSymmetric = QuantizedBlockLoaderScaleZeroPoint<
-      BT,
-      THREADGROUP_BLOCK_N,
-      (QUANT_BK > 0) ? QUANT_BK : 1,
-      SHARED_STRIDE_B,
-      1,
-      THREADGROUP_THREADS,
-      (GROUP_SIZE > 0) ? GROUP_SIZE : 1,
-      (BITS > 0) ? BITS : 4,
-      true>;
-
-  using AccumFragment = uzu::matmul::Fragment<AccumulatorType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps<>>;
-
-  struct QuantizedWeightAddressing {
-    int row_stride_bytes;
-    int groups_per_row;
-    int k_offset_groups;
-    const device uint8_t* block;
-  };
-
-  static METAL_FUNC QuantizedWeightAddressing
-  quantized_weight_addressing(const device BT* b, const size_t block_col, const uint k_offset, const int k_elements) {
-    constexpr int pack_factor = get_pack_factor<(BITS > 0) ? BITS : 4, 8>();
-    constexpr int bytes_per_pack = get_bytes_per_pack<(BITS > 0) ? BITS : 4>();
-    const int row_stride_bytes = k_elements * bytes_per_pack / pack_factor;
-    return QuantizedWeightAddressing{
-        row_stride_bytes,
-        (k_elements + int(GROUP_SIZE) - 1) / int(GROUP_SIZE),
-        int(k_offset) / int(GROUP_SIZE),
-        reinterpret_cast<const device uint8_t*>(b) + block_col * row_stride_bytes +
-            int(k_offset) * bytes_per_pack / pack_factor,
-    };
-  }
-
-  template <bool ALIGNED_M, bool ALIGNED_N, typename Loader>
-  static METAL_FUNC AccumFragment quant_k_loop(
-      const device AT* a_simdgroup,
-      threadgroup BT* b_shared,
-      const int leading_dimension_a,
-      const int aligned_k_iterations,
-      const short simdgroup_limit_m,
-      const short simdgroup_limit_n,
-      const ushort tile_col_offset,
-      const ushort tile_block_cols,
-      thread Loader& loader_b,
-      const thread ThreadContext& thread_context
-  ) {
-    AccumFragment accumulator;
-    accumulator.clear();
-
-    threadgroup BT* b_shared_simdgroup = b_shared + tile_col_offset * SHARED_STRIDE_B;
-    const short2 tile_dimensions_b = short2(QUANT_BK, tile_block_cols);
-
-    METAL_PRAGMA_NO_UNROLL
-    for (int outer_k = 0; outer_k < aligned_k_iterations; ++outer_k) {
-      threadgroup_barrier(mem_flags::mem_threadgroup);
-      if constexpr (ALIGNED_N) {
-        loader_b.load_unsafe();
-      } else {
-        loader_b.load_safe(tile_dimensions_b);
-      }
-      threadgroup_barrier(mem_flags::mem_threadgroup);
-
-      METAL_PRAGMA_NO_UNROLL
-      for (int inner_k = 0; inner_k < QUANT_BK; inner_k += SIMDGROUP_BLOCK_K) {
-        uzu::matmul::Fragment<AT, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps<>> left_tile;
-        uzu::matmul::Fragment<BT, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps<>> right_tile;
-
-        const int left_offset = inner_k;
-        auto left_src = uzu::matmul::fragment_source(a_simdgroup + left_offset, leading_dimension_a);
-        if constexpr (!ALIGNED_M) {
-          left_src = left_src.bounded(simdgroup_limit_m, SIMDGROUP_BLOCK_K);
-        }
-        left_tile.load_from(thread_context.simd_lane_id, left_src);
-
-        right_tile.load_from(
-            thread_context.simd_lane_id,
-            uzu::matmul::fragment_source(b_shared_simdgroup + inner_k, int(SHARED_STRIDE_B))
-        );
-
-        uzu::matmul::MxuFragmentOps<>::template fragment_mma<false, true>(accumulator, left_tile, right_tile);
-      }
-
-      a_simdgroup += QUANT_BK;
-      loader_b.next();
-    }
-
-    return accumulator;
-  }
-
-  template <bool ALIGNED_M>
-  static METAL_FUNC uzu::matmul::Fragment<int8_t, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps<>> load_int8_left_tile(
-      const device int8_t* a_int8_simdgroup,
-      const int leading_dimension_a,
-      const short simdgroup_limit_m,
-      const ushort simd_lane_id
-  ) {
-    uzu::matmul::Fragment<int8_t, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps<>> left_tile;
-    auto left_src = uzu::matmul::fragment_source(a_int8_simdgroup, leading_dimension_a);
-    if constexpr (!ALIGNED_M) {
-      left_src = left_src.bounded(simdgroup_limit_m, SIMDGROUP_BLOCK_K);
-    }
-    left_tile.load_from(simd_lane_id, left_src);
-    return left_tile;
-  }
-
-  // Per-thread cache holding one value per distinct fragment row (or column) line
-  // a thread owns, addressable either by slot or by offset from the thread origin.
-  template <ushort TILES, ushort SLOTS_PER_TILE, ushort FRAGMENT_EXTENT, ushort SLOT_STRIDE>
-  struct FragmentLineCache {
-    float values[TILES * SLOTS_PER_TILE];
-
-    METAL_FUNC thread float& slot(const ushort tile, const ushort index) thread {
-      return values[tile * SLOTS_PER_TILE + index];
-    }
-
-    METAL_FUNC void clear() thread {
-      METAL_PRAGMA_UNROLL
-      for (ushort index = 0; index < TILES * SLOTS_PER_TILE; ++index) {
-        values[index] = 0.0f;
-      }
-    }
-
-    METAL_FUNC float at(const short offset) const thread {
-      const ushort tile = ushort(offset) / FRAGMENT_EXTENT;
-      const ushort index = (ushort(offset) % FRAGMENT_EXTENT) / SLOT_STRIDE;
-      return values[tile * SLOTS_PER_TILE + index];
-    }
-
-    template <bool ALIGNED, typename Sink>
-    static METAL_FUNC void for_each_line(
-        const short origin,
-        const short limit,
-        const uint abs_base,
-        const uint groups_per_row,
-        const uint group_index,
-        Sink sink
-    ) {
-      METAL_PRAGMA_UNROLL
-      for (ushort tile = 0; tile < TILES; ++tile) {
-        METAL_PRAGMA_UNROLL
-        for (ushort index = 0; index < SLOTS_PER_TILE; ++index) {
-          const short coord = origin + tile * FRAGMENT_EXTENT + index * SLOT_STRIDE;
-          if (ALIGNED || coord < limit) {
-            const uint line_index = abs_base + uint(coord);
-            sink(tile, index, line_index * groups_per_row + group_index, line_index);
-          }
-        }
-      }
-    }
-  };
-
-  using FragmentOps = uzu::matmul::MxuFragmentOps<>;
-  using ActivationLineCache = FragmentLineCache<
-      TILES_M,
-      FragmentOps::THREAD_ELEMENT_ROWS,
-      FragmentOps::FRAGMENT_ROWS,
-      FragmentOps::THREAD_ELEMENT_ROW_STRIDE>;
-  using WeightLineCache = FragmentLineCache<TILES_N, FragmentOps::THREAD_ELEMENT_COLS, FragmentOps::FRAGMENT_COLS, 1>;
-
-  static_assert(
-      A_PROLOGUE != GemmAPrologueKind::Int8Symmetric || GROUP_SIZE % int(SIMDGROUP_BLOCK_K) == 0,
-      "A8 weight group size must be a multiple of the 32-wide activation chunk"
-  );
-  UZU_CONST bool int8_activation_needs_weight_correction =
-      A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant;
-  UZU_CONST float int8_weight_midpoint = float(symmetric_zero_point<ushort((BITS > 0) ? BITS : 4)>());
-
-  static METAL_FUNC float int8_weight_dequant_bias(
-      const float scale,
-      const uint scale_index,
-      const uint weight_column,
-      const uint weight_group,
-      const uint weight_groups_per_row,
-      const device BT* biases,
-      const device uint8_t* zero_points
-  ) {
-    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-      return static_cast<float>(biases[scale_index]);
-    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
-      if constexpr (BITS == 8) {
-        return -scale * float(zero_points[scale_index]);
-      } else {
-        const device uint8_t* zero_points_row =
-            zero_points + weight_column * zero_point_row_stride<ushort(BITS)>(weight_groups_per_row);
-        return -scale * float(decode_zero_point<ushort(BITS)>(zero_points_row, weight_group));
-      }
-    } else {
-      return 0.0f;
-    }
-  }
-
-  template <bool ALIGNED_M, bool ALIGNED_N>
-  static METAL_FUNC AccumFragment int8_activation_k_loop(
-      const device int8_t* a_int8_simdgroup,
-      const device uint8_t* b_packed_simdgroup,
-      const device float* a_scales,
-      const device int32_t* a_group_sums,
-      const device BT* b_scales,
-      const device BT* biases,
-      const device uint8_t* zero_points,
-      const int leading_dimension_a,
-      const int b_row_stride_bytes,
-      const int weight_group_iterations,
-      const short simdgroup_limit_m,
-      const short simdgroup_limit_n,
-      const uint abs_row_base,
-      const uint abs_col_base,
-      const uint k_offset_weight_groups,
-      const uint k_offset_act_groups,
-      const uint weight_groups_per_row,
-      const uint act_groups_per_row,
-      const thread ThreadContext& thread_context
-  ) {
-    using Ops = uzu::matmul::MxuFragmentOps<>;
-    AccumFragment accumulator;
-    accumulator.clear();
-
-    const short2 position = Ops::get_position(thread_context.simd_lane_id);
-    constexpr int k_bytes_per_weight_group = (BITS == 4) ? (int(GROUP_SIZE) / 2) : int(GROUP_SIZE);
-    constexpr int act_chunks_per_weight_group = int(GROUP_SIZE) / int(SIMDGROUP_BLOCK_K);
-
-    METAL_PRAGMA_NO_UNROLL
-    for (int weight_group = 0; weight_group < weight_group_iterations; ++weight_group) {
-      const uint weight_group_index = k_offset_weight_groups + uint(weight_group);
-
-      WeightLineCache weight_scales;
-      WeightLineCache weight_corrections;
-      WeightLineCache::template for_each_line<ALIGNED_N>(
-          position.x,
-          simdgroup_limit_n,
-          abs_col_base,
-          weight_groups_per_row,
-          weight_group_index,
-          [&](ushort tile_col, ushort thread_col, uint scale_index, uint weight_column) {
-            const float scale = static_cast<float>(b_scales[scale_index]);
-            weight_scales.slot(tile_col, thread_col) = scale;
-            if constexpr (int8_activation_needs_weight_correction) {
-              weight_corrections.slot(tile_col, thread_col) = scale * int8_weight_midpoint + int8_weight_dequant_bias(
-                                                                                                 scale,
-                                                                                                 scale_index,
-                                                                                                 weight_column,
-                                                                                                 weight_group_index,
-                                                                                                 weight_groups_per_row,
-                                                                                                 biases,
-                                                                                                 zero_points
-                                                                                             );
-            }
-          }
-      );
-
-      ActivationLineCache activation_corrections;
-      if constexpr (int8_activation_needs_weight_correction) {
-        activation_corrections.clear();
-      }
-
-      METAL_PRAGMA_NO_UNROLL
-      for (int act_chunk = 0; act_chunk < act_chunks_per_weight_group; ++act_chunk) {
-        const int k_element_offset = act_chunk * int(SIMDGROUP_BLOCK_K);
-        auto activation_tile = load_int8_left_tile<ALIGNED_M>(
-            a_int8_simdgroup + k_element_offset,
-            leading_dimension_a,
-            simdgroup_limit_m,
-            thread_context.simd_lane_id
-        );
-
-        uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops> chunk_products;
-        using RightFormat = IntegerFormat<BITS, Signedness::Signed>;
-        auto right = QuantizedRightOperand<RightFormat, ALIGNED_N, TILES_N, TILES_K, SIMDGROUP_BLOCK_K>::make(
-            b_packed_simdgroup,
-            k_element_offset,
-            b_row_stride_bytes,
-            simdgroup_limit_n,
-            position,
-            thread_context.simd_lane_id
-        );
-        Ops::template fragment_mm<false, true>(chunk_products, activation_tile, right);
-
-        const uint act_group_index = k_offset_act_groups + uint(weight_group * act_chunks_per_weight_group + act_chunk);
-        ActivationLineCache activation_scales;
-        ActivationLineCache::template for_each_line<ALIGNED_M>(
-            position.y,
-            simdgroup_limit_m,
-            abs_row_base,
-            act_groups_per_row,
-            act_group_index,
-            [&](ushort tile_row, ushort thread_row, uint scale_index, uint) {
-              const float activation_scale = a_scales[scale_index];
-              activation_scales.slot(tile_row, thread_row) = activation_scale;
-              if constexpr (int8_activation_needs_weight_correction) {
-                activation_corrections.slot(tile_row, thread_row) +=
-                    activation_scale * float(a_group_sums[scale_index]);
-              }
-            }
-        );
-
-        AccumFragment::zip_for_each_coord(
-            thread_context.simd_lane_id,
-            [&](short row, short col, thread float& accumulated, thread int& products) {
-              if (!ALIGNED_M && row >= simdgroup_limit_m) {
-                return;
-              }
-              if (!ALIGNED_N && col >= simdgroup_limit_n) {
-                return;
-              }
-              accumulated +=
-                  activation_scales.at(row - position.y) * weight_scales.at(col - position.x) * float(products);
-            },
-            accumulator,
-            chunk_products
-        );
-      }
-
-      if constexpr (int8_activation_needs_weight_correction) {
-        accumulator.map_coords(thread_context.simd_lane_id, [&](short row, short col, float value) {
-          if (!ALIGNED_M && row >= simdgroup_limit_m) {
-            return value;
-          }
-          if (!ALIGNED_N && col >= simdgroup_limit_n) {
-            return value;
-          }
-          return value + weight_corrections.at(col - position.x) * activation_corrections.at(row - position.y);
-        });
-      }
-
-      a_int8_simdgroup += GROUP_SIZE;
-      b_packed_simdgroup += k_bytes_per_weight_group;
-    }
-
-    return accumulator;
-  }
+  using AccumFragment = uzu::matmul::Fragment<AccumulatorType, TILES_M, TILES_N, FragmentOps>;
 
   static METAL_FUNC void run(
-      const device AT* a,
-      const device BT* b,
-      device DT* d,
+      const device LeftElementType* a,
+      const device RightElementType* b,
+      device OutputElementType* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
       GemmDTransform output_transform,
       const bool signed_codes,
-      const device BT* scales,
-      const device BT* biases,
+      const device RightElementType* scales,
+      const device RightElementType* biases,
       const device uint8_t* zero_points,
-      const device BT* output_bias,
+      const device RightElementType* output_bias,
       const device int32_t* rht_factors,
       const device int8_t* a_int8,
       const device float* a_scales,
       const device int32_t* a_group_sums,
-      threadgroup BT* b_shared,
+      threadgroup RightElementType* b_shared,
       const thread ThreadContext& thread_context
   ) {
     const uint partition = thread_context.threadgroup_position.z;
@@ -449,15 +113,16 @@ struct MxuMmaCore {
         (B_PROLOGUE == GemmBPrologueKind::FullPrecision) ? uint(THREADGROUP_BLOCK_K_FP) : uint(QUANT_BK);
     const uint k_offset = partition * params->aligned_inner_iterations * k_offset_per_block;
 
-    const device BT* b_block_fp = b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col) +
-                                  (TRANSPOSE_B ? k_offset : k_offset * uint(params->leading_dimension_b));
+    const device RightElementType* b_block_fp = b +
+                                                (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col) +
+                                                (TRANSPOSE_B ? k_offset : k_offset * uint(params->leading_dimension_b));
 
     const ushort tile_row_offset = SIMDGROUP_BLOCK_M * (thread_context.simdgroup_index / SIMDGROUPS_PER_COLUMN);
     const ushort tile_col_offset = SIMDGROUP_BLOCK_N * (thread_context.simdgroup_index % SIMDGROUPS_PER_COLUMN);
 
-    device DT* d_simdgroup = d + size_t(partition) * size_t(params->M) * size_t(params->N) +
-                             block_row * params->leading_dimension_d + block_col +
-                             tile_row_offset * params->leading_dimension_d + tile_col_offset;
+    device OutputElementType* d_simdgroup = d + size_t(partition) * size_t(params->M) * size_t(params->N) +
+                                            block_row * params->leading_dimension_d + block_col +
+                                            tile_row_offset * params->leading_dimension_d + tile_col_offset;
 
     const short simdgroup_limit_m =
         alignment.contains(GemmAlignment::M)
@@ -468,12 +133,12 @@ struct MxuMmaCore {
             ? SIMDGROUP_BLOCK_N
             : short(min(int(SIMDGROUP_BLOCK_N), int(params->N) - int(geometry.block_col_start + tile_col_offset)));
 
-    const device AT* a_simdgroup = a;
+    const device LeftElementType* a_simdgroup = a;
     if constexpr (A_PROLOGUE == GemmAPrologueKind::FullPrecision) {
       a_simdgroup +=
           block_row * params->leading_dimension_a + k_offset + size_t(tile_row_offset) * params->leading_dimension_a;
     }
-    const device BT* b_simdgroup_fp =
+    const device RightElementType* b_simdgroup_fp =
         b_block_fp +
         (TRANSPOSE_B ? size_t(tile_col_offset) * int(params->leading_dimension_b) : size_t(tile_col_offset));
 
@@ -484,7 +149,7 @@ struct MxuMmaCore {
     const bool apply_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
 
-    const device BT* bias_simdgroup = output_bias + size_t(block_col) + size_t(tile_col_offset);
+    const device RightElementType* bias_simdgroup = output_bias + size_t(block_col) + size_t(tile_col_offset);
 
     auto dispatch_aligned_k = [&](auto body) {
       if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
@@ -502,14 +167,19 @@ struct MxuMmaCore {
                 [&](auto aligned_n) {
                   auto accumulator_tile = [&]() {
                     if constexpr (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric) {
-                      const auto quantized_weights =
-                          quantized_weight_addressing(b, block_col, k_offset, int(params->K));
+                      using RightFormat = typename Schedule::RightFormat;
+                      const auto quantized_right = make_quantized_slice<RightFormat, Schedule::RIGHT_GROUP_SIZE>(
+                          b,
+                          block_col,
+                          k_offset,
+                          int(params->K)
+                      );
                       const device int8_t* a_int8_simdgroup = a_int8 + block_row * params->leading_dimension_a +
                                                               k_offset +
                                                               size_t(tile_row_offset) * params->leading_dimension_a;
                       const device uint8_t* b_packed_simdgroup =
-                          quantized_weights.block + size_t(tile_col_offset) * quantized_weights.row_stride_bytes;
-                      return int8_activation_k_loop<aligned_m.value, aligned_n.value>(
+                          quantized_right.storage + size_t(tile_col_offset) * quantized_right.row_stride_bytes;
+                      return Schedule::template run<MxuMmaCore, aligned_m.value, aligned_n.value>(
                           a_int8_simdgroup,
                           b_packed_simdgroup,
                           a_scales,
@@ -518,33 +188,21 @@ struct MxuMmaCore {
                           biases,
                           zero_points,
                           int(params->leading_dimension_a),
-                          quantized_weights.row_stride_bytes,
+                          quantized_right.row_stride_bytes,
                           int(params->aligned_inner_iterations),
                           simdgroup_limit_m,
                           simdgroup_limit_n,
                           uint(geometry.block_row_start) + tile_row_offset,
                           uint(geometry.block_col_start) + tile_col_offset,
-                          uint(quantized_weights.k_offset_groups),
-                          k_offset / uint(SIMDGROUP_BLOCK_K),
-                          uint(quantized_weights.groups_per_row),
-                          uint(params->K) / uint(SIMDGROUP_BLOCK_K),
+                          uint(quantized_right.first_group),
+                          k_offset / uint(Schedule::LEFT_GROUP_SIZE),
+                          uint(quantized_right.groups_per_row),
+                          uint(params->K) / uint(Schedule::LEFT_GROUP_SIZE),
                           thread_context
                       );
                     } else if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
                       const int aligned_k_iterations_fp = int(params->aligned_inner_iterations);
-                      return uzu::matmul::gemm_loop<
-                          AT,
-                          BT,
-                          SIMDGROUP_BLOCK_M,
-                          SIMDGROUP_BLOCK_N,
-                          SIMDGROUP_BLOCK_K,
-                          THREADGROUP_BLOCK_K_FP,
-                          false,
-                          TRANSPOSE_B,
-                          aligned_m.value,
-                          aligned_n.value,
-                          aligned_k.value,
-                          AccumulatorType>(
+                      return Schedule::template run<MxuMmaCore, aligned_m.value, aligned_n.value, aligned_k.value>(
                           a_simdgroup,
                           b_simdgroup_fp,
                           int(params->leading_dimension_a),
@@ -556,35 +214,57 @@ struct MxuMmaCore {
                           thread_context
                       );
                     } else {
+                      using RightFormat = typename Schedule::RightFormat;
                       const int aligned_k_iterations_q = int(params->aligned_inner_iterations);
                       const int k_elements = int(params->K);
-                      const auto quantized_weights = quantized_weight_addressing(b, block_col, k_offset, k_elements);
-                      const int groups_per_row = quantized_weights.groups_per_row;
-                      const int k_offset_groups = quantized_weights.k_offset_groups;
-                      const device uint8_t* weights_block = quantized_weights.block;
-                      const device BT* scales_offset = scales + block_col * groups_per_row + k_offset_groups;
+                      const auto quantized_right = make_quantized_slice<RightFormat, Schedule::RIGHT_GROUP_SIZE>(
+                          b,
+                          block_col,
+                          k_offset,
+                          k_elements
+                      );
+                      const int groups_per_row = quantized_right.groups_per_row;
+                      const int k_offset_groups = quantized_right.first_group;
+                      const device uint8_t* right_storage = quantized_right.storage;
+                      const device RightElementType* scales_offset =
+                          scales + block_col * groups_per_row + k_offset_groups;
+
+                      using Loaders = QuantizedLoaders<
+                          RightElementType,
+                          THREADGROUP_BLOCK_N,
+                          (QUANT_BK > 0) ? QUANT_BK : 1,
+                          SHARED_STRIDE_B,
+                          1,
+                          THREADGROUP_THREADS,
+                          Schedule::RIGHT_GROUP_SIZE,
+                          RightFormat::BITS>;
 
                       auto loader_b = [&]() {
                         if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-                          const device BT* biases_offset = biases + block_col * groups_per_row + k_offset_groups;
-                          return BLoaderScaleBias(
-                              weights_block,
+                          const device RightElementType* biases_offset =
+                              biases + block_col * groups_per_row + k_offset_groups;
+                          return make_loader<B_PROLOGUE, typename Loaders::ScaleBias>(
+                              right_storage,
                               scales_offset,
                               biases_offset,
+                              nullptr,
                               signed_codes,
                               k_elements,
+                              groups_per_row,
                               b_shared,
                               thread_context.simdgroup_index,
                               thread_context.simd_lane_id
                           );
                         } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
-                          const int zero_point_stride_per_row = zero_point_row_stride<ushort(BITS)>(groups_per_row);
+                          const int zero_point_stride_per_row =
+                              zero_point_row_stride<RightFormat::BITS>(groups_per_row);
                           const device uint8_t* zero_points_row_start =
                               zero_points + block_col * zero_point_stride_per_row +
-                              ((BITS == 4) ? (k_offset_groups / 2) : k_offset_groups);
-                          return BLoaderScaleZeroPoint(
-                              weights_block,
+                              ((RightFormat::BITS == 4) ? (k_offset_groups / 2) : k_offset_groups);
+                          return make_loader<B_PROLOGUE, typename Loaders::ScaleZeroPoint>(
+                              right_storage,
                               scales_offset,
+                              static_cast<const device RightElementType*>(nullptr),
                               zero_points_row_start,
                               signed_codes,
                               k_elements,
@@ -593,10 +273,13 @@ struct MxuMmaCore {
                               thread_context.simdgroup_index,
                               thread_context.simd_lane_id
                           );
-                        } else {
-                          return BLoaderScaleSymmetric(
-                              weights_block,
+                        } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant) {
+                          return make_loader<
+                              GemmBPrologueKind::ScaleSymmetricDequant,
+                              typename Loaders::ScaleSymmetric>(
+                              right_storage,
                               scales_offset,
+                              static_cast<const device RightElementType*>(nullptr),
                               nullptr,
                               signed_codes,
                               k_elements,
@@ -608,7 +291,7 @@ struct MxuMmaCore {
                         }
                       }();
 
-                      return quant_k_loop<aligned_m.value, aligned_n.value>(
+                      return Schedule::template run<MxuMmaCore, aligned_m.value, aligned_n.value>(
                           a_simdgroup,
                           b_shared,
                           int(params->leading_dimension_a),
@@ -629,13 +312,14 @@ struct MxuMmaCore {
                   }
 
                   if (apply_accumulate) {
-                    uzu::matmul::Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps<>> existing_output;
+                    uzu::matmul::Fragment<OutputElementType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps<>>
+                        existing_output;
                     auto output_src = uzu::matmul::fragment_source(d_simdgroup, int(params->leading_dimension_d));
                     if constexpr (!(aligned_m.value && aligned_n.value)) {
                       output_src = output_src.bounded(simdgroup_limit_m, simdgroup_limit_n);
                     }
                     existing_output.load_from(thread_context.simd_lane_id, output_src);
-                    thread DT* existing_data = existing_output.elements();
+                    thread OutputElementType* existing_data = existing_output.elements();
                     accumulator_tile.map([&](auto value) { return value + AccumulatorType(*(existing_data++)); });
                   }
 
@@ -670,7 +354,7 @@ struct MxuMmaCore {
 
     if (output_transform.contains(GemmDTransform::RHT)) {
       threadgroup_barrier(mem_flags::mem_device);
-      device DT* d_block = d + block_row * params->leading_dimension_d + block_col;
+      device OutputElementType* d_block = d + block_row * params->leading_dimension_d + block_col;
       const ushort tile_block_rows = ushort(min(int(THREADGROUP_BLOCK_M), int(params->M) - int(block_row)));
       const ushort tile_block_cols = ushort(min(int(THREADGROUP_BLOCK_N), int(params->N) - int(block_col)));
       apply_output_random_hadamard_transform(

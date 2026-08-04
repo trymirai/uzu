@@ -14,6 +14,7 @@
 #include "gemm_tiling.h"
 #include "quant_scale_bias.h"
 #include "quant_scale_zero_point.h"
+#include "quantized/loader.h"
 
 using namespace metal;
 
@@ -21,9 +22,9 @@ namespace uzu {
 namespace gemm {
 
 template <
-    typename AT,
-    typename BT,
-    typename DT,
+    typename LeftElementType,
+    typename RightElementType,
+    typename OutputElementType,
     GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
     GemmBPrologueKind B_PROLOGUE = GemmBPrologueKind::FullPrecision,
@@ -35,23 +36,28 @@ struct SimdgroupMmaCore {
   UZU_CONST int THREADGROUP_BLOCK_K = gemm_tiling_block_k(GEMM_TILING);
   UZU_CONST int SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(GEMM_TILING);
   UZU_CONST int SIMDGROUPS_PER_COLUMN = gemm_tiling_simdgroups_per_column(GEMM_TILING);
-  UZU_CONST ushort PADDING_A = 16 / sizeof(AT);
-  UZU_CONST ushort PADDING_B = 16 / sizeof(BT);
+  UZU_CONST ushort PADDING_A = 16 / sizeof(LeftElementType);
+  UZU_CONST ushort PADDING_B = 16 / sizeof(RightElementType);
   UZU_CONST ushort SHARED_STRIDE_A = THREADGROUP_BLOCK_K + PADDING_A;
   UZU_CONST ushort SHARED_STRIDE_B = (TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N) + PADDING_B;
   UZU_CONST ushort THREADGROUP_THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
 
-  using ALoader = uzu::matmul::
-      ThreadgroupLoader<AT, THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_K, SHARED_STRIDE_A, true, THREADGROUP_THREADS>;
-  using BLoaderFp = uzu::matmul::ThreadgroupLoader<
-      BT,
+  using ALoader = uzu::matmul::ThreadgroupLoader<
+      LeftElementType,
+      THREADGROUP_BLOCK_M,
+      THREADGROUP_BLOCK_K,
+      SHARED_STRIDE_A,
+      true,
+      THREADGROUP_THREADS>;
+  using FullPrecisionRightLoader = uzu::matmul::ThreadgroupLoader<
+      RightElementType,
       TRANSPOSE_B ? THREADGROUP_BLOCK_N : THREADGROUP_BLOCK_K,
       TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N,
       SHARED_STRIDE_B,
       TRANSPOSE_B,
       THREADGROUP_THREADS>;
-  using BLoaderScaleBias = QuantizedBlockLoaderScaleBias<
-      BT,
+  using ScaleBiasRightLoader = QuantizedBlockLoaderScaleBias<
+      RightElementType,
       THREADGROUP_BLOCK_N,
       THREADGROUP_BLOCK_K,
       SHARED_STRIDE_B,
@@ -59,8 +65,8 @@ struct SimdgroupMmaCore {
       THREADGROUP_THREADS,
       GROUP_SIZE,
       BITS>;
-  using BLoaderScaleZeroPoint = QuantizedBlockLoaderScaleZeroPoint<
-      BT,
+  using ScaleZeroPointRightLoader = QuantizedBlockLoaderScaleZeroPoint<
+      RightElementType,
       THREADGROUP_BLOCK_N,
       THREADGROUP_BLOCK_K,
       SHARED_STRIDE_B,
@@ -68,8 +74,8 @@ struct SimdgroupMmaCore {
       THREADGROUP_THREADS,
       GROUP_SIZE,
       BITS>;
-  using BLoaderScaleSymmetric = QuantizedBlockLoaderScaleZeroPoint<
-      BT,
+  using SymmetricRightLoader = QuantizedBlockLoaderScaleZeroPoint<
+      RightElementType,
       THREADGROUP_BLOCK_N,
       THREADGROUP_BLOCK_K,
       SHARED_STRIDE_B,
@@ -79,9 +85,9 @@ struct SimdgroupMmaCore {
       BITS,
       true>;
   using TileAccumulator = uzu::matmul::ThreadgroupTile<
-      AT,
-      BT,
-      DT,
+      LeftElementType,
+      RightElementType,
+      OutputElementType,
       THREADGROUP_BLOCK_M,
       THREADGROUP_BLOCK_N,
       THREADGROUP_BLOCK_K,
@@ -92,12 +98,12 @@ struct SimdgroupMmaCore {
       SHARED_STRIDE_A,
       SHARED_STRIDE_B,
       float,
-      uzu::matmul::TransformNone<DT, float>>;
+      uzu::matmul::TransformNone<OutputElementType, float>>;
 
   template <uint GEMM_ALIGNMENT_RAW, typename BLoader>
   static METAL_FUNC void k_loop(
-      threadgroup AT* a_shared,
-      threadgroup BT* b_shared,
+      threadgroup LeftElementType* a_shared,
+      threadgroup RightElementType* b_shared,
       const int aligned_k_iterations,
       thread ALoader& loader_a,
       thread BLoader& loader_b,
@@ -149,13 +155,13 @@ struct SimdgroupMmaCore {
   template <uint GEMM_ALIGNMENT_RAW>
   static METAL_FUNC void finalize(
       thread TileAccumulator& accumulator,
-      device DT* d,
+      device OutputElementType* d,
       const constant uzu::matmul::GemmParams* params,
       const thread ushort& tile_block_rows,
       const thread ushort& tile_block_cols,
       const bool needs_epilogue,
       const thread uzu::matmul::TransformScaleAccumulate<float, float>& epilogue,
-      const device BT* bias_block,
+      const device RightElementType* bias_block,
       const bool needs_bias,
       const device int32_t* rht_factors_block,
       const bool needs_rht,
@@ -196,20 +202,20 @@ struct SimdgroupMmaCore {
   }
 
   static METAL_FUNC void run(
-      const device AT* a,
-      const device BT* b,
-      device DT* d,
+      const device LeftElementType* a,
+      const device RightElementType* b,
+      device OutputElementType* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
       GemmDTransform output_transform,
       const bool signed_codes,
-      const device BT* scales,
-      const device BT* biases,
+      const device RightElementType* scales,
+      const device RightElementType* biases,
       const device uint8_t* zero_points,
-      const device BT* output_bias,
+      const device RightElementType* output_bias,
       const device int32_t* rht_factors,
-      threadgroup AT* a_shared,
-      threadgroup BT* b_shared,
+      threadgroup LeftElementType* a_shared,
+      threadgroup RightElementType* b_shared,
       const thread ThreadContext& thread_context
   ) {
     const uint partition = thread_context.threadgroup_position.z;
@@ -248,34 +254,37 @@ struct SimdgroupMmaCore {
     const float alpha = needs_scale ? params->ab_scale : 1.0f;
     const float beta = needs_accumulate ? 1.0f : 0.0f;
     uzu::matmul::TransformScaleAccumulate<float, float> epilogue(alpha, beta);
-    const device BT* bias_block = output_bias + block_col;
+    const device RightElementType* bias_block = output_bias + block_col;
     const device int32_t* rht_factors_block = rht_factors + block_col;
 
     auto loader_b = [&]() {
       if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
-        const device BT* b_block_fp = b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col) +
-                                      (TRANSPOSE_B ? k_offset : k_offset * params->leading_dimension_b);
-        return BLoaderFp(b_block_fp, params->leading_dimension_b, b_shared, thread_context);
+        const device RightElementType* b_block_fp =
+            b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col) +
+            (TRANSPOSE_B ? k_offset : k_offset * params->leading_dimension_b);
+        return FullPrecisionRightLoader(b_block_fp, params->leading_dimension_b, b_shared, thread_context);
       } else {
         constexpr int pack_factor = get_pack_factor<BITS, 8>();
         constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
         const int k_elements = int(params->K);
-        const int weights_row_stride_bytes = k_elements * bytes_per_pack / pack_factor;
+        const int right_row_stride_bytes = k_elements * bytes_per_pack / pack_factor;
         const int groups_per_row = (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
         const int k_offset_groups = int(k_offset) / GROUP_SIZE;
-        const device uint8_t* weights_block = reinterpret_cast<const device uint8_t*>(b) +
-                                              block_col * weights_row_stride_bytes +
+        const device uint8_t* right_storage = reinterpret_cast<const device uint8_t*>(b) +
+                                              block_col * right_row_stride_bytes +
                                               int(k_offset) * bytes_per_pack / pack_factor;
-        const device BT* scales_offset = scales + block_col * groups_per_row + k_offset_groups;
+        const device RightElementType* scales_offset = scales + block_col * groups_per_row + k_offset_groups;
 
         if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-          const device BT* biases_offset = biases + block_col * groups_per_row + k_offset_groups;
-          return BLoaderScaleBias(
-              weights_block,
+          const device RightElementType* biases_offset = biases + block_col * groups_per_row + k_offset_groups;
+          return make_loader<B_PROLOGUE, ScaleBiasRightLoader>(
+              right_storage,
               scales_offset,
               biases_offset,
+              nullptr,
               signed_codes,
               k_elements,
+              groups_per_row,
               b_shared,
               thread_context.simdgroup_index,
               thread_context.simd_lane_id
@@ -284,9 +293,10 @@ struct SimdgroupMmaCore {
           const int zero_point_stride_per_row = (BITS == 4) ? ((groups_per_row + 1) / 2) : groups_per_row;
           const device uint8_t* zero_points_row_start = zero_points + block_col * zero_point_stride_per_row +
                                                         ((BITS == 4) ? (k_offset_groups / 2) : k_offset_groups);
-          return BLoaderScaleZeroPoint(
-              weights_block,
+          return make_loader<B_PROLOGUE, ScaleZeroPointRightLoader>(
+              right_storage,
               scales_offset,
+              static_cast<const device RightElementType*>(nullptr),
               zero_points_row_start,
               signed_codes,
               k_elements,
@@ -295,10 +305,11 @@ struct SimdgroupMmaCore {
               thread_context.simdgroup_index,
               thread_context.simd_lane_id
           );
-        } else {
-          return BLoaderScaleSymmetric(
-              weights_block,
+        } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant) {
+          return make_loader<GemmBPrologueKind::ScaleSymmetricDequant, SymmetricRightLoader>(
+              right_storage,
               scales_offset,
+              static_cast<const device RightElementType*>(nullptr),
               nullptr,
               signed_codes,
               k_elements,
