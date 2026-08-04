@@ -110,6 +110,14 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
     ) {
     }
 
+    fn push_debug_group(
+        &mut self,
+        _name: &str,
+    ) {
+    }
+
+    fn pop_debug_group(&mut self) {}
+
     fn end_encoding(self) -> CpuCommandBufferExecutable {
         CpuCommandBufferExecutable {
             command_queue: self.command_queue,
