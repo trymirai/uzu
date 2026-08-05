@@ -1,6 +1,6 @@
 use proc_macros::uzu_config;
 
-use crate::config::{linear::LinearConfig, normalization::NormalizationConfig};
+use crate::config::{linear::LinearConfig, normalization::NormalizationConfig, rope::AnyRoPEConfig};
 
 #[uzu_config]
 pub struct WeaverConfig {
@@ -14,4 +14,5 @@ pub struct WeaverConfig {
     pub candidate_pool_size: usize,
     pub linear_config: LinearConfig,
     pub norm_config: NormalizationConfig,
+    pub rope_config: AnyRoPEConfig,
 }
