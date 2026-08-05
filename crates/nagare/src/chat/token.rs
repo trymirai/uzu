@@ -1,10 +1,16 @@
 use std::{
+    io,
     pin::Pin,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use futures::{Stream, StreamExt, stream};
-use hanashi::{Encoding as EncodingTrait, chat::Encoding};
+use hanashi::{
+    Encoding as EncodingTrait,
+    chat::{Encoding, EncodingConfig, TokenizerLocation, hanashi::HanashiEncodingImpl, harmony::HarmonyEncodingImpl},
+    load_tokenizer,
+};
 use shoji::{
     traits::{
         State,
@@ -29,10 +35,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     chat::ChatSessionError,
-    util::{
-        helpers::{build_encoding, error_stream},
-        power::PowerRecorder,
-    },
+    util::{helpers::error_stream, power::PowerRecorder},
 };
 
 pub struct Session {
@@ -51,17 +54,63 @@ impl Session {
         reference: String,
         model: &Model,
     ) -> Result<Self, ChatSessionError> {
-        let encoding = build_encoding(reference.clone(), model).map_err(|err| ChatSessionError::Loading {
-            message: err.to_string(),
-        })?;
-        let tokenizer = encoding.tokenizer().ok_or_else(|| ChatSessionError::Loading {
-            message: "tokenizer is empty".to_string(),
-        })?;
-
-        let instance =
-            backend.instance(reference, config, tokenizer).await.map_err(|error| ChatSessionError::Backend {
-                message: error.to_string(),
+        let encoding_configs = model
+            .encodings
+            .iter()
+            .map(|value| serde_json::from_str::<EncodingConfig>(value.json.as_str()).map_err(io::Error::other))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| ChatSessionError::Loading {
+                message: format!("Failed to parse encoding config: {err}"),
             })?;
+
+        let encoding_config: Option<EncodingConfig> = if encoding_configs.is_empty() {
+            None
+        } else if encoding_configs.len() == 1 {
+            encoding_configs.first().cloned()
+        } else {
+            let harmony_config =
+                encoding_configs.iter().find(|config| matches!(config, EncodingConfig::Harmony { .. }));
+            if harmony_config.is_some() {
+                harmony_config.cloned()
+            } else {
+                encoding_configs.first().cloned()
+            }
+        };
+
+        let tokenizer_location = TokenizerLocation::Directory {
+            path: reference.clone(),
+            name: None,
+        };
+        let tokenizer = load_tokenizer(&tokenizer_location).map_err(|err| ChatSessionError::Loading {
+            message: format!("Failed to initialize tokenizer: {err}"),
+        })?;
+        let tokenizer = Arc::new(tokenizer);
+
+        let encoding = match encoding_config {
+            Some(EncodingConfig::Hanashi {
+                config,
+            }) => HanashiEncodingImpl::new(config, tokenizer.clone()).map(Encoding::Hanashi).map_err(|err| {
+                ChatSessionError::Loading {
+                    message: format!("can not create harmony encoding: {err}"),
+                }
+            }),
+            Some(EncodingConfig::Harmony {
+                config,
+            }) => HarmonyEncodingImpl::new(config, tokenizer_location).map(Encoding::Harmony).map_err(|err| {
+                ChatSessionError::Loading {
+                    message: format!("can not create harmony encoding: {err}"),
+                }
+            }),
+            None => Err(ChatSessionError::Loading {
+                message: "can not get encoding config".to_string(),
+            }),
+        }?;
+
+        let instance = backend.instance(reference.clone(), config, tokenizer).await.map_err(|error| {
+            ChatSessionError::Backend {
+                message: error.to_string(),
+            }
+        })?;
         let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
@@ -256,7 +305,15 @@ impl Session {
                 } => Some(ToolCallState::Candidate(value.json.clone())),
                 _ => None,
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        let finish_reason = if let Some(ChatReplyFinishReason::Stop) = finish_reason
+            && !tool_calls.is_empty()
+        {
+            Some(ChatReplyFinishReason::ToolCalls)
+        } else {
+            finish_reason
+        };
 
         Output {
             reasoning: message.reasoning(),
@@ -265,6 +322,14 @@ impl Session {
             finish_reason,
             stats: state.get_stats(have_finish_reason),
         }
+    }
+
+    pub fn supports_tool_calls(&self) -> bool {
+        self.encoding.supports_tool_calls()
+    }
+
+    pub fn supports_multiple_tool_calls(&self) -> bool {
+        self.encoding.supports_multiple_tool_calls()
     }
 }
 

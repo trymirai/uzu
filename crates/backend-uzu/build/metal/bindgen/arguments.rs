@@ -11,7 +11,7 @@ use super::{
         },
         enum_path_rewrite::rewrite_for_rust,
     },
-    variant_path_rewriter::VariantPathRewriter,
+    host_expression_rewriter::HostExpressionRewriter,
 };
 use crate::common::enum_paths::EnumPaths;
 
@@ -62,7 +62,7 @@ pub struct IndirectDispatchArgument;
 pub fn parse(
     kernel: &MetalKernelInfo,
     enum_paths: &EnumPaths,
-    variant_path_rewriter: &mut VariantPathRewriter,
+    host_expression_rewriter: &mut HostExpressionRewriter,
 ) -> Result<Vec<ArgumentEmission>> {
     let mut emissions = Vec::new();
     let mut next_buffer_index = 0usize;
@@ -88,7 +88,7 @@ pub fn parse(
                     dimensions.as_deref(),
                     next_threadgroup_index,
                     enum_paths,
-                    variant_path_rewriter,
+                    host_expression_rewriter,
                 )?;
                 emissions.push(ArgumentEmission::Shared(shared));
                 next_threadgroup_index += 1;
@@ -109,7 +109,7 @@ fn parse_shared_argument(
     dimensions: Option<&str>,
     threadgroup_index: usize,
     enum_paths: &EnumPaths,
-    variant_path_rewriter: &mut VariantPathRewriter,
+    host_expression_rewriter: &mut HostExpressionRewriter,
 ) -> Result<SharedArgument> {
     let condition = parse_argument_condition(argument, enum_paths)?
         .context("optional threadgroup argument must carry a condition")?;
@@ -117,7 +117,7 @@ fn parse_shared_argument(
     let element_size = shared_element_byte_size(&argument.c_type)?;
     let dimension_factors = dimensions
         .split("][")
-        .map(|dimension| variant_path_rewriter.rewrite(dimension))
+        .map(|dimension| host_expression_rewriter.rewrite(dimension))
         .collect::<Result<Vec<TokenStream>>>()?;
     let element_count = dimension_factors
         .into_iter()

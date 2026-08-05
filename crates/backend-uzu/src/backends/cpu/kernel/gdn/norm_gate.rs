@@ -1,4 +1,4 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
@@ -14,7 +14,7 @@ use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 // where inv_rms = rsqrt(mean(in_out^2) + epsilon)
 // and z is at in_proj[token * total_proj_dim + conv_dim + hv * head_v_dim + i]
 #[kernel(DeltaNetNormGate)]
-#[variants(T, f32, f16, bf16)]
+#[variants(T, f32, bf16)]
 pub fn delta_net_norm_gate<T: ArrayElement + Float>(
     in_out: *mut T,
     in_proj: *const T,

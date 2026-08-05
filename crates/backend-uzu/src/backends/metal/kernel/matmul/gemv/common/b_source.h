@@ -25,18 +25,25 @@ struct BSource {
       const device uint8_t* zero_points,
       const device BT* biases,
       const device AT* a,
+      const device uint* gather_indices,
+      bool gathered,
       uint in_vec_size,
+      uint out_vec_size,
       uint out_row,
       uint batch_idx,
       uint simd_lane,
-      uint k_slice
+      uint k_slice,
+      const bool signed_codes
   ) {
     if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
       FullPrecisionBSource<BT, AT, U, RESULTS_PER_SIMDGROUP, K_SPLIT, INPUT_ALIGNED>::accumulate(
           result,
           b,
           a,
+          gather_indices,
+          gathered,
           in_vec_size,
+          out_vec_size,
           out_row,
           batch_idx,
           simd_lane,
@@ -50,10 +57,14 @@ struct BSource {
           zero_points,
           biases,
           a,
+          gather_indices,
+          gathered,
           in_vec_size,
+          out_vec_size,
           out_row,
           batch_idx,
-          simd_lane
+          simd_lane,
+          signed_codes
       );
     }
   }

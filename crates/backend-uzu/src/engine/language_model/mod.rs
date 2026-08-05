@@ -1,12 +1,9 @@
-use std::{fs::File, io, io::BufReader, path::Path, rc::Rc};
+use std::{fs::File, io, io::BufReader, path::Path, sync::Arc};
 
 use thiserror::Error;
 
 use crate::{
-    backends::common::{
-        Backend, Context, Kernels,
-        kernel::{ContextRingUpdateKernel, TokenCopySampledKernel},
-    },
+    backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
     config::model::{generation::GenerationConfig, language_model::LanguageModelConfig},
     data_type::DataType,
     encodable_block::{
@@ -15,19 +12,23 @@ use crate::{
     },
     engine::Engine,
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
+    speculators::dflash_speculator::{DFlashSpeculator, DFlashSpeculatorLoadError},
 };
 
-pub mod grammar;
 pub mod state;
 pub mod stream;
 
+#[cfg(grammar)]
+pub mod grammar;
+
 pub struct LanguageModel<B: Backend> {
-    context: Rc<B::Context>,
+    engine: Arc<Engine<B>>,
     decoder: Decoder<B>,
+    speculator: Option<DFlashSpeculator<B>>,
     sampling: Sampling<B>,
-    token_copy: <B::Kernels as Kernels>::TokenCopySampledKernel,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
+    #[cfg(grammar)]
     vocab_size: usize,
 }
 
@@ -45,11 +46,13 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("Decoder error: {0}")]
     Decoder(#[from] DecoderError<B>),
+    #[error("Speculator error: {0}")]
+    Speculator(#[from] DFlashSpeculatorLoadError<B>),
 }
 
 impl<B: Backend> Engine<B> {
     pub fn load_language_model(
-        &self,
+        self: &Arc<Self>,
         model_path: &Path,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
         let config: LanguageModelConfig =
@@ -58,11 +61,16 @@ impl<B: Backend> Engine<B> {
         let weights_file = File::open(model_path.join("model.safetensors"))?;
         let weight_loader = ParameterLoader::new(&weights_file, &*self.context)?;
 
-        self.build_language_model(config, &weight_loader)
+        // TODO
+        let speculator_path = model_path.join("speculator");
+        let speculator_path = speculator_path.exists().then_some(speculator_path);
+
+        self.build_language_model(config, &weight_loader, speculator_path.as_deref())
     }
 
+    // TODO: better design
     pub fn load_language_model_random(
-        &self,
+        self: &Arc<Self>,
         config_path: &Path,
         header_path: &Path,
         seed: u64,
@@ -72,45 +80,53 @@ impl<B: Backend> Engine<B> {
         let header_file = File::open(header_path)?;
         let weight_loader = ParameterLoader::new_random(&header_file, &*self.context, seed)?;
 
-        self.build_language_model(config, &weight_loader)
+        self.build_language_model(config, &weight_loader, None)
     }
 
     fn build_language_model(
-        &self,
+        self: &Arc<Self>,
         config: LanguageModelConfig,
         weight_loader: &ParameterLoader<B>,
+        speculator_path: Option<&Path>,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
-        let context = self.context.clone();
-
         let data_type = DataType::BF16;
 
         let decoder = Decoder::new(
-            context.as_ref(),
+            self.context.as_ref(),
             &config.decoder_config,
             &weight_loader.tree().subtree("decoder")?,
             data_type,
         )?;
 
+        assert!(
+            speculator_path.is_none() || decoder.speculation_supported(),
+            "attempted to load speculator for a model that doesn't support one"
+        );
+
+        let speculator = speculator_path
+            .map(|speculator_path| DFlashSpeculator::load(speculator_path, self.context.clone()))
+            .transpose()?;
+
         let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);
 
-        let token_copy = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context)
-            .map_err(EngineLoadLanguageModelError::Backend)?;
-        let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&context)
+        let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
         weight_loader.tree().assert_all_tensors_validated()?;
 
         let generation_config = config.generation_config;
 
+        #[cfg(grammar)]
         let vocab_size = config.decoder_config.vocab_size;
 
         Ok(LanguageModel {
-            context,
+            engine: self.clone(),
             decoder,
+            speculator,
             sampling,
-            token_copy,
             context_ring_update,
             generation_config,
+            #[cfg(grammar)]
             vocab_size,
         })
     }
@@ -125,7 +141,7 @@ impl<B: Backend> LanguageModel<B> {
         let max_context_length = self.max_context_length();
 
         // TODO: This is not the correct way to do it, there should be a real memory model
-        if self.context.sparse_buffers_supported() {
+        if self.engine.context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS) {
             // We just assume that all mixers use sparse if it's available to make max context free until it's actually used
             // Currenlty true for all mixers in uzu:
             // - full attention uses sparse if it's available to make max context free until it's actually used

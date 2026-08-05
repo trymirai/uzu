@@ -1,6 +1,7 @@
-use std::{path::PathBuf, pin::Pin};
+use std::{path::PathBuf, pin::Pin, sync::Arc};
 
 use futures::{StreamExt, stream};
+use parking_lot::Mutex;
 use shoji::traits::{
     State as ShojiState,
     backend::{
@@ -15,12 +16,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     backends::common::Backend,
-    bridge::sync_shared::SyncShared,
     engine::{Engine, classifier_model::ClassifierModel},
 };
 
 pub struct UzuClassificationBackendInstance<B: Backend> {
-    model: SyncShared<ClassifierModel<B>>,
+    model: Arc<Mutex<ClassifierModel<B>>>,
 }
 
 impl<B: Backend> UzuClassificationBackendInstance<B> {
@@ -29,7 +29,7 @@ impl<B: Backend> UzuClassificationBackendInstance<B> {
         let model_path = PathBuf::from(model_path);
         let model = engine.load_classifier_model(&model_path).map_err(|err| err.to_string())?;
         Ok(Self {
-            model: SyncShared::new(model),
+            model: Arc::new(Mutex::new(model)),
         })
     }
 }
@@ -59,7 +59,7 @@ impl<B: Backend> BackendInstance for UzuClassificationBackendInstance<B> {
     > {
         Box::pin(NoMetricsStream::new(
             stream::once(async move {
-                let model_guard = self.model.lock().map_err(|err| err.to_string())?;
+                let model_guard = self.model.lock();
                 model_guard.classify(input).map_err(|err| BackendError::from(err.to_string()))
             })
             .take_until(cancel_token.cancelled_owned()),

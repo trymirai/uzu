@@ -1,7 +1,7 @@
 pub mod batch_topology;
 pub mod classifier;
 pub mod decoder;
-pub(crate) mod dflash;
+pub mod dflash;
 pub mod embedding;
 pub mod linear;
 pub mod mixer;
@@ -12,3 +12,4 @@ pub mod prediction_head;
 pub mod sampling;
 pub mod transformer;
 pub mod transformer_layer;
+pub mod weaver;

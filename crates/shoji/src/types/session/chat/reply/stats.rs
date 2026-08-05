@@ -38,4 +38,12 @@ impl ChatReplyStats {
     pub fn tokens_count(&self) -> Option<u32> {
         self.tokens_count_input.and_then(|input| self.tokens_count_output.map(|output| input + output))
     }
+
+    /// Energy spent per processed token, counting both input and output tokens.
+    #[bindings::export(Method(Getter))]
+    pub fn joules_per_token(&self) -> Option<f64> {
+        let energy_joules = self.power_stats.as_ref()?.energy_joules;
+        let tokens_count = self.tokens_count()?;
+        (tokens_count > 0).then(|| energy_joules / f64::from(tokens_count))
+    }
 }

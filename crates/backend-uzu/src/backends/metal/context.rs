@@ -1,29 +1,30 @@
 use std::{
-    cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     path::Path,
-    rc::{Rc, Weak},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
 };
 
 #[cfg(test)]
 use metal::MTLSharedEvent;
 use metal::{
     MTL4CommandQueue, MTL4CommandQueueExt, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager,
-    MTLCommandQueue, MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent,
-    MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
+    MTLCommandBufferExt, MTLCommandQueue, MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
+    MTLEvent, MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
+use parking_lot::{Mutex, MutexGuard};
 
 use super::{
     Metal,
     device_tier::{DeviceTier, device_tier_for_device},
     error::MetalError,
-    kernel,
     metal_extensions::{DeviceExt, LibraryPipelineExtensions},
 };
 use crate::backends::{
-    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DeviceCapabilities},
     metal::{
         command_buffer::MetalCommandBufferInitial,
         sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
@@ -36,11 +37,11 @@ pub struct MetalContext {
     pub command_queue4: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
     timeline_event: Retained<ProtocolObject<dyn MTLEvent>>,
     timeline_value: AtomicU64,
-    allocator: Rc<Allocator<Metal>>,
-    peak_memory_usage: RefCell<usize>,
-    library: Retained<ProtocolObject<dyn MTLLibrary>>,
-    pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
-    sparse_heap_pool: RefCell<MetalSparseHeapPool>,
+    allocator: Arc<Allocator<Metal>>,
+    peak_memory_usage: AtomicUsize,
+    library_cache: Mutex<HashMap<usize, Retained<ProtocolObject<dyn MTLLibrary>>>>,
+    pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
+    sparse_heap_pool: Mutex<MetalSparseHeapPool>,
     device_tier: DeviceTier,
     weak_self: Weak<MetalContext>,
     #[cfg(test)]
@@ -57,32 +58,59 @@ impl MetalContext {
     }
 
     pub(super) fn update_peak_memory_usage(&self) {
-        let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
-        *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
+        self.peak_memory_usage.fetch_max(self.device.current_allocated_size(), Ordering::Relaxed);
+    }
+
+    fn library(
+        &self,
+        data: &'static [u8],
+        compressed: bool,
+    ) -> Result<Retained<ProtocolObject<dyn MTLLibrary>>, MetalError> {
+        // `data` always comes from an `include_bytes!` constant, so its address is a stable, unique key.
+        let key = data.as_ptr() as usize;
+        if let Some(library) = self.library_cache.lock().get(&key) {
+            return Ok(library.clone());
+        }
+
+        let maybe_uncompressed_data_owned;
+        let data = if compressed {
+            maybe_uncompressed_data_owned = zstd::decode_all(data).map_err(MetalError::CannotDecompressLibrary)?;
+
+            &maybe_uncompressed_data_owned
+        } else {
+            data
+        };
+
+        let library = self
+            .device
+            .new_library_with_data(data)
+            .map_err(|nserror| MetalError::CannotCreateLibrary(nserror.to_string()))?;
+        self.library_cache.lock().insert(key, library.clone());
+
+        Ok(library)
     }
 
     pub fn compute_pipeline_state(
         &self,
+        library_data: &'static [u8],
+        library_compressed: bool,
         cache_key: &str,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
     ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
-        if let Some(pipeline) = self.pipeline_cache.borrow().get(cache_key) {
+        if let Some(pipeline) = self.pipeline_cache.lock().get(cache_key) {
             return Ok(pipeline.clone());
         }
 
-        let pipeline = self.library.compute_pipeline_state(function_name, constants)?;
-        self.pipeline_cache.borrow_mut().insert(cache_key.to_string(), pipeline.clone());
+        let pipeline =
+            self.library(library_data, library_compressed)?.compute_pipeline_state(function_name, constants)?;
+        self.pipeline_cache.lock().insert(cache_key.to_string(), pipeline.clone());
 
         Ok(pipeline)
     }
 
-    pub(super) fn sparse_heap_pool(&self) -> Ref<'_, MetalSparseHeapPool> {
-        self.sparse_heap_pool.borrow()
-    }
-
-    pub(super) fn sparse_heap_pool_mut(&self) -> RefMut<'_, MetalSparseHeapPool> {
-        self.sparse_heap_pool.borrow_mut()
+    pub(super) fn sparse_heap_pool(&self) -> MutexGuard<'_, MetalSparseHeapPool> {
+        self.sparse_heap_pool.lock()
     }
 
     pub(super) fn sparse_update_mappings(
@@ -96,7 +124,7 @@ impl MetalContext {
         let wait_value = self.timeline_get_and_increment();
         self.command_queue4.wait_for_event_value(&self.timeline_event, wait_value);
         for op in mappings {
-            self.command_queue4.update_buffer_mappings(&op.buffer, Some(op.heap.borrow().heap()), &op.mtl_operations);
+            self.command_queue4.update_buffer_mappings(&op.buffer, Some(op.heap.lock().heap()), &op.mtl_operations);
         }
         self.command_queue4.signal_event_value(&self.timeline_event, wait_value + 1);
 
@@ -117,7 +145,7 @@ impl MetalContext {
 impl Context for MetalContext {
     type Backend = Metal;
 
-    fn new() -> Result<Rc<Self>, MetalError> {
+    fn new() -> Result<Arc<Self>, MetalError> {
         let device: Retained<ProtocolObject<dyn MTLDevice>> =
             <dyn MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
 
@@ -125,10 +153,6 @@ impl Context for MetalContext {
             device.new_command_queue_with_max_command_buffer_count(1024).ok_or(MetalError::CannotCreateCommandQueue)?;
 
         let command_queue4 = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?;
-
-        let library = device
-            .new_library_with_data(kernel::MTLB)
-            .map_err(|nserror| MetalError::CannotCreateLibrary(nserror.to_string()))?;
 
         let gpu_core_count = device.gpu_core_count();
         let device_tier = device_tier_for_device(gpu_core_count, device.as_ref());
@@ -139,17 +163,17 @@ impl Context for MetalContext {
         #[cfg(test)]
         let timeline_shared_event = device.new_shared_event().ok_or(MetalError::CannotCreateEvent)?;
 
-        Ok(Rc::new_cyclic(|weak_self| Self {
+        Ok(Arc::new_cyclic(|weak_self| Self {
             device,
             command_queue,
             command_queue4,
             timeline_event,
             timeline_value: AtomicU64::new(0),
             allocator: Allocator::new(weak_self.clone()),
-            peak_memory_usage: RefCell::new(0),
-            library,
-            pipeline_cache: RefCell::new(HashMap::new()),
-            sparse_heap_pool: RefCell::new(sparse_pool),
+            peak_memory_usage: AtomicUsize::new(0),
+            library_cache: Mutex::new(HashMap::new()),
+            pipeline_cache: Mutex::new(HashMap::new()),
+            sparse_heap_pool: Mutex::new(sparse_pool),
             device_tier,
             weak_self: weak_self.clone(),
             #[cfg(test)]
@@ -186,24 +210,27 @@ impl Context for MetalContext {
         self.allocator.create_pool(reusable)
     }
 
-    fn create_command_buffer(&self) -> Result<MetalCommandBufferInitial, MetalError> {
-        Ok(MetalCommandBufferInitial::new(
-            self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
-            self.weak_self.upgrade().unwrap(), // never fails
-        ))
+    fn create_command_buffer(
+        &self,
+        name: Option<&str>,
+    ) -> Result<MetalCommandBufferInitial, MetalError> {
+        let command_buffer = self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?;
+        command_buffer.set_label(name);
+        let context = self.weak_self.upgrade().unwrap(); // never fails
+        Ok(MetalCommandBufferInitial::new(command_buffer, context))
     }
 
     fn create_sparse_buffer(
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
-        let sparse_page_size = self.sparse_heap_pool.borrow().page_size();
+        let sparse_page_size = self.sparse_heap_pool.lock().page_size();
         let context = self.weak_self.upgrade().ok_or(MetalError::CannotCreateBuffer)?;
         MetalSparseBuffer::new(context, capacity, sparse_page_size)
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {
-        Some(*self.peak_memory_usage.borrow())
+        Some(self.peak_memory_usage.load(Ordering::Relaxed))
     }
 
     fn enable_capture() {
@@ -219,7 +246,7 @@ impl Context for MetalContext {
         let capture_manager = MTLCaptureManager::shared_capture_manager();
         let capture_descriptor = MTLCaptureDescriptor::new();
         capture_descriptor.set_destination(MTLCaptureDestination::GPUTraceDocument);
-        capture_descriptor.set_output_path(Some(trace_path));
+        capture_descriptor.set_output_path(Some(&trace_path.with_added_extension("gputrace")));
 
         self.command_queue.set_label(Some("uzu_command_queue"));
         capture_descriptor.set_capture_object(Some(self.command_queue.as_ref()));
@@ -237,7 +264,14 @@ impl Context for MetalContext {
         Ok(())
     }
 
-    fn sparse_buffers_supported(&self) -> bool {
-        self.device.supports_placement_sparse_resources()
+    fn device_capabilities(&self) -> DeviceCapabilities {
+        let mut capabilities = DeviceCapabilities::empty();
+        if self.device.supports_placement_sparse_resources() {
+            capabilities |= DeviceCapabilities::SPARSE_BUFFERS;
+        }
+        if self.device.supports_mxu() {
+            capabilities |= DeviceCapabilities::NATIVE_INT8_MATMUL;
+        }
+        capabilities
     }
 }

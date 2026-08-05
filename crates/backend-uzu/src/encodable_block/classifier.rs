@@ -8,7 +8,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         embedding::{Embedding, EmbeddingError},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar},
+        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         prediction_head::{PredictionHead, PredictionHeadError},
         transformer::{Transformer, TransformerNewError},
     },
@@ -62,8 +62,7 @@ impl<B: Backend> Classifier<B> {
         let embedding_norm = Normalization::new(
             config.transformer_config.model_dim,
             None,
-            false,
-            false,
+            ShortcutMode::None,
             PostLayerScalar::None,
             data_type,
             &config.embedding_norm_config,
@@ -132,7 +131,7 @@ impl<B: Backend> Classifier<B> {
             .collect::<Box<[TrieNode]>>();
         let hidden = self
             .transformer
-            .encode(hidden, None, &BatchTopology::new(&nodes, true), Some(0..batch_dim), None, encoder, &[])
+            .encode(hidden, None, &BatchTopology::new(&nodes, true), Some(0..batch_dim), None, None, encoder)
             .map_err(ClassifierError::Backend)?
             .output
             .unwrap();

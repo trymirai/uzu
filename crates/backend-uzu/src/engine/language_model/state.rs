@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::Backend,
-    encodable_block::{sampling::PRng, transformer::TransformerState},
+    encodable_block::{dflash::DFlashState, sampling::PRng, transformer::TransformerState},
     engine::language_model::LanguageModel,
 };
 
@@ -11,6 +11,7 @@ pub struct LanguageModelState<B: Backend> {
     pub(super) last_output_token: Option<u64>, // TODO: this leaks previous LanguageModelStreamOptions
     pub(super) prng: PRng,
     pub(super) transformer_state: TransformerState<B>,
+    pub(super) speculator_state: Option<DFlashState<B>>,
     pub(super) max_context_length: Option<usize>,
 }
 
@@ -38,7 +39,16 @@ impl<B: Backend> LanguageModel<B> {
 
         let transformer_state = self
             .decoder
-            .create_empty_state(max_context_length, &self.context)
+            .create_empty_state(max_context_length, &self.engine.context)
+            .map_err(LanguageModelCreateEmptyStateError::Backend)?;
+
+        let speculator_state = self
+            .speculator
+            .as_ref()
+            .map(|speculator| {
+                speculator.empty_state(max_context_length.expect("speculator doesn't support unlimited state capacity"))
+            })
+            .transpose()
             .map_err(LanguageModelCreateEmptyStateError::Backend)?;
 
         Ok(LanguageModelState {
@@ -46,6 +56,7 @@ impl<B: Backend> LanguageModel<B> {
             last_output_token,
             prng,
             transformer_state,
+            speculator_state,
             max_context_length,
         })
     }

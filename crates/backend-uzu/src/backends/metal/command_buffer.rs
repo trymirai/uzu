@@ -1,8 +1,8 @@
-use std::{rc::Rc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use metal::{
     MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferStatus,
-    MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLCommandEncoder, MTLCommandEncoderExt, MTLCommandQueue, MTLComputeCommandEncoder,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -28,13 +28,13 @@ impl CommandBuffer for MetalCommandBuffer {
 
 pub struct MetalCommandBufferInitial {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-    context: Rc<MetalContext>,
+    context: Arc<MetalContext>,
 }
 
 impl MetalCommandBufferInitial {
     pub fn new(
         command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        context: Rc<MetalContext>,
+        context: Arc<MetalContext>,
     ) -> Self {
         Self {
             command_buffer,
@@ -64,7 +64,7 @@ enum MetalCommandBufferEncodingEncodingState {
 pub struct MetalCommandBufferEncoding {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     encoding_state: MetalCommandBufferEncodingEncodingState,
-    context: Rc<MetalContext>,
+    context: Arc<MetalContext>,
 }
 
 impl MetalCommandBufferEncoding {
@@ -81,9 +81,10 @@ impl MetalCommandBufferEncoding {
     pub(super) fn ensure_compute(&mut self) -> &mut Retained<ProtocolObject<dyn MTLComputeCommandEncoder>> {
         if !matches!(self.encoding_state, MetalCommandBufferEncodingEncodingState::Compute(_)) {
             self.ensure_none();
-            self.encoding_state = MetalCommandBufferEncodingEncodingState::Compute(
-                self.command_buffer.compute_command_encoder().expect("Failed to create compute command encoder"),
-            );
+            let compute_encoder =
+                self.command_buffer.compute_command_encoder().expect("Failed to create compute command encoder");
+            compute_encoder.set_label(self.command_buffer.label().as_deref());
+            self.encoding_state = MetalCommandBufferEncodingEncodingState::Compute(compute_encoder);
         }
 
         let MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) = &mut self.encoding_state else {
@@ -157,6 +158,17 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
     ) {
     }
 
+    fn push_debug_group(
+        &mut self,
+        name: &str,
+    ) {
+        self.command_buffer.push_debug_group(name);
+    }
+
+    fn pop_debug_group(&mut self) {
+        self.command_buffer.pop_debug_group();
+    }
+
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
         self.ensure_none();
 
@@ -169,7 +181,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
 pub struct MetalCommandBufferExecutable {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-    context: Rc<MetalContext>,
+    context: Arc<MetalContext>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {

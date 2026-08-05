@@ -5,7 +5,7 @@ mod array;
 mod config;
 mod encodable_block;
 mod parameters;
-pub mod speculators;
+mod speculators;
 mod trie;
 mod utils;
 
@@ -18,8 +18,5 @@ pub mod engine;
 pub use parameters::{HeaderSummary, summarize_header};
 pub use utils::version::{TOOLCHAIN_VERSION, VERSION};
 
-// needed for tests to resolve `backend_uzu::` imports
-#[cfg(test)]
-extern crate self as backend_uzu;
 #[cfg(test)]
 pub mod tests;

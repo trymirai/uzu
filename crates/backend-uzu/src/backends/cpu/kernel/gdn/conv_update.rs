@@ -1,4 +1,4 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
@@ -6,7 +6,7 @@ use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 
 // Single-token causal conv1d with SiLU, in-place.
 #[kernel(DeltaNetConvUpdate)]
-#[variants(T, f32, f16, bf16)]
+#[variants(T, f32, bf16)]
 pub fn delta_net_conv_update<T: ArrayElement + Float>(
     conv_weight: *const f32,
     #[optional(has_bias)] bias: Option<*const f32>,

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 const PHILOX_W32_0: u32 = 0x9E3779B9;
 const PHILOX_W32_1: u32 = 0xBB67AE85;
 const PHILOX_M4X32_0: u32 = 0xD2511F53;
@@ -73,16 +71,4 @@ pub fn revidx(
     let block_idx_word = block_idx % WORDS_PER_OFFSET;
 
     (thread_offset + block_idx_offset, block_idx_word)
-}
-
-pub fn speculator_sample(
-    seed: u64,
-    vocab_size: usize,
-    speculator_probs: &HashMap<u64, f32>,
-) -> Option<u64> {
-    speculator_probs
-        .iter()
-        .map(|(&k, &v)| (k, f32::ln(v) + gumbel_float(seed, revidx(k as u32, vocab_size as u32))))
-        .max_by(|(_, av), (_, bv)| f32::total_cmp(av, bv))
-        .map(|(k, _)| k)
 }

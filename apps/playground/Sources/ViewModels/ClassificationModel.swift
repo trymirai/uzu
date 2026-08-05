@@ -46,7 +46,6 @@ final class ClassificationModel {
         }
 
         self.viewState = .loading
-        let feature = self.feature
 
         loadingTask?.cancel()
         loadingTask = Task.detached { [weak self] in
@@ -54,7 +53,7 @@ final class ClassificationModel {
             let session: ChatSession?
             let newState: ViewState
             do {
-                let config = ChatConfig.create().withSpeculationPreset(speculationPreset: .classification(feature: feature))
+                let config = ChatConfig.create()
                 session = try await engine.chat(model: model, config: config)
                 newState = .idle
             } catch {

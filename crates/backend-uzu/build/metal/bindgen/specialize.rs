@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{Context, Result};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -24,6 +26,11 @@ struct SpecializeArgument {
 
 pub struct SpecializeEmission {
     arguments: Vec<SpecializeArgument>,
+}
+
+pub struct RetainedSpecializations {
+    pub wrapper_fields: Vec<TokenStream>,
+    pub wrapper_initializers: Vec<TokenStream>,
 }
 
 pub fn parse(
@@ -66,6 +73,32 @@ pub fn parse(
 }
 
 impl SpecializeEmission {
+    pub fn argument_names(&self) -> Vec<String> {
+        self.arguments.iter().map(|argument| argument.name.to_string()).collect()
+    }
+
+    pub fn retain_referenced(
+        &self,
+        referenced: &BTreeSet<String>,
+    ) -> RetainedSpecializations {
+        let (wrapper_fields, wrapper_initializers) = self
+            .arguments
+            .iter()
+            .filter(|argument| referenced.contains(&argument.name.to_string()))
+            .map(|argument| {
+                let name = &argument.name;
+                let field = format_ident!("specialize_{}", name);
+                let rust_type = &argument.rust_type;
+                (quote! { #field: #rust_type }, quote! { #field: #name })
+            })
+            .unzip();
+
+        RetainedSpecializations {
+            wrapper_fields,
+            wrapper_initializers,
+        }
+    }
+
     pub fn constructor_arguments(&self) -> Vec<TokenStream> {
         self.arguments
             .iter()

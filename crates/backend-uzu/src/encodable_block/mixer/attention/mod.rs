@@ -14,10 +14,9 @@ use crate::{
             Mixer, MixerState,
             attention::{
                 core::{AttentionCoreNewArguments, AttentionCores},
-                mode::{LinearProjection, QkvProjection},
+                mode::LinearProjection,
                 qkv_norm::{QKVNorm, QKVNormError},
                 rope::PrecalculatedRoPE,
-                state::AttentionState,
             },
         },
     },
@@ -30,6 +29,8 @@ mod mode;
 mod qkv_norm;
 mod state;
 
+pub(crate) use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, AttentionStateType};
+
 pub mod rope;
 
 pub struct Attention<B: Backend> {
@@ -40,7 +41,8 @@ pub struct Attention<B: Backend> {
     sliding_window_size: Option<usize>,
     max_rope_length: Option<usize>,
     data_type: DataType,
-    projection: QkvProjection<B>,
+    qkv: LinearProjection<B>,
+    prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     gate_projection: Option<Box<dyn Linear<B>>>,
     sinks: Option<Allocation<B>>,
     flat_core: AttentionCores<B>,
@@ -157,21 +159,12 @@ impl<B: Backend> Attention<B> {
             rope_config.is_some(),
         )
         .map_err(AttentionNewError::Backend)?;
-        let projection = QkvProjection::Packed {
-            qkv: LinearProjection {
-                lin: qkv_projection,
-                norm: qkv_norm,
-            },
-            prepare,
-        };
-
         let sinks = config
             .has_sinks
             .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_allocation())
             .transpose()?;
 
-        // TODO: remove when wiring with DFlash: split non-causal attention needs full KV storage and a window mask.
-        let is_kv_cache_ring = sliding_window_size.is_some();
+        let is_kv_cache_ring = is_causal && sliding_window_size.is_some();
 
         let flat_core = AttentionCores::new(
             AttentionCoreNewArguments {
@@ -230,7 +223,11 @@ impl<B: Backend> Attention<B> {
                 sliding_window_size,
                 max_rope_length,
                 data_type,
-                projection,
+                qkv: LinearProjection {
+                    lin: qkv_projection,
+                    norm: qkv_norm,
+                },
+                prepare,
                 gate_projection,
                 sinks,
                 flat_core,

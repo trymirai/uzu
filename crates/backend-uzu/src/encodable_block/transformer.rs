@@ -3,13 +3,13 @@ use std::ops::Range;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::TensorAddScaleKernel},
     config::{rope::AnyRoPEConfig, transformer::TransformerConfig},
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
         mixer::{MixerState, attention::rope::PrecalculatedRoPE},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar},
+        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -28,7 +28,7 @@ pub struct TransformerState<B: Backend> {
 
 pub struct TransformerEncodeOutput<B: Backend> {
     pub output: Option<Allocation<B>>,
-    pub hidden_features: Box<[Allocation<B>]>,
+    pub hidden_features: Option<Box<[Allocation<B>]>>,
 }
 
 impl<B: Backend> TransformerState<B> {
@@ -58,6 +58,8 @@ impl<B: Backend> TransformerState<B> {
         accepted_indices: &[usize],
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
+        encoder.push_debug_group("transformer accept");
+
         for layer_state in &mut self.layer_states {
             let TransformerLayerStateType::Owned(layer_state) = layer_state else {
                 continue;
@@ -67,6 +69,8 @@ impl<B: Backend> TransformerState<B> {
         }
 
         self.context_length += accepted_indices.len();
+
+        encoder.pop_debug_group();
 
         Ok(())
     }
@@ -88,6 +92,8 @@ pub struct Transformer<B: Backend> {
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
     output_norm: Normalization<B>,
+    model_dim: usize,
+    residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
 }
 
 impl<B: Backend> Transformer<B> {
@@ -130,8 +136,7 @@ impl<B: Backend> Transformer<B> {
         let output_norm = Normalization::new(
             transformer_config.model_dim,
             output_norm_hadamard_factors,
-            true,
-            true,
+            ShortcutMode::Add,
             PostLayerScalar::None,
             data_type,
             &transformer_config.output_norm_config,
@@ -139,11 +144,29 @@ impl<B: Backend> Transformer<B> {
             context,
         )?;
 
+        let residual_add = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, false)
+            .map_err(TransformerNewError::Backend)?;
+
         Ok(Self {
             ropes: ropes.into_boxed_slice(),
             layers,
             output_norm,
+            model_dim: transformer_config.model_dim,
+            residual_add,
         })
+    }
+
+    fn capture_residual(
+        &self,
+        shortcut: &Allocation<B>,
+        hidden: &Allocation<B>,
+        batch_size: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut output = encoder.allocate_scratch(hidden.size())?;
+        let elements = (batch_size * self.model_dim) as u32;
+        self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, encoder);
+        Ok(output)
     }
 
     pub fn speculation_supported(&self) -> bool {
@@ -205,19 +228,20 @@ impl<B: Backend> Transformer<B> {
         per_layer_inputs: Option<&Allocation<B>>,
         batch_dim: &BatchTopology,
         output_range: Option<Range<usize>>,
+        hidden_feature_layer_indices: Option<&[usize]>,
         mut state: Option<&mut TransformerState<B>>,
         encoder: &mut Encoder<B>,
-        hidden_feature_layer_indices: &[usize],
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
         let mut hidden = input;
-        let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_empty() {
+        let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
         } else {
             self.layers.len()
         };
 
         let mut shortcut = encoder.allocate_scratch(hidden.size())?;
-        let mut hidden_features = (0..hidden_feature_layer_indices.len()).map(|_| None).collect::<Vec<_>>();
+        let mut hidden_features =
+            hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
         let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
         let token_positions =
@@ -257,24 +281,30 @@ impl<B: Backend> Transformer<B> {
                 encoder,
             )?;
 
-            for (feature_index, &layer_index) in hidden_feature_layer_indices.iter().enumerate() {
-                if layer_index == layer.layer_index {
-                    let mut feature = encoder.allocate_scratch(hidden.size())?;
-                    encoder.encode_copy(&hidden, .., &mut feature, ..);
-                    hidden_features[feature_index] = Some(feature);
+            if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
+                for (feature_index, &layer_index) in indices.iter().enumerate() {
+                    if layer_index == layer.layer_index {
+                        let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
+                        hidden_features[feature_index] = Some(feature);
+                    }
                 }
             }
         }
 
-        let hidden_features: Box<[Allocation<B>]> = hidden_features
-            .into_iter()
-            .enumerate()
-            .map(|(feature_index, feature)| {
-                feature.unwrap_or_else(|| {
-                    panic!("requested hidden feature for missing layer {}", hidden_feature_layer_indices[feature_index])
+        let hidden_features = hidden_features.map(|hidden_features| {
+            hidden_features
+                .into_iter()
+                .enumerate()
+                .map(|(feature_index, feature)| {
+                    feature.unwrap_or_else(|| {
+                        panic!(
+                            "requested hidden feature for missing layer {}",
+                            hidden_feature_layer_indices.unwrap()[feature_index]
+                        )
+                    })
                 })
-            })
-            .collect();
+                .collect::<Box<[_]>>()
+        });
 
         let Some(output_range) = output_range else {
             return Ok(TransformerEncodeOutput {

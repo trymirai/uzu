@@ -3,16 +3,17 @@ use std::convert::Infallible;
 use crate::backends::{common::Kernels, cpu::Cpu};
 
 mod activation;
+pub(crate) mod activation_transform;
 mod attention;
 mod embedding;
 mod gated_act_mul;
 mod gdn;
-mod hadamard_transform;
 mod logit_soft_cap;
 mod matmul;
 mod moe;
 mod normalization;
 mod pooling;
+mod radix_top_k_small;
 mod sampling;
 mod short_conv;
 mod softmax;
@@ -21,9 +22,9 @@ mod tensor_add_bias;
 mod tensor_add_scale;
 mod tensor_add_swap;
 mod tensor_copy;
-mod token_copy;
+mod weaver;
 
-include!(concat!(env!("OUT_DIR"), "/cpu/dsl.rs"));
+include!(concat!(env!("OUT_DIR"), "/cpu.rs"));
 
 pub struct CpuKernels;
 
@@ -33,5 +34,7 @@ impl Kernels for CpuKernels {
     autogen_kernels!();
     type AttentionGemmCore = Infallible;
     type DeltaNetChunkedPrefill = Infallible;
+    type DeltaNetTreeVerify = Infallible;
     type MatmulKernel = matmul::MatmulCpuKernel;
+    type RadixTopKSmall = radix_top_k_small::CpuRadixTopKSmall;
 }

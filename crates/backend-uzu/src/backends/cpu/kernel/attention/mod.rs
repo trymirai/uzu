@@ -1,3 +1,4 @@
+pub mod ancestor_attention;
 pub mod attention_fallback;
 pub mod attention_prepare;
 pub mod attention_single_pass;

@@ -414,7 +414,53 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 
 
 // Public interface members begin here.
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterBool : FfiConverter {
+    typealias FfiType = Int8
+    typealias SwiftType = Bool
+
+    public static func lift(_ value: Int8) throws -> Bool {
+        return value != 0
+    }
+
+    public static func lower(_ value: Bool) -> Int8 {
+        return value ? 1 : 0
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Bool {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Bool, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -462,6 +508,10 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 public protocol ChatSessionProtocol: AnyObject, Sendable {
     
+    func addForeignTool(tool: ForeignTool) async throws 
+    
+    func addForeignTools(tools: [ForeignTool]) async throws 
+    
     func messages() async  -> [ChatMessage]
     
     func reply(input: [ChatMessage], config: ChatReplyConfig) async throws  -> [ChatReply]
@@ -471,6 +521,8 @@ public protocol ChatSessionProtocol: AnyObject, Sendable {
     func reset() async throws 
     
     func state() async  -> ChatSessionState
+    
+    func supportsToolCalls() async  -> Bool
     
 }
 open class ChatSession: ChatSessionProtocol, @unchecked Sendable {
@@ -525,6 +577,40 @@ open class ChatSession: ChatSessionProtocol, @unchecked Sendable {
 
     
 
+    
+open func addForeignTool(tool: ForeignTool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nagare_fn_method_chatsession_add_foreign_tool(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeForeignTool_lower(tool)
+                )
+            },
+            pollFunc: ffi_nagare_rust_future_poll_void,
+            completeFunc: ffi_nagare_rust_future_complete_void,
+            freeFunc: ffi_nagare_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeChatSessionError_lift
+        )
+}
+    
+open func addForeignTools(tools: [ForeignTool])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nagare_fn_method_chatsession_add_foreign_tools(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceTypeForeignTool.lower(tools)
+                )
+            },
+            pollFunc: ffi_nagare_rust_future_poll_void,
+            completeFunc: ffi_nagare_rust_future_complete_void,
+            freeFunc: ffi_nagare_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeChatSessionError_lift
+        )
+}
     
 open func messages()async  -> [ChatMessage]  {
     return
@@ -609,6 +695,24 @@ open func state()async  -> ChatSessionState  {
             completeFunc: ffi_nagare_rust_future_complete_rust_buffer,
             freeFunc: ffi_nagare_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeChatSessionState_lift,
+            errorHandler: nil
+            
+        )
+}
+    
+open func supportsToolCalls()async  -> Bool  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nagare_fn_method_chatsession_supports_tool_calls(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_nagare_rust_future_poll_i8,
+            completeFunc: ffi_nagare_rust_future_complete_i8,
+            freeFunc: ffi_nagare_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
             errorHandler: nil
             
         )
@@ -945,6 +1049,121 @@ public func FfiConverterTypeClassificationSession_lower(_ value: ClassificationS
 
 
 
+public protocol ForeignToolProtocol: AnyObject, Sendable {
+    
+}
+open class ForeignTool: ForeignToolProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_nagare_fn_clone_foreigntool(self.handle, $0) }
+    }
+public convenience init(definition: ToolFunction, handler: ForeignToolHandler) {
+    let handle =
+        try! rustCall() {
+    uniffi_nagare_fn_constructor_foreigntool_new(
+        FfiConverterTypeToolFunction_lower(definition),
+        FfiConverterCallbackInterfaceForeignToolHandler_lower(handler),$0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_nagare_fn_free_foreigntool(handle, $0) }
+    }
+
+    
+
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeForeignTool: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ForeignTool
+
+    public static func lift(_ handle: UInt64) throws -> ForeignTool {
+        return ForeignTool(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ForeignTool) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ForeignTool {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ForeignTool, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForeignTool_lift(_ handle: UInt64) throws -> ForeignTool {
+    return try FfiConverterTypeForeignTool.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForeignTool_lower(_ value: ForeignTool) -> UInt64 {
+    return FfiConverterTypeForeignTool.lower(value)
+}
+
+
+
+
+
+
 public protocol TextToSpeechSessionProtocol: AnyObject, Sendable {
     
     func state() async  -> TextToSpeechSessionState
@@ -1255,6 +1474,8 @@ public enum ChatSessionError: Swift.Error, Equatable, Hashable, Codable, Foundat
     case UnsupportedModel
     case UnableToPerformOperationInCurrentState
     case NoResponse
+    case ToolTurnLimitExceeded(limit: UInt32
+    )
 
     
 
@@ -1293,6 +1514,9 @@ public struct FfiConverterTypeChatSessionError: FfiConverterRustBuffer {
         case 3: return .UnsupportedModel
         case 4: return .UnableToPerformOperationInCurrentState
         case 5: return .NoResponse
+        case 6: return .ToolTurnLimitExceeded(
+            limit: try FfiConverterUInt32.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1326,6 +1550,11 @@ public struct FfiConverterTypeChatSessionError: FfiConverterRustBuffer {
         case .NoResponse:
             writeInt(&buf, Int32(5))
         
+        
+        case let .ToolTurnLimitExceeded(limit):
+            writeInt(&buf, Int32(6))
+            FfiConverterUInt32.write(limit, into: &buf)
+            
         }
     }
 }
@@ -1659,6 +1888,80 @@ public func FfiConverterTypeClassificationSessionState_lower(_ value: Classifica
 
 
 
+public enum ForeignToolError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
+
+    
+    
+    case Invocation(message: String
+    )
+
+    
+
+    
+
+    
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+    
+}
+
+#if compiler(>=6)
+extension ForeignToolError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeForeignToolError: FfiConverterRustBuffer {
+    typealias SwiftType = ForeignToolError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ForeignToolError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        
+
+        
+        case 1: return .Invocation(
+            message: try FfiConverterString.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ForeignToolError, into buf: inout [UInt8]) {
+        switch value {
+
+        
+
+        
+        
+        case let .Invocation(message):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(message, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForeignToolError_lift(_ buf: RustBuffer) throws -> ForeignToolError {
+    return try FfiConverterTypeForeignToolError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForeignToolError_lower(_ value: ForeignToolError) -> RustBuffer {
+    return FfiConverterTypeForeignToolError.lower(value)
+}
+
+
 public enum TextToSpeechSessionError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
     
@@ -1890,6 +2193,149 @@ public func FfiConverterTypeTextToSpeechSessionStreamChunk_lower(_ value: TextTo
 }
 
 
+
+
+
+public protocol ForeignToolHandler: AnyObject, Sendable {
+    
+    func invokeJson(argumentsJson: String) async throws  -> String
+    
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceForeignToolHandler {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceForeignToolHandler] = [UniffiVTableCallbackInterfaceForeignToolHandler(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterCallbackInterfaceForeignToolHandler.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface ForeignToolHandler: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterCallbackInterfaceForeignToolHandler.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface ForeignToolHandler: handle missing in uniffiClone")
+            }
+        },
+        invokeJson: { (
+            uniffiHandle: UInt64,
+            argumentsJson: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteRustBuffer,
+            uniffiCallbackData: UInt64,
+            uniffiOutDroppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
+        ) in
+            let makeCall = {
+                () async throws -> String in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceForeignToolHandler.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try await uniffiObj.invokeJson(
+                     argumentsJson: try FfiConverterString.lift(argumentsJson)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: String) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureResultRustBuffer(
+                        returnValue: FfiConverterString.lower(returnValue),
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureResultRustBuffer(
+                        returnValue: RustBuffer.empty(),
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            uniffiTraitInterfaceCallAsyncWithError(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError,
+                lowerError: FfiConverterTypeForeignToolError_lower,
+                droppedCallback: uniffiOutDroppedCallback
+            )
+        }
+    )]
+}
+
+private func uniffiCallbackInitForeignToolHandler() {
+    uniffi_nagare_fn_init_callback_vtable_foreigntoolhandler(UniffiCallbackInterfaceForeignToolHandler.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceForeignToolHandler {
+    fileprivate static let handleMap = UniffiHandleMap<ForeignToolHandler>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceForeignToolHandler : FfiConverter {
+    typealias SwiftType = ForeignToolHandler
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceForeignToolHandler_lift(_ handle: UInt64) throws -> ForeignToolHandler {
+    return try FfiConverterCallbackInterfaceForeignToolHandler.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceForeignToolHandler_lower(_ v: ForeignToolHandler) -> UInt64 {
+    return FfiConverterCallbackInterfaceForeignToolHandler.lower(v)
+}
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1935,6 +2381,31 @@ fileprivate struct FfiConverterOptionTypeTextToSpeechSessionStreamChunk: FfiConv
         case 1: return try FfiConverterTypeTextToSpeechSessionStreamChunk.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeForeignTool: FfiConverterRustBuffer {
+    typealias SwiftType = [ForeignTool]
+
+    public static func write(_ value: [ForeignTool], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeForeignTool.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ForeignTool] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ForeignTool]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeForeignTool.read(from: &buf))
+        }
+        return seq
     }
 }
 
@@ -2060,6 +2531,96 @@ fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: In
         print("uniffiFutureContinuationCallback invalid handle")
     }
 }
+private func uniffiTraitInterfaceCallAsync<T>(
+    makeCall: @escaping () async throws -> T,
+    handleSuccess: @escaping (T) -> (),
+    handleError: @escaping (Int8, RustBuffer) -> (),
+    droppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
+) {
+    let task = Task {
+        // Note: it's important we call either `handleSuccess` or `handleError` exactly once.  Each
+        // call consumes an Arc reference, which means there should be no possibility of a double
+        // call.  The following code is structured so that will will never call both `handleSuccess`
+        // and `handleError`, even in the face of weird errors.
+        //
+        // On platforms that need extra machinery to make C-ABI calls, like JNA or ctypes, it's
+        // possible that we fail to make either call.  However, it doesn't seem like this is
+        // possible on Swift since swift can just make the C call directly.
+        var callResult: T
+        do {
+            callResult = try await makeCall()
+        } catch {
+            handleError(CALL_UNEXPECTED_ERROR, FfiConverterString.lower(String(describing: error)))
+            return
+        }
+        handleSuccess(callResult)
+    }
+    let handle = UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.insert(obj: task)
+    droppedCallback.pointee = UniffiForeignFutureDroppedCallbackStruct(
+        handle: handle,
+        free: uniffiForeignFutureDroppedCallback
+    )
+}
+
+private func uniffiTraitInterfaceCallAsyncWithError<T, E>(
+    makeCall: @escaping () async throws -> T,
+    handleSuccess: @escaping (T) -> (),
+    handleError: @escaping (Int8, RustBuffer) -> (),
+    lowerError: @escaping (E) -> RustBuffer,
+    droppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
+) {
+    let task = Task {
+        // See the note in uniffiTraitInterfaceCallAsync for details on `handleSuccess` and
+        // `handleError`.
+        var callResult: T
+        do {
+            callResult = try await makeCall()
+        } catch let error as E {
+            handleError(CALL_ERROR, lowerError(error))
+            return
+        } catch {
+            handleError(CALL_UNEXPECTED_ERROR, FfiConverterString.lower(String(describing: error)))
+            return
+        }
+        handleSuccess(callResult)
+    }
+    let handle = UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.insert(obj: task)
+    droppedCallback.pointee = UniffiForeignFutureDroppedCallbackStruct(
+        handle: handle,
+        free: uniffiForeignFutureDroppedCallback
+    )
+}
+
+// Borrow the callback handle map implementation to store foreign future handles
+// TODO: consolidate the handle-map code (https://github.com/mozilla/uniffi-rs/pull/1823)
+fileprivate let UNIFFI_FOREIGN_FUTURE_HANDLE_MAP = UniffiHandleMap<UniffiForeignFutureTask>()
+
+// Protocol for tasks that handle foreign futures.
+//
+// Defining a protocol allows all tasks to be stored in the same handle map.  This can't be done
+// with the task object itself, since has generic parameters.
+fileprivate protocol UniffiForeignFutureTask {
+    func cancel()
+}
+
+extension Task: UniffiForeignFutureTask {}
+
+private func uniffiForeignFutureDroppedCallback(handle: UInt64) {
+    do {
+        let task = try UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.remove(handle: handle)
+        // Set the cancellation flag on the task.  If it's still running, the code can check the
+        // cancellation flag or call `Task.checkCancellation()`.  If the task has completed, this is
+        // a no-op.
+        task.cancel()
+    } catch {
+        print("uniffiForeignFutureDroppedCallback: handle missing from handlemap")
+    }
+}
+
+// For testing
+public func uniffiForeignFutureHandleCountNagare() -> Int {
+    UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.count
+}
 
 private enum InitializationResult {
     case ok
@@ -2076,6 +2637,12 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_nagare_checksum_method_chatsession_add_foreign_tool() != 48906) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nagare_checksum_method_chatsession_add_foreign_tools() != 57388) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_nagare_checksum_method_chatsession_messages() != 35188) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2089,6 +2656,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_chatsession_state() != 61854) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nagare_checksum_method_chatsession_supports_tool_calls() != 55549) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_chatsessionstream_cancel_token() != 18598) {
@@ -2118,7 +2688,14 @@ private let initializationResult: InitializationResult = {
     if (uniffi_nagare_checksum_method_texttospeechsessionstream_next() != 21181) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_nagare_checksum_constructor_foreigntool_new() != 14839) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nagare_checksum_method_foreigntoolhandler_invoke_json() != 764) {
+        return InitializationResult.apiChecksumMismatch
+    }
 
+    uniffiCallbackInitForeignToolHandler()
     uniffiEnsureShojiInitialized()
     return InitializationResult.ok
 }()

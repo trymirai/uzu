@@ -1,11 +1,11 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
 use crate::array::ArrayElement;
 
 #[kernel(DeltaNetPrefill)]
-#[variants(T, f32, f16, bf16)]
+#[variants(T, f32, bf16)]
 #[variants(HEAD_K_DIM, 128)]
 pub fn delta_net_prefill<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     q_norm: *const f32,

@@ -4,7 +4,7 @@ use crate::backends::common::gpu_types::ring::RingParams;
 
 #[kernel(ContextRingUpdate)]
 pub fn context_ring_update(
-    input: *const u64,
+    input: *const u32,
     context_ring: *mut u32,
     suffix_repetition_length: u32,
     input_length: u32,
@@ -23,7 +23,7 @@ pub fn context_ring_update(
                 ring.ring_offset = (ring.ring_offset + 1) % suffix_repetition_length;
                 slot
             };
-            *ring_tokens.add(slot as usize) = *input.add(input_index as usize) as u32;
+            *ring_tokens.add(slot as usize) = *input.add(input_index as usize);
         }
     }
 }

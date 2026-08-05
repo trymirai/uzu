@@ -2,7 +2,6 @@
 #include "../../common/defines.h"
 #include "../../common/dsl.h"
 #include "../../matmul/common/fragment.h"
-#include "../../matmul/common/mxu_fragment_ops.h"
 #include "../../matmul/common/simdgroup_fragment_ops.h"
 
 using namespace metal;
@@ -27,12 +26,9 @@ using namespace uzu::matmul;
 // single-block tail when i is odd.
 // A and Ainv are kept in f32: the (I + A)^-1 forward-substitution cascade is
 // precision-sensitive.
-template <typename T, uint BV, bool USE_MXU>
+template <typename T, uint BV>
 VARIANTS(T, float, bfloat)
 VARIANTS(BV, 16, 32)
-VARIANTS(USE_MXU, false, true)
-CONSTRAINT(!USE_MXU || T != "float")
-CONSTRAINT(!USE_MXU || BV >= 32)
 PUBLIC KERNEL(TreeUpdateSolve)(
     const device float* kh0 OPTIONAL(use_h0),
     const device T* v,
@@ -53,7 +49,8 @@ PUBLIC KERNEL(TreeUpdateSolve)(
     const uint lane_idx THREADS(METAL_SIMD_SIZE)
 ) {
   constexpr uint BT = 16;
-  using FragmentOps = metal::conditional_t<USE_MXU, MxuFragmentOps<>, SimdgroupFragmentOps>;
+  // MXU was within 5% of SIMD-group at T=32..512.
+  using FragmentOps = SimdgroupFragmentOps;
   constexpr ushort TOKEN_FRAGMENTS = BT / FragmentOps::FRAGMENT_ROWS;
   constexpr ushort VALUE_FRAGMENTS = BV / FragmentOps::FRAGMENT_COLS;
   using TileFragment = Fragment<float, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, FragmentOps>;

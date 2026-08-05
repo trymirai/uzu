@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
+use hanashi::chat::{
+    Encoding, EncodingConfig, TokenizerLocation, hanashi::HanashiEncodingImpl, harmony::HarmonyEncodingImpl,
+};
 use serde::Deserialize;
 use shoji::types::{
     basic::{ReasoningEffort, ToolDescription, ToolNamespace, TranslationPayload},
@@ -88,6 +91,26 @@ pub fn load_tokenizer(model_name: &str) -> Tokenizer {
     let path = tokenizer_directory(model_name).join("tokenizer.json");
     Tokenizer::from_file(path.to_str().unwrap())
         .unwrap_or_else(|error| panic!("Failed to load tokenizer {}: {error}", path.display()))
+}
+
+pub fn build_encoding(
+    config: EncodingConfig,
+    model_name: &str,
+) -> Encoding {
+    match config {
+        EncodingConfig::Hanashi {
+            config,
+        } => Encoding::Hanashi(HanashiEncodingImpl::new(config, Arc::new(load_tokenizer(model_name))).unwrap()),
+        EncodingConfig::Harmony {
+            config,
+        } => {
+            let tokenizer_location = TokenizerLocation::Directory {
+                path: tokenizer_directory(model_name).to_str().unwrap().to_string(),
+                name: None,
+            };
+            Encoding::Harmony(HarmonyEncodingImpl::new(config, tokenizer_location).unwrap())
+        },
+    }
 }
 
 fn resolve_reasoning_effort(context: &HashMap<String, serde_json::Value>) -> Option<ReasoningEffort> {

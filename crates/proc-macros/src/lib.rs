@@ -1,6 +1,7 @@
 mod dsl;
 mod uzu_config;
 mod uzu_test;
+mod uzu_tool;
 
 use proc_macro::TokenStream;
 
@@ -45,4 +46,18 @@ pub fn uzu_bench(
     input: TokenStream,
 ) -> TokenStream {
     uzu_test::uzu_bench(args, input)
+}
+
+// Tool calls
+#[proc_macro]
+pub fn uzu_tool_closure(input: TokenStream) -> TokenStream {
+    uzu_tool::uzu_tool_closure(input)
+}
+
+#[proc_macro_attribute]
+pub fn uzu_tool_function(
+    args: TokenStream,
+    input: TokenStream,
+) -> TokenStream {
+    uzu_tool::uzu_tool_function(args, input)
 }

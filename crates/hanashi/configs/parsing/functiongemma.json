@@ -25,6 +25,14 @@
                                 "close_tokens": [
                                     "<end_function_call>"
                                 ]
+                            },
+                            {
+                                "type": "bounded",
+                                "name": "tool_call_result",
+                                "open_token": "<start_function_response>",
+                                "close_tokens": [
+                                    "<end_function_response>"
+                                ]
                             }
                         ]
                     }
@@ -43,6 +51,29 @@
                         "type": "regex_replace",
                         "pattern": "call:(\\w+)\\{([\\s\\S]*)\\}",
                         "template": "{\"name\": \"$1\", \"arguments\": {$2}}"
+                    },
+                    {
+                        "type": "regex_replace",
+                        "pattern": "<escape>",
+                        "template": "\""
+                    },
+                    {
+                        "type": "parse_json",
+                        "repair": true
+                    }
+                ]
+            }
+        ],
+        "tool_call_result": [
+            {
+                "type": "on",
+                "field": "$finished",
+                "with": "$value",
+                "do": [
+                    {
+                        "type": "regex_replace",
+                        "pattern": "^response:(\\w+)\\{([\\s\\S]*)\\}",
+                        "template": "{\"name\": \"$1\", \"value\": {$2}}"
                     },
                     {
                         "type": "regex_replace",

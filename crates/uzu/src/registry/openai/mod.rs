@@ -98,6 +98,7 @@ impl RegistryTrait for Registry {
                         ModelAccessibility::Remote {
                             repository: None,
                         },
+                        vec![],
                     )
                 })
                 .collect();

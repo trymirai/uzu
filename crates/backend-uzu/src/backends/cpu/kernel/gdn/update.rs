@@ -1,4 +1,4 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
@@ -11,7 +11,7 @@ use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 //   3. For each v-dim: read state, compute output, update state with delta rule
 //   4. RMSNorm output, gate with SiLU(z), write result
 #[kernel(DeltaNetUpdate)]
-#[variants(T, f32, f16, bf16)]
+#[variants(T, f32, bf16)]
 #[variants(HEAD_K_DIM, 128)]
 pub fn delta_net_update<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     in_proj: *const T,

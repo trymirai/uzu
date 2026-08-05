@@ -4,7 +4,7 @@
   </picture>
 </p>
 
-<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.5.12)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.5.12)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.5.12)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.5.12)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
+<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.5.14)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.5.14)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.5.14)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.5.14)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
 
 # uzu
 
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Add the dependency:
 
 ```bash
-uv add uzu==0.5.12
+uv add uzu==0.5.14
 ```
 
 Run the code below:
@@ -132,7 +132,7 @@ Add the dependency:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/trymirai/uzu.git", from: "0.5.12")
+    .package(url: "https://github.com/trymirai/uzu.git", from: "0.5.14")
 ]
 ```
 
@@ -181,7 +181,7 @@ public func runQuickStart() async throws {
 Add the dependency:
 
 ```bash
-pnpm add @trymirai/uzu@0.5.12
+pnpm add @trymirai/uzu@0.5.14
 ```
 
 Run the code below:
@@ -232,7 +232,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-speculation-classification** | **chat-speculation-summarization** | **chat-structured-output** | **classification** | **quick-start** | **text-to-speech**\>:
+You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start**\>:
 
 ### Chat
 
@@ -580,451 +580,6 @@ main().catch((error) => {
 
 </details>
 
-
-### Chat using speculation preset for classification
-
-In this example, we will use the `classification` speculation preset to determine the sentiment of the user's input:
-
-<details>
-<summary>Rust</summary>
-
-```rust
-use uzu::{
-    engine::{Engine, EngineConfig},
-    types::{
-        basic::{Feature, ReasoningEffort, SamplingMethod},
-        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatSpeculationPreset},
-    },
-};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let engine_config = EngineConfig::default();
-    let engine = Engine::new(engine_config).await?;
-
-    let model = engine.model("Qwen/Qwen3-0.6B".to_string()).await?.ok_or("Model not found")?;
-    let downloader = engine.download(&model).await?;
-    while let Some(update) = downloader.next().await {
-        println!("Download progress: {}", update.progress());
-    }
-
-    let feature = Feature {
-        name: "sentiment".to_string(),
-        values: vec![
-            "Happy".to_string(),
-            "Sad".to_string(),
-            "Angry".to_string(),
-            "Fearful".to_string(),
-            "Surprised".to_string(),
-            "Disgusted".to_string(),
-        ],
-    };
-    let chat_config = ChatConfig::default().with_speculation_preset(Some(ChatSpeculationPreset::Classification {
-        feature: feature.clone(),
-    }));
-    let session = engine.chat(model, chat_config).await?;
-
-    let text_to_detect_feature = "Today's been awesome! Everything just feels right, and I can't stop smiling.";
-    let prompt = format!(
-        "Text is: \"{text_to_detect_feature}\". Choose {} from the list: {}. Answer with one word. Don't add a dot at the end.",
-        feature.name,
-        feature.values.join(", ")
-    );
-    let messages = vec![
-        ChatMessage::system().with_reasoning_effort(ReasoningEffort::Disabled),
-        ChatMessage::user().with_text(prompt),
-    ];
-
-    let chat_reply_config =
-        ChatReplyConfig::default().with_token_limit(Some(32)).with_sampling_method(SamplingMethod::Greedy {});
-    let replies = session.reply(messages, chat_reply_config).await?;
-    if let Some(reply) = replies.first() {
-        println!("Prediction: {}", reply.message.text().unwrap_or_default());
-        println!("Generated tokens: {}", reply.stats.tokens_count_output.unwrap_or_default());
-    }
-
-    Ok(())
-}
-```
-
-</details>
-
-<details>
-<summary>Python</summary>
-
-```python
-import asyncio
-
-from uzu import (
-    ChatConfig,
-    ChatMessage,
-    ChatReplyConfig,
-    ChatSpeculationPreset,
-    Engine,
-    EngineConfig,
-    Feature,
-    ReasoningEffort,
-    SamplingMethod,
-)
-
-
-async def main() -> None:
-    engine_config = EngineConfig.create()
-    engine = await Engine.create(engine_config)
-
-    model = await engine.model("Qwen/Qwen3-0.6B")
-    if model is None:
-        raise RuntimeError("Model not found")
-    async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress}")
-
-    feature = Feature(
-        "sentiment",
-        ["Happy", "Sad", "Angry", "Fearful", "Surprised", "Disgusted"],
-    )
-    chat_config = ChatConfig.create().with_speculation_preset(ChatSpeculationPreset.Classification(feature))
-    session = await engine.chat(model, chat_config)
-
-    text_to_detect_feature = "Today's been awesome! Everything just feels right, and I can't stop smiling."
-    prompt = (
-        f'Text is: "{text_to_detect_feature}". '
-        f"Choose {feature.name} from the list: {', '.join(feature.values)}. "
-        "Answer with one word. Don't add a dot at the end."
-    )
-    messages = [
-        ChatMessage.system().with_reasoning_effort(ReasoningEffort.Disabled),
-        ChatMessage.user().with_text(prompt),
-    ]
-
-    chat_reply_config = ChatReplyConfig.create().with_token_limit(32).with_sampling_method(SamplingMethod.Greedy())
-    replies = await session.reply(messages, chat_reply_config)
-    if replies:
-        reply = replies[0]
-        print(f"Prediction: {reply.message.text}")
-        print(f"Generated tokens: {reply.stats.tokens_count_output}")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-</details>
-
-<details>
-<summary>Swift</summary>
-
-```swift
-import Uzu
-
-public func runChatSpeculationClassification() async throws {
-    let engineConfig = EngineConfig.create()
-    let engine = try await Engine.create(config: engineConfig)
-    
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
-        return
-    }
-    for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
-    }
-    
-    let feature = Feature(name: "sentiment", values: [
-        "Happy",
-        "Sad",
-        "Angry",
-        "Fearful",
-        "Surprised",
-        "Disgusted",
-    ])
-    let chatConfig = ChatConfig.create().withSpeculationPreset(speculationPreset: .classification(feature: feature))
-    let session = try await engine.chat(model: model, config: chatConfig)
-    
-    let textToDetectFeature =
-            "Today's been awesome! Everything just feels right, and I can't stop smiling."
-    let prompt = "Text is: \"\(textToDetectFeature)\". Choose \(feature.name) from the list: \(feature.values.joined(separator: ", ")). Answer with one word. Don't add a dot at the end."
-    let messages = [
-        ChatMessage.system().withReasoningEffort(reasoningEffort: .disabled),
-        ChatMessage.user().withText(text: prompt)
-    ]
-    
-    let chatReplyConfig = ChatReplyConfig.create().withTokenLimit(tokenLimit: 32).withSamplingMethod(samplingMethod: .greedy)
-    let replies = try await session.reply(input: messages, config: chatReplyConfig)
-    guard let reply = replies.last else {
-        return
-    }
-    
-    print("Prediction: \(reply.message.text() ?? "empty")")
-    print("Generated tokens: \(reply.stats.tokensCountOutput ?? 0)")
-}
-```
-
-</details>
-
-<details>
-<summary>TypeScript</summary>
-
-```ts
-import { ChatConfig, ChatMessage, ChatReplyConfig, ChatSpeculationPresetClassification, Engine, EngineConfig, Feature, ReasoningEffort, SamplingMethodGreedy } from '@trymirai/uzu';
-
-async function main() {
-    let engineConfig = EngineConfig.create();
-    let engine = await Engine.create(engineConfig);
-
-    let model = await engine.model('Qwen/Qwen3-0.6B');
-    if (!model) {
-        throw new Error('Model not found');
-    }
-    for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
-    }
-
-    const feature = new Feature('sentiment', [
-        'Happy',
-        'Sad',
-        'Angry',
-        'Fearful',
-        'Surprised',
-        'Disgusted',
-    ]);
-    let chatConfig = ChatConfig.create().withSpeculationPreset(new ChatSpeculationPresetClassification(feature));
-    let session = await engine.chat(model, chatConfig);
-
-    const textToDetectFeature =
-        "Today's been awesome! Everything just feels right, and I can't stop smiling.";
-    const prompt =
-        `Text is: "${textToDetectFeature}". Choose ${feature.name} from the list: ${feature.values.join(', ')}. ` +
-        "Answer with one word. Don't add a dot at the end.";
-    let messages = [
-        ChatMessage.system().withReasoningEffort("Disabled" as ReasoningEffort),
-        ChatMessage.user().withText(prompt)
-    ];
-
-    let chatReplyConfig = ChatReplyConfig.create().withTokenLimit(32).withSamplingMethod(new SamplingMethodGreedy());
-    let reply = (await session.reply(messages, chatReplyConfig))[0];
-
-    if (reply) {
-        console.log('Prediction: ', reply.message.text);
-        console.log('Generated tokens: ', reply.stats.tokensCountOutput);
-    }
-}
-
-main().catch((error) => {
-    console.error(error);
-});
-```
-
-</details>
-
-
-<br>You can view the stats to see that the answer will be ready immediately after the prefill step, and actual generation won’t even start due to speculative decoding, which significantly improves generation speed.
-
-### Chat using speculation preset for summarization
-
-In this example, we will use the `summarization` speculation preset to generate a summary of the input text:
-
-<details>
-<summary>Rust</summary>
-
-```rust
-use uzu::{
-    engine::{Engine, EngineConfig},
-    types::{
-        basic::{ReasoningEffort, SamplingMethod},
-        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatSpeculationPreset},
-    },
-};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let engine_config = EngineConfig::default();
-    let engine = Engine::new(engine_config).await?;
-
-    let model = engine.model("Qwen/Qwen3-0.6B".to_string()).await?.ok_or("Model not found")?;
-    let downloader = engine.download(&model).await?;
-    while let Some(update) = downloader.next().await {
-        println!("Download progress: {}", update.progress());
-    }
-
-    let text_to_summarize = "A Large Language Model (LLM) is a type of artificial intelligence that processes and generates human-like text. \
-        It is trained on vast datasets containing books, articles, and web content, allowing it to understand and predict language patterns. \
-        LLMs use deep learning, particularly transformer-based architectures, to analyze text, recognize context, and generate coherent responses. \
-        These models have a wide range of applications, including chatbots, content creation, translation, and code generation. \
-        One of the key strengths of LLMs is their ability to generate contextually relevant text based on prompts. \
-        They utilize self-attention mechanisms to weigh the importance of words within a sentence, improving accuracy and fluency. \
-        Examples of popular LLMs include OpenAI's GPT series, Google's BERT, and Meta's LLaMA. \
-        As these models grow in size and sophistication, they continue to enhance human-computer interactions, \
-        making AI-powered communication more natural and effective.";
-    let prompt = format!("Text is: \"{text_to_summarize}\". Write only summary itself.");
-    let messages = vec![
-        ChatMessage::system().with_reasoning_effort(ReasoningEffort::Disabled),
-        ChatMessage::user().with_text(prompt),
-    ];
-
-    let chat_config = ChatConfig::default().with_speculation_preset(Some(ChatSpeculationPreset::Summarization {}));
-    let session = engine.chat(model, chat_config).await?;
-
-    let chat_reply_config =
-        ChatReplyConfig::default().with_token_limit(Some(256)).with_sampling_method(SamplingMethod::Greedy {});
-    let replies = session.reply(messages, chat_reply_config).await?;
-    if let Some(reply) = replies.first() {
-        println!("Summary: {}", reply.message.text().unwrap_or_default());
-        println!("Generation t/s: {}", reply.stats.generate_tokens_per_second.unwrap_or_default());
-    }
-
-    Ok(())
-}
-```
-
-</details>
-
-<details>
-<summary>Python</summary>
-
-```python
-import asyncio
-
-from uzu import (
-    ChatConfig,
-    ChatMessage,
-    ChatReplyConfig,
-    ChatSpeculationPreset,
-    Engine,
-    EngineConfig,
-    ReasoningEffort,
-    SamplingMethod,
-)
-
-
-async def main() -> None:
-    engine_config = EngineConfig.create()
-    engine = await Engine.create(engine_config)
-
-    model = await engine.model("Qwen/Qwen3-0.6B")
-    if model is None:
-        raise RuntimeError("Model not found")
-    async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress}")
-
-    text_to_summarize = (
-        "A Large Language Model (LLM) is a type of artificial intelligence that processes and generates human-like text. "
-        "It is trained on vast datasets containing books, articles, and web content, allowing it to understand and predict language patterns. "
-        "LLMs use deep learning, particularly transformer-based architectures, to analyze text, recognize context, and generate coherent responses. "
-        "These models have a wide range of applications, including chatbots, content creation, translation, and code generation. "
-        "One of the key strengths of LLMs is their ability to generate contextually relevant text based on prompts. "
-        "They utilize self-attention mechanisms to weigh the importance of words within a sentence, improving accuracy and fluency. "
-        "Examples of popular LLMs include OpenAI's GPT series, Google's BERT, and Meta's LLaMA. "
-        "As these models grow in size and sophistication, they continue to enhance human-computer interactions, "
-        "making AI-powered communication more natural and effective."
-    )
-    prompt = f'Text is: "{text_to_summarize}". Write only summary itself.'
-    messages = [
-        ChatMessage.system().with_reasoning_effort(ReasoningEffort.Disabled),
-        ChatMessage.user().with_text(prompt),
-    ]
-
-    chat_config = ChatConfig.create().with_speculation_preset(ChatSpeculationPreset.Summarization())
-    session = await engine.chat(model, chat_config)
-
-    chat_reply_config = ChatReplyConfig.create().with_token_limit(256).with_sampling_method(SamplingMethod.Greedy())
-    replies = await session.reply(messages, chat_reply_config)
-    if replies:
-        reply = replies[0]
-        print(f"Summary: {reply.message.text}")
-        print(f"Generation t/s: {reply.stats.generate_tokens_per_second}")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-</details>
-
-<details>
-<summary>Swift</summary>
-
-```swift
-import Uzu
-
-public func runChatSpeculationSummarization() async throws {
-    let engineConfig = EngineConfig.create()
-    let engine = try await Engine.create(config: engineConfig)
-    
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
-        return
-    }
-    for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
-    }
-    
-    let textToSummarize = "A Large Language Model (LLM) is a type of artificial intelligence that processes and generates human-like text. It is trained on vast datasets containing books, articles, and web content, allowing it to understand and predict language patterns. LLMs use deep learning, particularly transformer-based architectures, to analyze text, recognize context, and generate coherent responses. These models have a wide range of applications, including chatbots, content creation, translation, and code generation. One of the key strengths of LLMs is their ability to generate contextually relevant text based on prompts. They utilize self-attention mechanisms to weigh the importance of words within a sentence, improving accuracy and fluency. Examples of popular LLMs include OpenAI's GPT series, Google's BERT, and Meta's LLaMA. As these models grow in size and sophistication, they continue to enhance human-computer interactions, making AI-powered communication more natural and effective.";
-    let prompt = "Text is: \"\(textToSummarize)\". Write only summary itself."
-    let messages = [
-        ChatMessage.system().withReasoningEffort(reasoningEffort: .disabled),
-        ChatMessage.user().withText(text: prompt)
-    ]
-    
-    let chatConfig = ChatConfig.create().withSpeculationPreset(speculationPreset: .summarization)
-    let session = try await engine.chat(model: model, config: chatConfig)
-    
-    let chatReplyConfig = ChatReplyConfig.create().withTokenLimit(tokenLimit: 256).withSamplingMethod(samplingMethod: .greedy)
-    let replies = try await session.reply(input: messages, config: chatReplyConfig)
-    guard let reply = replies.last else {
-        return
-    }
-    
-    print("Summary: \(reply.message.text() ?? "empty")")
-    print("Generation t\\s: \(reply.stats.generateTokensPerSecond ?? 0.0)")
-}
-```
-
-</details>
-
-<details>
-<summary>TypeScript</summary>
-
-```ts
-import { ChatConfig, ChatMessage, ChatReplyConfig, ChatSpeculationPresetSummarization, Engine, EngineConfig, ReasoningEffort, SamplingMethodGreedy } from '@trymirai/uzu';
-
-async function main() {
-    let engineConfig = EngineConfig.create();
-    let engine = await Engine.create(engineConfig);
-
-    let model = await engine.model('Qwen/Qwen3-0.6B');
-    if (!model) {
-        throw new Error('Model not found');
-    }
-    for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
-    }
-
-    const textToSummarize =
-        "A Large Language Model (LLM) is a type of artificial intelligence that processes and generates human-like text. It is trained on vast datasets containing books, articles, and web content, allowing it to understand and predict language patterns. LLMs use deep learning, particularly transformer-based architectures, to analyze text, recognize context, and generate coherent responses. These models have a wide range of applications, including chatbots, content creation, translation, and code generation. One of the key strengths of LLMs is their ability to generate contextually relevant text based on prompts. They utilize self-attention mechanisms to weigh the importance of words within a sentence, improving accuracy and fluency. Examples of popular LLMs include OpenAI's GPT series, Google's BERT, and Meta's LLaMA. As these models grow in size and sophistication, they continue to enhance human-computer interactions, making AI-powered communication more natural and effective.";
-    const prompt = `Text is: "${textToSummarize}". Write only summary itself.`;
-    let messages = [
-        ChatMessage.system().withReasoningEffort("Disabled" as ReasoningEffort),
-        ChatMessage.user().withText(prompt)
-    ];
-
-    let chatConfig = ChatConfig.create().withSpeculationPreset(new ChatSpeculationPresetSummarization);
-    let session = await engine.chat(model, chatConfig);
-
-    let chatReplyConfig = ChatReplyConfig.create().withTokenLimit(256).withSamplingMethod(new SamplingMethodGreedy());
-    let reply = (await session.reply(messages, chatReplyConfig))[0];
-
-    if (reply) {
-        console.log('Summary: ', reply.message.text);
-        console.log('Generation t\\s: ', reply.stats.generateTokensPerSecond);
-    }
-}
-
-main().catch((error) => {
-    console.error(error);
-});
-```
-
-</details>
-
-
-<br>You will notice that the model’s run count is lower than the actual number of generated tokens due to speculative decoding, which significantly improves generation speed.
 
 ### Chat with structured output
 
@@ -1392,179 +947,6 @@ main().catch((error) => {
 </details>
 
 
-### Text to Speech
-
-In this example, we will generate audio from text:
-
-<details>
-<summary>Rust</summary>
-
-```rust
-use uzu::{
-    engine::{Engine, EngineConfig},
-    session::text_to_speech::TextToSpeechSessionStreamChunk,
-    types::basic::PcmBatch,
-};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let engine_config = EngineConfig::default();
-    let engine = Engine::new(engine_config).await?;
-
-    let model = engine.model("fishaudio/s1-mini".to_string()).await?.ok_or("Model not found")?;
-    let downloader = engine.download(&model).await?;
-    while let Some(update) = downloader.next().await {
-        println!("Download progress: {}", update.progress());
-    }
-
-    let text = "London is the capital of United Kingdom and one of the world's most influential cities, \
-        known for its rich history, cultural diversity, and global significance in finance, politics, and the arts. \
-        Situated along the River Thames, the city blends historic landmarks like Tower of London and Buckingham Palace \
-        with modern architecture such as The Shard. London is also home to renowned institutions including the British Museum \
-        and vibrant areas like Covent Garden, offering a mix of history, entertainment, and innovation that attracts millions of visitors each year.";
-    let output_path = dirs::home_dir().ok_or("Home not found")?.join("Desktop").join("output.wav");
-
-    let session = engine.text_to_speech(model).await?;
-    let stream = session.synthesize_stream(text.to_string()).await;
-    let mut pcm_batches: Vec<PcmBatch> = Vec::new();
-    while let Some(event) = stream.next().await {
-        match event {
-            TextToSpeechSessionStreamChunk::Output {
-                output,
-            } => {
-                pcm_batches.push(output.pcm_batch);
-            },
-            TextToSpeechSessionStreamChunk::Error {
-                error,
-            } => {
-                println!("Error: {error}");
-            },
-        }
-    }
-
-    let pcm_batch_first = pcm_batches.first().ok_or("No batches")?;
-    let pcm_batch_full = PcmBatch {
-        samples: pcm_batches.iter().flat_map(|batch| batch.samples.iter().copied()).collect(),
-        sample_rate: pcm_batch_first.sample_rate,
-        channels: pcm_batch_first.channels,
-        lengths: vec![pcm_batches.iter().flat_map(|batch| batch.lengths.iter().copied()).sum()],
-    };
-    pcm_batch_full.save_as_wav(output_path.to_string_lossy().to_string())?;
-    println!("Output saved to: {}", output_path.display());
-
-    Ok(())
-}
-```
-
-</details>
-
-<details>
-<summary>Python</summary>
-
-```python
-import asyncio
-from pathlib import Path
-
-from uzu import Engine, EngineConfig
-
-
-async def main() -> None:
-    engine_config = EngineConfig.create()
-    engine = await Engine.create(engine_config)
-
-    model = await engine.model("fishaudio/s1-mini")
-    if model is None:
-        raise RuntimeError("Model not found")
-    async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress}")
-
-    text = (
-        "London is the capital of United Kingdom and one of the world's most influential cities, "
-        "known for its rich history, cultural diversity, and global significance in finance, politics, and the arts. "
-        "Situated along the River Thames, the city blends historic landmarks like Tower of London and Buckingham Palace "
-        "with modern architecture such as The Shard. London is also home to renowned institutions including the British Museum "
-        "and vibrant areas like Covent Garden, offering a mix of history, entertainment, and innovation that attracts millions of visitors each year."
-    )
-    output_path = Path.home() / "Desktop" / "output.wav"
-    session = await engine.text_to_speech(model)
-    output = await session.synthesize(text)
-    output.pcm_batch.save_as_wav(str(output_path))
-    print(f"Output saved to: {output_path}")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-</details>
-
-<details>
-<summary>Swift</summary>
-
-```swift
-import Foundation
-import Uzu
-
-public func runTextToSpeech() async throws {
-    let engineConfig = EngineConfig.create()
-    let engine = try await Engine.create(config: engineConfig)
-    
-    guard let model = try await engine.model(identifier: "fishaudio/s1-mini") else {
-        return
-    }
-    for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
-    }
-    
-    let text = "London is the capital of United Kingdom and one of the world’s most influential cities, known for its rich history, cultural diversity, and global significance in finance, politics, and the arts. Situated along the River Thames, the city blends historic landmarks like Tower of London and Buckingham Palace with modern architecture such as The Shard. London is also home to renowned institutions including the British Museum and vibrant areas like Covent Garden, offering a mix of history, entertainment, and innovation that attracts millions of visitors each year."
-    let outputPath = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Desktop")
-        .appendingPathComponent("output.wav")
-    let session = try await engine.textToSpeech(model: model)
-    let output = try await session.synthesize(input: text)
-    try output.pcmBatch.saveAsWav(path: outputPath.path())
-    print("Output saved to: \(outputPath.path())")
-}
-```
-
-</details>
-
-<details>
-<summary>TypeScript</summary>
-
-```ts
-import { Engine, EngineConfig } from '@trymirai/uzu';
-import { homedir } from "os";
-import { join } from "path";
-
-async function main() {
-    let engineConfig = EngineConfig.create();
-    let engine = await Engine.create(engineConfig);
-
-    let model = await engine.model('fishaudio/s1-mini');
-    if (!model) {
-        throw new Error('Model not found');
-    }
-    for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
-    }
-
-    const text = "London is the capital of United Kingdom and one of the world’s most influential cities, known for its rich history, cultural diversity, and global significance in finance, politics, and the arts. Situated along the River Thames, the city blends historic landmarks like Tower of London and Buckingham Palace with modern architecture such as The Shard. London is also home to renowned institutions including the British Museum and vibrant areas like Covent Garden, offering a mix of history, entertainment, and innovation that attracts millions of visitors each year.";
-    const outputPath = join(homedir(), "Desktop", "output.wav");
-    let session = await engine.textToSpeech(model);
-    let output = await session.synthesize(text);
-    output.pcmBatch.saveAsWav(outputPath);
-    console.log('Output saved to: ', outputPath);
-}
-
-main().catch((error) => {
-    console.error(error);
-});
-```
-
-</details>
-
-
 
 ## Development
 
@@ -1617,7 +999,7 @@ uv run downloader list             # show the list of supported models
 uv run downloader download {REPO}  # download a specific model
 ```
 
-Models downloaded for development are stored at `./workspace/models/0.5.12/`.
+Models downloaded for development are stored at `./workspace/models/0.5.14/`.
 
 You can also export a model yourself with [lalamo](https://github.com/trymirai/lalamo):
 
@@ -1651,7 +1033,7 @@ If the model is not downloaded yet, the CLI starts downloading it automatically.
 To run benchmarks:
 
 ```bash
-cargo run --release -p cli -- bench ./workspace/models/0.5.12/{MODEL_NAME} ./workspace/models/0.5.12/{MODEL_NAME}/benchmark_task.json ./workspace/models/0.5.12/{MODEL_NAME}/benchmark_result.json
+cargo run --release -p cli -- bench ./workspace/models/0.5.14/{MODEL_NAME} ./workspace/models/0.5.14/{MODEL_NAME}/benchmark_task.json ./workspace/models/0.5.14/{MODEL_NAME}/benchmark_result.json
 ```
 
 `benchmark_task.json` is automatically generated after the model is downloaded via `./tools/`.

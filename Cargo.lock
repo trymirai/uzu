@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "backend-remote"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "async-openai",
  "futures",
@@ -464,40 +464,31 @@ dependencies = [
 
 [[package]]
 name = "backend-uzu"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "anyhow",
- "async-stream",
  "async-trait",
  "bindgen",
  "bitflags 2.13.0",
  "blake3",
  "bytemuck",
- "bytesize",
- "cbindgen",
  "clang-ast",
- "comfy-table",
  "criterion",
- "criterion-macro",
  "depfile",
  "derive_more",
  "futures",
  "half",
- "indicatif",
  "is_close",
  "itertools 0.14.0",
- "libc",
  "libm",
  "memmap2",
- "minijinja",
- "minijinja-contrib",
  "monostate",
  "mtl-rs",
  "ndarray",
  "num-traits",
  "obfstr",
  "objc2",
- "objc2-foundation",
+ "parking_lot",
  "prettyplease",
  "proc-macro2",
  "proc-macros",
@@ -506,7 +497,6 @@ dependencies = [
  "rand 0.10.2",
  "rand_distr",
  "rangemap",
- "regex",
  "rhai",
  "rstest",
  "rustix",
@@ -515,7 +505,6 @@ dependencies = [
  "serde_json",
  "shoji",
  "syn 2.0.118",
- "sysinfo",
  "tempfile",
  "test-runner",
  "test-tag",
@@ -526,7 +515,7 @@ dependencies = [
  "walkdir",
  "xgrammar-rs",
  "xxhash-rust",
- "zerocopy",
+ "zstd",
 ]
 
 [[package]]
@@ -598,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "bindings"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -608,7 +597,7 @@ dependencies = [
 
 [[package]]
 name = "bindings-types"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "inventory",
  "napi",
@@ -850,25 +839,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cbindgen"
-version = "0.29.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ecb53484c9c167ba674026b656d8a27d7657a58e6066aa902bfb1a4aa00ae20"
-dependencies = [
- "clap",
- "heck",
- "indexmap 2.14.0",
- "log",
- "proc-macro2",
- "quote",
- "serde",
- "serde_json",
- "syn 2.0.118",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
 name = "cc"
 version = "1.2.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1022,7 +992,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "anyhow",
  "backend-uzu",
@@ -1043,7 +1013,7 @@ dependencies = [
 
 [[package]]
 name = "cli-storage"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "clap",
  "crossterm",
@@ -1061,7 +1031,7 @@ dependencies = [
 
 [[package]]
 name = "cli-tools"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "anyhow",
  "backend-uzu",
@@ -1372,16 +1342,6 @@ dependencies = [
  "serde_json",
  "tinytemplate",
  "walkdir",
-]
-
-[[package]]
-name = "criterion-macro"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "288a8f36b28a19d7dbd572c76006c0a0eba1f3bf912a254dda211c6f665e7ffc"
-dependencies = [
- "proc-macro2",
- "quote",
 ]
 
 [[package]]
@@ -1871,7 +1831,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "download-manager"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1982,9 +1942,6 @@ name = "esaxx-rs"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d817e038c30374a4bcb22f94d0a8a0e216958d4c3dcde369b1439fec4bdda6e6"
-dependencies = [
- "cc",
-]
 
 [[package]]
 name = "etcetera"
@@ -2519,7 +2476,7 @@ dependencies = [
 
 [[package]]
 name = "hanashi"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.0",
@@ -3236,7 +3193,7 @@ dependencies = [
 
 [[package]]
 name = "json-transform"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.0",
@@ -3290,7 +3247,7 @@ dependencies = [
 
 [[package]]
 name = "kanka"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "libc",
  "obfstr",
@@ -3310,7 +3267,7 @@ dependencies = [
 
 [[package]]
 name = "keisoku"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "bitflags 2.13.0",
  "kanka",
@@ -3335,7 +3292,7 @@ dependencies = [
 
 [[package]]
 name = "kiban"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3737,7 +3694,7 @@ dependencies = [
 
 [[package]]
 name = "mock-registry"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.0",
@@ -3788,9 +3745,9 @@ dependencies = [
 
 [[package]]
 name = "mtl-rs"
-version = "0.1.13"
+version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb19a6103808f1af363f96d845bd734c49df73eda4ada4177d118560cd4cf0ba"
+checksum = "6365d3a49e40c611ee28aa0f1bc90abc69b3b3a38172f63b1fdb0061809cba91"
 dependencies = [
  "bitflags 2.13.0",
  "block2",
@@ -3822,8 +3779,9 @@ dependencies = [
 
 [[package]]
 name = "nagare"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
+ "async-trait",
  "bindings",
  "bindings-types",
  "chrono",
@@ -3835,16 +3793,19 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "proc-macros",
  "pyo3",
  "pyo3-async-runtimes",
  "pyo3-build-config",
  "pyo3-stub-gen",
  "reqwest 0.13.4",
+ "schemars 1.2.1",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
  "shoji",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio",
  "tokio-util",
  "tracing",
@@ -4342,28 +4303,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "onig"
-version = "6.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cc3cbf698f9438986c11a880c90a6d04b9de27575afd28bbf45b154b6c709e2"
-dependencies = [
- "bitflags 2.13.0",
- "libc",
- "once_cell",
- "onig_sys",
-]
-
-[[package]]
-name = "onig_sys"
-version = "69.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e68317604e77e53b85896388e1a803c1d21b74c899ec9e5e1112db90735edd7"
-dependencies = [
- "cc",
- "pkg-config",
-]
-
-[[package]]
 name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4768,8 +4707,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macros"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -6242,7 +6182,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shoji"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "bindings",
  "bindings-types",
@@ -6750,7 +6690,7 @@ dependencies = [
 
 [[package]]
 name = "test-runner"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "criterion",
  "keisoku",
@@ -6925,7 +6865,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "token-stream-parser"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "indexmap 2.14.0",
  "json-transform",
@@ -6953,12 +6893,10 @@ dependencies = [
  "esaxx-rs",
  "fancy-regex 0.14.0",
  "getrandom 0.3.4",
- "indicatif",
  "itertools 0.14.0",
  "log",
  "macro_rules_attribute",
  "monostate",
- "onig",
  "paste",
  "rand 0.9.4",
  "rayon",
@@ -7679,7 +7617,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
@@ -8028,6 +7966,15 @@ dependencies = [
  "lazy_static",
  "serde",
  "wezterm-dynamic",
+]
+
+[[package]]
+name = "which"
+version = "8.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f3ef584124b911bcc3875c2f1472e80f24361ceb789bd1c62b3e9a3df9ff43c"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -8460,15 +8407,17 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xgrammar-rs"
-version = "0.2.2"
-source = "git+https://github.com/trymirai/xgrammar-rs.git?tag=0.2.2#d55d5bb1403f443d6a379c5acc7191a28bbcbb92"
+version = "0.2.3"
+source = "git+https://github.com/trymirai/xgrammar-rs.git?tag=0.2.3#e1e0f27df369c5d6027cc89ba4801fcda10e7b9e"
 dependencies = [
+ "cc",
  "cmake",
  "cxx",
  "cxx-build",
  "serde_json",
  "tokenizers",
  "walkdir",
+ "which",
 ]
 
 [[package]]
@@ -8600,6 +8549,34 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[package]]
+name = "zstd"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "7.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f49c4d5f0abb602a93fb8736af2a4f4dd9512e36f7f570d66e65ff867ed3b9d"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.0.16+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
 
 [[package]]
 name = "zune-core"

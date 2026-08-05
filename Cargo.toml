@@ -26,7 +26,7 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 rust-version = "1.94"
-version = "0.5.12"
+version = "0.5.14"
 authors = ["Mirai Tech Inc. <contact@getmirai.co>"]
 description = "A high-performance inference engine for AI models"
 readme = "README.md"
@@ -62,7 +62,7 @@ keisoku = { path = "crates/keisoku", default-features = false }
 kanka = { path = "crates/kanka", default-features = false }
 kiban = { path = "crates/kiban", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
-xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgrammar-rs.git", tag = "0.2.2", features = ["tokenizers"] }
+xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgrammar-rs.git", tag = "0.2.3", features = ["tokenizers"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17"
 serde = { version = "1.0", features = ["derive"] }
@@ -79,11 +79,11 @@ objc2-core-foundation = "0.3.2"
 objc2-io-kit = { version = "0.3.2", default-features = false, features = ["libc", "ps"] }
 objc2-security = "0.3.2"
 obfstr = "0.4.4"
-metal = { package = "mtl-rs", version = "0.1.12" }
+zstd = "0.13.3"
+metal = { package = "mtl-rs", version = "0.1.14" }
 block2 = "0.6"
 bytemuck = "1.23"
 bytesize = "2"
-zerocopy = "0.8.27"
 xxhash-rust = "0.8.15"
 memmap2 = "0.9.8"
 num-traits = "0.2"
@@ -98,7 +98,7 @@ rand = "0.10"
 rand_distr = "0.6.0"
 sysinfo = "0.38"
 itertools = "0.14"
-schemars = { version = "1.2", features = ["derive"] }
+schemars = { version = "1.2", features = ["derive", "preserve_order"] }
 is_close = "0.1"
 anyhow = "1.0.102"
 async-trait = "0.1"
@@ -109,18 +109,18 @@ depfile = "0.1"
 tempfile = "3.24"
 clang-ast = "0.1"
 rangemap = "1.7.1"
+parking_lot = "0.12"
 futures = "0.3"
-async-stream = "0.3"
 tokio = "1.49"
 tokio-stream = { version = "0.1.18", features = ["sync"] }
 tokio-util = { version = "0.7.17", default-features = false, features = ["rt"] }
 blake3 = "1.8"
 quote = "1.0"
 proc-macro2 = "1.0"
+proc-macro-crate = "3.5"
 syn = { version = "2.0", features = ["full", "fold"] }
 prettyplease = "0.2"
 rhai = "1.24.0"
-cbindgen = "0.29"
 indicatif = "0.18"
 rocket = { version = "0.5", features = ["json"] }
 uuid = { version = "1.20", features = ["serde", "v4", "v5"] }
@@ -130,7 +130,6 @@ rstest = "0.26"
 wiremock = "0.6"
 proptest = { version = "1.10", default-features = false, features = ["std"] }
 criterion = { version = "0.8.2", default-features = false }
-criterion-macro = "0.4.0"
 rustix = "1.1.4"
 indexmap = { version = "2.13.0", features = ["serde"] }
 tracing = "0.1.44"
@@ -226,14 +225,20 @@ needless_range_loop = "allow" # TODO: remove
 missing_safety_doc = "allow" # TODO: maybe remove?
 
 [workspace.metadata.dinghy]
-forward-cfgs = ["metal_backend", "grammar_xgrammar"]
+forward-cfgs = ["backend", "grammar"]
 
 [workspace.metadata.dinghy.test-attribute-aliases]
 uzu_test = "dinghy_apple_runner_macros::test_case"
 uzu_bench = "dinghy_apple_runner_macros::bench_case"
 
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.dev.build-override]
-opt-level = 3
+opt-level = 2
 
 [profile.release]
 lto = "thin"

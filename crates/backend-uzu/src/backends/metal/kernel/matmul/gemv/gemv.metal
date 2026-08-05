@@ -62,12 +62,17 @@ KERNEL(Gemv)(
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const device int32_t* hadamard_factors
         OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
+    const device uint* gather_indices OPTIONAL(gathered),
     const constant uint& in_vec_size,
     const constant uint& out_vec_size,
     const constant uint& batch_size,
     const constant float& ab_scale,
     const constant uint& group_count_x,
+    const constant float& soft_cap
+        OPTIONAL(output_transform.contains(GemmDTransform::SOFT_CAP)),
     const GemmDTransform output_transform SPECIALIZE,
+    const bool gathered SPECIALIZE,
+    const bool signed_codes SPECIALIZE,
     threadgroup float shared_results[NUM_SIMDGROUPS * RESULTS_PER_SIMDGROUP],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(group_count_x),
@@ -88,11 +93,15 @@ KERNEL(Gemv)(
       zero_points,
       biases,
       a,
+      gather_indices,
+      gathered,
       in_vec_size,
+      out_vec_size,
       tile.out_row,
       batch_idx,
       simd_lane,
-      tile.k_slice
+      tile.k_slice,
+      signed_codes
   );
 
   Reduce<U, K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::run(
@@ -111,6 +120,7 @@ KERNEL(Gemv)(
       hadamard_factors,
       shared_results,
       ab_scale,
+      soft_cap,
       output_transform,
       tile.out_row,
       out_vec_size,

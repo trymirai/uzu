@@ -5,15 +5,17 @@
 
 using namespace metal;
 
-template <typename T, uint HEAD_K_DIM>
-VARIANTS(T, float, half, bfloat)
+template <typename T, typename QKT, uint HEAD_K_DIM>
+VARIANTS(T, float, bfloat)
+VARIANTS(QKT, float, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 PUBLIC KERNEL(DeltaNetPrefillPrep)(
     device const T* in_proj,
     device const float* a_log,
     device const float* dt_bias,
-    device float* q_norm_out,
-    device float* k_norm_out,
+    device QKT* q_norm_out,
+    device QKT* k_norm_out,
+    device T* compact_v_out OPTIONAL(write_compact_v),
     device float* beta_out,
     device float* decay_out,
     constant const uint& num_v_heads,
@@ -24,6 +26,7 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
     const uint token_idx GROUPS(suffix_len),
     const uint hk_idx GROUPS(num_k_heads),
     const bool write_log_decay SPECIALIZE,
+    const bool write_compact_v SPECIALIZE,
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
   static_assert(HEAD_K_DIM % METAL_SIMD_SIZE == 0, "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE");
@@ -57,8 +60,8 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
   const uint out_base = token_idx * key_dim + hk_idx * HEAD_K_DIM;
   for (uint i = 0; i < elems_per_thread; ++i) {
     const uint idx = lane + i * METAL_SIMD_SIZE;
-    q_norm_out[out_base + idx] = q_vals[i] * q_inv_norm * q_scale;
-    k_norm_out[out_base + idx] = k_vals[i] * k_inv_norm;
+    q_norm_out[out_base + idx] = static_cast<QKT>(q_vals[i] * q_inv_norm * q_scale);
+    k_norm_out[out_base + idx] = static_cast<QKT>(k_vals[i] * k_inv_norm);
   }
 
   for (uint group = lane; group < groups_per_head; group += METAL_SIMD_SIZE) {
@@ -72,6 +75,17 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
       decay_out[token_idx * num_v_heads + hv] = log_decay;
     } else {
       decay_out[token_idx * num_v_heads + hv] = fast::exp(log_decay);
+    }
+  }
+
+  if (write_compact_v) {
+    const uint head_v_dim = value_dim / num_v_heads;
+    for (uint group = 0; group < groups_per_head; ++group) {
+      const uint hv = hk_idx * groups_per_head + group;
+      for (uint dv = lane; dv < head_v_dim; dv += METAL_SIMD_SIZE) {
+        const uint v_idx = hv * head_v_dim + dv;
+        compact_v_out[token_idx * value_dim + v_idx] = in_proj[tok_offset + 2 * key_dim + v_idx];
+      }
     }
   }
 }
