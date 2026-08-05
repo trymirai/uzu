@@ -124,6 +124,22 @@ fn chat_transcript_component(
     padding: u16,
     live: bool,
 ) -> AnyElement<'static> {
+    // consecutive tool calls form one block so there's no padding between them
+    let mut blocks: Vec<TranscriptBlock> = Vec::new();
+    for item in items {
+        match item {
+            TranscriptItem::ToolCall {
+                name,
+                called,
+            } => match blocks.last_mut() {
+                Some(TranscriptBlock::ToolGroup(calls)) => calls.push((name, called)),
+                _ => blocks.push(TranscriptBlock::ToolGroup(vec![(name, called)])),
+            },
+            TranscriptItem::Thinking(content) => blocks.push(TranscriptBlock::Thinking(content)),
+            TranscriptItem::Text(content) => blocks.push(TranscriptBlock::Text(content)),
+        }
+    }
+
     element! {
         View(
             width: 100pct,
@@ -134,8 +150,8 @@ fn chat_transcript_component(
             padding_left: padding,
             padding_right: padding,
         ) {
-            #(items.into_iter().map(|item| match item {
-                TranscriptItem::Thinking(content) => element! {
+            #(blocks.into_iter().map(|block| match block {
+                TranscriptBlock::Thinking(content) => element! {
                     View(
                         width: 100pct,
                         background_color: Some(overlay_color),
@@ -144,34 +160,15 @@ fn chat_transcript_component(
                     }
                 }
                 .into(),
-                TranscriptItem::ToolCall {
-                    name,
-                    called: true,
-                } => element! {
-                    Text(
-                        content: format!("* called {}", name),
-                        color: subtitle_color,
-                    )
+                TranscriptBlock::ToolGroup(calls) => element! {
+                    View(flex_direction: FlexDirection::Column) {
+                        #(calls.into_iter().map(|(name, called)| {
+                            tool_call_line(name, called, live, subtitle_color)
+                        }).collect::<Vec<AnyElement<'static>>>())
+                    }
                 }
                 .into(),
-                TranscriptItem::ToolCall {
-                    name,
-                    called: false,
-                } if live => element! {
-                    CallingToolLine(name: name, color: subtitle_color)
-                }
-                .into(),
-                TranscriptItem::ToolCall {
-                    name,
-                    called: false,
-                } => element! {
-                    Text(
-                        content: format!("* calling {}", name),
-                        color: subtitle_color,
-                    )
-                }
-                .into(),
-                TranscriptItem::Text(content) => element! {
+                TranscriptBlock::Text(content) => element! {
                     Text(content: content)
                 }
                 .into(),
@@ -180,6 +177,42 @@ fn chat_transcript_component(
         }
     }
     .into()
+}
+
+enum TranscriptBlock {
+    Thinking(String),
+    ToolGroup(Vec<(String, bool)>),
+    Text(String),
+}
+
+fn tool_call_line(
+    name: String,
+    called: bool,
+    live: bool,
+    color: Color,
+) -> AnyElement<'static> {
+    if called {
+        element! {
+            Text(
+                content: format!("* called {}", name),
+                color: color,
+            )
+        }
+        .into()
+    } else if live {
+        element! {
+            CallingToolLine(name: name, color: color)
+        }
+        .into()
+    } else {
+        element! {
+            Text(
+                content: format!("* calling {}", name),
+                color: color,
+            )
+        }
+        .into()
+    }
 }
 
 #[derive(Default, Props)]
