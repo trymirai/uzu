@@ -1,36 +1,42 @@
 //! Chat Completions tool-call tests.
 
+use rocket::http::Status;
 use uzu::types::{
     basic::{ToolCall, Value},
     session::chat::{ChatContentBlock, ChatRole},
 };
 
 use super::*;
-use crate::server::chat_tool_calls::{INCOMPLETE_TOOL_CALL_BATCH_ERROR, has_incomplete_tool_call_batch};
+use crate::server::{
+    chat_completions::{ChatCompletionResult, invalid_request_response},
+    chat_tool_calls::{INCOMPLETE_TOOL_CALL_BATCH_ERROR, has_incomplete_tool_call_batch},
+};
 
 fn request(json: &str) -> ChatCompletionRequest {
     serde_json::from_str(json).expect("valid request json")
 }
 
+fn request_value(value: serde_json::Value) -> ChatCompletionRequest {
+    serde_json::from_value(value).expect("valid request value")
+}
+
 #[test]
 fn tools_and_tool_history_map_to_chat_messages() {
-    let request = request(
-        r#"{
-            "messages":[
-                {"role":"system","content":"Be helpful"},
-                {"role":"user","content":"Weather?"},
-                {"role":"assistant","content":null,"tool_calls":[{
-                    "id":"call_1","type":"function",
-                    "function":{"name":"weather","arguments":"{\"city\":\"Paris\"}"}
-                }]},
-                {"role":"tool","tool_call_id":"call_1","content":"{\"degrees\":21}"}
-            ],
-            "tools":[{"type":"function","function":{
-                "name":"weather","description":"Get weather",
-                "parameters":{"type":"object","properties":{"city":{"type":"string"}}}
-            }}]
-        }"#,
-    );
+    let request = request_value(serde_json::json!({
+        "messages": [
+            {"role": OaiRole::System, "content": "Be helpful"},
+            {"role": OaiRole::User, "content": "Weather?"},
+            {"role": OaiRole::Assistant, "content": null, "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": {"name": "weather", "arguments": r#"{"city":"Paris"}"#}
+            }]},
+            {"role": OaiRole::Tool, "tool_call_id": "call_1", "content": r#"{"degrees":21}"#}
+        ],
+        "tools": [{"type": "function", "function": {
+            "name": "weather", "description": "Get weather",
+            "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}
+        }}]
+    }));
 
     let tools = select_tools(&request).expect("valid tool choice");
     let messages = to_chat_messages(&request.messages, tools);
@@ -53,16 +59,14 @@ fn tools_and_tool_history_map_to_chat_messages() {
 
 #[test]
 fn tools_attach_to_existing_developer_message() {
-    let request = request(
-        r#"{
-            "messages":[
-                {"role":"system","content":"System instructions"},
-                {"role":"developer","content":"Developer instructions"},
-                {"role":"user","content":"Hello"}
-            ],
-            "tools":[{"type":"function","function":{"name":"lookup"}}]
-        }"#,
-    );
+    let request = request_value(serde_json::json!({
+        "messages": [
+            {"role": OaiRole::System, "content": "System instructions"},
+            {"role": OaiRole::Developer, "content": "Developer instructions"},
+            {"role": OaiRole::User, "content": "Hello"}
+        ],
+        "tools": [{"type": "function", "function": {"name": "lookup"}}]
+    }));
 
     let tools = select_tools(&request).expect("valid tool choice");
     let messages = to_chat_messages(&request.messages, tools);
@@ -76,13 +80,11 @@ fn tools_attach_to_existing_developer_message() {
 
 #[test]
 fn tool_choice_none_hides_all_tools() {
-    let request = request(
-        r#"{
-            "messages":[{"role":"user","content":"Hello"}],
-            "tools":[{"type":"function","function":{"name":"first"}}],
-            "tool_choice":"none"
-        }"#,
-    );
+    let request = request_value(serde_json::json!({
+        "messages": [{"role": OaiRole::User, "content": "Hello"}],
+        "tools": [{"type": "function", "function": {"name": "first"}}],
+        "tool_choice": "none"
+    }));
 
     let tools = select_tools(&request).expect("supported tool choice");
     assert!(tools.is_empty());
@@ -92,16 +94,14 @@ fn tool_choice_none_hides_all_tools() {
 
 #[test]
 fn pinned_tool_choice_is_rejected_until_enforced() {
-    let request = request(
-        r#"{
-            "messages":[{"role":"user","content":"Hello"}],
-            "tools":[
-                {"type":"function","function":{"name":"first"}},
-                {"type":"function","function":{"name":"second"}}
-            ],
-            "tool_choice":{"type":"function","function":{"name":"second"}}
-        }"#,
-    );
+    let request = request_value(serde_json::json!({
+        "messages": [{"role": OaiRole::User, "content": "Hello"}],
+        "tools": [
+            {"type": "function", "function": {"name": "first"}},
+            {"type": "function", "function": {"name": "second"}}
+        ],
+        "tool_choice": {"type": "function", "function": {"name": "second"}}
+    }));
 
     assert_eq!(
         select_tools(&request).expect_err("pinned calls cannot be enforced"),
@@ -252,7 +252,7 @@ fn non_streaming_message_serializes_tool_calls() {
         },
     });
     let response = OaiMessage {
-        role: "assistant".to_string(),
+        role: OaiRole::Assistant,
         content: message.text(),
         tool_calls: response_tool_calls(&message),
         tool_call_id: None,
@@ -404,24 +404,22 @@ fn malformed_typed_request_fields_use_request_error_path() {
         r#"{"messages":[],"tools":[{"type":"function"}]}"#,
     ] {
         let value: serde_json::Value = serde_json::from_str(body).expect("valid JSON");
-        assert!(parse_request_body(value).is_err(), "body: {body}");
+        assert!(serde_json::from_value::<ChatCompletionRequest>(value).is_err(), "body: {body}");
     }
 }
 
 #[test]
 fn tool_history_must_match_model_capabilities() {
-    let history_request = request(
-        r#"{
-            "messages":[
-                {"role":"assistant","content":null,"tool_calls":[
-                    {"id":"call_1","type":"function","function":{"name":"first","arguments":"{}"}},
-                    {"id":"call_2","type":"function","function":{"name":"second","arguments":"{}"}}
-                ]},
-                {"role":"tool","tool_call_id":"call_1","content":"one"},
-                {"role":"tool","tool_call_id":"call_2","content":"two"}
-            ]
-        }"#,
-    );
+    let history_request = request_value(serde_json::json!({
+        "messages": [
+            {"role": OaiRole::Assistant, "content": null, "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "first", "arguments": "{}"}},
+                {"id": "call_2", "type": "function", "function": {"name": "second", "arguments": "{}"}}
+            ]},
+            {"role": OaiRole::Tool, "tool_call_id": "call_1", "content": "one"},
+            {"role": OaiRole::Tool, "tool_call_id": "call_2", "content": "two"}
+        ]
+    }));
     let error = validate_tool_history(&history_request.messages, false, false).expect_err("unsupported history");
     assert_eq!(error.param(), "messages[0].tool_calls");
     assert_eq!(error.code(), "unsupported_tool_history");
@@ -430,7 +428,9 @@ fn tool_history_must_match_model_capabilities() {
     assert_eq!(error.code(), "unsupported_parallel_tool_history");
     assert!(validate_tool_history(&history_request.messages, true, true).is_ok());
 
-    let tool_result = request(r#"{"messages":[{"role":"tool","tool_call_id":"call_1","content":"ok"}]}"#);
+    let tool_result = request_value(serde_json::json!({
+        "messages": [{"role": OaiRole::Tool, "tool_call_id": "call_1", "content": "ok"}]
+    }));
     let error = validate_tool_history(&tool_result.messages, true, true).expect_err("orphan tool result");
     assert_eq!(error.param(), "messages[0].tool_call_id");
     assert_eq!(error.code(), "invalid_tool_history");
@@ -440,27 +440,43 @@ fn tool_history_must_match_model_capabilities() {
 fn malformed_tool_history_is_rejected_before_conversion() {
     for (body, expected_param) in [
         (
-            r#"{"messages":[{"role":"user","content":"hi","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}]}"#,
+            serde_json::json!({"messages": [{"role": OaiRole::User, "content": "hi", "tool_calls": [{
+                "id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}
+            }]}]}),
             "messages[0].tool_calls",
         ),
         (
-            r#"{"messages":[{"role":"assistant","tool_calls":[{"id":"call_1","type":"other","function":{"name":"lookup","arguments":"{}"}}]}]}"#,
+            serde_json::json!({"messages": [{"role": OaiRole::Assistant, "tool_calls": [{
+                "id": "call_1", "type": "other", "function": {"name": "lookup", "arguments": "{}"}
+            }]}]}),
             "messages[0].tool_calls[0].type",
         ),
         (
-            r#"{"messages":[{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"not-json"}}]}]}"#,
+            serde_json::json!({"messages": [{"role": OaiRole::Assistant, "tool_calls": [{
+                "id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "not-json"}
+            }]}]}),
             "messages[0].tool_calls[0].function.arguments",
         ),
-        (r#"{"messages":[{"role":"tool","content":"ok"}]}"#, "messages[0].tool_call_id"),
-        (r#"{"messages":[{"role":"bogus","content":"hi"}]}"#, "messages[0].role"),
-        (r#"{"messages":[{"role":"system","content":null}]}"#, "messages[0].content"),
-        (r#"{"messages":[{"role":"assistant","content":null}]}"#, "messages[0].content"),
+        (serde_json::json!({"messages": [{"role": OaiRole::Tool, "content": "ok"}]}), "messages[0].tool_call_id"),
         (
-            r#"{"messages":[{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":null}]}"#,
+            serde_json::json!({"messages": [{
+                "role": OaiRole::Unsupported("bogus".to_string()), "content": "hi"
+            }]}),
+            "messages[0].role",
+        ),
+        (serde_json::json!({"messages": [{"role": OaiRole::System, "content": null}]}), "messages[0].content"),
+        (serde_json::json!({"messages": [{"role": OaiRole::Assistant, "content": null}]}), "messages[0].content"),
+        (
+            serde_json::json!({"messages": [
+                {"role": OaiRole::Assistant, "tool_calls": [{
+                    "id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}
+                }]},
+                {"role": OaiRole::Tool, "tool_call_id": "call_1", "content": null}
+            ]}),
             "messages[1].content",
         ),
     ] {
-        let history_request = request(body);
+        let history_request = request_value(body.clone());
         let error = validate_tool_history(&history_request.messages, true, true).expect_err("invalid history");
         assert_eq!(error.param(), expected_param, "body: {body}");
     }
@@ -493,32 +509,37 @@ fn single_call_capability_exposes_only_the_call_retained_in_history() {
 
 #[rocket::get("/tool-choice-err")]
 fn tool_choice_err_route() -> ChatCompletionResult {
-    tool_choice_error_response(ToolChoiceError::Unsupported("required".to_string()))
+    let error = ToolChoiceError::Unsupported("required".to_string());
+    invalid_request_response("tool_choice", error.code(), error.message())
 }
 
 #[rocket::get("/strict-tool-err")]
 fn strict_tool_err_route() -> ChatCompletionResult {
-    tool_definition_error_response(ToolDefinitionError::StrictUnsupported {
+    let error = ToolDefinitionError::StrictUnsupported {
         index: 2,
-    })
+    };
+    invalid_request_response(&error.param(), error.code(), error.message())
 }
 
 #[rocket::get("/tool-kind-err")]
 fn tool_kind_err_route() -> ChatCompletionResult {
-    tool_definition_error_response(ToolDefinitionError::UnsupportedKind {
+    let error = ToolDefinitionError::UnsupportedKind {
         index: 1,
         kind: "not_function".to_string(),
-    })
+    };
+    invalid_request_response(&error.param(), error.code(), error.message())
 }
 
 #[rocket::get("/unsupported-tools-err")]
 fn unsupported_tools_err_route() -> ChatCompletionResult {
-    tool_definition_error_response(ToolDefinitionError::ToolsUnsupported)
+    let error = ToolDefinitionError::ToolsUnsupported;
+    invalid_request_response(&error.param(), error.code(), error.message())
 }
 
 #[rocket::get("/parallel-tool-calls-err")]
 fn parallel_tool_calls_err_route() -> ChatCompletionResult {
-    parallel_tool_calls_error_response(ParallelToolCallsError)
+    let error = ParallelToolCallsError;
+    invalid_request_response("parallel_tool_calls", error.code(), error.message())
 }
 
 #[test]

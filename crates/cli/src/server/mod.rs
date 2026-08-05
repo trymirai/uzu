@@ -1,4 +1,5 @@
 mod chat_tool_calls;
+mod chat_tool_calls_errors;
 
 pub mod chat_completions;
 pub mod models;

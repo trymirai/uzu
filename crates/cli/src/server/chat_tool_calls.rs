@@ -1,4 +1,4 @@
-use std::{collections::HashSet, str::FromStr};
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 use uzu::types::{
@@ -6,7 +6,10 @@ use uzu::types::{
     session::chat::{ChatContentBlock, ChatMessage, ChatReplyFinishReason, ChatRole},
 };
 
-use super::chat_completions::{ChatCompletionRequest, OaiMessage};
+use super::chat_completions::{ChatCompletionRequest, OaiMessage, OaiRole};
+use crate::server::chat_tool_calls_errors::{
+    ParallelToolCallsError, ToolChoiceError, ToolDefinitionError, ToolHistoryError,
+};
 
 pub(super) static TOOL_KIND_FUNCTION: &str = "function";
 pub(super) static INCOMPLETE_TOOL_CALL_BATCH_ERROR: &str = "Model generated an incomplete tool-call batch";
@@ -75,120 +78,6 @@ struct StreamToolCallFunction {
     name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     arguments: Option<String>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum ToolChoiceError {
-    Invalid(String),
-    Unsupported(String),
-    UnknownFunction(String),
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum ToolDefinitionError {
-    ToolsUnsupported,
-    StrictUnsupported {
-        index: usize,
-    },
-    UnsupportedKind {
-        index: usize,
-        kind: String,
-    },
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct ParallelToolCallsError;
-
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct ToolHistoryError {
-    message: String,
-    param: String,
-    code: &'static str,
-}
-
-impl ToolHistoryError {
-    pub(super) fn message(&self) -> String {
-        self.message.clone()
-    }
-
-    pub(super) fn code(&self) -> &'static str {
-        self.code
-    }
-
-    pub(super) fn param(&self) -> String {
-        self.param.clone()
-    }
-}
-
-impl ParallelToolCallsError {
-    pub(super) fn message(&self) -> String {
-        "parallel_tool_calls: false is not supported by this server when tools are enabled".to_string()
-    }
-
-    pub(super) fn code(&self) -> &'static str {
-        "unsupported_parallel_tool_calls"
-    }
-}
-
-impl ToolDefinitionError {
-    pub(super) fn message(&self) -> String {
-        match self {
-            ToolDefinitionError::ToolsUnsupported => "tool calls are not supported by the loaded model".to_string(),
-            ToolDefinitionError::StrictUnsupported {
-                ..
-            } => "strict function tools are not supported by this server".to_string(),
-            ToolDefinitionError::UnsupportedKind {
-                kind,
-                ..
-            } => format!("tool type {kind:?} is not supported by this server"),
-        }
-    }
-
-    pub(super) fn code(&self) -> &'static str {
-        match self {
-            ToolDefinitionError::ToolsUnsupported => "unsupported_tools",
-            ToolDefinitionError::StrictUnsupported {
-                ..
-            } => "unsupported_strict_tool",
-            ToolDefinitionError::UnsupportedKind {
-                ..
-            } => "unsupported_tool_type",
-        }
-    }
-
-    pub(super) fn param(&self) -> String {
-        match self {
-            ToolDefinitionError::ToolsUnsupported => "tools".to_string(),
-            ToolDefinitionError::StrictUnsupported {
-                index,
-            } => format!("tools[{index}].function.strict"),
-            ToolDefinitionError::UnsupportedKind {
-                index,
-                ..
-            } => format!("tools[{index}].type"),
-        }
-    }
-}
-
-impl ToolChoiceError {
-    pub(super) fn message(&self) -> String {
-        match self {
-            ToolChoiceError::Invalid(detail) => format!("tool_choice is not recognized: {detail}"),
-            ToolChoiceError::Unsupported(choice) => {
-                format!("tool_choice {choice:?} is not supported by this server")
-            },
-            ToolChoiceError::UnknownFunction(name) => {
-                format!("tool_choice refers to function {name:?}, which is not present in tools")
-            },
-        }
-    }
-
-    pub(super) fn code(&self) -> &'static str {
-        match self {
-            ToolChoiceError::Invalid(_) | ToolChoiceError::UnknownFunction(_) => "invalid_tool_choice",
-            ToolChoiceError::Unsupported(_) => "unsupported_tool_choice",
-        }
-    }
 }
 
 pub(super) fn select_tools(request: &ChatCompletionRequest) -> Result<Vec<&OaiTool>, ToolChoiceError> {
@@ -275,14 +164,14 @@ pub(super) fn validate_tool_history(
     let mut pending_origin = None;
 
     for (index, message) in messages.iter().enumerate() {
-        if !matches!(message.role.as_str(), "system" | "developer" | "user" | "assistant" | "tool") {
+        if let OaiRole::Unsupported(role) = &message.role {
             return Err(ToolHistoryError {
-                message: format!("message role {:?} is not supported", message.role),
+                message: format!("message role {role:?} is not supported"),
                 param: format!("messages[{index}].role"),
                 code: "invalid_message_role",
             });
         }
-        if !pending_call_ids.is_empty() && message.role != "tool" {
+        if !pending_call_ids.is_empty() && message.role != OaiRole::Tool {
             let origin = pending_origin.unwrap_or(index);
             return Err(ToolHistoryError {
                 message: "assistant tool calls must all have tool-result messages before the conversation continues"
@@ -293,7 +182,7 @@ pub(super) fn validate_tool_history(
         }
 
         let tool_calls = message.tool_calls.as_deref().unwrap_or_default();
-        if !tool_calls.is_empty() && message.role != "assistant" {
+        if !tool_calls.is_empty() && message.role != OaiRole::Assistant {
             return Err(ToolHistoryError {
                 message: "tool_calls are only valid on assistant messages".to_string(),
                 param: format!("messages[{index}].tool_calls"),
@@ -314,8 +203,8 @@ pub(super) fn validate_tool_history(
                 code: "unsupported_parallel_tool_history",
             });
         }
-        let requires_content = matches!(message.role.as_str(), "system" | "developer" | "user")
-            || (message.role == "assistant" && tool_calls.is_empty());
+        let requires_content = matches!(&message.role, OaiRole::System | OaiRole::Developer | OaiRole::User)
+            || (message.role == OaiRole::Assistant && tool_calls.is_empty());
         if requires_content && message.content.is_none() {
             return Err(ToolHistoryError {
                 message: format!("{} messages require content", message.role),
@@ -359,7 +248,7 @@ pub(super) fn validate_tool_history(
             pending_origin = Some(index);
         }
 
-        if message.role == "tool" {
+        if message.role == OaiRole::Tool {
             if !supports_tool_calls {
                 return Err(ToolHistoryError {
                     message: "tool-result history is not supported by the loaded model".to_string(),
@@ -413,7 +302,14 @@ pub(super) fn to_chat_messages<'a>(
     let mut chat_messages = messages
         .iter()
         .map(|message| {
-            let role = ChatRole::from_str(&message.role).expect("message roles must be validated before conversion");
+            let role = match &message.role {
+                OaiRole::System => ChatRole::System {},
+                OaiRole::Developer => ChatRole::Developer {},
+                OaiRole::User => ChatRole::User {},
+                OaiRole::Assistant => ChatRole::Assistant {},
+                OaiRole::Tool => ChatRole::Tool {},
+                OaiRole::Unsupported(_) => unreachable!("message roles must be validated before conversion"),
+            };
             let mut chat_message = ChatMessage::for_role(role.clone());
 
             if role == (ChatRole::Tool {}) {

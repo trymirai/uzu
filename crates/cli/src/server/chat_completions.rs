@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     pin::Pin,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -30,16 +31,80 @@ use uzu::{
 use crate::server::{
     ServerState,
     chat_tool_calls::{
-        OaiTool, OaiToolCall, ParallelToolCallsError, StreamToolCall, ToolChoiceError, ToolDefinitionError,
-        ToolHistoryError, normalize_tool_calls_for_capability, response_tool_calls, select_tools,
+        OaiTool, OaiToolCall, StreamToolCall, normalize_tool_calls_for_capability, response_tool_calls, select_tools,
         stream_tool_call_deltas, to_chat_messages, tool_call_batch_error, validate_parallel_tool_calls,
         validate_selected_tools, validate_tool_capability, validate_tool_history,
     },
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OaiRole {
+    System,
+    Developer,
+    User,
+    Assistant,
+    Tool,
+    Unsupported(String),
+}
+
+impl OaiRole {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::System => "system",
+            Self::Developer => "developer",
+            Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::Tool => "tool",
+            Self::Unsupported(role) => role,
+        }
+    }
+}
+
+impl From<String> for OaiRole {
+    fn from(role: String) -> Self {
+        if role == Self::System.as_str() {
+            Self::System
+        } else if role == Self::Developer.as_str() {
+            Self::Developer
+        } else if role == Self::User.as_str() {
+            Self::User
+        } else if role == Self::Assistant.as_str() {
+            Self::Assistant
+        } else if role == Self::Tool.as_str() {
+            Self::Tool
+        } else {
+            Self::Unsupported(role)
+        }
+    }
+}
+
+impl fmt::Display for OaiRole {
+    fn fmt(
+        &self,
+        formatter: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl Serialize for OaiRole {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for OaiRole {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::from)
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OaiMessage {
-    pub role: String,
+    pub role: OaiRole,
     #[serde(default)]
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -76,6 +141,14 @@ pub struct ChatCompletionRequest {
     #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
+}
+
+impl ChatCompletionRequest {
+    fn parse(value: serde_json::Value) -> Result<Self, RequestBodyError> {
+        serde_json::from_value(value).map_err(|error| RequestBodyError {
+            message: format!("request body does not match the Chat Completions schema: {error}"),
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -120,7 +193,7 @@ pub struct ChatCompletionResponse {
 #[derive(Serialize)]
 struct StreamDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
-    role: Option<String>,
+    role: Option<OaiRole>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -194,6 +267,14 @@ struct RequestBodyError {
     message: String,
 }
 
+impl<'a> From<rocket::serde::json::Error<'a>> for RequestBodyError {
+    fn from(error: rocket::serde::json::Error<'a>) -> Self {
+        Self {
+            message: format!("request body is not valid JSON: {error}"),
+        }
+    }
+}
+
 impl ResponseFormatError {
     fn message(&self) -> String {
         match self {
@@ -223,27 +304,7 @@ fn request_error_response(error: ResponseFormatError) -> ChatCompletionResult {
     invalid_request_response("response_format", error.code(), error.message())
 }
 
-fn request_body_error_response(error: RequestBodyError) -> ChatCompletionResult {
-    invalid_request_response("request", "invalid_request", error.message)
-}
-
-fn tool_choice_error_response(error: ToolChoiceError) -> ChatCompletionResult {
-    invalid_request_response("tool_choice", error.code(), error.message())
-}
-
-fn tool_definition_error_response(error: ToolDefinitionError) -> ChatCompletionResult {
-    invalid_request_response(&error.param(), error.code(), error.message())
-}
-
-fn parallel_tool_calls_error_response(error: ParallelToolCallsError) -> ChatCompletionResult {
-    invalid_request_response("parallel_tool_calls", error.code(), error.message())
-}
-
-fn tool_history_error_response(error: ToolHistoryError) -> ChatCompletionResult {
-    invalid_request_response(&error.param(), error.code(), error.message())
-}
-
-fn invalid_request_response(
+pub(super) fn invalid_request_response(
     param: &str,
     code: &str,
     message: String,
@@ -259,18 +320,6 @@ fn invalid_request_response(
             },
         }),
     ))
-}
-
-fn parse_request_body(value: serde_json::Value) -> Result<ChatCompletionRequest, RequestBodyError> {
-    serde_json::from_value(value).map_err(|error| RequestBodyError {
-        message: format!("request body does not match the Chat Completions schema: {error}"),
-    })
-}
-
-fn request_body_guard_error(error: rocket::serde::json::Error<'_>) -> RequestBodyError {
-    RequestBodyError {
-        message: format!("request body is not valid JSON: {error}"),
-    }
 }
 
 fn with_response_format_grammar(
@@ -364,7 +413,7 @@ fn error_response(
         choices: vec![ChatCompletionChoice {
             index: 0,
             message: OaiMessage {
-                role: "assistant".to_string(),
+                role: OaiRole::Assistant,
                 content: Some(format!("Error: {message}")),
                 tool_calls: None,
                 tool_call_id: None,
@@ -474,7 +523,7 @@ async fn run_blocking(
                     choices: vec![ChatCompletionChoice {
                         index: 0,
                         message: OaiMessage {
-                            role: "assistant".to_string(),
+                            role: OaiRole::Assistant,
                             content: message.text(),
                             tool_calls: response_tool_calls(&message),
                             tool_call_id: None,
@@ -515,7 +564,7 @@ async fn run_stream(
             &model,
             created,
             StreamDelta {
-                role: Some("assistant".to_string()),
+                role: Some(OaiRole::Assistant),
                 content: Some(format!("Error: {error}")),
                 tool_calls: None,
             },
@@ -532,7 +581,7 @@ async fn run_stream(
             &model,
             created,
             StreamDelta {
-                role: Some("assistant".to_string()),
+                role: Some(OaiRole::Assistant),
                 content: None,
                 tool_calls: None,
             },
@@ -729,11 +778,13 @@ pub async fn handle_chat_completions(
 ) -> ChatCompletionResult {
     let request = match request {
         Ok(request) => request.into_inner(),
-        Err(error) => return request_body_error_response(request_body_guard_error(error)),
+        Err(error) => {
+            return invalid_request_response("request", "invalid_request", RequestBodyError::from(error).message);
+        },
     };
-    let request = match parse_request_body(request) {
+    let request = match ChatCompletionRequest::parse(request) {
         Ok(request) => request,
-        Err(error) => return request_body_error_response(error),
+        Err(error) => return invalid_request_response("request", "invalid_request", error.message),
     };
     let id = format!("chatcmpl-{}", Uuid::new_v4().simple());
     let created = now_unix();
@@ -746,23 +797,23 @@ pub async fn handle_chat_completions(
     };
     let tools = match select_tools(&request) {
         Ok(tools) => tools,
-        Err(error) => return tool_choice_error_response(error),
+        Err(error) => return invalid_request_response("tool_choice", error.code(), error.message()),
     };
     if let Err(error) = validate_selected_tools(&request, &tools) {
-        return tool_definition_error_response(error);
+        return invalid_request_response(&error.param(), error.code(), error.message());
     }
     let (supports_tool_calls, supports_multiple_tool_calls) = {
         let session = state.session.lock().await;
         (session.supports_tool_calls().await, session.supports_multiple_tool_calls().await)
     };
     if let Err(error) = validate_tool_capability(&tools, supports_tool_calls) {
-        return tool_definition_error_response(error);
+        return invalid_request_response(&error.param(), error.code(), error.message());
     }
     if let Err(error) = validate_tool_history(&request.messages, supports_tool_calls, supports_multiple_tool_calls) {
-        return tool_history_error_response(error);
+        return invalid_request_response(&error.param(), error.code(), error.message());
     }
     if let Err(error) = validate_parallel_tool_calls(&request, &tools, supports_multiple_tool_calls) {
-        return parallel_tool_calls_error_response(error);
+        return invalid_request_response("parallel_tool_calls", error.code(), error.message());
     }
     let allowed_tool_names = tools.iter().map(|tool| tool.function.name.clone()).collect::<Vec<_>>();
     let messages = to_chat_messages(&request.messages, tools);

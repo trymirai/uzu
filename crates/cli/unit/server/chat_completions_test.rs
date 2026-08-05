@@ -104,9 +104,7 @@ fn err_route() -> ChatCompletionResult {
 
 #[rocket::get("/request-body-err")]
 fn request_body_err_route() -> ChatCompletionResult {
-    request_body_error_response(RequestBodyError {
-        message: "bad request".to_string(),
-    })
+    invalid_request_response("request", "invalid_request", "bad request".to_string())
 }
 
 #[rocket::post("/request-body", format = "json", data = "<request>")]
@@ -114,13 +112,13 @@ fn request_body_route(
     request: Result<Json<serde_json::Value>, rocket::serde::json::Error<'_>>
 ) -> ChatCompletionResult {
     match request {
-        Ok(request) => match parse_request_body(request.into_inner()) {
-            Ok(_) => request_body_error_response(RequestBodyError {
-                message: "test expected an invalid request".to_string(),
-            }),
-            Err(error) => request_body_error_response(error),
+        Ok(request) => match ChatCompletionRequest::parse(request.into_inner()) {
+            Ok(_) => {
+                invalid_request_response("request", "invalid_request", "test expected an invalid request".to_string())
+            },
+            Err(error) => invalid_request_response("request", "invalid_request", error.message),
         },
-        Err(error) => request_body_error_response(request_body_guard_error(error)),
+        Err(error) => invalid_request_response("request", "invalid_request", RequestBodyError::from(error).message),
     }
 }
 
