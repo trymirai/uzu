@@ -44,6 +44,7 @@ pub enum HistoryCellType {
 #[derive(Default, Props)]
 pub struct HistoryCellProps {
     pub r#type: Option<HistoryCellType>,
+    pub live: Option<bool>,
 }
 
 #[component]
@@ -96,7 +97,14 @@ pub fn HistoryCell(
         Some(HistoryCellType::ChatTranscript {
             items,
             stats,
-        }) => chat_transcript_component(items, stats, theme.subtitle_color, theme.overlay_color(), theme.padding()),
+        }) => chat_transcript_component(
+            items,
+            stats,
+            theme.subtitle_color,
+            theme.overlay_color(),
+            theme.padding(),
+            props.live.unwrap_or(false),
+        ),
         Some(HistoryCellType::ClassificationOutput {
             output,
         }) => classification_output_component(output, theme.subtitle_color, theme.padding()),
@@ -114,6 +122,7 @@ fn chat_transcript_component(
     subtitle_color: Color,
     overlay_color: Color,
     padding: u16,
+    live: bool,
 ) -> AnyElement<'static> {
     element! {
         View(
@@ -137,10 +146,27 @@ fn chat_transcript_component(
                 .into(),
                 TranscriptItem::ToolCall {
                     name,
-                    called,
+                    called: true,
                 } => element! {
                     Text(
-                        content: format!("* {} {}", if called { "called" } else { "calling" }, name),
+                        content: format!("* called {}", name),
+                        color: subtitle_color,
+                    )
+                }
+                .into(),
+                TranscriptItem::ToolCall {
+                    name,
+                    called: false,
+                } if live => element! {
+                    CallingToolLine(name: name, color: subtitle_color)
+                }
+                .into(),
+                TranscriptItem::ToolCall {
+                    name,
+                    called: false,
+                } => element! {
+                    Text(
+                        content: format!("* calling {}", name),
                         color: subtitle_color,
                     )
                 }
@@ -154,6 +180,39 @@ fn chat_transcript_component(
         }
     }
     .into()
+}
+
+#[derive(Default, Props)]
+struct CallingToolLineProps {
+    name: String,
+    color: Option<Color>,
+}
+
+#[component]
+fn CallingToolLine(
+    props: &CallingToolLineProps,
+    mut hooks: Hooks,
+) -> impl Into<AnyElement<'static>> {
+    let mut frame = hooks.use_state(|| 0usize);
+    hooks.use_future(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            *frame.write() += 1;
+        }
+    });
+    // starts empty, then cycles one/two/three dots; padded so the line doesn't shift
+    let frame = *frame.read();
+    let dots = if frame == 0 {
+        "   "
+    } else {
+        [".  ", ".. ", "..."][(frame - 1) % 3]
+    };
+    element! {
+        Text(
+            content: format!("* calling {}{}", props.name, dots),
+            color: props.color,
+        )
+    }
 }
 
 fn classification_output_component(
