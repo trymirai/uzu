@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod bench;
+mod interactive;
 mod server;
 
 #[derive(Parser)]
@@ -52,18 +53,14 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "capability-cli")]
 async fn run_interactive(model: Option<String>) -> Result<()> {
-    use uzu::{cli::CliApplication, engine::EngineConfig};
+    use uzu::engine::EngineConfig;
+
+    use crate::interactive::CliApplication;
 
     let engine_config = EngineConfig::default().with_application_identifier("com.trymirai.cli".to_string());
     let application = CliApplication::create(engine_config).await?;
     application.run_with_model(model).await?;
 
-    Ok(())
-}
-
-#[cfg(not(feature = "capability-cli"))]
-async fn run_interactive(_model: Option<String>) -> Result<()> {
     Ok(())
 }
