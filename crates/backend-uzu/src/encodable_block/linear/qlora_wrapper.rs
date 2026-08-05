@@ -160,6 +160,8 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        encoder.push_debug_group("linear (qlora)");
+
         let mut intermediate =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.weights_data_type))?;
 
@@ -241,6 +243,8 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 encoder,
             );
         }
+
+        encoder.pop_debug_group();
 
         Ok(output)
     }

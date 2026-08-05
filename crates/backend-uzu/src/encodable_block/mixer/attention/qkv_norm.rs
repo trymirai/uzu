@@ -138,6 +138,8 @@ impl<B: Backend> QKVNorm<B> {
         q_heads: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
+        encoder.push_debug_group("qkv norm");
+
         let kv = self.num_kv_heads;
         let total_heads = q_heads + 2 * kv;
         let heads = [(&self.query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
@@ -163,6 +165,9 @@ impl<B: Backend> QKVNorm<B> {
                 encoder,
             );
         }
+
+        encoder.pop_debug_group();
+
         Ok(())
     }
 }

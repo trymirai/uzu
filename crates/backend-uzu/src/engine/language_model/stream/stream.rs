@@ -81,7 +81,7 @@ struct DecodingStatePending<B: Backend> {
     input_trie: TrieNode,
     full_accept: bool,
     pending: Box<[Pending<B>]>,
-    _capture_span: Option<CaptureSpan<B>>,
+    capture_span: Option<CaptureSpan<B>>,
     hidden_features: Option<Box<[Allocation<B>]>>,
     output_norm: Option<Allocation<B>>,
     output_tokens: Allocation<B>,
@@ -97,6 +97,7 @@ enum DecodingState<B: Backend> {
         num_accepted: usize,
         hidden_features: Option<Box<[Allocation<B>]>>,
         output_norm: Option<(Allocation<B>, usize)>,
+        capture_span: Option<CaptureSpan<B>>,
     },
     Halted,
     Invalid,
@@ -334,7 +335,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 input_trie: TrieNode::new(0, 0),
                 full_accept: true,
                 pending,
-                _capture_span: capture_span,
+                capture_span,
                 hidden_features: None,
                 output_norm,
                 output_tokens: output_tokens.unwrap(),
@@ -407,6 +408,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             num_accepted: 0,
                             hidden_features: forward_pass_pending.hidden_features,
                             output_norm,
+                            capture_span: forward_pass_pending.capture_span,
                         };
                         return self.generate();
                     }
@@ -416,6 +418,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     num_accepted,
                     hidden_features,
                     output_norm,
+                    capture_span,
                 } => {
                     let output_token_id = full[num_accepted].2;
 
@@ -427,6 +430,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             num_accepted: num_accepted + 1,
                             hidden_features,
                             output_norm,
+                            capture_span,
                         };
                         return Ok(Some(output_token_id));
                     } else {
@@ -483,6 +487,22 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             );
                             encoder.pop_debug_group();
                         }
+                        if let Some(capture_span) = capture_span {
+                            encoder
+                                .end_encoding()
+                                .submit()
+                                .wait_until_completed()
+                                .map_err(LanguageModelStreamError::Backend)?;
+
+                            drop(capture_span);
+
+                            encoder = Encoder::<B>::new_with_pool_name(
+                                &self.model.engine.context,
+                                self.allocation_pool.clone(),
+                                Some("decode"),
+                            )
+                            .map_err(LanguageModelStreamError::Backend)?;
+                        }
                         self.model_state.tokens.extend(accepted_output_token_ids);
                         (
                             ForwardPassChaining::Constant {
@@ -525,14 +545,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             None
         };
 
-        let mut pending = Vec::new();
-        let mut encoder = if let Some(encoder) = encoder {
-            encoder
-        } else {
-            Encoder::<B>::new_with_pool_name(&self.model.engine.context, self.allocation_pool.clone(), Some("decode"))
-                .map_err(LanguageModelStreamError::Backend)?
-        };
-
         let speculation_batch = self
             .model_state
             .max_context_length
@@ -545,13 +557,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 #[cfg(grammar)]
                 self.options.grammar.as_mut(),
             )? {
-            pending.push(encoder.end_encoding().submit());
-            encoder = Encoder::<B>::new_with_pool_name(
-                &self.model.engine.context,
-                self.allocation_pool.clone(),
-                Some("decode"),
-            )
-            .map_err(LanguageModelStreamError::Backend)?;
             let trie = speculator.propose_tree(
                 self.model_state.speculator_state.as_mut().unwrap(),
                 output_norm,
@@ -578,6 +583,14 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             (TrieNode::new(token, self.model_state.prng.derive(context_length as u64)), chain_copy, true)
         };
         let input_flat_trie = input_trie.linearize();
+
+        let mut pending = Vec::new();
+        let mut encoder = if let Some(encoder) = encoder {
+            encoder
+        } else {
+            Encoder::<B>::new_with_pool_name(&self.model.engine.context, self.allocation_pool.clone(), Some("decode"))
+                .map_err(LanguageModelStreamError::Backend)?
+        };
 
         let token_ids = if let Some(chain_copy) = chain_copy {
             let mut token_ids =
@@ -731,7 +744,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             input_trie,
             full_accept,
             pending: pending.into_boxed_slice(),
-            _capture_span: capture_span,
+            capture_span,
             hidden_features: if full_accept {
                 None
             } else {
@@ -804,6 +817,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                 num_accepted,
                 hidden_features,
                 output_norm: _,
+                capture_span,
             } => {
                 assert!(num_accepted > 0 && num_accepted < full.len());
 
@@ -827,6 +841,8 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                         .unwrap();
                 }
                 encoder.end_encoding().submit().wait_until_completed().unwrap();
+
+                drop(capture_span);
 
                 self.model_state.tokens.extend(full.iter().take(num_accepted).map(|(_, _, t)| *t));
 

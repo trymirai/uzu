@@ -178,6 +178,8 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        encoder.push_debug_group("linear (rht)");
+
         if let Some(quantize_transform) = &self.quantize_transform
             && self.inner_linear.select_path(batch_dim, encoder.context()) == MatmulPath::Gemm
         {
@@ -200,7 +202,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 self.input_dimension as u32,
                 encoder,
             );
-            return self.inner_linear.encode_with_a(
+            let output = self.inner_linear.encode_with_a(
                 MatmulA::Int8Symmetric {
                     values: &values,
                     scales: &scales,
@@ -208,7 +210,11 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 },
                 batch_dim,
                 encoder,
-            );
+            )?;
+
+            encoder.pop_debug_group();
+
+            return Ok(output);
         }
 
         let mut input = input;
@@ -219,6 +225,10 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             self.input_dimension as u32,
             encoder,
         );
-        self.inner_linear.encode(input, batch_dim, encoder)
+        let output = self.inner_linear.encode(input, batch_dim, encoder)?;
+
+        encoder.pop_debug_group();
+
+        Ok(output)
     }
 }

@@ -115,6 +115,8 @@ impl<B: Backend> Normalization<B> {
         shortcut: Option<&mut Allocation<B>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        encoder.push_debug_group("normalization");
+
         let row_size = self.element_count * self.data_type.size_in_bytes();
         let row_offset_bytes = row_offset * row_size;
         let shortcut = shortcut.map(|shortcut| (shortcut, row_offset_bytes));
@@ -133,6 +135,9 @@ impl<B: Backend> Normalization<B> {
             self.post_layer_scalar_value,
             encoder,
         );
+
+        encoder.pop_debug_group();
+
         Ok(output)
     }
 }

@@ -199,6 +199,8 @@ impl<B: Backend> TransformerLayer<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        encoder.push_debug_group(&format!("transformer layer {}", self.layer_index));
+
         let hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
             pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut), encoder)?
         } else {
@@ -227,6 +229,8 @@ impl<B: Backend> TransformerLayer<B> {
             ple_projection.encode(self.layer_index, per_layer_inputs, shortcut, &hidden, batch_dim.size(), encoder)?;
             encoder.encode_fill(&mut hidden, 0);
         }
+
+        encoder.pop_debug_group();
 
         Ok(hidden)
     }
