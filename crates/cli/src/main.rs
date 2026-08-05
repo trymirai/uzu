@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod bench;
-#[cfg(feature = "capability-cli")]
 mod interactive;
 mod server;
 
@@ -54,7 +53,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "capability-cli")]
 async fn run_interactive(model: Option<String>) -> Result<()> {
     use uzu::engine::EngineConfig;
 
@@ -64,10 +62,5 @@ async fn run_interactive(model: Option<String>) -> Result<()> {
     let application = CliApplication::create(engine_config).await?;
     application.run_with_model(model).await?;
 
-    Ok(())
-}
-
-#[cfg(not(feature = "capability-cli"))]
-async fn run_interactive(_model: Option<String>) -> Result<()> {
     Ok(())
 }

@@ -13,37 +13,36 @@ name = "cli"
 path = "src/main.rs"
 
 [features]
-default = ["backend-cpu", "backend-metal", "capability-grammar", "capability-cli"]
+default = ["backend-cpu", "backend-metal", "capability-grammar"]
 backend-cpu = ["uzu/backend-cpu"]
 backend-metal = ["uzu/backend-metal"]
 capability-grammar = ["uzu/capability-grammar"]
-capability-cli = ["dep:indoc", "dep:iocraft"]
 
 [dependencies]
-backend-uzu.workspace = true
-nagare.workspace = true
-uzu = { workspace = true, default-features = false }
-tokio = { workspace = true, features = ["full"] }
 anyhow.workspace = true
+backend-uzu.workspace = true
 chrono.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
-indicatif.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-jsonschema.workspace = true
-rocket.workspace = true
-uuid.workspace = true
-tokio-stream.workspace = true
-sysinfo.workspace = true
-shoji.workspace = true
 dirs.workspace = true
 indexmap.workspace = true
+indicatif.workspace = true
+indoc.workspace = true
+iocraft.workspace = true
+jsonschema.workspace = true
+nagare.workspace = true
+rocket.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+shoji.workspace = true
+sysinfo.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-stream.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
-thiserror.workspace = true
-indoc = { workspace = true, optional = true }
-iocraft = { workspace = true, optional = true }
+uuid.workspace = true
+uzu = { workspace = true, default-features = false }
 
 [lints]
 workspace = true

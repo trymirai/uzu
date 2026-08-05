@@ -16,7 +16,6 @@ default = ["backend-cpu", "backend-metal", "capability-grammar"]
 backend-cpu = ["backend-uzu/cpu"]
 backend-metal = ["backend-uzu/metal"]
 capability-grammar = ["backend-uzu/grammar"]
-capability-cli = []
 bindings = [
     "bindings-uniffi",
     "bindings-napi",
