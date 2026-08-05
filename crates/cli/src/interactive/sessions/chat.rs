@@ -7,13 +7,13 @@ use nagare::{
     tool::uzu_tool_function,
 };
 use shoji::types::{
-    basic::CancelToken,
+    basic::{CancelToken, ToolCall},
     model::Model,
-    session::chat::{ChatConfig, ChatMessage, ChatReply, ChatReplyConfig},
+    session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyStats, ChatRole},
 };
 
 use crate::interactive::{
-    components::{ApplicationState, HistoryCellType},
+    components::{ApplicationState, HistoryCellType, TranscriptItem},
     helpers::HINT_SESSION_INTERRUPT,
     sessions::SessionState,
 };
@@ -28,7 +28,8 @@ enum ChatSessionStatus {
 #[derive(Clone)]
 pub struct ChatSessionState {
     session: Option<ChatSession>,
-    pending_reply: Option<ChatReply>,
+    pending_items: Vec<TranscriptItem>,
+    pending_stats: Option<ChatReplyStats>,
     cancel_token: Option<CancelToken>,
     status: ChatSessionStatus,
 }
@@ -37,7 +38,8 @@ impl ChatSessionState {
     pub fn loading() -> Self {
         Self {
             session: None,
-            pending_reply: None,
+            pending_items: Vec::new(),
+            pending_stats: None,
             cancel_token: None,
             status: ChatSessionStatus::Loading,
         }
@@ -46,7 +48,8 @@ impl ChatSessionState {
     pub fn idle(session: ChatSession) -> Self {
         Self {
             session: Some(session),
-            pending_reply: None,
+            pending_items: Vec::new(),
+            pending_stats: None,
             cancel_token: None,
             status: ChatSessionStatus::Idle,
         }
@@ -84,8 +87,12 @@ impl SessionState for ChatSessionState {
     }
 
     fn pending_history_cell(&self) -> Option<HistoryCellType> {
-        self.pending_reply.clone().map(|reply| HistoryCellType::ChatReply {
-            reply,
+        if self.pending_items.is_empty() && self.pending_stats.is_none() {
+            return None;
+        }
+        Some(HistoryCellType::ChatTranscript {
+            items: self.pending_items.clone(),
+            stats: self.pending_stats.clone(),
         })
     }
 }
@@ -114,6 +121,7 @@ pub async fn ensure_session(
         let mut session = engine.chat(model.clone(), ChatConfig::default()).await?;
         if session.supports_tool_calls().await {
             session.add_tool(get_current_date_time).await?;
+            session.add_tool(sleep).await?;
         }
         Ok::<_, anyhow::Error>(session)
     }
@@ -163,14 +171,16 @@ pub async fn run_session(
     {
         let mut state = state.write();
         if let Some(chat_state) = chat_state_mut(&mut state) {
-            chat_state.pending_reply = None;
+            chat_state.pending_items = Vec::new();
+            chat_state.pending_stats = None;
             chat_state.cancel_token = None;
             chat_state.status = ChatSessionStatus::Generating;
         }
     }
 
+    let history_offset = session.messages().await.len();
     let stream = session.reply_with_stream(messages, reply_config).await;
-    let mut latest_reply: Option<ChatReply> = None;
+    let mut latest_stats: Option<ChatReplyStats> = None;
     {
         let mut state = state.write();
         if let Some(chat_state) = chat_state_mut(&mut state) {
@@ -183,12 +193,14 @@ pub async fn run_session(
             ChatSessionStreamChunk::Replies {
                 replies,
             } => {
-                if let Some(reply) = replies.last().cloned() {
-                    latest_reply = Some(reply.clone());
-                    let mut state = state.write();
-                    if let Some(chat_state) = chat_state_mut(&mut state) {
-                        chat_state.pending_reply = Some(reply);
-                    }
+                if let Some(reply) = replies.last() {
+                    latest_stats = Some(reply.stats.clone());
+                }
+                let items = build_transcript(&session.messages().await, history_offset);
+                let mut state = state.write();
+                if let Some(chat_state) = chat_state_mut(&mut state) {
+                    chat_state.pending_items = items;
+                    chat_state.pending_stats = latest_stats.clone();
                 }
             },
             ChatSessionStreamChunk::Error {
@@ -202,21 +214,64 @@ pub async fn run_session(
         }
     }
 
+    let final_items = build_transcript(&session.messages().await, history_offset);
     let mut state = state.write();
-    let final_reply = if let Some(chat_state) = chat_state_mut(&mut state) {
-        let final_reply = latest_reply.or_else(|| chat_state.pending_reply.take());
-        chat_state.pending_reply = None;
+    if let Some(chat_state) = chat_state_mut(&mut state) {
+        chat_state.pending_items = Vec::new();
+        chat_state.pending_stats = None;
         chat_state.cancel_token = None;
         chat_state.status = ChatSessionStatus::Idle;
-        final_reply
-    } else {
-        latest_reply
-    };
-    if let Some(reply) = final_reply {
-        state.history.push(HistoryCellType::ChatReply {
-            reply,
+    }
+    if !final_items.is_empty() || latest_stats.is_some() {
+        state.history.push(HistoryCellType::ChatTranscript {
+            items: final_items,
+            stats: latest_stats,
         });
     }
+}
+
+/// A tool call is `calling` until its result message shows up in the history,
+/// then it becomes `called`.
+fn build_transcript(
+    messages: &[ChatMessage],
+    history_offset: usize,
+) -> Vec<TranscriptItem> {
+    let messages = &messages[history_offset.min(messages.len())..];
+    let mut items = Vec::new();
+    for (index, message) in messages.iter().enumerate() {
+        if message.role != (ChatRole::Assistant {}) {
+            continue;
+        }
+        if let Some(reasoning) =
+            message.reasoning().map(|content| content.trim().to_string()).filter(|content| !content.is_empty())
+        {
+            items.push(TranscriptItem::Thinking(reasoning));
+        }
+        if let Some(text) = message.text().filter(|content| !content.is_empty()) {
+            items.push(TranscriptItem::Text(text));
+        }
+        for tool_call in message.tool_calls() {
+            items.push(TranscriptItem::ToolCall {
+                name: tool_call.name.clone(),
+                called: tool_call_called(messages, index, &tool_call),
+            });
+        }
+    }
+    items
+}
+
+fn tool_call_called(
+    messages: &[ChatMessage],
+    index: usize,
+    tool_call: &ToolCall,
+) -> bool {
+    messages[index + 1..].iter().any(|message| {
+        message.role == (ChatRole::Tool {})
+            && message.tool_call_results().iter().any(|(identifier, _, _)| match (&tool_call.identifier, identifier) {
+                (Some(call_identifier), Some(result_identifier)) => call_identifier == result_identifier,
+                _ => true,
+            })
+    })
 }
 
 fn chat_state(state: &ApplicationState) -> Option<&ChatSessionState> {
@@ -239,4 +294,17 @@ fn chat_state_mut(state: &mut ApplicationState) -> Option<&mut ChatSessionState>
 #[uzu_tool_function]
 fn get_current_date_time() -> String {
     Local::now().to_rfc3339()
+}
+
+/// Sleeps for the given number of seconds before responding, at most 60 seconds.
+#[uzu_tool_function]
+async fn sleep(
+    /// Number of seconds to sleep, at most 60.
+    seconds: f64
+) -> Result<String, String> {
+    if !(0.0..=60.0).contains(&seconds) {
+        return Err(format!("Refusing to sleep for {} seconds, must be between 0 and 60", seconds));
+    }
+    tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
+    Ok(format!("Slept for {} seconds", seconds))
 }

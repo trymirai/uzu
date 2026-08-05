@@ -1,14 +1,22 @@
 use iocraft::prelude::*;
 use shoji::types::session::{
-    chat::{ChatReply, ChatReplyStats},
-    classification::ClassificationOutput,
-    text_to_speech::TextToSpeechStats,
+    chat::ChatReplyStats, classification::ClassificationOutput, text_to_speech::TextToSpeechStats,
 };
 
 use crate::interactive::{
     components::ApplicationState,
     helpers::{SYMBOL_COMMAND, SYMBOL_INPUT, SYMBOL_INPUT_RESULT, SYMBOL_LONG_DASH},
 };
+
+#[derive(Clone)]
+pub enum TranscriptItem {
+    Thinking(String),
+    ToolCall {
+        name: String,
+        called: bool,
+    },
+    Text(String),
+}
 
 #[derive(Clone)]
 pub enum HistoryCellType {
@@ -21,8 +29,9 @@ pub enum HistoryCellType {
     Request {
         text: String,
     },
-    ChatReply {
-        reply: ChatReply,
+    ChatTranscript {
+        items: Vec<TranscriptItem>,
+        stats: Option<ChatReplyStats>,
     },
     ClassificationOutput {
         output: ClassificationOutput,
@@ -35,6 +44,7 @@ pub enum HistoryCellType {
 #[derive(Default, Props)]
 pub struct HistoryCellProps {
     pub r#type: Option<HistoryCellType>,
+    pub live: Option<bool>,
 }
 
 #[component]
@@ -84,9 +94,17 @@ pub fn HistoryCell(
             }
         }
         .into(),
-        Some(HistoryCellType::ChatReply {
-            reply,
-        }) => chat_reply_component(reply, theme.subtitle_color, theme.overlay_color(), theme.padding()),
+        Some(HistoryCellType::ChatTranscript {
+            items,
+            stats,
+        }) => chat_transcript_component(
+            items,
+            stats,
+            theme.subtitle_color,
+            theme.overlay_color(),
+            theme.padding(),
+            props.live.unwrap_or(false),
+        ),
         Some(HistoryCellType::ClassificationOutput {
             output,
         }) => classification_output_component(output, theme.subtitle_color, theme.padding()),
@@ -98,16 +116,29 @@ pub fn HistoryCell(
     view
 }
 
-fn chat_reply_component(
-    reply: ChatReply,
+fn chat_transcript_component(
+    items: Vec<TranscriptItem>,
+    stats: Option<ChatReplyStats>,
     subtitle_color: Color,
     overlay_color: Color,
     padding: u16,
+    live: bool,
 ) -> AnyElement<'static> {
-    let text = reply.message.text();
-    let reasoning =
-        reply.message.reasoning().map(|content| content.trim().to_string()).filter(|content| !content.is_empty());
-    let stats = reply.stats.clone();
+    // consecutive tool calls form one block so there's no padding between them
+    let mut blocks: Vec<TranscriptBlock> = Vec::new();
+    for item in items {
+        match item {
+            TranscriptItem::ToolCall {
+                name,
+                called,
+            } => match blocks.last_mut() {
+                Some(TranscriptBlock::ToolGroup(calls)) => calls.push((name, called)),
+                _ => blocks.push(TranscriptBlock::ToolGroup(vec![(name, called)])),
+            },
+            TranscriptItem::Thinking(content) => blocks.push(TranscriptBlock::Thinking(content)),
+            TranscriptItem::Text(content) => blocks.push(TranscriptBlock::Text(content)),
+        }
+    }
 
     element! {
         View(
@@ -119,21 +150,102 @@ fn chat_reply_component(
             padding_left: padding,
             padding_right: padding,
         ) {
-            #(reasoning.map(|content| element! {
-                View(
-                    width: 100pct,
-                    background_color: Some(overlay_color),
-                ) {
-                    Text(content: content, color: subtitle_color)
+            #(blocks.into_iter().map(|block| match block {
+                TranscriptBlock::Thinking(content) => element! {
+                    View(
+                        width: 100pct,
+                        background_color: Some(overlay_color),
+                    ) {
+                        Text(content: content, color: subtitle_color)
+                    }
                 }
-            }))
-            #(text.map(|content| element! {
-                Text(content: content)
-            }))
-            #(chat_reply_stats_component(&stats, subtitle_color))
+                .into(),
+                TranscriptBlock::ToolGroup(calls) => element! {
+                    View(flex_direction: FlexDirection::Column) {
+                        #(calls.into_iter().map(|(name, called)| {
+                            tool_call_line(name, called, live, subtitle_color)
+                        }).collect::<Vec<AnyElement<'static>>>())
+                    }
+                }
+                .into(),
+                TranscriptBlock::Text(content) => element! {
+                    Text(content: content)
+                }
+                .into(),
+            }).collect::<Vec<AnyElement<'static>>>())
+            #(stats.as_ref().map(|stats| chat_reply_stats_component(stats, subtitle_color)))
         }
     }
     .into()
+}
+
+enum TranscriptBlock {
+    Thinking(String),
+    ToolGroup(Vec<(String, bool)>),
+    Text(String),
+}
+
+fn tool_call_line(
+    name: String,
+    called: bool,
+    live: bool,
+    color: Color,
+) -> AnyElement<'static> {
+    if called {
+        element! {
+            Text(
+                content: format!("* called {}", name),
+                color: color,
+            )
+        }
+        .into()
+    } else if live {
+        element! {
+            CallingToolLine(name: name, color: color)
+        }
+        .into()
+    } else {
+        element! {
+            Text(
+                content: format!("* calling {}", name),
+                color: color,
+            )
+        }
+        .into()
+    }
+}
+
+#[derive(Default, Props)]
+struct CallingToolLineProps {
+    name: String,
+    color: Option<Color>,
+}
+
+#[component]
+fn CallingToolLine(
+    props: &CallingToolLineProps,
+    mut hooks: Hooks,
+) -> impl Into<AnyElement<'static>> {
+    let mut frame = hooks.use_state(|| 0usize);
+    hooks.use_future(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            *frame.write() += 1;
+        }
+    });
+    // starts empty, then cycles one/two/three dots; padded so the line doesn't shift
+    let frame = *frame.read();
+    let dots = if frame == 0 {
+        "   "
+    } else {
+        [".  ", ".. ", "..."][(frame - 1) % 3]
+    };
+    element! {
+        Text(
+            content: format!("* calling {}{}", props.name, dots),
+            color: props.color,
+        )
+    }
 }
 
 fn classification_output_component(
