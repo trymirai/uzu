@@ -114,6 +114,7 @@ pub async fn ensure_session(
         let mut session = engine.chat(model.clone(), ChatConfig::default()).await?;
         if session.supports_tool_calls().await {
             session.add_tool(get_current_date_time).await?;
+            session.add_tool(sleep).await?;
         }
         Ok::<_, anyhow::Error>(session)
     }
@@ -239,4 +240,17 @@ fn chat_state_mut(state: &mut ApplicationState) -> Option<&mut ChatSessionState>
 #[uzu_tool_function]
 fn get_current_date_time() -> String {
     Local::now().to_rfc3339()
+}
+
+/// Sleeps for the given number of seconds before responding, at most 60 seconds.
+#[uzu_tool_function]
+async fn sleep(
+    /// Number of seconds to sleep, at most 60.
+    seconds: f64
+) -> Result<String, String> {
+    if !(0.0..=60.0).contains(&seconds) {
+        return Err(format!("Refusing to sleep for {} seconds, must be between 0 and 60", seconds));
+    }
+    tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
+    Ok(format!("Slept for {} seconds", seconds))
 }
