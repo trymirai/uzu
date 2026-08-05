@@ -49,12 +49,12 @@ def get_current_temperature(
 
 async def main() -> None:
     engine = await Engine.create(EngineConfig.create())
-    model = await engine.model("mlx-community/Qwen3.5-9B-MLX-8bit")
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
     if model is None:
         raise RuntimeError("Model not found")
-
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress}")
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
 
     session = await engine.chat(model, ChatConfig.create())
     await session.add_tool(get_current_location)
