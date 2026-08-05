@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../../../generated/gemm.h"
+#include "../operands.h"
 #include "dense.h"
 #include "integer.h"
 #include "staged.h"
@@ -9,57 +10,32 @@ namespace uzu {
 namespace gemm {
 namespace schedules {
 
-template <
-    GemmAPrologueKind A_PROLOGUE,
-    GemmBPrologueKind B_PROLOGUE,
-    ushort BITS,
-    ushort RIGHT_GROUP_SIZE,
-    ushort LEFT_GROUP_SIZE = 32>
+template <typename LeftOperand, typename RightOperand>
 struct ScheduleFor;
 
-template <GemmBPrologueKind B_PROLOGUE, ushort BITS, ushort RIGHT_GROUP_SIZE, ushort LEFT_GROUP_SIZE>
-struct ScheduleFor<GemmAPrologueKind::Int8Symmetric, B_PROLOGUE, BITS, RIGHT_GROUP_SIZE, LEFT_GROUP_SIZE> {
-  using type = IntegerSchedule<BITS, RIGHT_GROUP_SIZE, LEFT_GROUP_SIZE, B_PROLOGUE>;
-};
-
-template <ushort BITS, ushort RIGHT_GROUP_SIZE, ushort LEFT_GROUP_SIZE>
-struct ScheduleFor<
-    GemmAPrologueKind::FullPrecision,
-    GemmBPrologueKind::FullPrecision,
-    BITS,
-    RIGHT_GROUP_SIZE,
-    LEFT_GROUP_SIZE> {
+template <typename LeftElementType, typename RightElementType>
+struct ScheduleFor<operands::Dense<LeftElementType>, operands::Dense<RightElementType>> {
   using type = DenseSchedule;
 };
 
-template <ushort BITS, ushort RIGHT_GROUP_SIZE, ushort LEFT_GROUP_SIZE>
-struct ScheduleFor<
-    GemmAPrologueKind::FullPrecision,
-    GemmBPrologueKind::ScaleBiasDequant,
-    BITS,
-    RIGHT_GROUP_SIZE,
-    LEFT_GROUP_SIZE> {
-  using type = StagedSchedule<BITS, RIGHT_GROUP_SIZE>;
+template <typename LeftElementType, typename Format, ushort GROUP_SIZE, GemmBPrologueKind SCHEME, typename ElementType>
+struct ScheduleFor<operands::Dense<LeftElementType>, operands::Quantized<Format, GROUP_SIZE, SCHEME, ElementType>> {
+  using type = StagedSchedule;
 };
 
-template <ushort BITS, ushort RIGHT_GROUP_SIZE, ushort LEFT_GROUP_SIZE>
+template <
+    typename LeftFormat,
+    ushort LEFT_GROUP_SIZE,
+    typename RightFormat,
+    ushort GROUP_SIZE,
+    GemmBPrologueKind SCHEME,
+    typename ElementType>
 struct ScheduleFor<
-    GemmAPrologueKind::FullPrecision,
-    GemmBPrologueKind::ScaleZeroPointDequant,
-    BITS,
-    RIGHT_GROUP_SIZE,
-    LEFT_GROUP_SIZE> {
-  using type = StagedSchedule<BITS, RIGHT_GROUP_SIZE>;
-};
-
-template <ushort BITS, ushort RIGHT_GROUP_SIZE, ushort LEFT_GROUP_SIZE>
-struct ScheduleFor<
-    GemmAPrologueKind::FullPrecision,
-    GemmBPrologueKind::ScaleSymmetricDequant,
-    BITS,
-    RIGHT_GROUP_SIZE,
-    LEFT_GROUP_SIZE> {
-  using type = StagedSchedule<BITS, RIGHT_GROUP_SIZE>;
+    operands::Quantized<LeftFormat, LEFT_GROUP_SIZE, GemmBPrologueKind::ScaleSymmetricDequant, float>,
+    operands::Quantized<RightFormat, GROUP_SIZE, SCHEME, ElementType>> {
+  using type = IntegerSchedule<
+      operands::Quantized<LeftFormat, LEFT_GROUP_SIZE, GemmBPrologueKind::ScaleSymmetricDequant, float>,
+      operands::Quantized<RightFormat, GROUP_SIZE, SCHEME, ElementType>>;
 };
 
 } // namespace schedules

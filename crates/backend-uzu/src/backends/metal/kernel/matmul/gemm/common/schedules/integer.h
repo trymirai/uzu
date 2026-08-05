@@ -6,9 +6,12 @@
 #include "../../../../generated/gemm.h"
 #include "../../../common/fragment.h"
 #include "../../../common/mxu_fragment/ops.h"
+#include "../gemm_alignment.h"
 #include "../integer_source.h"
 #include "../quantized/metadata.h"
+#include "../quantized/slice.h"
 #include "../quantized/source.h"
+#include "tile_context.h"
 
 using namespace metal;
 
@@ -16,33 +19,20 @@ namespace uzu {
 namespace gemm {
 namespace schedules {
 
-template <ushort BITS_VALUE, ushort RIGHT_GROUP_SIZE_VALUE, ushort LEFT_GROUP_SIZE_VALUE, GemmBPrologueKind B_PROLOGUE>
+template <typename LeftOperand, typename RightOperand>
 struct IntegerSchedule {
-  using RightFormat = uzu::matmul::IntegerFormat<BITS_VALUE, uzu::matmul::Signedness::Signed>;
-  UZU_CONST ushort RIGHT_GROUP_SIZE = RIGHT_GROUP_SIZE_VALUE;
-  UZU_CONST ushort LEFT_GROUP_SIZE = LEFT_GROUP_SIZE_VALUE;
-  UZU_CONST bool needs_correction = B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant;
+  using RightFormat = typename RightOperand::Format;
+  using RightBinding = operands::RightBinding<RightOperand>;
+  UZU_CONST bool needs_correction = RightBinding::NEEDS_CORRECTION;
 
   template <typename Core, bool ALIGNED_M, bool ALIGNED_N>
-  static METAL_FUNC typename Core::AccumFragment run(
-      const device int8_t* left_integer_simdgroup,
-      const device uint8_t* right_packed_simdgroup,
-      const device float* left_scale_values,
-      const device int32_t* left_group_sums,
-      const device typename Core::RightType* right_scale_values,
-      const device typename Core::RightType* biases,
-      const device uint8_t* zero_points,
-      const int leading_dimension_a,
-      const int b_row_stride_bytes,
-      const int right_group_iterations,
-      const short simdgroup_limit_m,
-      const short simdgroup_limit_n,
-      const uint abs_row_base,
-      const uint abs_col_base,
-      const uint k_offset_right_groups,
-      const uint k_offset_left_scale_groups,
-      const uint right_groups_per_row,
-      const uint left_scale_groups_per_row,
+  static METAL_FUNC typename Core::AccumFragment launch(
+      typename Core::LeftArgs left,
+      typename Core::RightArgs right,
+      threadgroup typename Core::RightElementType*,
+      const constant uzu::matmul::GemmParams* params,
+      const TileContext tile,
+      const GemmAlignment,
       const thread ThreadContext& thread_context
   ) {
     using Ops = typename Core::FragmentOps;
@@ -51,23 +41,36 @@ struct IntegerSchedule {
         Core::TILES_M,
         Ops::THREAD_ELEMENT_ROWS,
         Ops::FRAGMENT_ROWS,
-        Ops::THREAD_ELEMENT_ROW_STRIDE,
-        LEFT_GROUP_SIZE>;
-    using RightScaleCache =
-        QuantizationLineCache<Core::TILES_N, Ops::THREAD_ELEMENT_COLS, Ops::FRAGMENT_COLS, 1, RIGHT_GROUP_SIZE>;
-    using CorrectionPolicy = Correction<B_PROLOGUE, RightFormat, typename Core::RightType>;
+        Ops::THREAD_ELEMENT_ROW_STRIDE>;
+    using RightScaleCache = QuantizationLineCache<Core::TILES_N, Ops::THREAD_ELEMENT_COLS, Ops::FRAGMENT_COLS, 1>;
+    using CorrectionPolicy = Correction<RightOperand>;
     using ColumnCorrectionCache = metal::conditional_t<needs_correction, RightScaleCache, NoCorrectionCache>;
     using RowCorrectionCache = metal::conditional_t<needs_correction, LeftScaleCache, NoCorrectionCache>;
 
-    static_assert(RIGHT_GROUP_SIZE % LEFT_GROUP_SIZE == 0, "right groups must contain left groups");
-    static_assert(RIGHT_GROUP_SIZE % Core::SIMDGROUP_BLOCK_K == 0, "right groups must contain MMA chunks");
+    static_assert(RightOperand::GROUP_SIZE % Core::SIMDGROUP_BLOCK_K == 0, "right groups must contain MMA chunks");
+
+    const auto slice = make_quantized_slice<RightOperand>(tile.k_offset, int(params->K));
+    right.storage.seek_block(tile.block_col, tile.k_offset, slice.row_stride_bytes);
+    right.storage.seek_columns(tile.tile_col_offset, slice.row_stride_bytes);
+
+    const int leading_dimension_a = int(params->leading_dimension_a);
+    const int b_row_stride_bytes = slice.row_stride_bytes;
+    const int right_group_iterations = int(params->aligned_inner_iterations);
+    const short simdgroup_limit_m = tile.simdgroup_limit_m;
+    const short simdgroup_limit_n = tile.simdgroup_limit_n;
+    const uint abs_row_base = tile.abs_row_base;
+    const uint abs_col_base = tile.absolute_column_base();
+    const uint k_offset_right_groups = uint(slice.first_group);
+    const uint k_offset_left_scale_groups = tile.k_offset / uint(LeftOperand::GROUP_SIZE);
+    const uint right_groups_per_row = uint(slice.groups_per_row);
+    const uint left_scale_groups_per_row = uint(params->K) / uint(LeftOperand::GROUP_SIZE);
 
     AccumFragment accumulator;
     accumulator.clear();
 
     const short2 position = Ops::get_position(thread_context.simd_lane_id);
-    constexpr int k_bytes_per_right_group = int(RIGHT_GROUP_SIZE) * BITS_VALUE / 8;
-    constexpr int left_groups_per_right_group = int(RIGHT_GROUP_SIZE) / int(LEFT_GROUP_SIZE);
+    constexpr int k_bytes_per_right_group = int(RightOperand::GROUP_SIZE) * RightOperand::BITS / 8;
+    constexpr int left_groups_per_right_group = int(RightOperand::GROUP_SIZE) / int(LeftOperand::GROUP_SIZE);
 
     METAL_PRAGMA_NO_UNROLL
     for (int right_group = 0; right_group < right_group_iterations; ++right_group) {
@@ -82,7 +85,7 @@ struct IntegerSchedule {
           right_groups_per_row,
           right_group_index,
           [&](ushort tile_col, ushort thread_col, uint right_scale_index, uint right_column) {
-            const float scale = static_cast<float>(right_scale_values[right_scale_index]);
+            const float scale = static_cast<float>(right.scales[right_scale_index]);
             right_scales.slot(tile_col, thread_col) = scale;
             if constexpr (needs_correction) {
               column_corrections.slot(tile_col, thread_col) =
@@ -92,8 +95,7 @@ struct IntegerSchedule {
                                                              right_column,
                                                              right_group_index,
                                                              right_groups_per_row,
-                                                             biases,
-                                                             zero_points
+                                                             right
                                                          );
             }
           }
@@ -106,25 +108,25 @@ struct IntegerSchedule {
 
       METAL_PRAGMA_NO_UNROLL
       for (int left_group = 0; left_group < left_groups_per_right_group; ++left_group) {
-        const int k_element_offset = left_group * int(LEFT_GROUP_SIZE);
+        const int k_element_offset = left_group * int(LeftOperand::GROUP_SIZE);
         auto left_tile = load_integer_tile<int8_t, Ops, ALIGNED_M, Core::TILES_M, Core::TILES_K>(
-            left_integer_simdgroup + k_element_offset,
+            left.values + k_element_offset,
             leading_dimension_a,
             simdgroup_limit_m,
             thread_context.simd_lane_id
         );
 
         uzu::matmul::Fragment<int, Core::TILES_M, Core::TILES_N, Ops> chunk_products;
-        auto right =
+        auto right_tile =
             QuantizedSource<RightFormat, ALIGNED_N, Core::TILES_N, Core::TILES_K, Core::SIMDGROUP_BLOCK_K>::make(
-                right_packed_simdgroup,
+                right.storage.values,
                 k_element_offset,
                 b_row_stride_bytes,
                 simdgroup_limit_n,
                 position,
                 thread_context.simd_lane_id
             );
-        Ops::template fragment_mm<false, true>(chunk_products, left_tile, right);
+        Ops::template fragment_mm<false, true>(chunk_products, left_tile, right_tile);
 
         const uint left_scale_group_index =
             k_offset_left_scale_groups + uint(right_group * left_groups_per_right_group + left_group);
@@ -136,10 +138,10 @@ struct IntegerSchedule {
             left_scale_groups_per_row,
             left_scale_group_index,
             [&](ushort tile_row, ushort thread_row, uint left_scale_index, uint) {
-              const float left_scale = left_scale_values[left_scale_index];
+              const float left_scale = left.scales[left_scale_index];
               left_scales.slot(tile_row, thread_row) = left_scale;
               if constexpr (needs_correction) {
-                row_corrections.slot(tile_row, thread_row) += left_scale * float(left_group_sums[left_scale_index]);
+                row_corrections.slot(tile_row, thread_row) += left_scale * float(left.group_sums[left_scale_index]);
               }
             }
         );
@@ -172,8 +174,8 @@ struct IntegerSchedule {
         });
       }
 
-      left_integer_simdgroup += RIGHT_GROUP_SIZE;
-      right_packed_simdgroup += k_bytes_per_right_group;
+      left.advance_k(RightOperand::GROUP_SIZE);
+      right.storage.advance_k(k_bytes_per_right_group);
     }
 
     return accumulator;

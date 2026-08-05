@@ -140,38 +140,40 @@ KERNEL(Gemm)(
   (void)thread_y;
   (void)thread_z;
 
+  using LeftOperand = typename operands::LeftOperandFor<A_PROLOGUE, AT>::type;
+  using RightOperand = typename operands::RightOperandFor<B_PROLOGUE, ushort(BITS), ushort(GROUP_SIZE), BT>::type;
+  static_assert(
+      NEEDS_ASYMMETRIC_WEIGHT_CORRECTION == (A_IS_INT8 && operands::RightBinding<RightOperand>::NEEDS_CORRECTION),
+      "kernel bindings and operand correction policy must agree"
+  );
+  const auto left_args = operands::make_left_args<LeftOperand, RightOperand>(a, a_int8, a_scales, a_group_sums);
+  const auto right_args = operands::make_right_args<RightOperand>(b, scales, biases, zero_points, signed_codes);
+
   if constexpr (USE_MXU) {
-    MxuMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE, A_PROLOGUE>::run(
-        a,
-        b,
+    using Core = MxuMmaCore<DT, GEMM_TILING, TRANSPOSE_B, LeftOperand, RightOperand>;
+    static_assert(GEMM_TGB_ELEMENTS >= Core::STAGING_ELEMENTS, "threadgroup right staging is undersized");
+    Core::run(
+        left_args,
+        right_args,
         d,
         params,
         alignment,
         output_transform,
-        signed_codes,
-        scales,
-        biases,
-        zero_points,
         output_bias,
         rht_factors,
-        a_int8,
-        a_scales,
-        a_group_sums,
         b_shared,
         thread_context
     );
   } else {
-    SimdgroupMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
-        a,
-        b,
+    using Core = SimdgroupMmaCore<DT, GEMM_TILING, TRANSPOSE_B, LeftOperand, RightOperand>;
+    static_assert(GEMM_TGB_ELEMENTS >= Core::STAGING_ELEMENTS, "threadgroup right staging is undersized");
+    Core::run(
+        left_args,
+        right_args,
         d,
         params,
         alignment,
         output_transform,
-        signed_codes,
-        scales,
-        biases,
-        zero_points,
         output_bias,
         rht_factors,
         a_shared,

@@ -14,7 +14,8 @@
 #include "gemm_tiling.h"
 #include "quant_scale_bias.h"
 #include "quant_scale_zero_point.h"
-#include "quantized/loader.h"
+#include "operands.h"
+#include "schedules/staged.h"
 
 using namespace metal;
 
@@ -22,15 +23,24 @@ namespace uzu {
 namespace gemm {
 
 template <
-    typename LeftElementType,
-    typename RightElementType,
-    typename OutputElementType,
+    typename OutputElementType_,
     GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
-    GemmBPrologueKind B_PROLOGUE = GemmBPrologueKind::FullPrecision,
-    int BITS = 0,
-    int GROUP_SIZE = 0>
+    typename LeftOperand,
+    typename RightOperand>
 struct SimdgroupMmaCore {
+  using OutputElementType = OutputElementType_;
+  using Left = operands::LeftBinding<LeftOperand, RightOperand>;
+  using Right = operands::RightBinding<RightOperand>;
+  using LeftElementType = typename Left::ElementType;
+  using RightElementType = typename Right::ElementType;
+  using LeftArgs = typename Left::Args;
+  using RightArgs = typename Right::Args;
+  static_assert(
+      metal::is_same<LeftOperand, operands::Dense<LeftElementType>>::value,
+      "simdgroup MMA stages full-precision left operands only"
+  );
+  UZU_CONST bool TRANSPOSE_RIGHT = TRANSPOSE_B;
   UZU_CONST int THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   UZU_CONST int THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
   UZU_CONST int THREADGROUP_BLOCK_K = gemm_tiling_block_k(GEMM_TILING);
@@ -40,6 +50,8 @@ struct SimdgroupMmaCore {
   UZU_CONST ushort PADDING_B = 16 / sizeof(RightElementType);
   UZU_CONST ushort SHARED_STRIDE_A = THREADGROUP_BLOCK_K + PADDING_A;
   UZU_CONST ushort SHARED_STRIDE_B = (TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N) + PADDING_B;
+  UZU_CONST ushort STAGING_ELEMENTS =
+      TRANSPOSE_B ? THREADGROUP_BLOCK_N * SHARED_STRIDE_B : THREADGROUP_BLOCK_K * SHARED_STRIDE_B;
   UZU_CONST ushort THREADGROUP_THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
 
   using ALoader = uzu::matmul::ThreadgroupLoader<
@@ -56,34 +68,6 @@ struct SimdgroupMmaCore {
       SHARED_STRIDE_B,
       TRANSPOSE_B,
       THREADGROUP_THREADS>;
-  using ScaleBiasRightLoader = QuantizedBlockLoaderScaleBias<
-      RightElementType,
-      THREADGROUP_BLOCK_N,
-      THREADGROUP_BLOCK_K,
-      SHARED_STRIDE_B,
-      1,
-      THREADGROUP_THREADS,
-      GROUP_SIZE,
-      BITS>;
-  using ScaleZeroPointRightLoader = QuantizedBlockLoaderScaleZeroPoint<
-      RightElementType,
-      THREADGROUP_BLOCK_N,
-      THREADGROUP_BLOCK_K,
-      SHARED_STRIDE_B,
-      1,
-      THREADGROUP_THREADS,
-      GROUP_SIZE,
-      BITS>;
-  using SymmetricRightLoader = QuantizedBlockLoaderScaleZeroPoint<
-      RightElementType,
-      THREADGROUP_BLOCK_N,
-      THREADGROUP_BLOCK_K,
-      SHARED_STRIDE_B,
-      1,
-      THREADGROUP_THREADS,
-      GROUP_SIZE,
-      BITS,
-      true>;
   using TileAccumulator = uzu::matmul::ThreadgroupTile<
       LeftElementType,
       RightElementType,
@@ -202,16 +186,12 @@ struct SimdgroupMmaCore {
   }
 
   static METAL_FUNC void run(
-      const device LeftElementType* a,
-      const device RightElementType* b,
+      LeftArgs left,
+      RightArgs right,
       device OutputElementType* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
       GemmDTransform output_transform,
-      const bool signed_codes,
-      const device RightElementType* scales,
-      const device RightElementType* biases,
-      const device uint8_t* zero_points,
       const device RightElementType* output_bias,
       const device int32_t* rht_factors,
       threadgroup LeftElementType* a_shared,
@@ -233,11 +213,11 @@ struct SimdgroupMmaCore {
     const size_t block_row = size_t(geometry.block_row_start);
     const size_t block_col = size_t(geometry.block_col_start);
 
-    a += block_row * params->leading_dimension_a + k_offset;
+    left.seek_rows(block_row, params->leading_dimension_a, k_offset);
     d +=
         size_t(partition) * size_t(params->M) * size_t(params->N) + block_row * params->leading_dimension_d + block_col;
 
-    thread ALoader loader_a(a, params->leading_dimension_a, a_shared, thread_context);
+    thread ALoader loader_a(left.values, params->leading_dimension_a, a_shared, thread_context);
     thread TileAccumulator accumulator(thread_context);
 
     const ushort tile_block_rows =
@@ -257,70 +237,14 @@ struct SimdgroupMmaCore {
     const device RightElementType* bias_block = output_bias + block_col;
     const device int32_t* rht_factors_block = rht_factors + block_col;
 
-    auto loader_b = [&]() {
-      if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
-        const device RightElementType* b_block_fp =
-            b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col) +
-            (TRANSPOSE_B ? k_offset : k_offset * params->leading_dimension_b);
-        return FullPrecisionRightLoader(b_block_fp, params->leading_dimension_b, b_shared, thread_context);
-      } else {
-        constexpr int pack_factor = get_pack_factor<BITS, 8>();
-        constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
-        const int k_elements = int(params->K);
-        const int right_row_stride_bytes = k_elements * bytes_per_pack / pack_factor;
-        const int groups_per_row = (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
-        const int k_offset_groups = int(k_offset) / GROUP_SIZE;
-        const device uint8_t* right_storage = reinterpret_cast<const device uint8_t*>(b) +
-                                              block_col * right_row_stride_bytes +
-                                              int(k_offset) * bytes_per_pack / pack_factor;
-        const device RightElementType* scales_offset = scales + block_col * groups_per_row + k_offset_groups;
-
-        if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-          const device RightElementType* biases_offset = biases + block_col * groups_per_row + k_offset_groups;
-          return make_loader<B_PROLOGUE, ScaleBiasRightLoader>(
-              right_storage,
-              scales_offset,
-              biases_offset,
-              nullptr,
-              signed_codes,
-              k_elements,
-              groups_per_row,
-              b_shared,
-              thread_context.simdgroup_index,
-              thread_context.simd_lane_id
-          );
-        } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
-          const int zero_point_stride_per_row = (BITS == 4) ? ((groups_per_row + 1) / 2) : groups_per_row;
-          const device uint8_t* zero_points_row_start = zero_points + block_col * zero_point_stride_per_row +
-                                                        ((BITS == 4) ? (k_offset_groups / 2) : k_offset_groups);
-          return make_loader<B_PROLOGUE, ScaleZeroPointRightLoader>(
-              right_storage,
-              scales_offset,
-              static_cast<const device RightElementType*>(nullptr),
-              zero_points_row_start,
-              signed_codes,
-              k_elements,
-              groups_per_row,
-              b_shared,
-              thread_context.simdgroup_index,
-              thread_context.simd_lane_id
-          );
-        } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant) {
-          return make_loader<GemmBPrologueKind::ScaleSymmetricDequant, SymmetricRightLoader>(
-              right_storage,
-              scales_offset,
-              static_cast<const device RightElementType*>(nullptr),
-              nullptr,
-              signed_codes,
-              k_elements,
-              groups_per_row,
-              b_shared,
-              thread_context.simdgroup_index,
-              thread_context.simd_lane_id
-          );
-        }
-      }
-    }();
+    auto loader_b = schedules::StagedRightLoader<RightOperand>::template make<SimdgroupMmaCore>(
+        right,
+        params,
+        block_col,
+        k_offset,
+        b_shared,
+        thread_context
+    );
 
     const bool all_aligned = ((alignment.contains(GemmAlignment::M)) || (tile_block_rows == THREADGROUP_BLOCK_M)) &&
                              ((alignment.contains(GemmAlignment::N)) || (tile_block_cols == THREADGROUP_BLOCK_N)) &&

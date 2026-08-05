@@ -12,15 +12,8 @@ namespace gemm {
 
 // Per-thread replicated metadata. Compact row storage must consume each row
 // sum in the first split-K partition.
-template <
-    ushort TILES,
-    ushort SLOTS_PER_TILE,
-    ushort FRAGMENT_EXTENT,
-    ushort SLOT_STRIDE,
-    ushort SCALE_GROUP_SIZE_VALUE = 32>
+template <ushort TILES, ushort SLOTS_PER_TILE, ushort FRAGMENT_EXTENT, ushort SLOT_STRIDE>
 struct QuantizationLineCache {
-  static_assert(SCALE_GROUP_SIZE_VALUE > 0, "quantization scale groups must be non-empty");
-  UZU_CONST ushort SCALE_GROUP_SIZE = SCALE_GROUP_SIZE_VALUE;
   float values[TILES * SLOTS_PER_TILE];
 
   METAL_FUNC thread float& slot(const ushort tile, const ushort index) thread {
@@ -66,27 +59,29 @@ struct QuantizationLineCache {
 // Symmetric formats omit correction storage entirely.
 struct NoCorrectionCache {};
 
-template <GemmBPrologueKind B_PROLOGUE, typename Format, typename ElementType>
+template <typename RightOperand>
 struct Correction {
+  using Format = typename RightOperand::Format;
+
   static METAL_FUNC float midpoint() { return float(symmetric_zero_point<Format::BITS>()); }
 
+  template <typename RightArgs>
   static METAL_FUNC float offset(
       const float scale,
       const uint scale_index,
       const uint column,
       const uint group,
       const uint groups_per_row,
-      const device ElementType* biases,
-      const device uint8_t* zero_points
+      const thread RightArgs& right
   ) {
-    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-      return static_cast<float>(biases[scale_index]);
-    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
+    if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleBiasDequant) {
+      return static_cast<float>(right.biases[scale_index]);
+    } else if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant) {
       if constexpr (Format::BITS == 8) {
-        return -scale * float(zero_points[scale_index]);
+        return -scale * float(right.zero_points[scale_index]);
       } else {
         const device uint8_t* zero_points_row =
-            zero_points + column * zero_point_row_stride<Format::BITS>(groups_per_row);
+            right.zero_points + column * zero_point_row_stride<Format::BITS>(groups_per_row);
         return -scale * float(decode_zero_point<Format::BITS>(zero_points_row, group));
       }
     } else {
