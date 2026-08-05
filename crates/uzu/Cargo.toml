@@ -105,6 +105,7 @@ async-openai.workspace = true
 fancy-regex.workspace = true
 confy.workspace = true
 keyring-core.workspace = true
+chrono.workspace = true
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2.workspace = true
@@ -123,7 +124,6 @@ apple-native-keyring-store = { workspace = true, features = ["protected"] }
 [dev-dependencies]
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
-chrono.workspace = true
 tempfile.workspace = true
 indicatif.workspace = true
 dotenvy.workspace = true
