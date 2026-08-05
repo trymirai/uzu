@@ -25,6 +25,7 @@ nagare.workspace = true
 uzu = { workspace = true, default-features = false }
 tokio = { workspace = true, features = ["full"] }
 anyhow.workspace = true
+chrono.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
 indicatif.workspace = true

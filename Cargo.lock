@@ -996,6 +996,7 @@ version = "0.5.14"
 dependencies = [
  "anyhow",
  "backend-uzu",
+ "chrono",
  "clap",
  "comfy-table",
  "dirs",
