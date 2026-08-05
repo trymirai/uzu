@@ -23,23 +23,63 @@ use uuid::Uuid;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
     types::{
-        basic::{Grammar, SamplingMethod},
-        session::chat::{ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole},
+        basic::{Grammar, SamplingMethod, ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value},
+        session::chat::{
+            ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole,
+        },
     },
 };
 
 use crate::server::ServerState;
 
+static TOOL_KIND_FUNCTION: &str = "function";
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OaiMessage {
     pub role: String,
     #[serde(default)]
-    pub content: String,
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<OaiToolCall>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct OaiToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: OaiToolCallFunction,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct OaiToolCallFunction {
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Deserialize)]
+pub struct OaiTool {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: OaiToolFunction,
+}
+
+#[derive(Deserialize)]
+pub struct OaiToolFunction {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub parameters: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
 pub struct ChatCompletionRequest {
     pub messages: Vec<OaiMessage>,
+    #[serde(default)]
+    pub tools: Option<Vec<OaiTool>>,
     #[serde(default)]
     pub stream: Option<bool>,
     #[serde(default)]
@@ -105,6 +145,26 @@ struct StreamDelta {
     role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<StreamToolCall>>,
+}
+
+#[derive(Serialize)]
+struct StreamToolCall {
+    index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+    function: StreamToolCallFunction,
+}
+
+#[derive(Serialize)]
+struct StreamToolCallFunction {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arguments: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -162,14 +222,75 @@ fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
-    messages
+fn to_chat_messages(
+    messages: &[OaiMessage],
+    tools: Option<&[OaiTool]>,
+) -> Vec<ChatMessage> {
+    let mut tool_names = std::collections::HashMap::<String, String>::new();
+    let mut chat_messages = messages
         .iter()
         .map(|message| {
             let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
-            ChatMessage::for_role(role).with_text(message.content.clone())
+            let mut chat_message = ChatMessage::for_role(role.clone());
+
+            if role == (ChatRole::Tool {}) {
+                let identifier = message.tool_call_id.clone();
+                let name = identifier.as_ref().and_then(|identifier| tool_names.get(identifier).cloned());
+                let value = message
+                    .content
+                    .as_deref()
+                    .and_then(|content| serde_json::from_str(content).ok())
+                    .unwrap_or_else(|| serde_json::Value::String(message.content.clone().unwrap_or_default()));
+                chat_message = chat_message.with_block(ChatContentBlock::ToolCallResult {
+                    identifier,
+                    name,
+                    value: Value::from(value),
+                });
+            } else {
+                if let Some(content) = &message.content {
+                    chat_message = chat_message.with_text(content.clone());
+                }
+                if role == (ChatRole::Assistant {}) {
+                    for tool_call in message.tool_calls.as_deref().unwrap_or_default() {
+                        tool_names.insert(tool_call.id.clone(), tool_call.function.name.clone());
+                        chat_message = chat_message.with_tool_call(ToolCall {
+                            identifier: Some(tool_call.id.clone()),
+                            name: tool_call.function.name.clone(),
+                            arguments: Value {
+                                json: tool_call.function.arguments.clone(),
+                            },
+                        });
+                    }
+                }
+            }
+            chat_message
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    let descriptions = tools
+        .unwrap_or_default()
+        .iter()
+        .filter(|tool| tool.kind == TOOL_KIND_FUNCTION)
+        .map(|tool| ToolDescription::Function {
+            tool_function: ToolFunction {
+                name: tool.function.name.clone(),
+                description: tool.function.description.clone().unwrap_or_default(),
+                parameters: tool.function.parameters.clone().map(Value::from),
+                return_definition: None,
+            },
+        })
+        .collect::<Vec<_>>();
+    if !descriptions.is_empty() {
+        let definitions = ChatMessage::developer().with_tool_namespaces(vec![ToolNamespace {
+            name: "functions".to_string(),
+            description: None,
+            tools: descriptions,
+        }]);
+        let position = chat_messages.iter().position(|message| message.role == (ChatRole::System {}));
+        chat_messages.insert(position.map(|position| position + 1).unwrap_or(0), definitions);
+    }
+
+    chat_messages
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -295,6 +416,22 @@ fn usage_from_stats(stats: &ChatReplyStats) -> ChatCompletionUsage {
     }
 }
 
+fn response_tool_calls(message: &ChatMessage) -> Option<Vec<OaiToolCall>> {
+    let tool_calls = message
+        .tool_calls()
+        .into_iter()
+        .map(|tool_call| OaiToolCall {
+            id: tool_call.identifier.unwrap_or_default(),
+            kind: TOOL_KIND_FUNCTION.to_string(),
+            function: OaiToolCallFunction {
+                name: tool_call.name,
+                arguments: tool_call.arguments.json,
+            },
+        })
+        .collect::<Vec<_>>();
+    (!tool_calls.is_empty()).then_some(tool_calls)
+}
+
 fn error_response(
     id: String,
     model: String,
@@ -310,7 +447,9 @@ fn error_response(
             index: 0,
             message: OaiMessage {
                 role: "assistant".to_string(),
-                content: format!("Error: {message}"),
+                content: Some(format!("Error: {message}")),
+                tool_calls: None,
+                tool_call_id: None,
             },
             finish_reason: "stop".to_string(),
         }],
@@ -341,6 +480,28 @@ fn chunk_json(
     serde_json::to_string(&chunk).unwrap_or_default()
 }
 
+fn stream_tool_call_deltas(
+    tool_calls: &[ToolCall],
+    emitted_count: &mut usize,
+) -> Vec<StreamToolCall> {
+    let deltas = tool_calls
+        .iter()
+        .enumerate()
+        .skip(*emitted_count)
+        .map(|(index, tool_call)| StreamToolCall {
+            index,
+            id: Some(tool_call.identifier.clone().unwrap_or_default()),
+            kind: Some(TOOL_KIND_FUNCTION.to_string()),
+            function: StreamToolCallFunction {
+                name: Some(tool_call.name.clone()),
+                arguments: Some(tool_call.arguments.json.clone()),
+            },
+        })
+        .collect::<Vec<_>>();
+    *emitted_count = tool_calls.len();
+    deltas
+}
+
 async fn run_blocking(
     session: Arc<Mutex<ChatSession>>,
     messages: Vec<ChatMessage>,
@@ -365,7 +526,9 @@ async fn run_blocking(
                     index: 0,
                     message: OaiMessage {
                         role: "assistant".to_string(),
-                        content: reply.message.text().unwrap_or_default(),
+                        content: reply.message.text(),
+                        tool_calls: response_tool_calls(&reply.message),
+                        tool_call_id: None,
                     },
                     finish_reason: reply
                         .finish_reason
@@ -399,6 +562,7 @@ async fn run_stream(
             StreamDelta {
                 role: None,
                 content: Some(format!("Error: {error}")),
+                tool_calls: None,
             },
             Some("stop".to_string()),
             None,
@@ -414,6 +578,7 @@ async fn run_stream(
         StreamDelta {
             role: Some("assistant".to_string()),
             content: None,
+            tool_calls: None,
         },
         None,
         None,
@@ -421,6 +586,7 @@ async fn run_stream(
 
     let stream = session.reply_with_stream(messages, config).await;
     let mut emitted = 0usize;
+    let mut emitted_tool_calls = 0usize;
     let mut finish_reason = "stop".to_string();
     let mut usage = ChatCompletionUsage::default();
     let mut errored = false;
@@ -445,6 +611,26 @@ async fn run_stream(
                         StreamDelta {
                             role: None,
                             content: Some(delta),
+                            tool_calls: None,
+                        },
+                        None,
+                        None,
+                    )));
+                    if sent.is_err() {
+                        return;
+                    }
+                }
+                let tool_calls = reply.message.tool_calls();
+                let tool_call_deltas = stream_tool_call_deltas(&tool_calls, &mut emitted_tool_calls);
+                if !tool_call_deltas.is_empty() {
+                    let sent = sender.send(Event::data(chunk_json(
+                        &id,
+                        &model,
+                        created,
+                        StreamDelta {
+                            role: None,
+                            content: None,
+                            tool_calls: Some(tool_call_deltas),
                         },
                         None,
                         None,
@@ -469,6 +655,7 @@ async fn run_stream(
                     StreamDelta {
                         role: None,
                         content: Some(format!("Error: {error}")),
+                        tool_calls: None,
                     },
                     Some("stop".to_string()),
                     None,
@@ -486,6 +673,7 @@ async fn run_stream(
             StreamDelta {
                 role: None,
                 content: None,
+                tool_calls: None,
             },
             Some(finish_reason),
             Some(usage),
@@ -510,7 +698,7 @@ pub async fn handle_chat_completions(
         Ok(config) => config,
         Err(error) => return request_error_response(error),
     };
-    let messages = to_chat_messages(&request.messages);
+    let messages = to_chat_messages(&request.messages, request.tools.as_deref());
 
     if is_stream {
         let session = Arc::clone(&state.session);

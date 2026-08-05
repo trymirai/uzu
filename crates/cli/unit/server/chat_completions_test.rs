@@ -97,6 +97,97 @@ fn malformed_response_format_passes_json_extraction() {
     }
 }
 
+#[test]
+fn tools_and_tool_history_map_to_chat_messages() {
+    let request = request(
+        r#"{
+            "messages":[
+                {"role":"system","content":"Be helpful"},
+                {"role":"user","content":"Weather?"},
+                {"role":"assistant","content":null,"tool_calls":[{
+                    "id":"call_1","type":"function",
+                    "function":{"name":"weather","arguments":"{\"city\":\"Paris\"}"}
+                }]},
+                {"role":"tool","tool_call_id":"call_1","content":"{\"degrees\":21}"}
+            ],
+            "tools":[{"type":"function","function":{
+                "name":"weather","description":"Get weather",
+                "parameters":{"type":"object","properties":{"city":{"type":"string"}}}
+            }}]
+        }"#,
+    );
+
+    let messages = to_chat_messages(&request.messages, request.tools.as_deref());
+    assert_eq!(messages.len(), 5);
+    assert_eq!(messages[0].role, ChatRole::System {});
+    assert_eq!(messages[1].role, ChatRole::Developer {});
+    assert_eq!(messages[1].tool_namespaces()[0].tools.len(), 1);
+
+    let call = &messages[3].tool_calls()[0];
+    assert_eq!(call.identifier.as_deref(), Some("call_1"));
+    assert_eq!(call.name, "weather");
+    assert_eq!(call.arguments.json, r#"{"city":"Paris"}"#);
+
+    let results = messages[4].tool_call_results();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].0.as_deref(), Some("call_1"));
+    assert_eq!(results[0].1.as_deref(), Some("weather"));
+    assert_eq!(results[0].2.json, r#"{"degrees":21}"#);
+}
+
+#[test]
+fn non_streaming_message_serializes_tool_calls() {
+    let message = ChatMessage::assistant().with_tool_call(ToolCall {
+        identifier: Some("call_7".to_string()),
+        name: "lookup".to_string(),
+        arguments: Value {
+            json: r#"{"query":"uzu"}"#.to_string(),
+        },
+    });
+    let response = OaiMessage {
+        role: "assistant".to_string(),
+        content: message.text(),
+        tool_calls: response_tool_calls(&message),
+        tool_call_id: None,
+    };
+
+    let json = serde_json::to_value(response).expect("serializable response");
+    assert!(json["content"].is_null());
+    assert_eq!(json["tool_calls"][0]["id"], "call_7");
+    assert_eq!(json["tool_calls"][0]["type"], "function");
+    assert_eq!(json["tool_calls"][0]["function"]["name"], "lookup");
+    assert_eq!(json["tool_calls"][0]["function"]["arguments"], r#"{"query":"uzu"}"#);
+}
+
+#[test]
+fn streaming_tool_calls_are_emitted_once_with_indexes() {
+    let calls = vec![
+        ToolCall {
+            identifier: Some("call_1".to_string()),
+            name: "first".to_string(),
+            arguments: Value {
+                json: "{}".to_string(),
+            },
+        },
+        ToolCall {
+            identifier: Some("call_2".to_string()),
+            name: "second".to_string(),
+            arguments: Value {
+                json: r#"{"value":2}"#.to_string(),
+            },
+        },
+    ];
+    let mut emitted = 0;
+    let deltas = stream_tool_call_deltas(&calls, &mut emitted);
+    let json = serde_json::to_value(deltas).expect("serializable deltas");
+
+    assert_eq!(emitted, 2);
+    assert_eq!(json[0]["index"], 0);
+    assert_eq!(json[1]["index"], 1);
+    assert_eq!(json[1]["function"]["arguments"], r#"{"value":2}"#);
+    assert!(stream_tool_call_deltas(&calls, &mut emitted).is_empty());
+}
+
 #[rocket::get("/err")]
 fn err_route() -> ChatCompletionResult {
     request_error_response(ResponseFormatError::InvalidResponseFormat("bad".to_string()))
