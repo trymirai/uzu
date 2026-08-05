@@ -43,7 +43,6 @@ impl MatmulKernel for MatmulCpuKernel {
             output_data_type,
             weights_data_type,
             true,
-            false,
         )?;
         Ok(Self {
             weights_data_type,
@@ -296,15 +295,7 @@ impl MatmulKernel for MatmulCpuKernel {
             self.output_rht.encode_fp_in_place(&mut *d, factors, m, n, encoder);
             if let Some(bias) = bias_alloc {
                 let output_length = m.checked_mul(n).expect("matmul output length must fit in u32");
-                self.bias_add.encode(
-                    None::<&Allocation<Cpu>>,
-                    bias,
-                    None::<&Allocation<Cpu>>,
-                    &mut *d,
-                    n,
-                    output_length,
-                    encoder,
-                );
+                self.bias_add.encode(None::<&Allocation<Cpu>>, bias, &mut *d, n, output_length, encoder);
             }
         }
 
