@@ -1,3 +1,4 @@
+import Foundation
 import FoundationModels
 import Uzu
 
@@ -10,19 +11,20 @@ private struct Coordinate: Codable, Sendable {
     let longitude: Double
 }
 
-private struct GetCurrentLocationTool: Tool {
-    let description = "Return the current location in coordinates."
+private struct GetCurrentLocation: Tool {
+    let description = "Returns current location in coordinates"
 
     @Generable
-    struct Arguments {}
+    struct Arguments {
+    }
 
     func call(arguments: Arguments) async throws -> Coordinate {
         Coordinate(latitude: 51.5074, longitude: -0.1278)
     }
 }
 
-private struct GetCurrentTemperatureTool: Tool {
-    let description = "Return the temperature at the provided coordinates."
+private struct GetCurrentTemperature: Tool {
+    let description = "Returns temperature in provided location"
 
     func call(arguments: Coordinate) async throws -> Double {
         _ = arguments
@@ -32,22 +34,25 @@ private struct GetCurrentTemperatureTool: Tool {
 
 public func runToolCalls() async throws {
     let engine = try await Engine.create(config: .create())
-    guard let model = try await engine.model(identifier: "mlx-community/Qwen3.5-9B-MLX-8bit") else {
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
         throw ToolCallsExampleError.modelNotFound
     }
     for try await update in try await engine.download(model: model).iterator() {
-        print("Download progress: \(update.progress())")
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
     }
+    print()
 
     let session = try await engine.chat(model: model, config: .create())
-    try await session.addTool(GetCurrentLocationTool())
-    try await session.addTool(GetCurrentTemperatureTool())
+    try await session.addTool(GetCurrentLocation())
+    try await session.addTool(GetCurrentTemperature())
 
     let messages = [
         ChatMessage.system().withText(text: "You are a helpful assistant"),
         ChatMessage.user().withText(text: "What temperature is it now at my location?"),
     ]
-    let replies = try await session.reply(input: messages, config: .create())
+    let reply_config = ChatReplyConfig.create().withSamplingMethod(samplingMethod: .greedy)
+    let replies = try await session.reply(input: messages, config: reply_config)
     guard let message = replies.last?.message else {
         return
     }
