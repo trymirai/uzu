@@ -290,7 +290,7 @@ pub fn Application(
     };
     let pending_reply_component: AnyElement<'static> = match pending_reply {
         Some(history_cell) => element! {
-            HistoryCell(r#type: Some(history_cell))
+            HistoryCell(r#type: Some(history_cell), live: true)
         }
         .into(),
         None => element! { View }.into(),
