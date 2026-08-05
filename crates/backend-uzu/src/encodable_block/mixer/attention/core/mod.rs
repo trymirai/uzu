@@ -76,7 +76,9 @@ impl<B: Backend> AttentionCores<B> {
         arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, <B as Backend>::Error> {
-        if arguments.suffix_length > 8
+        encoder.push_debug_group("attention core");
+
+        let output = if arguments.suffix_length > 8
             && let Some(gemm) = &self.gemm
         {
             gemm.encode(arguments, encoder)
@@ -88,7 +90,11 @@ impl<B: Backend> AttentionCores<B> {
             self.two_pass.encode(arguments, encoder)
         } else {
             self.single_pass.encode(arguments, encoder)
-        }
+        }?;
+
+        encoder.pop_debug_group();
+
+        Ok(output)
     }
 }
 

@@ -38,6 +38,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         fused_up: &Allocation<B>,
         batch_dim: usize,
     ) -> Result<Allocation<B>, B::Error> {
+        encoder.push_debug_group("gate act mul");
+
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
         }
@@ -54,6 +56,9 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             self.activation.act_type(),
             encoder,
         );
+
+        encoder.pop_debug_group();
+
         Ok(hidden)
     }
 }

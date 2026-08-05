@@ -9,8 +9,9 @@ async function main() {
         throw new Error('Model not found');
     }
     for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
+    console.log();
 
     let messages = [
         ClassificationMessage.user('Hi')

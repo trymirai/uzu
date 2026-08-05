@@ -486,6 +486,8 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        encoder.push_debug_group("delta net");
+
         assert!(precalculated_rope.is_none(), "unexpected rope for delta net mixer");
 
         let state = state.expect("delta net requires state");
@@ -499,7 +501,11 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         let mut in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
 
         if !batch_dim.full_accept() {
-            return self.encode_tree_verify(in_projected, batch_dim, state, encoder);
+            let output = self.encode_tree_verify(in_projected, batch_dim, state, encoder)?;
+
+            encoder.pop_debug_group();
+
+            return Ok(output);
         }
 
         let mut delta_output =
@@ -639,6 +645,10 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             suffix_length: batch_dim.size(),
         });
 
-        self.out_projection.encode(delta_output, batch_dim.size(), encoder)
+        let output = self.out_projection.encode(delta_output, batch_dim.size(), encoder)?;
+
+        encoder.pop_debug_group();
+
+        Ok(output)
     }
 }

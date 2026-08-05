@@ -117,6 +117,8 @@ impl<B: Backend> Classifier<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, ClassifierError<B>> {
+        encoder.push_debug_group("classifier");
+
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim, encoder)?;
 
         let hidden =
@@ -142,6 +144,8 @@ impl<B: Backend> Classifier<B> {
         self.pooling.encode(&hidden, &mut pooled, batch_dim as u32, self.hidden_dim as u32, 1, encoder);
 
         let logits = self.prediction_head.encode(pooled, 1, encoder).map_err(ClassifierError::Backend)?;
+
+        encoder.pop_debug_group();
 
         Ok(logits)
     }

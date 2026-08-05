@@ -1,5 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    iter::{chain, once},
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
+use itertools::Itertools;
 use metal::{
     MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferStatus,
     MTLCommandEncoder, MTLCommandEncoderExt, MTLCommandQueue, MTLComputeCommandEncoder,
@@ -13,6 +18,8 @@ use crate::backends::{
     },
     metal::{Metal, MetalContext, error::MetalError},
 };
+
+static DEBUG_ENCODER_LABELS: LazyLock<bool> = LazyLock::new(|| std::env::var("UZU_METAL_DEBUG_ENCODER_LABELS").is_ok());
 
 pub struct MetalCommandBuffer;
 
@@ -50,6 +57,7 @@ impl CommandBufferInitial for MetalCommandBufferInitial {
         MetalCommandBufferEncoding {
             command_buffer: self.command_buffer,
             encoding_state: MetalCommandBufferEncodingEncodingState::None,
+            debug_group_stack: vec![],
             context: self.context,
         }
     }
@@ -64,16 +72,23 @@ enum MetalCommandBufferEncodingEncodingState {
 pub struct MetalCommandBufferEncoding {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     encoding_state: MetalCommandBufferEncodingEncodingState,
+    debug_group_stack: Vec<String>,
     context: Arc<MetalContext>,
 }
 
 impl MetalCommandBufferEncoding {
     fn ensure_none(&mut self) {
-        match &mut self.encoding_state {
+        let encoder: &ProtocolObject<dyn MTLCommandEncoder> = match &self.encoding_state {
             MetalCommandBufferEncodingEncodingState::None => return,
-            MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) => compute_encoder.end_encoding(),
-            MetalCommandBufferEncodingEncodingState::Blit(blit_encoder) => blit_encoder.end_encoding(),
+            MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) => compute_encoder.as_ref(),
+            MetalCommandBufferEncodingEncodingState::Blit(blit_encoder) => blit_encoder.as_ref(),
         };
+
+        for _ in &self.debug_group_stack {
+            encoder.pop_debug_group();
+        }
+
+        encoder.end_encoding();
 
         self.encoding_state = MetalCommandBufferEncodingEncodingState::None;
     }
@@ -83,7 +98,7 @@ impl MetalCommandBufferEncoding {
             self.ensure_none();
             let compute_encoder =
                 self.command_buffer.compute_command_encoder().expect("Failed to create compute command encoder");
-            compute_encoder.set_label(self.command_buffer.label().as_deref());
+            self.ensure_common(compute_encoder.as_ref());
             self.encoding_state = MetalCommandBufferEncodingEncodingState::Compute(compute_encoder);
         }
 
@@ -96,15 +111,41 @@ impl MetalCommandBufferEncoding {
     fn ensure_blit(&mut self) -> &mut Retained<ProtocolObject<dyn MTLBlitCommandEncoder>> {
         if !matches!(self.encoding_state, MetalCommandBufferEncodingEncodingState::Blit(_)) {
             self.ensure_none();
-            self.encoding_state = MetalCommandBufferEncodingEncodingState::Blit(
-                self.command_buffer.blit_command_encoder().expect("Failed to create blit command encoder"),
-            );
+            let blit_encoder =
+                self.command_buffer.blit_command_encoder().expect("Failed to create blit command encoder");
+            self.ensure_common(blit_encoder.as_ref());
+            self.encoding_state = MetalCommandBufferEncodingEncodingState::Blit(blit_encoder);
         }
 
         let MetalCommandBufferEncodingEncodingState::Blit(blit_encoder) = &mut self.encoding_state else {
             unreachable!()
         };
         blit_encoder
+    }
+
+    fn ensure_common(
+        &self,
+        encoder: &ProtocolObject<dyn MTLCommandEncoder>,
+    ) {
+        let command_buffer_label = self.command_buffer.label();
+        let label = if *DEBUG_ENCODER_LABELS && (command_buffer_label.is_some() || !self.debug_group_stack.is_empty()) {
+            Some(
+                chain(
+                    once(command_buffer_label.as_deref()),
+                    self.debug_group_stack.iter().map(|label| Some(label.as_str())),
+                )
+                .flatten()
+                .join("."),
+            )
+        } else {
+            command_buffer_label
+        };
+        if label.is_some() {
+            encoder.set_label(label.as_deref());
+        }
+        for debug_group in &self.debug_group_stack {
+            encoder.push_debug_group(debug_group);
+        }
     }
 }
 
@@ -162,11 +203,37 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         &mut self,
         name: &str,
     ) {
-        self.command_buffer.push_debug_group(name);
+        if *DEBUG_ENCODER_LABELS {
+            self.ensure_none();
+        }
+
+        self.debug_group_stack.push(name.to_string());
+
+        match &self.encoding_state {
+            MetalCommandBufferEncodingEncodingState::None => (),
+            MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) => compute_encoder.push_debug_group(name),
+            MetalCommandBufferEncodingEncodingState::Blit(blit_encoder) => {
+                let encoder: &ProtocolObject<dyn MTLCommandEncoder> = blit_encoder.as_ref();
+                encoder.push_debug_group(name);
+            },
+        }
     }
 
     fn pop_debug_group(&mut self) {
-        self.command_buffer.pop_debug_group();
+        if *DEBUG_ENCODER_LABELS {
+            self.ensure_none();
+        }
+
+        self.debug_group_stack.pop().expect("debug group stack underflow");
+
+        match &self.encoding_state {
+            MetalCommandBufferEncodingEncodingState::None => (),
+            MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) => compute_encoder.pop_debug_group(),
+            MetalCommandBufferEncodingEncodingState::Blit(blit_encoder) => {
+                let encoder: &ProtocolObject<dyn MTLCommandEncoder> = blit_encoder.as_ref();
+                encoder.pop_debug_group();
+            },
+        }
     }
 
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
@@ -193,6 +260,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
 
         {
             let cmd_buffer = cmd_queue.command_buffer().expect("Failed to create command buffer");
+            cmd_buffer.set_label(Some("sync (wait)"));
             cmd_buffer.encode_wait_for_event_value(self.context.timeline_event(), wait_value);
             cmd_buffer.commit();
         }
@@ -201,6 +269,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
 
         {
             let cmd_buffer = cmd_queue.command_buffer().expect("Failed to create command buffer");
+            cmd_buffer.set_label(Some("sync (signal)"));
             cmd_buffer.encode_signal_event_value(self.context.timeline_event(), wait_value + 1);
             cmd_buffer.commit();
         }

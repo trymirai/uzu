@@ -4,7 +4,7 @@ public func runChatCloud() async throws {
     let engineConfig = EngineConfig.create().withOpenaiApiKey(openaiApiKey: "OPENAI_API_KEY")
     let engine = try await Engine.create(config: engineConfig)
     
-    guard let model = try await engine.model(identifier: "Qwen/Qwen3-0.6B") else {
+    guard let model = try await engine.model(identifier: "gpt-5") else {
         return
     }
     

@@ -111,12 +111,14 @@ pub fn bindgen(
                 #(#encode_argument_definitions),*
             ) {
                 #empty_dispatch_guards
+                encoder.push_debug_group(#kernel_name);
                 #(#encode_deconstructs)*
                 #encode_accesses_call
                 let compute_encoder = encoder.as_command_buffer_mut().ensure_compute();
                 compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_set_calls)*
                 #dispatch_code
+                encoder.pop_debug_group();
             }
         }
     };
