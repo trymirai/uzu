@@ -509,12 +509,12 @@ async fn run_blocking(
     match session.reply(messages, config).await {
         Ok(replies) => match replies.last() {
             Some(reply) => {
-                if let Some(error) =
-                    tool_call_batch_error(&reply.message, reply.finish_reason.as_ref(), &allowed_tool_names, true)
-                {
-                    return error_response_with_text(id, model, created, reply.message.text(), &error);
-                }
                 let message = normalize_tool_calls_for_capability(&reply.message, supports_multiple_tool_calls);
+                if let Some(error) =
+                    tool_call_batch_error(&message, reply.finish_reason.as_ref(), &allowed_tool_names, true)
+                {
+                    return error_response_with_text(id, model, created, message.text(), &error);
+                }
                 ChatCompletionResponse {
                     id,
                     object: "chat.completion".to_string(),
@@ -625,15 +625,11 @@ async fn run_stream(
                     continue;
                 };
                 let is_terminal = reply.finish_reason.is_some();
-                tool_call_error = tool_call_batch_error(
-                    &reply.message,
-                    reply.finish_reason.as_ref(),
-                    &allowed_tool_names,
-                    is_terminal,
-                );
-                last_message = Some(reply.message.clone());
-                last_finish_reason = reply.finish_reason.clone();
                 let message = normalize_tool_calls_for_capability(&reply.message, supports_multiple_tool_calls);
+                tool_call_error =
+                    tool_call_batch_error(&message, reply.finish_reason.as_ref(), &allowed_tool_names, is_terminal);
+                last_message = Some(message.clone());
+                last_finish_reason = reply.finish_reason.clone();
                 let text = message.text().unwrap_or_default();
                 if let Some(delta) = next_text_delta(&text, &mut emitted) {
                     let sent = sender.send(Event::data(chunk_json(

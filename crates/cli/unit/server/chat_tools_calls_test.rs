@@ -507,6 +507,37 @@ fn single_call_capability_exposes_only_the_call_retained_in_history() {
     assert_eq!(normalize_tool_calls_for_capability(&message, true).tool_calls().len(), 2);
 }
 
+#[test]
+fn single_call_capability_validates_only_the_retained_call() {
+    let first_call = ToolCall {
+        identifier: Some("call_1".to_string()),
+        name: "lookup".to_string(),
+        arguments: Value {
+            json: "{}".to_string(),
+        },
+    };
+
+    for (name, arguments) in [("undeclared", "{}"), ("lookup", "not-json")] {
+        let message = ChatMessage::assistant().with_tool_call(first_call.clone()).with_tool_call(ToolCall {
+            identifier: Some("call_2".to_string()),
+            name: name.to_string(),
+            arguments: Value {
+                json: arguments.to_string(),
+            },
+        });
+
+        let normalized = normalize_tool_calls_for_capability(&message, false);
+        assert!(
+            tool_call_batch_error(&normalized, Some(&ChatReplyFinishReason::ToolCalls), &["lookup".to_string()], true)
+                .is_none()
+        );
+        assert!(
+            tool_call_batch_error(&message, Some(&ChatReplyFinishReason::ToolCalls), &["lookup".to_string()], true)
+                .is_some()
+        );
+    }
+}
+
 #[rocket::get("/tool-choice-err")]
 fn tool_choice_err_route() -> ChatCompletionResult {
     let error = ToolChoiceError::Unsupported("required".to_string());

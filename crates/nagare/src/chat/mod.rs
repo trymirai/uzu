@@ -164,6 +164,10 @@ impl ChatSession {
         })
     }
 
+    pub async fn supports_multiple_tool_calls(&self) -> bool {
+        self.instance.lock().await.supports_multiple_tool_calls()
+    }
+
     pub async fn peak_memory_usage(&self) -> Option<usize> {
         self.instance.lock().await.peak_memory_usage()
     }
@@ -541,11 +545,6 @@ impl ChatSession {
     #[bindings::export(Method(Getter))]
     pub async fn supports_tool_calls(&self) -> bool {
         self.tool_registry.is_some()
-    }
-
-    #[bindings::export(Method(Getter))]
-    pub async fn supports_multiple_tool_calls(&self) -> bool {
-        self.instance.lock().await.supports_multiple_tool_calls()
     }
 
     #[bindings::export(Method)]
