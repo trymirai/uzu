@@ -53,7 +53,9 @@ impl From<DownloadManagerCliType> for DownloadManagerType {
 pub(crate) async fn run(download_manager: DownloadManagerCliType) -> Result<()> {
     dotenvy::dotenv().ok();
     let runtime = tokio::runtime::Handle::current();
-    let config = EngineConfig::default().with_download_manager_type(download_manager.into());
+    let config = EngineConfig::default()
+        .with_application_identifier("com.trymirai.cli".to_string())
+        .with_download_manager_type(download_manager.into());
     let engine = Arc::new(Engine::new(config).await?);
 
     // Setup terminal
