@@ -1,6 +1,5 @@
 use std::{
     pin::Pin,
-    str::FromStr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -21,19 +20,22 @@ use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
 use uzu::{
-    session::chat::{ChatSession, ChatSessionStreamChunk},
+    session::chat::{ChatSession, ChatSessionStream, ChatSessionStreamChunk},
     types::{
-        basic::{Grammar, SamplingMethod, ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value},
-        session::chat::{
-            ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole,
-        },
+        basic::{Grammar, SamplingMethod},
+        session::chat::{ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats},
     },
 };
 
-use crate::server::ServerState;
-
-static TOOL_KIND_FUNCTION: &str = "function";
-static INCOMPLETE_TOOL_CALL_BATCH_ERROR: &str = "Model generated an incomplete tool-call batch";
+use crate::server::{
+    ServerState,
+    chat_tool_calls::{
+        OaiTool, OaiToolCall, ParallelToolCallsError, StreamToolCall, ToolChoiceError, ToolDefinitionError,
+        ToolHistoryError, normalize_tool_calls_for_capability, response_tool_calls, select_tools,
+        stream_tool_call_deltas, to_chat_messages, tool_call_batch_error, validate_parallel_tool_calls,
+        validate_selected_tools, validate_tool_capability, validate_tool_history,
+    },
+};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OaiMessage {
@@ -44,38 +46,6 @@ pub struct OaiMessage {
     pub tool_calls: Option<Vec<OaiToolCall>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct OaiToolCall {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub function: OaiToolCallFunction,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct OaiToolCallFunction {
-    pub name: String,
-    pub arguments: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OaiTool {
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub function: OaiToolFunction,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OaiToolFunction {
-    pub name: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub parameters: Option<serde_json::Value>,
-    #[serde(default)]
-    pub strict: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -123,22 +93,6 @@ pub struct JsonSchemaFormat {
     pub schema: serde_json::Value,
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum ToolChoice {
-    Mode(String),
-    Function {
-        #[serde(rename = "type")]
-        kind: String,
-        function: ToolChoiceFunction,
-    },
-}
-
-#[derive(Deserialize)]
-struct ToolChoiceFunction {
-    name: String,
-}
-
 #[derive(Serialize, Clone)]
 pub struct ChatCompletionChoice {
     pub index: u32,
@@ -171,24 +125,6 @@ struct StreamDelta {
     content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<StreamToolCall>>,
-}
-
-#[derive(Serialize)]
-struct StreamToolCall {
-    index: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    kind: Option<String>,
-    function: StreamToolCallFunction,
-}
-
-#[derive(Serialize)]
-struct StreamToolCallFunction {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    arguments: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -246,85 +182,6 @@ fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn to_chat_messages<'a>(
-    messages: &[OaiMessage],
-    tools: impl IntoIterator<Item = &'a OaiTool>,
-) -> Vec<ChatMessage> {
-    let mut tool_names = std::collections::HashMap::<String, String>::new();
-    let mut chat_messages = messages
-        .iter()
-        .map(|message| {
-            let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
-            let mut chat_message = ChatMessage::for_role(role.clone());
-
-            if role == (ChatRole::Tool {}) {
-                let identifier = message.tool_call_id.clone();
-                let name = identifier.as_ref().and_then(|identifier| tool_names.get(identifier).cloned());
-                let value = message
-                    .content
-                    .as_deref()
-                    .and_then(|content| serde_json::from_str(content).ok())
-                    .unwrap_or_else(|| serde_json::Value::String(message.content.clone().unwrap_or_default()));
-                chat_message = chat_message.with_block(ChatContentBlock::ToolCallResult {
-                    identifier,
-                    name,
-                    value: Value::from(value),
-                });
-            } else {
-                if let Some(content) = &message.content {
-                    chat_message = chat_message.with_text(content.clone());
-                }
-                if role == (ChatRole::Assistant {}) {
-                    for tool_call in message.tool_calls.as_deref().unwrap_or_default() {
-                        tool_names.insert(tool_call.id.clone(), tool_call.function.name.clone());
-                        chat_message = chat_message.with_tool_call(ToolCall {
-                            identifier: Some(tool_call.id.clone()),
-                            name: tool_call.function.name.clone(),
-                            arguments: Value {
-                                json: tool_call.function.arguments.clone(),
-                            },
-                        });
-                    }
-                }
-            }
-            chat_message
-        })
-        .collect::<Vec<_>>();
-
-    let descriptions = tools
-        .into_iter()
-        .filter(|tool| tool.kind == TOOL_KIND_FUNCTION)
-        .map(|tool| ToolDescription::Function {
-            tool_function: ToolFunction {
-                name: tool.function.name.clone(),
-                description: tool.function.description.clone().unwrap_or_default(),
-                parameters: tool.function.parameters.clone().map(Value::from),
-                return_definition: None,
-            },
-        })
-        .collect::<Vec<_>>();
-    if !descriptions.is_empty() {
-        let namespaces = vec![ToolNamespace {
-            name: "functions".to_string(),
-            description: None,
-            tools: descriptions,
-        }];
-        if let Some(developer_message) =
-            chat_messages.iter_mut().find(|message| message.role == (ChatRole::Developer {}))
-        {
-            developer_message.content.push(ChatContentBlock::Tools {
-                namespaces,
-            });
-        } else {
-            let definitions = ChatMessage::developer().with_tool_namespaces(namespaces);
-            let position = chat_messages.iter().position(|message| message.role == (ChatRole::System {}));
-            chat_messages.insert(position.map(|position| position + 1).unwrap_or(0), definitions);
-        }
-    }
-
-    chat_messages
-}
-
 #[derive(Debug, PartialEq, Eq)]
 enum ResponseFormatError {
     GrammarUnsupported,
@@ -333,63 +190,8 @@ enum ResponseFormatError {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum ToolChoiceError {
-    Invalid(String),
-    Unsupported(String),
-    UnknownFunction(String),
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct ToolDefinitionError {
-    index: usize,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct ParallelToolCallsError;
-
-impl ParallelToolCallsError {
-    fn message(&self) -> String {
-        "parallel_tool_calls: false is not supported by this server when tools are enabled".to_string()
-    }
-
-    fn code(&self) -> &'static str {
-        "unsupported_parallel_tool_calls"
-    }
-}
-
-impl ToolDefinitionError {
-    fn message(&self) -> String {
-        "strict function tools are not supported by this server".to_string()
-    }
-
-    fn code(&self) -> &'static str {
-        "unsupported_strict_tool"
-    }
-
-    fn param(&self) -> String {
-        format!("tools[{}].function.strict", self.index)
-    }
-}
-
-impl ToolChoiceError {
-    fn message(&self) -> String {
-        match self {
-            ToolChoiceError::Invalid(detail) => format!("tool_choice is not recognized: {detail}"),
-            ToolChoiceError::Unsupported(choice) => {
-                format!("tool_choice {choice:?} is not supported by this server")
-            },
-            ToolChoiceError::UnknownFunction(name) => {
-                format!("tool_choice refers to function {name:?}, which is not present in tools")
-            },
-        }
-    }
-
-    fn code(&self) -> &'static str {
-        match self {
-            ToolChoiceError::Invalid(_) | ToolChoiceError::UnknownFunction(_) => "invalid_tool_choice",
-            ToolChoiceError::Unsupported(_) => "unsupported_tool_choice",
-        }
-    }
+struct RequestBodyError {
+    message: String,
 }
 
 impl ResponseFormatError {
@@ -421,6 +223,10 @@ fn request_error_response(error: ResponseFormatError) -> ChatCompletionResult {
     invalid_request_response("response_format", error.code(), error.message())
 }
 
+fn request_body_error_response(error: RequestBodyError) -> ChatCompletionResult {
+    invalid_request_response("request", "invalid_request", error.message)
+}
+
 fn tool_choice_error_response(error: ToolChoiceError) -> ChatCompletionResult {
     invalid_request_response("tool_choice", error.code(), error.message())
 }
@@ -431,6 +237,10 @@ fn tool_definition_error_response(error: ToolDefinitionError) -> ChatCompletionR
 
 fn parallel_tool_calls_error_response(error: ParallelToolCallsError) -> ChatCompletionResult {
     invalid_request_response("parallel_tool_calls", error.code(), error.message())
+}
+
+fn tool_history_error_response(error: ToolHistoryError) -> ChatCompletionResult {
+    invalid_request_response(&error.param(), error.code(), error.message())
 }
 
 fn invalid_request_response(
@@ -451,60 +261,16 @@ fn invalid_request_response(
     ))
 }
 
-fn select_tools(request: &ChatCompletionRequest) -> Result<Vec<&OaiTool>, ToolChoiceError> {
-    let tools = request.tools.as_deref().unwrap_or_default();
-    let choice = match &request.tool_choice {
-        Some(choice) => serde_json::from_value::<ToolChoice>(choice.clone())
-            .map_err(|error| ToolChoiceError::Invalid(error.to_string()))?,
-        None => ToolChoice::Mode("auto".to_string()),
-    };
-
-    match choice {
-        ToolChoice::Mode(mode) if mode == "auto" => Ok(tools.iter().collect()),
-        ToolChoice::Mode(mode) if mode == "none" => Ok(Vec::new()),
-        ToolChoice::Mode(mode) if mode == "required" => Err(ToolChoiceError::Unsupported(mode)),
-        ToolChoice::Mode(mode) => Err(ToolChoiceError::Invalid(format!("unknown mode {mode:?}"))),
-        ToolChoice::Function {
-            kind,
-            function,
-        } if kind == TOOL_KIND_FUNCTION => {
-            if tools.iter().any(|tool| tool.kind == TOOL_KIND_FUNCTION && tool.function.name == function.name) {
-                Err(ToolChoiceError::Unsupported(format!("function {}", function.name)))
-            } else {
-                Err(ToolChoiceError::UnknownFunction(function.name))
-            }
-        },
-        ToolChoice::Function {
-            kind,
-            ..
-        } => Err(ToolChoiceError::Unsupported(kind)),
-    }
+fn parse_request_body(value: serde_json::Value) -> Result<ChatCompletionRequest, RequestBodyError> {
+    serde_json::from_value(value).map_err(|error| RequestBodyError {
+        message: format!("request body does not match the Chat Completions schema: {error}"),
+    })
 }
 
-fn validate_selected_tools(
-    request: &ChatCompletionRequest,
-    selected_tools: &[&OaiTool],
-) -> Result<(), ToolDefinitionError> {
-    let declared_tools = request.tools.as_deref().unwrap_or_default();
-    for tool in selected_tools {
-        if tool.function.strict == Some(true) {
-            let index = declared_tools.iter().position(|declared| std::ptr::eq(declared, *tool)).unwrap_or_default();
-            return Err(ToolDefinitionError {
-                index,
-            });
-        }
+fn request_body_guard_error(error: rocket::serde::json::Error<'_>) -> RequestBodyError {
+    RequestBodyError {
+        message: format!("request body is not valid JSON: {error}"),
     }
-    Ok(())
-}
-
-fn validate_parallel_tool_calls(
-    request: &ChatCompletionRequest,
-    selected_tools: &[&OaiTool],
-) -> Result<(), ParallelToolCallsError> {
-    if request.parallel_tool_calls == Some(false) && !selected_tools.is_empty() {
-        return Err(ParallelToolCallsError);
-    }
-    Ok(())
 }
 
 fn with_response_format_grammar(
@@ -584,30 +350,6 @@ fn usage_from_stats(stats: &ChatReplyStats) -> ChatCompletionUsage {
     }
 }
 
-fn response_tool_calls(message: &ChatMessage) -> Option<Vec<OaiToolCall>> {
-    let tool_calls = message
-        .tool_calls()
-        .into_iter()
-        .map(|tool_call| OaiToolCall {
-            id: tool_call.identifier.unwrap_or_default(),
-            kind: TOOL_KIND_FUNCTION.to_string(),
-            function: OaiToolCallFunction {
-                name: tool_call.name,
-                arguments: tool_call.arguments.json,
-            },
-        })
-        .collect::<Vec<_>>();
-    (!tool_calls.is_empty()).then_some(tool_calls)
-}
-
-fn has_incomplete_tool_call_batch(
-    message: &ChatMessage,
-    finish_reason: Option<&ChatReplyFinishReason>,
-) -> bool {
-    let has_candidate = message.content.iter().any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }));
-    has_candidate || (finish_reason == Some(&ChatReplyFinishReason::ToolCalls) && message.tool_calls().is_empty())
-}
-
 fn error_response(
     id: String,
     model: String,
@@ -633,6 +375,34 @@ fn error_response(
     }
 }
 
+fn error_response_with_text(
+    id: String,
+    model: String,
+    created: i64,
+    text: Option<String>,
+    error: &str,
+) -> ChatCompletionResponse {
+    let mut response = error_response(id, model, created, error);
+    if let Some(text) = text.filter(|text| !text.is_empty()) {
+        response.choices[0].message.content = Some(format!("{text}\n\nError: {error}"));
+    }
+    response
+}
+
+fn stream_error_text(
+    error: &str,
+    has_emitted_text: bool,
+) -> String {
+    format!(
+        "{}Error: {error}",
+        if has_emitted_text {
+            "\n\n"
+        } else {
+            ""
+        }
+    )
+}
+
 fn chunk_json(
     id: &str,
     model: &str,
@@ -656,26 +426,20 @@ fn chunk_json(
     serde_json::to_string(&chunk).unwrap_or_default()
 }
 
-fn stream_tool_call_deltas(
-    tool_calls: &[ToolCall],
-    emitted_count: &mut usize,
-) -> Vec<StreamToolCall> {
-    let deltas = tool_calls
-        .iter()
-        .enumerate()
-        .skip(*emitted_count)
-        .map(|(index, tool_call)| StreamToolCall {
-            index,
-            id: Some(tool_call.identifier.clone().unwrap_or_default()),
-            kind: Some(TOOL_KIND_FUNCTION.to_string()),
-            function: StreamToolCallFunction {
-                name: Some(tool_call.name.clone()),
-                arguments: Some(tool_call.arguments.json.clone()),
-            },
-        })
-        .collect::<Vec<_>>();
-    *emitted_count = tool_calls.len();
-    deltas
+fn next_text_delta(
+    text: &str,
+    emitted: &mut usize,
+) -> Option<String> {
+    let start = (*emitted..=text.len()).find(|&index| text.is_char_boundary(index)).unwrap_or(text.len());
+    (text.len() > start).then(|| {
+        *emitted = text.len();
+        text[start..].to_string()
+    })
+}
+
+async fn cancel_and_drain_stream(stream: &ChatSessionStream) {
+    stream.cancel_token().cancel();
+    while stream.next().await.is_some() {}
 }
 
 async fn run_blocking(
@@ -685,6 +449,8 @@ async fn run_blocking(
     id: String,
     model: String,
     created: i64,
+    supports_multiple_tool_calls: bool,
+    allowed_tool_names: Vec<String>,
 ) -> ChatCompletionResponse {
     let session = session.lock().await;
     if let Err(error) = session.reset().await {
@@ -693,29 +459,34 @@ async fn run_blocking(
 
     match session.reply(messages, config).await {
         Ok(replies) => match replies.last() {
-            Some(reply) if has_incomplete_tool_call_batch(&reply.message, reply.finish_reason.as_ref()) => {
-                error_response(id, model, created, INCOMPLETE_TOOL_CALL_BATCH_ERROR)
-            },
-            Some(reply) => ChatCompletionResponse {
-                id,
-                object: "chat.completion".to_string(),
-                created,
-                model,
-                choices: vec![ChatCompletionChoice {
-                    index: 0,
-                    message: OaiMessage {
-                        role: "assistant".to_string(),
-                        content: reply.message.text(),
-                        tool_calls: response_tool_calls(&reply.message),
-                        tool_call_id: None,
-                    },
-                    finish_reason: reply
-                        .finish_reason
-                        .as_ref()
-                        .map(map_finish_reason)
-                        .unwrap_or_else(|| "stop".to_string()),
-                }],
-                usage: usage_from_stats(&reply.stats),
+            Some(reply) => {
+                if let Some(error) =
+                    tool_call_batch_error(&reply.message, reply.finish_reason.as_ref(), &allowed_tool_names, true)
+                {
+                    return error_response_with_text(id, model, created, reply.message.text(), &error);
+                }
+                let message = normalize_tool_calls_for_capability(&reply.message, supports_multiple_tool_calls);
+                ChatCompletionResponse {
+                    id,
+                    object: "chat.completion".to_string(),
+                    created,
+                    model,
+                    choices: vec![ChatCompletionChoice {
+                        index: 0,
+                        message: OaiMessage {
+                            role: "assistant".to_string(),
+                            content: message.text(),
+                            tool_calls: response_tool_calls(&message),
+                            tool_call_id: None,
+                        },
+                        finish_reason: reply
+                            .finish_reason
+                            .as_ref()
+                            .map(map_finish_reason)
+                            .unwrap_or_else(|| "stop".to_string()),
+                    }],
+                    usage: usage_from_stats(&reply.stats),
+                }
             },
             None => error_response(id, model, created, "No response generated"),
         },
@@ -730,16 +501,21 @@ async fn run_stream(
     id: String,
     model: String,
     created: i64,
+    supports_multiple_tool_calls: bool,
+    allowed_tool_names: Vec<String>,
     sender: mpsc::UnboundedSender<Event>,
 ) {
-    let session = session.lock().await;
+    let session = tokio::select! {
+        session = session.lock() => session,
+        _ = sender.closed() => return,
+    };
     if let Err(error) = session.reset().await {
         let _ = sender.send(Event::data(chunk_json(
             &id,
             &model,
             created,
             StreamDelta {
-                role: None,
+                role: Some("assistant".to_string()),
                 content: Some(format!("Error: {error}")),
                 tool_calls: None,
             },
@@ -750,28 +526,48 @@ async fn run_stream(
         return;
     }
 
-    let _ = sender.send(Event::data(chunk_json(
-        &id,
-        &model,
-        created,
-        StreamDelta {
-            role: Some("assistant".to_string()),
-            content: None,
-            tool_calls: None,
-        },
-        None,
-        None,
-    )));
+    if sender
+        .send(Event::data(chunk_json(
+            &id,
+            &model,
+            created,
+            StreamDelta {
+                role: Some("assistant".to_string()),
+                content: None,
+                tool_calls: None,
+            },
+            None,
+            None,
+        )))
+        .is_err()
+    {
+        return;
+    }
 
-    let stream = session.reply_with_stream(messages, config).await;
+    let stream = tokio::select! {
+        stream = session.reply_with_stream(messages, config) => stream,
+        _ = sender.closed() => return,
+    };
     let mut emitted = 0usize;
     let mut emitted_tool_calls = 0usize;
     let mut finish_reason = "stop".to_string();
     let mut usage = ChatCompletionUsage::default();
     let mut errored = false;
-    let mut incomplete_tool_call_batch = false;
+    let mut tool_call_error: Option<String> = None;
+    let mut last_message: Option<ChatMessage> = None;
+    let mut last_finish_reason: Option<ChatReplyFinishReason> = None;
 
-    while let Some(chunk) = stream.next().await {
+    loop {
+        let chunk = tokio::select! {
+            chunk = stream.next() => chunk,
+            _ = sender.closed() => {
+                cancel_and_drain_stream(&stream).await;
+                return;
+            },
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
         match chunk {
             ChatSessionStreamChunk::Replies {
                 replies,
@@ -779,11 +575,18 @@ async fn run_stream(
                 let Some(reply) = replies.last() else {
                     continue;
                 };
-                let text = reply.message.text().unwrap_or_default();
-                let start = (emitted..=text.len()).find(|&index| text.is_char_boundary(index)).unwrap_or(text.len());
-                if text.len() > start {
-                    let delta = text[start..].to_string();
-                    emitted = text.len();
+                let is_terminal = reply.finish_reason.is_some();
+                tool_call_error = tool_call_batch_error(
+                    &reply.message,
+                    reply.finish_reason.as_ref(),
+                    &allowed_tool_names,
+                    is_terminal,
+                );
+                last_message = Some(reply.message.clone());
+                last_finish_reason = reply.finish_reason.clone();
+                let message = normalize_tool_calls_for_capability(&reply.message, supports_multiple_tool_calls);
+                let text = message.text().unwrap_or_default();
+                if let Some(delta) = next_text_delta(&text, &mut emitted) {
                     let sent = sender.send(Event::data(chunk_json(
                         &id,
                         &model,
@@ -797,13 +600,12 @@ async fn run_stream(
                         None,
                     )));
                     if sent.is_err() {
+                        cancel_and_drain_stream(&stream).await;
                         return;
                     }
                 }
-                incomplete_tool_call_batch =
-                    has_incomplete_tool_call_batch(&reply.message, reply.finish_reason.as_ref());
                 if let Some(reason) = &reply.finish_reason {
-                    if incomplete_tool_call_batch {
+                    if let Some(error) = &tool_call_error {
                         errored = true;
                         let _ = sender.send(Event::data(chunk_json(
                             &id,
@@ -811,15 +613,16 @@ async fn run_stream(
                             created,
                             StreamDelta {
                                 role: None,
-                                content: Some(format!("Error: {INCOMPLETE_TOOL_CALL_BATCH_ERROR}")),
+                                content: Some(stream_error_text(error, emitted > 0)),
                                 tool_calls: None,
                             },
                             Some("stop".to_string()),
                             None,
                         )));
+                        cancel_and_drain_stream(&stream).await;
                         break;
                     }
-                    let tool_calls = reply.message.tool_calls();
+                    let tool_calls = message.tool_calls();
                     let tool_call_deltas = stream_tool_call_deltas(&tool_calls, &mut emitted_tool_calls);
                     if !tool_call_deltas.is_empty() {
                         let sent = sender.send(Event::data(chunk_json(
@@ -835,6 +638,7 @@ async fn run_stream(
                             None,
                         )));
                         if sent.is_err() {
+                            cancel_and_drain_stream(&stream).await;
                             return;
                         }
                     }
@@ -852,18 +656,19 @@ async fn run_stream(
                     created,
                     StreamDelta {
                         role: None,
-                        content: Some(format!("Error: {error}")),
+                        content: Some(stream_error_text(&error.to_string(), emitted > 0)),
                         tool_calls: None,
                     },
                     Some("stop".to_string()),
                     None,
                 )));
+                cancel_and_drain_stream(&stream).await;
                 break;
             },
         }
     }
 
-    if !errored && incomplete_tool_call_batch {
+    if !errored && last_message.is_none() {
         errored = true;
         let _ = sender.send(Event::data(chunk_json(
             &id,
@@ -871,7 +676,27 @@ async fn run_stream(
             created,
             StreamDelta {
                 role: None,
-                content: Some(format!("Error: {INCOMPLETE_TOOL_CALL_BATCH_ERROR}")),
+                content: Some("Error: No response generated".to_string()),
+                tool_calls: None,
+            },
+            Some("stop".to_string()),
+            None,
+        )));
+    }
+
+    if !errored && let Some(message) = &last_message {
+        tool_call_error = tool_call_batch_error(message, last_finish_reason.as_ref(), &allowed_tool_names, true);
+    }
+
+    if !errored && let Some(error) = &tool_call_error {
+        errored = true;
+        let _ = sender.send(Event::data(chunk_json(
+            &id,
+            &model,
+            created,
+            StreamDelta {
+                role: None,
+                content: Some(stream_error_text(error, emitted > 0)),
                 tool_calls: None,
             },
             Some("stop".to_string()),
@@ -899,10 +724,17 @@ async fn run_stream(
 #[allow(private_interfaces)]
 #[post("/chat/completions", format = "json", data = "<request>")]
 pub async fn handle_chat_completions(
-    request: Json<ChatCompletionRequest>,
+    request: Result<Json<serde_json::Value>, rocket::serde::json::Error<'_>>,
     state: &State<ServerState>,
 ) -> ChatCompletionResult {
-    let request = request.into_inner();
+    let request = match request {
+        Ok(request) => request.into_inner(),
+        Err(error) => return request_body_error_response(request_body_guard_error(error)),
+    };
+    let request = match parse_request_body(request) {
+        Ok(request) => request,
+        Err(error) => return request_body_error_response(error),
+    };
     let id = format!("chatcmpl-{}", Uuid::new_v4().simple());
     let created = now_unix();
     let model = state.model_name.clone();
@@ -919,20 +751,51 @@ pub async fn handle_chat_completions(
     if let Err(error) = validate_selected_tools(&request, &tools) {
         return tool_definition_error_response(error);
     }
-    if let Err(error) = validate_parallel_tool_calls(&request, &tools) {
+    let (supports_tool_calls, supports_multiple_tool_calls) = {
+        let session = state.session.lock().await;
+        (session.supports_tool_calls().await, session.supports_multiple_tool_calls().await)
+    };
+    if let Err(error) = validate_tool_capability(&tools, supports_tool_calls) {
+        return tool_definition_error_response(error);
+    }
+    if let Err(error) = validate_tool_history(&request.messages, supports_tool_calls, supports_multiple_tool_calls) {
+        return tool_history_error_response(error);
+    }
+    if let Err(error) = validate_parallel_tool_calls(&request, &tools, supports_multiple_tool_calls) {
         return parallel_tool_calls_error_response(error);
     }
+    let allowed_tool_names = tools.iter().map(|tool| tool.function.name.clone()).collect::<Vec<_>>();
     let messages = to_chat_messages(&request.messages, tools);
 
     if is_stream {
         let session = Arc::clone(&state.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Event>();
-        rocket::tokio::spawn(run_stream(session, messages, config, id, model, created, sender));
+        rocket::tokio::spawn(run_stream(
+            session,
+            messages,
+            config,
+            id,
+            model,
+            created,
+            supports_multiple_tool_calls,
+            allowed_tool_names,
+            sender,
+        ));
         let body: Pin<Box<dyn Stream<Item = Event> + Send>> = Box::pin(UnboundedReceiverStream::new(receiver));
         ChatCompletionResult::Stream(EventStream::from(body))
     } else {
         let session = Arc::clone(&state.session);
-        let response = run_blocking(session, messages, config, id, model, created).await;
+        let response = run_blocking(
+            session,
+            messages,
+            config,
+            id,
+            model,
+            created,
+            supports_multiple_tool_calls,
+            allowed_tool_names,
+        )
+        .await;
         ChatCompletionResult::Json(Json(response))
     }
 }

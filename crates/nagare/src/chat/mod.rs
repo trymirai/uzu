@@ -543,6 +543,11 @@ impl ChatSession {
         self.tool_registry.is_some()
     }
 
+    #[bindings::export(Method(Getter))]
+    pub async fn supports_multiple_tool_calls(&self) -> bool {
+        self.instance.lock().await.supports_multiple_tool_calls()
+    }
+
     #[bindings::export(Method)]
     pub async fn reset(&self) -> Result<(), ChatSessionError> {
         {
