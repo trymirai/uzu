@@ -16,7 +16,7 @@ mod theme;
 pub use application::{Application, ApplicationState, ModelState};
 pub use command_input::CommandInput;
 pub use gradient::Gradient;
-pub use history_cell::{HistoryCell, HistoryCellType};
+pub use history_cell::{HistoryCell, HistoryCellType, TranscriptItem};
 pub use loading::Loading;
 pub use logo::Logo;
 pub use model_capabilities::{ModelCapabilities, ModelSamplingDefaults, ThinkingSupport};

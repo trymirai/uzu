@@ -1,14 +1,22 @@
 use iocraft::prelude::*;
 use shoji::types::session::{
-    chat::{ChatReply, ChatReplyStats},
-    classification::ClassificationOutput,
-    text_to_speech::TextToSpeechStats,
+    chat::ChatReplyStats, classification::ClassificationOutput, text_to_speech::TextToSpeechStats,
 };
 
 use crate::interactive::{
     components::ApplicationState,
     helpers::{SYMBOL_COMMAND, SYMBOL_INPUT, SYMBOL_INPUT_RESULT, SYMBOL_LONG_DASH},
 };
+
+#[derive(Clone)]
+pub enum TranscriptItem {
+    Thinking(String),
+    ToolCall {
+        name: String,
+        called: bool,
+    },
+    Text(String),
+}
 
 #[derive(Clone)]
 pub enum HistoryCellType {
@@ -21,8 +29,9 @@ pub enum HistoryCellType {
     Request {
         text: String,
     },
-    ChatReply {
-        reply: ChatReply,
+    ChatTranscript {
+        items: Vec<TranscriptItem>,
+        stats: Option<ChatReplyStats>,
     },
     ClassificationOutput {
         output: ClassificationOutput,
@@ -84,9 +93,10 @@ pub fn HistoryCell(
             }
         }
         .into(),
-        Some(HistoryCellType::ChatReply {
-            reply,
-        }) => chat_reply_component(reply, theme.subtitle_color, theme.overlay_color(), theme.padding()),
+        Some(HistoryCellType::ChatTranscript {
+            items,
+            stats,
+        }) => chat_transcript_component(items, stats, theme.subtitle_color, theme.overlay_color(), theme.padding()),
         Some(HistoryCellType::ClassificationOutput {
             output,
         }) => classification_output_component(output, theme.subtitle_color, theme.padding()),
@@ -98,17 +108,13 @@ pub fn HistoryCell(
     view
 }
 
-fn chat_reply_component(
-    reply: ChatReply,
+fn chat_transcript_component(
+    items: Vec<TranscriptItem>,
+    stats: Option<ChatReplyStats>,
     subtitle_color: Color,
     overlay_color: Color,
     padding: u16,
 ) -> AnyElement<'static> {
-    let text = reply.message.text();
-    let reasoning =
-        reply.message.reasoning().map(|content| content.trim().to_string()).filter(|content| !content.is_empty());
-    let stats = reply.stats.clone();
-
     element! {
         View(
             width: 100pct,
@@ -119,18 +125,32 @@ fn chat_reply_component(
             padding_left: padding,
             padding_right: padding,
         ) {
-            #(reasoning.map(|content| element! {
-                View(
-                    width: 100pct,
-                    background_color: Some(overlay_color),
-                ) {
-                    Text(content: content, color: subtitle_color)
+            #(items.into_iter().map(|item| match item {
+                TranscriptItem::Thinking(content) => element! {
+                    View(
+                        width: 100pct,
+                        background_color: Some(overlay_color),
+                    ) {
+                        Text(content: content, color: subtitle_color)
+                    }
                 }
-            }))
-            #(text.map(|content| element! {
-                Text(content: content)
-            }))
-            #(chat_reply_stats_component(&stats, subtitle_color))
+                .into(),
+                TranscriptItem::ToolCall {
+                    name,
+                    called,
+                } => element! {
+                    Text(
+                        content: format!("* {} {}", if called { "called" } else { "calling" }, name),
+                        color: subtitle_color,
+                    )
+                }
+                .into(),
+                TranscriptItem::Text(content) => element! {
+                    Text(content: content)
+                }
+                .into(),
+            }).collect::<Vec<AnyElement<'static>>>())
+            #(stats.as_ref().map(|stats| chat_reply_stats_component(stats, subtitle_color)))
         }
     }
     .into()
