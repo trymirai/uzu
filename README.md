@@ -1407,6 +1407,12 @@ cargo run --release -p cli -- --model trymirai/Qwen3.5-4B-M
 
 If the model is not downloaded yet, the CLI starts downloading it automatically.
 
+To manage downloaded models in the storage interface:
+
+```bash
+cargo run --release -p cli -- storage
+```
+
 ## Benchmarks
 
 To run benchmarks:

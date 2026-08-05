@@ -999,13 +999,17 @@ dependencies = [
  "chrono",
  "clap",
  "comfy-table",
+ "crossterm",
  "dirs",
+ "dotenvy",
+ "futures-util",
  "indexmap 2.14.0",
  "indicatif",
  "indoc",
  "iocraft",
  "jsonschema",
  "nagare",
+ "ratatui",
  "rocket",
  "serde",
  "serde_json",
@@ -1014,27 +1018,10 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
+ "tracing",
  "unicode-segmentation",
  "unicode-width 0.2.2",
  "uuid",
- "uzu",
-]
-
-[[package]]
-name = "cli-storage"
-version = "0.5.14"
-dependencies = [
- "clap",
- "crossterm",
- "dotenvy",
- "download-manager",
- "futures-util",
- "ratatui",
- "shoji",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "uzu",
 ]
 

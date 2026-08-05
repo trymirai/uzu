@@ -14,7 +14,7 @@
 /crates/benchmarks @uuuvn
 /crates/bindings @alexxale
 /crates/cli @alexxale
-/crates/cli-storage @eugenebokhan
+/crates/cli/src/storage @eugenebokhan
 /crates/cli-release @alexxale
 /crates/download-manager @uuuvn @eugenebokhan
 /crates/dsl @uuuvn
