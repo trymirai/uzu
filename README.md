@@ -4,12 +4,11 @@
   </picture>
 </p>
 
-<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.5.14)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.5.14)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.5.14)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.5.14)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org)
+<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.5.14)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.5.14)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.5.14)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.5.14)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
 
 # uzu
 
-A high-performance inference engine for AI models. It allows you to deploy AI directly in your app with **zero latency
-**, **full data privacy**, and **no inference costs**. Key features:
+A high-performance inference engine for AI models. It allows you to deploy AI directly in your app with **zero latency**, **full data privacy**, and **no inference costs**. Key features:
 
 - Simple, high-level API
 - Unified model configurations, making it easy to add support for new models
@@ -18,6 +17,8 @@ A high-performance inference engine for AI models. It allows you to deploy AI di
 - [Broad model support](https://trymirai.com/models)
 
 ## Quick Start
+
+
 
 <details>
 <summary>Rust</summary>
@@ -36,37 +37,37 @@ Run the code below:
 use std::io::{self, Write};
 
 use uzu::{
-  engine::{Engine, EngineConfig},
-  types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+    engine::{Engine, EngineConfig},
+    types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let engine_config = EngineConfig::default();
-  let engine = Engine::new(engine_config).await?;
+    let engine_config = EngineConfig::default();
+    let engine = Engine::new(engine_config).await?;
 
-  let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
-  let downloader = engine.download(&model).await?;
-  while let Some(update) = downloader.next().await {
-    print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
-    io::stdout().flush()?;
-  }
-  println!();
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
+    let downloader = engine.download(&model).await?;
+    while let Some(update) = downloader.next().await {
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
+        io::stdout().flush()?;
+    }
+    println!();
 
-  let session = engine.chat(model, ChatConfig::default()).await?;
+    let session = engine.chat(model, ChatConfig::default()).await?;
 
-  let messages = vec![
-    ChatMessage::system().with_text("You are a helpful assistant".to_string()),
-    ChatMessage::user().with_text("Tell me a short, funny story about a robot".to_string()),
-  ];
+    let messages = vec![
+        ChatMessage::system().with_text("You are a helpful assistant".to_string()),
+        ChatMessage::user().with_text("Tell me a short, funny story about a robot".to_string()),
+    ];
 
-  let replies = session.reply(messages, ChatReplyConfig::default()).await?;
-  if let Some(reply) = replies.last() {
-    println!("Reasoning: {}", reply.message.reasoning().unwrap_or_default());
-    println!("Text: {}", reply.message.text().unwrap_or_default());
-  }
+    let replies = session.reply(messages, ChatReplyConfig::default()).await?;
+    if let Some(reply) = replies.last() {
+        println!("Reasoning: {}", reply.message.reasoning().unwrap_or_default());
+        println!("Text: {}", reply.message.text().unwrap_or_default());
+    }
 
-  Ok(())
+    Ok(())
 }
 ```
 
@@ -93,35 +94,35 @@ from uzu import ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig
 
 
 async def main() -> None:
-  engine_config = EngineConfig.create()
-  engine = await Engine.create(engine_config)
+    engine_config = EngineConfig.create()
+    engine = await Engine.create(engine_config)
 
-  model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
-  if model is None:
-    return
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        return
 
-  async for update in (await engine.download(model)).iterator():
-    print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
-  print()
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
 
-  session = await engine.chat(model, ChatConfig.create())
+    session = await engine.chat(model, ChatConfig.create())
 
-  messages = [
-    ChatMessage.system().with_text("You are a helpful assistant"),
-    ChatMessage.user().with_text("Tell me a short, funny story about a robot"),
-  ]
+    messages = [
+        ChatMessage.system().with_text("You are a helpful assistant"),
+        ChatMessage.user().with_text("Tell me a short, funny story about a robot"),
+    ]
 
-  replies = await session.reply(messages, ChatReplyConfig.create())
-  if not replies:
-    return
+    replies = await session.reply(messages, ChatReplyConfig.create())
+    if not replies:
+        return
 
-  message = replies[-1].message
-  print(f"Reasoning: {message.reasoning}")
-  print(f"Text: {message.text}")
+    message = replies[-1].message
+    print(f"Reasoning: {message.reasoning}")
+    print(f"Text: {message.text}")
 
 
 if __name__ == "__main__":
-  asyncio.run(main())
+    asyncio.run(main())
 ```
 
 </details>
@@ -135,9 +136,9 @@ if __name__ == "__main__":
 Add the dependency:
 
 ```swift
-dependencies
-: [
-.package (url: "https://github.com/trymirai/uzu.git", from: "0.5.14")]
+dependencies: [
+    .package(url: "https://github.com/trymirai/uzu.git", from: "0.5.14")
+]
 ```
 
 Run the code below:
@@ -147,33 +148,33 @@ import Foundation
 import Uzu
 
 public func runQuickStart() async throws {
-  let engineConfig = EngineConfig.create()
-  let engine = try await Engine.create(config: engineConfig)
-
-  guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
-    return
-  }
-
-  for try await update in try await engine.download(model: model).iterator() {
-    print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
-    fflush(stdout)
-  }
-  print()
-
-  let session = try await engine.chat(model: model, config: .create())
-
-  let messages = [
-    ChatMessage.system().withText(text: "You are a helpful assistant"),
-    ChatMessage.user().withText(text: "Tell me a short, funny story about a robot")
-  ]
-
-  let reply = try await session.reply(input: messages, config: .create())
-  guard let message = reply.last?.message else {
-    return
-  }
-
-  print("Reasoning: \(message.reasoning() ?? "empty")")
-  print("Text: \(message.text() ?? "empty")")
+    let engineConfig = EngineConfig.create()
+    let engine = try await Engine.create(config: engineConfig)
+    
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
+        return
+    }
+    
+    for try await update in try await engine.download(model: model).iterator() {
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
+    }
+    print()
+    
+    let session = try await engine.chat(model: model, config: .create())
+    
+    let messages = [
+        ChatMessage.system().withText(text: "You are a helpful assistant"),
+        ChatMessage.user().withText(text: "Tell me a short, funny story about a robot")
+    ]
+    
+    let reply = try await session.reply(input: messages, config: .create())
+    guard let message = reply.last?.message else {
+        return
+    }
+    
+    print("Reasoning: \(message.reasoning() ?? "empty")")
+    print("Text: \(message.text() ?? "empty")")
 }
 ```
 
@@ -194,40 +195,40 @@ pnpm add @trymirai/uzu@0.5.14
 Run the code below:
 
 ```ts
-import {ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig} from '@trymirai/uzu';
+import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig } from '@trymirai/uzu';
 
 async function main() {
-  let engineConfig = EngineConfig.create();
-  let engine = await Engine.create(engineConfig);
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
 
-  let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
-  if (!model) {
-    throw new Error('Model not found');
-  }
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
+    }
 
-  for await (const update of await engine.download(model)) {
-    process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
-  }
-  console.log();
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    console.log();
 
-  let session = await engine.chat(model, ChatConfig.create());
+    let session = await engine.chat(model, ChatConfig.create());
 
-  let messages = [
-    ChatMessage.system().withText('You are a helpful assistant'),
-    ChatMessage.user().withText('Tell me a short, funny story about a robot')
-  ];
+    let messages = [
+        ChatMessage.system().withText('You are a helpful assistant'),
+        ChatMessage.user().withText('Tell me a short, funny story about a robot')
+    ];
 
-  let reply = await session.reply(messages, ChatReplyConfig.create());
-  let message = reply[0]?.message;
+    let reply = await session.reply(messages, ChatReplyConfig.create());
+    let message = reply[0]?.message;
 
-  if (message) {
-    console.log('Reasoning: ', message.reasoning);
-    console.log('Text: ', message.text);
-  }
+    if (message) {
+        console.log('Reasoning: ', message.reasoning);
+        console.log('Text: ', message.text);
+    }
 }
 
 main().catch((error) => {
-  console.error(error);
+    console.error(error);
 });
 ```
 
@@ -236,13 +237,11 @@ main().catch((error) => {
 
 <br>
 
-Everything from model downloading to inference configuration is handled automatically. Refer to
-the [documentation](https://docs.trymirai.com) for details on how to customize each step of the process.
+Everything from model downloading to inference configuration is handled automatically. Refer to the [documentation](https://docs.trymirai.com) for details on how to customize each step of the process.
 
 ## Examples
 
-You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | *
-*chat-cloud** | **chat-structured-output** | **classification** | **quick-start** | **tool-calls**\>:
+You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start** | **tool-calls**\>:
 
 ### Chat
 
@@ -255,54 +254,54 @@ In this example, we will download a model and get a reply to a specific list of 
 use std::io::{self, Write};
 
 use uzu::{
-  engine::{Engine, EngineConfig},
-  session::chat::ChatSessionStreamChunk,
-  types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+    engine::{Engine, EngineConfig},
+    session::chat::ChatSessionStreamChunk,
+    types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let engine_config = EngineConfig::default();
-  let engine = Engine::new(engine_config).await?;
+    let engine_config = EngineConfig::default();
+    let engine = Engine::new(engine_config).await?;
 
-  let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
-  let downloader = engine.download(&model).await?;
-  while let Some(update) = downloader.next().await {
-    print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
-    io::stdout().flush()?;
-  }
-  println!();
-
-  let messages = vec![
-    ChatMessage::system().with_text("You are a helpful assistant".to_string()),
-    ChatMessage::user().with_text("Tell me a short, funny story about a robot".to_string()),
-  ];
-  let session = engine.chat(model, ChatConfig::default()).await?;
-  let stream = session.reply_with_stream(messages, ChatReplyConfig::default()).await;
-  let mut last_message: Option<ChatMessage> = None;
-  while let Some(chunk) = stream.next().await {
-    match chunk {
-      ChatSessionStreamChunk::Replies {
-        replies,
-      } => {
-        if let Some(reply) = replies.first() {
-          last_message = Some(reply.message.clone());
-          println!("Generated tokens: {}", reply.stats.tokens_count_output.unwrap_or_default());
-        }
-      }
-      ChatSessionStreamChunk::Error {
-        error,
-      } => {
-        println!("Error: {error}");
-      }
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
+    let downloader = engine.download(&model).await?;
+    while let Some(update) = downloader.next().await {
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
+        io::stdout().flush()?;
     }
-  }
-  if let Some(message) = last_message {
-    println!("Reasoning: {}", message.reasoning().unwrap_or_default());
-    println!("Text: {}", message.text().unwrap_or_default());
-  }
+    println!();
 
-  Ok(())
+    let messages = vec![
+        ChatMessage::system().with_text("You are a helpful assistant".to_string()),
+        ChatMessage::user().with_text("Tell me a short, funny story about a robot".to_string()),
+    ];
+    let session = engine.chat(model, ChatConfig::default()).await?;
+    let stream = session.reply_with_stream(messages, ChatReplyConfig::default()).await;
+    let mut last_message: Option<ChatMessage> = None;
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            ChatSessionStreamChunk::Replies {
+                replies,
+            } => {
+                if let Some(reply) = replies.first() {
+                    last_message = Some(reply.message.clone());
+                    println!("Generated tokens: {}", reply.stats.tokens_count_output.unwrap_or_default());
+                }
+            },
+            ChatSessionStreamChunk::Error {
+                error,
+            } => {
+                println!("Error: {error}");
+            },
+        }
+    }
+    if let Some(message) = last_message {
+        println!("Reasoning: {}", message.reasoning().unwrap_or_default());
+        println!("Text: {}", message.text().unwrap_or_default());
+    }
+
+    Ok(())
 }
 ```
 
@@ -315,49 +314,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 import asyncio
 
 from uzu import (
-  ChatConfig,
-  ChatMessage,
-  ChatReplyConfig,
-  ChatSessionStreamChunk,
-  Engine,
-  EngineConfig,
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    ChatSessionStreamChunk,
+    Engine,
+    EngineConfig,
 )
 
 
 async def main() -> None:
-  engine_config = EngineConfig.create()
-  engine = await Engine.create(engine_config)
+    engine_config = EngineConfig.create()
+    engine = await Engine.create(engine_config)
 
-  model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
-  if model is None:
-    raise RuntimeError("Model not found")
-  async for update in (await engine.download(model)).iterator():
-    print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
-  print()
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        raise RuntimeError("Model not found")
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
 
-  messages = [
-    ChatMessage.system().with_text("You are a helpful assistant"),
-    ChatMessage.user().with_text("Tell me a short, funny story about a robot"),
-  ]
-  session = await engine.chat(model, ChatConfig.create())
-  stream = await session.reply_with_stream(messages, ChatReplyConfig.create())
-  message: ChatMessage | None = None
-  async for chunk in stream.iterator():
-    if isinstance(chunk, ChatSessionStreamChunk.Replies):
-      replies = chunk.replies
-      if replies:
-        reply = replies[0]
-        message = reply.message
-        print(f"Generated tokens: {reply.stats.tokens_count_output}")
-    elif isinstance(chunk, ChatSessionStreamChunk.Error):
-      print(f"Error: {chunk.error}")
-  if message is not None:
-    print(f"Reasoning: {message.reasoning}")
-    print(f"Text: {message.text}")
+    messages = [
+        ChatMessage.system().with_text("You are a helpful assistant"),
+        ChatMessage.user().with_text("Tell me a short, funny story about a robot"),
+    ]
+    session = await engine.chat(model, ChatConfig.create())
+    stream = await session.reply_with_stream(messages, ChatReplyConfig.create())
+    message: ChatMessage | None = None
+    async for chunk in stream.iterator():
+        if isinstance(chunk, ChatSessionStreamChunk.Replies):
+            replies = chunk.replies
+            if replies:
+                reply = replies[0]
+                message = reply.message
+                print(f"Generated tokens: {reply.stats.tokens_count_output}")
+        elif isinstance(chunk, ChatSessionStreamChunk.Error):
+            print(f"Error: {chunk.error}")
+    if message is not None:
+        print(f"Reasoning: {message.reasoning}")
+        print(f"Text: {message.text}")
 
 
 if __name__ == "__main__":
-  asyncio.run(main())
+    asyncio.run(main())
 ```
 
 </details>
@@ -370,37 +369,37 @@ import Foundation
 import Uzu
 
 public func runChat() async throws {
-  let engineConfig = EngineConfig.create()
-  let engine = try await Engine.create(config: engineConfig)
-
-  guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
-    return
-  }
-  for try await update in try await engine.download(model: model).iterator() {
-    print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
-    fflush(stdout)
-  }
-  print()
-
-  let messages = [
-    ChatMessage.system().withText(text: "You are a helpful assistant"),
-    ChatMessage.user().withText(text: "Tell me a short, funny story about a robot")
-  ]
-  let session = try await engine.chat(model: model, config: .create())
-  let stream = await session.replyWithStream(input: messages, config: .create())
-  var message: ChatMessage? = nil
-  for try await update in stream.iterator() {
-    switch update {
-    case .replies(let replies):
-      let reply = replies.last
-      message = reply?.message
-      print("Generated tokens: \(reply?.stats.tokensCountOutput ?? 0)")
-    case .error(let error):
-      print("Error: \(error)")
+    let engineConfig = EngineConfig.create()
+    let engine = try await Engine.create(config: engineConfig)
+    
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
+        return
     }
-  }
-  print("Reasoning: \(message?.reasoning() ?? "empty")")
-  print("Text: \(message?.text() ?? "empty")")
+    for try await update in try await engine.download(model: model).iterator() {
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
+    }
+    print()
+    
+    let messages = [
+        ChatMessage.system().withText(text: "You are a helpful assistant"),
+        ChatMessage.user().withText(text: "Tell me a short, funny story about a robot")
+    ]
+    let session = try await engine.chat(model: model, config: .create())
+    let stream = await session.replyWithStream(input: messages, config: .create())
+    var message: ChatMessage? = nil
+    for try await update in stream.iterator() {
+        switch update {
+        case .replies(let replies):
+            let reply = replies.last
+            message = reply?.message
+            print("Generated tokens: \(reply?.stats.tokensCountOutput ?? 0)")
+        case .error(let error):
+            print("Error: \(error)")
+        }
+    }
+    print("Reasoning: \(message?.reasoning() ?? "empty")")
+    print("Text: \(message?.text() ?? "empty")")
 }
 ```
 
@@ -411,60 +410,56 @@ public func runChat() async throws {
 
 ```ts
 import {
-  ChatConfig,
-  ChatMessage,
-  ChatReplyConfig,
-  ChatSessionStreamChunkError,
-  ChatSessionStreamChunkReplies,
-  Engine,
-  EngineConfig
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    ChatSessionStreamChunkError,
+    ChatSessionStreamChunkReplies,
+    Engine,
+    EngineConfig
 } from '@trymirai/uzu';
 
 async function main() {
-  let engineConfig = EngineConfig.create();
-  let engine = await Engine.create(engineConfig);
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
 
-  let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
-  if (!model) {
-    throw new Error('Model not found');
-  }
-  for await (const update of await engine.download(model)) {
-    process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
-  }
-  console.log();
-
-  let messages = [
-    ChatMessage.system().withText('You are a helpful assistant'),
-    ChatMessage.user().withText('Tell me a short, funny story about a robot')
-  ];
-  let session = await engine.chat(model, ChatConfig.create());
-  let stream = await session.replyWithStream(messages, ChatReplyConfig.create());
-  let message: ChatMessage | undefined;
-  for await (const chunk of stream) {
-    if (chunk instanceof ChatSessionStreamChunkReplies) {
-      message = chunk.replies[0]?.message;
-      console.log('Generated tokens: ', chunk.replies[0]?.stats.tokensCountOutput);
-    } else if (chunk instanceof ChatSessionStreamChunkError) {
-      console.error('Error: ', chunk.error);
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
     }
-  }
-  console.log('Reasoning: ', message?.reasoning);
-  console.log('Text: ', message?.text);
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    console.log();
+
+    let messages = [
+        ChatMessage.system().withText('You are a helpful assistant'),
+        ChatMessage.user().withText('Tell me a short, funny story about a robot')
+    ];
+    let session = await engine.chat(model, ChatConfig.create());
+    let stream = await session.replyWithStream(messages, ChatReplyConfig.create());
+    let message: ChatMessage | undefined;
+    for await (const chunk of stream) {
+        if (chunk instanceof ChatSessionStreamChunkReplies) {
+            message = chunk.replies[0]?.message;
+            console.log('Generated tokens: ', chunk.replies[0]?.stats.tokensCountOutput);
+        } else if (chunk instanceof ChatSessionStreamChunkError) {
+            console.error('Error: ', chunk.error);
+        }
+    }
+    console.log('Reasoning: ', message?.reasoning);
+    console.log('Text: ', message?.text);
 }
 
 main().catch((error) => {
-  console.error(error);
+    console.error(error);
 });
 ```
 
 </details>
 
 
-<br>Once loaded, the same `ChatSession` can be reused for multiple requests until you drop it. Each model may consume a
-significant amount of RAM, so it's important to keep only one session loaded at a time. For iOS apps, we recommend
-adding
-the [Increased Memory Capability](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.kernel.increased-memory-limit)
-entitlement to ensure your app can allocate the required memory.
+<br>Once loaded, the same `ChatSession` can be reused for multiple requests until you drop it. Each model may consume a significant amount of RAM, so it's important to keep only one session loaded at a time. For iOS apps, we recommend adding the [Increased Memory Capability](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.kernel.increased-memory-limit) entitlement to ensure your app can allocate the required memory.
 
 ### Chat with the cloud model
 
@@ -475,33 +470,33 @@ In this example, we will get a reply to a specific list of messages from a cloud
 
 ```rust
 use uzu::{
-  engine::{Engine, EngineConfig},
-  types::{
-    basic::ReasoningEffort,
-    session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
-  },
+    engine::{Engine, EngineConfig},
+    types::{
+        basic::ReasoningEffort,
+        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+    },
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let engine_config = EngineConfig::default().with_openai_api_key("OPENAI_API_KEY".to_string());
-  let engine = Engine::new(engine_config).await?;
+    let engine_config = EngineConfig::default().with_openai_api_key("OPENAI_API_KEY".to_string());
+    let engine = Engine::new(engine_config).await?;
 
-  let model = engine.model("gpt-5".to_string()).await?.ok_or("Model not found")?;
+    let model = engine.model("gpt-5".to_string()).await?.ok_or("Model not found")?;
 
-  let messages = vec![
-    ChatMessage::system().with_reasoning_effort(ReasoningEffort::Low),
-    ChatMessage::user().with_text("How LLMs work".to_string()),
-  ];
+    let messages = vec![
+        ChatMessage::system().with_reasoning_effort(ReasoningEffort::Low),
+        ChatMessage::user().with_text("How LLMs work".to_string()),
+    ];
 
-  let session = engine.chat(model, ChatConfig::default()).await?;
-  let replies = session.reply(messages, ChatReplyConfig::default()).await?;
-  if let Some(reply) = replies.first() {
-    println!("Reasoning: {}", reply.message.reasoning().unwrap_or_default());
-    println!("Text: {}", reply.message.text().unwrap_or_default());
-  }
+    let session = engine.chat(model, ChatConfig::default()).await?;
+    let replies = session.reply(messages, ChatReplyConfig::default()).await?;
+    if let Some(reply) = replies.first() {
+        println!("Reasoning: {}", reply.message.reasoning().unwrap_or_default());
+        println!("Text: {}", reply.message.text().unwrap_or_default());
+    }
 
-  Ok(())
+    Ok(())
 }
 ```
 
@@ -517,27 +512,27 @@ from uzu import ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig, 
 
 
 async def main() -> None:
-  engine_config = EngineConfig.create().with_openai_api_key("OPENAI_API_KEY")
-  engine = await Engine.create(engine_config)
-  model = await engine.model("gpt-5")
-  if model is None:
-    raise RuntimeError("Model not found")
+    engine_config = EngineConfig.create().with_openai_api_key("OPENAI_API_KEY")
+    engine = await Engine.create(engine_config)
+    model = await engine.model("gpt-5")
+    if model is None:
+        raise RuntimeError("Model not found")
 
-  messages = [
-    ChatMessage.system().with_reasoning_effort(ReasoningEffort.Low),
-    ChatMessage.user().with_text("How LLMs work"),
-  ]
+    messages = [
+        ChatMessage.system().with_reasoning_effort(ReasoningEffort.Low),
+        ChatMessage.user().with_text("How LLMs work"),
+    ]
 
-  session = await engine.chat(model, ChatConfig.create())
-  replies = await session.reply(messages, ChatReplyConfig.create())
-  if replies:
-    message = replies[0].message
-    print(f"Reasoning: {message.reasoning}")
-    print(f"Text: {message.text}")
+    session = await engine.chat(model, ChatConfig.create())
+    replies = await session.reply(messages, ChatReplyConfig.create())
+    if replies:
+        message = replies[0].message
+        print(f"Reasoning: {message.reasoning}")
+        print(f"Text: {message.text}")
 
 
 if __name__ == "__main__":
-  asyncio.run(main())
+    asyncio.run(main())
 ```
 
 </details>
@@ -549,26 +544,26 @@ if __name__ == "__main__":
 import Uzu
 
 public func runChatCloud() async throws {
-  let engineConfig = EngineConfig.create().withOpenaiApiKey(openaiApiKey: "OPENAI_API_KEY")
-  let engine = try await Engine.create(config: engineConfig)
-
-  guard let model = try await engine.model(identifier: "gpt-5") else {
-    return
-  }
-
-  let messages = [
-    ChatMessage.system().withReasoningEffort(reasoningEffort: .low),
-    ChatMessage.user().withText(text: "How LLMs work")
-  ]
-
-  let session = try await engine.chat(model: model, config: .create())
-  let reply = try await session.reply(input: messages, config: .create())
-  guard let message = reply.last?.message else {
-    return
-  }
-
-  print("Reasoning: \(message.reasoning() ?? "empty")")
-  print("Text: \(message.text() ?? "empty")")
+    let engineConfig = EngineConfig.create().withOpenaiApiKey(openaiApiKey: "OPENAI_API_KEY")
+    let engine = try await Engine.create(config: engineConfig)
+    
+    guard let model = try await engine.model(identifier: "gpt-5") else {
+        return
+    }
+    
+    let messages = [
+        ChatMessage.system().withReasoningEffort(reasoningEffort: .low),
+        ChatMessage.user().withText(text: "How LLMs work")
+    ]
+    
+    let session = try await engine.chat(model: model, config: .create())
+    let reply = try await session.reply(input: messages, config: .create())
+    guard let message = reply.last?.message else {
+        return
+    }
+    
+    print("Reasoning: \(message.reasoning() ?? "empty")")
+    print("Text: \(message.text() ?? "empty")")
 }
 ```
 
@@ -578,42 +573,42 @@ public func runChatCloud() async throws {
 <summary>TypeScript</summary>
 
 ```ts
-import {ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig, ReasoningEffort} from '@trymirai/uzu';
+import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig, ReasoningEffort } from '@trymirai/uzu';
 
 async function main() {
-  let engineConfig = EngineConfig.create().withOpenaiApiKey('OPENAI_API_KEY');
-  let engine = await Engine.create(engineConfig);
+    let engineConfig = EngineConfig.create().withOpenaiApiKey('OPENAI_API_KEY');
+    let engine = await Engine.create(engineConfig);
 
-  let model = await engine.model('gpt-5');
-  if (!model) {
-    throw new Error('Model not found');
-  }
+    let model = await engine.model('gpt-5');
+    if (!model) {
+        throw new Error('Model not found');
+    }
 
-  let messages = [
-    ChatMessage.system().withReasoningEffort("Low" as ReasoningEffort),
-    ChatMessage.user().withText('How LLMs work')
-  ];
+    let messages = [
+        ChatMessage.system().withReasoningEffort("Low" as ReasoningEffort),
+        ChatMessage.user().withText('How LLMs work')
+    ];
 
-  let session = await engine.chat(model, ChatConfig.create());
-  let reply = await session.reply(messages, ChatReplyConfig.create());
-  let message = reply[0]?.message;
-  if (message) {
-    console.log('Reasoning: ', message.reasoning);
-    console.log('Text: ', message.text);
-  }
+    let session = await engine.chat(model, ChatConfig.create());
+    let reply = await session.reply(messages, ChatReplyConfig.create());
+    let message = reply[0]?.message;
+    if (message) {
+        console.log('Reasoning: ', message.reasoning);
+        console.log('Text: ', message.text);
+    }
 }
 
 main().catch((error) => {
-  console.error(error);
+    console.error(error);
 });
 ```
 
 </details>
 
+
 ### Chat with structured output
 
-Sometimes you want the generated output to be valid JSON with predefined fields. You can use `Grammar` to manually
-specify a JSON schema for the response you want to receive:
+Sometimes you want the generated output to be valid JSON with predefined fields. You can use `Grammar` to manually specify a JSON schema for the response you want to receive:
 
 <details>
 <summary>Rust</summary>
@@ -624,59 +619,59 @@ use std::io::{self, Write};
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use uzu::{
-  engine::{Engine, EngineConfig},
-  types::{
-    basic::{Grammar, ReasoningEffort},
-    session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
-  },
+    engine::{Engine, EngineConfig},
+    types::{
+        basic::{Grammar, ReasoningEffort},
+        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+    },
 };
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Country {
-  name: String,
-  capital: String,
+    name: String,
+    capital: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct CountryList {
-  countries: Vec<Country>,
+    countries: Vec<Country>,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let engine_config = EngineConfig::default();
-  let engine = Engine::new(engine_config).await?;
+    let engine_config = EngineConfig::default();
+    let engine = Engine::new(engine_config).await?;
 
-  let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
-  let downloader = engine.download(&model).await?;
-  while let Some(update) = downloader.next().await {
-    print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
-    io::stdout().flush()?;
-  }
-  println!();
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
+    let downloader = engine.download(&model).await?;
+    while let Some(update) = downloader.next().await {
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
+        io::stdout().flush()?;
+    }
+    println!();
 
-  let schema_string = serde_json::to_string(&schema_for!(CountryList))?;
-  let messages = vec![
-    ChatMessage::system().with_reasoning_effort(ReasoningEffort::Disabled),
-    ChatMessage::user().with_text(
-      "Give me a JSON object containing a list of 3 countries, where each country has name and capital fields"
-              .to_string(),
-    ),
-  ];
+    let schema_string = serde_json::to_string(&schema_for!(CountryList))?;
+    let messages = vec![
+        ChatMessage::system().with_reasoning_effort(ReasoningEffort::Disabled),
+        ChatMessage::user().with_text(
+            "Give me a JSON object containing a list of 3 countries, where each country has name and capital fields"
+                .to_string(),
+        ),
+    ];
 
-  let session = engine.chat(model, ChatConfig::default()).await?;
-  let chat_reply_config = ChatReplyConfig::default().with_grammar(Some(Grammar::JsonSchema {
-    schema: schema_string,
-  }));
-  let replies = session.reply(messages, chat_reply_config).await?;
-  if let Some(reply) = replies.first()
-          && let Some(text) = reply.message.text()
-  {
-    let parsed: CountryList = serde_json::from_str(&text)?;
-    println!("{parsed:#?}");
-  }
+    let session = engine.chat(model, ChatConfig::default()).await?;
+    let chat_reply_config = ChatReplyConfig::default().with_grammar(Some(Grammar::JsonSchema {
+        schema: schema_string,
+    }));
+    let replies = session.reply(messages, chat_reply_config).await?;
+    if let Some(reply) = replies.first()
+        && let Some(text) = reply.message.text()
+    {
+        let parsed: CountryList = serde_json::from_str(&text)?;
+        println!("{parsed:#?}");
+    }
 
-  Ok(())
+    Ok(())
 }
 ```
 
@@ -692,62 +687,62 @@ import json
 from pydantic import BaseModel
 
 from uzu import (
-  ChatConfig,
-  ChatMessage,
-  ChatReplyConfig,
-  Engine,
-  EngineConfig,
-  Grammar,
-  ReasoningEffort,
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    Grammar,
+    ReasoningEffort,
 )
 
 
 class Country(BaseModel):
-  name: str
-  capital: str
+    name: str
+    capital: str
 
 
 class CountryList(BaseModel):
-  countries: list[Country]
+    countries: list[Country]
 
 
 def structured_response(response: str | None, model_type: type[BaseModel]) -> BaseModel | None:
-  if not response:
-    return None
-  return model_type.model_validate_json(response)
+    if not response:
+        return None
+    return model_type.model_validate_json(response)
 
 
 async def main() -> None:
-  engine_config = EngineConfig.create()
-  engine = await Engine.create(engine_config)
+    engine_config = EngineConfig.create()
+    engine = await Engine.create(engine_config)
 
-  model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
-  if model is None:
-    raise RuntimeError("Model not found")
-  async for update in (await engine.download(model)).iterator():
-    print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
-  print()
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        raise RuntimeError("Model not found")
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
 
-  schema_string = json.dumps(CountryList.model_json_schema())
-  messages = [
-    ChatMessage.system().with_reasoning_effort(ReasoningEffort.Disabled),
-    ChatMessage.user().with_text(
-      "Give me a JSON object containing a list of 3 countries, where each country has name and capital fields"
-    ),
-  ]
+    schema_string = json.dumps(CountryList.model_json_schema())
+    messages = [
+        ChatMessage.system().with_reasoning_effort(ReasoningEffort.Disabled),
+        ChatMessage.user().with_text(
+            "Give me a JSON object containing a list of 3 countries, where each country has name and capital fields"
+        ),
+    ]
 
-  session = await engine.chat(model, ChatConfig.create())
-  replies = await session.reply(
-    messages,
-    ChatReplyConfig.create().with_grammar(Grammar.JsonSchema(schema_string)),
-  )
-  if replies:
-    countries = structured_response(replies[0].message.text, CountryList)
-    print(countries)
+    session = await engine.chat(model, ChatConfig.create())
+    replies = await session.reply(
+        messages,
+        ChatReplyConfig.create().with_grammar(Grammar.JsonSchema(schema_string)),
+    )
+    if replies:
+        countries = structured_response(replies[0].message.text, CountryList)
+        print(countries)
 
 
 if __name__ == "__main__":
-  asyncio.run(main())
+    asyncio.run(main())
 ```
 
 </details>
@@ -762,37 +757,37 @@ import Uzu
 
 @Generable()
 struct Country: Codable {
-  let name: String
-  let capital: String
+    let name: String
+    let capital: String
 }
 
 public func runChatStructuredOutput() async throws {
-  let engineConfig = EngineConfig.create()
-  let engine = try await Engine.create(config: engineConfig)
-
-  guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
-    return
-  }
-  for try await update in try await engine.download(model: model).iterator() {
-    print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
-    fflush(stdout)
-  }
-  print()
-
-  let messages = [
-    ChatMessage.system().withReasoningEffort(reasoningEffort: .disabled),
-    ChatMessage.user().withText(text: "Give me a JSON object containing a list of 3 countries, where each country has name and capital fields")
-  ]
-
-  let session = try await engine.chat(model: model, config: .create())
-  let reply = try await session.reply(input: messages, config: .create().withGrammar(grammar: .fromType([Country].self)))
-  guard let message = reply.last?.message else {
-    return
-  }
-  guard let countries: [Country] = message.textDecoded() else {
-    return
-  }
-  print(countries)
+    let engineConfig = EngineConfig.create()
+    let engine = try await Engine.create(config: engineConfig)
+    
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
+        return
+    }
+    for try await update in try await engine.download(model: model).iterator() {
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
+    }
+    print()
+    
+    let messages = [
+        ChatMessage.system().withReasoningEffort(reasoningEffort: .disabled),
+        ChatMessage.user().withText(text: "Give me a JSON object containing a list of 3 countries, where each country has name and capital fields")
+    ]
+    
+    let session = try await engine.chat(model: model, config: .create())
+    let reply = try await session.reply(input: messages, config: .create().withGrammar(grammar: .fromType([Country].self)))
+    guard let message = reply.last?.message else {
+        return
+    }
+    guard let countries: [Country] = message.textDecoded() else {
+        return
+    }
+    print(countries)
 }
 ```
 
@@ -802,70 +797,62 @@ public func runChatStructuredOutput() async throws {
 <summary>TypeScript</summary>
 
 ```ts
-import {
-  ChatConfig,
-  ChatMessage,
-  ChatReplyConfig,
-  Engine,
-  EngineConfig,
-  GrammarJsonSchema,
-  ReasoningEffort
-} from '@trymirai/uzu';
+import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig, GrammarJsonSchema, ReasoningEffort } from '@trymirai/uzu';
 import * as z from "zod";
 
 const CountryType = z.object({
-  name: z.string(),
-  capital: z.string(),
+    name: z.string(),
+    capital: z.string(),
 });
 const CountryListType = z.array(CountryType);
 
 function structuredResponse<T extends z.ZodType>(response: string | null | undefined, type: T): z.infer<T> | undefined {
-  if (!response) {
-    return undefined;
-  }
-  const data = JSON.parse(response);
-  const result = type.parse(data);
-  return result;
+    if (!response) {
+        return undefined;
+    }
+    const data = JSON.parse(response);
+    const result = type.parse(data);
+    return result;
 }
 
 async function main() {
-  let engineConfig = EngineConfig.create();
-  let engine = await Engine.create(engineConfig);
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
 
-  let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
-  if (!model) {
-    throw new Error('Model not found');
-  }
-  for await (const update of await engine.download(model)) {
-    process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
-  }
-  console.log();
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    console.log();
 
-  let schema = z.toJSONSchema(CountryListType);
-  let schemaString = JSON.stringify(schema);
-  let messages = [
-    ChatMessage.system().withReasoningEffort("Disabled" as ReasoningEffort),
-    ChatMessage.user().withText('Give me a JSON object containing a list of 3 countries, where each country has name and capital fields')
-  ];
+    let schema = z.toJSONSchema(CountryListType);
+    let schemaString = JSON.stringify(schema);
+    let messages = [
+        ChatMessage.system().withReasoningEffort("Disabled" as ReasoningEffort),
+        ChatMessage.user().withText('Give me a JSON object containing a list of 3 countries, where each country has name and capital fields')
+    ];
 
-  let session = await engine.chat(model, ChatConfig.create());
-  let reply = await session.reply(messages, ChatReplyConfig.create().withGrammar(new GrammarJsonSchema(schemaString)));
-  let message = reply[0]?.message;
-  let countries = structuredResponse(message?.text, CountryListType);
-  console.log(countries);
+    let session = await engine.chat(model, ChatConfig.create());
+    let reply = await session.reply(messages, ChatReplyConfig.create().withGrammar(new GrammarJsonSchema(schemaString)));
+    let message = reply[0]?.message;
+    let countries = structuredResponse(message?.text, CountryListType);
+    console.log(countries);
 }
 
 main().catch((error) => {
-  console.error(error);
+    console.error(error);
 });
 ```
 
 </details>
 
+
 ### Classification
 
-In this example, we will use a classification model to determine whether the user's input is safe from a moderation
-perspective:
+In this example, we will use a classification model to determine whether the user's input is safe from a moderation perspective:
 
 <details>
 <summary>Rust</summary>
@@ -874,30 +861,30 @@ perspective:
 use std::io::{self, Write};
 
 use uzu::{
-  engine::{Engine, EngineConfig},
-  types::session::classification::ClassificationMessage,
+    engine::{Engine, EngineConfig},
+    types::session::classification::ClassificationMessage,
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let engine_config = EngineConfig::default();
-  let engine = Engine::new(engine_config).await?;
+    let engine_config = EngineConfig::default();
+    let engine = Engine::new(engine_config).await?;
 
-  let model = engine.model("trymirai/chat-moderation-router".to_string()).await?.ok_or("Model not found")?;
-  let downloader = engine.download(&model).await?;
-  while let Some(update) = downloader.next().await {
-    print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
-    io::stdout().flush()?;
-  }
-  println!();
+    let model = engine.model("trymirai/chat-moderation-router".to_string()).await?.ok_or("Model not found")?;
+    let downloader = engine.download(&model).await?;
+    while let Some(update) = downloader.next().await {
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
+        io::stdout().flush()?;
+    }
+    println!();
 
-  let messages = vec![ClassificationMessage::user("Hi".to_string())];
+    let messages = vec![ClassificationMessage::user("Hi".to_string())];
 
-  let session = engine.classification(model).await?;
-  let output = session.classify(messages).await?;
-  println!("Output: {:?}", output.probabilities.values);
+    let session = engine.classification(model).await?;
+    let output = session.classify(messages).await?;
+    println!("Output: {:?}", output.probabilities.values);
 
-  Ok(())
+    Ok(())
 }
 ```
 
@@ -913,25 +900,25 @@ from uzu import ClassificationMessage, Engine, EngineConfig
 
 
 async def main() -> None:
-  engine_config = EngineConfig.create()
-  engine = await Engine.create(engine_config)
+    engine_config = EngineConfig.create()
+    engine = await Engine.create(engine_config)
 
-  model = await engine.model("trymirai/chat-moderation-router")
-  if model is None:
-    raise RuntimeError("Model not found")
-  async for update in (await engine.download(model)).iterator():
-    print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
-  print()
+    model = await engine.model("trymirai/chat-moderation-router")
+    if model is None:
+        raise RuntimeError("Model not found")
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
 
-  messages = [ClassificationMessage.user("Hi")]
+    messages = [ClassificationMessage.user("Hi")]
 
-  session = await engine.classification(model)
-  output = await session.classify(messages)
-  print(f"Output: {output.probabilities.values}")
+    session = await engine.classification(model)
+    output = await session.classify(messages)
+    print(f"Output: {output.probabilities.values}")
 
 
 if __name__ == "__main__":
-  asyncio.run(main())
+    asyncio.run(main())
 ```
 
 </details>
@@ -944,24 +931,24 @@ import Foundation
 import Uzu
 
 public func runClassification() async throws {
-  let engine = try await Engine.create(config: .create())
-
-  guard let model = try await engine.model(identifier: "trymirai/chat-moderation-router") else {
-    return
-  }
-  for try await update in try await engine.download(model: model).iterator() {
-    print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
-    fflush(stdout)
-  }
-  print()
-
-  let messages = [
-    ClassificationMessage.user(content: "Hi")
-  ]
-
-  let session = try await engine.classification(model: model)
-  let output = try await session.classify(input: messages)
-  print("Output: \(output.probabilities.values)")
+    let engine = try await Engine.create(config: .create())
+    
+    guard let model = try await engine.model(identifier: "trymirai/chat-moderation-router") else {
+        return
+    }
+    for try await update in try await engine.download(model: model).iterator() {
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
+    }
+    print()
+    
+    let messages = [
+        ClassificationMessage.user(content: "Hi")
+    ]
+    
+    let session = try await engine.classification(model: model)
+    let output = try await session.classify(input: messages)
+    print("Output: \(output.probabilities.values)")
 }
 ```
 
@@ -971,36 +958,37 @@ public func runClassification() async throws {
 <summary>TypeScript</summary>
 
 ```ts
-import {ClassificationMessage, Engine, EngineConfig} from '@trymirai/uzu';
+import { ClassificationMessage, Engine, EngineConfig } from '@trymirai/uzu';
 
 async function main() {
-  let engineConfig = EngineConfig.create();
-  let engine = await Engine.create(engineConfig);
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
 
-  let model = await engine.model('trymirai/chat-moderation-router');
-  if (!model) {
-    throw new Error('Model not found');
-  }
-  for await (const update of await engine.download(model)) {
-    process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
-  }
-  console.log();
+    let model = await engine.model('trymirai/chat-moderation-router');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    console.log();
 
-  let messages = [
-    ClassificationMessage.user('Hi')
-  ];
+    let messages = [
+        ClassificationMessage.user('Hi')
+    ];
 
-  let session = await engine.classification(model);
-  let output = await session.classify(messages);
-  console.log('Output: ', output.probabilities.values);
+    let session = await engine.classification(model);
+    let output = await session.classify(messages);
+    console.log('Output: ', output.probabilities.values);
 }
 
 main().catch((error) => {
-  console.error(error);
+    console.error(error);
 });
 ```
 
 </details>
+
 
 ### Tool calls
 
@@ -1016,44 +1004,44 @@ use nagare::tool::{func_def::ErrorFuture, uzu_tool_closure, uzu_tool_function};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use shoji::types::{
-  basic::{SamplingMethod, SamplingPolicy},
-  session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+    basic::{SamplingMethod, SamplingPolicy},
+    session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
 };
 use uzu::engine::{Engine, EngineConfig};
 
 /// A geographic coordinate.
 #[derive(Serialize, Deserialize, JsonSchema)]
 struct Coordinate {
-  /// Latitude in decimal degrees.
-  latitude: f64,
-  /// Longitude in decimal degrees.
-  longitude: f64,
+    /// Latitude in decimal degrees.
+    latitude: f64,
+    /// Longitude in decimal degrees.
+    longitude: f64,
 }
 
 /// Returns current location in coordinates
 #[uzu_tool_function]
 fn get_current_location() -> Result<Coordinate, ErrorFuture> {
-  Ok(Coordinate {
-    latitude: 51.5074,
-    longitude: -0.1278,
-  })
+    Ok(Coordinate {
+        latitude: 51.5074,
+        longitude: -0.1278,
+    })
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let engine = Engine::new(EngineConfig::default()).await?;
-  let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
-  let downloader = engine.download(&model).await?;
-  while let Some(update) = downloader.next().await {
-    print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
-    io::stdout().flush()?;
-  }
-  println!();
+    let engine = Engine::new(EngineConfig::default()).await?;
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
+    let downloader = engine.download(&model).await?;
+    while let Some(update) = downloader.next().await {
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
+        io::stdout().flush()?;
+    }
+    println!();
 
-  let mut session = engine.chat(model, ChatConfig::default()).await?;
-  session.add_tool(get_current_location).await?;
-  session
-          .add_tool(uzu_tool_closure! {
+    let mut session = engine.chat(model, ChatConfig::default()).await?;
+    session.add_tool(get_current_location).await?;
+    session
+        .add_tool(uzu_tool_closure! {
             /// Returns temperature in provided location
             get_current_temperature: |
                 /// Latitude in decimal degrees.
@@ -1064,26 +1052,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(25.0)
             }
         })
-          .await?;
+        .await?;
 
-  let messages = vec![
-    ChatMessage::system().with_text("You are a helpful assistant".to_string()),
-    ChatMessage::user().with_text("What temperature is it now at my location?".to_string()),
-  ];
+    let messages = vec![
+        ChatMessage::system().with_text("You are a helpful assistant".to_string()),
+        ChatMessage::user().with_text("What temperature is it now at my location?".to_string()),
+    ];
 
-  let config = ChatReplyConfig {
-    sampling_policy: SamplingPolicy::Custom {
-      method: SamplingMethod::Greedy {},
-    },
-    ..ChatReplyConfig::default()
-  };
-  let replies = session.reply(messages.clone(), config).await?;
-  if let Some(reply) = replies.last() {
-    println!("Reasoning: {}", reply.message.reasoning().unwrap_or_default());
-    println!("Text: {}", reply.message.text().unwrap_or_default());
-  }
+    let config = ChatReplyConfig {
+        sampling_policy: SamplingPolicy::Custom {
+            method: SamplingMethod::Greedy {},
+        },
+        ..ChatReplyConfig::default()
+    };
+    let replies = session.reply(messages.clone(), config).await?;
+    if let Some(reply) = replies.last() {
+        println!("Reasoning: {}", reply.message.reasoning().unwrap_or_default());
+        println!("Text: {}", reply.message.text().unwrap_or_default());
+    }
 
-  Ok(())
+    Ok(())
 }
 ```
 
@@ -1099,76 +1087,76 @@ from typing import Annotated
 from pydantic import BaseModel
 
 from uzu import (
-  ChatConfig,
-  ChatMessage,
-  ChatReplyConfig,
-  Engine,
-  EngineConfig,
-  SamplingMethod,
-  SamplingPolicy,
-  uzu_tool_function,
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    SamplingMethod,
+    SamplingPolicy,
+    uzu_tool_function,
 )
 
 
 class Coordinate(BaseModel):
-  """A geographic coordinate.
+    """A geographic coordinate.
 
-  Attributes:
-      latitude: Latitude in decimal degrees.
-      longitude: Longitude in decimal degrees.
-  """
+    Attributes:
+        latitude: Latitude in decimal degrees.
+        longitude: Longitude in decimal degrees.
+    """
 
-  latitude: float
-  longitude: Annotated[float, "Longitude in decimal degrees."]
+    latitude: float
+    longitude: Annotated[float, "Longitude in decimal degrees."]
 
 
 @uzu_tool_function(name="get_location", description="Return the current location in coordinates")
 def get_current_location() -> Coordinate:
-  return Coordinate(latitude=51.5074, longitude=-0.1278)
+    return Coordinate(latitude=51.5074, longitude=-0.1278)
 
 
 @uzu_tool_function
 def get_current_temperature(
-        latitude: float,
-        longitude: Annotated[float, "Longitude in decimal degrees."],
+    latitude: float,
+    longitude: Annotated[float, "Longitude in decimal degrees."],
 ) -> float:
-  """Return the temperature at the provided coordinates.
+    """Return the temperature at the provided coordinates.
 
-  Args:
-      latitude: Latitude in decimal degrees.
-      longitude: This is overridden by the Annotated description.
-  """
-  _ = latitude, longitude
-  return 25.0
+    Args:
+        latitude: Latitude in decimal degrees.
+        longitude: This is overridden by the Annotated description.
+    """
+    _ = latitude, longitude
+    return 25.0
 
 
 async def main() -> None:
-  engine = await Engine.create(EngineConfig.create())
-  model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
-  if model is None:
-    raise RuntimeError("Model not found")
-  async for update in (await engine.download(model)).iterator():
-    print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
-  print()
+    engine = await Engine.create(EngineConfig.create())
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        raise RuntimeError("Model not found")
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
 
-  session = await engine.chat(model, ChatConfig.create())
-  await session.add_tool(get_current_location)
-  await session.add_tool(get_current_temperature)
+    session = await engine.chat(model, ChatConfig.create())
+    await session.add_tool(get_current_location)
+    await session.add_tool(get_current_temperature)
 
-  messages = [
-    ChatMessage.system().with_text("You are a helpful assistant"),
-    ChatMessage.user().with_text("What temperature is it now at my location?"),
-  ]
-  config = ChatReplyConfig.create().with_sampling_policy(SamplingPolicy.Custom(method=SamplingMethod.Greedy()))
-  replies = await session.reply(messages, config)
-  if replies:
-    message = replies[-1].message
-    print(f"Reasoning: {message.reasoning or ''}")
-    print(f"Text: {message.text or ''}")
+    messages = [
+        ChatMessage.system().with_text("You are a helpful assistant"),
+        ChatMessage.user().with_text("What temperature is it now at my location?"),
+    ]
+    config = ChatReplyConfig.create().with_sampling_policy(SamplingPolicy.Custom(method=SamplingMethod.Greedy()))
+    replies = await session.reply(messages, config)
+    if replies:
+        message = replies[-1].message
+        print(f"Reasoning: {message.reasoning or ''}")
+        print(f"Text: {message.text or ''}")
 
 
 if __name__ == "__main__":
-  asyncio.run(main())
+    asyncio.run(main())
 ```
 
 </details>
@@ -1183,65 +1171,65 @@ import Uzu
 
 @Generable
 private struct Coordinate: Codable, Sendable {
-  @Guide(description: "Latitude in decimal degrees.")
-  let latitude: Double
+    @Guide(description: "Latitude in decimal degrees.")
+    let latitude: Double
 
-  @Guide(description: "Longitude in decimal degrees.")
-  let longitude: Double
+    @Guide(description: "Longitude in decimal degrees.")
+    let longitude: Double
 }
 
 private struct GetCurrentLocation: Tool {
-  let description = "Returns current location in coordinates"
+    let description = "Returns current location in coordinates"
 
-  @Generable
-  struct Arguments {
-  }
+    @Generable
+    struct Arguments {
+    }
 
-  func call(arguments: Arguments) async throws -> Coordinate {
-    Coordinate(latitude: 51.5074, longitude: -0.1278)
-  }
+    func call(arguments: Arguments) async throws -> Coordinate {
+        Coordinate(latitude: 51.5074, longitude: -0.1278)
+    }
 }
 
 private struct GetCurrentTemperature: Tool {
-  let description = "Returns temperature in provided location"
+    let description = "Returns temperature in provided location"
 
-  func call(arguments: Coordinate) async throws -> Double {
-    _ = arguments
-    return 25.0
-  }
+    func call(arguments: Coordinate) async throws -> Double {
+        _ = arguments
+        return 25.0
+    }
 }
 
 public func runToolCalls() async throws {
-  let engine = try await Engine.create(config: .create())
-  guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
-    throw ToolCallsExampleError.modelNotFound
-  }
-  for try await update in try await engine.download(model: model).iterator() {
-    print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
-    fflush(stdout)
-  }
-  print()
+    let engine = try await Engine.create(config: .create())
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
+        throw ToolCallsExampleError.modelNotFound
+    }
+    for try await update in try await engine.download(model: model).iterator() {
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
+    }
+    print()
 
-  let session = try await engine.chat(model: model, config: .create())
-  try await session.addTool(GetCurrentLocation())
-  try await session.addTool(GetCurrentTemperature())
+    let session = try await engine.chat(model: model, config: .create())
+    try await session.addTool(GetCurrentLocation())
+    try await session.addTool(GetCurrentTemperature())
 
-  let messages = [
-    ChatMessage.system().withText(text: "You are a helpful assistant"),
-    ChatMessage.user().withText(text: "What temperature is it now at my location?"),
-  ]
-  let reply_config = ChatReplyConfig.create().withSamplingMethod(samplingMethod: .greedy)
-  let replies = try await session.reply(input: messages, config: reply_config)
-  guard let message = replies.last?.message else {
-    return
-  }
+    let messages = [
+        ChatMessage.system().withText(text: "You are a helpful assistant"),
+        ChatMessage.user().withText(text: "What temperature is it now at my location?"),
+    ]
+    let reply_config = ChatReplyConfig.create().withSamplingMethod(samplingMethod: .greedy)
+    let replies = try await session.reply(input: messages, config: reply_config)
+    guard let message = replies.last?.message else {
+        return
+    }
 
-  print("Reasoning: \(message.reasoning() ?? "")")
-  print("Text: \(message.text() ?? "")")
+    print("Reasoning: \(message.reasoning() ?? "")")
+    print("Text: \(message.text() ?? "")")
 }
 
 private enum ToolCallsExampleError: Swift.Error {
-  case modelNotFound
+    case modelNotFound
 }
 ```
 
@@ -1252,90 +1240,92 @@ private enum ToolCallsExampleError: Swift.Error {
 
 ```ts
 import {
-  ChatConfig,
-  ChatMessage,
-  ChatReplyConfig,
-  Engine,
-  EngineConfig,
-  SamplingMethodGreedy,
-  SamplingPolicyCustom,
-  uzuToolFunction,
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    SamplingMethodGreedy,
+    SamplingPolicyCustom,
+    uzuToolFunction,
 } from '@trymirai/uzu';
 import * as z from 'zod';
 
 
 const Coordinate = z.object({
-  latitude: z.number().describe('Latitude in decimal degrees.'),
-  longitude: z.number().describe('Longitude in decimal degrees.'),
+    latitude: z.number().describe('Latitude in decimal degrees.'),
+    longitude: z.number().describe('Longitude in decimal degrees.'),
 });
 
 type Coordinate = z.infer<typeof Coordinate>;
 
 
 const getCurrentLocation = uzuToolFunction({
-  name: 'get_location',
-  description: 'Return the current location in coordinates',
-  parameters: z.object({}),
-  returns: Coordinate,
-  handler: (): Coordinate => ({
-    latitude: 51.5074,
-    longitude: -0.1278,
-  }),
+    name: 'get_location',
+    description: 'Return the current location in coordinates',
+    parameters: z.object({}),
+    returns: Coordinate,
+    handler: (): Coordinate => ({
+        latitude: 51.5074,
+        longitude: -0.1278,
+    }),
 });
 
 
 async function calculateCurrentTemperature({latitude, longitude}: Coordinate): Promise<number> {
-  if (!Number.isFinite(Math.hypot(latitude, longitude))) {
-    throw new RangeError('Coordinates must be finite');
-  }
-  return 25;
+    if (!Number.isFinite(Math.hypot(latitude, longitude))) {
+        throw new RangeError('Coordinates must be finite');
+    }
+    return 25;
 }
 
 const getCurrentTemperature = uzuToolFunction({
-  name: 'get_current_temperature',
-  description: 'Return the temperature at the provided coordinates',
-  parameters: Coordinate,
-  returns: z.number(),
-  handler: calculateCurrentTemperature,
+    name: 'get_current_temperature',
+    description: 'Return the temperature at the provided coordinates',
+    parameters: Coordinate,
+    returns: z.number(),
+    handler: calculateCurrentTemperature,
 });
 
 
 async function main() {
-  const engine = await Engine.create(EngineConfig.create());
-  const model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
-  if (!model) {
-    throw new Error('Model not found');
-  }
-  for await (const update of await engine.download(model)) {
-    process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
-  }
-  process.stdout.write('\n');
+    const engine = await Engine.create(EngineConfig.create());
+    const model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    process.stdout.write('\n');
 
-  const session = await engine.chat(model, ChatConfig.create());
-  await session.addTool(getCurrentLocation);
-  await session.addTool(getCurrentTemperature);
+    const session = await engine.chat(model, ChatConfig.create());
+    await session.addTool(getCurrentLocation);
+    await session.addTool(getCurrentTemperature);
 
-  const messages = [
-    ChatMessage.system().withText('You are a helpful assistant'),
-    ChatMessage.user().withText('What temperature is it now at my location?'),
-  ];
-  const config = ChatReplyConfig.create().withSamplingPolicy(
-          new SamplingPolicyCustom(new SamplingMethodGreedy()),
-  );
-  const replies = await session.reply(messages, config);
-  const message = replies[replies.length - 1]?.message;
-  if (message) {
-    console.log('Reasoning:', message.reasoning ?? '');
-    console.log('Text:', message.text ?? '');
-  }
+    const messages = [
+        ChatMessage.system().withText('You are a helpful assistant'),
+        ChatMessage.user().withText('What temperature is it now at my location?'),
+    ];
+    const config = ChatReplyConfig.create().withSamplingPolicy(
+        new SamplingPolicyCustom(new SamplingMethodGreedy()),
+    );
+    const replies = await session.reply(messages, config);
+    const message = replies[replies.length - 1]?.message;
+    if (message) {
+        console.log('Reasoning:', message.reasoning ?? '');
+        console.log('Text:', message.text ?? '');
+    }
 }
 
 main().catch((error: unknown) => {
-  console.error(error);
+    console.error(error);
 });
 ```
 
 </details>
+
+
 
 ## Development
 
@@ -1348,18 +1338,18 @@ main().catch((error: unknown) => {
 It supports:
 
 - Backends:
-  - `metal`
-  - `cpu`
+    - `metal`
+    - `cpu`
 - Targets:
-  - `aarch64-apple-darwin`
-  - `aarch64-apple-ios`
-  - `aarch64-apple-ios-sim`
-  - `aarch64-pc-windows-msvc` _(in progress)_
-  - `aarch64-unknown-linux-gnu` _(in progress)_
-  - `wasm32-wasip1-threads` _(in progress)_
-  - `x86_64-apple-darwin`
-  - `x86_64-pc-windows-msvc` _(in progress)_
-  - `x86_64-unknown-linux-gnu` _(in progress)_
+    - `aarch64-apple-darwin`
+    - `aarch64-apple-ios`
+    - `aarch64-apple-ios-sim`
+    - `aarch64-pc-windows-msvc` _(in progress)_
+    - `aarch64-unknown-linux-gnu` _(in progress)_
+    - `wasm32-wasip1-threads` _(in progress)_
+    - `x86_64-apple-darwin`
+    - `x86_64-pc-windows-msvc` _(in progress)_
+    - `x86_64-unknown-linux-gnu` _(in progress)_
 
 <br>
 For initial setup we recommend running <code>cargo tools setup</code>, which installs all necessary dependencies (<code>rustup</code>, <code>uv</code>, <code>pnpm</code>, <code>Rust targets</code>, <code>Metal toolchain</code>, ...) if not already present.
@@ -1435,8 +1425,7 @@ You can also run `uzu` as an OpenAI-compatible HTTP server:
 cargo run --release -p cli -- server --model trymirai/Qwen3.5-4B-M
 ```
 
-The model is loaded on startup (and downloaded first if needed). By default the server listens on `127.0.0.1:8000`;
-override the address with `--host` and `--port`:
+The model is loaded on startup (and downloaded first if needed). By default the server listens on `127.0.0.1:8000`; override the address with `--host` and `--port`:
 
 ```bash
 cargo run --release -p cli -- server --model trymirai/Qwen3.5-4B-M --host 0.0.0.0 --port 8080
@@ -1444,8 +1433,7 @@ cargo run --release -p cli -- server --model trymirai/Qwen3.5-4B-M --host 0.0.0.
 
 It exposes the following endpoints, available both at the root and under `/v1`:
 
-- `POST /v1/chat/completions` — chat completions, with streaming when `"stream": true`. Honors `temperature`, `top_p`,
-  `top_k`, and `max_tokens`.
+- `POST /v1/chat/completions` — chat completions, with streaming when `"stream": true`. Honors `temperature`, `top_p`, `top_k`, and `max_tokens`.
 - `GET /v1/models` — lists the loaded model.
 
 ```bash
@@ -1458,10 +1446,11 @@ curl http://127.0.0.1:8000/v1/chat/completions \
     }'
 ```
 
+
+
 ## Troubleshooting
 
-If you experience any problems, please contact us via [Discord](https://discord.com/invite/trymirai)
-or [email](mailto:contact@getmirai.co).
+If you experience any problems, please contact us via [Discord](https://discord.com/invite/trymirai) or [email](mailto:contact@getmirai.co).
 
 ## License
 
