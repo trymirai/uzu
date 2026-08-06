@@ -95,9 +95,10 @@ PUBLIC KERNEL(AncestorAttention)(
   device bfloat4* node_vectors = (device bfloat4*)node_kv;
   const device bfloat4* current_row = (const device bfloat4*)current_qkv + row * qkv_vectors;
 
-  // RoPE, fused. Channel c pairs with c + HEAD_DIM/2, which lives exactly
-  // vectors_per_head/2 lanes away, so the partner value comes from a shuffle
-  // rather than a second pass over the buffer.
+  // Rotate this node's query and key by its position, here rather than in a
+  // pass of its own. The rotation pairs every channel with one from the other
+  // half of the head, and a thread 16 lanes over already holds that half, so we
+  // ask it directly instead of reading the buffer a second time.
   static_assert(vectors_per_head == METAL_SIMD_SIZE, "one lane per head vector");
   const uint depth = node_metadata[uint(MetadataIdx::Depth) * rows + row];
   const uint rope_position = min(depth, max_depth - 1u) + 1u;
@@ -150,18 +151,14 @@ PUBLIC KERNEL(AncestorAttention)(
     });
   }
 
-  {
-    const float score = simd_sum(dot(query, rotated_key));
-    const float4 own_value = float4(current_row[current_value_offset]);
-    const float new_max = max(max_score, score);
-    const float old_factor = fast::exp(max_score - new_max);
-    sum *= old_factor;
-    values *= old_factor;
-    const float factor = fast::exp(score - new_max);
-    sum += factor;
-    values += factor * own_value;
-    max_score = new_max;
-  }
+  const float own_score = simd_sum(dot(query, rotated_key));
+  const float4 own_value = float4(current_row[current_value_offset]);
+  const float own_max = max(max_score, own_score);
+  const float rescale = fast::exp(max_score - own_max);
+  const float own_factor = fast::exp(own_score - own_max);
+  sum = sum * rescale + own_factor;
+  values = values * rescale + own_factor * own_value;
+  max_score = own_max;
 
   if (node_capacity > 0u) {
     const uint node = min(node_indices[row], last_node);
