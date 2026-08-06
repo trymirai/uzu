@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{app::ModelWithState, sections::Section};
+use super::{app::ModelWithState, sections::Section};
 
 pub struct ModelOrganizer;
 

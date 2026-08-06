@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 mod bench;
 mod interactive;
 mod server;
+mod storage;
 
 #[derive(Parser)]
 #[command(name = "cli", bin_name = "cli")]
@@ -30,6 +31,10 @@ enum Commands {
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
     },
+    Storage {
+        #[arg(long, value_enum, default_value_t = storage::DownloadManagerCliType::default())]
+        download_manager: storage::DownloadManagerCliType,
+    },
 }
 
 #[tokio::main]
@@ -47,6 +52,9 @@ async fn main() -> Result<()> {
             port,
             host,
         }) => server::run_server(model, host, port).await?,
+        Some(Commands::Storage {
+            download_manager,
+        }) => storage::run(download_manager).await?,
         None => run_interactive(cli.model).await?,
     }
 

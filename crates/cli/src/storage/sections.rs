@@ -1,6 +1,6 @@
 use uzu::storage::types::DownloadPhase;
 
-use crate::app::ModelWithState;
+use super::app::ModelWithState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Section {

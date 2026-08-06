@@ -7,7 +7,7 @@ use shoji::types::model::Model;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use uzu::{engine::Engine, storage::types::DownloadState};
 
-use crate::{events::AppEvent, models::ModelOrganizer, sections::Section};
+use super::{events::AppEvent, models::ModelOrganizer, sections::Section};
 
 /// Holds a Model handle and its cached state for UI rendering
 #[derive(Clone)]

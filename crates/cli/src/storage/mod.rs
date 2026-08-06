@@ -1,5 +1,3 @@
-#![cfg(target_os = "macos")]
-
 mod app;
 mod events;
 mod models;
@@ -8,7 +6,8 @@ mod ui;
 
 use std::{io, sync::Arc};
 
-use clap::{Parser, ValueEnum};
+use anyhow::Result;
+use clap::ValueEnum;
 use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -16,16 +15,11 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use uzu::engine::{DownloadManagerType, Engine, EngineConfig};
 
-use crate::{app::App, events::EventHandler};
-
-#[derive(Debug, Clone, Parser)]
-struct Cli {
-    #[arg(long, value_enum, default_value_t = DownloadManagerCliType::default())]
-    download_manager: DownloadManagerCliType,
-}
+use self::{app::App, events::EventHandler};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum DownloadManagerCliType {
+pub(crate) enum DownloadManagerCliType {
+    #[cfg(target_vendor = "apple")]
     Native,
     Universal,
 }
@@ -39,6 +33,7 @@ impl Default for DownloadManagerCliType {
 impl From<DownloadManagerType> for DownloadManagerCliType {
     fn from(download_manager_type: DownloadManagerType) -> Self {
         match download_manager_type {
+            #[cfg(target_vendor = "apple")]
             DownloadManagerType::Native => Self::Native,
             DownloadManagerType::Universal => Self::Universal,
         }
@@ -48,18 +43,19 @@ impl From<DownloadManagerType> for DownloadManagerCliType {
 impl From<DownloadManagerCliType> for DownloadManagerType {
     fn from(download_manager_type: DownloadManagerCliType) -> Self {
         match download_manager_type {
+            #[cfg(target_vendor = "apple")]
             DownloadManagerCliType::Native => Self::Native,
             DownloadManagerCliType::Universal => Self::Universal,
         }
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+pub(crate) async fn run(download_manager: DownloadManagerCliType) -> Result<()> {
     dotenvy::dotenv().ok();
     let runtime = tokio::runtime::Handle::current();
-    let config = EngineConfig::default().with_download_manager_type(cli.download_manager.into());
+    let config = EngineConfig::default()
+        .with_application_identifier("com.trymirai.cli".to_string())
+        .with_download_manager_type(download_manager.into());
     let engine = Arc::new(Engine::new(config).await?);
 
     // Setup terminal
@@ -81,8 +77,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
-    if let Err(e) = res {
-        tracing::error!("Application error: {:?}", e);
+    if let Err(error) = res {
+        tracing::error!("Application error: {error:?}");
     }
 
     Ok(())

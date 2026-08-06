@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
 };
 
-use crate::{
+use super::{
     app::{App, ModelWithState},
     models::ModelOrganizer,
     sections::Section,
