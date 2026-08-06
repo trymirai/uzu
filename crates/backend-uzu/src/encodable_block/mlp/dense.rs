@@ -35,8 +35,14 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        encoder.push_debug_group("mlp (dense)");
+
         let fused_up = self.up.encode(input, batch_dim, encoder)?;
         let hidden = self.gate.encode(encoder, &fused_up, batch_dim)?;
-        self.down.encode(hidden, batch_dim, encoder)
+        let output = self.down.encode(hidden, batch_dim, encoder)?;
+
+        encoder.pop_debug_group();
+
+        Ok(output)
     }
 }

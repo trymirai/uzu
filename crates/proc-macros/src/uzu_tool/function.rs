@@ -73,10 +73,11 @@ fn expand_tool_function(mut func: ItemFn) -> syn::Result<TokenStream2> {
     let arg_parsing = arg_parsing_tokens(&params, &name_str, &nagare);
 
     let arg_idents = params.iter().map(|param| &param.ident);
-    let mut call = quote!(Self::call(#(#arg_idents),*));
-    if is_async {
-        call = quote!(#call.await);
-    }
+    let call = if is_async {
+        quote!(Self::call(#(#arg_idents),*).await)
+    } else {
+        quote!(#nagare::tool::func_def::run_blocking(move || Self::call(#(#arg_idents),*)).await?)
+    };
     let map_err = quote!(.map_err(|error| -> #nagare::tool::func_def::ErrorFuture { error.into() })?);
     let call_stmt = match (&ok_type, is_result) {
         (Some(_), true) => quote!(let result = #call #map_err;),

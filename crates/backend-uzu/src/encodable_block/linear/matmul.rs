@@ -349,13 +349,19 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        self.encode_with_a(
+        encoder.push_debug_group("matmul");
+
+        let output = self.encode_with_a(
             MatmulA::FullPrecision {
                 values: &input,
                 offset: 0,
             },
             batch_dim,
             encoder,
-        )
+        )?;
+
+        encoder.pop_debug_group();
+
+        Ok(output)
     }
 }

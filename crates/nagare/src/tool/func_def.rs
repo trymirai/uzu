@@ -82,6 +82,12 @@ pub fn null_result() -> Value {
     Value::from(serde_json::Value::Null)
 }
 
+/// Runs a synchronous tool on the blocking thread pool so heavy work
+/// doesn't stall the async runtime.
+pub async fn run_blocking<T: Send + 'static>(func: impl FnOnce() -> T + Send + 'static) -> Result<T, ErrorFuture> {
+    tokio::task::spawn_blocking(func).await.map_err(|error| -> ErrorFuture { error.into() })
+}
+
 fn coerce_to_schema(
     value: serde_json::Value,
     schema: &serde_json::Value,

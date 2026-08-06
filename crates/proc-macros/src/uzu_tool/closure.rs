@@ -119,10 +119,11 @@ fn expand_tool_closure(tool: ToolClosure) -> syn::Result<TokenStream2> {
     };
 
     let arg_idents = params.iter().map(|param| &param.ident);
-    let mut call = quote!(__uzu_tool_func(#(#arg_idents),*));
-    if is_async {
-        call = quote!(#call.await);
-    }
+    let call = if is_async {
+        quote!(__uzu_tool_func(#(#arg_idents),*).await)
+    } else {
+        quote!(#nagare::tool::func_def::run_blocking(move || __uzu_tool_func(#(#arg_idents),*)).await?)
+    };
     let result_stmt = match &return_type {
         Some(ty) => quote!(let __uzu_result: #ty = #call;),
         None => quote!(let __uzu_result = #call;),

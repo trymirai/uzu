@@ -94,6 +94,8 @@ impl<B: Backend> PredictionHead<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        encoder.push_debug_group("prediction head");
+
         let mut hidden = self.dense_projection.encode(input, batch_dim, encoder)?;
         self.activation_kernel.encode(
             None::<&Allocation<B>>,
@@ -103,6 +105,10 @@ impl<B: Backend> PredictionHead<B> {
             encoder,
         );
         let normalized = self.normalization.encode(&hidden, 0, batch_dim, None, encoder)?;
-        self.readout.encode(normalized, batch_dim, encoder)
+        let logits = self.readout.encode(normalized, batch_dim, encoder)?;
+
+        encoder.pop_debug_group();
+
+        Ok(logits)
     }
 }

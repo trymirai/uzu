@@ -265,10 +265,16 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        encoder.push_debug_group("attention");
+
         assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        self.attend(hidden, precalculated_rope, batch_dim, state, encoder)
+        let output = self.attend(hidden, precalculated_rope, batch_dim, state, encoder)?;
+
+        encoder.pop_debug_group();
+
+        Ok(output)
     }
 }

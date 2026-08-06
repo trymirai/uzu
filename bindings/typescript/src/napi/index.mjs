@@ -107,7 +107,6 @@ export const HashMethod = cjs.HashMethod;
 export const ImageFormat = cjs.ImageFormat;
 export const ImageTheme = cjs.ImageTheme;
 export const ReasoningEffort = cjs.ReasoningEffort;
-export const CliApplication = cjs.CliApplication;
 export const Device = cjs.Device;
 export const Downloader = cjs.Downloader;
 export const DownloaderStream = cjs.DownloaderStream;

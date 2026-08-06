@@ -87,6 +87,30 @@ struct QuantizedBlockLoaderScaleZeroPoint {
         ),
         signed_codes(signed_codes_) {}
 
+  QuantizedBlockLoaderScaleZeroPoint(
+      const device uint8_t* src_,
+      const device T* scales_,
+      const bool signed_codes_,
+      const int src_leading_dim_,
+      const int groups_per_row_,
+      threadgroup T* dst_,
+      ushort simd_group_id [[simdgroup_index_in_threadgroup]],
+      ushort simd_lane_id [[thread_index_in_simdgroup]]
+  )
+      : QuantizedBlockLoaderScaleZeroPoint(
+            src_,
+            scales_,
+            static_cast<const device uint8_t*>(nullptr),
+            signed_codes_,
+            src_leading_dim_,
+            groups_per_row_,
+            dst_,
+            simd_group_id,
+            simd_lane_id
+        ) {
+    static_assert(SCALE_SYMMETRIC, "zero-point-free loader construction requires symmetric quantization");
+  }
+
   inline void current_scale_bias(thread T& out_scale, thread T& out_bias) const {
     uint zero_point_value;
     T scale_value;

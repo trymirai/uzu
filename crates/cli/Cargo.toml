@@ -13,28 +13,41 @@ name = "cli"
 path = "src/main.rs"
 
 [features]
-default = ["backend-cpu", "backend-metal", "capability-grammar", "capability-cli"]
+default = ["backend-cpu", "backend-metal", "capability-grammar"]
 backend-cpu = ["uzu/backend-cpu"]
 backend-metal = ["uzu/backend-metal"]
 capability-grammar = ["uzu/capability-grammar"]
-capability-cli = ["uzu/capability-cli"]
 
 [dependencies]
-backend-uzu.workspace = true
-uzu = { workspace = true, default-features = false }
-tokio = { workspace = true, features = ["full"] }
 anyhow.workspace = true
+backend-uzu.workspace = true
+chrono.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
+crossterm.workspace = true
+dirs.workspace = true
+dotenvy.workspace = true
+futures-util.workspace = true
+indexmap.workspace = true
 indicatif.workspace = true
+indoc.workspace = true
+iocraft.workspace = true
+jsonschema.workspace = true
+nagare.workspace = true
+ratatui.workspace = true
+rocket.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-jsonschema.workspace = true
-rocket.workspace = true
-uuid.workspace = true
-tokio-stream.workspace = true
-sysinfo.workspace = true
 shoji.workspace = true
+sysinfo.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-stream.workspace = true
+tracing.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+uuid.workspace = true
+uzu = { workspace = true, default-features = false }
 
 [lints]
 workspace = true

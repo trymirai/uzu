@@ -540,6 +540,8 @@ impl<B: Backend> Embedding<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        encoder.push_debug_group("embedding lookup");
+
         let mut output = encoder
             .allocate_scratch(size_for_shape(&[batch_dim, self.model_dim as usize], self.data_type))
             .map_err(EmbeddingError::BackendError)?;
@@ -618,6 +620,8 @@ impl<B: Backend> Embedding<B> {
             },
         };
 
+        encoder.pop_debug_group();
+
         Ok(output)
     }
 
@@ -628,6 +632,8 @@ impl<B: Backend> Embedding<B> {
         output_data_type: DataType,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        encoder.push_debug_group("embedding readout");
+
         assert!(batch_dim > 0, "Embedding readout requires at least one row");
         let native_output = output_data_type == self.data_type;
         let input_hadamard = match &self.tying {
@@ -776,6 +782,8 @@ impl<B: Backend> Embedding<B> {
             }
         }
 
+        encoder.pop_debug_group();
+
         Ok(output_allocation)
     }
 
@@ -789,6 +797,8 @@ impl<B: Backend> Embedding<B> {
         ids_per_row: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        encoder.push_debug_group("embedding readout (sparse)");
+
         assert!(rows > 0 && ids_per_row > 0);
         let (b, readout, input_hadamard) = match &self.tying {
             EmbeddingTying::Tied {
@@ -894,6 +904,8 @@ impl<B: Backend> Embedding<B> {
                 encoder,
             )
             .map_err(EmbeddingError::BackendError)?;
+
+        encoder.pop_debug_group();
 
         Ok(output)
     }

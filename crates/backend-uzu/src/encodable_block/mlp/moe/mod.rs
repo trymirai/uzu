@@ -216,6 +216,8 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        encoder.push_debug_group("mlp (moe)");
+
         let total_rows = batch_dim * self.num_active_experts;
         let num_blocks = batch_dim.div_ceil(256);
         let num_tiles = self.num_routed_experts.div_ceil(512);
@@ -340,6 +342,8 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             self.num_active_experts as u32,
             encoder,
         );
+
+        encoder.pop_debug_group();
 
         Ok(output)
     }
