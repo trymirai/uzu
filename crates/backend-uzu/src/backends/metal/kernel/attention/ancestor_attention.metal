@@ -4,6 +4,7 @@
 #include "../common/integral_constant.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
+#include "../weaver/weaver_frontier.h"
 
 using namespace metal;
 
@@ -55,6 +56,9 @@ PUBLIC KERNEL(AncestorAttention)(
     const device bfloat* prefix_kv,
     device bfloat* node_kv,
     const device bfloat* current_qkv,
+    const device float* cosines,
+    const device float* sines,
+    const device uint* node_metadata,
     const device uint* ancestor_indices,
     const device uint* ancestor_counts,
     const device uint* node_indices,
@@ -63,6 +67,7 @@ PUBLIC KERNEL(AncestorAttention)(
     constant uint& prefix_length,
     constant uint& ancestor_stride,
     constant uint& node_capacity,
+    constant uint& max_depth,
     constant float& scale,
     const uint num_heads SPECIALIZE,
     const ThreadContext thread_context,
@@ -90,7 +95,29 @@ PUBLIC KERNEL(AncestorAttention)(
   device bfloat4* node_vectors = (device bfloat4*)node_kv;
   const device bfloat4* current_row = (const device bfloat4*)current_qkv + row * qkv_vectors;
 
-  const float4 query = float4(current_row[head_offset]) * scale;
+  // Rotate this node's query and key by its position, here rather than in a
+  // pass of its own. The rotation pairs every channel with one from the other
+  // half of the head, and a thread 16 lanes over already holds that half, so we
+  // ask it directly instead of reading the buffer a second time.
+  static_assert(vectors_per_head == METAL_SIMD_SIZE, "one lane per head vector");
+  const uint depth = node_metadata[uint(MetadataIdx::Depth) * rows + row];
+  const uint rope_position = min(depth, max_depth - 1u) + 1u;
+  const device float4* cosine_row = (const device float4*)(cosines + rope_position * HEAD_DIM);
+  const device float4* sine_row = (const device float4*)(sines + rope_position * HEAD_DIM);
+  const float4 cosine = cosine_row[lane];
+  const float4 sine = sine_row[lane];
+  const bool low_half = lane < (vectors_per_head / 2);
+
+  const float4 raw_query = float4(current_row[head_offset]);
+  const float4 paired_query = simd_shuffle_xor(raw_query, ushort(vectors_per_head / 2));
+  const float4 rotated_query =
+      low_half ? (raw_query * cosine - paired_query * sine) : (raw_query * cosine + paired_query * sine);
+
+  const float4 raw_key = float4(current_row[current_key_offset]);
+  const float4 paired_key = simd_shuffle_xor(raw_key, ushort(vectors_per_head / 2));
+  const float4 rotated_key = low_half ? (raw_key * cosine - paired_key * sine) : (raw_key * cosine + paired_key * sine);
+
+  const float4 query = rotated_query * scale;
 
   // prefix_length >= 1 (the u0 token): seed the online softmax from position 0.
   float max_score = simd_sum(dot(query, float4(prefix_vectors[head_offset])));
@@ -124,14 +151,19 @@ PUBLIC KERNEL(AncestorAttention)(
     });
   }
 
-  attend_qkv<1>(query, current_key_offset, current_value_offset, values, max_score, sum, [&](int) {
-    return current_row;
-  });
+  const float own_score = simd_sum(dot(query, rotated_key));
+  const float4 own_value = float4(current_row[current_value_offset]);
+  const float own_max = max(max_score, own_score);
+  const float rescale = fast::exp(max_score - own_max);
+  const float own_factor = fast::exp(own_score - own_max);
+  sum = sum * rescale + own_factor;
+  values = values * rescale + own_factor * own_value;
+  max_score = own_max;
 
   if (node_capacity > 0u) {
     const uint node = min(node_indices[row], last_node);
 
-    node_vectors[node * model_vectors + head_offset] = current_row[current_key_offset];
+    node_vectors[node * model_vectors + head_offset] = bfloat4(rotated_key);
     node_vectors[node_value_offset + node * model_vectors] = current_row[current_value_offset];
   }
 
