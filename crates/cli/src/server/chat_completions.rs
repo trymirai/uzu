@@ -23,7 +23,7 @@ use uuid::Uuid;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
     types::{
-        basic::{Grammar, SamplingMethod},
+        basic::{Grammar, ReasoningEffort, SamplingMethod},
         session::chat::{ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole},
     },
 };
@@ -55,6 +55,10 @@ pub struct ChatCompletionRequest {
     // Raw value (not typed) so a bad response_format is our 400, not Rocket's 422.
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
+    #[serde(default)]
+    // Raw value, not a typed string, so a bad reasoning_effort becomes our OpenAI 400
+    // rather than Rocket's 422 at request extraction.
+    pub reasoning_effort: Option<serde_json::Value>,
     #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
@@ -162,14 +166,89 @@ fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
-    messages
+fn to_chat_messages(
+    messages: &[OaiMessage],
+    reasoning_effort: Option<ReasoningEffort>,
+) -> Vec<ChatMessage> {
+    let mut messages = messages
         .iter()
         .map(|message| {
             let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
             ChatMessage::for_role(role).with_text(message.content.clone())
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if let (Some(effort), Some(message)) = (reasoning_effort, messages.last_mut()) {
+        *message = message.with_reasoning_effort(effort);
+    }
+    messages
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RequestValidationError {
+    UnsupportedReasoningEffort(&'static str),
+    InvalidReasoningEffort(String),
+}
+
+impl RequestValidationError {
+    fn message(&self) -> String {
+        match self {
+            RequestValidationError::UnsupportedReasoningEffort(value) => {
+                format!("reasoning_effort `{value}` is recognized but not supported yet")
+            },
+            RequestValidationError::InvalidReasoningEffort(value) => {
+                format!("reasoning_effort must be one of none, low, medium, high, disabled, default; got `{value}`")
+            },
+        }
+    }
+
+    fn code(&self) -> &'static str {
+        match self {
+            RequestValidationError::UnsupportedReasoningEffort(_) => "unsupported_reasoning_effort",
+            RequestValidationError::InvalidReasoningEffort(_) => "invalid_reasoning_effort",
+        }
+    }
+
+    fn param(&self) -> &'static str {
+        "reasoning_effort"
+    }
+}
+
+fn reasoning_effort_error_response(error: RequestValidationError) -> ChatCompletionResult {
+    ChatCompletionResult::Error(status::Custom(
+        Status::BadRequest,
+        Json(OaiErrorResponse {
+            error: OaiError {
+                message: error.message(),
+                kind: "invalid_request_error".to_string(),
+                param: Some(error.param().to_string()),
+                code: Some(error.code().to_string()),
+            },
+        }),
+    ))
+}
+
+fn parse_reasoning_effort(
+    value: Option<&serde_json::Value>
+) -> Result<Option<ReasoningEffort>, RequestValidationError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(value) = value.as_str() else {
+        return Err(RequestValidationError::InvalidReasoningEffort(value.to_string()));
+    };
+    match value {
+        "none" | "disabled" => Ok(Some(ReasoningEffort::Disabled)),
+        "default" => Ok(Some(ReasoningEffort::Default)),
+        // Local chat templates currently expose a thinking on/off control. Keep the requested
+        // level in the message so backends that can honor levels may do so, while local backends
+        // treat all non-disabled levels as thinking enabled.
+        "low" => Ok(Some(ReasoningEffort::Low)),
+        "medium" => Ok(Some(ReasoningEffort::Medium)),
+        "high" => Ok(Some(ReasoningEffort::High)),
+        "minimal" => Err(RequestValidationError::UnsupportedReasoningEffort("minimal")),
+        "xhigh" => Err(RequestValidationError::UnsupportedReasoningEffort("xhigh")),
+        other => Err(RequestValidationError::InvalidReasoningEffort(other.to_string())),
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -204,7 +283,7 @@ impl ResponseFormatError {
     }
 }
 
-fn request_error_response(error: ResponseFormatError) -> ChatCompletionResult {
+fn response_format_error_response(error: ResponseFormatError) -> ChatCompletionResult {
     ChatCompletionResult::Error(status::Custom(
         Status::BadRequest,
         Json(OaiErrorResponse {
@@ -508,9 +587,13 @@ pub async fn handle_chat_completions(
 
     let config = match build_reply_config(&request) {
         Ok(config) => config,
-        Err(error) => return request_error_response(error),
+        Err(error) => return response_format_error_response(error),
     };
-    let messages = to_chat_messages(&request.messages);
+    let reasoning_effort = match parse_reasoning_effort(request.reasoning_effort.as_ref()) {
+        Ok(reasoning_effort) => reasoning_effort,
+        Err(error) => return reasoning_effort_error_response(error),
+    };
+    let messages = to_chat_messages(&request.messages, reasoning_effort);
 
     if is_stream {
         let session = Arc::clone(&state.session);
