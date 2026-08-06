@@ -31,8 +31,8 @@ use uzu::{
 use crate::server::{
     ServerState,
     chat_tool_calls::{
-        OaiTool, OaiToolCall, backfill_tool_result_names, insert_tools_message, reply_tool_calls, to_tool_call,
-        tool_call_deltas, tool_call_result_block,
+        OaiTool, OaiToolCall, backfill_tool_result_names, choose_tools, insert_tools_message, reply_tool_calls,
+        to_tool_call, tool_call_deltas, tool_call_result_block, withhold_stream_text,
     },
 };
 
@@ -67,6 +67,9 @@ pub struct ChatCompletionRequest {
     pub response_format: Option<serde_json::Value>,
     #[serde(default)]
     pub tools: Option<Vec<OaiTool>>,
+    // Raw value like response_format: a bad tool_choice is our 400, not Rocket's 422.
+    #[serde(default)]
+    pub tool_choice: Option<serde_json::Value>,
     #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
@@ -196,11 +199,12 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
-pub(crate) fn build_messages(request: &ChatCompletionRequest) -> Vec<ChatMessage> {
+pub(crate) fn build_messages(request: &ChatCompletionRequest) -> Result<Vec<ChatMessage>, String> {
+    let tools = choose_tools(request.tools.as_deref(), request.tool_choice.as_ref())?;
     let mut messages = to_chat_messages(&request.messages);
     backfill_tool_result_names(&mut messages);
-    insert_tools_message(&mut messages, request.tools.as_deref());
-    messages
+    insert_tools_message(&mut messages, &tools);
+    Ok(messages)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -235,15 +239,19 @@ impl ResponseFormatError {
     }
 }
 
-fn request_error_response(error: ResponseFormatError) -> ChatCompletionResult {
+fn invalid_request_response(
+    param: &str,
+    code: &str,
+    message: String,
+) -> ChatCompletionResult {
     ChatCompletionResult::Error(status::Custom(
         Status::BadRequest,
         Json(OaiErrorResponse {
             error: OaiError {
-                message: error.message(),
+                message,
                 kind: "invalid_request_error".to_string(),
-                param: Some("response_format".to_string()),
-                code: Some(error.code().to_string()),
+                param: Some(param.to_string()),
+                code: Some(code.to_string()),
             },
         }),
     ))
@@ -462,9 +470,11 @@ async fn run_stream(
         None,
     )));
 
+    let has_tools = messages.iter().any(|message| !message.tool_namespaces().is_empty());
     let stream = session.reply_with_stream(messages, config).await;
     let mut emitted = 0usize;
     let mut emitted_tool_calls = 0usize;
+    let mut final_text = String::new();
     let mut finish_reason = "stop".to_string();
     let mut usage = ChatCompletionUsage::default();
     let mut errored = false;
@@ -479,7 +489,7 @@ async fn run_stream(
                 };
                 let text = reply.message.text().unwrap_or_default();
                 let start = (emitted..=text.len()).find(|&index| text.is_char_boundary(index)).unwrap_or(text.len());
-                if text.len() > start {
+                if !withhold_stream_text(has_tools, &text) && text.len() > start {
                     let delta = text[start..].to_string();
                     emitted = text.len();
                     let sent = sender.send(Event::data(chunk_json(
@@ -522,6 +532,7 @@ async fn run_stream(
                     finish_reason = map_finish_reason(reason);
                 }
                 usage = usage_from_stats(&reply.stats);
+                final_text = text;
             },
             ChatSessionStreamChunk::Error {
                 error,
@@ -544,6 +555,26 @@ async fn run_stream(
     }
 
     if !errored {
+        // Flush withheld text that survived in the final message.
+        // Text that was reclassified into tool calls is gone from it and stays suppressed.
+        let start =
+            (emitted..=final_text.len()).find(|&index| final_text.is_char_boundary(index)).unwrap_or(final_text.len());
+        if final_text.len() > start {
+            let sent = sender.send(Event::data(chunk_json(
+                &id,
+                &model,
+                created,
+                StreamDelta {
+                    content: Some(final_text[start..].to_string()),
+                    ..StreamDelta::default()
+                },
+                None,
+                None,
+            )));
+            if sent.is_err() {
+                return;
+            }
+        }
         // Same guard as the blocking path: candidates that never finalized produce a ToolCalls finish with
         // no emitted tool call deltas, which reads as stop.
         if emitted_tool_calls == 0 && finish_reason == "tool_calls" {
@@ -575,9 +606,12 @@ pub async fn handle_chat_completions(
 
     let config = match build_reply_config(&request) {
         Ok(config) => config,
-        Err(error) => return request_error_response(error),
+        Err(error) => return invalid_request_response("response_format", error.code(), error.message()),
     };
-    let messages = build_messages(&request);
+    let messages = match build_messages(&request) {
+        Ok(messages) => messages,
+        Err(detail) => return invalid_request_response("tool_choice", "invalid_tool_choice", detail),
+    };
 
     if is_stream {
         let session = Arc::clone(&state.session);

@@ -5,14 +5,18 @@ fn request(json: &str) -> ChatCompletionRequest {
     serde_json::from_str(json).expect("valid request json")
 }
 
+fn messages(json: &str) -> Vec<ChatMessage> {
+    build_messages(&request(json)).expect("valid request")
+}
+
 #[test]
 fn tools_become_developer_message_after_system() {
-    let messages = build_messages(&request(
+    let messages = messages(
         r#"{
             "messages":[{"role":"system","content":"be nice"},{"role":"user","content":"hi"}],
             "tools":[{"type":"function","function":{"name":"get_time","description":"Get time","parameters":{"type":"object","properties":{}}}}]
         }"#,
-    ));
+    );
 
     assert_eq!(messages.len(), 3);
     assert_eq!(messages[1].role, ChatRole::Developer {});
@@ -27,7 +31,7 @@ fn tools_become_developer_message_after_system() {
 
 #[test]
 fn tool_call_round_trip_maps_to_chat_blocks() {
-    let messages = build_messages(&request(
+    let messages = messages(
         r#"{
             "messages":[
                 {"role":"user","content":"what time is it?"},
@@ -35,7 +39,7 @@ fn tool_call_round_trip_maps_to_chat_blocks() {
                 {"role":"tool","tool_call_id":"call_1","content":"{\"time\":\"17:03\"}"}
             ]
         }"#,
-    ));
+    );
 
     assert_eq!(messages.len(), 3);
     let tool_calls = messages[1].tool_calls();
@@ -70,6 +74,51 @@ fn invalid_tool_call_arguments_stay_serializable() {
     for arguments in ["", r#"{"a":"#] {
         serde_json::to_value(&call(arguments).arguments).expect("arguments should stay serializable");
     }
+}
+
+#[test]
+fn tool_choice_controls_exposed_tools() {
+    const TOOLS: &str = r#""tools":[
+        {"type":"function","function":{"name":"get_time","description":"Get time"}},
+        {"type":"function","function":{"name":"get_weather","description":"Get weather"}}
+    ]"#;
+    let with_choice =
+        |choice: &str| format!(r#"{{"messages":[{{"role":"user","content":"hi"}}],{TOOLS},"tool_choice":{choice}}}"#);
+    let exposed = |choice: &str| -> Vec<String> {
+        messages(&with_choice(choice))
+            .iter()
+            .flat_map(|message| message.tool_namespaces())
+            .flat_map(|namespace| namespace.tools)
+            .map(
+                |ToolDescription::Function {
+                     tool_function,
+                 }| tool_function.name,
+            )
+            .collect()
+    };
+
+    assert_eq!(exposed(r#""auto""#), ["get_time", "get_weather"]);
+    assert_eq!(exposed(r#""required""#), ["get_time", "get_weather"]);
+    assert_eq!(exposed(r#""none""#), Vec::<String>::new());
+    assert_eq!(exposed(r#"{"type":"function","function":{"name":"get_weather"}}"#), ["get_weather"]);
+
+    let unknown_function = with_choice(r#"{"type":"function","function":{"name":"missing"}}"#);
+    assert!(build_messages(&request(&unknown_function)).is_err(), "undeclared forced function should be rejected");
+    let bogus_mode = with_choice(r#""sometimes""#);
+    assert!(build_messages(&request(&bogus_mode)).is_err(), "unrecognized tool_choice should be rejected");
+}
+
+#[test]
+fn json_looking_stream_text_is_withheld_while_tools_are_declared() {
+    // Undecided (empty / leading whitespace) or JSON-looking text may still be
+    // reclassified into a tool call, so it must not stream.
+    assert!(withhold_stream_text(true, ""));
+    assert!(withhold_stream_text(true, "  "));
+    assert!(withhold_stream_text(true, r#" {"name": "get_time", "parameters"#));
+
+    // Prose can never be rewritten; without tools no rewrite happens at all.
+    assert!(!withhold_stream_text(true, "The time is"));
+    assert!(!withhold_stream_text(false, r#"{"name": "get_time"}"#));
 }
 
 #[test]
