@@ -9,7 +9,7 @@ use crate::{
         },
         kernel::{
             AncestorAttentionKernel, AttentionPrepareKernel, WeaverFrontierInsertChildrenKernel,
-            WeaverFrontierSelectKernel, WeaverRopeQkvKernel, WeaverTopChildrenKernel,
+            WeaverFrontierSelectKernel, WeaverTopChildrenKernel,
         },
     },
     config::{
@@ -146,7 +146,6 @@ struct WeaverLayer<B: Backend> {
     pre_attention_norm: Normalization<B>,
     qkv_projection: Box<dyn Linear<B>>,
     attention_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
-    node_rope_qkv: <B::Kernels as Kernels>::WeaverRopeQkvKernel,
     prefix_attention: AttentionCores<B>,
     ancestor_attention: <B::Kernels as Kernels>::AncestorAttentionKernel,
     out_projection: Box<dyn Linear<B>>,
@@ -688,8 +687,6 @@ impl<B: Backend> WeaverLayer<B> {
         let attention_prepare =
             <B::Kernels as Kernels>::AttentionPrepareKernel::new(context, DATA_TYPE, ROPE_DATA_TYPE, true, true)
                 .map_err(WeaverNewError::Backend)?;
-        let node_rope_qkv = <B::Kernels as Kernels>::WeaverRopeQkvKernel::new(context, DATA_TYPE, ROPE_DATA_TYPE)
-            .map_err(WeaverNewError::Backend)?;
         let pre_attention_norm = Normalization::new(
             model_dim,
             None,
@@ -731,7 +728,6 @@ impl<B: Backend> WeaverLayer<B> {
             out_projection,
             prefix_attention,
             attention_prepare,
-            node_rope_qkv,
             pre_attention_norm,
             pre_mlp_norm,
             mlp,
@@ -830,18 +826,7 @@ impl<B: Backend> WeaverLayer<B> {
     ) -> Result<Allocation<B>, B::Error> {
         let attention_input =
             self.pre_attention_norm.encode(&residual_input, 0, nodes.count, Some(residual_state), encoder)?;
-        let mut current_qkv = self.qkv_projection.encode(attention_input, nodes.count, encoder)?;
-        self.node_rope_qkv.encode(
-            &mut current_qkv,
-            &rope.cosines,
-            &rope.sines,
-            nodes.metadata,
-            self.num_heads as u32,
-            self.head_dim as u32,
-            self.max_depth as u32,
-            nodes.count as u32,
-            encoder,
-        );
+        let current_qkv = self.qkv_projection.encode(attention_input, nodes.count, encoder)?;
         let metadata_field_bytes = nodes.count * DataType::U32.size_in_bytes();
         let ancestor_counts = (nodes.metadata, MetadataIdx::AncestorCount as usize * metadata_field_bytes);
         let tree_slot_indices = (nodes.metadata, MetadataIdx::TreeSlot as usize * metadata_field_bytes);
@@ -851,6 +836,9 @@ impl<B: Backend> WeaverLayer<B> {
             prefix_kv,
             node_kv_cache,
             &current_qkv,
+            &rope.cosines,
+            &rope.sines,
+            nodes.metadata,
             nodes.ancestor_indices,
             ancestor_counts,
             tree_slot_indices,
@@ -859,6 +847,7 @@ impl<B: Backend> WeaverLayer<B> {
             prefix_length as u32,
             nodes.ancestor_stride as u32,
             node_capacity,
+            self.max_depth as u32,
             self.attention_scale,
             encoder,
         );
