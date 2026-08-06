@@ -28,13 +28,23 @@ use uzu::{
     },
 };
 
-use crate::server::ServerState;
+use crate::server::{
+    ServerState,
+    chat_tool_calls::{
+        OaiTool, OaiToolCall, backfill_tool_result_names, choose_tools, insert_tools_message, reply_tool_calls,
+        to_tool_call, tool_call_deltas, tool_call_result_block, withhold_stream_text,
+    },
+};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OaiMessage {
     pub role: String,
     #[serde(default)]
-    pub content: String,
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<OaiToolCall>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -55,6 +65,11 @@ pub struct ChatCompletionRequest {
     // Raw value (not typed) so a bad response_format is our 400, not Rocket's 422.
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
+    #[serde(default)]
+    pub tools: Option<Vec<OaiTool>>,
+    // Raw value like response_format: a bad tool_choice is our 400, not Rocket's 422.
+    #[serde(default)]
+    pub tool_choice: Option<serde_json::Value>,
     #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
@@ -99,12 +114,14 @@ pub struct ChatCompletionResponse {
     pub usage: ChatCompletionUsage,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 struct StreamDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
     role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OaiToolCall>>,
 }
 
 #[derive(Serialize)]
@@ -167,9 +184,27 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
         .iter()
         .map(|message| {
             let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
-            ChatMessage::for_role(role).with_text(message.content.clone())
+            let mut chat_message = ChatMessage::for_role(role);
+            if let Some(identifier) = &message.tool_call_id {
+                let result = tool_call_result_block(identifier, message.content.clone().unwrap_or_default());
+                chat_message = chat_message.with_block(result);
+            } else if let Some(content) = &message.content {
+                chat_message = chat_message.with_text(content.clone());
+            }
+            for tool_call in message.tool_calls.iter().flatten() {
+                chat_message = chat_message.with_tool_call(to_tool_call(tool_call));
+            }
+            chat_message
         })
         .collect()
+}
+
+pub(crate) fn build_messages(request: &ChatCompletionRequest) -> Result<Vec<ChatMessage>, String> {
+    let tools = choose_tools(request.tools.as_deref(), request.tool_choice.as_ref())?;
+    let mut messages = to_chat_messages(&request.messages);
+    backfill_tool_result_names(&mut messages);
+    insert_tools_message(&mut messages, &tools);
+    Ok(messages)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -204,15 +239,19 @@ impl ResponseFormatError {
     }
 }
 
-fn request_error_response(error: ResponseFormatError) -> ChatCompletionResult {
+fn invalid_request_response(
+    param: &str,
+    code: &str,
+    message: String,
+) -> ChatCompletionResult {
     ChatCompletionResult::Error(status::Custom(
         Status::BadRequest,
         Json(OaiErrorResponse {
             error: OaiError {
-                message: error.message(),
+                message,
                 kind: "invalid_request_error".to_string(),
-                param: Some("response_format".to_string()),
-                code: Some(error.code().to_string()),
+                param: Some(param.to_string()),
+                code: Some(code.to_string()),
             },
         }),
     ))
@@ -310,7 +349,9 @@ fn error_response(
             index: 0,
             message: OaiMessage {
                 role: "assistant".to_string(),
-                content: format!("Error: {message}"),
+                content: Some(format!("Error: {message}")),
+                tool_calls: None,
+                tool_call_id: None,
             },
             finish_reason: "stop".to_string(),
         }],
@@ -356,24 +397,34 @@ async fn run_blocking(
 
     match session.reply(messages, config).await {
         Ok(replies) => match replies.last() {
-            Some(reply) => ChatCompletionResponse {
-                id,
-                object: "chat.completion".to_string(),
-                created,
-                model,
-                choices: vec![ChatCompletionChoice {
-                    index: 0,
-                    message: OaiMessage {
-                        role: "assistant".to_string(),
-                        content: reply.message.text().unwrap_or_default(),
-                    },
-                    finish_reason: reply
-                        .finish_reason
-                        .as_ref()
-                        .map(map_finish_reason)
-                        .unwrap_or_else(|| "stop".to_string()),
-                }],
-                usage: usage_from_stats(&reply.stats),
+            Some(reply) => {
+                let tool_calls = reply_tool_calls(&reply.message);
+                // OpenAI sets content to null (not "") on tool call replies.
+                let content = reply.message.text().or_else(|| tool_calls.is_none().then(String::new));
+                let mut finish_reason =
+                    reply.finish_reason.as_ref().map(map_finish_reason).unwrap_or_else(|| "stop".to_string());
+                // A call the parser could not finalize yields ToolCalls with nothing to execute.
+                // Clients would stall on an absent tool_calls array, so report stop.
+                if tool_calls.is_none() && finish_reason == "tool_calls" {
+                    finish_reason = "stop".to_string();
+                }
+                ChatCompletionResponse {
+                    id,
+                    object: "chat.completion".to_string(),
+                    created,
+                    model,
+                    choices: vec![ChatCompletionChoice {
+                        index: 0,
+                        message: OaiMessage {
+                            role: "assistant".to_string(),
+                            content,
+                            tool_calls,
+                            tool_call_id: None,
+                        },
+                        finish_reason,
+                    }],
+                    usage: usage_from_stats(&reply.stats),
+                }
             },
             None => error_response(id, model, created, "No response generated"),
         },
@@ -397,8 +448,8 @@ async fn run_stream(
             &model,
             created,
             StreamDelta {
-                role: None,
                 content: Some(format!("Error: {error}")),
+                ..StreamDelta::default()
             },
             Some("stop".to_string()),
             None,
@@ -413,14 +464,17 @@ async fn run_stream(
         created,
         StreamDelta {
             role: Some("assistant".to_string()),
-            content: None,
+            ..StreamDelta::default()
         },
         None,
         None,
     )));
 
+    let has_tools = messages.iter().any(|message| !message.tool_namespaces().is_empty());
     let stream = session.reply_with_stream(messages, config).await;
     let mut emitted = 0usize;
+    let mut emitted_tool_calls = 0usize;
+    let mut final_text = String::new();
     let mut finish_reason = "stop".to_string();
     let mut usage = ChatCompletionUsage::default();
     let mut errored = false;
@@ -435,7 +489,7 @@ async fn run_stream(
                 };
                 let text = reply.message.text().unwrap_or_default();
                 let start = (emitted..=text.len()).find(|&index| text.is_char_boundary(index)).unwrap_or(text.len());
-                if text.len() > start {
+                if !withhold_stream_text(has_tools, &text) && text.len() > start {
                     let delta = text[start..].to_string();
                     emitted = text.len();
                     let sent = sender.send(Event::data(chunk_json(
@@ -443,8 +497,8 @@ async fn run_stream(
                         &model,
                         created,
                         StreamDelta {
-                            role: None,
                             content: Some(delta),
+                            ..StreamDelta::default()
                         },
                         None,
                         None,
@@ -453,10 +507,32 @@ async fn run_stream(
                         return;
                     }
                 }
+
+                let tool_calls = reply.message.tool_calls();
+                if tool_calls.len() > emitted_tool_calls {
+                    let delta = tool_call_deltas(&tool_calls, emitted_tool_calls);
+                    emitted_tool_calls = tool_calls.len();
+                    let sent = sender.send(Event::data(chunk_json(
+                        &id,
+                        &model,
+                        created,
+                        StreamDelta {
+                            tool_calls: Some(delta),
+                            ..StreamDelta::default()
+                        },
+                        None,
+                        None,
+                    )));
+                    if sent.is_err() {
+                        return;
+                    }
+                }
+
                 if let Some(reason) = &reply.finish_reason {
                     finish_reason = map_finish_reason(reason);
                 }
                 usage = usage_from_stats(&reply.stats);
+                final_text = text;
             },
             ChatSessionStreamChunk::Error {
                 error,
@@ -467,8 +543,8 @@ async fn run_stream(
                     &model,
                     created,
                     StreamDelta {
-                        role: None,
                         content: Some(format!("Error: {error}")),
+                        ..StreamDelta::default()
                     },
                     Some("stop".to_string()),
                     None,
@@ -479,14 +555,36 @@ async fn run_stream(
     }
 
     if !errored {
+        // Flush withheld text that survived in the final message.
+        // Text that was reclassified into tool calls is gone from it and stays suppressed.
+        let start =
+            (emitted..=final_text.len()).find(|&index| final_text.is_char_boundary(index)).unwrap_or(final_text.len());
+        if final_text.len() > start {
+            let sent = sender.send(Event::data(chunk_json(
+                &id,
+                &model,
+                created,
+                StreamDelta {
+                    content: Some(final_text[start..].to_string()),
+                    ..StreamDelta::default()
+                },
+                None,
+                None,
+            )));
+            if sent.is_err() {
+                return;
+            }
+        }
+        // Same guard as the blocking path: candidates that never finalized produce a ToolCalls finish with
+        // no emitted tool call deltas, which reads as stop.
+        if emitted_tool_calls == 0 && finish_reason == "tool_calls" {
+            finish_reason = "stop".to_string();
+        }
         let _ = sender.send(Event::data(chunk_json(
             &id,
             &model,
             created,
-            StreamDelta {
-                role: None,
-                content: None,
-            },
+            StreamDelta::default(),
             Some(finish_reason),
             Some(usage),
         )));
@@ -508,9 +606,12 @@ pub async fn handle_chat_completions(
 
     let config = match build_reply_config(&request) {
         Ok(config) => config,
-        Err(error) => return request_error_response(error),
+        Err(error) => return invalid_request_response("response_format", error.code(), error.message()),
     };
-    let messages = to_chat_messages(&request.messages);
+    let messages = match build_messages(&request) {
+        Ok(messages) => messages,
+        Err(detail) => return invalid_request_response("tool_choice", "invalid_tool_choice", detail),
+    };
 
     if is_stream {
         let session = Arc::clone(&state.session);
