@@ -69,9 +69,9 @@ impl BenchmarkData {
         k: usize,
         n: usize,
         bits: u32,
+        group_size: u32,
         seed: u64,
     ) -> Self {
-        let group_size = HADAMARD_TRANSFORM_BLOCK_SIZE as u32;
         let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed)
             .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE as usize, None);
 
@@ -169,6 +169,7 @@ fn encode_step(
                     values: &data.a_int8,
                     scales: &data.a_scales,
                     group_sums: None,
+                    activation_scale_group_size: 128,
                 },
                 b: MatmulB::ScaleSymmetricDequant {
                     b: &data.signed_weights,
@@ -230,7 +231,15 @@ fn bench_bits(
 
     for (layer, shape) in qwen3_layer_shapes(bits) {
         let (m, k, n) = (shape.m, shape.k, shape.n);
-        let mut data = BenchmarkData::new(context, m, k, n, bits, 0xA8_00 ^ u64::from(bits) ^ k as u64 ^ n as u64);
+        let mut data = BenchmarkData::new(
+            context,
+            m,
+            k,
+            n,
+            bits,
+            HADAMARD_TRANSFORM_BLOCK_SIZE as u32,
+            0xA8_00 ^ u64::from(bits) ^ k as u64 ^ n as u64,
+        );
         let mut output = alloc_allocation::<Metal, bf16>(context, m * n);
         let shape_label = format!("{layer}_m{m}_k{k}_n{n}");
 

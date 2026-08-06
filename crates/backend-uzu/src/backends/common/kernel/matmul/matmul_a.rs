@@ -9,6 +9,7 @@ pub enum MatmulA<'a, B: Backend> {
         values: &'a Allocation<B>,
         scales: &'a Allocation<B>,
         group_sums: Option<&'a Allocation<B>>,
+        activation_scale_group_size: u32,
     },
 }
 

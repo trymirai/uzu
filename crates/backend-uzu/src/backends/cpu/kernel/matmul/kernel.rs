@@ -6,7 +6,6 @@ use crate::{
             gpu_types::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
@@ -107,6 +106,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 values,
                 scales,
                 group_sums: _,
+                activation_scale_group_size,
             } => {
                 let weight_gs_ok = matches!(b.group_size(), Some(32 | 64 | 128));
                 let weights_ok = matches!(
@@ -138,7 +138,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     scales: SendPtr(
                         unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
                     ),
-                    group_size: ACTIVATION_SCALE_GROUP_SIZE as usize,
+                    group_size: activation_scale_group_size as usize,
                 }
             },
         };

@@ -17,8 +17,14 @@ METAL_FUNC static auto make_tensor_view(
   );
 }
 
-template <bool transpose_left, bool transpose_right, class OutputFragment, class LeftFragment, typename Format>
-METAL_FUNC static void fragment_mm(
+template <
+    MatmulMode OUTPUT_MODE,
+    bool transpose_left,
+    bool transpose_right,
+    class OutputFragment,
+    class LeftFragment,
+    typename Format>
+METAL_FUNC static void fragment_matmul(
     thread OutputFragment& output,
     thread LeftFragment& left,
     const DeviceTensorOperand<Format> right
@@ -38,7 +44,7 @@ METAL_FUNC static void fragment_mm(
   constexpr int tile_k = int(2 * FRAGMENT_COLS);
   constexpr int tile_n = int(2 * FRAGMENT_COLS);
   constexpr auto descriptor =
-      mpp::tensor_ops::matmul2d_descriptor(FRAGMENT_ROWS, tile_n, tile_k, false, true, RELAXED, MatmulMode::multiply);
+      mpp::tensor_ops::matmul2d_descriptor(FRAGMENT_ROWS, tile_n, tile_k, false, true, RELAXED, OUTPUT_MODE);
   mpp::tensor_ops::matmul2d<descriptor, metal::execution_simdgroup> matmul_op;
 
   METAL_PRAGMA_UNROLL
@@ -60,9 +66,30 @@ METAL_FUNC static void fragment_mm(
           matmul_op
               .template get_destination_cooperative_tensor<decltype(cooperative_left), decltype(right_tensor), int>();
 
+      if constexpr (OUTPUT_MODE == MatmulMode::multiply_accumulate) {
+        load_paired_vectors(cooperative_output, output.fragment_at(row, col), output.fragment_at(row, col + 1));
+      }
       matmul_op.run(cooperative_left, right_tensor, cooperative_output);
 
       store_paired_vectors(cooperative_output, output.fragment_at(row, col), output.fragment_at(row, col + 1));
     }
   }
+}
+
+template <bool transpose_left, bool transpose_right, class OutputFragment, class LeftFragment, typename Format>
+METAL_FUNC static void fragment_mma(
+    thread OutputFragment& output,
+    thread LeftFragment& left,
+    const DeviceTensorOperand<Format> right
+) {
+  fragment_matmul<MatmulMode::multiply_accumulate, transpose_left, transpose_right>(output, left, right);
+}
+
+template <bool transpose_left, bool transpose_right, class OutputFragment, class LeftFragment, typename Format>
+METAL_FUNC static void fragment_mm(
+    thread OutputFragment& output,
+    thread LeftFragment& left,
+    const DeviceTensorOperand<Format> right
+) {
+  fragment_matmul<MatmulMode::multiply, transpose_left, transpose_right>(output, left, right);
 }

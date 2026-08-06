@@ -19,10 +19,21 @@ pub(super) struct GemmSpecialization {
     pub(super) bits_per_b: Option<u32>,
     pub(super) group_size: Option<u32>,
     pub(super) signed_codes: bool,
+    pub(super) activation_group_size: u32,
+    pub(super) stage_scale_lines: bool,
 }
 
 impl GemmSpecialization {
     pub(super) fn validate(&self) -> Result<(), GemmSpecializationError> {
+        let valid_activation_group = match self.a_prologue {
+            GemmAPrologueKind::FullPrecision => self.activation_group_size == 0,
+            GemmAPrologueKind::Int8Symmetric => matches!(self.activation_group_size, 32 | 64 | 128),
+        };
+        if !valid_activation_group {
+            return Err(GemmSpecializationError::InvalidActivationGroupSize {
+                group_size: self.activation_group_size,
+            });
+        }
         if self.use_mxu != self.tiling.is_mxu_variant() {
             return Err(GemmSpecializationError::TilingUseMxuMismatch {
                 tiling: self.tiling,

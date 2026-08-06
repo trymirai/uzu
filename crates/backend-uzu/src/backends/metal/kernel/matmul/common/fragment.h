@@ -5,6 +5,7 @@
 #include "../../common/integral_constant.h"
 #include "../../common/thread_context.h"
 #include "defines.h"
+#include "mxu_fragment/tensor_operand.h"
 
 using namespace metal;
 
@@ -444,6 +445,32 @@ METAL_FUNC void fragment_mm(thread OutputFragment& output, thread LeftFragment& 
       left,
       right
   );
+}
+
+template <class OutputFragment, class LeftFragment, typename Format>
+METAL_FUNC void fragment_mma(
+    thread OutputFragment& output,
+    thread LeftFragment& left,
+    const DeviceTensorOperand<Format> right
+) {
+  static_assert(
+      metal::is_same_v<typename OutputFragment::FragmentOpsType, typename LeftFragment::FragmentOpsType>,
+      "fragment_mma requires output and left fragments to use the same FragmentOps"
+  );
+  OutputFragment::FragmentOpsType::template fragment_mma<LeftFragment::MMA_TRANSPOSE, true>(output, left, right);
+}
+
+template <class OutputFragment, class LeftFragment, typename Format>
+METAL_FUNC void fragment_mm(
+    thread OutputFragment& output,
+    thread LeftFragment& left,
+    const DeviceTensorOperand<Format> right
+) {
+  static_assert(
+      metal::is_same_v<typename OutputFragment::FragmentOpsType, typename LeftFragment::FragmentOpsType>,
+      "fragment_mm requires output and left fragments to use the same FragmentOps"
+  );
+  OutputFragment::FragmentOpsType::template fragment_mm<LeftFragment::MMA_TRANSPOSE, true>(output, left, right);
 }
 
 } // namespace matmul

@@ -25,6 +25,7 @@ pub struct PreparedInt8A {
     pub values: Vec<i8>,
     pub scales: Vec<f32>,
     pub group_sums: Vec<i32>,
+    pub activation_scale_group_size: u32,
 }
 
 pub struct QuantInput<T: ArrayElement + Float> {
@@ -151,6 +152,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             values: allocation_to_vec(&values),
             scales: allocation_to_vec(&scales),
             group_sums: group_sums.map_or_else(Vec::new, |sums| allocation_to_vec(&sums)),
+            activation_scale_group_size: activation_group_size as u32,
         });
         self
     }
@@ -275,6 +277,11 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
             // Symmetric weights carry no correction term, so the GEMM never reads these.
             group_sums: (input.quant_method != QuantizationMethod::ScaleSymmetric)
                 .then(|| prepared_a_group_sums.as_ref().expect("prepared activation row sums")),
+            activation_scale_group_size: input
+                .prepared_a
+                .as_ref()
+                .expect("prepared activation metadata")
+                .activation_scale_group_size,
         },
         None => MatmulA::FullPrecision {
             values: x,

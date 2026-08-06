@@ -30,16 +30,14 @@ template <
     typename RightOperand>
 struct SimdgroupMmaCore {
   using OutputElementType = OutputElementType_;
-  using Left = operands::LeftBinding<LeftOperand, RightOperand>;
-  using Right = operands::RightBinding<RightOperand>;
+  using RightOperandType = RightOperand;
+  using Left = LeftOperand;
+  using Right = RightOperand;
   using LeftElementType = typename Left::ElementType;
   using RightElementType = typename Right::ElementType;
-  using LeftArgs = typename Left::Args;
-  using RightArgs = typename Right::Args;
-  static_assert(
-      metal::is_same<LeftOperand, operands::Dense<LeftElementType>>::value,
-      "simdgroup MMA stages full-precision left operands only"
-  );
+  using LeftStorage = operands::LeftStorage<Left>;
+  using RightStorage = operands::RightStorage<Right>;
+  static_assert(!Left::quantized, "simdgroup MMA stages full-precision left operands only");
   UZU_CONST bool TRANSPOSE_RIGHT = TRANSPOSE_B;
   UZU_CONST int THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   UZU_CONST int THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
@@ -50,8 +48,6 @@ struct SimdgroupMmaCore {
   UZU_CONST ushort PADDING_B = 16 / sizeof(RightElementType);
   UZU_CONST ushort SHARED_STRIDE_A = THREADGROUP_BLOCK_K + PADDING_A;
   UZU_CONST ushort SHARED_STRIDE_B = (TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N) + PADDING_B;
-  UZU_CONST ushort STAGING_ELEMENTS =
-      TRANSPOSE_B ? THREADGROUP_BLOCK_N * SHARED_STRIDE_B : THREADGROUP_BLOCK_K * SHARED_STRIDE_B;
   UZU_CONST ushort THREADGROUP_THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
 
   using ALoader = uzu::matmul::ThreadgroupLoader<
@@ -186,8 +182,8 @@ struct SimdgroupMmaCore {
   }
 
   static METAL_FUNC void run(
-      LeftArgs left,
-      RightArgs right,
+      LeftStorage left,
+      RightStorage right,
       device OutputElementType* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
@@ -213,11 +209,15 @@ struct SimdgroupMmaCore {
     const size_t block_row = size_t(geometry.block_row_start);
     const size_t block_col = size_t(geometry.block_col_start);
 
-    left.seek_rows(block_row, params->leading_dimension_a, k_offset);
     d +=
         size_t(partition) * size_t(params->M) * size_t(params->N) + block_row * params->leading_dimension_d + block_col;
 
-    thread ALoader loader_a(left.values, params->leading_dimension_a, a_shared, thread_context);
+    thread ALoader loader_a(
+        left.values + block_row * params->leading_dimension_a + k_offset,
+        params->leading_dimension_a,
+        a_shared,
+        thread_context
+    );
     thread TileAccumulator accumulator(thread_context);
 
     const ushort tile_block_rows =
@@ -237,15 +237,6 @@ struct SimdgroupMmaCore {
     const device RightElementType* bias_block = output_bias + block_col;
     const device int32_t* rht_factors_block = rht_factors + block_col;
 
-    auto loader_b = schedules::StagedRightLoader<RightOperand>::template make<SimdgroupMmaCore>(
-        right,
-        params,
-        block_col,
-        k_offset,
-        b_shared,
-        thread_context
-    );
-
     const bool all_aligned = ((alignment.contains(GemmAlignment::M)) || (tile_block_rows == THREADGROUP_BLOCK_M)) &&
                              ((alignment.contains(GemmAlignment::N)) || (tile_block_cols == THREADGROUP_BLOCK_N)) &&
                              alignment.contains(GemmAlignment::K);
@@ -255,39 +246,63 @@ struct SimdgroupMmaCore {
         alignment.raw_value | ((tile_block_rows == THREADGROUP_BLOCK_M) ? static_cast<uint>(GemmAlignment::M) : 0u) |
         ((tile_block_cols == THREADGROUP_BLOCK_N) ? static_cast<uint>(GemmAlignment::N) : 0u);
 
-    auto kernel_invoke = [&](auto gemm_alignment_mask) {
-      constexpr uint gemm_alignment = gemm_alignment_mask.value;
-      k_loop<gemm_alignment>(
-          a_shared,
-          b_shared,
-          params->aligned_inner_iterations,
-          loader_a,
-          loader_b,
-          accumulator,
-          tile_block_rows,
-          tile_block_cols,
-          leftover_block_depth
-      );
-      finalize<gemm_alignment>(
-          accumulator,
-          d,
-          params,
-          tile_block_rows,
-          tile_block_cols,
-          needs_epilogue,
-          epilogue,
-          bias_block,
-          needs_bias,
-          rht_factors_block,
-          needs_rht,
-          thread_context
-      );
+    auto run_with_loader = [&](auto loader_b) {
+      auto kernel_invoke = [&](auto gemm_alignment_mask) {
+        constexpr uint gemm_alignment = gemm_alignment_mask.value;
+        k_loop<gemm_alignment>(
+            a_shared,
+            b_shared,
+            params->aligned_inner_iterations,
+            loader_a,
+            loader_b,
+            accumulator,
+            tile_block_rows,
+            tile_block_cols,
+            leftover_block_depth
+        );
+        finalize<gemm_alignment>(
+            accumulator,
+            d,
+            params,
+            tile_block_rows,
+            tile_block_cols,
+            needs_epilogue,
+            epilogue,
+            bias_block,
+            needs_bias,
+            rht_factors_block,
+            needs_rht,
+            thread_context
+        );
+      };
+
+      if (all_aligned) {
+        kernel_invoke(integral_constant<uint, MASK_ALL>{});
+      } else {
+        dispatch_gemm_alignment(dynamic_alignment_mask, kernel_invoke);
+      }
     };
 
-    if (all_aligned) {
-      kernel_invoke(integral_constant<uint, MASK_ALL>{});
+    if constexpr (!Right::quantized) {
+      auto loader_b = schedules::make_full_precision_loader<SimdgroupMmaCore>(
+          right,
+          params,
+          block_col,
+          k_offset,
+          b_shared,
+          thread_context
+      );
+      run_with_loader(loader_b);
     } else {
-      dispatch_gemm_alignment(dynamic_alignment_mask, kernel_invoke);
+      auto loader_b = schedules::make_staged_loader<SimdgroupMmaCore, RightOperand>(
+          right,
+          params,
+          block_col,
+          k_offset,
+          b_shared,
+          thread_context
+      );
+      run_with_loader(loader_b);
     }
   }
 };

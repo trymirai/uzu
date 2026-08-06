@@ -158,7 +158,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
                     context,
                     input_data_type,
                     activation_group_size,
-                    emit_group_sums.then_some(weight_group_size as u32),
+                    emit_group_sums.then_some((weight_group_size as u32).min(activation_group_size as u32)),
                 )
                 .map_err(RHTLinearWrapperError::BackendError)?,
             )
@@ -231,6 +231,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                     values: &values,
                     scales: &scales,
                     group_sums: group_sums.as_ref(),
+                    activation_scale_group_size: quantize_transform.activation_group_size as u32,
                 },
                 batch_dim,
                 encoder,

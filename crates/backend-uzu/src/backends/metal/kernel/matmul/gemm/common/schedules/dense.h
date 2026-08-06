@@ -15,22 +15,17 @@ namespace gemm {
 namespace schedules {
 
 struct DenseSchedule {
-  template <typename Core, bool ALIGNED_M, bool ALIGNED_N>
+  template <typename Core, bool ALIGNED_M, bool ALIGNED_N, bool STAGE_SCALE_LINES>
   static METAL_FUNC typename Core::AccumFragment launch(
-      typename Core::LeftArgs left,
-      typename Core::RightArgs right,
+      typename Core::LeftStorage left,
+      typename Core::RightStorage right,
       threadgroup typename Core::RightElementType*,
       const constant uzu::matmul::GemmParams* params,
       const TileContext tile,
       const GemmAlignment alignment,
       const thread ThreadContext& thread_context
   ) {
-    right.template seek_columns<Core::TRANSPOSE_RIGHT>(
-        tile.block_col + tile.tile_col_offset,
-        tile.k_offset,
-        params->leading_dimension_b
-    );
-
+    static_assert(!Core::Left::quantized && !Core::Right::quantized, "dense schedule requires dense operands");
     typename Core::AccumFragment accumulator;
     dispatch_bool(alignment.contains(GemmAlignment::K), [&](auto aligned_k) {
       accumulator = uzu::matmul::gemm_loop<
@@ -46,8 +41,11 @@ struct DenseSchedule {
           ALIGNED_N,
           aligned_k.value,
           typename Core::AccumulatorType>(
-          left.values,
-          right.values,
+          left.values + tile.abs_row_base * uint(params->leading_dimension_a) + tile.k_offset,
+          right.dense +
+              (Core::TRANSPOSE_RIGHT
+                   ? (tile.block_col + tile.tile_col_offset) * uint(params->leading_dimension_b) + tile.k_offset
+                   : tile.block_col + tile.tile_col_offset + tile.k_offset * uint(params->leading_dimension_b)),
           int(params->leading_dimension_a),
           int(params->leading_dimension_b),
           int(params->K),

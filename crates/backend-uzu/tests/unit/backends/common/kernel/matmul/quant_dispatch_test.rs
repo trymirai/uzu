@@ -18,6 +18,7 @@ use crate::{
             gpu_types::{QuantizationMethod, gemm::GemmDTransform},
             kernel::{
                 Kernels,
+                activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{MatmulDOps, MatmulError, MatmulKernel},
             },
         },
@@ -516,7 +517,10 @@ fn a8w_mxu_parity_bf16(
         return;
     }
     let (k, n) = (256usize, 128usize);
-    let input = QuantInput::<bf16>::new(m, k, n, weight_gs, bits, method, 0).with_prepared_a();
+    let input = QuantInput::<bf16>::new(m, k, n, weight_gs, bits, method, 0).with_prepared_a(
+        ACTIVATION_SCALE_GROUP_SIZE as usize,
+        (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
+    );
     let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>(
@@ -526,6 +530,74 @@ fn a8w_mxu_parity_bf16(
         0.08,
         0.8,
     );
+}
+
+#[rstest]
+#[test_attr(uzu_test)]
+#[case::m1(1usize)]
+#[case::m16(16usize)]
+#[case::m33(33usize)]
+fn a8w_independent_activation_group_parity_bf16(#[case] m: usize) {
+    let context = MetalContext::new().expect("Metal context");
+    if !context.supports_mxu() {
+        return;
+    }
+
+    for (activation_group_size, weight_group_size) in
+        [(32usize, 32u32), (32, 64), (64, 64), (64, 128), (128, 32), (128, 64), (128, 128)]
+    {
+        for (bits, method) in [
+            (4, QuantizationMethod::ScaleSymmetric),
+            (8, QuantizationMethod::ScaleBias),
+            (4, QuantizationMethod::ScaleZeroPoint),
+        ] {
+            let input = QuantInput::<bf16>::new(m, 256, 72, weight_group_size, bits, method, 0).with_prepared_a(
+                activation_group_size,
+                (method != QuantizationMethod::ScaleSymmetric)
+                    .then_some((activation_group_size as u32).min(weight_group_size)),
+            );
+            let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
+            let reference = run_quant_cpu::<bf16>(&input);
+            assert_parity::<bf16>(
+                &format!("A8W{bits} act{activation_group_size} weight{weight_group_size} m={m} method={method:?}"),
+                &reference,
+                &actual,
+                0.08,
+                0.8,
+            );
+        }
+    }
+}
+
+#[rstest]
+#[test_attr(uzu_test)]
+#[case::m1(1)]
+#[case::m16(16)]
+#[case::m33(33)]
+fn a8w4_zero_point_tail_parity(#[case] m: usize) {
+    let context = MetalContext::new().expect("Metal context");
+    if !context.supports_mxu() {
+        return;
+    }
+    let input = QuantInput::<bf16>::new(m, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint, 0)
+        .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE as usize, Some(32));
+    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
+    let reference = run_quant_cpu::<bf16>(&input);
+    assert_parity::<bf16>(&format!("A8W4 ZP N-tail m={m}"), &reference, &actual, 0.08, 0.8);
+}
+
+#[uzu_test]
+fn a8w4_zero_point_tail_signed_codes_parity() {
+    let context = MetalContext::new().expect("Metal context");
+    if !context.supports_mxu() {
+        return;
+    }
+    let input = QuantInput::<bf16>::new(33, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint, 0)
+        .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE as usize, Some(32))
+        .with_signed_weight_codes();
+    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
+    let reference = run_quant_cpu::<bf16>(&input);
+    assert_parity::<bf16>("A8W4 ZP signed-code N-tail", &reference, &actual, 0.08, 0.8);
 }
 
 #[rstest]
@@ -584,7 +656,8 @@ fn a8w_mxu_output_bias_parity_bf16(
             70usize
         },
     );
-    let input = QuantInput::<bf16>::new(m, k, n, 32, bits, QuantizationMethod::ScaleSymmetric, 0).with_prepared_a();
+    let input = QuantInput::<bf16>::new(m, k, n, 32, bits, QuantizationMethod::ScaleSymmetric, 0)
+        .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE as usize, None);
     let output_bias: Vec<bf16> = (0..n).map(|column| bf16::from_f32(0.25 + 0.05 * (column % 7) as f32)).collect();
     let output_hadamard_factors: Option<Vec<i32>> = with_output_hadamard.then(|| {
         (0..n)
