@@ -84,10 +84,20 @@ pub fn Application(
         let mut state = state;
         async move {
             let Some(identifier) = initial_model else {
+                state.write().flow = Some(Box::new(ModelRegistriesFlow));
                 return;
             };
             match engine.model(identifier.clone()).await {
                 Ok(Some(model)) => {
+                    let model_exists = !model.is_local()
+                        || matches!(
+                            engine.model_path(&model).await,
+                            Some(path) if std::path::Path::new(&path).exists()
+                        );
+                    if !model_exists {
+                        state.write().flow = Some(Box::new(ModelRegistriesFlow));
+                        return;
+                    }
                     let summary = format!("Model: {}", model.name());
                     state.write().model_state = Some(ModelState {
                         model,
@@ -99,12 +109,18 @@ pub fn Application(
                         result: summary,
                     });
                 },
-                Ok(None) => state.write().history.push(HistoryCellType::CommandResult {
-                    result: format!("Unknown model: {}", identifier),
-                }),
-                Err(error) => state.write().history.push(HistoryCellType::CommandResult {
-                    result: format!("Failed to load model {}: {}", identifier, error),
-                }),
+                Ok(None) => {
+                    state.write().history.push(HistoryCellType::CommandResult {
+                        result: format!("Unknown model: {}", identifier),
+                    });
+                    state.write().flow = Some(Box::new(ModelRegistriesFlow));
+                },
+                Err(error) => {
+                    state.write().history.push(HistoryCellType::CommandResult {
+                        result: format!("Failed to load model {}: {}", identifier, error),
+                    });
+                    state.write().flow = Some(Box::new(ModelRegistriesFlow));
+                },
             }
         }
     });
