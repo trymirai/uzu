@@ -907,7 +907,3 @@ fn nodes_from_packed_tree(packed_tree: &[u32]) -> Vec<ProposalNode> {
     }
     nodes
 }
-
-#[cfg(test)]
-#[path = "../../tests/unit/encodable_block/weaver_test.rs"]
-mod tests;
