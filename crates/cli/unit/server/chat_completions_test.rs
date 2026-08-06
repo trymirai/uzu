@@ -78,7 +78,8 @@ fn response_format_json_schema_rejects_invalid_schema() {
 
 #[test]
 fn response_format_validation_errors_are_request_errors() {
-    match request_error_response(ResponseFormatError::GrammarUnsupported) {
+    let error = ResponseFormatError::GrammarUnsupported;
+    match invalid_request_response("response_format", error.code(), error.message()) {
         ChatCompletionResult::Error(_) => {},
         ChatCompletionResult::Json(_) | ChatCompletionResult::Stream(_) => {
             panic!("response_format validation errors should be request errors")
@@ -99,7 +100,8 @@ fn malformed_response_format_passes_json_extraction() {
 
 #[rocket::get("/err")]
 fn err_route() -> ChatCompletionResult {
-    request_error_response(ResponseFormatError::InvalidResponseFormat("bad".to_string()))
+    let error = ResponseFormatError::InvalidResponseFormat("bad".to_string());
+    invalid_request_response("response_format", error.code(), error.message())
 }
 
 #[test]
