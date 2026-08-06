@@ -122,7 +122,9 @@ impl<B: Backend> Transformer<B> {
 
                 let layer = TransformerLayer::new(
                     context,
-                    transformer_config,
+                    transformer_config.model_dim,
+                    transformer_config.hidden_dim,
+                    transformer_config.layer_configs.len(),
                     layer_config,
                     layer_index,
                     &layer_loader,
