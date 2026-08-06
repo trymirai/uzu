@@ -40,7 +40,7 @@ const ROPE_DATA_TYPE: DataType = DataType::F32;
 fn weaver_mlp_config(linear_config: LinearConfig) -> AnyMLPConfig {
     AnyMLPConfig::DenseMLPConfig(DenseMLPConfig::unclipped(
         linear_config,
-        AnyActivation::SiLU(SiLU::new(1.0)),
+        AnyActivation::SiLU(SiLU::default()),
         true,
         true,
     ))

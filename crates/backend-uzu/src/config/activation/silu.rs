@@ -5,11 +5,11 @@ pub struct SiLU {
     pub alpha: f32,
 }
 
-impl SiLU {
-    pub fn new(alpha: f32) -> Self {
+impl Default for SiLU {
+    fn default() -> Self {
         Self {
             ty: Default::default(),
-            alpha,
+            alpha: 1.0,
         }
     }
 }
