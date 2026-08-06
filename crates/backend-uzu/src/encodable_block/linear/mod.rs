@@ -9,7 +9,10 @@ pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE},
+    backends::common::{
+        Allocation, Backend, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        kernel::activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
+    },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
         full_precision_spec::FullPrecisionSpec,
@@ -226,6 +229,7 @@ impl<B: Backend> dyn Linear<B> {
                 input_dimension,
                 input_data_type,
                 output_data_type,
+                ACTIVATION_SCALE_GROUP_SIZE as usize,
             ) {
                 let linear = RHTLinearWrapper::new(
                     context,

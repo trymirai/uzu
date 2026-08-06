@@ -3,9 +3,10 @@ use crate::{
     backends::{
         common::{
             Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
-            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMode},
+            gpu_types::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
+                activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
@@ -137,7 +138,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     scales: SendPtr(
                         unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
                     ),
-                    group_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                    group_size: ACTIVATION_SCALE_GROUP_SIZE as usize,
                 }
             },
         };
