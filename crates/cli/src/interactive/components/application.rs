@@ -9,6 +9,7 @@ use uzu::{
 use crate::interactive::{
     components::{
         CommandInput, HistoryCell, HistoryCellType, Logo, ModelCapabilities, Preferences, SelectedModel, Theme,
+        app_settings::AppSettings,
     },
     flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
     helpers::SYMBOL_COMMAND,
@@ -23,6 +24,7 @@ pub struct ApplicationProps {
     pub settings: Option<Settings>,
     pub theme: Option<Theme>,
     pub preferences: Option<Preferences>,
+    pub app_settings: Option<AppSettings>,
     pub model: Option<String>,
 }
 
@@ -38,6 +40,7 @@ pub struct ApplicationState {
     pub settings: Option<Settings>,
     pub theme: Theme,
     pub preferences: Preferences,
+    pub app_settings: AppSettings,
     pub flow: Option<Box<dyn Flow>>,
     pub history: Vec<HistoryCellType>,
     pub registry: FlowRegistry,
@@ -62,6 +65,7 @@ pub fn Application(
         settings: props.settings.clone(),
         theme: props.theme.clone().unwrap_or_default(),
         preferences: props.preferences.unwrap_or_default(),
+        app_settings: props.app_settings.clone().unwrap_or_default(),
         flow: None,
         history: Vec::new(),
         registry: FlowRegistry::default()

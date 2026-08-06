@@ -1,3 +1,4 @@
+mod app_settings;
 mod application;
 mod command_input;
 mod gradient;
@@ -13,6 +14,7 @@ mod selector;
 mod text_input;
 mod theme;
 
+pub use app_settings::AppSettings;
 pub use application::{Application, ApplicationState, ModelState};
 pub use command_input::CommandInput;
 pub use gradient::Gradient;
