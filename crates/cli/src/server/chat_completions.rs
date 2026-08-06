@@ -183,8 +183,8 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
             let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
             let mut chat_message = ChatMessage::for_role(role);
             if let Some(identifier) = &message.tool_call_id {
-                chat_message = chat_message
-                    .with_block(tool_call_result_block(identifier, message.content.clone().unwrap_or_default()));
+                let result = tool_call_result_block(identifier, message.content.clone().unwrap_or_default());
+                chat_message = chat_message.with_block(result);
             } else if let Some(content) = &message.content {
                 chat_message = chat_message.with_text(content.clone());
             }
@@ -395,8 +395,8 @@ async fn run_blocking(
                 let content = reply.message.text().or_else(|| tool_calls.is_none().then(String::new));
                 let mut finish_reason =
                     reply.finish_reason.as_ref().map(map_finish_reason).unwrap_or_else(|| "stop".to_string());
-                // A call the parser could not finalize yields ToolCalls with nothing to
-                // execute; clients would stall on an absent tool_calls array, so report stop.
+                // A call the parser could not finalize yields ToolCalls with nothing to execute.
+                // Clients would stall on an absent tool_calls array, so report stop.
                 if tool_calls.is_none() && finish_reason == "tool_calls" {
                     finish_reason = "stop".to_string();
                 }
@@ -497,6 +497,7 @@ async fn run_stream(
                         return;
                     }
                 }
+
                 let tool_calls = reply.message.tool_calls();
                 if tool_calls.len() > emitted_tool_calls {
                     let delta = tool_call_deltas(&tool_calls, emitted_tool_calls);
@@ -516,6 +517,7 @@ async fn run_stream(
                         return;
                     }
                 }
+
                 if let Some(reason) = &reply.finish_reason {
                     finish_reason = map_finish_reason(reason);
                 }
@@ -542,8 +544,8 @@ async fn run_stream(
     }
 
     if !errored {
-        // Same guard as the blocking path: candidates that never finalized produce a
-        // ToolCalls finish with no emitted tool call deltas, which reads as stop.
+        // Same guard as the blocking path: candidates that never finalized produce a ToolCalls finish with
+        // no emitted tool call deltas, which reads as stop.
         if emitted_tool_calls == 0 && finish_reason == "tool_calls" {
             finish_reason = "stop".to_string();
         }

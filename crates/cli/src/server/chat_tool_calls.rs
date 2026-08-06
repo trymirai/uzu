@@ -38,8 +38,8 @@ pub struct OaiToolFunction {
 }
 
 pub fn to_tool_call(tool_call: &OaiToolCall) -> ToolCall {
-    // An invalid Value fails serialization inside template rendering and errors the whole
-    // request, so arguments that are not valid JSON are re-wrapped instead of passed through.
+    // An invalid Value fails serialization inside template rendering and errors the whole request,
+    // so arguments that are not valid JSON are re-wrapped instead of passed through.
     let arguments = &tool_call.function.arguments;
     let json = match serde_json::from_str::<serde_json::Value>(arguments) {
         Ok(_) => arguments.clone(),
