@@ -35,7 +35,7 @@ template <
     uint BITS,
     uint GROUP_SIZE,
     GemmAPrologueKind A_PROLOGUE,
-    uint ACT_GROUP_SIZE>
+    uint A_GROUP_SIZE>
 VARIANTS(AT, bfloat, float)
 VARIANTS(BT, bfloat, float)
 VARIANTS(DT, bfloat, float)
@@ -67,7 +67,7 @@ VARIANTS(
     A_PROLOGUE,
     GemmAPrologueKind::FullPrecision,
     GemmAPrologueKind::Int8Symmetric)
-VARIANTS(ACT_GROUP_SIZE, 0, 32, 64, 128)
+VARIANTS(A_GROUP_SIZE, 0, 32, 64, 128)
 CONSTRAINT(
     USE_MXU ==
     (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
@@ -106,8 +106,8 @@ CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
     (TRANSPOSE_B && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
-CONSTRAINT((A_PROLOGUE == GemmAPrologueKind::FullPrecision) == (ACT_GROUP_SIZE == 0))
-CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || ACT_GROUP_SIZE >= 32)
+CONSTRAINT((A_PROLOGUE == GemmAPrologueKind::FullPrecision) == (A_GROUP_SIZE == 0))
+CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || A_GROUP_SIZE >= 32)
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
     const device BT* b,
@@ -150,7 +150,7 @@ KERNEL(Gemm)(
   (void)thread_y;
   (void)thread_z;
 
-  using LeftOperand = operands::LeftOperandFor<A_PROLOGUE, AT, ushort(ACT_GROUP_SIZE)>;
+  using LeftOperand = operands::LeftOperandFor<A_PROLOGUE, AT, ushort(A_GROUP_SIZE)>;
   using RightOperand = operands::RightOperandFor<B_PROLOGUE, ushort(BITS), ushort(GROUP_SIZE), BT>;
   static_assert(
       NEEDS_ASYMMETRIC_WEIGHT_CORRECTION == (A_IS_INT8 && RightOperand::NEEDS_CORRECTION),

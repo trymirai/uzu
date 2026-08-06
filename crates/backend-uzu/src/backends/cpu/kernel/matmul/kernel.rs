@@ -106,7 +106,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 values,
                 scales,
                 group_sums: _,
-                activation_scale_group_size,
+                group_size: a_group_size,
             } => {
                 let weight_gs_ok = matches!(b.group_size(), Some(32 | 64 | 128));
                 let weights_ok = matches!(
@@ -138,7 +138,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     scales: SendPtr(
                         unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
                     ),
-                    group_size: activation_scale_group_size as usize,
+                    group_size: a_group_size as usize,
                 }
             },
         };

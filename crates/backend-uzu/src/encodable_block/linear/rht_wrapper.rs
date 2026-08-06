@@ -231,7 +231,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                     values: &values,
                     scales: &scales,
                     group_sums: group_sums.as_ref(),
-                    activation_scale_group_size: quantize_transform.activation_group_size as u32,
+                    group_size: quantize_transform.activation_group_size as u32,
                 },
                 batch_dim,
                 encoder,

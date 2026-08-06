@@ -109,9 +109,9 @@ impl GemmKernel {
                     specialization.use_mxu,
                     specialization.b_prologue,
                     specialization.bits_per_b.unwrap_or(0),
-                    specialization.group_size.unwrap_or(0),
+                    specialization.b_group_size.unwrap_or(0),
                     specialization.a_prologue,
-                    specialization.activation_group_size,
+                    specialization.a_group_size.unwrap_or(0),
                     specialization.output_transform,
                     specialization.alignment,
                     specialization.signed_codes,
@@ -363,7 +363,7 @@ impl GemmKernel {
                             bits_per_b,
                             group_size,
                             false,
-                            0,
+                            None,
                             split_k,
                             output_transform,
                             output_bias,
@@ -401,10 +401,10 @@ impl GemmKernel {
                     transpose_b: b_transpose,
                     b_prologue,
                     bits_per_b,
-                    group_size,
+                    b_group_size: group_size,
                     a_prologue: GemmAPrologueKind::FullPrecision,
                     signed_codes: false,
-                    activation_group_size: 0,
+                    a_group_size: None,
                     stage_scale_lines: true,
                 };
                 specialization.validate()?;
@@ -460,16 +460,16 @@ impl GemmKernel {
 
                 let a_prologue = a.prologue_kind();
                 let a_is_int8 = a_prologue == GemmAPrologueKind::Int8Symmetric;
-                let (a_full_precision, a_int8, a_scales, a_group_sums, activation_group_size) = match a {
+                let (a_full_precision, a_int8, a_scales, a_group_sums, a_group_size) = match a {
                     MatmulA::FullPrecision {
                         values,
                         offset,
-                    } => (Some((values, offset)), None, None, None, 0),
+                    } => (Some((values, offset)), None, None, None, None),
                     MatmulA::Int8Symmetric {
                         values,
                         scales: activation_scales,
                         group_sums: activation_group_sums,
-                        activation_scale_group_size,
+                        group_size: a_group_size,
                     } => {
                         validate_int8_activation_arguments(
                             use_mxu,
@@ -478,7 +478,7 @@ impl GemmKernel {
                             b_prologue,
                             bits_per_b,
                             group_size,
-                            activation_scale_group_size,
+                            a_group_size,
                         )?;
                         if output_transform.contains(GemmDTransform::SOFT_CAP) {
                             return Err(MatmulError::UnsupportedDOp {
@@ -487,13 +487,7 @@ impl GemmKernel {
                             }
                             .into());
                         }
-                        (
-                            None,
-                            Some(values),
-                            Some(activation_scales),
-                            activation_group_sums,
-                            activation_scale_group_size,
-                        )
+                        (None, Some(values), Some(activation_scales), activation_group_sums, Some(a_group_size))
                     },
                 };
 
@@ -553,7 +547,7 @@ impl GemmKernel {
                         bits_per_b,
                         group_size,
                         weights_signed_codes,
-                        activation_group_size,
+                        a_group_size,
                         split_k,
                         output_transform,
                         output_bias,
@@ -570,10 +564,10 @@ impl GemmKernel {
                         transpose_b: true,
                         b_prologue,
                         bits_per_b,
-                        group_size,
+                        b_group_size: group_size,
                         a_prologue,
                         signed_codes: weights_signed_codes,
-                        activation_group_size,
+                        a_group_size,
                         stage_scale_lines: should_stage_scale_lines(tiling, k, group_size, bits_per_b),
                     };
                     specialization.validate()?;
@@ -631,7 +625,7 @@ impl GemmKernel {
         bits_per_b: Option<u32>,
         group_size: Option<u32>,
         signed_codes: bool,
-        activation_group_size: u32,
+        a_group_size: Option<u32>,
         split_k: u32,
         output_transform: GemmDTransform,
         output_bias: Option<&Allocation<Metal>>,
@@ -654,10 +648,10 @@ impl GemmKernel {
             transpose_b: true,
             b_prologue,
             bits_per_b,
-            group_size,
+            b_group_size: group_size,
             a_prologue,
             signed_codes,
-            activation_group_size,
+            a_group_size,
             stage_scale_lines: should_stage_scale_lines(tiling, kp, group_size, bits_per_b),
         };
         part_spec.validate()?;
@@ -732,7 +726,7 @@ fn validate_int8_activation_arguments(
     b_prologue: GemmBPrologueKind,
     bits_per_b: Option<u32>,
     weight_group_size: Option<u32>,
-    activation_group_size: u32,
+    a_group_size: u32,
 ) -> Result<(), MetalError> {
     let compatible = use_mxu
         && weights_signed_codes
@@ -743,8 +737,8 @@ fn validate_int8_activation_arguments(
                 | GemmBPrologueKind::ScaleZeroPointDequant
         )
         && matches!(bits_per_b, Some(4 | 8))
-        && matches!(activation_group_size, 32 | 64 | 128)
-        && k.is_multiple_of(activation_group_size)
+        && matches!(a_group_size, 32 | 64 | 128)
+        && k.is_multiple_of(a_group_size)
         && weight_group_size.is_some_and(|gs| matches!(gs, 32 | 64 | 128) && k.is_multiple_of(gs));
     if !compatible {
         return Err(MatmulError::IncompatibleA {

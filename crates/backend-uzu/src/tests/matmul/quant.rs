@@ -277,11 +277,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
             // Symmetric weights carry no correction term, so the GEMM never reads these.
             group_sums: (input.quant_method != QuantizationMethod::ScaleSymmetric)
                 .then(|| prepared_a_group_sums.as_ref().expect("prepared activation row sums")),
-            activation_scale_group_size: input
-                .prepared_a
-                .as_ref()
-                .expect("prepared activation metadata")
-                .activation_scale_group_size,
+            group_size: input.prepared_a.as_ref().expect("prepared activation metadata").activation_scale_group_size,
         },
         None => MatmulA::FullPrecision {
             values: x,

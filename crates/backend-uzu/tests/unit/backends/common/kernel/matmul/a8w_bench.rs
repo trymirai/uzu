@@ -169,7 +169,7 @@ fn encode_step(
                     values: &data.a_int8,
                     scales: &data.a_scales,
                     group_sums: None,
-                    activation_scale_group_size: 128,
+                    group_size: 128,
                 },
                 b: MatmulB::ScaleSymmetricDequant {
                     b: &data.signed_weights,
