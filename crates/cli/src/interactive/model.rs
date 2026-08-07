@@ -2,19 +2,31 @@ use shoji::types::model::{Model, ModelAccessibility, ModelReference};
 use sysinfo::System;
 use uzu::engine::{Engine, EngineError};
 
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum ModelResolutionError {
+    #[error(transparent)]
+    Engine(#[from] EngineError),
+    #[error("model `{model}` has checkpoints, but none fit in {memory_total} bytes of total memory")]
+    InsufficientMemory {
+        model: String,
+        memory_total: u64,
+    },
+}
+
 pub async fn resolve_model_id(
     engine: &Engine,
     model: String,
-) -> Result<Option<String>, EngineError> {
+) -> Result<Option<String>, ModelResolutionError> {
     let models = engine.models().await?;
     let mut system = System::new();
     system.refresh_memory();
-    let resolved = models
-        .iter()
-        .find(|candidate| candidate.identifier == model)
-        .or_else(|| resolve_model_shorthand(&models, &model, system.total_memory()))
-        .map(|model| model.identifier.clone())
-        .unwrap_or(model);
+    let resolved = if let Some(model) = models.iter().find(|candidate| candidate.identifier == model) {
+        model.identifier.clone()
+    } else if let Some(model) = resolve_model_shorthand(&models, &model, system.total_memory())? {
+        model.identifier.clone()
+    } else {
+        model
+    };
     Ok(Some(resolved))
 }
 
@@ -22,12 +34,19 @@ fn resolve_model_shorthand<'a>(
     models: &'a [Model],
     requested: &str,
     memory_total: u64,
-) -> Option<&'a Model> {
-    let mut candidates = models
-        .iter()
-        .filter(|model| model_shorthand_matches(model, requested))
-        .filter(|model| checkpoint_size_bytes(model).is_some_and(|size| size <= memory_total))
-        .collect::<Vec<_>>();
+) -> Result<Option<&'a Model>, ModelResolutionError> {
+    let mut candidates = models.iter().filter(|model| model_shorthand_matches(model, requested)).collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    candidates.retain(|model| checkpoint_size_bytes(model).is_some_and(|size| size <= memory_total));
+    if candidates.is_empty() {
+        return Err(ModelResolutionError::InsufficientMemory {
+            model: requested.to_string(),
+            memory_total,
+        });
+    }
 
     candidates.sort_by(|left, right| {
         quantization_priority(left)
@@ -36,7 +55,7 @@ fn resolve_model_shorthand<'a>(
             .then_with(|| quantization_bits(right).cmp(&quantization_bits(left)))
             .then_with(|| left.identifier.cmp(&right.identifier))
     });
-    candidates.into_iter().next()
+    Ok(candidates.into_iter().next())
 }
 
 fn model_shorthand_matches(

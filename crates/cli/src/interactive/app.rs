@@ -8,7 +8,7 @@ use uzu::{
 
 use crate::interactive::{
     components::{AppSettings, Application, Preferences, Theme},
-    model::resolve_model_id,
+    model::{ModelResolutionError, resolve_model_id},
 };
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -16,6 +16,8 @@ use crate::interactive::{
 pub enum CliError {
     #[error(transparent)]
     Engine(#[from] EngineError),
+    #[error(transparent)]
+    ModelResolution(#[from] ModelResolutionError),
     #[error(transparent)]
     Settigs(#[from] SettingsError),
     #[error("Rendering error: {message}")]

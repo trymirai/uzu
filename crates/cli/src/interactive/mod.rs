@@ -1,4 +1,3 @@
-use std::string::ToString;
 use comfy_table::{
     ContentArrangement, Table,
     modifiers::{UTF8_ROUND_CORNERS, UTF8_SOLID_INNER_BORDERS},
@@ -19,17 +18,17 @@ mod list;
 mod model;
 mod sessions;
 
-static APP_IDENTIFIER: String = "com.trymirai.cli".to_string();
+const APP_IDENTIFIER: &str = "com.trymirai.cli";
 
 pub async fn run_interactive(model: Option<String>) -> anyhow::Result<()> {
-    let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER);
+    let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER.to_string());
     let application = CliApplication::create(engine_config).await?;
     application.run_with_model(model).await?;
     Ok(())
 }
 
 pub async fn run_list_models() -> anyhow::Result<()> {
-    let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER);
+    let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER.to_string());
     let engine = Engine::new(engine_config).await?;
     let models = engine.models().await?;
     if models.is_empty() {
@@ -54,7 +53,7 @@ pub async fn run_list_models() -> anyhow::Result<()> {
 }
 
 pub async fn run_list_checkpoints(model_id: String) -> anyhow::Result<()> {
-    let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER);
+    let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER.to_string());
     let engine = Engine::new(engine_config).await?;
     let models = engine.models().await?;
     let checkpoints = get_checkpoints(&models, &model_id);

@@ -15,7 +15,7 @@ fn family_only_prefers_largest_mirai_model_that_fits() {
         checkpoint("27b", 27 * GB, "mlx-community", "mlx", 4, 16 * GB),
     ];
 
-    let resolved = resolve_model_shorthand(&models, "qwen3.5", 32 * GB as u64).unwrap();
+    let resolved = resolve_model_shorthand(&models, "qwen3.5", 32 * GB as u64).unwrap().unwrap();
 
     assert_eq!(resolved.properties.as_ref().unwrap().identifier, "4b");
     assert_eq!(resolved.quantization.as_ref().unwrap().method, "mirai-m");
@@ -28,7 +28,7 @@ fn family_only_uses_largest_checkpoint_when_no_mirai_model_exists() {
         checkpoint("27b", 27 * GB, "mlx-community", "mlx", 4, 16 * GB),
     ];
 
-    let resolved = resolve_model_shorthand(&models, "qwen3.5", 32 * GB as u64).unwrap();
+    let resolved = resolve_model_shorthand(&models, "qwen3.5", 32 * GB as u64).unwrap().unwrap();
 
     assert_eq!(resolved.properties.as_ref().unwrap().identifier, "27b");
 }
@@ -40,10 +40,10 @@ fn shorthand_prefers_mirai_m_then_mirai_s() {
     let mirai_m = checkpoint("4b", 4 * GB, "mirai", "mirai-m", 4, 4 * GB);
 
     let models = vec![mlx.clone(), mirai_s.clone(), mirai_m.clone()];
-    assert_eq!(resolve_model_shorthand(&models, "qwen3.5:4b", 8 * GB as u64), Some(&mirai_m));
+    assert_eq!(resolve_model_shorthand(&models, "qwen3.5:4b", 8 * GB as u64), Ok(Some(&mirai_m)));
 
     let models = vec![mlx, mirai_s.clone()];
-    assert_eq!(resolve_model_shorthand(&models, "qwen3.5:4b", 8 * GB as u64), Some(&mirai_s));
+    assert_eq!(resolve_model_shorthand(&models, "qwen3.5:4b", 8 * GB as u64), Ok(Some(&mirai_s)));
 }
 
 #[test]
@@ -51,8 +51,33 @@ fn shorthand_infers_family_and_quantization_vendors() {
     let model = checkpoint("4b", 4 * GB, "mlx-community", "mlx", 8, 4 * GB);
     let models = [model.clone()];
 
-    assert_eq!(resolve_model_shorthand(&models, "qwen3.5:4b:mlx:8", 8 * GB as u64), Some(&model));
-    assert_eq!(resolve_model_shorthand(&models, "alibaba:qwen3.5:4b:mlx-community:mlx:8", 8 * GB as u64), Some(&model));
+    assert_eq!(resolve_model_shorthand(&models, "qwen3.5:4b:mlx:8", 8 * GB as u64), Ok(Some(&model)));
+    assert_eq!(
+        resolve_model_shorthand(&models, "alibaba:qwen3.5:4b:mlx-community:mlx:8", 8 * GB as u64),
+        Ok(Some(&model))
+    );
+}
+
+#[test]
+fn valid_shorthand_returns_insufficient_memory_when_no_checkpoint_fits() {
+    let models = [checkpoint("4b", 4 * GB, "mirai", "mirai-m", 4, 4 * GB)];
+
+    let result = resolve_model_shorthand(&models, "qwen3.5:4b", GB as u64);
+
+    assert_eq!(
+        result,
+        Err(ModelResolutionError::InsufficientMemory {
+            model: "qwen3.5:4b".to_string(),
+            memory_total: GB as u64,
+        })
+    );
+}
+
+#[test]
+fn unknown_shorthand_remains_unresolved() {
+    let models = [checkpoint("4b", 4 * GB, "mirai", "mirai-m", 4, 4 * GB)];
+
+    assert_eq!(resolve_model_shorthand(&models, "unknown", GB as u64), Ok(None));
 }
 
 fn checkpoint(
