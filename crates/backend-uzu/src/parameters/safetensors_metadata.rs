@@ -1,6 +1,6 @@
 // This code is based on the safetensors implementation: https://docs.rs/safetensors/latest/src/safetensors/tensor.rs.html
 
-use std::{collections::HashMap, fs::File, str::Utf8Error};
+use std::{collections::HashMap, fs::File, path::Path, str::Utf8Error};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -108,6 +108,38 @@ impl Dtype {
 }
 
 const MAX_HEADER_SIZE: usize = 100_000_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeaderSummary {
+    pub tensor_count: usize,
+    pub logical_payload_bytes: u64,
+}
+
+impl HeaderSummary {
+    pub fn from_metadata(metadata: &HashMetadata) -> Result<Self, HeaderLoadingError> {
+        let mut logical_payload_bytes = 0u64;
+        for (key, tensor) in &metadata.tensors {
+            let (begin, end) = tensor.data_offsets;
+            let size = end.checked_sub(begin).ok_or_else(|| HeaderLoadingError::InvalidTensorOffsets {
+                key: key.clone().into_boxed_str(),
+                begin,
+                end,
+            })?;
+            logical_payload_bytes =
+                logical_payload_bytes.checked_add(size as u64).ok_or(HeaderLoadingError::InvalidHeaderLength)?;
+        }
+        Ok(Self {
+            tensor_count: metadata.tensors.len(),
+            logical_payload_bytes,
+        })
+    }
+}
+
+pub fn summarize_header(path: &Path) -> Result<HeaderSummary, HeaderLoadingError> {
+    let file = File::open(path).map_err(HeaderLoadingError::UnableToReadHeader)?;
+    let (_, metadata) = read_metadata(&file)?;
+    HeaderSummary::from_metadata(&metadata)
+}
 
 pub fn read_metadata(file: &File) -> Result<(usize, HashMetadata), HeaderLoadingError> {
     let mut header_buffer = [0u8; size_of::<u64>()];
