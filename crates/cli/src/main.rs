@@ -23,6 +23,12 @@ enum Commands {
         task_path: String,
         output_path: String,
     },
+    ListCheckpoints {
+        /// Model ID shown by `list-models`.
+        #[arg(value_name = "MODEL_ID")]
+        model_id: String,
+    },
+    ListModels,
     Server {
         #[arg(long, value_name = "MODEL")]
         model: String,
@@ -47,6 +53,10 @@ async fn main() -> Result<()> {
             task_path,
             output_path,
         }) => bench::run_bench(model_path, task_path, output_path).await?,
+        Some(Commands::ListCheckpoints {
+            model_id,
+        }) => interactive::run_list_checkpoints(model_id).await?,
+        Some(Commands::ListModels) => interactive::run_list_models().await?,
         Some(Commands::Server {
             model,
             port,
