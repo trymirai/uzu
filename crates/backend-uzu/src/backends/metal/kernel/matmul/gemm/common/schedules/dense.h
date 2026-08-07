@@ -15,7 +15,7 @@ namespace gemm {
 namespace schedules {
 
 struct DenseSchedule {
-  template <typename Core, bool ALIGNED_M, bool ALIGNED_N, bool>
+  template <typename Core, bool ALIGNED_M, bool ALIGNED_N, bool, bool>
   static METAL_FUNC typename Core::AccumFragment launch(
       typename Core::LeftStorage left,
       typename Core::RightStorage right,

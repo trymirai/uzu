@@ -157,16 +157,13 @@ struct Cursor<SignedInt4Format, Fragment, true, HOIST> {
   METAL_FUNC void begin_k_group(const uint) thread {}
 };
 
-template <Axis AXIS, typename Core, typename Format, bool ALIGNED, typename Storage>
+template <Axis AXIS, bool HOIST_OPERAND_ADDRESSING, typename Core, typename Format, bool ALIGNED, typename Storage>
 static METAL_FUNC auto make_cursor(
     const Storage source,
     const constant uzu::matmul::GemmParams* params,
     const schedules::TileContext tile,
     const thread ThreadContext& thread_context
 ) {
-  constexpr bool HOIST_OPERAND_ADDRESSING =
-      Core::RightOperand::NEEDS_CORRECTION || !(Core::THREADGROUP_BLOCK_M == 128 && Core::THREADGROUP_BLOCK_N == 128);
-
   if constexpr (AXIS == Axis::Rows) {
     using Fragment = uzu::matmul::Fragment<int8_t, Core::TILES_M, Core::TILES_K, typename Core::FragmentOps>;
     const device int8_t* current =

@@ -548,6 +548,7 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: usize) {
     {
         for (bits, method) in [
             (4, QuantizationMethod::ScaleSymmetric),
+            (8, QuantizationMethod::ScaleSymmetric),
             (8, QuantizationMethod::ScaleBias),
             (4, QuantizationMethod::ScaleZeroPoint),
         ] {

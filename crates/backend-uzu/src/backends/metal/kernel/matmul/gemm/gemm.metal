@@ -133,6 +133,7 @@ KERNEL(Gemm)(
     const GemmAlignment alignment SPECIALIZE,
     const bool signed_codes SPECIALIZE,
     const bool stage_weight_scales SPECIALIZE,
+    const bool hoist_operand_addressing SPECIALIZE,
     threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
     threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
     const uint group_x GROUPS(group_count_x),
@@ -177,6 +178,7 @@ KERNEL(Gemm)(
         rht_factors,
         b_shared,
         stage_weight_scales,
+        hoist_operand_addressing,
         thread_context
     );
   } else {

@@ -23,7 +23,7 @@ template <typename LeftOperand, typename RightOperand>
 struct IntegerSchedule {
   UZU_CONST bool NEEDS_CORRECTION = RightOperand::NEEDS_CORRECTION;
 
-  template <typename Core, bool ALIGNED_M, bool ALIGNED_N, bool STAGE_WEIGHT_SCALES>
+  template <typename Core, bool ALIGNED_M, bool ALIGNED_N, bool STAGE_WEIGHT_SCALES, bool HOIST_OPERAND_ADDRESSING>
   static METAL_FUNC typename Core::AccumFragment launch(
       typename Core::LeftStorage left_storage,
       typename Core::RightStorage right_storage,
@@ -44,18 +44,20 @@ struct IntegerSchedule {
     constexpr ushort SPAN =
         LeftOperand::GROUP_SIZE < RightOperand::GROUP_SIZE ? LeftOperand::GROUP_SIZE : RightOperand::GROUP_SIZE;
 
-    auto left_codes = quantized::make_cursor<quantized::Axis::Rows, Core, typename LeftOperand::Format, ALIGNED_M>(
-        left_storage,
-        params,
-        tile,
-        thread_context
-    );
-    auto right_codes = quantized::make_cursor<quantized::Axis::Columns, Core, typename RightOperand::Format, ALIGNED_N>(
-        right_storage,
-        params,
-        tile,
-        thread_context
-    );
+    auto left_codes = quantized::
+        make_cursor<quantized::Axis::Rows, HOIST_OPERAND_ADDRESSING, Core, typename LeftOperand::Format, ALIGNED_M>(
+            left_storage,
+            params,
+            tile,
+            thread_context
+        );
+    auto right_codes = quantized::
+        make_cursor<quantized::Axis::Columns, HOIST_OPERAND_ADDRESSING, Core, typename RightOperand::Format, ALIGNED_N>(
+            right_storage,
+            params,
+            tile,
+            thread_context
+        );
 
     quantized::Cache<quantized::Residency::Registers, Core, typename Core::LeftStorage, LeftOperand, ALIGNED_M>
         left_scales(left_storage, shared, params, tile, thread_context);
@@ -80,9 +82,6 @@ struct IntegerSchedule {
 
     METAL_PRAGMA_NO_UNROLL
     for (int k_group_index = 0; k_group_index < k_group_count; ++k_group_index) {
-      const uint k_group_offset = uint(k_group_index * int(RightOperand::GROUP_SIZE));
-      left_codes.begin_k_group(k_group_offset);
-      right_codes.begin_k_group(k_group_offset);
       if constexpr (STAGE_WEIGHT_SCALES) {
         threadgroup_barrier(mem_flags::mem_threadgroup);
         if (k_group_index + 1 < k_group_count) {
@@ -93,6 +92,8 @@ struct IntegerSchedule {
 
       for (int span_index = 0; span_index < spans_per_k_group; ++span_index) {
         const uint span_offset = uint(k_group_index * int(RightOperand::GROUP_SIZE)) + uint(span_index * int(SPAN));
+        left_codes.begin_k_group(span_offset);
+        right_codes.begin_k_group(span_offset);
         left_scales.fill_at_k_offset(span_offset);
 
         uzu::matmul::Fragment<int, Core::TILES_M, Core::TILES_N, typename Core::FragmentOps> products;

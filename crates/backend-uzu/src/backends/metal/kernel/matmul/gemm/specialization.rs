@@ -21,6 +21,7 @@ pub(super) struct GemmSpecialization {
     pub(super) signed_codes: bool,
     pub(super) a_group_size: Option<u32>,
     pub(super) stage_weight_scales: bool,
+    pub(super) hoist_operand_addressing: bool,
 }
 
 impl GemmSpecialization {

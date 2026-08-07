@@ -78,6 +78,7 @@ struct MxuMmaCore {
       const device int32_t* rht_factors,
       threadgroup RightElementType* b_shared,
       const bool stage_weight_scales,
+      const bool hoist_operand_addressing,
       const thread ThreadContext& thread_context
   ) {
     const uint partition = thread_context.threadgroup_position.z;
@@ -134,16 +135,18 @@ struct MxuMmaCore {
               [&](auto aligned_n) {
                 AccumFragment accumulator_tile;
                 dispatch_bool(stage_weight_scales, [&](auto stage) {
-                  accumulator_tile =
-                      Schedule::template launch<MxuMmaCore, aligned_m.value, aligned_n.value, stage.value>(
-                          left,
-                          right,
-                          b_shared,
-                          params,
-                          tile_context,
-                          alignment,
-                          thread_context
-                      );
+                  dispatch_bool(hoist_operand_addressing, [&](auto hoist) {
+                    accumulator_tile = Schedule::
+                        template launch<MxuMmaCore, aligned_m.value, aligned_n.value, stage.value, hoist.value>(
+                            left,
+                            right,
+                            b_shared,
+                            params,
+                            tile_context,
+                            alignment,
+                            thread_context
+                        );
+                  });
                 });
 
                 if (apply_scale) {

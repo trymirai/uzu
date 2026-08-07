@@ -54,6 +54,15 @@ fn should_stage_weight_scales(
         || group_size.is_none_or(|group_size| dispatch_k / group_size >= STAGE_WEIGHT_SCALE_MIN_GROUPS)
 }
 
+fn should_hoist_operand_addressing(
+    tiling: GemmTiling,
+    b_prologue: GemmBPrologueKind,
+) -> bool {
+    let needs_correction =
+        matches!(b_prologue, GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant);
+    needs_correction || tiling != GemmTiling::Tile128x128x256_Simdgroups4x4
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum GemmDispatchPath {
     Simdgroup,
@@ -116,6 +125,7 @@ impl GemmKernel {
                     specialization.alignment,
                     specialization.signed_codes,
                     specialization.stage_weight_scales,
+                    specialization.hoist_operand_addressing,
                 )?;
                 Ok(entry.insert(kernel))
             },
@@ -406,6 +416,7 @@ impl GemmKernel {
                     signed_codes: false,
                     a_group_size: None,
                     stage_weight_scales: true,
+                    hoist_operand_addressing: false,
                 };
                 specialization.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -569,6 +580,7 @@ impl GemmKernel {
                         signed_codes: weights_signed_codes,
                         a_group_size,
                         stage_weight_scales: should_stage_weight_scales(tiling, k, group_size, bits_per_b),
+                        hoist_operand_addressing: should_hoist_operand_addressing(tiling, b_prologue),
                     };
                     specialization.validate()?;
                     let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -653,6 +665,7 @@ impl GemmKernel {
             signed_codes,
             a_group_size,
             stage_weight_scales: should_stage_weight_scales(tiling, kp, group_size, bits_per_b),
+            hoist_operand_addressing: should_hoist_operand_addressing(tiling, b_prologue),
         };
         part_spec.validate()?;
 
