@@ -41,7 +41,7 @@ fn problem(
     shape: MatmulShape,
     data_type: DataType,
 ) -> GemmProblem {
-    GemmProblem::new(shape, data_type, data_type, data_type, true)
+    GemmProblem::new(shape, data_type, data_type, true)
 }
 
 fn select(shape: MatmulShape) -> GemmPlan {
@@ -130,7 +130,7 @@ fn split_k_and_staging_rules_are_preserved() {
     assert!(!select(p).should_stage_weight_scales(p));
 
     p.d_transform = GemmDTransform::BIAS;
-    assert_eq!(GemmProblem::new(p, DataType::BF16, DataType::BF16, DataType::F32, true).select_plan().split_k, 1);
+    assert_eq!(GemmProblem::new(p, DataType::BF16, DataType::F32, true).select_plan().split_k, 1);
 
     let mut w8 = a8(quant(shape(17, 4096, 4096)));
     w8.b_bits = Some(8);
@@ -150,27 +150,9 @@ fn split_k_and_staging_rules_are_preserved() {
 }
 
 #[uzu_test]
-fn gemv_override_is_preserved() {
-    let prefer = |shape, data_type| {
-        let problem = problem(shape, data_type);
-        prefer_gemm_over_gemv(problem, problem.select_plan())
-    };
-
-    assert!(prefer(shape(4, 4096, 8192), DataType::BF16));
-    assert!(!prefer(shape(4, 8192, 4096), DataType::BF16));
-    assert!(!prefer(shape(4, 4096, 4096), DataType::F32));
-    assert!(!prefer(shape(3, 4096, 8192), DataType::BF16));
-    assert!(!prefer(shape(5, 4096, 8192), DataType::BF16));
-
-    let mut gathered = shape(4, 4096, 8192);
-    gathered.gathered = true;
-    assert!(!prefer(gathered, DataType::BF16));
-}
-
-#[uzu_test]
 fn invalid_plans_are_rejected() {
     let huge = shape(u32::MAX, u32::MAX, u32::MAX);
-    let no_mxu = GemmProblem::new(huge, DataType::BF16, DataType::BF16, DataType::BF16, false);
+    let no_mxu = GemmProblem::new(huge, DataType::BF16, DataType::BF16, false);
     assert_eq!(no_mxu.select_plan_for_engine(GemmEngine::Mxu), Err(GemmPlanError::MxuUnavailable));
 
     let mut invalid_layout = quant(huge);

@@ -111,7 +111,7 @@ impl GemmKernel {
         shape: MatmulShape,
         supports_mxu: bool,
     ) -> GemmProblem {
-        GemmProblem::new(shape, self.weights_data_type, self.input_data_type, self.output_data_type, supports_mxu)
+        GemmProblem::new(shape, self.weights_data_type, self.output_data_type, supports_mxu)
     }
 
     #[cfg(test)]

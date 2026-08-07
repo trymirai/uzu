@@ -1,5 +1,6 @@
 mod error;
 mod kernel;
+mod policy;
 mod selection;
 mod specialization;
 
@@ -17,7 +18,7 @@ pub enum GemmEngine {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GemmPlan {
-    engine: GemmEngine,
-    tiling: GemmTiling,
-    split_k: u32,
+    pub(super) engine: GemmEngine,
+    pub(super) tiling: GemmTiling,
+    pub(super) split_k: u32,
 }

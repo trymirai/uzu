@@ -10,6 +10,7 @@ use crate::{
     backends::{
         common::{
             BufferArg, Encoder,
+            gpu_types::gemm::GemmTiling,
             kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulPath, MatmulShape},
         },
         metal::{Metal, context::MetalContext, error::MetalError},
@@ -31,6 +32,35 @@ enum MatmulDispatch {
 }
 
 impl MatmulMetalKernel {
+    fn prefer_gemm_over_gemv(
+        shape: MatmulShape,
+        plan: GemmPlan,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+    ) -> bool {
+        if shape.gathered || plan.engine != gemm::GemmEngine::Mxu {
+            return false;
+        }
+        match (shape.m, shape.n == shape.k, (weights_data_type, input_data_type, output_data_type)) {
+            (4, true, (DataType::F32, DataType::F32, DataType::F32))
+            | (5, _, (DataType::BF16, DataType::BF16, DataType::BF16)) => return false,
+            _ => {},
+        }
+        match shape.m {
+            0..=3 => return false,
+            4 => {
+                let small_enough_for_mxu = shape.n <= 6144 && shape.k <= 9728;
+                let k_dominates = shape.k > 3_u32.saturating_mul(shape.n);
+                if !(small_enough_for_mxu || k_dominates) {
+                    return false;
+                }
+            },
+            _ => {},
+        }
+        matches!(plan.tiling, GemmTiling::Tile16x32x256_Simdgroups1x1 | GemmTiling::Tile16x128x256_Simdgroups1x4)
+    }
+
     fn select_dispatch(
         &self,
         shape: &MatmulShape,
@@ -43,16 +73,20 @@ impl MatmulMetalKernel {
             self.output_data_type,
             context.device_tier(),
         );
-        let problem = GemmProblem::new(
-            *shape,
-            self.weights_data_type,
-            self.input_data_type,
-            self.output_data_type,
-            context.supports_mxu(),
-        );
-        match problem.plan_for_dispatch(gemv.is_some()) {
-            Some(plan) => MatmulDispatch::Gemm(plan),
-            None => MatmulDispatch::Gemv(gemv.expect("GEMV must be available when GEMM is not selected")),
+        let problem = GemmProblem::new(*shape, self.weights_data_type, self.output_data_type, context.supports_mxu());
+        let plan = problem.select_plan();
+        if gemv.is_none()
+            || Self::prefer_gemm_over_gemv(
+                *shape,
+                plan,
+                self.weights_data_type,
+                self.input_data_type,
+                self.output_data_type,
+            )
+        {
+            MatmulDispatch::Gemm(plan)
+        } else {
+            MatmulDispatch::Gemv(gemv.expect("GEMV must be available when GEMM is not selected"))
         }
     }
 }
@@ -121,3 +155,7 @@ impl MatmulKernel for MatmulMetalKernel {
         self.gemm.encode_plan(arguments, plan, encoder)
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../../tests/unit/backends/metal/kernel/matmul/dispatch_selection_test.rs"]
+mod tests;
