@@ -7,6 +7,7 @@ use crate::{
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationTransform,
+            activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
             matmul::{MatmulA, MatmulPath},
         },
     },
@@ -31,6 +32,7 @@ pub(super) fn int8_activations_eligible<B: Backend>(
     input_dimension: usize,
     input_data_type: DataType,
     output_data_type: DataType,
+    activation_group_size: usize,
 ) -> bool {
     if !INT8_ACTIVATIONS_ENABLED {
         return false;
@@ -60,6 +62,7 @@ pub(super) fn int8_activations_eligible<B: Backend>(
         && matches!(group_size, 32 | 64 | 128)
         && input_dimension.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
         && input_dimension.is_multiple_of(group_size)
+        && input_dimension.is_multiple_of(activation_group_size)
 }
 
 #[derive(Debug, Error)]
@@ -125,6 +128,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             .read_allocation()?;
         let quantized_weights_tree = weights_tree.subtree("quantized")?;
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
+        let activation_group_size = ACTIVATION_SCALE_GROUP_SIZE as usize;
 
         let input_transform = ActivationTransform::input_rht(context, input_data_type, true)
             .map_err(RHTLinearWrapperError::BackendError)?;
@@ -135,11 +139,28 @@ impl<B: Backend> RHTLinearWrapper<B> {
             input_dimension,
             input_data_type,
             output_data_type,
+            activation_group_size,
         ) {
             let emit_group_sums = weights_need_group_sums(&quantization_spec);
+            let weight_group_size = match &quantization_spec {
+                AnyWeightMatrixSpec::IntSpec(IntSpec {
+                    group_size,
+                    ..
+                })
+                | AnyWeightMatrixSpec::MLXSpec(MLXSpec {
+                    group_size,
+                    ..
+                }) => *group_size,
+                _ => unreachable!("A8 eligibility only accepts integer quantization specs"),
+            };
             Some(
-                ActivationTransform::quantize(context, input_data_type, emit_group_sums)
-                    .map_err(RHTLinearWrapperError::BackendError)?,
+                ActivationTransform::quantize(
+                    context,
+                    input_data_type,
+                    activation_group_size,
+                    emit_group_sums.then_some((weight_group_size as u32).min(activation_group_size as u32)),
+                )
+                .map_err(RHTLinearWrapperError::BackendError)?,
             )
         } else {
             None
@@ -183,13 +204,16 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         if let Some(quantize_transform) = &self.quantize_transform
             && self.inner_linear.select_path(batch_dim, encoder.context()) == MatmulPath::Gemm
         {
-            let groups_per_row = self.input_dimension.div_ceil(HADAMARD_TRANSFORM_BLOCK_SIZE);
+            let scale_groups_per_row = self.input_dimension.div_ceil(quantize_transform.activation_group_size());
+            let sum_groups_per_row = quantize_transform
+                .sum_group_size()
+                .map(|group_size| self.input_dimension.div_ceil(group_size as usize));
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
-            let mut scales = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::F32))?;
-            let emit_group_sums = quantize_transform.emit_group_sums();
-            let mut group_sums = emit_group_sums
-                .then(|| encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::I32)))
+            let mut scales =
+                encoder.allocate_scratch(size_for_shape(&[batch_dim, scale_groups_per_row], DataType::F32))?;
+            let mut group_sums = sum_groups_per_row
+                .map(|groups| encoder.allocate_scratch(size_for_shape(&[batch_dim, groups], DataType::I32)))
                 .transpose()?;
 
             quantize_transform.encode_quantize(
@@ -207,6 +231,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                     values: &values,
                     scales: &scales,
                     group_sums: group_sums.as_ref(),
+                    group_size: quantize_transform.activation_group_size() as u32,
                 },
                 batch_dim,
                 encoder,

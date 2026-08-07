@@ -11,7 +11,8 @@
 #include "block_geometry.h"
 #include "gemm_tiling.h"
 #include "operands.h"
-#include "schedules/selector.h"
+#include "schedules/dense.h"
+#include "schedules/integer.h"
 #include "schedules/staged.h"
 #include "schedules/tile_context.h"
 
@@ -29,14 +30,18 @@ template <
 struct MxuMmaCore {
   using OutputElementType = OutputElementType_;
   using RightOperand = RightOperand_;
-  using Left = operands::LeftBinding<LeftOperand, RightOperand>;
-  using Right = operands::RightBinding<RightOperand>;
+  using Left = LeftOperand;
+  using Right = RightOperand;
   using LeftElementType = typename Left::ElementType;
   using RightElementType = typename Right::ElementType;
-  using LeftArgs = typename Left::Args;
-  using RightArgs = typename Right::Args;
+  using LeftStorage = operands::LeftStorage<Left>;
+  using RightStorage = operands::RightStorage<Right>;
   using FragmentOps = uzu::matmul::MxuFragmentOps<>;
-  using Schedule = typename schedules::ScheduleFor<LeftOperand, RightOperand>::type;
+  using Schedule = metal::conditional_t<
+      !Left::QUANTIZED,
+      metal::conditional_t<!Right::QUANTIZED, schedules::DenseSchedule, schedules::StagedSchedule>,
+      schedules::IntegerSchedule<Left, Right>>;
+  UZU_CONST GemmTiling TILING = GEMM_TILING;
   UZU_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   UZU_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
   UZU_CONST ushort SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(GEMM_TILING);
@@ -54,11 +59,8 @@ struct MxuMmaCore {
   UZU_CONST ushort TILES_N = SIMDGROUP_BLOCK_N / uzu::matmul::MxuFragmentOps<>::FRAGMENT_COLS;
   UZU_CONST ushort TILES_K = SIMDGROUP_BLOCK_K / uzu::matmul::MxuFragmentOps<>::FRAGMENT_ROWS;
 
-  using OuterBlock = schedules::OuterBlockK<RightOperand, THREADGROUP_BLOCK_K_FP, SIMDGROUP_BLOCK_K>;
-  UZU_CONST ushort THREADGROUP_BLOCK_K = OuterBlock::VALUE;
+  UZU_CONST ushort THREADGROUP_BLOCK_K = Right::template outer_block_k<THREADGROUP_BLOCK_K_FP>();
   UZU_CONST ushort SHARED_STRIDE_B = THREADGROUP_BLOCK_K + 16 / sizeof(RightElementType);
-  UZU_CONST ushort STAGING_ELEMENTS =
-      metal::is_same<Schedule, schedules::StagedSchedule>::value ? THREADGROUP_BLOCK_N * SHARED_STRIDE_B : 1;
   UZU_CONST ushort THREADGROUP_THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
 
   using AccumulatorType = float;
@@ -66,8 +68,8 @@ struct MxuMmaCore {
   using AccumFragment = uzu::matmul::Fragment<AccumulatorType, TILES_M, TILES_N, FragmentOps>;
 
   static METAL_FUNC void run(
-      LeftArgs left,
-      RightArgs right,
+      LeftStorage left,
+      RightStorage right,
       device OutputElementType* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
@@ -75,6 +77,8 @@ struct MxuMmaCore {
       const device RightElementType* output_bias,
       const device int32_t* rht_factors,
       threadgroup RightElementType* b_shared,
+      const bool stage_weight_scales,
+      const bool hoist_operand_addressing,
       const thread ThreadContext& thread_context
   ) {
     const uint partition = thread_context.threadgroup_position.z;
@@ -107,8 +111,6 @@ struct MxuMmaCore {
             ? SIMDGROUP_BLOCK_N
             : short(min(int(SIMDGROUP_BLOCK_N), int(params->N) - int(geometry.block_col_start + tile_col_offset)));
 
-    left.seek_rows(block_row + tile_row_offset, params->leading_dimension_a, k_offset);
-
     schedules::TileContext tile_context;
     tile_context.simdgroup_limit_m = simdgroup_limit_m;
     tile_context.simdgroup_limit_n = simdgroup_limit_n;
@@ -131,15 +133,21 @@ struct MxuMmaCore {
           dispatch_bool(
               alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
               [&](auto aligned_n) {
-                auto accumulator_tile = Schedule::template launch<MxuMmaCore, aligned_m.value, aligned_n.value>(
-                    left,
-                    right,
-                    b_shared,
-                    params,
-                    tile_context,
-                    alignment,
-                    thread_context
-                );
+                AccumFragment accumulator_tile;
+                dispatch_bool(stage_weight_scales, [&](auto stage) {
+                  dispatch_bool(hoist_operand_addressing, [&](auto hoist) {
+                    accumulator_tile = Schedule::
+                        template launch<MxuMmaCore, aligned_m.value, aligned_n.value, stage.value, hoist.value>(
+                            left,
+                            right,
+                            b_shared,
+                            params,
+                            tile_context,
+                            alignment,
+                            thread_context
+                        );
+                  });
+                });
 
                 if (apply_scale) {
                   const AccumulatorType scale = AccumulatorType(params->ab_scale);

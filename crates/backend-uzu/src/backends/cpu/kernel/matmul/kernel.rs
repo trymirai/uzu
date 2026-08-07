@@ -3,7 +3,7 @@ use crate::{
     backends::{
         common::{
             Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
-            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMode},
+            gpu_types::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
@@ -106,25 +106,28 @@ impl MatmulKernel for MatmulCpuKernel {
                 values,
                 scales,
                 group_sums: _,
+                group_size: a_group_size,
             } => {
-                let weight_gs_ok = matches!(b.group_size(), Some(32 | 64 | 128));
-                let weights_ok = matches!(
-                    b,
-                    MatmulB::ScaleSymmetricDequant {
-                        mode: QuantizationMode::U4 | QuantizationMode::U8,
-                        ..
-                    } | MatmulB::ScaleBiasDequant {
-                        mode: QuantizationMode::U4 | QuantizationMode::U8,
-                        ..
-                    } | MatmulB::ScaleZeroPointDequant {
-                        mode: QuantizationMode::U4 | QuantizationMode::U8,
-                        ..
-                    }
-                );
-                if !weight_gs_ok || !weights_ok {
+                let compatible = matches!(a_group_size, 32 | 64 | 128)
+                    && k.is_multiple_of(a_group_size)
+                    && matches!(b.group_size(), Some(32 | 64 | 128))
+                    && matches!(
+                        b,
+                        MatmulB::ScaleSymmetricDequant {
+                            mode: QuantizationMode::U4 | QuantizationMode::U8,
+                            ..
+                        } | MatmulB::ScaleBiasDequant {
+                            mode: QuantizationMode::U4 | QuantizationMode::U8,
+                            ..
+                        } | MatmulB::ScaleZeroPointDequant {
+                            mode: QuantizationMode::U4 | QuantizationMode::U8,
+                            ..
+                        }
+                    );
+                if !compatible {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
-                        reason: "symmetric int8 activations require unsigned 4/8-bit quantized weights with group size 32/64/128",
+                        reason: "symmetric int8 activations require a supported 32/64/128 activation and weight group",
                     }
                     .into());
                 }
@@ -137,7 +140,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     scales: SendPtr(
                         unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
                     ),
-                    group_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                    group_size: a_group_size as usize,
                 }
             },
         };

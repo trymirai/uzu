@@ -13,6 +13,7 @@ use crate::{
             gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
             kernel::{
                 ActivationTransform, Kernels,
+                activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulShape},
             },
         },
@@ -68,11 +69,11 @@ impl BenchmarkData {
         k: usize,
         n: usize,
         bits: u32,
+        group_size: u32,
         seed: u64,
     ) -> Self {
-        let group_size = HADAMARD_TRANSFORM_BLOCK_SIZE as u32;
         let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed)
-            .with_prepared_a();
+            .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE as usize, None);
 
         let unsigned_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
         let signed_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.weights_for_upload());
@@ -168,6 +169,7 @@ fn encode_step(
                     values: &data.a_int8,
                     scales: &data.a_scales,
                     group_sums: None,
+                    group_size: 128,
                 },
                 b: MatmulB::ScaleSymmetricDequant {
                     b: &data.signed_weights,
@@ -229,7 +231,15 @@ fn bench_bits(
 
     for (layer, shape) in qwen3_layer_shapes(bits) {
         let (m, k, n) = (shape.m, shape.k, shape.n);
-        let mut data = BenchmarkData::new(context, m, k, n, bits, 0xA8_00 ^ u64::from(bits) ^ k as u64 ^ n as u64);
+        let mut data = BenchmarkData::new(
+            context,
+            m,
+            k,
+            n,
+            bits,
+            HADAMARD_TRANSFORM_BLOCK_SIZE as u32,
+            0xA8_00 ^ u64::from(bits) ^ k as u64 ^ n as u64,
+        );
         let mut output = alloc_allocation::<Metal, bf16>(context, m * n);
         let shape_label = format!("{layer}_m{m}_k{k}_n{n}");
 
@@ -279,7 +289,7 @@ fn bench_a8w(c: &mut Criterion) {
     }
     let device_tier = context.device_tier();
 
-    let prepare = ActivationTransform::<Metal>::quantize(&context, DataType::BF16, false).expect("prepare kernel");
+    let prepare = ActivationTransform::<Metal>::quantize(&context, DataType::BF16, 128, None).expect("prepare kernel");
     let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, true).expect("hadamard kernel");
 
     for bits in [8u32, 4u32] {
