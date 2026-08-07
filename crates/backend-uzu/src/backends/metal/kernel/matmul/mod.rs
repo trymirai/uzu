@@ -1,15 +1,18 @@
 pub mod gemm;
 pub mod gemv;
 
-pub use self::gemm::{GemmDispatchPath, GemmKernel};
-use self::gemv::{GemvDispatch, GemvSpecialization};
+pub use self::gemm::GemmKernel;
+use self::{
+    gemm::{GemmPlan, GemmProblem},
+    gemv::{GemvDispatch, GemvSpecialization},
+};
 use crate::{
     backends::{
         common::{
             BufferArg, Encoder,
             kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulPath, MatmulShape},
         },
-        metal::{Metal, context::MetalContext, error::MetalError, metal_extensions::DeviceExt},
+        metal::{Metal, context::MetalContext, error::MetalError},
     },
     data_type::DataType,
 };
@@ -22,22 +25,35 @@ pub struct MatmulMetalKernel {
     output_data_type: DataType,
 }
 
+enum MatmulDispatch {
+    Gemv(GemvSpecialization),
+    Gemm(GemmPlan),
+}
+
 impl MatmulMetalKernel {
-    fn gemv_specialization(
+    fn select_dispatch(
         &self,
         shape: &MatmulShape,
         context: &MetalContext,
-    ) -> Option<GemvSpecialization> {
-        if context.device.supports_mxu() && self.gemm.should_skip_gemv_for_mxu(shape) {
-            return None;
-        }
-        GemvSpecialization::select_shape(
+    ) -> MatmulDispatch {
+        let gemv = GemvSpecialization::select_shape(
             shape,
             self.weights_data_type,
             self.input_data_type,
             self.output_data_type,
             context.device_tier(),
-        )
+        );
+        let problem = GemmProblem::new(
+            *shape,
+            self.weights_data_type,
+            self.input_data_type,
+            self.output_data_type,
+            context.supports_mxu(),
+        );
+        match problem.plan_for_dispatch(gemv.is_some()) {
+            Some(plan) => MatmulDispatch::Gemm(plan),
+            None => MatmulDispatch::Gemv(gemv.expect("GEMV must be available when GEMM is not selected")),
+        }
     }
 }
 
@@ -73,10 +89,9 @@ impl MatmulKernel for MatmulMetalKernel {
         shape: &MatmulShape,
         context: &MetalContext,
     ) -> MatmulPath {
-        if self.gemv_specialization(shape, context).is_some() {
-            MatmulPath::Gemv
-        } else {
-            MatmulPath::Gemm
+        match self.select_dispatch(shape, context) {
+            MatmulDispatch::Gemv(_) => MatmulPath::Gemv,
+            MatmulDispatch::Gemm(_) => MatmulPath::Gemm,
         }
     }
 
@@ -86,9 +101,12 @@ impl MatmulKernel for MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        if let Some(gemv) = self.gemv_specialization(&shape, encoder.context()) {
-            return self.gemv.encode(arguments, gemv, encoder).map_err(MetalError::from);
-        }
+        let plan = match self.select_dispatch(&shape, encoder.context()) {
+            MatmulDispatch::Gemv(gemv) => {
+                return self.gemv.encode(arguments, gemv, encoder).map_err(MetalError::from);
+            },
+            MatmulDispatch::Gemm(plan) => plan,
+        };
 
         // TODO: remove after GatherGEMM is supported
         if arguments.gather_indices.is_some() {
@@ -100,6 +118,6 @@ impl MatmulKernel for MatmulMetalKernel {
                 .into(),
             ));
         }
-        self.gemm.encode(arguments, encoder)
+        self.gemm.encode_plan(arguments, plan, encoder)
     }
 }

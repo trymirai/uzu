@@ -13,7 +13,7 @@ use crate::{
             gpu_types::QuantizationMethod,
             kernel::{Kernels, matmul::MatmulKernel},
         },
-        metal::{GemmDispatchPath, Metal, MetalContext},
+        metal::{GemmEngine, Metal, MetalContext},
     },
     tests::{
         matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, iter_encode_loop, quant_arguments},
@@ -30,10 +30,10 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
     quant_method: QuantizationMethod,
 ) {
     let supports_mxu = context.supports_mxu();
-    let paths: &[(&str, GemmDispatchPath)] = if supports_mxu {
-        &[("Simdgroup", GemmDispatchPath::Simdgroup), ("Mxu", GemmDispatchPath::Mxu)]
+    let engines: &[(&str, GemmEngine)] = if supports_mxu {
+        &[("Simdgroup", GemmEngine::Simdgroup), ("Mxu", GemmEngine::Mxu)]
     } else {
-        &[("Simdgroup", GemmDispatchPath::Simdgroup)]
+        &[("Simdgroup", GemmEngine::Simdgroup)]
     };
 
     for shape in bench_quant_gemm_shapes(bits) {
@@ -48,7 +48,7 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
         )
         .unwrap();
 
-        for &(path_label, path) in paths {
+        for &(path_label, engine) in engines {
             let mut group = c.benchmark_group(format!(
                 "{}/Kernel/UnifiedQuantizedGemm/{}/{}",
                 type_short_name::<Metal>(),
@@ -56,11 +56,11 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
                 label
             ));
             group.throughput(Throughput::Elements((m * n * k) as u64));
-            group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
+            group.bench_function(BenchmarkId::new(format!("{engine:?}"), shape.to_string()), |b| {
                 iter_encode_loop::<Metal, _>(context, b, |encoder| {
                     matmul
                         .gemm
-                        .encode_dispatch_path(quant_arguments(&mut buffers, &input), path, encoder)
+                        .encode_with_engine(quant_arguments(&mut buffers, &input), engine, encoder)
                         .expect("encode unified quant matmul");
                 });
             });

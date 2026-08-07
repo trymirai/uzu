@@ -2,7 +2,7 @@ use num_traits::Float;
 
 use super::Shape;
 #[cfg(backend = "metal")]
-use crate::backends::metal::{GemmDispatchPath, Metal, MetalContext};
+use crate::backends::metal::{GemmEngine, Metal, MetalContext};
 use crate::{
     array::ArrayElement,
     backends::{
@@ -20,6 +20,13 @@ use crate::{
 
 #[cfg(backend = "metal")]
 pub type MetalMatmulKernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
+
+#[cfg(backend = "metal")]
+#[derive(Debug, Clone, Copy)]
+pub enum TestDispatch {
+    Auto,
+    GemmEngine(GemmEngine),
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Case {
@@ -198,12 +205,12 @@ pub fn run_metal<T: ArrayElement + Float>(
     context: &MetalContext,
     kernel: &mut MetalMatmulKernel,
     input: &Input<T>,
-    path: Option<GemmDispatchPath>,
+    dispatch: TestDispatch,
 ) -> Vec<T> {
-    run::<Metal, T>(context, kernel, input, |kernel, args, encoder| match path {
-        None => kernel.encode(args, encoder).expect("matmul encode failed"),
-        Some(gemm_path) => {
-            kernel.gemm.encode_dispatch_path(args, gemm_path, encoder).expect("gemm encode_dispatch_path failed")
+    run::<Metal, T>(context, kernel, input, |kernel, args, encoder| match dispatch {
+        TestDispatch::Auto => kernel.encode(args, encoder).expect("matmul encode failed"),
+        TestDispatch::GemmEngine(engine) => {
+            kernel.gemm.encode_with_engine(args, engine, encoder).expect("forced GEMM engine encode failed")
         },
     })
 }

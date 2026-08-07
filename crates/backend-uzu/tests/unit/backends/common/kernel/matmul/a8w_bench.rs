@@ -17,7 +17,7 @@ use crate::{
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulShape},
             },
         },
-        metal::{DeviceTier, GemmDispatchPath, GemvDispatch, GemvSpecialization, Metal, MetalContext},
+        metal::{DeviceTier, GemmEngine, GemvDispatch, GemvSpecialization, Metal, MetalContext},
     },
     data_type::DataType,
     tests::{
@@ -187,13 +187,13 @@ fn encode_step(
                 n: data.n,
                 k: data.k,
             };
-            matmul.gemm.encode_dispatch_path(args, GemmDispatchPath::Mxu, encoder).expect("a8 gemm mxu encode");
+            matmul.gemm.encode_with_engine(args, GemmEngine::Mxu, encoder).expect("a8 gemm mxu encode");
         },
         BenchPath::Bf16GemmMxu => {
             encoder.encode_copy(&data.activations, .., &mut data.a_working, ..);
             hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
             let args = data.bf16_arguments(output);
-            matmul.gemm.encode_dispatch_path(args, GemmDispatchPath::Mxu, encoder).expect("bf16 gemm mxu encode");
+            matmul.gemm.encode_with_engine(args, GemmEngine::Mxu, encoder).expect("bf16 gemm mxu encode");
         },
         BenchPath::Bf16Gemv => {
             encoder.encode_copy(&data.activations, .., &mut data.a_working, ..);

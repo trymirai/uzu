@@ -23,11 +23,16 @@ use crate::{
             },
         },
         cpu::Cpu,
-        metal::{GemmDispatchPath, Metal, MetalContext},
+        metal::{GemmEngine, Metal, MetalContext},
     },
     tests::{
         helpers::allocation_to_vec,
-        matmul::{QuantBuffers, QuantInput, quant_arguments, quant_b_variant, run_quant_cpu, run_quant_metal},
+        matmul::{
+            QuantBuffers, QuantInput,
+            harness::TestDispatch,
+            quant::{run_quant_cpu, run_quant_metal},
+            quant_arguments, quant_b_variant,
+        },
     },
 };
 
@@ -76,7 +81,7 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
 ) {
     let context = MetalContext::new().expect("Metal context");
     let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 0);
-    let unified = run_quant_metal::<T>(&context, &input, Some(GemmDispatchPath::Simdgroup));
+    let unified = run_quant_metal::<T>(&context, &input, TestDispatch::GemmEngine(GemmEngine::Simdgroup));
     let reference = run_quant_cpu::<T>(&input);
 
     assert_parity::<T>(
@@ -146,7 +151,7 @@ fn run_parity_gemv<T: ArrayElement + Float + Debug + Display>(
 ) {
     let context = MetalContext::new().expect("Metal context");
     let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 0);
-    let gemv = run_quant_metal::<T>(&context, &input, None);
+    let gemv = run_quant_metal::<T>(&context, &input, TestDispatch::Auto);
     let reference = run_quant_cpu::<T>(&input);
     assert_parity::<T>(
         &format!(
@@ -207,7 +212,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
         bias: Some(&bias_pp_buf),
         ..MatmulDOps::none()
     };
-    matmul.gemm.encode_dispatch_path(args, GemmDispatchPath::Simdgroup, &mut encoder).expect("encode quant with bias");
+    matmul.gemm.encode_with_engine(args, GemmEngine::Simdgroup, &mut encoder).expect("encode quant with bias");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
 
@@ -481,7 +486,7 @@ fn mxu_quant_parity_bf16(
         return;
     }
     let input = QuantInput::<bf16>::new(m, k, n, gs, bits, method, 0);
-    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
+    let actual = run_quant_metal::<bf16>(&context, &input, TestDispatch::GemmEngine(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>(
         &format!("MXU m={m} k={k} n={n} gs={gs} bits={bits} method={method:?}"),
@@ -521,7 +526,7 @@ fn a8w_mxu_parity_bf16(
         ACTIVATION_SCALE_GROUP_SIZE as usize,
         (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
     );
-    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
+    let actual = run_quant_metal::<bf16>(&context, &input, TestDispatch::GemmEngine(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>(
         &format!("A8W{bits} MXU m={m} weight_gs={weight_gs} method={method:?}"),
@@ -557,7 +562,7 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: usize) {
                 (method != QuantizationMethod::ScaleSymmetric)
                     .then_some((activation_group_size as u32).min(weight_group_size)),
             );
-            let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
+            let actual = run_quant_metal::<bf16>(&context, &input, TestDispatch::GemmEngine(GemmEngine::Mxu));
             let reference = run_quant_cpu::<bf16>(&input);
             assert_parity::<bf16>(
                 &format!("A8W{bits} act{activation_group_size} weight{weight_group_size} m={m} method={method:?}"),
@@ -582,7 +587,7 @@ fn a8w4_zero_point_tail_parity(#[case] m: usize) {
     }
     let input = QuantInput::<bf16>::new(m, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint, 0)
         .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE as usize, Some(32));
-    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
+    let actual = run_quant_metal::<bf16>(&context, &input, TestDispatch::GemmEngine(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>(&format!("A8W4 ZP N-tail m={m}"), &reference, &actual, 0.08, 0.8);
 }
@@ -596,7 +601,7 @@ fn a8w4_zero_point_tail_signed_codes_parity() {
     let input = QuantInput::<bf16>::new(33, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint, 0)
         .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE as usize, Some(32))
         .with_signed_weight_codes();
-    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
+    let actual = run_quant_metal::<bf16>(&context, &input, TestDispatch::GemmEngine(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>("A8W4 ZP signed-code N-tail", &reference, &actual, 0.08, 0.8);
 }
@@ -621,8 +626,10 @@ fn signed_weights_full_precision_activations_parity_bf16(
     let reference_input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0);
     let reference = run_quant_cpu::<bf16>(&reference_input);
 
-    for (label, path) in [("gemv", None), ("simdgroup", Some(GemmDispatchPath::Simdgroup))] {
-        let actual = run_quant_metal::<bf16>(&context, &input, path);
+    for (label, dispatch) in
+        [("gemv", TestDispatch::Auto), ("simdgroup", TestDispatch::GemmEngine(GemmEngine::Simdgroup))]
+    {
+        let actual = run_quant_metal::<bf16>(&context, &input, dispatch);
         assert_parity::<bf16>(
             &format!("signed weights FP-A {label} bits={bits} method={method:?}"),
             &reference,
@@ -720,7 +727,7 @@ fn a8w_mxu_output_bias_parity_bf16(
     };
     metal_matmul
         .gemm
-        .encode_dispatch_path(metal_arguments, GemmDispatchPath::Mxu, &mut metal_encoder)
+        .encode_with_engine(metal_arguments, GemmEngine::Mxu, &mut metal_encoder)
         .expect("Metal A8W MXU matmul with output bias");
     metal_encoder.end_encoding().submit().wait_until_completed().unwrap();
     let actual = allocation_to_vec::<Metal, bf16>(&metal_buffers.y);
