@@ -206,7 +206,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         {
             let scale_groups_per_row = self.input_dimension.div_ceil(quantize_transform.activation_group_size);
             let sum_groups_per_row = quantize_transform
-                .correction_group_size()
+                .sum_group_size()
                 .map(|group_size| self.input_dimension.div_ceil(group_size as usize));
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;

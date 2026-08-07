@@ -15,7 +15,7 @@ namespace gemm {
 namespace schedules {
 
 struct DenseSchedule {
-  template <typename Core, bool ALIGNED_M, bool ALIGNED_N, bool STAGE_SCALE_LINES>
+  template <typename Core, bool ALIGNED_M, bool ALIGNED_N, bool>
   static METAL_FUNC typename Core::AccumFragment launch(
       typename Core::LeftStorage left,
       typename Core::RightStorage right,
@@ -25,7 +25,7 @@ struct DenseSchedule {
       const GemmAlignment alignment,
       const thread ThreadContext& thread_context
   ) {
-    static_assert(!Core::Left::quantized && !Core::Right::quantized, "dense schedule requires dense operands");
+    static_assert(!Core::Left::QUANTIZED && !Core::Right::QUANTIZED, "dense schedule requires dense operands");
     typename Core::AccumFragment accumulator;
     dispatch_bool(alignment.contains(GemmAlignment::K), [&](auto aligned_k) {
       accumulator = uzu::matmul::gemm_loop<

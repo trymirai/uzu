@@ -39,9 +39,9 @@ fn split_k_target(
     }
 }
 
-const STAGE_SCALE_LINES_MIN_GROUPS: u32 = 6;
+const STAGE_WEIGHT_SCALE_MIN_GROUPS: u32 = 6;
 
-fn should_stage_scale_lines(
+fn should_stage_weight_scales(
     tiling: GemmTiling,
     dispatch_k: u32,
     group_size: Option<u32>,
@@ -51,7 +51,7 @@ fn should_stage_scale_lines(
         return false;
     }
     tiling != GemmTiling::Tile32x64x256_Simdgroups2x2
-        || group_size.is_none_or(|group_size| dispatch_k / group_size >= STAGE_SCALE_LINES_MIN_GROUPS)
+        || group_size.is_none_or(|group_size| dispatch_k / group_size >= STAGE_WEIGHT_SCALE_MIN_GROUPS)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -115,7 +115,7 @@ impl GemmKernel {
                     specialization.output_transform,
                     specialization.alignment,
                     specialization.signed_codes,
-                    specialization.stage_scale_lines,
+                    specialization.stage_weight_scales,
                 )?;
                 Ok(entry.insert(kernel))
             },
@@ -405,7 +405,7 @@ impl GemmKernel {
                     a_prologue: GemmAPrologueKind::FullPrecision,
                     signed_codes: false,
                     a_group_size: None,
-                    stage_scale_lines: true,
+                    stage_weight_scales: true,
                 };
                 specialization.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -568,7 +568,7 @@ impl GemmKernel {
                         a_prologue,
                         signed_codes: weights_signed_codes,
                         a_group_size,
-                        stage_scale_lines: should_stage_scale_lines(tiling, k, group_size, bits_per_b),
+                        stage_weight_scales: should_stage_weight_scales(tiling, k, group_size, bits_per_b),
                     };
                     specialization.validate()?;
                     let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -652,7 +652,7 @@ impl GemmKernel {
             a_prologue,
             signed_codes,
             a_group_size,
-            stage_scale_lines: should_stage_scale_lines(tiling, kp, group_size, bits_per_b),
+            stage_weight_scales: should_stage_weight_scales(tiling, kp, group_size, bits_per_b),
         };
         part_spec.validate()?;
 

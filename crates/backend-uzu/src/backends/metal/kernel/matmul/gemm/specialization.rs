@@ -20,7 +20,7 @@ pub(super) struct GemmSpecialization {
     pub(super) b_group_size: Option<u32>,
     pub(super) signed_codes: bool,
     pub(super) a_group_size: Option<u32>,
-    pub(super) stage_scale_lines: bool,
+    pub(super) stage_weight_scales: bool,
 }
 
 impl GemmSpecialization {

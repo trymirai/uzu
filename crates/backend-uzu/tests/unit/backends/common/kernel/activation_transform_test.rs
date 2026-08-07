@@ -124,10 +124,10 @@ mod quantize {
         columns: usize,
         activation_group_size: usize,
         emit_group_sums: bool,
-        correction_group_size: Option<usize>,
+        sum_group_size: Option<usize>,
     ) -> (Vec<i8>, Vec<f32>, Option<Vec<i32>>) {
         let scale_groups = columns / activation_group_size;
-        let sum_groups = correction_group_size.map_or(0, |group_size| columns / group_size);
+        let sum_groups = sum_group_size.map_or(0, |group_size| columns / group_size);
         let context = B::Context::new().expect("context");
         let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), input_data);
         let factors = alloc_allocation_with_data::<B, i32>(context.as_ref(), factors_data);
@@ -138,7 +138,7 @@ mod quantize {
             context.as_ref(),
             DataType::F32,
             activation_group_size,
-            correction_group_size.map(|size| size as u32),
+            sum_group_size.map(|size| size as u32),
         )
         .expect("quantize transform");
         let mut encoder = Encoder::<B>::new(context.as_ref()).expect("encoder");
@@ -160,7 +160,7 @@ mod quantize {
     fn check_quantize(
         activation_group_size: usize,
         emit_group_sums: bool,
-        correction_group_size: Option<usize>,
+        sum_group_size: Option<usize>,
     ) {
         let rows = 3;
         let columns = 256;
@@ -182,7 +182,7 @@ mod quantize {
             columns,
             activation_group_size,
             emit_group_sums,
-            correction_group_size,
+            sum_group_size,
         );
 
         for_each_backend!(|B| {
@@ -193,7 +193,7 @@ mod quantize {
                 columns,
                 activation_group_size,
                 emit_group_sums,
-                correction_group_size,
+                sum_group_size,
             );
 
             for (index, (&actual, &expected)) in actual_scales.iter().zip(&expected_scales).enumerate() {
@@ -209,7 +209,7 @@ mod quantize {
                     for (group_index, (&actual, &expected)) in
                         actual_group_sums.iter().zip(expected_group_sums.as_ref().expect("CPU group sums")).enumerate()
                     {
-                        let sum_group_size = correction_group_size.expect("correction group");
+                        let sum_group_size = sum_group_size.expect("correction group");
                         let start = group_index * sum_group_size;
                         let sum_from_actual_codes: i32 =
                             actual_values[start..start + sum_group_size].iter().copied().map(i32::from).sum();

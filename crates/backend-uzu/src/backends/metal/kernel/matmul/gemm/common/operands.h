@@ -13,25 +13,23 @@ namespace operands {
 
 template <GemmAPrologueKind PROLOGUE, typename Element, ushort ACTIVATION_GROUP_SIZE>
 struct LeftOperand {
-  UZU_CONST bool quantized = PROLOGUE == GemmAPrologueKind::Int8Symmetric;
-  UZU_CONST ushort bits = quantized ? 8 : 0;
-  UZU_CONST ushort group_size = quantized ? ACTIVATION_GROUP_SIZE : 0;
-  UZU_CONST ushort BITS = bits;
-  UZU_CONST ushort GROUP_SIZE = group_size;
+  UZU_CONST bool QUANTIZED = PROLOGUE == GemmAPrologueKind::Int8Symmetric;
+  UZU_CONST ushort BITS = QUANTIZED ? 8 : 0;
+  UZU_CONST ushort GROUP_SIZE = QUANTIZED ? ACTIVATION_GROUP_SIZE : 0;
   static_assert(
-      quantized == (ACTIVATION_GROUP_SIZE != 0),
+      QUANTIZED == (ACTIVATION_GROUP_SIZE != 0),
       "activation group size must be present exactly for int8 activations"
   );
 
   using CodeElement = int8_t;
   using ScaleElement = float;
   using DenseElement = Element;
-  using ElementType = metal::conditional_t<quantized, CodeElement, DenseElement>;
+  using ElementType = metal::conditional_t<QUANTIZED, CodeElement, DenseElement>;
   using Format = uzu::matmul::IntegerFormat<8, uzu::matmul::Signedness::Signed>;
 
   template <ushort BLOCK_K>
   static constexpr ushort outer_block_k() {
-    if constexpr (quantized) {
+    if constexpr (QUANTIZED) {
       static_assert(ACTIVATION_GROUP_SIZE % MXU_SIMDGROUP_BLOCK_K == 0, "activation groups must contain MMA chunks");
       return ACTIVATION_GROUP_SIZE;
     } else {
@@ -42,31 +40,27 @@ struct LeftOperand {
 
 template <GemmBPrologueKind PROLOGUE, ushort BITS_, ushort GROUP_SIZE_, typename Element>
 struct RightOperand {
-  UZU_CONST bool quantized = PROLOGUE != GemmBPrologueKind::FullPrecision;
-  UZU_CONST ushort bits = quantized ? BITS_ : 0;
-  UZU_CONST ushort group_size = quantized ? GROUP_SIZE_ : 0;
-  UZU_CONST ushort BITS = bits;
-  UZU_CONST ushort GROUP_SIZE = group_size;
-  UZU_CONST GemmBPrologueKind scheme = PROLOGUE;
-  UZU_CONST GemmBPrologueKind SCHEME = scheme;
-  UZU_CONST bool needs_correction = quantized && scheme != GemmBPrologueKind::ScaleSymmetricDequant;
-  UZU_CONST bool NEEDS_CORRECTION = needs_correction;
+  UZU_CONST bool QUANTIZED = PROLOGUE != GemmBPrologueKind::FullPrecision;
+  UZU_CONST ushort BITS = QUANTIZED ? BITS_ : 0;
+  UZU_CONST ushort GROUP_SIZE = QUANTIZED ? GROUP_SIZE_ : 0;
+  UZU_CONST GemmBPrologueKind SCHEME = PROLOGUE;
+  UZU_CONST bool NEEDS_CORRECTION = QUANTIZED && PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant;
 
-  static_assert(!quantized || BITS_ == 4 || BITS_ == 8, "quantized integer weights must use 4 or 8 bits");
-  static_assert(!quantized || PROLOGUE != GemmBPrologueKind::FullPrecision, "quantized weights need a scheme");
+  static_assert(!QUANTIZED || BITS_ == 4 || BITS_ == 8, "quantized integer weights must use 4 or 8 bits");
+  static_assert(!QUANTIZED || PROLOGUE != GemmBPrologueKind::FullPrecision, "quantized weights need a scheme");
 
   using CodeElement = int8_t;
   using ScaleElement = Element;
   using DenseElement = Element;
   using ElementType = DenseElement;
   using Format = metal::conditional_t<
-      quantized,
+      QUANTIZED,
       uzu::matmul::IntegerFormat<BITS_, uzu::matmul::Signedness::Signed>,
       uzu::matmul::IntegerFormat<8, uzu::matmul::Signedness::Signed>>;
 
   template <ushort BLOCK_K>
   static constexpr ushort outer_block_k() {
-    if constexpr (quantized) {
+    if constexpr (QUANTIZED) {
       static_assert(GROUP_SIZE_ % MXU_SIMDGROUP_BLOCK_K == 0, "weight groups must contain complete MMA chunks");
       static_assert(BLOCK_K % GROUP_SIZE_ == 0, "tile block K must contain complete weight groups");
       return GROUP_SIZE_;
@@ -84,7 +78,7 @@ struct LeftStorage {
   const device int32_t* group_sums;
 
   METAL_FUNC const device int32_t* correction_sums() const thread {
-    static_assert(Left::quantized, "correction_sums is only valid for int8 activations");
+    static_assert(Left::QUANTIZED, "correction_sums is only valid for int8 activations");
     return group_sums;
   }
 };
@@ -99,13 +93,13 @@ struct RightStorage {
   bool signed_codes;
 
   METAL_FUNC const device typename Right::ScaleElement* bias() const thread {
-    static_assert(Right::scheme == GemmBPrologueKind::ScaleBiasDequant, "bias is only valid for ScaleBiasDequant");
+    static_assert(Right::SCHEME == GemmBPrologueKind::ScaleBiasDequant, "bias is only valid for ScaleBiasDequant");
     return biases;
   }
 
   METAL_FUNC const device uint8_t* zp() const thread {
     static_assert(
-        Right::scheme == GemmBPrologueKind::ScaleZeroPointDequant,
+        Right::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant,
         "zp is only valid for ScaleZeroPointDequant"
     );
     return zero_points;
@@ -119,7 +113,7 @@ METAL_FUNC LeftStorage<Left> pack_left(
     const device float* scales,
     const device int32_t* group_sums
 ) {
-  if constexpr (Left::quantized) {
+  if constexpr (Left::QUANTIZED) {
     return {nullptr, codes, scales, group_sums};
   } else {
     return {a, nullptr, nullptr, nullptr};
@@ -134,15 +128,15 @@ METAL_FUNC RightStorage<Right> pack_right(
     const device uint8_t* zero_points,
     const bool signed_codes
 ) {
-  if constexpr (!Right::quantized) {
+  if constexpr (!Right::QUANTIZED) {
     return {dense, nullptr, nullptr, nullptr, nullptr, false};
   } else {
     return {
         nullptr,
         reinterpret_cast<const device uint8_t*>(dense),
         scales,
-        Right::scheme == GemmBPrologueKind::ScaleBiasDequant ? biases : nullptr,
-        Right::scheme == GemmBPrologueKind::ScaleZeroPointDequant ? zero_points : nullptr,
+        Right::SCHEME == GemmBPrologueKind::ScaleBiasDequant ? biases : nullptr,
+        Right::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant ? zero_points : nullptr,
         signed_codes
     };
   }

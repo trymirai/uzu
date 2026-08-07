@@ -81,9 +81,9 @@ PUBLIC KERNEL(ActivationTransform)(
     const ActivationTransformOp ops SPECIALIZE,
     const bool in_place SPECIALIZE,
     const uint activation_scale_group_size SPECIALIZE,
-    const uint correction_group_size SPECIALIZE,
+    const uint sum_group_size SPECIALIZE,
     threadgroup float partial_max OPTIONAL(QUANTIZED && activation_scale_group_size > METAL_SIMD_SIZE)[4],
-    threadgroup int partial_sums OPTIONAL(EMITS_GROUP_SUMS && correction_group_size > METAL_SIMD_SIZE)[4],
+    threadgroup int partial_sums OPTIONAL(EMITS_GROUP_SUMS && sum_group_size > METAL_SIMD_SIZE)[4],
     uint activation_tile_index GROUPS(element_count.div_ceil(128)),
     uint batch_index GROUPS(batch_size),
     uint thread_index THREADS(128),
@@ -144,7 +144,7 @@ PUBLIC KERNEL(ActivationTransform)(
   if (EMITS_GROUP_SUMS) {
     const int sum = reduce_quantization_group(
         int(code),
-        correction_group_size,
+        sum_group_size,
         partial_sums,
         thread_context,
         [](int x) { return simd_sum(x); },
@@ -153,7 +153,7 @@ PUBLIC KERNEL(ActivationTransform)(
     write_quantization_group(
         group_sums_out,
         sum,
-        correction_group_size,
+        sum_group_size,
         element_count,
         activation_tile_index,
         batch_index,

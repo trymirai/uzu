@@ -137,7 +137,7 @@ static METAL_FUNC auto make_full_precision_loader(
 }
 
 struct StagedSchedule {
-  template <typename Core, bool ALIGNED_M, bool ALIGNED_N, bool STAGE_SCALE_LINES>
+  template <typename Core, bool ALIGNED_M, bool ALIGNED_N, bool>
   static METAL_FUNC typename Core::AccumFragment launch(
       typename Core::LeftStorage left,
       typename Core::RightStorage right,
@@ -147,7 +147,7 @@ struct StagedSchedule {
       const GemmAlignment,
       const thread ThreadContext& thread_context
   ) {
-    static_assert(!Core::Left::quantized && Core::Right::quantized, "staged schedule requires dense A and quantized W");
+    static_assert(!Core::Left::QUANTIZED && Core::Right::QUANTIZED, "staged schedule requires dense A and quantized W");
     using LeftTile =
         uzu::matmul::Fragment<typename Core::LeftElementType, Core::TILES_M, Core::TILES_K, typename Core::FragmentOps>;
     using RightTile = uzu::matmul::Fragment<

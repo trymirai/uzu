@@ -132,7 +132,7 @@ KERNEL(Gemm)(
     const GemmDTransform output_transform SPECIALIZE,
     const GemmAlignment alignment SPECIALIZE,
     const bool signed_codes SPECIALIZE,
-    const bool stage_scale_lines SPECIALIZE,
+    const bool stage_weight_scales SPECIALIZE,
     threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
     threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
     const uint group_x GROUPS(group_count_x),
@@ -176,7 +176,7 @@ KERNEL(Gemm)(
         output_bias,
         rht_factors,
         b_shared,
-        stage_scale_lines,
+        stage_weight_scales,
         thread_context
     );
   } else {

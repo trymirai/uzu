@@ -111,14 +111,14 @@ impl<T: ArrayElement + Float> QuantInput<T> {
     pub fn with_prepared_a(
         mut self,
         activation_group_size: usize,
-        correction_group_size: Option<u32>,
+        sum_group_size: Option<u32>,
     ) -> Self {
         self.signed_codes = true;
-        let correction_group_size = correction_group_size.map(|group_size| group_size as usize);
+        let sum_group_size = sum_group_size.map(|group_size| group_size as usize);
         let rows = self.m as usize;
         let columns = self.k as usize;
         assert!(columns.is_multiple_of(activation_group_size));
-        if let Some(group_size) = correction_group_size {
+        if let Some(group_size) = sum_group_size {
             assert!(columns.is_multiple_of(group_size));
         }
         let context = <Cpu as Backend>::Context::new().expect("CPU context");
@@ -127,12 +127,12 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let mut values = alloc_allocation::<Cpu, i8>(&context, rows * columns);
         let mut scales = alloc_allocation::<Cpu, f32>(&context, rows * columns / activation_group_size);
         let mut group_sums =
-            correction_group_size.map(|group_size| alloc_allocation::<Cpu, i32>(&context, rows * columns / group_size));
+            sum_group_size.map(|group_size| alloc_allocation::<Cpu, i32>(&context, rows * columns / group_size));
         let transform = ActivationTransform::<Cpu>::quantize(
             &context,
             T::data_type(),
             activation_group_size,
-            correction_group_size.map(|group_size| group_size as u32),
+            sum_group_size.map(|group_size| group_size as u32),
         )
         .expect("CPU activation quantization transform");
         let mut encoder = Encoder::<Cpu>::new(&context).expect("CPU encoder");

@@ -11,7 +11,7 @@ use crate::{
 pub fn quantize_transformed_row(
     transformed: &[f32],
     activation_scale_group_size: usize,
-    correction_group_size: Option<usize>,
+    sum_group_size: Option<usize>,
     values: &mut [i8],
     scales: &mut [f32],
     mut group_sums: Option<&mut [i32]>,
@@ -20,7 +20,7 @@ pub fn quantize_transformed_row(
     assert_eq!(scales.len(), transformed.len() / activation_scale_group_size);
     assert!(transformed.len().is_multiple_of(activation_scale_group_size));
     if let Some(group_sums) = group_sums.as_deref() {
-        assert_eq!(group_sums.len(), transformed.len() / correction_group_size.expect("correction group"));
+        assert_eq!(group_sums.len(), transformed.len() / sum_group_size.expect("correction group"));
     }
     if let Some(group_sums) = group_sums.as_deref_mut() {
         group_sums.fill(0);
@@ -34,7 +34,7 @@ pub fn quantize_transformed_row(
             let absolute_index = scale_group_index * activation_scale_group_size + index;
             values[absolute_index] = code;
             if let Some(group_sums) = group_sums.as_deref_mut() {
-                group_sums[absolute_index / correction_group_size.expect("correction group")] += code as i32;
+                group_sums[absolute_index / sum_group_size.expect("correction group")] += code as i32;
             }
         }
     }
@@ -58,7 +58,7 @@ pub fn activation_transform<T: ArrayElement + Float>(
     #[specialize] ops: ActivationTransformOp,
     #[specialize] in_place: bool,
     #[specialize] activation_scale_group_size: u32,
-    #[specialize] correction_group_size: u32,
+    #[specialize] sum_group_size: u32,
 ) {
     let input = match in_place {
         true => fp_out.expect("in-place transform requires fp_out"),
@@ -112,14 +112,14 @@ pub fn activation_transform<T: ArrayElement + Float>(
                     scales_per_row,
                 )
             };
-            let sums_per_row = columns / correction_group_size as usize;
+            let sums_per_row = columns / sum_group_size as usize;
             let sums = group_sums_out.map(|group_sums_out| unsafe {
                 std::slice::from_raw_parts_mut(group_sums_out.add(row * sums_per_row), sums_per_row)
             });
             quantize_transformed_row(
                 &transformed,
                 activation_scale_group_size as usize,
-                group_sums_out.map(|_| correction_group_size as usize),
+                group_sums_out.map(|_| sum_group_size as usize),
                 values,
                 scales,
                 sums,

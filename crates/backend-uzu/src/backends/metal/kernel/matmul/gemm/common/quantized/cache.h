@@ -21,7 +21,7 @@ enum class Residency {
   Threadgroup,
 };
 
-struct Empty {};
+struct NoStorage {};
 
 template <typename Operand, typename Storage>
 static METAL_FUNC float correction_value(
@@ -70,10 +70,10 @@ struct Cache<Residency::Registers, Core, Storage, Operand, ALIGNED> {
   short limit;
   uint absolute_base;
   uint scale_k_groups_per_row;
-  metal::conditional_t<ROWS, uint, Empty> sum_k_groups_per_row;
+  metal::conditional_t<ROWS, uint, NoStorage> sum_k_groups_per_row;
   uint first_k_offset;
   float scales[TILES * SLOTS];
-  metal::conditional_t<NEEDS_CORRECTION, float[TILES * SLOTS], Empty> corrections;
+  metal::conditional_t<NEEDS_CORRECTION, float[TILES * SLOTS], NoStorage> corrections;
 
   METAL_FUNC Cache(
       const Storage source_,
@@ -167,12 +167,12 @@ struct Cache<Residency::Threadgroup, Core, Storage, Operand, ALIGNED> {
 
   Storage source;
   threadgroup Element* shared;
-  const threadgroup Element* staged_scales;
-  metal::conditional_t<NEEDS_CORRECTION, const threadgroup float*, Empty> staged_corrections;
+  const threadgroup Element* current_scales;
+  metal::conditional_t<NEEDS_CORRECTION, const threadgroup float*, NoStorage> current_corrections;
   uint k_groups_per_row;
   uint first_k_group;
   uint block_column;
-  short staged_offset;
+  short column_offset;
   short block_columns;
   ushort local_thread_index;
   ushort threads_per_threadgroup;
@@ -186,11 +186,11 @@ struct Cache<Residency::Threadgroup, Core, Storage, Operand, ALIGNED> {
   ) thread
       : source(source_),
         shared(shared_),
-        staged_scales(nullptr),
+        current_scales(nullptr),
         k_groups_per_row((uint(params->K) + uint(Operand::GROUP_SIZE) - 1) / uint(Operand::GROUP_SIZE)),
         first_k_group(tile.k_offset / uint(Operand::GROUP_SIZE)),
         block_column(uint(tile.block_col)),
-        staged_offset(short(tile.tile_col_offset)),
+        column_offset(short(tile.tile_col_offset)),
         block_columns(short(tile.tile_block_cols)),
         local_thread_index(thread_context.simdgroup_index* thread_context.simdgroup_size + thread_context.simd_lane_id),
         threads_per_threadgroup(thread_context.simdgroups_per_threadgroup* thread_context.simdgroup_size) {}
@@ -198,15 +198,15 @@ struct Cache<Residency::Threadgroup, Core, Storage, Operand, ALIGNED> {
   METAL_FUNC void prefetch(const uint k_group) thread {
     const uint absolute_k_group = first_k_group + k_group;
     uint scale_index = (block_column + uint(local_thread_index)) * k_groups_per_row + absolute_k_group;
-    threadgroup Element* slab_scales = shared + slab_offset(k_group);
+    threadgroup Element* group_scales = shared + group_slot_offset(k_group);
     if constexpr (NEEDS_CORRECTION) {
-      threadgroup float* slab_corrections = correction_slab(k_group);
+      threadgroup float* group_corrections = group_corrections_for(k_group);
       for (short column = short(local_thread_index); column < block_columns;
            column += short(threads_per_threadgroup), scale_index += uint(threads_per_threadgroup) * k_groups_per_row) {
         const uint weight_column = block_column + uint(column);
         const float group_scale = float(source.scales[scale_index]);
-        slab_scales[column] = Element(group_scale);
-        slab_corrections[column] = correction_value<Operand>(
+        group_scales[column] = Element(group_scale);
+        group_corrections[column] = correction_value<Operand>(
             source,
             group_scale,
             scale_index,
@@ -218,27 +218,29 @@ struct Cache<Residency::Threadgroup, Core, Storage, Operand, ALIGNED> {
     } else {
       for (short column = short(local_thread_index); column < block_columns;
            column += short(threads_per_threadgroup), scale_index += uint(threads_per_threadgroup) * k_groups_per_row) {
-        slab_scales[column] = Element(source.scales[scale_index]);
+        group_scales[column] = Element(source.scales[scale_index]);
       }
     }
   }
 
   METAL_FUNC void fill(const int k_group_index) thread {
-    staged_scales = shared + slab_offset(uint(k_group_index));
+    current_scales = shared + group_slot_offset(uint(k_group_index));
     if constexpr (NEEDS_CORRECTION) {
-      staged_corrections = correction_slab(uint(k_group_index));
+      current_corrections = group_corrections_for(uint(k_group_index));
     }
   }
 
-  METAL_FUNC float scale(const short column) const thread { return float(staged_scales[staged_offset + column]); }
+  METAL_FUNC float scale(const short column) const thread { return float(current_scales[column_offset + column]); }
 
-  METAL_FUNC float correction(const short column) const thread { return staged_corrections[staged_offset + column]; }
+  METAL_FUNC float correction(const short column) const thread { return current_corrections[column_offset + column]; }
 
 private:
-  static METAL_FUNC ushort slab_offset(const uint k_group) { return ushort(k_group & 1) * Core::THREADGROUP_BLOCK_N; }
+  static METAL_FUNC ushort group_slot_offset(const uint k_group) {
+    return ushort(k_group & 1) * Core::THREADGROUP_BLOCK_N;
+  }
 
-  METAL_FUNC threadgroup float* correction_slab(const uint k_group) const thread {
-    return reinterpret_cast<threadgroup float*>(shared + 2 * Core::THREADGROUP_BLOCK_N) + slab_offset(k_group);
+  METAL_FUNC threadgroup float* group_corrections_for(const uint k_group) const thread {
+    return reinterpret_cast<threadgroup float*>(shared + 2 * Core::THREADGROUP_BLOCK_N) + group_slot_offset(k_group);
   }
 };
 

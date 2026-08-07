@@ -38,8 +38,8 @@ struct MxuMmaCore {
   using RightStorage = operands::RightStorage<Right>;
   using FragmentOps = uzu::matmul::MxuFragmentOps<>;
   using Schedule = metal::conditional_t<
-      !Left::quantized,
-      metal::conditional_t<!Right::quantized, schedules::DenseSchedule, schedules::StagedSchedule>,
+      !Left::QUANTIZED,
+      metal::conditional_t<!Right::QUANTIZED, schedules::DenseSchedule, schedules::StagedSchedule>,
       schedules::IntegerSchedule<Left, Right>>;
   UZU_CONST GemmTiling TILING = GEMM_TILING;
   UZU_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
@@ -77,7 +77,7 @@ struct MxuMmaCore {
       const device RightElementType* output_bias,
       const device int32_t* rht_factors,
       threadgroup RightElementType* b_shared,
-      const bool stage_scale_lines,
+      const bool stage_weight_scales,
       const thread ThreadContext& thread_context
   ) {
     const uint partition = thread_context.threadgroup_position.z;
@@ -133,7 +133,7 @@ struct MxuMmaCore {
               alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
               [&](auto aligned_n) {
                 AccumFragment accumulator_tile;
-                dispatch_bool(stage_scale_lines, [&](auto stage) {
+                dispatch_bool(stage_weight_scales, [&](auto stage) {
                   accumulator_tile =
                       Schedule::template launch<MxuMmaCore, aligned_m.value, aligned_n.value, stage.value>(
                           left,

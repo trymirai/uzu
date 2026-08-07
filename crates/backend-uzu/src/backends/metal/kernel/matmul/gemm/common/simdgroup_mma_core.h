@@ -30,14 +30,13 @@ template <
     typename RightOperand>
 struct SimdgroupMmaCore {
   using OutputElementType = OutputElementType_;
-  using RightOperandType = RightOperand;
   using Left = LeftOperand;
   using Right = RightOperand;
   using LeftElementType = typename Left::ElementType;
   using RightElementType = typename Right::ElementType;
   using LeftStorage = operands::LeftStorage<Left>;
   using RightStorage = operands::RightStorage<Right>;
-  static_assert(!Left::quantized, "simdgroup MMA stages full-precision left operands only");
+  static_assert(!Left::QUANTIZED, "simdgroup MMA stages full-precision left operands only");
   UZU_CONST bool TRANSPOSE_RIGHT = TRANSPOSE_B;
   UZU_CONST int THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   UZU_CONST int THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
@@ -283,7 +282,7 @@ struct SimdgroupMmaCore {
       }
     };
 
-    if constexpr (!Right::quantized) {
+    if constexpr (!Right::QUANTIZED) {
       auto loader_b = schedules::make_full_precision_loader<SimdgroupMmaCore>(
           right,
           params,
