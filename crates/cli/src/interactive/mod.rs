@@ -15,6 +15,7 @@ mod components;
 mod flows;
 mod helpers;
 mod list;
+mod model;
 mod sessions;
 
 pub async fn run_interactive(model: Option<String>) -> anyhow::Result<()> {

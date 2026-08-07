@@ -6,7 +6,10 @@ use uzu::{
     settings::SettingsError,
 };
 
-use crate::interactive::components::{AppSettings, Application, Preferences, Theme};
+use crate::interactive::{
+    components::{AppSettings, Application, Preferences, Theme},
+    model::resolve_model_id,
+};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
@@ -62,10 +65,11 @@ impl CliApplication {
             None => AppSettings::default(),
         };
 
-        let mut selected_model = model;
-        if selected_model.is_none() {
-            selected_model = app_settings.selected_model_id.clone();
-        }
+        let requested_model = model.or_else(|| app_settings.selected_model_id.clone());
+        let selected_model = match requested_model {
+            Some(model) => resolve_model_id(&self.engine, model).await?,
+            None => None,
+        };
 
         element! {
             Application(
