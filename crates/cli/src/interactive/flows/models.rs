@@ -108,14 +108,27 @@ fn Models(
                 on_submit: move |index: usize| {
                     let mut state = state;
                     if let Some(model) = list.get(index) {
-                        let summary = format!("Model: {}", model.name());
                         state.write().model_state = Some(ModelState {
                             model: model.clone(),
                             download_state: DownloadState::not_downloaded(0),
                             session_state: None,
                             capabilities: ModelCapabilities::default(),
                         });
-                        on_event(FlowEvent::finish(summary));
+                        state.write().app_settings.selected_model_id = Some(model.identifier.clone());
+                        let settings_result = {
+                            let state = state.read();
+                            match state.settings.as_ref() {
+                                Some(settings) => state.app_settings.save(settings),
+                                None => Ok(()),
+                            }
+                        };
+                        let result = match settings_result {
+                            Ok(()) => format!("Model: {}", model.name()),
+                            Err(error) => {
+                                format!("Model: {}, unable to save preference: {}", model.name(), error)
+                            },
+                        };
+                        on_event(FlowEvent::finish(result));
                     }
                 },
             )

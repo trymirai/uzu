@@ -55,20 +55,8 @@ async fn main() -> Result<()> {
         Some(Commands::Storage {
             download_manager,
         }) => storage::run(download_manager).await?,
-        None => run_interactive(cli.model).await?,
+        None => interactive::run_interactive(cli.model).await?,
     }
-
-    Ok(())
-}
-
-async fn run_interactive(model: Option<String>) -> Result<()> {
-    use uzu::engine::EngineConfig;
-
-    use crate::interactive::CliApplication;
-
-    let engine_config = EngineConfig::default().with_application_identifier("com.trymirai.cli".to_string());
-    let application = CliApplication::create(engine_config).await?;
-    application.run_with_model(model).await?;
 
     Ok(())
 }
