@@ -108,24 +108,26 @@ impl MatmulKernel for MatmulCpuKernel {
                 group_sums: _,
                 group_size: a_group_size,
             } => {
-                let weight_gs_ok = matches!(b.group_size(), Some(32 | 64 | 128));
-                let weights_ok = matches!(
-                    b,
-                    MatmulB::ScaleSymmetricDequant {
-                        mode: QuantizationMode::U4 | QuantizationMode::U8,
-                        ..
-                    } | MatmulB::ScaleBiasDequant {
-                        mode: QuantizationMode::U4 | QuantizationMode::U8,
-                        ..
-                    } | MatmulB::ScaleZeroPointDequant {
-                        mode: QuantizationMode::U4 | QuantizationMode::U8,
-                        ..
-                    }
-                );
-                if !weight_gs_ok || !weights_ok {
+                let compatible = matches!(a_group_size, 32 | 64 | 128)
+                    && k.is_multiple_of(a_group_size)
+                    && matches!(b.group_size(), Some(32 | 64 | 128))
+                    && matches!(
+                        b,
+                        MatmulB::ScaleSymmetricDequant {
+                            mode: QuantizationMode::U4 | QuantizationMode::U8,
+                            ..
+                        } | MatmulB::ScaleBiasDequant {
+                            mode: QuantizationMode::U4 | QuantizationMode::U8,
+                            ..
+                        } | MatmulB::ScaleZeroPointDequant {
+                            mode: QuantizationMode::U4 | QuantizationMode::U8,
+                            ..
+                        }
+                    );
+                if !compatible {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
-                        reason: "symmetric int8 activations require unsigned 4/8-bit quantized weights with group size 32/64/128",
+                        reason: "symmetric int8 activations require a supported 32/64/128 activation and weight group",
                     }
                     .into());
                 }

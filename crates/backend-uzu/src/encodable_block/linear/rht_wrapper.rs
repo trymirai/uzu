@@ -204,7 +204,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         if let Some(quantize_transform) = &self.quantize_transform
             && self.inner_linear.select_path(batch_dim, encoder.context()) == MatmulPath::Gemm
         {
-            let scale_groups_per_row = self.input_dimension.div_ceil(quantize_transform.activation_group_size);
+            let scale_groups_per_row = self.input_dimension.div_ceil(quantize_transform.activation_group_size());
             let sum_groups_per_row = quantize_transform
                 .sum_group_size()
                 .map(|group_size| self.input_dimension.div_ceil(group_size as usize));
@@ -231,7 +231,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                     values: &values,
                     scales: &scales,
                     group_sums: group_sums.as_ref(),
-                    group_size: quantize_transform.activation_group_size as u32,
+                    group_size: quantize_transform.activation_group_size() as u32,
                 },
                 batch_dim,
                 encoder,
