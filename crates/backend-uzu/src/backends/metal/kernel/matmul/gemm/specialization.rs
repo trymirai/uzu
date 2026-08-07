@@ -17,12 +17,24 @@ pub(super) struct GemmSpecialization {
     pub(super) a_prologue: GemmAPrologueKind,
     pub(super) b_prologue: GemmBPrologueKind,
     pub(super) bits_per_b: Option<u32>,
-    pub(super) group_size: Option<u32>,
+    pub(super) b_group_size: Option<u32>,
     pub(super) signed_codes: bool,
+    pub(super) a_group_size: Option<u32>,
+    pub(super) stage_weight_scales: bool,
+    pub(super) hoist_operand_addressing: bool,
 }
 
 impl GemmSpecialization {
     pub(super) fn validate(&self) -> Result<(), GemmSpecializationError> {
+        let valid_activation_group = match self.a_prologue {
+            GemmAPrologueKind::FullPrecision => self.a_group_size.is_none(),
+            GemmAPrologueKind::Int8Symmetric => matches!(self.a_group_size, Some(32 | 64 | 128)),
+        };
+        if !valid_activation_group {
+            return Err(GemmSpecializationError::InvalidAGroupSize {
+                a_group_size: self.a_group_size,
+            });
+        }
         if self.use_mxu != self.tiling.is_mxu_variant() {
             return Err(GemmSpecializationError::TilingUseMxuMismatch {
                 tiling: self.tiling,
@@ -31,7 +43,7 @@ impl GemmSpecialization {
         }
         if self.use_mxu
             && self.b_prologue != GemmBPrologueKind::FullPrecision
-            && let Some(group_size) = self.group_size
+            && let Some(group_size) = self.b_group_size
             && !self.tiling.fits_quant_group_size(group_size)
         {
             return Err(GemmSpecializationError::MxuQuantTileTooLarge {
@@ -40,7 +52,7 @@ impl GemmSpecialization {
             });
         }
         if !self.use_mxu
-            && let Some(group_size) = self.group_size
+            && let Some(group_size) = self.b_group_size
         {
             let simdgroup_block_k = self.tiling.simdgroup_block_k();
             if simdgroup_block_k > group_size {

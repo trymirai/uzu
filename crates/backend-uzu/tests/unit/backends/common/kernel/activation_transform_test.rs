@@ -122,17 +122,25 @@ mod quantize {
         factors_data: &[i32],
         rows: usize,
         columns: usize,
+        activation_group_size: usize,
         emit_group_sums: bool,
+        sum_group_size: Option<usize>,
     ) -> (Vec<i8>, Vec<f32>, Option<Vec<i32>>) {
-        let groups = columns / BLOCK_SIZE;
+        let scale_groups = columns / activation_group_size;
+        let sum_groups = sum_group_size.map_or(0, |group_size| columns / group_size);
         let context = B::Context::new().expect("context");
         let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), input_data);
         let factors = alloc_allocation_with_data::<B, i32>(context.as_ref(), factors_data);
         let mut values = alloc_allocation::<B, i8>(context.as_ref(), rows * columns);
-        let mut scales = alloc_allocation::<B, f32>(context.as_ref(), rows * groups);
-        let mut group_sums = emit_group_sums.then(|| alloc_allocation::<B, i32>(context.as_ref(), rows * groups));
-        let kernel = ActivationTransform::quantize(context.as_ref(), DataType::F32, emit_group_sums)
-            .expect("quantize transform");
+        let mut scales = alloc_allocation::<B, f32>(context.as_ref(), rows * scale_groups);
+        let mut group_sums = emit_group_sums.then(|| alloc_allocation::<B, i32>(context.as_ref(), rows * sum_groups));
+        let kernel = ActivationTransform::quantize(
+            context.as_ref(),
+            DataType::F32,
+            activation_group_size,
+            sum_group_size.map(|size| size as u32),
+        )
+        .expect("quantize transform");
         let mut encoder = Encoder::<B>::new(context.as_ref()).expect("encoder");
         kernel.encode_quantize(
             &input,
@@ -149,9 +157,13 @@ mod quantize {
         (allocation_to_vec(&values), allocation_to_vec(&scales), group_sums.as_ref().map(allocation_to_vec))
     }
 
-    fn check_quantize(emit_group_sums: bool) {
-        let rows = 5;
-        let columns = 96;
+    fn check_quantize(
+        activation_group_size: usize,
+        emit_group_sums: bool,
+        sum_group_size: Option<usize>,
+    ) {
+        let rows = 3;
+        let columns = 256;
         let mut rng = SmallRng::seed_from_u64(0x5EED_0001);
         let input_data: Vec<f32> = (0..rows * columns).map(|_| rng.random_range(-1.0f32..1.0f32)).collect();
         let factors_data: Vec<i32> = (0..columns)
@@ -163,12 +175,26 @@ mod quantize {
                 }
             })
             .collect();
-        let (expected_values, expected_scales, expected_group_sums) =
-            run::<Cpu>(&input_data, &factors_data, rows, columns, emit_group_sums);
+        let (expected_values, expected_scales, expected_group_sums) = run::<Cpu>(
+            &input_data,
+            &factors_data,
+            rows,
+            columns,
+            activation_group_size,
+            emit_group_sums,
+            sum_group_size,
+        );
 
         for_each_backend!(|B| {
-            let (actual_values, actual_scales, actual_group_sums) =
-                run::<B>(&input_data, &factors_data, rows, columns, emit_group_sums);
+            let (actual_values, actual_scales, actual_group_sums) = run::<B>(
+                &input_data,
+                &factors_data,
+                rows,
+                columns,
+                activation_group_size,
+                emit_group_sums,
+                sum_group_size,
+            );
 
             for (index, (&actual, &expected)) in actual_scales.iter().zip(&expected_scales).enumerate() {
                 let relative_error = (actual - expected).abs() / expected.abs().max(1e-6);
@@ -183,12 +209,13 @@ mod quantize {
                     for (group_index, (&actual, &expected)) in
                         actual_group_sums.iter().zip(expected_group_sums.as_ref().expect("CPU group sums")).enumerate()
                     {
-                        let start = group_index * BLOCK_SIZE;
+                        let sum_group_size = sum_group_size.expect("correction group");
+                        let start = group_index * sum_group_size;
                         let sum_from_actual_codes: i32 =
-                            actual_values[start..start + BLOCK_SIZE].iter().copied().map(i32::from).sum();
+                            actual_values[start..start + sum_group_size].iter().copied().map(i32::from).sum();
                         assert_eq!(actual, sum_from_actual_codes, "group sum {group_index}");
                         assert!(
-                            (actual - expected).abs() <= BLOCK_SIZE as i32,
+                            (actual - expected).abs() <= sum_group_size as i32,
                             "group sum {group_index}: {actual} != {expected}"
                         );
                     }
@@ -200,11 +227,22 @@ mod quantize {
 
     #[uzu_test]
     fn quantize_with_group_sums_matches_cpu() {
-        check_quantize(true);
+        check_quantize(128, true, Some(BLOCK_SIZE));
     }
 
     #[uzu_test]
     fn quantize_without_group_sums_matches_cpu() {
-        check_quantize(false);
+        check_quantize(128, false, None);
+    }
+
+    #[uzu_test]
+    fn quantize_compact_scale_g128_sum_g64_matches_cpu() {
+        check_quantize(128, true, Some(64));
+    }
+
+    #[uzu_test]
+    fn quantize_scale_g32_and_g64_match_cpu() {
+        check_quantize(32, false, None);
+        check_quantize(64, false, None);
     }
 }

@@ -8,6 +8,38 @@ use crate::{
     backends::common::gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
 };
 
+pub fn quantize_transformed_row(
+    transformed: &[f32],
+    activation_scale_group_size: usize,
+    sum_group_size: Option<usize>,
+    values: &mut [i8],
+    scales: &mut [f32],
+    mut group_sums: Option<&mut [i32]>,
+) {
+    assert_eq!(transformed.len(), values.len());
+    assert_eq!(scales.len(), transformed.len() / activation_scale_group_size);
+    assert!(transformed.len().is_multiple_of(activation_scale_group_size));
+    if let Some(group_sums) = group_sums.as_deref() {
+        assert_eq!(group_sums.len(), transformed.len() / sum_group_size.expect("correction group"));
+    }
+    if let Some(group_sums) = group_sums.as_deref_mut() {
+        group_sums.fill(0);
+    }
+
+    for (scale_group_index, source) in transformed.chunks_exact(activation_scale_group_size).enumerate() {
+        let scale = min_max_symmetric_divisor(source);
+        scales[scale_group_index] = scale;
+        for (index, &value) in source.iter().enumerate() {
+            let code = quantize_symmetric_i8(value, scale);
+            let absolute_index = scale_group_index * activation_scale_group_size + index;
+            values[absolute_index] = code;
+            if let Some(group_sums) = group_sums.as_deref_mut() {
+                group_sums[absolute_index / sum_group_size.expect("correction group")] += code as i32;
+            }
+        }
+    }
+}
+
 #[kernel(ActivationTransform)]
 #[variants(T, f32, bf16)]
 pub fn activation_transform<T: ArrayElement + Float>(
@@ -25,6 +57,8 @@ pub fn activation_transform<T: ArrayElement + Float>(
     element_count: u32,
     #[specialize] ops: ActivationTransformOp,
     #[specialize] in_place: bool,
+    #[specialize] activation_scale_group_size: u32,
+    #[specialize] sum_group_size: u32,
 ) {
     let input = match in_place {
         true => fp_out.expect("in-place transform requires fp_out"),
@@ -35,7 +69,6 @@ pub fn activation_transform<T: ArrayElement + Float>(
     let input_rht = ops != ActivationTransformOp::OutputRht;
     let quantize = matches!(ops, ActivationTransformOp::Quantize | ActivationTransformOp::QuantizeWithGroupSums);
 
-    let groups = columns / HADAMARD_TRANSFORM_BLOCK_SIZE;
     let mut transformed = vec![0.0f32; columns];
     for row in 0..rows {
         let row_offset = row * columns;
@@ -66,24 +99,31 @@ pub fn activation_transform<T: ArrayElement + Float>(
         }
 
         if quantize {
-            let q_out = q_out.expect("quantized transform requires q_out");
-            let scales_out = scales_out.expect("quantized transform requires scales_out");
-            for group in 0..groups {
-                let start = group * HADAMARD_TRANSFORM_BLOCK_SIZE;
-                let end = start + HADAMARD_TRANSFORM_BLOCK_SIZE;
-                let slice = &transformed[start..end];
-                let divisor = min_max_symmetric_divisor(slice);
-                unsafe { *scales_out.add(row * groups + group) = divisor };
-                let mut group_sum = 0i32;
-                for index in start..end {
-                    let q = quantize_symmetric_i8(transformed[index], divisor);
-                    unsafe { *q_out.add(row * columns + index) = q };
-                    group_sum += q as i32;
-                }
-                if let Some(group_sums_out) = group_sums_out {
-                    unsafe { *group_sums_out.add(row * groups + group) = group_sum };
-                }
-            }
+            let values = unsafe {
+                std::slice::from_raw_parts_mut(
+                    q_out.expect("quantized transform requires q_out").add(row_offset),
+                    columns,
+                )
+            };
+            let scales_per_row = columns / activation_scale_group_size as usize;
+            let scales = unsafe {
+                std::slice::from_raw_parts_mut(
+                    scales_out.expect("quantized transform requires scales_out").add(row * scales_per_row),
+                    scales_per_row,
+                )
+            };
+            let sums_per_row = columns / sum_group_size as usize;
+            let sums = group_sums_out.map(|group_sums_out| unsafe {
+                std::slice::from_raw_parts_mut(group_sums_out.add(row * sums_per_row), sums_per_row)
+            });
+            quantize_transformed_row(
+                &transformed,
+                activation_scale_group_size as usize,
+                group_sums_out.map(|_| sum_group_size as usize),
+                values,
+                scales,
+                sums,
+            );
         } else {
             let fp_out = fp_out.expect("FP transform requires fp_out");
             for index in 0..columns {

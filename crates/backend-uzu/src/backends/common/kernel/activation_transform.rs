@@ -14,10 +14,14 @@ fn assert_row_width(element_count: u32) {
     );
 }
 
+pub const ACTIVATION_SCALE_GROUP_SIZE: u32 = 128;
+
 pub struct ActivationTransform<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationTransformKernel,
     ops: ActivationTransformOp,
     in_place: bool,
+    activation_group_size: usize,
+    sum_group_size: Option<u32>,
 }
 
 impl<B: Backend> ActivationTransform<B> {
@@ -26,12 +30,23 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         ops: ActivationTransformOp,
         in_place: bool,
+        activation_group_size: usize,
+        sum_group_size: Option<u32>,
     ) -> Result<Self, B::Error> {
-        let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(context, data_type, ops, in_place)?;
+        let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(
+            context,
+            data_type,
+            ops,
+            in_place,
+            activation_group_size as u32,
+            sum_group_size.unwrap_or(HADAMARD_TRANSFORM_BLOCK_SIZE as u32),
+        )?;
         Ok(Self {
             kernel,
             ops,
             in_place,
+            activation_group_size,
+            sum_group_size,
         })
     }
 
@@ -40,7 +55,7 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, ActivationTransformOp::InputRht, in_place)
+        Self::new(context, data_type, ActivationTransformOp::InputRht, in_place, HADAMARD_TRANSFORM_BLOCK_SIZE, None)
     }
 
     pub fn output_rht(
@@ -48,20 +63,28 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, ActivationTransformOp::OutputRht, in_place)
+        Self::new(context, data_type, ActivationTransformOp::OutputRht, in_place, HADAMARD_TRANSFORM_BLOCK_SIZE, None)
     }
 
     pub fn quantize(
         context: &B::Context,
         data_type: DataType,
-        emit_group_sums: bool,
+        activation_group_size: usize,
+        sum_group_size: Option<u32>,
     ) -> Result<Self, B::Error> {
-        let ops = if emit_group_sums {
+        let ops = if sum_group_size.is_some() {
             ActivationTransformOp::QuantizeWithGroupSums
         } else {
             ActivationTransformOp::Quantize
         };
-        Self::new(context, data_type, ops, false)
+        if let Some(group_size) = sum_group_size {
+            assert!(matches!(group_size, 32 | 64 | 128), "unsupported correction group ({group_size})");
+        }
+        assert!(
+            matches!(activation_group_size, 32 | 64 | 128),
+            "unsupported activation group ({activation_group_size})"
+        );
+        Self::new(context, data_type, ops, false, activation_group_size, sum_group_size)
     }
 
     /// `input` and `output` must be distinct buffers.
@@ -125,6 +148,14 @@ impl<B: Backend> ActivationTransform<B> {
     ) {
         assert!(self.quantizes());
         assert_row_width(element_count);
+        assert!(
+            element_count.is_multiple_of(self.activation_group_size as u32),
+            "quantized activation row ({element_count}) must be a multiple of scale group ({})",
+            self.activation_group_size
+        );
+        if let Some(group_size) = self.sum_group_size {
+            assert!(element_count.is_multiple_of(group_size));
+        }
         self.kernel.encode(
             Some(input),
             None::<&mut Allocation<B>>,
@@ -143,6 +174,14 @@ impl<B: Backend> ActivationTransform<B> {
     }
 
     pub fn emit_group_sums(&self) -> bool {
-        self.ops == ActivationTransformOp::QuantizeWithGroupSums
+        self.sum_group_size.is_some()
+    }
+
+    pub fn activation_group_size(&self) -> usize {
+        self.activation_group_size
+    }
+
+    pub fn sum_group_size(&self) -> Option<u32> {
+        self.sum_group_size
     }
 }
