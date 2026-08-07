@@ -62,7 +62,6 @@ impl GemmProblem {
         self,
         engine: GemmEngine,
     ) -> Result<GemmPlan, GemmPlanError> {
-        self.validate_engine(engine)?;
         let shape = self.shape;
         let tiling = match engine {
             GemmEngine::Mxu => {
@@ -77,7 +76,7 @@ impl GemmProblem {
             GemmEngine::Simdgroup => select_simdgroup_tiling(shape),
         };
         let plan = self.finish_plan(engine, tiling);
-        self.validate_split_k(plan)?;
+        self.validate(plan)?;
         Ok(plan)
     }
 
@@ -86,13 +85,6 @@ impl GemmProblem {
         plan: GemmPlan,
     ) -> Result<(), GemmPlanError> {
         self.validate_engine(plan.engine)?;
-        self.validate_split_k(plan)
-    }
-
-    fn validate_split_k(
-        &self,
-        plan: GemmPlan,
-    ) -> Result<(), GemmPlanError> {
         if !self.split_k_is_legal(plan) {
             return Err(GemmPlanError::InvalidSplitK {
                 split_k: plan.split_k,
@@ -136,7 +128,7 @@ impl GemmProblem {
         if !splittable || !self.split_k_output_supported() {
             return 1;
         }
-        let base_tiles = shape.n.div_ceil(tiling.block_n()) * shape.m.div_ceil(tiling.block_m());
+        let base_tiles = shape.n.div_ceil(tiling.block_n()).saturating_mul(shape.m.div_ceil(tiling.block_m()));
         if base_tiles == 0 || !((shape.m as u64) * (shape.n as u64)).is_multiple_of(4) {
             return 1;
         }
@@ -150,7 +142,7 @@ impl GemmProblem {
             step.max(group_size)
         };
         if shape.b_prologue == GemmBPrologueKind::ScaleZeroPointDequant && shape.b_bits == Some(4) {
-            align = align.max(2 * group_size);
+            align = align.max(2_u32.saturating_mul(group_size));
         }
         let align = align.max(ACTIVATION_SCALE_GROUP_SIZE).max(group_size);
         let target_tiles = policy::split_k_target_tiles(!shape.a_full_precision, tiling, shape.b_bits);

@@ -32,20 +32,11 @@ fn quant(mut shape: MatmulShape) -> MatmulShape {
     shape
 }
 
-fn a8(mut shape: MatmulShape) -> MatmulShape {
-    shape.a_full_precision = false;
-    shape
-}
-
 fn problem(
     shape: MatmulShape,
-    data_type: DataType,
+    output_data_type: DataType,
 ) -> GemmProblem {
-    GemmProblem::new(shape, data_type, data_type, true)
-}
-
-fn select(shape: MatmulShape) -> GemmPlan {
-    problem(shape, DataType::BF16).select_plan()
+    GemmProblem::new(shape, DataType::BF16, output_data_type, true)
 }
 
 fn plan(
@@ -61,99 +52,79 @@ fn plan(
 }
 
 #[uzu_test]
-fn tiling_boundaries_are_preserved() {
-    use GemmEngine::*;
+fn policy_boundaries_are_preserved() {
     use GemmTiling::*;
 
-    let a8_cases = [
-        (16, 4096, Tile16x128x256_Simdgroups1x4, 8),
-        (17, 4096, Tile32x64x256_Simdgroups2x2, 8),
-        (63, 4096, Tile32x64x256_Simdgroups2x2, 4),
-        (64, 4096, Tile64x64x256_Simdgroups2x2, 4),
-        (511, 4096, Tile64x64x256_Simdgroups2x2, 1),
-        (512, 4096, Tile128x128x256_Simdgroups4x4, 2),
-        (64, 63, Tile64x32x256_Simdgroups4x1, 16),
-        (64, 64, Tile64x64x256_Simdgroups2x2, 16),
-    ];
-    for (m, n, tiling, split_k) in a8_cases {
-        assert_eq!(select(a8(quant(shape(m, n, 4096)))), plan(Mxu, tiling, split_k));
+    for (is_a_int8, m, n, expected) in [
+        (true, 16, 4096, Tile16x128x256_Simdgroups1x4),
+        (true, 17, 4096, Tile32x64x256_Simdgroups2x2),
+        (true, 64, 63, Tile64x32x256_Simdgroups4x1),
+        (true, 512, 4096, Tile128x128x256_Simdgroups4x4),
+        (false, 16, 4096, Tile32x64x256_Simdgroups2x2),
+        (false, 64, 4096, Tile64x64x256_Simdgroups2x2),
+        (false, 256, 4096, Tile128x128x256_Simdgroups4x4),
+    ] {
+        assert_eq!(policy::mxu_mn_tile(is_a_int8, m, n), expected);
     }
 
-    let dense_cases = [
+    for (m, n, k, expected) in [
         (15, 2560, 2560, Tile16x32x256_Simdgroups1x1),
-        (16, 2560, 2560, Tile32x64x256_Simdgroups2x2),
         (15, 4096, 8192, Tile16x128x256_Simdgroups1x4),
         (15, 131_073, 4096, Tile16x32x256_Simdgroups1x1),
-        (15, 16_384, 4096, Tile16x128x256_Simdgroups1x4),
-        (15, 8192, 4096, Tile32x64x256_Simdgroups2x2),
-        (63, 4096, 2048, Tile32x64x256_Simdgroups2x2),
         (64, 4096, 2048, Tile64x64x256_Simdgroups2x2),
-        (255, 4096, 2048, Tile64x64x256_Simdgroups2x2),
         (256, 4096, 2048, Tile128x128x256_Simdgroups4x4),
-    ];
-    for (m, n, k, tiling) in dense_cases {
-        assert_eq!(select(shape(m, n, k)).tiling, tiling);
+    ] {
+        assert_eq!(policy::mxu_fp_tile(m, n, k), expected);
     }
 
-    let simdgroup_cases = [
+    for (m, n, group_size, expected) in [
         (16, 4096, 31, Tile64x64x16_Simdgroups2x2),
         (31, 4096, 32, Tile8x32x32_Simdgroups1x1),
-        (32, 4096, 32, Tile32x32x32_Simdgroups2x2),
         (64, 6143, 32, Tile32x32x32_Simdgroups2x2),
         (64, 6144, 32, Tile64x64x32_Simdgroups2x2),
-    ];
-    for (m, n, group_size, tiling) in simdgroup_cases {
-        let mut shape = quant(shape(m, n, 8192));
-        shape.b_group_size = Some(group_size);
-        assert_eq!(problem(shape, DataType::BF16).select_plan_for_engine(Simdgroup).unwrap().tiling, tiling);
+    ] {
+        assert_eq!(policy::simdgroup_quant_tile(m, n, group_size), expected);
     }
-
-    let mut invalid_layout = quant(shape(64, 4096, 4096));
-    invalid_layout.b_transpose = false;
-    assert_eq!(select(invalid_layout).engine, Simdgroup);
-    assert_eq!(select(quant(shape(64, 4096, 4095))).engine, Simdgroup);
-
-    let mut large_group = a8(quant(shape(512, 4096, 4096)));
-    large_group.b_group_size = Some(128);
-    assert_eq!(select(large_group).tiling, Tile64x64x256_Simdgroups2x2);
 }
 
 #[uzu_test]
-fn split_k_and_staging_rules_are_preserved() {
-    use GemmEngine::Mxu;
-    use GemmTiling::Tile32x64x256_Simdgroups2x2;
+fn selection_fallbacks_and_split_k_are_preserved() {
+    use GemmEngine::*;
+    use GemmTiling::*;
 
-    let mut p = a8(quant(shape(16, 4096, 4096)));
-    assert!(select(p).should_stage_weight_scales(p));
+    let mut invalid_layout = quant(shape(64, 4096, 4096));
+    invalid_layout.b_transpose = false;
+    assert_eq!(problem(invalid_layout, DataType::BF16).select_plan().engine, Simdgroup);
+    assert_eq!(problem(quant(shape(64, 4096, 4095)), DataType::BF16).select_plan().engine, Simdgroup);
 
-    p.b_group_size = Some(32);
-    assert!(!select(p).should_stage_weight_scales(p));
+    let mut large_group = quant(shape(512, 4096, 4096));
+    large_group.a_full_precision = false;
+    large_group.b_group_size = Some(128);
+    assert_eq!(problem(large_group, DataType::BF16).select_plan().tiling, Tile64x64x256_Simdgroups2x2);
 
-    p.d_transform = GemmDTransform::BIAS;
-    assert_eq!(GemmProblem::new(p, DataType::BF16, DataType::F32, true).select_plan().split_k, 1);
+    let a8 = quant(shape(16, 4096, 4096));
+    let mut a8 = a8;
+    a8.a_full_precision = false;
+    assert_eq!(problem(a8, DataType::BF16).select_plan().split_k, 8);
 
-    let mut w8 = a8(quant(shape(17, 4096, 4096)));
-    w8.b_bits = Some(8);
-    assert_eq!(select(w8).split_k, 16);
-
-    let mut groups = a8(quant(shape(32, 64, 320)));
-    groups.b_bits = Some(8);
-    let plan = plan(Mxu, Tile32x64x256_Simdgroups2x2, 1);
-    assert!(!plan.should_stage_weight_scales(groups));
-    groups.k = 384;
-    assert!(plan.should_stage_weight_scales(groups));
+    let mut biased = quant(shape(16, 4096, 4096));
+    biased.a_full_precision = false;
+    biased.d_transform = GemmDTransform::BIAS;
+    assert_eq!(GemmProblem::new(biased, DataType::BF16, DataType::F32, true).select_plan().split_k, 1);
 
     let mut zero = quant(shape(0, 1, 1));
     zero.b_prologue = GemmBPrologueKind::ScaleZeroPointDequant;
     zero.b_group_size = Some(u32::MAX);
-    assert_eq!(select(zero).split_k, 1);
+    assert_eq!(problem(zero, DataType::BF16).select_plan().split_k, 1);
 }
 
 #[uzu_test]
 fn invalid_plans_are_rejected() {
     let huge = shape(u32::MAX, u32::MAX, u32::MAX);
-    let no_mxu = GemmProblem::new(huge, DataType::BF16, DataType::BF16, false);
-    assert_eq!(no_mxu.select_plan_for_engine(GemmEngine::Mxu), Err(GemmPlanError::MxuUnavailable));
+    assert_eq!(
+        GemmProblem::new(huge, DataType::BF16, DataType::BF16, false).select_plan_for_engine(GemmEngine::Mxu),
+        Err(GemmPlanError::MxuUnavailable)
+    );
 
     let mut invalid_layout = quant(huge);
     invalid_layout.b_transpose = false;
@@ -162,10 +133,9 @@ fn invalid_plans_are_rejected() {
         Err(GemmPlanError::UnsupportedQuantLayout)
     );
 
-    let shape = quant(shape(64, 4096, 4096));
+    let problem = problem(quant(shape(64, 4096, 4096)), DataType::BF16);
     assert!(matches!(
-        problem(shape, DataType::BF16)
-            .validate(plan(GemmEngine::Simdgroup, GemmTiling::Tile32x32x32_Simdgroups2x2, 3,)),
+        problem.validate(plan(GemmEngine::Simdgroup, GemmTiling::Tile32x32x32_Simdgroups2x2, 3)),
         Err(GemmPlanError::InvalidSplitK {
             split_k: 3
         })

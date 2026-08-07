@@ -19,7 +19,7 @@ use crate::{
     tests::{
         assert::assert_eq_float,
         matmul::{
-            Case, Shape, cpu_reference, deterministic_input,
+            Case, Shape, all_correctness_shapes, cpu_reference, deterministic_input,
             harness::{TestDispatch, run_metal},
         },
     },
@@ -64,9 +64,7 @@ fn run_matrix<T: ArrayElement + Float + Debug + Display>(
     )
     .expect("MatmulKernel");
     for engine in gemm_engines_for_hw(&context) {
-        for shape in
-            [Shape::new(8, 128, 64), Shape::new(33, 128, 64), Shape::new(64, 128, 128), Shape::new(128, 2048, 256)]
-        {
+        for shape in all_correctness_shapes() {
             let case = case_for_shape(shape);
             check_case::<T>(&context, &mut kernel, TestDispatch::GemmEngine(engine), case, tolerance);
         }
@@ -142,6 +140,22 @@ fn bias_parity_bf16() {
             let case = Case::new(shape).with_bias(true);
             check_case::<bf16>(&context, &mut kernel, TestDispatch::GemmEngine(engine), case, 1.0);
         }
+    }
+}
+
+#[uzu_test]
+fn gemv_fp_partial_output_block_bf16() {
+    let context = MetalContext::new().expect("Metal context");
+    let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulKernel");
+    let shapes = [Shape::new(1, 128, 33), Shape::new(2, 256, 65), Shape::new(4, 384, 100)];
+    for shape in shapes {
+        check_case::<bf16>(&context, &mut kernel, TestDispatch::Auto, Case::new(shape), 1.0);
     }
 }
 

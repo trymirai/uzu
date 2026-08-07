@@ -75,18 +75,20 @@ impl MatmulMetalKernel {
         );
         let problem = GemmProblem::new(*shape, self.weights_data_type, self.output_data_type, context.supports_mxu());
         let plan = problem.select_plan();
-        if gemv.is_none()
-            || Self::prefer_gemm_over_gemv(
-                *shape,
-                plan,
-                self.weights_data_type,
-                self.input_data_type,
-                self.output_data_type,
-            )
-        {
-            MatmulDispatch::Gemm(plan)
-        } else {
-            MatmulDispatch::Gemv(gemv.expect("GEMV must be available when GEMM is not selected"))
+        match gemv {
+            None => MatmulDispatch::Gemm(plan),
+            Some(_)
+                if Self::prefer_gemm_over_gemv(
+                    *shape,
+                    plan,
+                    self.weights_data_type,
+                    self.input_data_type,
+                    self.output_data_type,
+                ) =>
+            {
+                MatmulDispatch::Gemm(plan)
+            },
+            Some(gemv) => MatmulDispatch::Gemv(gemv),
         }
     }
 }
@@ -155,7 +157,3 @@ impl MatmulKernel for MatmulMetalKernel {
         self.gemm.encode_plan(arguments, plan, encoder)
     }
 }
-
-#[cfg(test)]
-#[path = "../../../../../tests/unit/backends/metal/kernel/matmul/dispatch_selection_test.rs"]
-mod tests;

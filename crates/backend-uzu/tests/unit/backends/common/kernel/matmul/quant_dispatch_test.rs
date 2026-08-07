@@ -76,17 +76,19 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
     group_size: u32,
     bits: u32,
     quant_method: QuantizationMethod,
+    dispatch: TestDispatch,
+    label: &str,
     rel_tol: f64,
     abs_tol: f64,
 ) {
     let context = MetalContext::new().expect("Metal context");
     let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 0);
-    let unified = run_quant_metal::<T>(&context, &input, TestDispatch::GemmEngine(GemmEngine::Simdgroup));
+    let unified = run_quant_metal::<T>(&context, &input, dispatch);
     let reference = run_quant_cpu::<T>(&input);
 
     assert_parity::<T>(
         &format!(
-            "m={m} k={k} n={n} gs={group_size} bits={bits} method={quant_method:?} dtype={}",
+            "{label} m={m} k={k} n={n} gs={group_size} bits={bits} method={quant_method:?} dtype={}",
             std::any::type_name::<T>()
         ),
         &reference,
@@ -119,7 +121,7 @@ fn parity_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
 ) {
-    run_parity::<bf16>(m, k, n, gs, bits, method, 0.05, 0.4);
+    run_parity::<bf16>(m, k, n, gs, bits, method, TestDispatch::GemmEngine(GemmEngine::Simdgroup), "gemm", 0.05, 0.4);
 }
 
 #[rstest]
@@ -136,33 +138,7 @@ fn parity_bf16_8bit_splitk(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
 ) {
-    run_parity::<bf16>(m, k, n, gs, bits, method, 0.05, 1.0);
-}
-
-fn run_parity_gemv<T: ArrayElement + Float + Debug + Display>(
-    m: usize,
-    k: usize,
-    n: usize,
-    group_size: u32,
-    bits: u32,
-    quant_method: QuantizationMethod,
-    rel_tol: f64,
-    abs_tol: f64,
-) {
-    let context = MetalContext::new().expect("Metal context");
-    let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 0);
-    let gemv = run_quant_metal::<T>(&context, &input, TestDispatch::Auto);
-    let reference = run_quant_cpu::<T>(&input);
-    assert_parity::<T>(
-        &format!(
-            "gemv m={m} k={k} n={n} gs={group_size} bits={bits} method={quant_method:?} dtype={}",
-            std::any::type_name::<T>()
-        ),
-        &reference,
-        &gemv,
-        rel_tol,
-        abs_tol,
-    );
+    run_parity::<bf16>(m, k, n, gs, bits, method, TestDispatch::GemmEngine(GemmEngine::Simdgroup), "gemm", 0.05, 1.0);
 }
 
 #[rstest]
@@ -185,7 +161,7 @@ fn parity_gemv_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
 ) {
-    run_parity_gemv::<bf16>(m, k, n, gs, bits, method, 0.05, 0.4);
+    run_parity::<bf16>(m, k, n, gs, bits, method, TestDispatch::Auto, "gemv", 0.05, 0.4);
 }
 
 #[uzu_test]
@@ -285,7 +261,7 @@ fn parity_gemv_partial_group_bf16(
 ) {
     // k is not a multiple of group_size, so the per-row scale/zp stride must use
     // ceil(k / group_size) groups.
-    run_parity_gemv::<bf16>(m, k, n, gs, bits, method, 0.05, 0.6);
+    run_parity::<bf16>(m, k, n, gs, bits, method, TestDispatch::Auto, "gemv", 0.05, 0.6);
 }
 
 #[rstest]
@@ -302,7 +278,7 @@ fn parity_gemv_unaligned_width_bf16(
     #[case] method: QuantizationMethod,
 ) {
     // n is not a multiple of 8; the output-tail clamp must cover the partial block.
-    run_parity_gemv::<bf16>(m, k, n, gs, bits, method, 0.05, 0.6);
+    run_parity::<bf16>(m, k, n, gs, bits, method, TestDispatch::Auto, "gemv", 0.05, 0.6);
 }
 
 #[uzu_test]

@@ -88,7 +88,7 @@ pub(super) fn simdgroup_fp_tile(
     n: u32,
     k: u32,
 ) -> GemmTiling {
-    if 2 * m.max(n) > k {
+    if 2_u32.saturating_mul(m.max(n)) > k {
         GemmTiling::Tile64x64x16_Simdgroups2x2
     } else {
         GemmTiling::Tile64x32x32_Simdgroups2x2

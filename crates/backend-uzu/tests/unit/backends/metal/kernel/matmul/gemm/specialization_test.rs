@@ -45,19 +45,14 @@ fn specialization(
 }
 
 #[uzu_test]
-fn plan_flags_preserve_dense_and_split_k_defaults() {
+fn plan_flags_follow_dense_and_quant_tuning() {
     let dense = shape();
-    let unsplit = specialization(dense, plan(1));
-    assert!(unsplit.stage_weight_scales);
-    assert!(!unsplit.hoist_operand_addressing);
+    for (split_k, hoist) in [(1, false), (2, true)] {
+        let spec = specialization(dense, plan(split_k));
+        assert!(spec.stage_weight_scales);
+        assert_eq!(spec.hoist_operand_addressing, hoist);
+    }
 
-    let split = specialization(dense, plan(2));
-    assert!(split.stage_weight_scales);
-    assert!(split.hoist_operand_addressing);
-}
-
-#[uzu_test]
-fn plan_flags_use_quantized_tuning() {
     let mut quant = shape();
     quant.b_prologue = GemmBPrologueKind::ScaleSymmetricDequant;
     quant.b_bits = Some(4);
