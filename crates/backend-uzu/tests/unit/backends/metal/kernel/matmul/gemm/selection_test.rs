@@ -1,7 +1,10 @@
 use proc_macros::uzu_test;
 
-use super::*;
-use crate::backends::common::gpu_types::gemm::GemmDTransform;
+use super::{super::specialization::GemmSpecialization, *};
+use crate::backends::{
+    common::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmDTransform},
+    metal::kernel::matmul::MatmulMetalKernel,
+};
 
 fn shape(
     m: u32,
@@ -39,14 +42,10 @@ fn problem(
     GemmProblem::new(shape, DataType::BF16, output_data_type, true)
 }
 
-fn plan(
-    engine: GemmEngine,
-    tiling: GemmTiling,
-    split_k: u32,
-) -> GemmPlan {
+fn plan(split_k: u32) -> GemmPlan {
     GemmPlan {
-        engine,
-        tiling,
+        engine: GemmEngine::Mxu,
+        tiling: GemmTiling::Tile64x64x256_Simdgroups2x2,
         split_k,
     }
 }
@@ -95,6 +94,8 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     let mut invalid_layout = quant(shape(64, 4096, 4096));
     invalid_layout.b_transpose = false;
     assert_eq!(problem(invalid_layout, DataType::BF16).select_plan().engine, Simdgroup);
+    invalid_layout.a_full_precision = false;
+    assert_eq!(problem(invalid_layout, DataType::BF16).select_plan().engine, Mxu);
     assert_eq!(problem(quant(shape(64, 4096, 4095)), DataType::BF16).select_plan().engine, Simdgroup);
 
     let mut large_group = quant(shape(512, 4096, 4096));
@@ -118,7 +119,7 @@ fn selection_fallbacks_and_split_k_are_preserved() {
 }
 
 #[uzu_test]
-fn invalid_plans_are_rejected() {
+fn forced_engine_errors_are_preserved() {
     let huge = shape(u32::MAX, u32::MAX, u32::MAX);
     assert_eq!(
         GemmProblem::new(huge, DataType::BF16, DataType::BF16, false).select_plan_for_engine(GemmEngine::Mxu),
@@ -131,12 +132,46 @@ fn invalid_plans_are_rejected() {
         problem(invalid_layout, DataType::BF16).select_plan_for_engine(GemmEngine::Mxu),
         Err(GemmPlanError::UnsupportedQuantLayout)
     );
+}
 
-    let problem = problem(quant(shape(64, 4096, 4096)), DataType::BF16);
-    assert!(matches!(
-        problem.validate(plan(GemmEngine::Simdgroup, GemmTiling::Tile32x32x32_Simdgroups2x2, 3)),
-        Err(GemmPlanError::InvalidSplitK {
-            split_k: 3
-        })
-    ));
+#[uzu_test]
+fn specialization_flags_are_preserved() {
+    let specialization = |shape, split_k| {
+        GemmSpecialization::from_plan(
+            plan(split_k),
+            shape,
+            DataType::BF16,
+            GemmDTransform::empty(),
+            GemmAlignment::new(true, true, true),
+            GemmAPrologueKind::FullPrecision,
+            None,
+        )
+        .unwrap()
+    };
+    for (split_k, hoist) in [(1, false), (2, true)] {
+        let spec = specialization(shape(64, 4096, 4096), split_k);
+        assert!(spec.stage_weight_scales);
+        assert_eq!(spec.hoist_operand_addressing, hoist);
+    }
+    let spec = specialization(quant(shape(64, 4096, 4096)), 1);
+    assert!(spec.stage_weight_scales);
+    assert!(spec.hoist_operand_addressing);
+}
+
+#[uzu_test]
+fn gemv_gemm_route_boundaries_are_preserved() {
+    for (shape, data_type, prefer_gemm) in [
+        (shape(4, 4096, 8192), DataType::BF16, true),
+        (shape(4, 8192, 4096), DataType::BF16, false),
+        (shape(4, 4096, 4096), DataType::F32, false),
+        (shape(3, 4096, 8192), DataType::BF16, false),
+        (shape(5, 4096, 8192), DataType::BF16, false),
+    ] {
+        let plan = GemmProblem::new(shape, data_type, data_type, true).select_plan();
+        assert_eq!(MatmulMetalKernel::prefer_gemm_over_gemv(shape, plan, data_type, data_type, data_type), prefer_gemm);
+    }
+    let mut gathered = shape(4, 4096, 8192);
+    gathered.gathered = true;
+    let plan = problem(gathered, DataType::BF16).select_plan();
+    assert!(!MatmulMetalKernel::prefer_gemm_over_gemv(gathered, plan, DataType::BF16, DataType::BF16, DataType::BF16,));
 }

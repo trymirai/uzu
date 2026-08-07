@@ -145,7 +145,7 @@ impl GemmKernel {
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
         self.problem(shape, encoder.context().supports_mxu())
-            .validate(plan)
+            .validate_engine(plan.engine)
             .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))?;
 
         let is_quant = !matches!(arguments.b, MatmulB::FullPrecision { .. });

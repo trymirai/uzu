@@ -132,7 +132,3 @@ impl GemmPlan {
         self.tiling != GemmTiling::Tile128x128x256_Simdgroups4x4
     }
 }
-
-#[cfg(test)]
-#[path = "../../../../../../tests/unit/backends/metal/kernel/matmul/gemm/specialization_test.rs"]
-mod tests;

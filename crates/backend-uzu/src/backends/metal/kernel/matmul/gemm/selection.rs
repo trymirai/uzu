@@ -23,10 +23,6 @@ pub(super) enum GemmPlanError {
     MxuUnavailable,
     #[error("quantized GEMM requires transposed contiguous B")]
     UnsupportedQuantLayout,
-    #[error("split_k={split_k} is not legal for this GEMM problem")]
-    InvalidSplitK {
-        split_k: u32,
-    },
 }
 
 impl GemmProblem {
@@ -45,16 +41,12 @@ impl GemmProblem {
     }
 
     pub fn select_plan(self) -> GemmPlan {
-        if self.supports_mxu {
-            if !self.shape.a_full_precision {
-                return self.finish_plan(GemmEngine::Mxu, select_mxu_quant_tiling(self.shape));
-            }
-            if let Some(tiling) = select_mxu_tiling(self.shape) {
-                return self.finish_plan(GemmEngine::Mxu, tiling);
-            }
-        }
-
-        self.finish_plan(GemmEngine::Simdgroup, select_simdgroup_tiling(self.shape))
+        let engine = if self.supports_mxu && mxu_is_eligible(self.shape) {
+            GemmEngine::Mxu
+        } else {
+            GemmEngine::Simdgroup
+        };
+        self.finish_plan(engine, select_tiling(self.shape, engine))
     }
 
     #[cfg(test)]
@@ -62,38 +54,11 @@ impl GemmProblem {
         self,
         engine: GemmEngine,
     ) -> Result<GemmPlan, GemmPlanError> {
-        let shape = self.shape;
-        let tiling = match engine {
-            GemmEngine::Mxu => {
-                if shape.is_quant() {
-                    select_mxu_quant_tiling(shape)
-                } else if shape.b_transpose {
-                    policy::mxu_fp_tile(shape.m, shape.n, shape.k)
-                } else {
-                    policy::mxu_mn_tile(false, shape.m, shape.n)
-                }
-            },
-            GemmEngine::Simdgroup => select_simdgroup_tiling(shape),
-        };
-        let plan = self.finish_plan(engine, tiling);
-        self.validate(plan)?;
-        Ok(plan)
+        self.validate_engine(engine)?;
+        Ok(self.finish_plan(engine, select_tiling(self.shape, engine)))
     }
 
-    pub(super) fn validate(
-        &self,
-        plan: GemmPlan,
-    ) -> Result<(), GemmPlanError> {
-        self.validate_engine(plan.engine)?;
-        if !self.split_k_is_legal(plan) {
-            return Err(GemmPlanError::InvalidSplitK {
-                split_k: plan.split_k,
-            });
-        }
-        Ok(())
-    }
-
-    fn validate_engine(
+    pub(super) fn validate_engine(
         &self,
         engine: GemmEngine,
     ) -> Result<(), GemmPlanError> {
@@ -169,13 +134,6 @@ impl GemmProblem {
         !output_transform.contains(GemmDTransform::BIAS)
             || (self.shape.n.is_multiple_of(4) && self.weights_data_type == self.output_data_type)
     }
-
-    fn split_k_is_legal(
-        &self,
-        plan: GemmPlan,
-    ) -> bool {
-        plan.split_k == 1 || plan.split_k == self.select_split_k(plan.engine, plan.tiling)
-    }
 }
 
 pub(super) fn outer_block_k(
@@ -190,23 +148,27 @@ pub(super) fn outer_block_k(
     }
 }
 
-fn select_mxu_tiling(shape: MatmulShape) -> Option<GemmTiling> {
-    if !shape.a_full_precision {
-        return None;
+fn mxu_is_eligible(shape: MatmulShape) -> bool {
+    if !shape.a_full_precision || shape.b_prologue == GemmBPrologueKind::FullPrecision {
+        return true;
     }
-    match shape.b_prologue {
-        GemmBPrologueKind::FullPrecision => Some(if shape.b_transpose {
-            policy::mxu_fp_tile(shape.m, shape.n, shape.k)
-        } else {
-            policy::mxu_mn_tile(false, shape.m, shape.n)
-        }),
-        _ => {
-            if !shape.b_transpose || shape.b_leading_dimension.is_some() {
-                return None;
-            }
-            let tiling = select_mxu_quant_tiling(shape);
-            shape.k.is_multiple_of(tiling.block_k()).then_some(tiling)
+    shape.b_transpose
+        && shape.b_leading_dimension.is_none()
+        && shape.k.is_multiple_of(select_mxu_quant_tiling(shape).block_k())
+}
+
+fn select_tiling(
+    shape: MatmulShape,
+    engine: GemmEngine,
+) -> GemmTiling {
+    match engine {
+        GemmEngine::Simdgroup if shape.is_quant() => {
+            policy::simdgroup_quant_tile(shape.m, shape.n, shape.b_group_size.unwrap_or(0))
         },
+        GemmEngine::Simdgroup => policy::simdgroup_fp_tile(shape.m, shape.n, shape.k),
+        GemmEngine::Mxu if !shape.a_full_precision || shape.is_quant() => select_mxu_quant_tiling(shape),
+        GemmEngine::Mxu if shape.b_transpose => policy::mxu_fp_tile(shape.m, shape.n, shape.k),
+        GemmEngine::Mxu => policy::mxu_mn_tile(false, shape.m, shape.n),
     }
 }
 
@@ -216,14 +178,6 @@ fn select_mxu_quant_tiling(shape: MatmulShape) -> GemmTiling {
         tiling
     } else {
         policy::MXU_DEFAULT_TILE
-    }
-}
-
-fn select_simdgroup_tiling(shape: MatmulShape) -> GemmTiling {
-    if shape.is_quant() {
-        policy::simdgroup_quant_tile(shape.m, shape.n, shape.b_group_size.unwrap_or(0))
-    } else {
-        policy::simdgroup_fp_tile(shape.m, shape.n, shape.k)
     }
 }
 #[cfg(test)]
