@@ -4,7 +4,9 @@ use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 #[cfg(backend = "metal")]
-use crate::backends::metal::{GemmDispatchPath, Metal, MetalContext};
+use super::harness::TestDispatch;
+#[cfg(backend = "metal")]
+use crate::backends::metal::{Metal, MetalContext};
 use crate::{
     array::ArrayElement,
     backends::{
@@ -318,7 +320,7 @@ pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
 pub fn run_quant_metal<T: ArrayElement + Float>(
     context: &MetalContext,
     input: &QuantInput<T>,
-    path: Option<GemmDispatchPath>,
+    dispatch: TestDispatch,
 ) -> Vec<T> {
     let mut buffers = QuantBuffers::<Metal, T>::allocate(context, input);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
@@ -330,11 +332,10 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
     .expect("MatmulMetalKernel");
     let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
     let args = quant_arguments(&mut buffers, input);
-    match path {
-        None => matmul.encode(args, &mut encoder).expect("matmul encode failed"),
-        Some(gemm_path) => {
-            matmul.gemm.encode_dispatch_path(args, gemm_path, &mut encoder).expect("gemm encode_dispatch_path failed")
-        },
+    if let Some(engine) = dispatch {
+        matmul.gemm.encode_with_engine(args, engine, &mut encoder).expect("forced GEMM engine encode failed");
+    } else {
+        matmul.encode(args, &mut encoder).expect("matmul encode failed");
     }
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<Metal, T>(&buffers.y)
