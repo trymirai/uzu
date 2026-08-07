@@ -1,6 +1,10 @@
 use std::collections::{HashMap, hash_map::Entry};
 
-use super::{GemmEngine, GemmPlan, selection::GemmProblem, specialization::GemmSpecialization};
+use super::{
+    GemmEngine, GemmPlan,
+    selection::{GemmProblem, outer_block_k},
+    specialization::GemmSpecialization,
+};
 use crate::{
     backends::{
         common::{
@@ -499,7 +503,7 @@ impl GemmKernel {
         let tiling = plan.tiling;
         let split_k = plan.split_k;
         let kp = k / split_k;
-        let k_step = plan.split_k_step(shape).unwrap_or(1);
+        let k_step = outer_block_k(shape, plan.engine, plan.tiling).unwrap_or(1);
         let base_gx = n.div_ceil(tiling.block_n());
         let base_gy = m.div_ceil(tiling.block_m());
         let alignment =
@@ -637,7 +641,7 @@ fn quant_params(
         leading_dimension_d: n,
         threadgroups_per_row: n.div_ceil(tiling.block_n()),
         threadgroups_per_column: m.div_ceil(tiling.block_m()),
-        aligned_inner_iterations: plan.split_k_step(shape).map_or(0, |step| k / step),
+        aligned_inner_iterations: outer_block_k(shape, plan.engine, plan.tiling).map_or(0, |step| k / step),
         use_morton: false,
         ab_scale,
     }
