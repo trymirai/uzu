@@ -4,14 +4,15 @@ async function main() {
     let engineConfig = EngineConfig.create();
     let engine = await Engine.create(engineConfig);
 
-    let model = await engine.model('Qwen/Qwen3-0.6B');
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     if (!model) {
         throw new Error('Model not found');
     }
 
     for await (const update of await engine.download(model)) {
-        console.log('Download progress:', update.progress);
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
     }
+    console.log();
 
     let session = await engine.chat(model, ChatConfig.create());
 

@@ -1,3 +1,5 @@
+use std::io::{self, Write};
+
 use nagare::tool::{func_def::ErrorFuture, uzu_tool_closure, uzu_tool_function};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -28,11 +30,13 @@ fn get_current_location() -> Result<Coordinate, ErrorFuture> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::new(EngineConfig::default()).await?;
-    let model = engine.model("mlx-community/Qwen3.5-9B-MLX-8bit".to_string()).await?.ok_or("Model not found")?;
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        println!("Download progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
+        io::stdout().flush()?;
     }
+    println!();
 
     let mut session = engine.chat(model, ChatConfig::default()).await?;
     session.add_tool(get_current_location).await?;

@@ -6,7 +6,6 @@ from uzu import ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig, 
 async def main() -> None:
     engine_config = EngineConfig.create().with_openai_api_key("OPENAI_API_KEY")
     engine = await Engine.create(engine_config)
-
     model = await engine.model("gpt-5")
     if model is None:
         raise RuntimeError("Model not found")

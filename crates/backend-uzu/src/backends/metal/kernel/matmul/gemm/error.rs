@@ -4,6 +4,10 @@ use crate::backends::common::gpu_types::gemm::GemmTiling;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum GemmSpecializationError {
+    #[error("unsupported A group size {a_group_size:?}; expected None or 32/64/128")]
+    InvalidAGroupSize {
+        a_group_size: Option<u32>,
+    },
     #[error("simdgroup K={simdgroup_k} exceeds group size {group_size}")]
     SimdgroupKExceedsGroupSize {
         simdgroup_k: u32,

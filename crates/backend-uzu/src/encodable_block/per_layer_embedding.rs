@@ -116,6 +116,8 @@ impl<B: Backend> PerLayerEmbedding<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        encoder.push_debug_group("per layer embedding");
+
         let total_ple_dim = self.num_layers * self.ple_dim;
         let total_rows = batch_dim * self.num_layers;
         let total_elements = batch_dim * total_ple_dim;
@@ -150,6 +152,8 @@ impl<B: Backend> PerLayerEmbedding<B> {
             1.0,
             encoder,
         );
+
+        encoder.pop_debug_group();
 
         Ok(per_layer_inputs)
     }
@@ -209,9 +213,8 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
 
         let gate_act_mul = <B::Kernels as Kernels>::GatedActMulKernel::new(context, data_type, false, false)
             .map_err(PerLayerEmbeddingError::BackendError)?;
-        let residual_finalize =
-            <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true, false)
-                .map_err(PerLayerEmbeddingError::BackendError)?;
+        let residual_finalize = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true)
+            .map_err(PerLayerEmbeddingError::BackendError)?;
         let residual_combine = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, true)
             .map_err(PerLayerEmbeddingError::BackendError)?;
 
@@ -240,12 +243,13 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
+        encoder.push_debug_group("per layer embedding projection");
+
         let length = batch_dim * self.model_dim;
 
         self.residual_finalize.encode(
             None::<&Allocation<B>>,
             hidden,
-            None::<&Allocation<B>>,
             &mut *outputs,
             length as u32,
             length as u32,
@@ -282,6 +286,8 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             self.post_layer_scalar,
             encoder,
         );
+
+        encoder.pop_debug_group();
 
         Ok(())
     }

@@ -455,8 +455,7 @@ impl ChatSession {
             return vec![];
         };
 
-        let mut tool_messages: Vec<ChatMessage> = Vec::with_capacity(tool_calls.len());
-        for call in tool_calls {
+        let executions = tool_calls.into_iter().map(|call| async move {
             let func = {
                 let registry_guard = registry.lock().await;
                 registry_guard.get_function(&call.name).cloned()
@@ -479,14 +478,14 @@ impl ChatSession {
             };
 
             // chat templates expect tool results as plain text, one message per call
-            let tool_message = ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+            ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
                 identifier: call.identifier.clone(),
                 name: Some(call.name.clone()),
                 value,
-            });
-            tool_messages.push(tool_message);
-        }
-        tool_messages
+            })
+        });
+        // results stay in call order even though the calls run concurrently
+        futures::future::join_all(executions).await
     }
 
     /// Atomically switches state from `from` to `to`.

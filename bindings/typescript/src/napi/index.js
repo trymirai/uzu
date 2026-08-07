@@ -610,7 +610,6 @@ module.exports.HashMethod = nativeBinding.HashMethod
 module.exports.ImageFormat = nativeBinding.ImageFormat
 module.exports.ImageTheme = nativeBinding.ImageTheme
 module.exports.ReasoningEffort = nativeBinding.ReasoningEffort
-module.exports.CliApplication = nativeBinding.CliApplication
 module.exports.Device = nativeBinding.Device
 module.exports.Downloader = nativeBinding.Downloader
 module.exports.DownloaderStream = nativeBinding.DownloaderStream

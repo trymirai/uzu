@@ -4,22 +4,21 @@ use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 #[cfg(backend = "metal")]
-use crate::backends::metal::{GemmDispatchPath, Metal, MetalContext};
+use super::harness::TestDispatch;
+#[cfg(backend = "metal")]
+use crate::backends::metal::{Metal, MetalContext};
 use crate::{
     array::ArrayElement,
     backends::{
         common::{
             Allocation, Backend, Context, Encoder,
-            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
+            gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
-                Kernels,
+                ActivationTransform, Kernels,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
-        cpu::{
-            Cpu,
-            kernel::activation_transform::{min_max_symmetric_divisor, quantize_symmetric_i8},
-        },
+        cpu::Cpu,
     },
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
@@ -28,6 +27,7 @@ pub struct PreparedInt8A {
     pub values: Vec<i8>,
     pub scales: Vec<f32>,
     pub group_sums: Vec<i32>,
+    pub activation_scale_group_size: u32,
 }
 
 pub struct QuantInput<T: ArrayElement + Float> {
@@ -110,38 +110,51 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         self
     }
 
-    pub fn with_prepared_a(mut self) -> Self {
+    pub fn with_prepared_a(
+        mut self,
+        activation_group_size: usize,
+        sum_group_size: Option<u32>,
+    ) -> Self {
         self.signed_codes = true;
-        let group_size = HADAMARD_TRANSFORM_BLOCK_SIZE;
+        let sum_group_size = sum_group_size.map(|group_size| group_size as usize);
         let rows = self.m as usize;
         let columns = self.k as usize;
-        let groups = columns.div_ceil(group_size);
-        let mut values = vec![0i8; rows * columns];
-        let mut scales = vec![0.0f32; rows * groups];
-        let mut group_sums = vec![0i32; rows * groups];
-
-        for row in 0..rows {
-            for group in 0..groups {
-                let start = group * group_size;
-                let end = (start + group_size).min(columns);
-                let prepared =
-                    (start..end).map(|column| self.x[row * columns + column].to_f32().unwrap()).collect::<Vec<_>>();
-                let divisor = min_max_symmetric_divisor(&prepared);
-                scales[row * groups + group] = divisor;
-                let mut group_sum = 0i32;
-                for (column, value) in (start..end).zip(prepared) {
-                    let code = quantize_symmetric_i8(value, divisor);
-                    values[row * columns + column] = code;
-                    group_sum += i32::from(code);
-                }
-                group_sums[row * groups + group] = group_sum;
-            }
+        assert!(columns.is_multiple_of(activation_group_size));
+        if let Some(group_size) = sum_group_size {
+            assert!(columns.is_multiple_of(group_size));
         }
+        let context = <Cpu as Backend>::Context::new().expect("CPU context");
+        let input = alloc_allocation_with_data::<Cpu, T>(&context, &self.x);
+        let factors = alloc_allocation_with_data::<Cpu, i32>(&context, &vec![1; columns]);
+        let mut values = alloc_allocation::<Cpu, i8>(&context, rows * columns);
+        let mut scales = alloc_allocation::<Cpu, f32>(&context, rows * columns / activation_group_size);
+        let mut group_sums =
+            sum_group_size.map(|group_size| alloc_allocation::<Cpu, i32>(&context, rows * columns / group_size));
+        let transform = ActivationTransform::<Cpu>::quantize(
+            &context,
+            T::data_type(),
+            activation_group_size,
+            sum_group_size.map(|group_size| group_size as u32),
+        )
+        .expect("CPU activation quantization transform");
+        let mut encoder = Encoder::<Cpu>::new(&context).expect("CPU encoder");
+        transform.encode_quantize(
+            &input,
+            &mut values,
+            &mut scales,
+            group_sums.as_mut(),
+            &factors,
+            rows as u32,
+            columns as u32,
+            &mut encoder,
+        );
+        encoder.end_encoding().submit().wait_until_completed().expect("CPU activation quantization");
 
         self.prepared_a = Some(PreparedInt8A {
-            values,
-            scales,
-            group_sums,
+            values: allocation_to_vec(&values),
+            scales: allocation_to_vec(&scales),
+            group_sums: group_sums.map_or_else(Vec::new, |sums| allocation_to_vec(&sums)),
+            activation_scale_group_size: activation_group_size as u32,
         });
         self
     }
@@ -199,6 +212,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
             prepared_a_group_sums: input
                 .prepared_a
                 .as_ref()
+                .filter(|prepared| !prepared.group_sums.is_empty())
                 .map(|prepared| alloc_allocation_with_data::<B, i32>(context, &prepared.group_sums)),
             y: alloc_allocation::<B, T>(context, (input.m as usize) * (input.n as usize)),
             _t: std::marker::PhantomData,
@@ -265,6 +279,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
             // Symmetric weights carry no correction term, so the GEMM never reads these.
             group_sums: (input.quant_method != QuantizationMethod::ScaleSymmetric)
                 .then(|| prepared_a_group_sums.as_ref().expect("prepared activation row sums")),
+            group_size: input.prepared_a.as_ref().expect("prepared activation metadata").activation_scale_group_size,
         },
         None => MatmulA::FullPrecision {
             values: x,
@@ -305,7 +320,7 @@ pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
 pub fn run_quant_metal<T: ArrayElement + Float>(
     context: &MetalContext,
     input: &QuantInput<T>,
-    path: Option<GemmDispatchPath>,
+    dispatch: TestDispatch,
 ) -> Vec<T> {
     let mut buffers = QuantBuffers::<Metal, T>::allocate(context, input);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
@@ -317,11 +332,10 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
     .expect("MatmulMetalKernel");
     let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
     let args = quant_arguments(&mut buffers, input);
-    match path {
-        None => matmul.encode(args, &mut encoder).expect("matmul encode failed"),
-        Some(gemm_path) => {
-            matmul.gemm.encode_dispatch_path(args, gemm_path, &mut encoder).expect("gemm encode_dispatch_path failed")
-        },
+    if let Some(engine) = dispatch {
+        matmul.gemm.encode_with_engine(args, engine, &mut encoder).expect("forced GEMM engine encode failed");
+    } else {
+        matmul.encode(args, &mut encoder).expect("matmul encode failed");
     }
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<Metal, T>(&buffers.y)

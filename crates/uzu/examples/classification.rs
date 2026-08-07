@@ -1,3 +1,5 @@
+use std::io::{self, Write};
+
 use uzu::{
     engine::{Engine, EngineConfig},
     types::session::classification::ClassificationMessage,
@@ -11,8 +13,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = engine.model("trymirai/chat-moderation-router".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
-        println!("Download progress: {}", update.progress());
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
+        io::stdout().flush()?;
     }
+    println!();
 
     let messages = vec![ClassificationMessage::user("Hi".to_string())];
 

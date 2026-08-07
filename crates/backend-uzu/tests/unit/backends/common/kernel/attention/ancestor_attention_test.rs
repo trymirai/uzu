@@ -7,7 +7,9 @@ use proc_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{Allocation, Backend, Encoder, Kernels, kernel::AncestorAttentionKernel},
+        common::{
+            Allocation, Backend, Encoder, Kernels, gpu_types::weaver::MetadataIdx, kernel::AncestorAttentionKernel,
+        },
         cpu::Cpu,
         metal::Metal,
     },
@@ -19,6 +21,7 @@ use crate::{
 
 const HEAD_DIM: usize = 128;
 const NUM_HEADS: u32 = 16;
+const MAX_DEPTH: u32 = 8;
 
 struct Runner<B: Backend> {
     context: Arc<B::Context>,
@@ -26,6 +29,9 @@ struct Runner<B: Backend> {
     prefix_kv: Allocation<B>,
     node_kv: Allocation<B>,
     current_qkv: Allocation<B>,
+    cosines: Allocation<B>,
+    sines: Allocation<B>,
+    node_metadata: Allocation<B>,
     ancestor_indices: Allocation<B>,
     ancestor_counts: Allocation<B>,
     node_indices: Allocation<B>,
@@ -63,6 +69,24 @@ impl<B: Backend> Runner<B> {
             }
         }
 
+        let half_dim = HEAD_DIM / 2;
+        let mut cosines = vec![0.0f32; (MAX_DEPTH as usize + 1) * HEAD_DIM];
+        let mut sines = vec![0.0f32; (MAX_DEPTH as usize + 1) * HEAD_DIM];
+        for position in 0..=MAX_DEPTH as usize {
+            for pair in 0..half_dim {
+                let angle = position as f32 / 10_000f32.powf(2.0 * pair as f32 / HEAD_DIM as f32);
+                let row_base = position * HEAD_DIM;
+                cosines[row_base + pair] = angle.cos();
+                cosines[row_base + half_dim + pair] = angle.cos();
+                sines[row_base + pair] = angle.sin();
+                sines[row_base + half_dim + pair] = angle.sin();
+            }
+        }
+        let mut node_metadata = vec![0u32; rows * MetadataIdx::COUNT];
+        for row in 0..rows {
+            node_metadata[MetadataIdx::Depth as usize * rows + row] = (row as u32 * 3) % (MAX_DEPTH + 2);
+        }
+
         let context = create_context::<B>();
         let kernel =
             <B::Kernels as Kernels>::AncestorAttentionKernel::new(context.as_ref(), HEAD_DIM as u32, NUM_HEADS)
@@ -71,6 +95,9 @@ impl<B: Backend> Runner<B> {
             prefix_kv: alloc_allocation_with_data::<B, bf16>(&context, &values(prefix_length * kv_width, 0)),
             node_kv: alloc_allocation_with_data::<B, bf16>(&context, &values(nodes * kv_width, 11)),
             current_qkv: alloc_allocation_with_data::<B, bf16>(&context, &values(rows * qkv_width, 29)),
+            cosines: alloc_allocation_with_data::<B, f32>(&context, &cosines),
+            sines: alloc_allocation_with_data::<B, f32>(&context, &sines),
+            node_metadata: alloc_allocation_with_data::<B, u32>(&context, &node_metadata),
             ancestor_indices: alloc_allocation_with_data::<B, u32>(&context, &ancestor_indices),
             ancestor_counts: alloc_allocation_with_data::<B, u32>(&context, &ancestor_counts),
             node_indices: alloc_allocation_with_data::<B, u32>(&context, &node_indices),
@@ -94,6 +121,9 @@ impl<B: Backend> Runner<B> {
                 &self.prefix_kv,
                 &mut self.node_kv,
                 &self.current_qkv,
+                &self.cosines,
+                &self.sines,
+                &self.node_metadata,
                 &self.ancestor_indices,
                 &self.ancestor_counts,
                 &self.node_indices,
@@ -102,6 +132,7 @@ impl<B: Backend> Runner<B> {
                 self.prefix_length,
                 self.ancestor_stride,
                 self.node_capacity,
+                MAX_DEPTH,
                 1.0 / (HEAD_DIM as f32).sqrt(),
                 &mut encoder,
             );

@@ -522,131 +522,6 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 
-public protocol CliApplicationProtocol: AnyObject, Sendable {
-    
-    func run() async throws 
-    
-}
-open class CliApplication: CliApplicationProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_uzu_fn_clone_cliapplication(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_uzu_fn_free_cliapplication(handle, $0) }
-    }
-
-    
-
-    
-open func run()async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_uzu_fn_method_cliapplication_run(
-                    self.uniffiCloneHandle()
-                    
-                )
-            },
-            pollFunc: ffi_uzu_rust_future_poll_void,
-            completeFunc: ffi_uzu_rust_future_complete_void,
-            freeFunc: ffi_uzu_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCliError_lift
-        )
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCliApplication: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = CliApplication
-
-    public static func lift(_ handle: UInt64) throws -> CliApplication {
-        return CliApplication(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: CliApplication) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CliApplication {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: CliApplication, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCliApplication_lift(_ handle: UInt64) throws -> CliApplication {
-    return try FfiConverterTypeCliApplication.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCliApplication_lower(_ value: CliApplication) -> UInt64 {
-    return FfiConverterTypeCliApplication.lower(value)
-}
-
-
-
-
-
-
 public protocol DownloaderProtocol: AnyObject, Sendable {
     
     func delete() async throws 
@@ -2473,100 +2348,6 @@ public func FfiConverterTypeEngineConfig_lower(_ value: EngineConfig) -> RustBuf
 }
 
 
-public enum CliError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
-
-    
-    
-    case Engine(EngineError
-    )
-    case Settigs(SettingsError
-    )
-    case RenderingError(message: String
-    )
-
-    
-
-    
-
-    
-    public var errorDescription: String? {
-        String(reflecting: self)
-    }
-    
-}
-
-#if compiler(>=6)
-extension CliError: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCliError: FfiConverterRustBuffer {
-    typealias SwiftType = CliError
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CliError {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-
-        
-
-        
-        case 1: return .Engine(
-            try FfiConverterTypeEngineError.read(from: &buf)
-            )
-        case 2: return .Settigs(
-            try FfiConverterTypeSettingsError.read(from: &buf)
-            )
-        case 3: return .RenderingError(
-            message: try FfiConverterString.read(from: &buf)
-            )
-
-         default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: CliError, into buf: inout [UInt8]) {
-        switch value {
-
-        
-
-        
-        
-        case let .Engine(v1):
-            writeInt(&buf, Int32(1))
-            FfiConverterTypeEngineError.write(v1, into: &buf)
-            
-        
-        case let .Settigs(v1):
-            writeInt(&buf, Int32(2))
-            FfiConverterTypeSettingsError.write(v1, into: &buf)
-            
-        
-        case let .RenderingError(message):
-            writeInt(&buf, Int32(3))
-            FfiConverterString.write(message, into: &buf)
-            
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCliError_lift(_ buf: RustBuffer) throws -> CliError {
-    return try FfiConverterTypeCliError.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCliError_lower(_ value: CliError) -> RustBuffer {
-    return FfiConverterTypeCliError.lower(value)
-}
-
-
 public enum DeviceError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
     
@@ -3837,20 +3618,6 @@ fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: In
         print("uniffiFutureContinuationCallback invalid handle")
     }
 }
-public func cliApplicationCreate(config: EngineConfig)async throws  -> CliApplication  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_uzu_fn_func_cli_application_create(FfiConverterTypeEngineConfig_lower(config)
-                )
-            },
-            pollFunc: ffi_uzu_rust_future_poll_u64,
-            completeFunc: ffi_uzu_rust_future_complete_u64,
-            freeFunc: ffi_uzu_rust_future_free_u64,
-            liftFunc: FfiConverterTypeCliApplication_lift,
-            errorHandler: FfiConverterTypeCliError_lift
-        )
-}
 public func deviceCreate()throws  -> Device  {
     return try  FfiConverterTypeDevice_lift(try rustCallWithError(FfiConverterTypeDeviceError_lift) {
     uniffi_uzu_fn_func_device_create($0
@@ -3907,9 +3674,6 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_uzu_checksum_func_cli_application_create() != 46459) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_uzu_checksum_func_device_create() != 25038) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3920,9 +3684,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_func_player_create() != 61496) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_uzu_checksum_method_cliapplication_run() != 41086) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_chat() != 2862) {
