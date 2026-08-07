@@ -14,7 +14,7 @@ use crate::{
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
-        metal::{GemmDispatchPath, Metal},
+        metal::{GemmEngine, Metal},
     },
     tests::{
         helpers::alloc_allocation,
@@ -34,13 +34,13 @@ fn bench_gemm(c: &mut Criterion) {
     )
     .expect("MatmulKernel");
 
-    let paths: &[(&str, GemmDispatchPath)] = if context.supports_mxu() {
-        &[("GEMM", GemmDispatchPath::Simdgroup), ("GEMM_MXU", GemmDispatchPath::Mxu)]
+    let engines: &[(&str, GemmEngine)] = if context.supports_mxu() {
+        &[("GEMM", GemmEngine::Simdgroup), ("GEMM_MXU", GemmEngine::Mxu)]
     } else {
-        &[("GEMM", GemmDispatchPath::Simdgroup)]
+        &[("GEMM", GemmEngine::Simdgroup)]
     };
 
-    for &(group_label, path) in paths {
+    for &(group_label, engine) in engines {
         let mut group = c.benchmark_group(format!("{}/Kernel/Matmul/{}", type_short_name::<Metal>(), group_label));
 
         for shape in bench_fp_gemm_shapes() {
@@ -48,13 +48,12 @@ fn bench_gemm(c: &mut Criterion) {
             let a = alloc_allocation::<Metal, bf16>(&context, m * k);
             let b_weights = alloc_allocation::<Metal, bf16>(&context, n * k);
             let mut d = alloc_allocation::<Metal, bf16>(&context, m * n);
-
             group.throughput(Throughput::Elements((2 * m * k * n) as u64));
             group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
                 iter_encode_loop::<Metal, _>(&context, b, |encoder| {
                     kernel
                         .gemm
-                        .encode_dispatch_path(
+                        .encode_with_engine(
                             MatmulArguments {
                                 a: MatmulA::FullPrecision {
                                     values: &a,
@@ -72,10 +71,10 @@ fn bench_gemm(c: &mut Criterion) {
                                 n: n as u32,
                                 k: k as u32,
                             },
-                            path,
+                            engine,
                             encoder,
                         )
-                        .expect("encode_dispatch_path failed");
+                        .expect("encode_plan failed");
                 });
             });
         }
