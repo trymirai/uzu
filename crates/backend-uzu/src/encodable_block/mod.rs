@@ -13,3 +13,4 @@ pub mod sampling;
 pub mod transformer;
 pub mod transformer_layer;
 pub mod weaver;
+pub mod weaver_layer;
