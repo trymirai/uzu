@@ -62,13 +62,8 @@ impl GemmProblem {
         self,
         engine: GemmEngine,
     ) -> Result<GemmPlan, GemmPlanError> {
-        if engine == GemmEngine::Mxu && !self.supports_mxu {
-            return Err(GemmPlanError::MxuUnavailable);
-        }
+        self.validate_engine(engine)?;
         let shape = self.shape;
-        if shape.is_quant() && (!shape.b_transpose || shape.b_leading_dimension.is_some()) {
-            return Err(GemmPlanError::UnsupportedQuantLayout);
-        }
         let tiling = match engine {
             GemmEngine::Mxu => {
                 if shape.is_quant() {
@@ -82,7 +77,7 @@ impl GemmProblem {
             GemmEngine::Simdgroup => select_simdgroup_tiling(shape),
         };
         let plan = self.finish_plan(engine, tiling);
-        self.validate(plan)?;
+        self.validate_split_k(plan)?;
         Ok(plan)
     }
 
@@ -90,16 +85,31 @@ impl GemmProblem {
         &self,
         plan: GemmPlan,
     ) -> Result<(), GemmPlanError> {
-        if plan.engine == GemmEngine::Mxu && !self.supports_mxu {
-            return Err(GemmPlanError::MxuUnavailable);
-        }
-        if self.shape.is_quant() && (!self.shape.b_transpose || self.shape.b_leading_dimension.is_some()) {
-            return Err(GemmPlanError::UnsupportedQuantLayout);
-        }
+        self.validate_engine(plan.engine)?;
+        self.validate_split_k(plan)
+    }
+
+    fn validate_split_k(
+        &self,
+        plan: GemmPlan,
+    ) -> Result<(), GemmPlanError> {
         if !self.split_k_is_legal(plan) {
             return Err(GemmPlanError::InvalidSplitK {
                 split_k: plan.split_k,
             });
+        }
+        Ok(())
+    }
+
+    fn validate_engine(
+        &self,
+        engine: GemmEngine,
+    ) -> Result<(), GemmPlanError> {
+        if engine == GemmEngine::Mxu && !self.supports_mxu {
+            return Err(GemmPlanError::MxuUnavailable);
+        }
+        if self.shape.is_quant() && (!self.shape.b_transpose || self.shape.b_leading_dimension.is_some()) {
+            return Err(GemmPlanError::UnsupportedQuantLayout);
         }
         Ok(())
     }

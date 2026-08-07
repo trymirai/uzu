@@ -4,11 +4,7 @@
 //! features to choices. Eligibility, fallbacks, and legality stay in
 //! `selection.rs`.
 
-use super::GemmPlan;
-use crate::backends::common::{
-    gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
-    kernel::matmul::MatmulShape,
-};
+use crate::backends::common::gpu_types::gemm::GemmTiling;
 
 pub(super) const MXU_DEFAULT_TILE: GemmTiling = GemmTiling::Tile64x64x256_Simdgroups2x2;
 
@@ -31,8 +27,6 @@ const SPLIT_K_TARGET_TILES_FP: u32 = 512;
 const SPLIT_K_TARGET_TILES_A8: u32 = 256;
 const SPLIT_K_TARGET_TILES_A8_TILE32_W4: u32 = 512;
 const SPLIT_K_TARGET_TILES_A8_TILE32_W8: u32 = 1024;
-
-const STAGE_WEIGHT_SCALE_MIN_GROUPS: u32 = 6;
 
 fn bucket(
     value: u32,
@@ -127,32 +121,5 @@ pub(super) fn split_k_target_tiles(
         (true, GemmTiling::Tile32x64x256_Simdgroups2x2, _) => SPLIT_K_TARGET_TILES_A8_TILE32_W8,
         (true, _, _) => SPLIT_K_TARGET_TILES_A8,
         (false, _, _) => SPLIT_K_TARGET_TILES_FP,
-    }
-}
-
-impl GemmPlan {
-    pub(super) fn should_stage_weight_scales(
-        self,
-        shape: MatmulShape,
-    ) -> bool {
-        if shape.b_bits == Some(4) && shape.b_group_size == Some(32) && self.tiling.block_m() <= 32 {
-            return false;
-        }
-        if self.tiling == GemmTiling::Tile32x64x256_Simdgroups2x2 {
-            return shape
-                .b_group_size
-                .is_none_or(|group_size| shape.k / self.split_k / group_size >= STAGE_WEIGHT_SCALE_MIN_GROUPS);
-        }
-        true
-    }
-
-    pub(super) fn should_hoist_operand_addressing(
-        self,
-        shape: MatmulShape,
-    ) -> bool {
-        if matches!(shape.b_prologue, GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant) {
-            return true;
-        }
-        self.tiling != GemmTiling::Tile128x128x256_Simdgroups4x4
     }
 }

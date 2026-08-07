@@ -249,10 +249,6 @@ impl GemmKernel {
                         ab_scale,
                         shape,
                         plan,
-                        b_prologue,
-                        bits_per_b,
-                        group_size,
-                        false,
                         None,
                         output_transform,
                         output_bias,
@@ -280,23 +276,15 @@ impl GemmKernel {
                     ab_scale,
                 };
 
-                let specialization = GemmSpecialization {
-                    weights_data_type: self.weights_data_type,
-                    tiling,
-                    use_mxu,
+                let specialization = GemmSpecialization::from_plan(
+                    plan,
+                    shape,
+                    self.weights_data_type,
                     output_transform,
                     alignment,
-                    transpose_b: b_transpose,
-                    b_prologue,
-                    bits_per_b,
-                    b_group_size: group_size,
-                    a_prologue: GemmAPrologueKind::FullPrecision,
-                    signed_codes: false,
-                    a_group_size: None,
-                    stage_weight_scales: true,
-                    hoist_operand_addressing: false,
-                };
-                specialization.validate()?;
+                    GemmAPrologueKind::FullPrecision,
+                    None,
+                )?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
                     Some((a, a_offset)),
@@ -411,10 +399,6 @@ impl GemmKernel {
                         ab_scale,
                         shape,
                         plan,
-                        b_prologue,
-                        bits_per_b,
-                        group_size,
-                        weights_signed_codes,
                         a_group_size,
                         output_transform,
                         output_bias,
@@ -422,23 +406,15 @@ impl GemmKernel {
                         encoder,
                     )?;
                 } else {
-                    let specialization = GemmSpecialization {
-                        weights_data_type: self.weights_data_type,
-                        tiling,
-                        use_mxu,
+                    let specialization = GemmSpecialization::from_plan(
+                        plan,
+                        shape,
+                        self.weights_data_type,
                         output_transform,
                         alignment,
-                        transpose_b: true,
-                        b_prologue,
-                        bits_per_b,
-                        b_group_size: group_size,
                         a_prologue,
-                        signed_codes: weights_signed_codes,
                         a_group_size,
-                        stage_weight_scales: plan.should_stage_weight_scales(shape),
-                        hoist_operand_addressing: plan.should_hoist_operand_addressing(shape),
-                    };
-                    specialization.validate()?;
+                    )?;
                     let kernel = self.get_or_create(encoder.context(), specialization)?;
                     kernel.encode(
                         a_full_precision,
@@ -489,17 +465,12 @@ impl GemmKernel {
         ab_scale: f32,
         shape: MatmulShape,
         plan: GemmPlan,
-        b_prologue: GemmBPrologueKind,
-        bits_per_b: Option<u32>,
-        group_size: Option<u32>,
-        signed_codes: bool,
         a_group_size: Option<u32>,
         output_transform: GemmDTransform,
         output_bias: Option<&Allocation<Metal>>,
         rht_factors: Option<&Allocation<Metal>>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        let use_mxu = plan.engine == GemmEngine::Mxu;
         let tiling = plan.tiling;
         let split_k = plan.split_k;
         let kp = k / split_k;
@@ -508,23 +479,15 @@ impl GemmKernel {
         let base_gy = m.div_ceil(tiling.block_m());
         let alignment =
             GemmAlignment::new(m.is_multiple_of(tiling.block_m()), n.is_multiple_of(tiling.block_n()), true);
-        let part_spec = GemmSpecialization {
-            weights_data_type: self.weights_data_type,
-            tiling,
-            use_mxu,
-            output_transform: GemmDTransform::empty(),
+        let part_spec = GemmSpecialization::from_plan(
+            plan,
+            shape,
+            self.weights_data_type,
+            GemmDTransform::empty(),
             alignment,
-            transpose_b: true,
-            b_prologue,
-            bits_per_b,
-            b_group_size: group_size,
             a_prologue,
-            signed_codes,
             a_group_size,
-            stage_weight_scales: plan.should_stage_weight_scales(shape),
-            hoist_operand_addressing: plan.should_hoist_operand_addressing(shape),
-        };
-        part_spec.validate()?;
+        )?;
 
         let elem = (m as usize) * (n as usize);
         let slice_bytes = elem * self.output_data_type.size_in_bytes();
