@@ -48,7 +48,7 @@ impl<'a, B: Backend> MaybeMut<'a, dyn MixerState<B>> {
     }
 }
 
-pub trait Mixer<B: Backend>: Send + Sync {
+pub trait Mixer<B: Backend>: Any + Send + Sync {
     fn speculation_supported(&self) -> bool;
 
     fn max_context_length(&self) -> Option<usize>;

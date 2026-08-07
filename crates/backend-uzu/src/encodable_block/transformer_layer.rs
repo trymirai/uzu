@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{Allocation, Backend, Encoder},
-    config::{transformer::TransformerConfig, transformer_layer::TransformerLayerConfig},
+    config::transformer_layer::TransformerLayerConfig,
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
@@ -50,7 +50,9 @@ pub struct TransformerLayer<B: Backend> {
 impl<B: Backend> TransformerLayer<B> {
     pub fn new(
         context: &B::Context,
-        transformer_config: &TransformerConfig,
+        model_dim: usize,
+        hidden_dim: usize,
+        num_layers: usize,
         layer_config: &TransformerLayerConfig,
         layer_index: usize,
         parameter_tree: &ParameterTree<B>,
@@ -82,7 +84,7 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         let (mixer, mixer_hadamard_factors) = <dyn Mixer<B>>::new(
-            transformer_config.model_dim,
+            model_dim,
             data_type,
             layer_config.rope_config.as_ref(),
             &layer_config.mixer_config,
@@ -92,7 +94,7 @@ impl<B: Backend> TransformerLayer<B> {
 
         let pre_mixer_norm = if let Some(pre_mixer_norm_config) = &layer_config.pre_mixer_norm_config {
             Some(Normalization::new(
-                transformer_config.model_dim,
+                model_dim,
                 mixer_hadamard_factors,
                 if layer_index > 0 {
                     ShortcutMode::Add
@@ -114,7 +116,7 @@ impl<B: Backend> TransformerLayer<B> {
 
         let post_mixer_norm = if let Some(norm_config) = &layer_config.post_mixer_norm_config {
             Some(Normalization::new(
-                transformer_config.model_dim,
+                model_dim,
                 None,
                 ShortcutMode::None,
                 PostLayerScalar::None,
@@ -129,15 +131,15 @@ impl<B: Backend> TransformerLayer<B> {
 
         let (mlp, mlp_input_hadamard_factors) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
-            transformer_config.model_dim,
-            layer_config.hidden_dim.unwrap_or(transformer_config.hidden_dim),
+            model_dim,
+            layer_config.hidden_dim.unwrap_or(hidden_dim),
             context,
             &parameter_tree.subtree("mlp")?,
             data_type,
         )?;
 
         let pre_mlp_norm = Normalization::new(
-            transformer_config.model_dim,
+            model_dim,
             mlp_input_hadamard_factors,
             ShortcutMode::Add,
             residual_sum_scalar,
@@ -149,7 +151,7 @@ impl<B: Backend> TransformerLayer<B> {
 
         let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
             Some(Normalization::new(
-                transformer_config.model_dim,
+                model_dim,
                 None,
                 ShortcutMode::None,
                 output_scalar,
@@ -167,8 +169,8 @@ impl<B: Backend> TransformerLayer<B> {
             PerLayerEmbeddingProjection::new(
                 context,
                 ple_config,
-                transformer_config.model_dim,
-                transformer_config.layer_configs.len(),
+                model_dim,
+                num_layers,
                 post_layer_scalar.unwrap_or(1.0),
                 data_type,
                 &ple_loader,

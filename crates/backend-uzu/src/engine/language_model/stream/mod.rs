@@ -6,7 +6,7 @@ use crate::{
     backends::common::Backend,
     encodable_block::decoder::DecoderError,
     engine::language_model::{LanguageModel, state::LanguageModelState},
-    speculators::dflash_speculator::DFlashTreeError,
+    speculators::dflash_tfm::DFlashTreeError,
 };
 pub use crate::{
     encodable_block::sampling::SamplingMethod, engine::language_model::stream::stream::LanguageModelStream,

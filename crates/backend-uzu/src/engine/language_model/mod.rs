@@ -12,7 +12,7 @@ use crate::{
     },
     engine::Engine,
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
-    speculators::dflash_speculator::{DFlashSpeculator, DFlashSpeculatorLoadError},
+    speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
 };
 
 pub mod state;
@@ -24,7 +24,7 @@ pub mod grammar;
 pub struct LanguageModel<B: Backend> {
     engine: Arc<Engine<B>>,
     decoder: Decoder<B>,
-    speculator: Option<DFlashSpeculator<B>>,
+    speculator: Option<DFlashTfmSpeculator<B>>,
     sampling: Sampling<B>,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
@@ -104,7 +104,7 @@ impl<B: Backend> Engine<B> {
         );
 
         let speculator = speculator_path
-            .map(|speculator_path| DFlashSpeculator::load(speculator_path, self.context.clone()))
+            .map(|speculator_path| DFlashTfmSpeculator::new(speculator_path, self.context.clone()))
             .transpose()?;
 
         let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);

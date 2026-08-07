@@ -1,19 +1,9 @@
 use proc_macros::uzu_config;
 
 use crate::config::{
-    linear::LinearConfig, mlp::dense_mlp::DenseMLPConfig, normalization::NormalizationConfig, rope::AnyRoPEConfig,
-    token_mixer::attention::AttentionConfig,
+    linear::LinearConfig, normalization::NormalizationConfig, rope::AnyRoPEConfig,
+    transformer_layer::TransformerLayerConfig,
 };
-
-#[uzu_config]
-pub struct DFlashDraftLayerConfig {
-    pub attention_config: AttentionConfig,
-    pub input_norm_config: NormalizationConfig,
-    /// Sits in the pre-MLP-norm position: normalizes hidden + attention output
-    /// before the MLP, unlike uzu's post-mixer norm.
-    pub post_attention_norm_config: NormalizationConfig,
-    pub mlp_config: DenseMLPConfig,
-}
 
 #[uzu_config]
 pub struct DFlashDraftConfig {
@@ -27,6 +17,6 @@ pub struct DFlashDraftConfig {
     pub context_projection_config: LinearConfig,
     pub context_norm_config: NormalizationConfig,
     pub rope_config: AnyRoPEConfig,
-    pub layer_configs: Box<[DFlashDraftLayerConfig]>,
+    pub layer_configs: Box<[TransformerLayerConfig]>,
     pub output_norm_config: NormalizationConfig,
 }

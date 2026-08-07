@@ -14,7 +14,7 @@ use crate::{
         gpu_types::trie::TrieNode as GpuTrieNode, kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
-    encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
+    encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod, weaver::TreeShape},
     engine::{
         capture::CaptureSpan,
         language_model::{
@@ -23,7 +23,6 @@ use crate::{
             stream::{LanguageModelStreamError, LanguageModelStreamOptions},
         },
     },
-    speculators::dflash_speculator::DFlashTreeOptions,
     trie::TrieNode,
 };
 
@@ -302,7 +301,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 if let Some(speculator) = model.speculator.as_ref() {
                     let speculator_state = model_state.speculator_state.as_mut().unwrap();
                     speculator
-                        .append_state(
+                        .encode_accept(
                             speculator_state,
                             decoder_output.hidden_features.as_ref().unwrap(),
                             &(0..input_chunk.len()).collect::<Box<[usize]>>(),
@@ -359,7 +358,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
     }
 
     fn generate(&mut self) -> Result<Option<u64>, LanguageModelStreamError<B>> {
-        let (mut prev_output, encoder): (ForwardPassChaining<B>, Option<Encoder<B>>) =
+        let (mut prev_output, mut encoder): (ForwardPassChaining<B>, Option<Encoder<B>>) =
             match replace(&mut self.decoding_state, DecodingState::Invalid) {
                 DecodingState::Seeded {
                     seed_token,
@@ -449,7 +448,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             .map_err(LanguageModelStreamError::Backend)?;
                         if let Some(speculator) = self.model.speculator.as_ref() {
                             speculator
-                                .append_state(
+                                .encode_accept(
                                     self.model_state.speculator_state.as_mut().unwrap(),
                                     hidden_features.as_deref().unwrap(),
                                     &accepted_token_indicies,
@@ -550,6 +549,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             .max_context_length
             .map_or(32, |max_context_length| 32.min(max_context_length - context_length));
 
+        let mut pending = Vec::new();
         let (input_trie, chain_copy, full_accept) = if speculation_batch > 1
             && let Some(speculator) = &self.model.speculator
             && let (root_token, Some(output_norm)) = prev_output.resolve(
@@ -557,19 +557,23 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 #[cfg(grammar)]
                 self.options.grammar.as_mut(),
             )? {
+            if let Some(accept_encoder) = encoder.take() {
+                pending.push(accept_encoder.end_encoding().submit());
+            }
             let trie = speculator.propose_tree(
                 self.model_state.speculator_state.as_mut().unwrap(),
                 output_norm,
                 root_token as u32,
                 self.model.decoder.embedding(),
-                &self.model_state.prng,
-                #[cfg(grammar)]
-                self.options.grammar.as_mut(),
-                DFlashTreeOptions {
+                TreeShape {
                     budget: speculation_batch - 1,
                     frontier_width: 4,
                     children_per_node: 4,
                 },
+                #[cfg(grammar)]
+                self.options.grammar.as_mut(),
+                &self.model_state.prng,
+                self.allocation_pool.clone(),
             )?;
             (trie, None, false)
         } else {
@@ -584,7 +588,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         };
         let input_flat_trie = input_trie.linearize();
 
-        let mut pending = Vec::new();
         let mut encoder = if let Some(encoder) = encoder {
             encoder
         } else {
@@ -710,7 +713,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             if let Some(speculator) = self.model.speculator.as_ref() {
                 let speculator_state = self.model_state.speculator_state.as_mut().unwrap();
                 speculator
-                    .append_state(
+                    .encode_accept(
                         speculator_state,
                         decoder_output.hidden_features.as_ref().unwrap(),
                         &(0..batch_dim.size()).collect::<Box<[usize]>>(),
@@ -799,7 +802,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                     self.model_state.transformer_state.encode_accept(&[0], &mut encoder).unwrap();
                     if let Some(speculator) = self.model.speculator.as_ref() {
                         speculator
-                            .append_state(
+                            .encode_accept(
                                 self.model_state.speculator_state.as_mut().unwrap(),
                                 in_flight.hidden_features.as_deref().unwrap(),
                                 &[0],
@@ -832,7 +835,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                 self.model_state.transformer_state.encode_accept(&accepted_token_indicies, &mut encoder).unwrap();
                 if let Some(speculator) = self.model.speculator.as_ref() {
                     speculator
-                        .append_state(
+                        .encode_accept(
                             self.model_state.speculator_state.as_mut().unwrap(),
                             hidden_features.as_deref().unwrap(),
                             &accepted_token_indicies,
