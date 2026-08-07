@@ -30,19 +30,27 @@ println!("CPU energy: {}", sample.get::<EnergyRail<Cpu>>());
 
 Apple only. `interval_measurement` (IOReport) is macOS-only; iOS exposes the `Device` instant subset.
 
-### Per-generation IOReport differences
+### Per-part IOReport differences
 
-The bandwidth group is named `PMP` through M4 and `PMP0` from M5 on, with `PMP1` for a second die. All
-three are subscribed, so `DramHistogram` and `AneBandwidth` work across generations.
+The bandwidth group is named `PMP` on some parts and `PMP0` on others, with `PMP1` for a second die.
+This does not follow the generations: an M4 Max resolves it under `PMP` while an M5 Max needs `PMP0`.
+All three names are subscribed and classified, so `DramHistogram` and `AneBandwidth` work regardless of
+which one a given SoC uses — do not assume a rule from the chip's generation.
 
-`DramBytes` reads from `AMC Stats`, and on some parts `IOReportCreateSubscription` refuses that group —
-its channels remain enumerable but cannot be subscribed to. Measured: `DramBytes` works on M1, M2,
-M2 Pro and base M4, and is refused on M3 Max, M4 Pro, M4 Max and M5 Max. `DramHistogram` covers
-everything except M1, which reports no bandwidth. Every generation has one of the two, but neither
-alone covers the whole range.
+Memory traffic comes from two sources and neither covers every part:
+
+| | `DramBytes` (`AMC Stats`) | `DramHistogram` (`PMP*`) |
+| --- | --- | --- |
+| M1 | yes | no |
+| M2, M2 Pro, M4 | yes | yes |
+| M3 Max, M4 Pro, M4 Max, M5 Max | no | yes |
+
+`DramBytes` reads from `AMC Stats`, and where it is unavailable `IOReportCreateSubscription` refuses
+that group outright — the channels remain enumerable but cannot be subscribed to. Every part measured
+has one of the two, but code that needs memory traffic should handle either being zero.
 
 M1 also publishes no memory energy channels at all, so `EnergyRail<Ram>` is zero there.
 
-`EnergyRail<Ram>` is the memory subsystem rather than the DRAM dies: from M5 the `DRAM`, `DCS` and
-`AMCC` channels are published separately and all three are summed. They respond differently to
-workload shape, so they are distinct consumers rather than duplicates.
+`EnergyRail<Ram>` is the memory subsystem rather than the DRAM dies: where the `DRAM`, `DCS` and `AMCC`
+channels are published separately, all three are summed. They respond differently to workload shape, so
+they are distinct consumers rather than duplicates.
