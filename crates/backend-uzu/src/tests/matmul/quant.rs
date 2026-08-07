@@ -332,11 +332,10 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
     .expect("MatmulMetalKernel");
     let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
     let args = quant_arguments(&mut buffers, input);
-    match dispatch {
-        TestDispatch::Auto => matmul.encode(args, &mut encoder).expect("matmul encode failed"),
-        TestDispatch::GemmEngine(engine) => {
-            matmul.gemm.encode_with_engine(args, engine, &mut encoder).expect("forced GEMM engine encode failed")
-        },
+    if let Some(engine) = dispatch {
+        matmul.gemm.encode_with_engine(args, engine, &mut encoder).expect("forced GEMM engine encode failed");
+    } else {
+        matmul.encode(args, &mut encoder).expect("matmul encode failed");
     }
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<Metal, T>(&buffers.y)

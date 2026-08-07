@@ -49,7 +49,7 @@ fn bench_gemm(c: &mut Criterion) {
             let b_weights = alloc_allocation::<Metal, bf16>(&context, n * k);
             let mut d = alloc_allocation::<Metal, bf16>(&context, m * n);
             group.throughput(Throughput::Elements((2 * m * k * n) as u64));
-            group.bench_function(BenchmarkId::new(format!("BF16/{engine:?}"), shape.to_string()), |b| {
+            group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
                 iter_encode_loop::<Metal, _>(&context, b, |encoder| {
                     kernel
                         .gemm

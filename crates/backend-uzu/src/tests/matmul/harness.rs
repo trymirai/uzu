@@ -22,11 +22,7 @@ use crate::{
 pub type MetalMatmulKernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 
 #[cfg(backend = "metal")]
-#[derive(Debug, Clone, Copy)]
-pub enum TestDispatch {
-    Auto,
-    GemmEngine(GemmEngine),
-}
+pub type TestDispatch = Option<GemmEngine>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Case {
@@ -207,10 +203,11 @@ pub fn run_metal<T: ArrayElement + Float>(
     input: &Input<T>,
     dispatch: TestDispatch,
 ) -> Vec<T> {
-    run::<Metal, T>(context, kernel, input, |kernel, args, encoder| match dispatch {
-        TestDispatch::Auto => kernel.encode(args, encoder).expect("matmul encode failed"),
-        TestDispatch::GemmEngine(engine) => {
-            kernel.gemm.encode_with_engine(args, engine, encoder).expect("forced GEMM engine encode failed")
-        },
+    run::<Metal, T>(context, kernel, input, |kernel, args, encoder| {
+        if let Some(engine) = dispatch {
+            kernel.gemm.encode_with_engine(args, engine, encoder).expect("forced GEMM engine encode failed");
+        } else {
+            kernel.encode(args, encoder).expect("matmul encode failed");
+        }
     })
 }

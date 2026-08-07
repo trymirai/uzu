@@ -121,7 +121,7 @@ fn parity_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
 ) {
-    run_parity::<bf16>(m, k, n, gs, bits, method, TestDispatch::GemmEngine(GemmEngine::Simdgroup), "gemm", 0.05, 0.4);
+    run_parity::<bf16>(m, k, n, gs, bits, method, Some(GemmEngine::Simdgroup), "gemm", 0.05, 0.4);
 }
 
 #[rstest]
@@ -138,7 +138,7 @@ fn parity_bf16_8bit_splitk(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
 ) {
-    run_parity::<bf16>(m, k, n, gs, bits, method, TestDispatch::GemmEngine(GemmEngine::Simdgroup), "gemm", 0.05, 1.0);
+    run_parity::<bf16>(m, k, n, gs, bits, method, Some(GemmEngine::Simdgroup), "gemm", 0.05, 1.0);
 }
 
 #[rstest]
@@ -161,7 +161,7 @@ fn parity_gemv_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
 ) {
-    run_parity::<bf16>(m, k, n, gs, bits, method, TestDispatch::Auto, "gemv", 0.05, 0.4);
+    run_parity::<bf16>(m, k, n, gs, bits, method, None, "gemv", 0.05, 0.4);
 }
 
 #[uzu_test]
@@ -261,7 +261,7 @@ fn parity_gemv_partial_group_bf16(
 ) {
     // k is not a multiple of group_size, so the per-row scale/zp stride must use
     // ceil(k / group_size) groups.
-    run_parity::<bf16>(m, k, n, gs, bits, method, TestDispatch::Auto, "gemv", 0.05, 0.6);
+    run_parity::<bf16>(m, k, n, gs, bits, method, None, "gemv", 0.05, 0.6);
 }
 
 #[rstest]
@@ -278,7 +278,7 @@ fn parity_gemv_unaligned_width_bf16(
     #[case] method: QuantizationMethod,
 ) {
     // n is not a multiple of 8; the output-tail clamp must cover the partial block.
-    run_parity::<bf16>(m, k, n, gs, bits, method, TestDispatch::Auto, "gemv", 0.05, 0.6);
+    run_parity::<bf16>(m, k, n, gs, bits, method, None, "gemv", 0.05, 0.6);
 }
 
 #[uzu_test]
@@ -462,7 +462,7 @@ fn mxu_quant_parity_bf16(
         return;
     }
     let input = QuantInput::<bf16>::new(m, k, n, gs, bits, method, 0);
-    let actual = run_quant_metal::<bf16>(&context, &input, TestDispatch::GemmEngine(GemmEngine::Mxu));
+    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>(
         &format!("MXU m={m} k={k} n={n} gs={gs} bits={bits} method={method:?}"),
@@ -502,7 +502,7 @@ fn a8w_mxu_parity_bf16(
         ACTIVATION_SCALE_GROUP_SIZE as usize,
         (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
     );
-    let actual = run_quant_metal::<bf16>(&context, &input, TestDispatch::GemmEngine(GemmEngine::Mxu));
+    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>(
         &format!("A8W{bits} MXU m={m} weight_gs={weight_gs} method={method:?}"),
@@ -538,7 +538,7 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: usize) {
                 (method != QuantizationMethod::ScaleSymmetric)
                     .then_some((activation_group_size as u32).min(weight_group_size)),
             );
-            let actual = run_quant_metal::<bf16>(&context, &input, TestDispatch::GemmEngine(GemmEngine::Mxu));
+            let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
             let reference = run_quant_cpu::<bf16>(&input);
             assert_parity::<bf16>(
                 &format!("A8W{bits} act{activation_group_size} weight{weight_group_size} m={m} method={method:?}"),
@@ -563,7 +563,7 @@ fn a8w4_zero_point_tail_parity(#[case] m: usize) {
     }
     let input = QuantInput::<bf16>::new(m, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint, 0)
         .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE as usize, Some(32));
-    let actual = run_quant_metal::<bf16>(&context, &input, TestDispatch::GemmEngine(GemmEngine::Mxu));
+    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>(&format!("A8W4 ZP N-tail m={m}"), &reference, &actual, 0.08, 0.8);
 }
@@ -577,7 +577,7 @@ fn a8w4_zero_point_tail_signed_codes_parity() {
     let input = QuantInput::<bf16>::new(33, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint, 0)
         .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE as usize, Some(32))
         .with_signed_weight_codes();
-    let actual = run_quant_metal::<bf16>(&context, &input, TestDispatch::GemmEngine(GemmEngine::Mxu));
+    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>("A8W4 ZP signed-code N-tail", &reference, &actual, 0.08, 0.8);
 }
@@ -602,9 +602,7 @@ fn signed_weights_full_precision_activations_parity_bf16(
     let reference_input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0);
     let reference = run_quant_cpu::<bf16>(&reference_input);
 
-    for (label, dispatch) in
-        [("gemv", TestDispatch::Auto), ("simdgroup", TestDispatch::GemmEngine(GemmEngine::Simdgroup))]
-    {
+    for (label, dispatch) in [("gemv", None), ("simdgroup", Some(GemmEngine::Simdgroup))] {
         let actual = run_quant_metal::<bf16>(&context, &input, dispatch);
         assert_parity::<bf16>(
             &format!("signed weights FP-A {label} bits={bits} method={method:?}"),

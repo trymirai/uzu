@@ -102,8 +102,7 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     large_group.b_group_size = Some(128);
     assert_eq!(problem(large_group, DataType::BF16).select_plan().tiling, Tile64x64x256_Simdgroups2x2);
 
-    let a8 = quant(shape(16, 4096, 4096));
-    let mut a8 = a8;
+    let mut a8 = quant(shape(16, 4096, 4096));
     a8.a_full_precision = false;
     assert_eq!(problem(a8, DataType::BF16).select_plan().split_k, 8);
 

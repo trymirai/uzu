@@ -23,7 +23,6 @@ use crate::{
             context::MetalContext,
             error::MetalError,
             kernel::{GemmMetalKernel, GemmSplitKReduceMetalKernel, TensorAddBiasMetalKernel},
-            metal_extensions::DeviceExt,
         },
     },
     data_type::DataType,
@@ -121,7 +120,7 @@ impl GemmKernel {
         engine: GemmEngine,
         context: &MetalContext,
     ) -> Result<GemmPlan, MetalError> {
-        self.problem(*shape, context.device.supports_mxu())
+        self.problem(*shape, context.supports_mxu())
             .select_plan_for_engine(engine)
             .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))
     }
@@ -145,7 +144,7 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        self.problem(shape, encoder.context().device.supports_mxu())
+        self.problem(shape, encoder.context().supports_mxu())
             .validate(plan)
             .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))?;
 
@@ -155,12 +154,6 @@ impl GemmKernel {
             if d_mask.contains(GemmDTransform::ACCUMULATE) {
                 return Err(MatmulError::UnsupportedDOp {
                     bit: GemmDTransform::ACCUMULATE,
-                    path: "QuantGemm",
-                }
-                .into());
-            }
-            if !arguments.b_transpose || arguments.b_leading_dimension.is_some() {
-                return Err(MatmulError::UnsupportedLayout {
                     path: "QuantGemm",
                 }
                 .into());
@@ -233,23 +226,18 @@ impl GemmKernel {
 
                 if plan.split_k > 1 {
                     return self.encode_split_k(
-                        Some((a, a_offset)),
-                        None,
-                        None,
-                        None,
-                        GemmAPrologueKind::FullPrecision,
+                        MatmulA::FullPrecision {
+                            values: a,
+                            offset: a_offset,
+                        },
                         weights,
                         None,
                         None,
                         None,
                         &mut *d,
-                        m,
-                        n,
-                        k,
                         ab_scale,
                         shape,
                         plan,
-                        None,
                         output_transform,
                         output_bias,
                         rht_factors,
@@ -336,11 +324,11 @@ impl GemmKernel {
                 };
 
                 let a_prologue = a.prologue_kind();
-                let (a_full_precision, a_int8, a_scales, a_group_sums, a_group_size) = match a {
+                let (a_full_precision, a_int8, a_scales, a_group_sums, a_group_size) = match &a {
                     MatmulA::FullPrecision {
                         values,
                         offset,
-                    } => (Some((values, offset)), None, None, None, None),
+                    } => (Some((*values, *offset)), None, None, None, None),
                     MatmulA::Int8Symmetric {
                         values,
                         scales: activation_scales,
@@ -354,7 +342,7 @@ impl GemmKernel {
                             b_prologue,
                             bits_per_b,
                             group_size,
-                            a_group_size,
+                            *a_group_size,
                         )?;
                         if output_transform.contains(GemmDTransform::SOFT_CAP) {
                             return Err(MatmulError::UnsupportedDOp {
@@ -363,7 +351,7 @@ impl GemmKernel {
                             }
                             .into());
                         }
-                        (None, Some(values), Some(activation_scales), activation_group_sums, Some(a_group_size))
+                        (None, Some(*values), Some(*activation_scales), *activation_group_sums, Some(*a_group_size))
                     },
                 };
 
@@ -383,23 +371,15 @@ impl GemmKernel {
 
                 if plan.split_k > 1 {
                     self.encode_split_k(
-                        a_full_precision,
-                        a_int8,
-                        a_scales,
-                        a_group_sums,
-                        a_prologue,
+                        a,
                         weights,
                         scales,
                         biases,
                         zero_points,
                         &mut *d,
-                        m,
-                        n,
-                        k,
                         ab_scale,
                         shape,
                         plan,
-                        a_group_size,
                         output_transform,
                         output_bias,
                         rht_factors,
@@ -449,28 +429,38 @@ impl GemmKernel {
     #[allow(clippy::too_many_arguments)]
     fn encode_split_k<'a, 'b, WB: BufferArg<'b, Metal>>(
         &mut self,
-        a_full_precision: Option<(&Allocation<Metal>, usize)>,
-        a_int8: Option<&Allocation<Metal>>,
-        a_scales: Option<&Allocation<Metal>>,
-        a_group_sums: Option<&Allocation<Metal>>,
-        a_prologue: GemmAPrologueKind,
+        a: MatmulA<'a, Metal>,
         weights: WB,
         scales: Option<&Allocation<Metal>>,
         biases: Option<&Allocation<Metal>>,
         zero_points: Option<&Allocation<Metal>>,
         d: &mut Allocation<Metal>,
-        m: u32,
-        n: u32,
-        k: u32,
         ab_scale: f32,
         shape: MatmulShape,
         plan: GemmPlan,
-        a_group_size: Option<u32>,
         output_transform: GemmDTransform,
         output_bias: Option<&Allocation<Metal>>,
         rht_factors: Option<&Allocation<Metal>>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        let MatmulShape {
+            m,
+            n,
+            k,
+            ..
+        } = shape;
+        let (a_full_precision, a_int8, a_scales, a_group_sums, a_prologue, a_group_size) = match a {
+            MatmulA::FullPrecision {
+                values,
+                offset,
+            } => (Some((values, offset)), None, None, None, GemmAPrologueKind::FullPrecision, None),
+            MatmulA::Int8Symmetric {
+                values,
+                scales,
+                group_sums,
+                group_size,
+            } => (None, Some(values), Some(scales), group_sums, GemmAPrologueKind::Int8Symmetric, Some(group_size)),
+        };
         let tiling = plan.tiling;
         let split_k = plan.split_k;
         let kp = k / split_k;

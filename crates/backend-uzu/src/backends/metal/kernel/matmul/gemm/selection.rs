@@ -186,7 +186,7 @@ pub(super) fn outer_block_k(
     if engine == GemmEngine::Mxu && shape.is_quant() {
         shape.b_group_size.filter(|&group_size| group_size != 0)
     } else {
-        Some(tiling.block_k())
+        Some(tiling.block_k()).filter(|&block_k| block_k != 0)
     }
 }
 

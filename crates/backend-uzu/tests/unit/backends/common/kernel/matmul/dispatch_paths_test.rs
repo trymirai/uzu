@@ -66,7 +66,7 @@ fn run_matrix<T: ArrayElement + Float + Debug + Display>(
     for engine in gemm_engines_for_hw(&context) {
         for shape in all_correctness_shapes() {
             let case = case_for_shape(shape);
-            check_case::<T>(&context, &mut kernel, TestDispatch::GemmEngine(engine), case, tolerance);
+            check_case::<T>(&context, &mut kernel, Some(engine), case, tolerance);
         }
     }
 }
@@ -118,7 +118,7 @@ fn rht_parity_bf16() {
     for engine in gemm_engines_for_hw(&context) {
         for shape in rht_shapes() {
             let case = Case::new(shape).with_rht(true);
-            check_case::<bf16>(&context, &mut kernel, TestDispatch::GemmEngine(engine), case, 1.0);
+            check_case::<bf16>(&context, &mut kernel, Some(engine), case, 1.0);
         }
     }
 }
@@ -138,7 +138,7 @@ fn bias_parity_bf16() {
     for engine in gemm_engines_for_hw(&context) {
         for shape in shapes {
             let case = Case::new(shape).with_bias(true);
-            check_case::<bf16>(&context, &mut kernel, TestDispatch::GemmEngine(engine), case, 1.0);
+            check_case::<bf16>(&context, &mut kernel, Some(engine), case, 1.0);
         }
     }
 }
@@ -155,7 +155,7 @@ fn gemv_fp_partial_output_block_bf16() {
     .expect("MatmulKernel");
     let shapes = [Shape::new(1, 128, 33), Shape::new(2, 256, 65), Shape::new(4, 384, 100)];
     for shape in shapes {
-        check_case::<bf16>(&context, &mut kernel, TestDispatch::Auto, Case::new(shape), 1.0);
+        check_case::<bf16>(&context, &mut kernel, None, Case::new(shape), 1.0);
     }
 }
 
@@ -179,7 +179,7 @@ fn gemv_fp_output_transforms_bf16() {
         Case::new(shape).with_ab_scale(2.0).with_rht(true),
     ];
     for case in cases {
-        check_case::<bf16>(&context, &mut kernel, TestDispatch::Auto, case, 1.0);
+        check_case::<bf16>(&context, &mut kernel, None, case, 1.0);
     }
 }
 
@@ -202,9 +202,10 @@ fn small_m_square_tile_parity() {
     )
     .expect("MatmulKernel");
 
-    let shape = Shape::new(8, 256, 256);
-    for engine in gemm_engines_for_hw(&context) {
-        check_case::<bf16>(&context, &mut bf16_kernel, TestDispatch::GemmEngine(engine), Case::new(shape), 1.0);
-        check_case::<f32>(&context, &mut f32_kernel, TestDispatch::GemmEngine(engine), Case::new(shape), 0.01);
+    for shape in [Shape::new(8, 256, 256), Shape::new(8, 512, 256)] {
+        for engine in gemm_engines_for_hw(&context) {
+            check_case::<bf16>(&context, &mut bf16_kernel, Some(engine), Case::new(shape), 1.0);
+            check_case::<f32>(&context, &mut f32_kernel, Some(engine), Case::new(shape), 0.01);
+        }
     }
 }

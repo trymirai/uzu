@@ -56,7 +56,7 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
                 label
             ));
             group.throughput(Throughput::Elements((m * n * k) as u64));
-            group.bench_function(BenchmarkId::new(format!("{engine:?}"), shape.to_string()), |b| {
+            group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
                 iter_encode_loop::<Metal, _>(context, b, |encoder| {
                     matmul
                         .gemm
