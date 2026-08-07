@@ -23,6 +23,7 @@ enum Commands {
         task_path: String,
         output_path: String,
     },
+    ListModels,
     Server {
         #[arg(long, value_name = "MODEL")]
         model: String,
@@ -47,6 +48,7 @@ async fn main() -> Result<()> {
             task_path,
             output_path,
         }) => bench::run_bench(model_path, task_path, output_path).await?,
+        Some(Commands::ListModels {}) => interactive::run_list_models().await?,
         Some(Commands::Server {
             model,
             port,
