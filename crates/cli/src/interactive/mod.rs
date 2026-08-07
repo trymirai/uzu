@@ -12,6 +12,8 @@ use uzu::{
     settings::SettingsError,
 };
 
+use crate::interactive::components::AppSettings;
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum CliError {
@@ -56,6 +58,15 @@ impl CliApplication {
             Some(settings) => Preferences::load(settings)?,
             None => Preferences::default(),
         };
+        let app_settings = match &settings {
+            Some(settings) => AppSettings::load(settings)?,
+            None => AppSettings::default(),
+        };
+
+        let mut selected_model = model;
+        if selected_model.is_none() {
+            selected_model = app_settings.selected_model_id.clone();
+        }
 
         element! {
             Application(
@@ -63,7 +74,8 @@ impl CliApplication {
                 settings: settings,
                 theme: Some(theme),
                 preferences: Some(preferences),
-                model: model,
+                app_settings: Some(app_settings),
+                model: selected_model,
             )
         }
         .render_loop()
@@ -81,4 +93,11 @@ impl CliApplication {
         let engine = Engine::new(config).await?;
         Ok(Self::new(engine))
     }
+}
+
+pub async fn run_interactive(model: Option<String>) -> anyhow::Result<()> {
+    let engine_config = EngineConfig::default().with_application_identifier("com.trymirai.cli".to_string());
+    let application = CliApplication::create(engine_config).await?;
+    application.run_with_model(model).await?;
+    Ok(())
 }
