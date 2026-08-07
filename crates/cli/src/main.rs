@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
         Some(Commands::ListCheckpoints {
             model_id,
         }) => interactive::run_list_checkpoints(model_id).await?,
-        Some(Commands::ListModels {}) => interactive::run_list_models().await?,
+        Some(Commands::ListModels) => interactive::run_list_models().await?,
         Some(Commands::Server {
             model,
             port,
