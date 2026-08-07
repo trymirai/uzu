@@ -15,7 +15,7 @@ impl GroupId {
             GroupId::EnergyModel
         } else if group == obfstr!("AMC Stats") {
             GroupId::AmcStats
-        } else if group == obfstr!("PMP") {
+        } else if group == obfstr!("PMP") || group == obfstr!("PMP0") || group == obfstr!("PMP1") {
             GroupId::Pmp
         } else {
             GroupId::Other
