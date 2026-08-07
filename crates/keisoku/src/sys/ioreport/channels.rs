@@ -16,6 +16,8 @@ impl Channels {
             (IoReportGroups::ENERGY_MODEL, obfstr!("Energy Model"), None::<&str>),
             (IoReportGroups::AMC_STATS, obfstr!("AMC Stats"), None),
             (IoReportGroups::PMP, obfstr!("PMP"), None),
+            (IoReportGroups::PMP, obfstr!("PMP0"), None),
+            (IoReportGroups::PMP, obfstr!("PMP1"), None),
         ] {
             if !groups.contains(flag) {
                 continue;
