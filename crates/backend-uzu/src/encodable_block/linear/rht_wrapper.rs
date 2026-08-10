@@ -4,7 +4,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Context, DeviceCapabilities, Encoder,
-        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod},
         kernel::{
             ActivationTransform,
             activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
@@ -14,11 +14,12 @@ use crate::{
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
-        int_spec::IntSpec,
-        mlx_spec::MLXSpec,
     },
     data_type::DataType,
-    encodable_block::linear::{Linear, LinearMatmul, LinearMatmulError},
+    encodable_block::{
+        linear::{Linear, LinearMatmul, LinearMatmulError},
+        weight_matrix::{ParsedWeightSpec, WeightMatrixError, parse_spec},
+    },
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -28,7 +29,7 @@ const INT8_ACTIVATIONS_ENABLED: bool = true;
 
 pub(super) fn int8_activations_eligible<B: Backend>(
     context: &B::Context,
-    quantization_spec: &AnyWeightMatrixSpec,
+    spec: &ParsedWeightSpec,
     input_dimension: usize,
     input_data_type: DataType,
     output_data_type: DataType,
@@ -43,23 +44,11 @@ pub(super) fn int8_activations_eligible<B: Backend>(
     if input_data_type != DataType::BF16 || output_data_type != DataType::BF16 {
         return false;
     }
-    let (bits, group_size) = match quantization_spec {
-        AnyWeightMatrixSpec::IntSpec(IntSpec {
-            bits,
-            group_size,
-            layout: Layout::OutputInput,
-            ..
-        })
-        | AnyWeightMatrixSpec::MLXSpec(MLXSpec {
-            bits,
-            group_size,
-            layout: Layout::OutputInput,
-            ..
-        }) => (*bits, *group_size),
-        _ => return false,
+    let (Some(info), Layout::OutputInput) = (spec.quantization, &spec.layout) else {
+        return false;
     };
-    matches!(bits, 4 | 8)
-        && matches!(group_size, 32 | 64 | 128)
+    let group_size = info.group_size as usize;
+    matches!(group_size, 32 | 64 | 128)
         && input_dimension.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
         && input_dimension.is_multiple_of(group_size)
         && input_dimension.is_multiple_of(activation_group_size)
@@ -69,22 +58,14 @@ pub(super) fn int8_activations_eligible<B: Backend>(
 pub enum RHTLinearWrapperError<B: Backend> {
     #[error("Inner linear error: {0}")]
     InnerLinearError(#[from] LinearMatmulError<B>),
+    #[error("Weight matrix error: {0}")]
+    WeightMatrix(#[from] WeightMatrixError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Unsupported RHT linear configuration: {0}")]
     UnsupportedConfiguration(String),
-}
-
-fn weights_need_group_sums(quantization_spec: &AnyWeightMatrixSpec) -> bool {
-    !matches!(
-        quantization_spec,
-        AnyWeightMatrixSpec::IntSpec(IntSpec {
-            is_symmetric: true,
-            ..
-        })
-    )
 }
 
 pub struct RHTLinearWrapper<B: Backend> {
@@ -128,45 +109,16 @@ impl<B: Backend> RHTLinearWrapper<B> {
             .read_allocation()?;
         let quantized_weights_tree = weights_tree.subtree("quantized")?;
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
+        let parsed = parse_spec::<B>(&quantization_spec)?;
+        let Some(quantization) = parsed.quantization else {
+            return Err(RHTLinearWrapperError::UnsupportedConfiguration("RHT requires a quantized inner spec".into()));
+        };
         let activation_group_size = ACTIVATION_SCALE_GROUP_SIZE as usize;
 
         let input_transform = ActivationTransform::input_rht(context, input_data_type, true)
             .map_err(RHTLinearWrapperError::BackendError)?;
 
-        let quantize_transform = if int8_activations_eligible::<B>(
-            context,
-            &quantization_spec,
-            input_dimension,
-            input_data_type,
-            output_data_type,
-            activation_group_size,
-        ) {
-            let emit_group_sums = weights_need_group_sums(&quantization_spec);
-            let weight_group_size = match &quantization_spec {
-                AnyWeightMatrixSpec::IntSpec(IntSpec {
-                    group_size,
-                    ..
-                })
-                | AnyWeightMatrixSpec::MLXSpec(MLXSpec {
-                    group_size,
-                    ..
-                }) => *group_size,
-                _ => unreachable!("A8 eligibility only accepts integer quantization specs"),
-            };
-            Some(
-                ActivationTransform::quantize(
-                    context,
-                    input_data_type,
-                    activation_group_size,
-                    emit_group_sums.then_some((weight_group_size as u32).min(activation_group_size as u32)),
-                )
-                .map_err(RHTLinearWrapperError::BackendError)?,
-            )
-        } else {
-            None
-        };
-
-        let mut inner_linear = LinearMatmul::quantized(
+        let mut inner_linear = LinearMatmul::load(
             context,
             quantization_spec,
             input_dimension,
@@ -178,9 +130,28 @@ impl<B: Backend> RHTLinearWrapper<B> {
             has_biases.then_some(parameter_tree),
             Some(output_factors),
         )?;
-        if quantize_transform.is_some() {
-            inner_linear.make_weight_codes_signed();
-        }
+
+        let quantize_transform = if int8_activations_eligible::<B>(
+            context,
+            &parsed,
+            input_dimension,
+            input_data_type,
+            output_data_type,
+            activation_group_size,
+        ) {
+            let emit_group_sums = !matches!(quantization.method, QuantizationMethod::ScaleSymmetric);
+            let transform = ActivationTransform::quantize(
+                context,
+                input_data_type,
+                activation_group_size,
+                emit_group_sums.then_some(quantization.group_size.min(activation_group_size as u32)),
+            )
+            .map_err(RHTLinearWrapperError::BackendError)?;
+            inner_linear.make_codes_signed();
+            Some(transform)
+        } else {
+            None
+        };
 
         Ok(Self {
             input_transform,

@@ -13,7 +13,10 @@ use crate::{
     },
     config::weight_matrix::{AnyWeightMatrixSpec, hybrid_spec::IncoherenceProcessingMode, low_rank_spec::LowRankSpec},
     data_type::DataType,
-    encodable_block::linear::{Linear, LinearMatmul, LinearMatmulError},
+    encodable_block::{
+        linear::{Linear, LinearMatmul, LinearMatmulError},
+        weight_matrix::{WeightMatrixError, parse_spec},
+    },
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -21,6 +24,8 @@ use crate::{
 pub enum QLoRALinearWrapperError<B: Backend> {
     #[error("LinearMatmul error: {0}")]
     LinearMatmulError(#[from] LinearMatmulError<B>),
+    #[error("Weight matrix error: {0}")]
+    WeightMatrix(#[from] WeightMatrixError<B>),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
     #[error("Backend error: {0}")]
@@ -69,7 +74,13 @@ impl<B: Backend> QLoRALinearWrapper<B> {
         };
 
         let quantized_tree = weights_tree.subtree("quantized")?;
-        let base_linear = LinearMatmul::quantized(
+        let parsed = parse_spec::<B>(&quantization_spec)?;
+        let Some(_) = parsed.quantization else {
+            return Err(QLoRALinearWrapperError::UnsupportedConfiguration(
+                "QLoRA requires a quantized base spec".into(),
+            ));
+        };
+        let base_linear = LinearMatmul::load(
             context,
             quantization_spec,
             input_dim,
