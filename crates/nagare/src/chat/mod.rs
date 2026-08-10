@@ -21,7 +21,8 @@ use shoji::{
         basic::{CancelToken, ToolCall, ToolDescription, ToolNamespace, Value},
         model::{Model, ModelSpecialization},
         session::chat::{
-            ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatReplyFinishReason, ChatRole,
+            ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatReplyFinishReason,
+            ChatReplyPowerStats, ChatReplySpeculatorStats, ChatReplyStats, ChatRole,
         },
     },
 };
@@ -243,6 +244,7 @@ impl ChatSession {
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
+        completed_stats: &mut Vec<ChatReplyStats>,
     ) -> Option<Vec<ChatReply>> {
         // prepare all messages
         let all_messages = {
@@ -268,6 +270,7 @@ impl ChatSession {
         let mut error_value: Option<serde_json::Value> = None;
         let mut interrupted = false;
         let mut generated_tool_call_identifiers: Vec<Option<String>> = Vec::new();
+        let mut latest_stats: Option<ChatReplyStats> = None;
 
         let mut instance = self.instance.lock().await;
         let mut stream = match &mut *instance {
@@ -282,9 +285,10 @@ impl ChatSession {
                     let finish_reason = backend_output.finish_reason;
                     let output = ChatReply {
                         message: message.clone(),
-                        stats: backend_output.stats.clone(),
+                        stats: aggregate_stats(completed_stats, &backend_output.stats),
                         finish_reason: finish_reason.clone(),
                     };
+                    latest_stats = Some(backend_output.stats);
 
                     // add output to messages list
                     let mut messages_guard = self.messages.lock().await;
@@ -321,11 +325,15 @@ impl ChatSession {
             self.telemetry.report(TelemetryEvent::ModelInferenceFailed {
                 error,
             });
-        } else if let Some(last) = outputs.values().last() {
+        } else if let Some(stats) = latest_stats.as_ref() {
             self.telemetry.report(TelemetryEvent::ModelInferenceFinished {
                 model_id: self.model_id.clone(),
-                stats: last.stats.clone().into(),
+                stats: stats.clone().into(),
             });
+        }
+
+        if !interrupted && let Some(stats) = latest_stats {
+            completed_stats.push(stats);
         }
 
         (!interrupted).then(|| outputs.into_values().collect())
@@ -347,11 +355,13 @@ impl ChatSession {
         let tool_turn_limit = config.tool_turn_limit.unwrap_or(DEFAULT_TOOL_TURN_LIMIT);
         let mut tool_turns: u32 = 0;
         let mut next_input = input;
+        let mut completed_stats = Vec::new();
 
         loop {
             // send message
             let turn_input = std::mem::take(&mut next_input);
-            let Some(turn_replies) = self.send_input(&sender, turn_input, config.clone(), cancel_token.clone()).await
+            let Some(turn_replies) =
+                self.send_input(&sender, turn_input, config.clone(), cancel_token.clone(), &mut completed_stats).await
             else {
                 break;
             };
@@ -650,6 +660,89 @@ fn build_message(
         };
     }
     message
+}
+
+fn aggregate_stats(
+    completed: &[ChatReplyStats],
+    current: &ChatReplyStats,
+) -> ChatReplyStats {
+    let stats = completed.iter().chain(std::iter::once(current)).collect::<Vec<_>>();
+    let speculator_stats = average_optional_f64(&stats, |stats| {
+        stats.speculator_stats.as_ref().map(|stats| stats.tokens_per_forward_pass)
+    })
+    .map(|tokens_per_forward_pass| ChatReplySpeculatorStats {
+        tokens_per_forward_pass,
+    });
+
+    ChatReplyStats {
+        duration: stats.iter().map(|stats| stats.duration).sum(),
+        time_to_first_token: stats.iter().find_map(|stats| stats.time_to_first_token),
+        prefill_tokens_per_second: stats.iter().find_map(|stats| stats.prefill_tokens_per_second),
+        generate_tokens_per_second: aggregate_generate_rate(&stats),
+        tokens_count_input: sum_optional_u32(&stats, |stats| stats.tokens_count_input),
+        tokens_count_output: sum_optional_u32(&stats, |stats| stats.tokens_count_output),
+        memory_used_bytes: stats.iter().filter_map(|stats| stats.memory_used_bytes).max(),
+        speculator_stats,
+        power_stats: aggregate_power_stats(&stats),
+    }
+}
+
+fn aggregate_generate_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
+    let (token_intervals, duration) = stats.iter().try_fold((0_u64, 0.0), |(token_intervals, duration), stats| {
+        let tokens = stats.tokens_count_output?;
+        if tokens < 2 {
+            return Some((token_intervals, duration));
+        }
+        let generate_duration = stats.duration - stats.time_to_first_token?;
+        (generate_duration > 0.0).then(|| (token_intervals + u64::from(tokens - 1), duration + generate_duration))
+    })?;
+    (token_intervals > 0 && duration > 0.0).then(|| token_intervals as f64 / duration)
+}
+
+fn sum_optional_u32(
+    stats: &[&ChatReplyStats],
+    value: impl Fn(&ChatReplyStats) -> Option<u32>,
+) -> Option<u32> {
+    stats.iter().try_fold(0_u32, |sum, stats| sum.checked_add(value(stats)?))
+}
+
+fn aggregate_power_stats(stats: &[&ChatReplyStats]) -> Option<ChatReplyPowerStats> {
+    let stats =
+        stats.iter().filter_map(|stats| stats.power_stats.as_ref().map(|power| (*stats, power))).collect::<Vec<_>>();
+    if stats.is_empty() {
+        return None;
+    }
+
+    Some(ChatReplyPowerStats {
+        samples_count: stats.iter().map(|(_, power)| power.samples_count).sum(),
+        average_cpu_watts: duration_weighted_power(&stats, |power| power.average_cpu_watts),
+        average_gpu_watts: duration_weighted_power(&stats, |power| power.average_gpu_watts),
+        average_ane_watts: duration_weighted_power(&stats, |power| power.average_ane_watts),
+        average_ram_watts: duration_weighted_power(&stats, |power| power.average_ram_watts),
+        average_total_watts: duration_weighted_power(&stats, |power| power.average_total_watts),
+        energy_joules: stats.iter().map(|(_, power)| power.energy_joules).sum(),
+    })
+}
+
+fn duration_weighted_power(
+    stats: &[(&ChatReplyStats, &ChatReplyPowerStats)],
+    value: impl Fn(&ChatReplyPowerStats) -> f64,
+) -> f64 {
+    let duration = stats.iter().map(|(stats, _)| stats.duration).sum::<f64>();
+    if duration > 0.0 {
+        stats.iter().map(|(stats, power)| value(power) * stats.duration).sum::<f64>() / duration
+    } else {
+        stats.iter().map(|(_, power)| value(power)).sum::<f64>() / stats.len() as f64
+    }
+}
+
+fn average_optional_f64(
+    stats: &[&ChatReplyStats],
+    value: impl Fn(&ChatReplyStats) -> Option<f64>,
+) -> Option<f64> {
+    let values = stats.iter().filter_map(|stats| value(stats));
+    let (sum, count) = values.fold((0.0, 0_u32), |(sum, count), value| (sum + value, count + 1));
+    (count > 0).then(|| sum / f64::from(count))
 }
 
 fn find_tools_definitions(messages: &mut [ChatMessage]) -> Option<&mut Vec<ToolNamespace>> {
