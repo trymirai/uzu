@@ -153,6 +153,8 @@ fn parity_bf16_8bit_splitk(
 #[case::m1_gs64_8bit_sym(1, 256, 64, 64, 8, QuantizationMethod::ScaleSymmetric)]
 #[case::m2_gs32_4bit_mlx(2, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::m4_gs32_4bit_zp(4, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::m8_gs32_4bit_zp(8, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::m8_gs32_4bit_mlx(8, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 fn parity_gemv_bf16(
     #[case] m: usize,
     #[case] k: usize,

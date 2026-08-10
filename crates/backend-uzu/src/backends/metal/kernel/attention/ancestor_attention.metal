@@ -138,16 +138,15 @@ PUBLIC KERNEL(AncestorAttention)(
 
   const uint ancestor_count = ancestor_counts[row];
   const device uint* row_ancestors = ancestor_indices + row * ancestor_stride;
-  const uint last_node = node_capacity == 0 ? 0u : node_capacity - 1u;
   uint offset = 0;
   for (; offset + unroll_count - 1 < ancestor_count; offset += unroll_count) {
     attend_qkv<unroll_count>(query, head_offset, node_value_offset, values, max_score, sum, [&](int step) {
-      return node_vectors + min(row_ancestors[offset + step], last_node) * model_vectors;
+      return node_vectors + row_ancestors[offset + step] * model_vectors;
     });
   }
   for (; offset < ancestor_count; ++offset) {
     attend_qkv<1>(query, head_offset, node_value_offset, values, max_score, sum, [&](int) {
-      return node_vectors + min(row_ancestors[offset], last_node) * model_vectors;
+      return node_vectors + row_ancestors[offset] * model_vectors;
     });
   }
 
@@ -161,7 +160,7 @@ PUBLIC KERNEL(AncestorAttention)(
   max_score = own_max;
 
   if (node_capacity > 0u) {
-    const uint node = min(node_indices[row], last_node);
+    const uint node = node_indices[row];
 
     node_vectors[node * model_vectors + head_offset] = bfloat4(rotated_key);
     node_vectors[node_value_offset + node * model_vectors] = current_row[current_value_offset];

@@ -34,7 +34,6 @@ fn ancestor_attention<const HEAD_DIM: u32>(
     let qkv_width = QKV_COMPONENTS * model_dim;
     let prefix_length = prefix_length as usize;
     let node_capacity = node_capacity as usize;
-    let last_node = node_capacity.saturating_sub(1);
     let half_dim = head_dim / 2;
     let row_count = rows as usize;
 
@@ -77,7 +76,8 @@ fn ancestor_attention<const HEAD_DIM: u32>(
                 prefix_length * model_dim,
             );
             for offset in 0..ancestor_count {
-                let ancestor = (*ancestor_indices.add(row * ancestor_stride as usize + offset) as usize).min(last_node);
+                let ancestor = *ancestor_indices.add(row * ancestor_stride as usize + offset) as usize;
+                assert!(ancestor < node_capacity, "ancestor slot exceeds tree slot count");
                 std::ptr::copy_nonoverlapping(
                     node_kv.add(ancestor * model_dim),
                     keys.as_mut_ptr().add((prefix_length + offset) * model_dim),
@@ -124,7 +124,8 @@ fn ancestor_attention<const HEAD_DIM: u32>(
                 false,
             );
             if node_capacity > 0 {
-                let node = (*node_indices.add(row) as usize).min(last_node);
+                let node = *node_indices.add(row) as usize;
+                assert!(node < node_capacity, "node slot exceeds tree slot count");
                 std::ptr::copy_nonoverlapping(rotated_keys.as_ptr(), node_kv.add(node * model_dim), model_dim);
                 std::ptr::copy_nonoverlapping(
                     current_row.add(VALUE_COMPONENT * model_dim),

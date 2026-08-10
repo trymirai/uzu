@@ -15,14 +15,14 @@ PUBLIC KERNEL(WeaverFrontierInsertChildren)(
     constant uint& frontier_capacity,
     constant uint& tree_slot_count,
     constant uint& node_count,
-    constant uint& children_per_node,
-    const uint position AXIS(node_count* children_per_node, 64)
+    constant uint& expand_width,
+    const uint position AXIS(node_count* expand_width, 64)
 ) {
-  if (frontier_capacity == 0 || tree_slot_count == 0 || children_per_node == 0) {
+  if (frontier_capacity == 0 || tree_slot_count == 0 || expand_width == 0) {
     return;
   }
 
-  const uint row = position / children_per_node, child = position % children_per_node;
+  const uint row = position / expand_width, child = position % expand_width;
   if (node_valid[row] == 0u) {
     return;
   }
@@ -31,16 +31,16 @@ PUBLIC KERNEL(WeaverFrontierInsertChildren)(
   if (parent >= tree_slot_count) {
     return;
   }
-  const uint slot = parent * children_per_node + child;
+  const uint slot = parent * expand_width + child;
   if (slot >= frontier_capacity) {
     return;
   }
 
-  const float logprob = child_logprobs[row * children_per_node + child];
+  const float logprob = child_logprobs[row * expand_width + child];
   const float cumulative_logprob =
       as_type<float>(packed_tree[uint(TreeIdx::PathLogprobBits) * tree_slot_count + parent]) + logprob;
 
-  frontier[uint(FrontierIdx::TokenId) * frontier_capacity + slot] = child_ids[row * children_per_node + child];
+  frontier[uint(FrontierIdx::TokenId) * frontier_capacity + slot] = child_ids[row * expand_width + child];
   frontier[uint(FrontierIdx::ParentSlot) * frontier_capacity + slot] = parent;
   frontier[uint(FrontierIdx::Depth) * frontier_capacity + slot] =
       packed_tree[uint(TreeIdx::Depth) * tree_slot_count + parent] + 1u;
