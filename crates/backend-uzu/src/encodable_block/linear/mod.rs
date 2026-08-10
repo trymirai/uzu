@@ -14,11 +14,11 @@ use crate::{
         kernel::activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
     },
     config::weight_matrix::{
-        AnyWeightMatrixSpec, Layout,
-        full_precision_spec::FullPrecisionSpec,
+        AnyWeightMatrixSpec,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
+    encodable_block::weight_matrix::parse_spec,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -72,19 +72,20 @@ impl<B: Backend> dyn Linear<B> {
         let weights_tree = parameter_tree.subtree("weights")?;
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
-            AnyWeightMatrixSpec::FullPrecisionSpec(FullPrecisionSpec {
-                layout: Layout::OutputInput,
-                ..
-            }) => {
-                let block = LinearMatmul::full_precision(
+            spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)
+            | AnyWeightMatrixSpec::MLXSpec(_)
+            | AnyWeightMatrixSpec::IntSpec(_)) => {
+                let block = LinearMatmul::load(
                     context,
+                    spec,
                     input_dimension,
                     output_dimension_sum,
-                    has_biases,
                     weights_data_type,
                     input_data_type,
                     output_data_type,
-                    parameter_tree,
+                    &weights_tree,
+                    has_biases.then_some(parameter_tree),
+                    None,
                 )?;
                 Ok(Box::new(block))
             },
@@ -129,21 +130,6 @@ impl<B: Backend> dyn Linear<B> {
                     &weights_tree,
                 )?))
             },
-            spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
-                let block = LinearMatmul::quantized(
-                    context,
-                    spec,
-                    input_dimension,
-                    output_dimension_sum,
-                    weights_data_type,
-                    input_data_type,
-                    output_data_type,
-                    &weights_tree,
-                    has_biases.then_some(parameter_tree),
-                    None,
-                )?;
-                Ok(Box::new(block))
-            },
             spec => Err(LinearBlockError::UnsupportedConfiguration(format!("{spec:?}"))),
         }
     }
@@ -183,7 +169,7 @@ impl<B: Backend> dyn Linear<B> {
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
             spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
-                Ok(Box::new(LinearMatmul::quantized(
+                Ok(Box::new(LinearMatmul::load(
                     context,
                     spec,
                     input_dim,
@@ -223,14 +209,17 @@ impl<B: Backend> dyn Linear<B> {
         }) = &spec
         {
             let quantization_spec = weights_tree.subtree("quantized")?.metadata::<AnyWeightMatrixSpec>("spec")?;
-            if int8_activations_eligible::<B>(
-                context,
-                &quantization_spec,
-                input_dimension,
-                input_data_type,
-                output_data_type,
-                ACTIVATION_SCALE_GROUP_SIZE as usize,
-            ) {
+            let parsed = parse_spec::<B>(&quantization_spec).ok();
+            if parsed.as_ref().is_some_and(|parsed| {
+                int8_activations_eligible::<B>(
+                    context,
+                    parsed,
+                    input_dimension,
+                    input_data_type,
+                    output_data_type,
+                    ACTIVATION_SCALE_GROUP_SIZE as usize,
+                )
+            }) {
                 let linear = RHTLinearWrapper::new(
                     context,
                     input_dimension,
