@@ -89,25 +89,16 @@ pub fn Application(
             };
             match engine.model(identifier.clone()).await {
                 Ok(Some(model)) => {
-                    let model_exists = model.is_downloadable()
-                        || !model.is_local()
-                        || matches!(
-                            engine.model_path(&model).await,
-                            Some(path) if std::path::Path::new(&path).exists()
-                        );
+                    let model_exists = model.is_downloadable() || !model.is_local();
                     if !model_exists {
                         state.write().flow = Some(Box::new(ModelRegistriesFlow));
                         return;
                     }
-                    let summary = format!("Model: {}", model.name());
                     state.write().model_state = Some(ModelState {
                         model,
                         download_state: DownloadState::not_downloaded(0),
                         session_state: None,
                         capabilities: ModelCapabilities::default(),
-                    });
-                    state.write().history.push(HistoryCellType::CommandResult {
-                        result: summary,
                     });
                 },
                 Ok(None) => {
