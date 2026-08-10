@@ -6,7 +6,10 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{
             Kernels,
-            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulPath, MatmulShape},
+            matmul::{
+                A8ActivationPlan, ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel,
+                MatmulShape,
+            },
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
@@ -104,8 +107,15 @@ impl<B: Backend> LinearMatmul<B> {
         })
     }
 
-    pub(super) fn make_codes_signed(&mut self) {
+    pub(super) fn prepare_a8(
+        &mut self,
+        context: &B::Context,
+    ) -> Option<A8ActivationPlan> {
+        let mut candidate = self.matmul_shape(1, false);
+        candidate.signed_codes = true;
+        let plan = self.kernel.lock().a8_activation_plan(&candidate, context)?;
         self.matrix.make_codes_signed();
+        Some(plan)
     }
 
     pub(super) fn encode_with_a(
@@ -135,6 +145,40 @@ impl<B: Backend> LinearMatmul<B> {
         Ok(output)
     }
 
+    fn matmul_shape(
+        &self,
+        batch_dim: usize,
+        a_full_precision: bool,
+    ) -> MatmulShape {
+        let b = self.matmul_b();
+        MatmulShape {
+            m: batch_dim as u32,
+            n: self.output_dim as u32,
+            k: self.input_dim as u32,
+            b_transpose: true,
+            b_leading_dimension: None,
+            b_prologue: b.b_prologue(),
+            b_bits: b.bits_per_b(),
+            b_group_size: b.group_size(),
+            signed_codes: b.signed_codes(),
+            a_full_precision,
+            gathered: false,
+            d_transform: self.d_ops().mask(),
+        }
+    }
+
+    pub(super) fn select_activation_format(
+        &self,
+        batch_dim: usize,
+        context: &B::Context,
+    ) -> ActivationFormat {
+        if !self.matmul_b().signed_codes() {
+            return ActivationFormat::Bf16;
+        }
+        let bf16_shape = self.matmul_shape(batch_dim, true);
+        self.kernel.lock().select_activation_format(&bf16_shape, context)
+    }
+
     fn matmul_b(&self) -> MatmulB<'_, B> {
         self.matrix.matmul_b()
     }
@@ -145,29 +189,6 @@ impl<B: Backend> LinearMatmul<B> {
             rht_factors: self.output_hadamard_factors.as_ref(),
             ..MatmulDOps::none()
         }
-    }
-
-    pub(super) fn select_path(
-        &self,
-        batch_dim: u32,
-        context: &B::Context,
-    ) -> MatmulPath {
-        let b = self.matmul_b();
-        let shape = MatmulShape {
-            m: batch_dim,
-            n: self.output_dim,
-            k: self.input_dim,
-            b_transpose: true,
-            b_leading_dimension: None,
-            b_prologue: b.b_prologue(),
-            b_bits: b.bits_per_b(),
-            b_group_size: b.group_size(),
-            signed_codes: b.signed_codes(),
-            a_full_precision: true,
-            gathered: false,
-            d_transform: self.d_ops().mask(),
-        };
-        self.kernel.lock().select_path(&shape, context)
     }
 }
 

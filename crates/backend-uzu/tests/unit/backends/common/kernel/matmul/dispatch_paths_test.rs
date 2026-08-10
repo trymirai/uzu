@@ -12,7 +12,11 @@ use crate::{
     backends::{
         common::{
             Backend, Context,
-            kernel::{Kernels, matmul::MatmulKernel},
+            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+            kernel::{
+                Kernels,
+                matmul::{ActivationFormat, MatmulKernel, MatmulShape},
+            },
         },
         metal::{GemmEngine, Metal, MetalContext},
     },
@@ -180,6 +184,48 @@ fn gemv_fp_output_transforms_bf16() {
     ];
     for case in cases {
         check_case::<bf16>(&context, &mut kernel, None, case, 1.0);
+    }
+}
+
+#[uzu_test]
+fn a8_plan_and_selection_use_actual_candidates() {
+    let context = MetalContext::new().expect("Metal context");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulKernel");
+
+    let candidate_a8 = MatmulShape {
+        m: 1,
+        n: 4096,
+        k: 4096,
+        b_transpose: true,
+        b_leading_dimension: None,
+        b_prologue: GemmBPrologueKind::ScaleSymmetricDequant,
+        b_bits: Some(4),
+        b_group_size: Some(128),
+        signed_codes: true,
+        a_full_precision: false,
+        gathered: false,
+        d_transform: GemmDTransform::RHT,
+    };
+    if kernel.a8_activation_plan(&candidate_a8, &context).is_none() {
+        return;
+    }
+
+    for (m, expected_format) in
+        [(1, ActivationFormat::Bf16), (16, ActivationFormat::Int8), (32, ActivationFormat::Int8)]
+    {
+        let bf16_shape = MatmulShape {
+            m,
+            a_full_precision: true,
+            signed_codes: true,
+            ..candidate_a8
+        };
+        assert_eq!(kernel.select_activation_format(&bf16_shape, &context), expected_format, "M={m}");
     }
 }
 
