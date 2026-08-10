@@ -352,7 +352,7 @@ fn chat_reply_stats_component(
                 color: subtitle_color,
             )
             Text(
-                content: format!("total power: {power}"),
+                content: format!("average power: {power}"),
                 color: subtitle_color,
             )
             Text(
