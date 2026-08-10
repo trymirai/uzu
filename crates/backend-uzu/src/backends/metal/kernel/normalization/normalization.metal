@@ -18,7 +18,7 @@ VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(AccumT, float)
 PUBLIC KERNEL(Normalization)(
     const device InputT* input OPTIONAL(!in_place),
-    const device AffineT* scales,
+    const device AffineT* scales OPTIONAL(has_scales),
     const device AffineT* biases OPTIONAL(has_biases),
     device OutputT* output,
     device InputT* shortcut OPTIONAL(copy_to_shortcut),
@@ -37,6 +37,7 @@ PUBLIC KERNEL(Normalization)(
     const bool scale_residual_sum SPECIALIZE,
     const bool scale_output SPECIALIZE,
     const bool has_biases SPECIALIZE,
+    const bool has_scales SPECIALIZE,
     threadgroup AccumT shared_sum[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
@@ -112,15 +113,18 @@ PUBLIC KERNEL(Normalization)(
       x = static_cast<AccumT>(input[i]);
     }
 
-    AccumT scale = static_cast<AccumT>(scales[i]) + static_cast<AccumT>(scale_offset);
-
     // If full_layer, normalize and scale in AccumT, cast to OutputT at the end
     // If not, cast to OutputT after normalize, scale in OutputT
     OutputT val;
-    if (full_layer) {
-      val = static_cast<OutputT>((x - mean) * rms_inv * scale);
+    if (has_scales) {
+      AccumT scale = static_cast<AccumT>(scales[i]) + static_cast<AccumT>(scale_offset);
+      if (full_layer) {
+        val = static_cast<OutputT>((x - mean) * rms_inv * scale);
+      } else {
+        val = static_cast<OutputT>((x - mean) * rms_inv) * static_cast<OutputT>(scale);
+      }
     } else {
-      val = static_cast<OutputT>((x - mean) * rms_inv) * static_cast<OutputT>(scale);
+      val = static_cast<OutputT>((x - mean) * rms_inv);
     }
 
     if (has_biases) {
