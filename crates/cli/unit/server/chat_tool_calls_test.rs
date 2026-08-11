@@ -1,12 +1,15 @@
 use super::*;
-use crate::server::chat_completions::{ChatCompletionRequest, build_messages};
+use crate::{
+    common::model_capabilities::ThinkingSupport,
+    server::chat_completions::{ChatCompletionRequest, build_messages},
+};
 
 fn request(json: &str) -> ChatCompletionRequest {
     serde_json::from_str(json).expect("valid request json")
 }
 
 fn messages(json: &str) -> Vec<ChatMessage> {
-    build_messages(&request(json)).expect("valid request")
+    build_messages(&request(json), ThinkingSupport::Unsupported).expect("valid request")
 }
 
 #[test]
@@ -103,9 +106,15 @@ fn tool_choice_controls_exposed_tools() {
     assert_eq!(exposed(r#"{"type":"function","function":{"name":"get_weather"}}"#), ["get_weather"]);
 
     let unknown_function = with_choice(r#"{"type":"function","function":{"name":"missing"}}"#);
-    assert!(build_messages(&request(&unknown_function)).is_err(), "undeclared forced function should be rejected");
+    assert!(
+        build_messages(&request(&unknown_function), ThinkingSupport::Unsupported).is_err(),
+        "undeclared forced function should be rejected"
+    );
     let bogus_mode = with_choice(r#""sometimes""#);
-    assert!(build_messages(&request(&bogus_mode)).is_err(), "unrecognized tool_choice should be rejected");
+    assert!(
+        build_messages(&request(&bogus_mode), ThinkingSupport::Unsupported).is_err(),
+        "unrecognized tool_choice should be rejected"
+    );
 }
 
 #[test]

@@ -98,6 +98,185 @@ fn malformed_response_format_passes_json_extraction() {
     }
 }
 
+fn messages_with_support(
+    json: &str,
+    thinking_support: ThinkingSupport,
+) -> Vec<ChatMessage> {
+    build_messages(&request(json), thinking_support).expect("valid request")
+}
+
+#[test]
+fn reasoning_effort_prepends_system_message_for_levels_model() {
+    use uzu::types::session::chat::ChatMessageList;
+
+    let messages = messages_with_support(
+        r#"{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}"#,
+        ThinkingSupport::Levels(ReasoningEffort::Default),
+    );
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].reasoning_effort(), Some(ReasoningEffort::High));
+    assert_eq!(messages.reasoning_effort(), Some(ReasoningEffort::High));
+}
+
+#[test]
+fn reasoning_effort_default_emits_no_system_message() {
+    for body in [
+        r#"{"messages":[{"role":"user","content":"hi"}]}"#,
+        r#"{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"default"}"#,
+    ] {
+        let messages = messages_with_support(body, ThinkingSupport::Levels(ReasoningEffort::Default));
+        assert_eq!(messages.len(), 1);
+        assert!(messages.iter().all(|message| message.reasoning_effort().is_none()));
+    }
+}
+
+#[test]
+fn reasoning_effort_maps_levels_to_on_off_for_toggle_model() {
+    let enabled = messages_with_support(r#"{"messages":[],"reasoning_effort":"low"}"#, ThinkingSupport::Toggle(true));
+    assert_eq!(enabled[0].reasoning_effort(), Some(ReasoningEffort::Default));
+
+    let disabled =
+        messages_with_support(r#"{"messages":[],"reasoning_effort":"disabled"}"#, ThinkingSupport::Toggle(true));
+    assert_eq!(disabled[0].reasoning_effort(), Some(ReasoningEffort::Disabled));
+}
+
+#[test]
+fn reasoning_effort_satisfied_without_system_message_when_model_behavior_already_matches() {
+    for (support, body) in [
+        (ThinkingSupport::AlwaysOn, r#"{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}"#),
+        (
+            ThinkingSupport::Unsupported,
+            r#"{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"disabled"}"#,
+        ),
+    ] {
+        let messages = messages_with_support(body, support);
+        assert_eq!(messages.len(), 1);
+        assert!(messages.iter().all(|message| message.reasoning_effort().is_none()));
+    }
+}
+
+#[test]
+fn reasoning_effort_rejected_when_model_cannot_produce_it() {
+    for (support, body) in [
+        (ThinkingSupport::AlwaysOn, r#"{"messages":[],"reasoning_effort":"disabled"}"#),
+        (ThinkingSupport::Unsupported, r#"{"messages":[],"reasoning_effort":"high"}"#),
+    ] {
+        let error =
+            build_messages(&request(body), support).expect_err("unfulfillable reasoning_effort should be rejected");
+        assert!(
+            matches!(error, MessageBuildError::ReasoningEffort(_)),
+            "expected ReasoningEffort error, got {error:?}"
+        );
+    }
+}
+
+#[test]
+fn enable_thinking_honored_for_toggle_model() {
+    let enabled = messages_with_support(r#"{"messages":[],"enable_thinking":true}"#, ThinkingSupport::Toggle(false));
+    assert_eq!(enabled[0].reasoning_effort(), Some(ReasoningEffort::Default));
+
+    let disabled = messages_with_support(
+        r#"{"messages":[],"chat_template_kwargs":{"enable_thinking":false}}"#,
+        ThinkingSupport::Toggle(true),
+    );
+    assert_eq!(disabled[0].reasoning_effort(), Some(ReasoningEffort::Disabled));
+}
+
+#[test]
+fn enable_thinking_honored_for_levels_model() {
+    let disabled = messages_with_support(
+        r#"{"messages":[],"enable_thinking":false}"#,
+        ThinkingSupport::Levels(ReasoningEffort::Default),
+    );
+    assert_eq!(disabled[0].reasoning_effort(), Some(ReasoningEffort::Disabled));
+}
+
+#[test]
+fn enable_thinking_rejected_when_model_cannot_produce_it() {
+    let error = build_messages(&request(r#"{"messages":[],"enable_thinking":false}"#), ThinkingSupport::AlwaysOn)
+        .expect_err("disabling an always-on model should be rejected");
+    assert!(matches!(error, MessageBuildError::EnableThinking(_)), "expected EnableThinking error, got {error:?}");
+
+    let error = build_messages(&request(r#"{"messages":[],"enable_thinking":true}"#), ThinkingSupport::Unsupported)
+        .expect_err("enabling reasoning on an unsupported model should be rejected");
+    assert!(matches!(error, MessageBuildError::EnableThinking(_)), "expected EnableThinking error, got {error:?}");
+}
+
+#[test]
+fn enable_thinking_rejects_contradictions() {
+    for body in [
+        r#"{"messages":[],"enable_thinking":true,"chat_template_kwargs":{"enable_thinking":false}}"#,
+        r#"{"messages":[],"enable_thinking":false,"reasoning_effort":"high"}"#,
+        r#"{"messages":[],"enable_thinking":true,"reasoning_effort":"disabled"}"#,
+    ] {
+        build_messages(&request(body), ThinkingSupport::Levels(ReasoningEffort::Default))
+            .expect_err("contradictory thinking requests should be rejected");
+    }
+}
+
+#[test]
+fn enable_thinking_agrees_with_compatible_reasoning_effort() {
+    let messages = messages_with_support(
+        r#"{"messages":[],"enable_thinking":true,"reasoning_effort":"low"}"#,
+        ThinkingSupport::Levels(ReasoningEffort::Default),
+    );
+    assert_eq!(messages[0].reasoning_effort(), Some(ReasoningEffort::Low));
+}
+
+#[test]
+fn enable_thinking_rejects_malformed_values() {
+    for body in [
+        r#"{"messages":[],"enable_thinking":"yes"}"#,
+        r#"{"messages":[],"chat_template_kwargs":{"enable_thinking":1}}"#,
+        r#"{"messages":[],"chat_template_kwargs":"nope"}"#,
+    ] {
+        build_messages(&request(body), ThinkingSupport::Toggle(true))
+            .expect_err("malformed enable_thinking should be rejected");
+    }
+}
+
+#[test]
+fn chat_template_kwargs_ignores_unrelated_keys_and_null() {
+    for body in [
+        r#"{"messages":[],"chat_template_kwargs":{"some_other_kwarg":42}}"#,
+        r#"{"messages":[],"chat_template_kwargs":{"enable_thinking":null}}"#,
+        r#"{"messages":[],"enable_thinking":null}"#,
+    ] {
+        let messages = messages_with_support(body, ThinkingSupport::Toggle(true));
+        assert!(messages.iter().all(|message| message.reasoning_effort().is_none()));
+    }
+}
+
+#[test]
+fn malformed_enable_thinking_passes_json_extraction() {
+    for body in [r#"{"messages":[],"enable_thinking":"yes"}"#, r#"{"messages":[],"chat_template_kwargs":"nope"}"#] {
+        serde_json::from_str::<ChatCompletionRequest>(body)
+            .unwrap_or_else(|error| panic!("expected {body} to pass extraction, got {error}"));
+    }
+}
+
+#[test]
+fn reasoning_effort_rejects_unrecognized_values() {
+    for body in [r#"{"messages":[],"reasoning_effort":"totally-bogus"}"#, r#"{"messages":[],"reasoning_effort":42}"#] {
+        let error = build_messages(&request(body), ThinkingSupport::default())
+            .expect_err("bad reasoning_effort should be rejected");
+        assert!(
+            matches!(error, MessageBuildError::ReasoningEffort(_)),
+            "expected ReasoningEffort error, got {error:?}"
+        );
+        assert_eq!(error.param(), "reasoning_effort");
+        assert_eq!(error.code(), "invalid_reasoning_effort");
+    }
+}
+
+#[test]
+fn malformed_reasoning_effort_passes_json_extraction() {
+    for body in [r#"{"messages":[],"reasoning_effort":"totally-bogus"}"#, r#"{"messages":[],"reasoning_effort":42}"#] {
+        serde_json::from_str::<ChatCompletionRequest>(body)
+            .unwrap_or_else(|error| panic!("expected {body} to pass extraction, got {error}"));
+    }
+}
+
 #[rocket::get("/err")]
 fn err_route() -> ChatCompletionResult {
     let error = ResponseFormatError::InvalidResponseFormat("bad".to_string());

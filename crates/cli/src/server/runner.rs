@@ -9,7 +9,10 @@ use uzu::{
     types::session::chat::ChatConfig,
 };
 
-use crate::server::{ServerState, handle_chat_completions, handle_models};
+use crate::{
+    common::model_capabilities::ModelCapabilities,
+    server::{ServerState, handle_chat_completions, handle_models},
+};
 
 pub async fn run_server(
     model: String,
@@ -34,12 +37,14 @@ pub async fn run_server(
     }
     spinner.finish_with_message(format!("Loaded: {}", resolved.identifier));
 
+    let capabilities = ModelCapabilities::load(&engine, &resolved).await;
     let session =
         engine.chat(resolved.clone(), ChatConfig::default()).await.context("Failed to create chat session")?;
     let model_name = resolved.identifier.clone();
     let state = ServerState {
         model_name: model_name.clone(),
         session: Arc::new(Mutex::new(session)),
+        thinking_support: capabilities.thinking,
     };
 
     let address: IpAddr = host.parse().with_context(|| format!("Invalid host: {host}"))?;
