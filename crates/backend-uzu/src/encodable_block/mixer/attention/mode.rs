@@ -50,21 +50,12 @@ impl<B: Backend> Attention<B> {
         state: Option<MaybeMut<AttentionState<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        // If we have gate we must duplicate input (linear does hadamard in-place). TODO: fix this properly by adding support for not in place input hadamard
-        let (hidden, gate) = if let Some(gate_projection) = &self.gate_projection {
-            let mut hidden_copy = encoder.allocate_scratch(hidden.size())?;
-            encoder.encode_copy(&hidden, .., &mut hidden_copy, ..);
-            let gate = gate_projection.encode(hidden, batch_dim.size(), encoder)?;
-            (hidden_copy, Some(gate))
-        } else {
-            (hidden, None)
-        };
+        let projected = self.qkv.project(hidden, batch_dim.size(), encoder)?;
 
         let mut attention_output = match state {
             Some(MaybeMut::Mut(state)) => {
-                let qkv = self.qkv.project(hidden, batch_dim.size(), encoder)?;
                 let queries = self.prepare_kv_and_queries(
-                    &qkv,
+                    &projected,
                     state.keys.as_mut(),
                     state.values.as_mut(),
                     state.state_type.physical_prefix_length(),
@@ -76,9 +67,8 @@ impl<B: Backend> Attention<B> {
                 self.run_core(&queries, batch_dim, state, encoder)?
             },
             Some(MaybeMut::Const(state)) => {
-                // KV sharing: the packed projection produces queries only.
-                let query = self.qkv.project(hidden, batch_dim.size(), encoder)?;
-                let queries = self.prepare_queries(&query, precalculated_rope, batch_dim.size(), encoder)?;
+                // KV sharing: the packed projection produces queries and an optional gate only.
+                let queries = self.prepare_queries(&projected, precalculated_rope, batch_dim.size(), encoder)?;
                 self.run_core(&queries, batch_dim, state, encoder)?
             },
             None => {
@@ -87,14 +77,13 @@ impl<B: Backend> Attention<B> {
                 };
                 assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
 
-                let qkv = self.qkv.project(hidden, batch_dim.size(), encoder)?;
                 let mut keys = encoder
                     .allocate_scratch_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)?;
                 let mut values = encoder
                     .allocate_scratch_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)?;
 
                 let queries = self.prepare_kv_and_queries(
-                    &qkv,
+                    &projected,
                     &mut keys,
                     &mut values,
                     0,
@@ -133,10 +122,14 @@ impl<B: Backend> Attention<B> {
         };
 
         if let Some(gate_kernel) = &self.gate_kernel {
+            let gate_dim = self.num_q_heads * self.head_dim;
+            let gate_offset = self.projection_dim - gate_dim;
             gate_kernel.encode(
-                &gate.unwrap(),
+                (&projected, gate_offset as usize * self.data_type.size_in_bytes()),
                 &mut attention_output,
-                batch_dim.size() * (self.num_q_heads * self.head_dim),
+                gate_dim,
+                batch_dim.size(),
+                self.projection_dim,
                 encoder,
             );
         }
@@ -208,6 +201,13 @@ impl<B: Backend> Attention<B> {
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        let num_kv_heads = self.num_kv_heads.expect("KV prepare requires KV heads");
+        // Appended KV is tightly packed; attention projections may have a trailing gate segment.
+        let input_row_stride = if num_q_heads == 0 {
+            2 * num_kv_heads * self.head_dim
+        } else {
+            self.projection_dim
+        };
         let mut queries = if num_q_heads == 0 {
             encoder.allocate_scratch(self.data_type.size_in_bytes())?
         } else {
@@ -221,10 +221,11 @@ impl<B: Backend> Attention<B> {
             precalculated_rope.map(|precalculated_rope| &precalculated_rope.cosines),
             precalculated_rope.map(|precalculated_rope| &precalculated_rope.sines),
             num_q_heads,
-            Some(self.num_kv_heads.expect("KV prepare requires KV heads")),
+            Some(num_kv_heads),
             self.head_dim,
             precalculated_rope.map(|precalculated_rope| precalculated_rope.dim),
             Some(kv_token_offset),
+            input_row_stride,
             batch_dim,
             encoder,
         );
@@ -252,6 +253,7 @@ impl<B: Backend> Attention<B> {
             self.head_dim,
             precalculated_rope.map(|rope| rope.dim),
             None,
+            self.projection_dim,
             batch_dim,
             encoder,
         );

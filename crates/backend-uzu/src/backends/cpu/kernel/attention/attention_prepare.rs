@@ -46,6 +46,7 @@ pub fn attention_prepare<ElementT: ArrayElement + Float, RopeT: ArrayElement + F
     head_dim: u32,
     #[optional(has_rope)] rope_dim: Option<u32>,
     #[optional(has_kv)] kv_token_offset: Option<u32>,
+    input_row_stride: u32,
     batch_dim: u32,
     #[specialize] has_kv: bool,
     #[specialize] has_rope: bool,
@@ -82,15 +83,17 @@ pub fn attention_prepare<ElementT: ArrayElement + Float, RopeT: ArrayElement + F
     let num_q_heads = num_q_heads as usize;
     let head_dim = head_dim as usize;
     let batch_dim = batch_dim as usize;
+    let input_row_stride = input_row_stride as usize;
     let total_heads = if has_kv {
         num_q_heads + num_kv_heads * 2
     } else {
         num_q_heads
     };
+    assert!(input_row_stride >= total_heads * head_dim, "attention prepare row stride is too small");
 
     for batch_idx in 0..batch_dim {
         for head_idx in 0..total_heads {
-            let qkv_head = unsafe { qkv.add(batch_idx * total_heads * head_dim + head_idx * head_dim) };
+            let qkv_head = unsafe { qkv.add(batch_idx * input_row_stride + head_idx * head_dim) };
             let is_query = !has_kv || head_idx < num_q_heads;
             let is_key = has_kv && head_idx >= num_q_heads && head_idx < num_q_heads + num_kv_heads;
 

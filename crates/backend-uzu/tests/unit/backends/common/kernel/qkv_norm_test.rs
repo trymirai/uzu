@@ -23,6 +23,7 @@ struct Input<InputT: ArrayElement + Float, ScaleT: ArrayElement + Float, OutputT
     batch_size: u32,
     num_q_heads: u32,
     num_kv_heads: u32,
+    num_gate_heads: u32,
     head_dim: u32,
     epsilon: f32,
     scale_offset: f32,
@@ -94,6 +95,7 @@ fn get_test_data<
         batch_size,
         num_q_heads,
         num_kv_heads,
+        num_gate_heads: 0,
         head_dim,
         epsilon,
         scale_offset,
@@ -140,7 +142,7 @@ fn get_output<
         scales.as_ref(),
         &mut qkv,
         input.batch_size,
-        input.num_q_heads + 2 * input.num_kv_heads,
+        input.num_q_heads + 2 * input.num_kv_heads + input.num_gate_heads,
         input.head_dim,
         input.epsilon,
         input.scale_offset,
@@ -312,6 +314,47 @@ fn test_v_addressing<
     });
 }
 
+fn test_gated_row_stride_internal() {
+    let (input, _) = get_test_data::<f32, f32, f32, f32>(0, 4, false, false);
+    let qkv_row = input.qkv.to_vec();
+    let gate_heads = input.num_q_heads;
+    let gate_len = (gate_heads * input.head_dim) as usize;
+    let qkv_len = qkv_row.len();
+    let row_len = qkv_len + gate_len;
+    let qkvg = (0..2)
+        .flat_map(|batch| {
+            qkv_row.iter().copied().chain((0..gate_len).map(move |index| 10.0 + batch as f32 + index as f32 * 0.01))
+        })
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    let input = Input {
+        qkv: qkvg,
+        batch_size: 2,
+        num_gate_heads: gate_heads,
+        ..input
+    };
+
+    let assert_addressing = |output: &[f32], backend: &str| {
+        for batch in 0..input.batch_size as usize {
+            let row_offset = batch * row_len;
+            for index in row_offset..row_offset + (input.num_q_heads * input.head_dim) as usize {
+                assert_ne!(output[index], input.qkv[index], "Q was not normalized on {backend}");
+            }
+            for index in row_offset + qkv_len..row_offset + row_len {
+                assert_eq!(output[index], input.qkv[index], "gate was modified on {backend}");
+            }
+        }
+    };
+
+    let expected = get_output::<Cpu, f32, f32, f32, f32>(&input);
+    assert_addressing(&expected, "CPU");
+    for_each_non_cpu_backend!(|B| {
+        let output = get_output::<B, f32, f32, f32, f32>(&input);
+        assert_addressing(&output, std::any::type_name::<B>());
+        assert_eq_float(&expected, &output, 1e-5, "QKVG row stride mismatch");
+    });
+}
+
 // Q norm tests
 #[uzu_test]
 fn test_q_norm_f32_f32_f32_f32() {
@@ -398,4 +441,9 @@ fn test_v_addressing_f32_f32_f32_f32() {
 #[uzu_test]
 fn test_v_addressing_bf16_bf16_bf16_f32() {
     test_v_addressing::<bf16, bf16, bf16, f32>();
+}
+
+#[uzu_test]
+fn test_gated_row_stride() {
+    test_gated_row_stride_internal();
 }

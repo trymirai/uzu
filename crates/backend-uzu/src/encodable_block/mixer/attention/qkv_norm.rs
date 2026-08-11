@@ -30,6 +30,7 @@ pub struct QKVNorm<B: Backend> {
     value: Option<Head<B>>,
     num_q_heads: u32,
     num_kv_heads: u32,
+    packed_projection_heads: u32,
     head_dim: u32,
 }
 
@@ -43,6 +44,7 @@ impl<B: Backend> QKVNorm<B> {
         parameter_tree: &ParameterTree<B>,
         num_q_heads: u32,
         num_kv_heads: u32,
+        packed_projection_heads: u32,
         head_dim: u32,
     ) -> Result<Self, QKVNormError<B>> {
         let query = query_config
@@ -77,6 +79,7 @@ impl<B: Backend> QKVNorm<B> {
             value,
             num_q_heads,
             num_kv_heads,
+            packed_projection_heads,
             head_dim,
         })
     }
@@ -122,7 +125,7 @@ impl<B: Backend> QKVNorm<B> {
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        self.encode_packed(qkv, batch_dim, self.num_q_heads, encoder)
+        self.encode_packed(qkv, batch_dim, self.num_q_heads, self.packed_projection_heads, encoder)
     }
 
     pub fn encode_key_value(
@@ -131,7 +134,7 @@ impl<B: Backend> QKVNorm<B> {
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        self.encode_packed(key_value, batch_dim, 0, encoder)
+        self.encode_packed(key_value, batch_dim, 0, 2 * self.num_kv_heads, encoder)
     }
 
     fn encode_packed(
@@ -139,12 +142,12 @@ impl<B: Backend> QKVNorm<B> {
         buffer: &mut Allocation<B>,
         batch_dim: u32,
         q_heads: u32,
+        packed_heads: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         encoder.push_debug_group("qkv norm");
 
         let kv = self.num_kv_heads;
-        let total_heads = q_heads + 2 * kv;
         let heads = [(&self.query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
         for (head, head_offset, head_count) in heads {
             let Some(head) = head else {
@@ -158,7 +161,7 @@ impl<B: Backend> QKVNorm<B> {
                 head.scales.as_ref(),
                 &mut *buffer,
                 batch_dim,
-                total_heads,
+                packed_heads,
                 self.head_dim,
                 head.config.epsilon,
                 head.config.scale_offset.unwrap_or(0.0),
