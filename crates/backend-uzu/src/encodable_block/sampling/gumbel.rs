@@ -46,7 +46,14 @@ fn uniform_float(
         philox4x32_round(&mut ctr, &key);
     }
 
-    ctr[word as usize] as f32 * (1.0 / 4294967296.0)
+    unit_interval(ctr[word as usize])
+}
+
+/// Uniform in [2^-24, 1-2^-24]; mirrors Metal `uniform_float` in kernel/rng.h. -ln(-ln u)
+/// needs (0,1): u == 1 gives +inf. 24 bits only; the full 32 rounds the top words to 2^32.
+#[inline]
+fn unit_interval(word: u32) -> f32 {
+    ((word >> 8).max(1)) as f32 * (1.0 / 16777216.0)
 }
 
 pub fn gumbel_float(
@@ -72,3 +79,7 @@ pub fn revidx(
 
     (thread_offset + block_idx_offset, block_idx_word)
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/encodable_block/sampling/gumbel_test.rs"]
+mod tests;
