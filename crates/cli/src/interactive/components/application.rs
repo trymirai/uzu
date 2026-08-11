@@ -6,14 +6,17 @@ use uzu::{
     storage::types::{DownloadPhase, DownloadState},
 };
 
-use crate::interactive::{
-    components::{
-        CommandInput, HistoryCell, HistoryCellType, Logo, ModelCapabilities, Preferences, SelectedModel, Theme,
-        app_settings::AppSettings,
+use crate::{
+    common::model_capabilities::ModelCapabilities,
+    interactive::{
+        components::{
+            CommandInput, HistoryCell, HistoryCellType, Logo, Preferences, SelectedModel, Theme,
+            app_settings::AppSettings,
+        },
+        flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
+        helpers::SYMBOL_COMMAND,
+        sessions::{self, SessionState},
     },
-    flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
-    helpers::SYMBOL_COMMAND,
-    sessions::{self, SessionState},
 };
 
 const HISTORY_LIMIT: usize = 20;
