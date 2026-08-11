@@ -23,7 +23,7 @@ pub struct AttentionConfig {
     pub has_sinks: bool,
     pub has_qkv_biases: bool,
     pub has_out_biases: bool,
-    pub gate_projection_config: Option<LinearConfig>,
+    pub has_gate: bool,
     pub normalize_values: bool,
     pub is_kv_sharing: bool,
 }
