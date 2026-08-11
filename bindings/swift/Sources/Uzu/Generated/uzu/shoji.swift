@@ -1253,11 +1253,13 @@ public func FfiConverterTypeChatReplyPowerStats_lower(_ value: ChatReplyPowerSta
 
 public struct ChatReplySpeculatorStats: Equatable, Hashable, Codable {
     public var tokensPerForwardPass: Double
+    public var numDecodeForwardPasses: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(tokensPerForwardPass: Double) {
+    public init(tokensPerForwardPass: Double, numDecodeForwardPasses: UInt32) {
         self.tokensPerForwardPass = tokensPerForwardPass
+        self.numDecodeForwardPasses = numDecodeForwardPasses
     }
 
     
@@ -1276,12 +1278,14 @@ public struct FfiConverterTypeChatReplySpeculatorStats: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatReplySpeculatorStats {
         return
             try ChatReplySpeculatorStats(
-                tokensPerForwardPass: FfiConverterDouble.read(from: &buf)
+                tokensPerForwardPass: FfiConverterDouble.read(from: &buf), 
+                numDecodeForwardPasses: FfiConverterUInt32.read(from: &buf)
         )
     }
 
     public static func write(_ value: ChatReplySpeculatorStats, into buf: inout [UInt8]) {
         FfiConverterDouble.write(value.tokensPerForwardPass, into: &buf)
+        FfiConverterUInt32.write(value.numDecodeForwardPasses, into: &buf)
     }
 }
 
