@@ -6,7 +6,6 @@ mod config;
 mod encodable_block;
 mod parameters;
 mod speculators;
-mod trace;
 mod trie;
 mod utils;
 
@@ -15,6 +14,9 @@ pub mod bridge;
 pub mod data_type;
 
 pub mod engine;
+
+#[cfg(feature = "trace")]
+pub mod trace;
 
 pub use utils::version::{TOOLCHAIN_VERSION, VERSION};
 

@@ -13,7 +13,7 @@ build = "build/main.rs"
 workspace = true
 
 [features]
-default = ["cpu", "metal", "grammar"]
+default = ["cpu", "metal", "grammar", "trace"]
 
 cpu = []
 
@@ -28,6 +28,8 @@ metal = [
 ]
 
 grammar = ["dep:xgrammar", "dep:schemars"]
+
+trace = ["dep:safetensors"]
 
 [build-dependencies]
 anyhow.workspace = true
@@ -65,6 +67,7 @@ monostate.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
 rangemap.workspace = true
+safetensors = { workspace = true, optional = true }
 bytemuck = { workspace = true, features = ["derive"] }
 xxhash-rust = { workspace = true, features = ["xxh3"] }
 memmap2.workspace = true
