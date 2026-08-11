@@ -129,6 +129,7 @@ wiremock = "0.6"
 proptest = { version = "1.10", default-features = false, features = ["std"] }
 criterion = { version = "0.8.2", default-features = false }
 rustix = "1.1.4"
+rustfft = "6.4"
 indexmap = { version = "2.13.0", features = ["serde"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }

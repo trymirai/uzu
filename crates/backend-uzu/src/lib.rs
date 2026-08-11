@@ -9,6 +9,8 @@ mod speculators;
 mod trie;
 mod utils;
 
+#[cfg(feature = "audio")]
+pub mod audio;
 pub mod backends;
 pub mod bridge;
 pub mod data_type;

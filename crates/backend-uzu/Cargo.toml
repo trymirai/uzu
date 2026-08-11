@@ -28,6 +28,7 @@ metal = [
 ]
 
 grammar = ["dep:xgrammar", "dep:schemars"]
+audio = ["dep:rustfft"]
 
 [build-dependencies]
 anyhow.workspace = true
@@ -73,6 +74,7 @@ libm.workspace = true
 rand.workspace = true
 itertools.workspace = true
 rustix.workspace = true
+rustfft = { workspace = true, optional = true }
 futures.workspace = true
 parking_lot = { workspace = true, features = ["send_guard"] }
 tokio-util.workspace = true
