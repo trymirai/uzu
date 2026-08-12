@@ -18,7 +18,7 @@ members = [
     "crates/test-runner",
     "crates/keisoku",
     "crates/kanka",
-    "crates/kiban",
+    "crates/kiban", "crates/uzu-types",
 ]
 resolver = "3"
 

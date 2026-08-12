@@ -7652,6 +7652,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "uzu-types"
+version = "0.5.15"
+
+[[package]]
 name = "v_frame"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
