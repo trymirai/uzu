@@ -1,9 +1,7 @@
 use iocraft::prelude::*;
-use uzu::settings::{SettingKind, Settings, SettingsError};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::interactive::helpers::ColorRgb;
-
-const SETTINGS_THEME: &str = "theme";
 
 #[derive(Debug, Clone)]
 pub struct Theme {
@@ -16,6 +14,10 @@ pub struct Theme {
 impl Theme {
     pub fn all() -> Vec<Self> {
         vec![Self::blue(), Self::green(), Self::yellow(), Self::red(), Self::purple()]
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        Self::all().into_iter().find(|theme| theme.name == name)
     }
 
     pub fn blue() -> Self {
@@ -62,15 +64,7 @@ impl Theme {
             symbol_heart: "💜".to_string(),
         }
     }
-}
 
-impl Default for Theme {
-    fn default() -> Self {
-        Self::blue()
-    }
-}
-
-impl Theme {
     pub fn padding(&self) -> u16 {
         1
     }
@@ -84,18 +78,30 @@ impl Theme {
     }
 }
 
-impl Theme {
-    pub fn load(settings: &Settings) -> Result<Option<Self>, SettingsError> {
-        let Some(name) = settings.load(SettingKind::Config, SETTINGS_THEME.to_string())? else {
-            return Ok(None);
-        };
-        Ok(Self::all().into_iter().find(|theme| theme.name == name))
+impl Default for Theme {
+    fn default() -> Self {
+        Self::blue()
     }
+}
 
-    pub fn save(
+impl Serialize for Theme {
+    fn serialize<S>(
         &self,
-        settings: &Settings,
-    ) -> Result<(), SettingsError> {
-        settings.save(SettingKind::Config, SETTINGS_THEME.to_string(), Some(self.name.clone()))
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.name)
+    }
+}
+
+impl<'de> Deserialize<'de> for Theme {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let name = String::deserialize(deserializer)?;
+        Self::from_name(&name).ok_or_else(|| serde::de::Error::custom(format!("unknown theme: {name}")))
     }
 }

@@ -1,7 +1,9 @@
 use shoji::types::basic::ReasoningEffort;
 
-use super::preferences::cycle;
-use crate::common::model_capabilities::{ThinkingPreference, ThinkingSupport};
+use crate::{
+    common::model_capabilities::{ThinkingPreference, ThinkingSupport},
+    interactive::util::cycle,
+};
 
 const LEVELS: [ReasoningEffort; 5] = [
     ReasoningEffort::Default,

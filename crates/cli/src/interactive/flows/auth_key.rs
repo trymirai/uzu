@@ -96,8 +96,8 @@ fn AuthKeyFlowView(
     let state = *hooks.use_context::<State<ApplicationState>>();
     let (width, _) = hooks.use_terminal_size();
 
-    let padding = state.read().theme.padding();
-    let subtitle_color = state.read().theme.subtitle_color;
+    let padding = state.read().theme().padding();
+    let subtitle_color = state.read().theme().subtitle_color;
     let label = format!("{} {}", SYMBOL_INPUT_RESULT, provider.value_title);
     let maximal_width = width
         .saturating_sub(UnicodeWidthStr::width(label.as_str()) as u16)

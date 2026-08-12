@@ -3,8 +3,9 @@ use iocraft::prelude::*;
 use crate::{
     common::model_capabilities::{ModelSamplingDefaults, ThinkingSupport},
     interactive::{
-        components::{ApplicationState, Preferences, SamplingMode, Theme, ThinkingSupportExt},
+        components::{ApplicationState, Preferences, Theme, ThinkingSupportExt},
         flows::{Flow, FlowEvent},
+        sampling::SamplingMode,
     },
 };
 
@@ -211,10 +212,10 @@ fn SettingsFlowView(
     let support = capabilities.thinking;
     let defaults = capabilities.sampling_defaults;
 
-    let mut draft = hooks.use_state(|| state.read().preferences);
+    let mut draft = hooks.use_state(|| state.read().preferences().clone());
     let mut selected_index = hooks.use_state(|| 0usize);
 
-    let preferences = draft.get();
+    let preferences = draft.read().clone();
     let fields = visible_fields(&preferences, support);
     if selected_index.get() >= fields.len() {
         selected_index.set(fields.len().saturating_sub(1));
@@ -233,7 +234,7 @@ fn SettingsFlowView(
             return;
         }
 
-        let preferences = draft.get();
+        let preferences = draft.read().clone();
         let fields = visible_fields(&preferences, support);
         if fields.is_empty() {
             return;
@@ -259,43 +260,39 @@ fn SettingsFlowView(
                 selected_index.set(next);
             },
             KeyCode::Left => {
-                let mut preferences = draft.get();
+                let mut preferences = draft.read().clone();
                 adjust(&mut preferences, field, -1, support);
                 draft.set(preferences);
             },
             KeyCode::Right => {
-                let mut preferences = draft.get();
+                let mut preferences = draft.read().clone();
                 adjust(&mut preferences, field, 1, support);
                 draft.set(preferences);
             },
             KeyCode::Char(' ') => {
-                let mut preferences = draft.get();
+                let mut preferences = draft.read().clone();
                 toggle(&mut preferences, field, support, defaults);
                 draft.set(preferences);
             },
             KeyCode::Enter => {
                 let mut state = state;
-                let preferences = draft.get();
+                let preferences = draft.read().clone();
                 let summary = format!(
                     "thinking {} · sampling {}",
                     thinking_summary(support, &preferences),
                     preferences.sampling.summary()
                 );
-                let result = match state.read().settings.clone() {
-                    Some(settings) => match preferences.save(&settings) {
-                        Ok(()) => format!("Settings saved ({})", summary),
-                        Err(error) => format!("Settings applied ({}), unable to save: {}", summary, error),
-                    },
-                    None => format!("Settings applied ({})", summary),
+                let result = match state.write().set_preferences(&preferences) {
+                    Ok(()) => format!("Settings saved ({})", summary),
+                    Err(error) => format!("Settings applied ({}), unable to save: {}", summary, error),
                 };
-                state.write().preferences = preferences;
                 on_event(FlowEvent::finish(result));
             },
             _ => {},
         }
     });
 
-    let theme = state.read().theme.clone();
+    let theme = state.read().theme().clone();
     let selected = fields.get(selected_index.get().min(fields.len().saturating_sub(1))).copied();
     let padding = theme.padding();
 

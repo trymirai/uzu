@@ -23,5 +23,10 @@ fn ExitFlowView(hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let mut system = hooks.use_context_mut::<SystemContext>();
     system.exit();
 
-    element! { Text(content: format!("See you soon {}!", state.read().theme.symbol_heart), color: state.read().theme.accent_color) }
+    element! {
+        Text(
+            content: format!("See you soon {}!", state.read().theme().symbol_heart),
+            color: state.read().theme().accent_color
+        )
+    }
 }

@@ -43,15 +43,15 @@ pub fn Logo(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::FlexStart,
             width: 100pct,
-            column_gap: state.read().theme.padding_wide(),
+            column_gap: state.read().theme().padding_wide(),
         ) {
             Text(
                 content: LOGO,
-                color: state.read().theme.accent_color
+                color: state.read().theme().accent_color
             )
             Text(
                 content: about,
-                color: state.read().theme.subtitle_color
+                color: state.read().theme().subtitle_color
             )
         }
     }
