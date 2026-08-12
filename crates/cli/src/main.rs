@@ -5,6 +5,8 @@ mod bench;
 mod interactive;
 mod server;
 mod storage;
+#[cfg(feature = "capability-trace")]
+mod trace;
 
 #[derive(Parser)]
 #[command(name = "cli", bin_name = "cli")]
@@ -41,6 +43,20 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = storage::DownloadManagerCliType::default())]
         download_manager: storage::DownloadManagerCliType,
     },
+    /// Record an activation trace of a single forward pass, in lalamo's layout.
+    #[cfg(feature = "capability-trace")]
+    Trace {
+        #[arg(long, value_name = "DIR")]
+        model_path: String,
+        /// User message to run the forward pass on.
+        #[arg(long, value_name = "TEXT")]
+        message: String,
+        #[arg(long, value_name = "FILE")]
+        output_path: String,
+        /// Trace a classifier model instead of a language model.
+        #[arg(long)]
+        classifier: bool,
+    },
 }
 
 #[tokio::main]
@@ -65,6 +81,13 @@ async fn main() -> Result<()> {
         Some(Commands::Storage {
             download_manager,
         }) => storage::run(download_manager).await?,
+        #[cfg(feature = "capability-trace")]
+        Some(Commands::Trace {
+            model_path,
+            message,
+            output_path,
+            classifier,
+        }) => trace::run_trace(model_path, message, output_path, classifier).await?,
         None => interactive::run_interactive(cli.model).await?,
     }
 

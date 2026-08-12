@@ -13,10 +13,11 @@ name = "cli"
 path = "src/main.rs"
 
 [features]
-default = ["backend-cpu", "backend-metal", "capability-grammar"]
+default = ["backend-cpu", "backend-metal", "capability-grammar", "capability-trace"]
 backend-cpu = ["uzu/backend-cpu"]
 backend-metal = ["uzu/backend-metal"]
 capability-grammar = ["uzu/capability-grammar"]
+capability-trace = ["backend-uzu/trace"]
 
 [dependencies]
 anyhow.workspace = true
@@ -33,7 +34,11 @@ indicatif.workspace = true
 indoc.workspace = true
 iocraft.workspace = true
 jsonschema.workspace = true
+hanashi.workspace = true
+minijinja.workspace = true
+minijinja-contrib.workspace = true
 nagare.workspace = true
+tokenizers.workspace = true
 ratatui.workspace = true
 rocket.workspace = true
 serde.workspace = true
