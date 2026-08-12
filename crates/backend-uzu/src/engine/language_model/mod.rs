@@ -127,7 +127,7 @@ impl<B: Backend> Engine<B> {
             context_ring_update,
             generation_config,
             #[cfg(grammar)]
-            vocab_size,
+            vocab_size: vocab_size as usize,
         })
     }
 }

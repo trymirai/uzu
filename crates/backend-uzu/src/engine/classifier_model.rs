@@ -64,7 +64,7 @@ impl<B: Backend> Engine<B> {
         )?;
 
         let output_labels = if let Some(output_labels) = config.classifier_config.output_labels {
-            assert!(output_labels.len() == config.classifier_config.num_labels);
+            assert!(output_labels.len() == config.classifier_config.num_labels as usize);
             output_labels
         } else {
             (0..config.classifier_config.num_labels).map(|index| format!("class_{index}")).collect()
@@ -113,7 +113,7 @@ impl<B: Backend> ClassifierModel<B> {
             .map_err(ClassifierModelClassifyError::Backend)?;
         token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 
-        let logits = self.classifier.encode(&token_ids, input.len(), &mut encoder)?;
+        let logits = self.classifier.encode(&token_ids, input.len() as u32, &mut encoder)?;
 
         let mut output_buffer = self
             .context

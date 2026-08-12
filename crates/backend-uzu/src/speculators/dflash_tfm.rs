@@ -85,7 +85,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         })
     }
 
-    pub fn hidden_feature_layer_indices(&self) -> &[usize] {
+    pub fn hidden_feature_layer_indices(&self) -> &[u32] {
         &self.config.draft_config.target_layer_ids
     }
 
@@ -93,14 +93,14 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         &self,
         context_capacity: usize,
     ) -> Result<DFlashState<B>, B::Error> {
-        self.dflash.empty_state(context_capacity, &self.context)
+        self.dflash.empty_state(context_capacity as u32, &self.context)
     }
 
     pub fn encode_accept(
         &self,
         state: &mut DFlashState<B>,
         target_features: &[Allocation<B>],
-        accepted_indices: &[usize],
+        accepted_indices: &[u32],
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         self.dflash.encode_accept(state, target_features, accepted_indices, encoder)
@@ -134,7 +134,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let max_depth = self.config.weaver_config.max_depth;
         let depth_seeds =
-            (0..max_depth).map(|depth| prng.derive((root_position + depth) as u64)).collect::<Box<[u64]>>();
+            (0..max_depth).map(|depth| prng.derive((root_position + depth as usize) as u64)).collect::<Box<[u64]>>();
         let tree = self.weaver.encode_tree(
             target_output_norm,
             &dflash_output.draft_hidden,
@@ -158,7 +158,8 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             prng: &PRng,
         ) -> TrieNode {
             let node = &nodes[index];
-            let mut trie_node = TrieNode::new(node.token_id as u64, prng.derive((root_position + node.depth) as u64));
+            let mut trie_node =
+                TrieNode::new(node.token_id as u64, prng.derive((root_position + node.depth as usize) as u64));
             for &child_index in &node.child_indices {
                 #[cfg(grammar)]
                 if let Some(grammar) = grammar.as_mut()

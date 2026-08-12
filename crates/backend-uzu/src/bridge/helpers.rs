@@ -89,7 +89,7 @@ pub fn get_sampling_method<B: Backend>(
                 top_p: top_p.map(|value| value as f32),
                 min_p: min_p.map(|value| value as f32),
                 repetition_penalty: repetition_penalty.map(|value| value as f32),
-                suffix_repetition_length: suffix_repetition_length.map(|value| value as usize),
+                suffix_repetition_length: suffix_repetition_length.map(|value| value as u32),
             },
         },
     }
