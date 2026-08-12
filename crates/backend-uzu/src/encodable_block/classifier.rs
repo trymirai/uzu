@@ -13,7 +13,7 @@ use crate::{
         transformer::{Transformer, TransformerNewError},
     },
     parameters::{ParameterLoaderError, ParameterTree},
-    utils::trace::{trace, trace_let, trace_scope, trace_scope_end},
+    utils::trace::{trace, trace_scope, trace_scope_end},
 };
 
 #[derive(Debug, Error)]
@@ -153,7 +153,8 @@ impl<B: Backend> Classifier<B> {
 
         let logits = self.prediction_head.encode(pooled, 1, encoder).map_err(ClassifierError::Backend)?;
         // Recorded under both the activation trace and the root.
-        trace_let!(logits_shape = [1, self.num_labels]);
+        #[cfg(feature = "trace")]
+        let logits_shape = [1, self.num_labels];
         trace!(encoder, "logits", &logits, logits_shape, self.data_type);
         trace_scope_end!(encoder);
         trace!(encoder, "logits", &logits, logits_shape, self.data_type);

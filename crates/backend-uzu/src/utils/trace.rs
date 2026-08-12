@@ -15,13 +15,6 @@ macro_rules! trace_host {
     }};
 }
 
-macro_rules! trace_let {
-    ($name:ident = $value:expr $(,)?) => {
-        #[cfg(feature = "trace")]
-        let $name = $value;
-    };
-}
-
 macro_rules! trace_scope {
     ($encoder:expr, $($segment:tt)+) => {{
         #[cfg(feature = "trace")]
@@ -37,4 +30,4 @@ macro_rules! trace_scope_end {
 }
 
 #[cfg_attr(not(feature = "trace"), allow(unused_imports))]
-pub(crate) use {trace, trace_host, trace_let, trace_scope, trace_scope_end};
+pub(crate) use {trace, trace_host, trace_scope, trace_scope_end};

@@ -14,7 +14,7 @@ use crate::{
     parameters::{ParameterLoaderError, ParameterTree},
     utils::{
         maybe_mut::MaybeMut,
-        trace::{trace, trace_let, trace_scope, trace_scope_end},
+        trace::{trace, trace_scope, trace_scope_end},
     },
 };
 
@@ -214,7 +214,8 @@ impl<B: Backend> TransformerLayer<B> {
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group(&format!("transformer layer {}", self.layer_index));
         trace_scope!(encoder, "activation_trace");
-        trace_let!(activations = [1, batch_dim.size(), self.model_dim]);
+        #[cfg(feature = "trace")]
+        let activations = [1, batch_dim.size(), self.model_dim];
 
         let hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
             pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut), encoder)?
