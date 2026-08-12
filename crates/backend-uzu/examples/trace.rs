@@ -16,6 +16,7 @@
 use std::{collections::HashMap, error::Error, fs::File, io::BufReader, path::PathBuf, process::ExitCode};
 
 use backend_uzu::engine::Engine;
+use clap::Parser;
 use hanashi::chat::hanashi::renderer::{
     RAISE_EXCEPTION_FUNCTION_NAME, STRFTIME_NOW_FUNCTION_NAME, TEMPLATE_NAME, TOJSON_FILTER_NAME, raise_exception,
     strftime_now, to_json,
@@ -30,44 +31,21 @@ type B = backend_uzu::backends::metal::Metal;
 #[cfg(all(backend = "cpu", not(backend = "metal")))]
 type B = backend_uzu::backends::cpu::Cpu;
 
+#[derive(Parser)]
+#[command(name = "trace", bin_name = "trace")]
 struct Args {
+    /// Model directory holding config.json, tokenizer.json and model.safetensors.
+    #[arg(long, value_name = "DIR")]
     model: PathBuf,
+    /// User message to run the forward pass on.
+    #[arg(long, value_name = "TEXT")]
     message: String,
+    /// Where to write the trace.
+    #[arg(long, value_name = "FILE")]
     output: PathBuf,
+    /// Trace a classifier model instead of a language model.
+    #[arg(long)]
     classifier: bool,
-}
-
-const USAGE: &str = "\
-usage: trace --model <dir> --message <text> --output <file> [--classifier]
-
-  --model <dir>       Model directory holding config.json, tokenizer.json and model.safetensors
-  --message <text>    User message to run the forward pass on
-  --output <file>     Where to write the trace (safetensors)
-  --classifier        Trace a classifier model instead of a language model";
-
-fn parse_args() -> Result<Args, String> {
-    let (mut model, mut message, mut output) = (None, None, None);
-    let mut classifier = false;
-
-    let mut arguments = std::env::args().skip(1);
-    while let Some(argument) = arguments.next() {
-        let mut value = || arguments.next().ok_or_else(|| format!("{argument} needs a value"));
-        match argument.as_str() {
-            "--model" => model = Some(PathBuf::from(value()?)),
-            "--message" => message = Some(value()?),
-            "--output" => output = Some(PathBuf::from(value()?)),
-            "--classifier" => classifier = true,
-            "-h" | "--help" => return Err(USAGE.to_owned()),
-            other => return Err(format!("unexpected argument {other}\n\n{USAGE}")),
-        }
-    }
-
-    Ok(Args {
-        model: model.ok_or_else(|| format!("--model is required\n\n{USAGE}"))?,
-        message: message.ok_or_else(|| format!("--message is required\n\n{USAGE}"))?,
-        output: output.ok_or_else(|| format!("--output is required\n\n{USAGE}"))?,
-        classifier,
-    })
 }
 
 // Mirrors lalamo's ChatCodec.render_request so both sides tokenize the same text.
@@ -158,15 +136,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn main() -> ExitCode {
-    let args = match parse_args() {
-        Ok(args) => args,
-        Err(message) => {
-            eprintln!("{message}");
-            return ExitCode::FAILURE;
-        },
-    };
-
-    match run(args) {
+    match run(Args::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");
