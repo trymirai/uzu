@@ -40,8 +40,8 @@ impl<'a> BatchTopology<'a> {
         self.nodes
     }
 
-    pub fn size(&self) -> usize {
-        self.nodes.len()
+    pub fn node_count(&self) -> u32 {
+        u32::try_from(self.nodes.len()).expect("batch topology exceeds u32 nodes")
     }
 
     pub fn is_flat(&self) -> bool {
