@@ -10,4 +10,12 @@ pub enum Error {
     Safetensors(#[from] safetensors::SafeTensorError),
     #[error("Data type {0:?} has no safetensors equivalent")]
     UnsupportedDataType(DataType),
+    #[error("{0}")]
+    Backend(String),
+}
+
+impl Error {
+    pub(super) fn backend(error: impl std::fmt::Display) -> Self {
+        Self::Backend(error.to_string())
+    }
 }
