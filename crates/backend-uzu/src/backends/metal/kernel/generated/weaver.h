@@ -5,11 +5,11 @@
 using namespace metal;
 
 namespace uzu::weaver {
-static constant constexpr size_t CANDIDATES_MAX = 512;
+static constant constexpr uint32_t CANDIDATES_MAX = 512;
 
-static constant constexpr size_t TOP_CHILDREN_THREADS = 256;
+static constant constexpr uint32_t TOP_CHILDREN_THREADS = 256;
 
-static constant constexpr size_t TOP_CHILDREN_SIMDGROUPS = 8;
+static constant constexpr uint32_t TOP_CHILDREN_SIMDGROUPS = 8;
 
 enum class FrontierIdx : uint32_t {
   TokenId = 0,
@@ -38,13 +38,13 @@ enum class MetadataIdx : uint32_t {
 
 static constant constexpr uint32_t FRONTIER_NO_WINNER = ~0;
 
-static constant constexpr size_t FRONTIER_SELECT_THREADS = 256;
+static constant constexpr uint32_t FRONTIER_SELECT_THREADS = 256;
 
-static constant constexpr size_t FRONTIER_SELECT_SIMDGROUPS = 8;
+static constant constexpr uint32_t FRONTIER_SELECT_SIMDGROUPS = 8;
 
-static constant constexpr size_t FRONTIER_ENTRIES_PER_THREAD = 8;
+static constant constexpr uint32_t FRONTIER_ENTRIES_PER_THREAD = 8;
 
-static constant constexpr size_t FRONTIER_MAX_SLOTS = 2048;
+static constant constexpr uint32_t FRONTIER_MAX_SLOTS = 2048;
 
-static constant constexpr size_t FRONTIER_MAX_WIDTH = 32;
+static constant constexpr uint32_t FRONTIER_MAX_WIDTH = 32;
 } // namespace uzu::weaver
