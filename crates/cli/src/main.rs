@@ -53,9 +53,6 @@ enum Commands {
         message: String,
         #[arg(long, value_name = "FILE")]
         output_path: String,
-        /// Trace a classifier model instead of a language model.
-        #[arg(long)]
-        classifier: bool,
     },
 }
 
@@ -86,8 +83,7 @@ async fn main() -> Result<()> {
             model_path,
             message,
             output_path,
-            classifier,
-        }) => trace::run_trace(model_path, message, output_path, classifier).await?,
+        }) => trace::run_trace(model_path, message, output_path).await?,
         None => interactive::run_interactive(cli.model).await?,
     }
 

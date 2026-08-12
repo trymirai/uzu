@@ -1,10 +1,7 @@
 use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::{Context, Result, bail};
-use backend_uzu::{
-    ChatCodecConfig,
-    trace::{record_classifier_trace, record_language_model_trace},
-};
+use backend_uzu::{ChatCodecConfig, trace::record_trace};
 use hanashi::chat::hanashi::renderer::{
     RAISE_EXCEPTION_FUNCTION_NAME, STRFTIME_NOW_FUNCTION_NAME, TEMPLATE_NAME, TOJSON_FILTER_NAME, raise_exception,
     strftime_now, to_json,
@@ -26,19 +23,13 @@ pub async fn run_trace(
     model_path: String,
     message: String,
     output_path: String,
-    classifier: bool,
 ) -> Result<()> {
     let model_path = Path::new(&model_path);
     let prompt = encode_prompt(model_path, &message)?;
     println!("Prompt tokenized to {} tokens", prompt.token_ids.len());
 
     let output_path = Path::new(&output_path);
-    let metadata = Some(prompt.metadata()?);
-    let output = if classifier {
-        record_classifier_trace(model_path, &prompt.token_ids, output_path, metadata)?
-    } else {
-        record_language_model_trace(model_path, &prompt.token_ids, output_path, metadata)?
-    };
+    let output = record_trace(model_path, &prompt.token_ids, output_path, Some(prompt.metadata()?))?;
 
     println!("Recorded {} arrays to {}", output.array_count, output_path.display());
 

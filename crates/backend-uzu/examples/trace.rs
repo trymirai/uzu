@@ -10,7 +10,7 @@
 
 use std::{error::Error, path::PathBuf, process::ExitCode};
 
-use backend_uzu::trace::{record_classifier_trace, record_language_model_trace};
+use backend_uzu::trace::record_trace;
 use clap::Parser;
 
 #[derive(Parser)]
@@ -25,17 +25,10 @@ struct Args {
     /// Where to write the trace.
     #[arg(long, value_name = "FILE")]
     output: PathBuf,
-    /// Trace a classifier model instead of a language model.
-    #[arg(long)]
-    classifier: bool,
 }
 
 fn run(args: Args) -> Result<(), Box<dyn Error>> {
-    let output = if args.classifier {
-        record_classifier_trace(&args.model, &args.tokens, &args.output, None)?
-    } else {
-        record_language_model_trace(&args.model, &args.tokens, &args.output, None)?
-    };
+    let output = record_trace(&args.model, &args.tokens, &args.output, None)?;
 
     println!("Recorded {} arrays to {}", output.array_count, args.output.display());
 
