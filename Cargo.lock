@@ -7635,6 +7635,7 @@ dependencies = [
  "blake3",
  "bytemuck",
  "clang-ast",
+ "clap",
  "criterion",
  "depfile",
  "derive_more",
