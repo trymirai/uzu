@@ -688,13 +688,21 @@ fn aggregate_stats(
 }
 
 fn aggregate_generate_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
+    if let [stats] = stats {
+        return stats.generate_tokens_per_second;
+    }
+
     let (token_intervals, duration) = stats.iter().try_fold((0_u64, 0.0), |(token_intervals, duration), stats| {
         let tokens = stats.tokens_count_output?;
         if tokens < 2 {
             return Some((token_intervals, duration));
         }
-        let generate_duration = stats.duration - stats.time_to_first_token?;
-        (generate_duration > 0.0).then(|| (token_intervals + u64::from(tokens - 1), duration + generate_duration))
+        let generate_rate = stats.generate_tokens_per_second?;
+        if !generate_rate.is_finite() || generate_rate <= 0.0 {
+            return None;
+        }
+        let intervals = u64::from(tokens - 1);
+        Some((token_intervals + intervals, duration + intervals as f64 / generate_rate))
     })?;
     (token_intervals > 0 && duration > 0.0).then(|| token_intervals as f64 / duration)
 }
