@@ -28,9 +28,9 @@ pub struct QKVNorm<B: Backend> {
     query: Option<Head<B>>,
     key: Option<Head<B>>,
     value: Option<Head<B>>,
-    num_q_heads: usize,
-    num_kv_heads: usize,
-    head_dim: usize,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    head_dim: u32,
 }
 
 impl<B: Backend> QKVNorm<B> {
@@ -41,9 +41,9 @@ impl<B: Backend> QKVNorm<B> {
         key_config: Option<NormalizationConfig>,
         value_config: Option<NormalizationConfig>,
         parameter_tree: &ParameterTree<B>,
-        num_q_heads: usize,
-        num_kv_heads: usize,
-        head_dim: usize,
+        num_q_heads: u32,
+        num_kv_heads: u32,
+        head_dim: u32,
     ) -> Result<Self, QKVNormError<B>> {
         let query = query_config
             .map(|cfg| {
@@ -89,7 +89,7 @@ impl<B: Backend> QKVNorm<B> {
         config: NormalizationConfig,
         parameter_tree: &ParameterTree<B>,
         scales_leaf: Option<&str>,
-        head_dim: usize,
+        head_dim: u32,
     ) -> Result<Head<B>, QKVNormError<B>> {
         let scales = if let Some(scales_leaf) = scales_leaf {
             Some(parameter_tree.leaf(scales_leaf)?.validate(&[head_dim], DataType::F32)?.read_allocation()?)
@@ -116,7 +116,7 @@ impl<B: Backend> QKVNorm<B> {
     pub fn encode(
         &self,
         qkv: &mut Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         self.encode_packed(qkv, batch_dim, self.num_q_heads, encoder)
@@ -125,7 +125,7 @@ impl<B: Backend> QKVNorm<B> {
     pub fn encode_key_value(
         &self,
         key_value: &mut Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         self.encode_packed(key_value, batch_dim, 0, encoder)
@@ -134,8 +134,8 @@ impl<B: Backend> QKVNorm<B> {
     fn encode_packed(
         &self,
         buffer: &mut Allocation<B>,
-        batch_dim: usize,
-        q_heads: usize,
+        batch_dim: u32,
+        q_heads: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         encoder.push_debug_group("qkv norm");
@@ -154,13 +154,13 @@ impl<B: Backend> QKVNorm<B> {
                 None::<&Allocation<B>>,
                 head.scales.as_ref(),
                 &mut *buffer,
-                batch_dim as u32,
-                total_heads as u32,
-                self.head_dim as u32,
+                batch_dim,
+                total_heads,
+                self.head_dim,
                 head.config.epsilon,
                 head.config.scale_offset.unwrap_or(0.0),
-                head_offset as u32,
-                head_count as u32,
+                head_offset,
+                head_count,
                 head.config.upcast_mode == UpcastMode::FullLayer,
                 encoder,
             );

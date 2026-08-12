@@ -1,5 +1,4 @@
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Allocation, Backend, BufferArg, Encoder, Kernels,
         kernel::{AttentionTwoPass1Kernel, AttentionTwoPass2Kernel},
@@ -8,11 +7,13 @@ use crate::{
     encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
 };
 
+const INNER_DATA_TYPE: DataType = DataType::F32;
+
 pub struct AttentionTwoPassCore<B: Backend> {
-    head_dim: usize,
-    num_groups: usize,
-    num_q_heads: usize,
-    sliding_window_size: Option<usize>,
+    head_dim: u32,
+    num_groups: u32,
+    num_q_heads: u32,
+    sliding_window_size: Option<u32>,
     scale: Option<f32>,
     data_type: DataType,
     pass_1: <B::Kernels as Kernels>::AttentionTwoPass1Kernel,
@@ -27,7 +28,7 @@ impl<B: Backend> AttentionTwoPassCore<B> {
         let pass_1 = <B::Kernels as Kernels>::AttentionTwoPass1Kernel::new(
             context,
             arguments.data_type,
-            arguments.head_dim as u32,
+            arguments.head_dim,
             arguments.has_sinks,
             arguments.is_kv_cache_ring,
             arguments.is_causal,
@@ -35,11 +36,8 @@ impl<B: Backend> AttentionTwoPassCore<B> {
             arguments.sliding_window_size.is_some(),
         )?;
 
-        let pass_2 = <B::Kernels as Kernels>::AttentionTwoPass2Kernel::new(
-            context,
-            arguments.data_type,
-            arguments.head_dim as u32,
-        )?;
+        let pass_2 =
+            <B::Kernels as Kernels>::AttentionTwoPass2Kernel::new(context, arguments.data_type, arguments.head_dim)?;
 
         Ok(Self {
             head_dim: arguments.head_dim,
@@ -58,14 +56,14 @@ impl<B: Backend> AttentionTwoPassCore<B> {
         arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut partials = encoder.allocate_scratch(size_for_shape(
+        let mut partials = encoder.allocate_scratch_with_shape(
             &[self.num_q_heads * arguments.suffix_length * 32 * self.head_dim],
-            DataType::F32,
-        ))?;
-        let mut sums = encoder
-            .allocate_scratch(size_for_shape(&[self.num_q_heads * arguments.suffix_length * 32], DataType::F32))?;
-        let mut maxs = encoder
-            .allocate_scratch(size_for_shape(&[self.num_q_heads * arguments.suffix_length * 32], DataType::F32))?;
+            INNER_DATA_TYPE,
+        )?;
+        let mut sums =
+            encoder.allocate_scratch_with_shape(&[self.num_q_heads * arguments.suffix_length * 32], INNER_DATA_TYPE)?;
+        let mut maxs =
+            encoder.allocate_scratch_with_shape(&[self.num_q_heads * arguments.suffix_length * 32], INNER_DATA_TYPE)?;
 
         self.pass_1.encode(
             arguments.queries,
@@ -74,35 +72,27 @@ impl<B: Backend> AttentionTwoPassCore<B> {
             &mut partials,
             &mut sums,
             &mut maxs,
-            (self.num_q_heads / self.num_groups) as u32,
-            (arguments.state_type.physical_prefix_length() + arguments.suffix_length) as u32,
-            self.head_dim as u32,
-            (self.num_groups * self.head_dim) as u32,
-            self.head_dim as u32,
-            (self.num_groups * self.head_dim) as u32,
+            self.num_q_heads / self.num_groups,
+            arguments.state_type.physical_prefix_length() + arguments.suffix_length,
+            self.head_dim,
+            self.num_groups * self.head_dim,
+            self.head_dim,
+            self.num_groups * self.head_dim,
             arguments.state_type.ring_params(),
             self.scale.unwrap_or(1.0f32 / (self.head_dim as f32).sqrt()),
-            self.num_q_heads as u32,
-            arguments.suffix_length as u32,
+            self.num_q_heads,
+            arguments.suffix_length,
             arguments.trie,
-            self.sliding_window_size.map(|sliding_window_size| sliding_window_size as u32),
+            self.sliding_window_size,
             arguments.sinks,
             encoder,
         );
 
-        let mut output = encoder.allocate_constant(size_for_shape(
+        let mut output = encoder.allocate_constant_with_shape(
             &[arguments.suffix_length, self.num_q_heads, self.head_dim],
             self.data_type,
-        ))?;
-        self.pass_2.encode(
-            &partials,
-            &sums,
-            &maxs,
-            &mut output,
-            self.num_q_heads as u32,
-            arguments.suffix_length as u32,
-            encoder,
-        );
+        )?;
+        self.pass_2.encode(&partials, &sums, &maxs, &mut output, self.num_q_heads, arguments.suffix_length, encoder);
 
         Ok(output)
     }

@@ -34,11 +34,11 @@ pub(crate) use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, AttentionState
 pub mod rope;
 
 pub struct Attention<B: Backend> {
-    head_dim: usize,
-    num_q_heads: usize,
-    num_kv_heads: Option<usize>,
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: Option<u32>,
     is_causal: bool,
-    sliding_window_size: Option<usize>,
+    sliding_window_size: Option<u32>,
     max_rope_length: Option<usize>,
     data_type: DataType,
     qkv: LinearProjection<B>,
@@ -81,7 +81,7 @@ impl<B: Backend> Attention<B> {
 
         let is_causal = config.is_causal;
         let sliding_window_size = config.sliding_window_size;
-        let max_rope_length = rope_config.map(|rope_config| *rope_config.max_sequence_length());
+        let max_rope_length = rope_config.map(|rope_config| *rope_config.max_sequence_length() as usize);
 
         let q_dim = num_q_heads * head_dim;
 
@@ -97,7 +97,7 @@ impl<B: Backend> Attention<B> {
         };
         let (qkv_projection, in_projection_input_hadamard_factors) = if !has_gate {
             <dyn Linear<B>>::new_extracting_input_hadamard(
-                hidden_dim,
+                hidden_dim as u32,
                 [qkv_projection_output_dimension],
                 config.has_qkv_biases,
                 context,
@@ -107,7 +107,7 @@ impl<B: Backend> Attention<B> {
         } else {
             (
                 <dyn Linear<B>>::new(
-                    hidden_dim,
+                    hidden_dim as u32,
                     [qkv_projection_output_dimension],
                     config.has_qkv_biases,
                     context,
@@ -121,7 +121,7 @@ impl<B: Backend> Attention<B> {
         let gate_projection = has_gate
             .then(|| {
                 <dyn Linear<B>>::new(
-                    hidden_dim,
+                    hidden_dim as u32,
                     [q_dim],
                     false,
                     context,
@@ -207,7 +207,7 @@ impl<B: Backend> Attention<B> {
 
         let out_projection = <dyn Linear<B>>::new(
             q_dim,
-            [hidden_dim],
+            [hidden_dim as u32],
             config.has_out_biases,
             context,
             data_type,

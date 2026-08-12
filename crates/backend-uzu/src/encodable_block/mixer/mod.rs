@@ -27,14 +27,14 @@ pub mod short_conv;
 pub trait MixerState<B: Backend>: Any + Send {
     fn prepare(
         &mut self,
-        context_length: usize,
-        suffix_length: usize,
+        context_length: u32,
+        suffix_length: u32,
         context: &B::Context,
     ) -> Result<(), B::Error>;
 
     fn encode_accept(
         &mut self,
-        accepted_indices: &[usize],
+        accepted_indices: &[u32],
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error>;
 }
@@ -83,7 +83,7 @@ pub enum MixerNewError<B: Backend> {
 
 impl<B: Backend> dyn Mixer<B> {
     pub fn new(
-        hidden_dim: usize,
+        hidden_dim: u32,
         data_type: DataType,
         rope_config: Option<&AnyRoPEConfig>,
         config: &AnyTokenMixerConfig,
@@ -93,7 +93,7 @@ impl<B: Backend> dyn Mixer<B> {
         match config {
             AnyTokenMixerConfig::AttentionConfig(config) => {
                 let (attention, in_projection_input_hadamard_factors) =
-                    Attention::new(hidden_dim, data_type, rope_config, config, parameter_tree, context)?;
+                    Attention::new(hidden_dim as usize, data_type, rope_config, config, parameter_tree, context)?;
 
                 Ok((Box::new(attention), in_projection_input_hadamard_factors))
             },

@@ -1,7 +1,6 @@
 use parking_lot::Mutex;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Allocation, Backend, BufferArg, Encoder, Kernels,
         kernel::{
@@ -14,10 +13,10 @@ use crate::{
 };
 
 pub struct AttentionFallbackCore<B: Backend> {
-    head_dim: usize,
-    num_groups: usize,
-    num_q_heads: usize,
-    sliding_window_size: Option<usize>,
+    head_dim: u32,
+    num_groups: u32,
+    num_q_heads: u32,
+    sliding_window_size: Option<u32>,
     scale: Option<f32>,
     data_type: DataType,
     scatter_scores: <B::Kernels as Kernels>::AttentionFallbackScatterScoresKernel,
@@ -70,35 +69,36 @@ impl<B: Backend> AttentionFallbackCore<B> {
         arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let sequence_length = arguments.state_type.physical_prefix_length() + arguments.suffix_length;
+        let suffix_length = arguments.suffix_length;
+        let sequence_length = arguments.state_type.physical_prefix_length() + suffix_length;
         let gqa_factor = self.num_q_heads / self.num_groups;
         let scale = self.scale.unwrap_or(1.0f32 / (self.head_dim as f32).sqrt());
-        let dt_bytes = self.data_type.size_in_bytes();
 
-        let mut output = encoder.allocate_constant(size_for_shape(
-            &[arguments.suffix_length, self.num_q_heads, self.head_dim],
-            self.data_type,
-        ))?;
-        let mut scores = encoder.allocate_scratch(size_for_shape(
-            &[self.num_q_heads * arguments.suffix_length * sequence_length],
-            self.data_type,
-        ))?;
-        let mut group_scores = encoder.allocate_scratch(size_for_shape(
-            &[gqa_factor * arguments.suffix_length, sequence_length],
-            self.data_type,
-        ))?;
+        let dt_bytes = self.data_type.size_in_bytes();
+        let head_dim_bytes = self.head_dim as usize * dt_bytes;
+        let group_rows = gqa_factor as usize * suffix_length as usize;
+
+        let scores_len =
+            u32::try_from(group_rows * sequence_length as usize).expect("attention score buffer exceeds u32 elements");
+
+        let mut output =
+            encoder.allocate_constant_with_shape(&[suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
+        let mut scores =
+            encoder.allocate_scratch_with_shape(&[self.num_q_heads, suffix_length, sequence_length], self.data_type)?;
+        let mut group_scores =
+            encoder.allocate_scratch_with_shape(&[gqa_factor * suffix_length, sequence_length], self.data_type)?;
 
         for group_index in 0..self.num_groups {
             self.matmul.lock().encode(
                 MatmulArguments {
                     a: MatmulA::FullPrecision {
                         values: arguments.queries,
-                        offset: group_index * gqa_factor * arguments.suffix_length * self.head_dim * dt_bytes,
+                        offset: group_index as usize * group_rows * head_dim_bytes,
                     },
                     b: MatmulB::FullPrecision {
-                        b: (arguments.keys, group_index * self.head_dim * dt_bytes),
+                        b: (arguments.keys, group_index as usize * head_dim_bytes),
                     },
-                    b_leading_dimension: Some((self.num_groups * self.head_dim) as u32),
+                    b_leading_dimension: Some(self.num_groups * self.head_dim),
                     b_transpose: true,
                     d: &mut group_scores,
                     d_transform: MatmulDOps {
@@ -106,9 +106,9 @@ impl<B: Backend> AttentionFallbackCore<B> {
                         ..MatmulDOps::none()
                     },
                     gather_indices: None,
-                    m: (gqa_factor * arguments.suffix_length) as u32,
-                    n: sequence_length as u32,
-                    k: self.head_dim as u32,
+                    m: gqa_factor * suffix_length,
+                    n: sequence_length,
+                    k: self.head_dim,
                 },
                 encoder,
             )?;
@@ -117,58 +117,51 @@ impl<B: Backend> AttentionFallbackCore<B> {
                 &mut scores,
                 arguments.state_type.ring_params(),
                 None::<&Allocation<B>>,
-                self.sliding_window_size.map(|sliding_window_size| sliding_window_size as u32),
-                group_index as u32,
-                gqa_factor as u32,
-                sequence_length as u32,
-                arguments.suffix_length as u32,
-                (gqa_factor * arguments.suffix_length * sequence_length) as u32,
+                self.sliding_window_size,
+                group_index,
+                gqa_factor,
+                sequence_length,
+                suffix_length,
+                scores_len,
                 encoder,
             );
         }
 
-        self.softmax.encode(
-            &mut scores,
-            arguments.sinks,
-            sequence_length as u32,
-            self.num_q_heads as u32,
-            arguments.suffix_length as u32,
-            encoder,
-        );
+        self.softmax.encode(&mut scores, arguments.sinks, sequence_length, self.num_q_heads, suffix_length, encoder);
 
-        let mut group_output = encoder
-            .allocate_scratch(size_for_shape(&[gqa_factor * arguments.suffix_length, self.head_dim], self.data_type))?;
+        let mut group_output =
+            encoder.allocate_scratch_with_shape(&[gqa_factor * suffix_length, self.head_dim], self.data_type)?;
 
         for group_index in 0..self.num_groups {
             self.matmul.lock().encode(
                 MatmulArguments {
                     a: MatmulA::FullPrecision {
                         values: &scores,
-                        offset: group_index * gqa_factor * arguments.suffix_length * sequence_length * dt_bytes,
+                        offset: group_index as usize * group_rows * sequence_length as usize * dt_bytes,
                     },
                     b: MatmulB::FullPrecision {
-                        b: (arguments.values, group_index * self.head_dim * dt_bytes),
+                        b: (arguments.values, group_index as usize * head_dim_bytes),
                     },
-                    b_leading_dimension: Some((self.num_groups * self.head_dim) as u32),
+                    b_leading_dimension: Some(self.num_groups * self.head_dim),
                     b_transpose: false,
                     d: &mut group_output,
                     d_transform: MatmulDOps::none(),
                     gather_indices: None,
-                    m: (gqa_factor * arguments.suffix_length) as u32,
-                    n: self.head_dim as u32,
-                    k: sequence_length as u32,
+                    m: gqa_factor * suffix_length,
+                    n: self.head_dim,
+                    k: sequence_length,
                 },
                 encoder,
             )?;
             self.scatter_values.encode(
                 &group_output,
                 &mut output,
-                group_index as u32,
-                gqa_factor as u32,
-                arguments.suffix_length as u32,
-                self.num_q_heads as u32,
-                self.head_dim as u32,
-                (gqa_factor * arguments.suffix_length * self.head_dim) as u32,
+                group_index,
+                gqa_factor,
+                suffix_length,
+                self.num_q_heads,
+                self.head_dim,
+                gqa_factor * suffix_length * self.head_dim,
                 encoder,
             );
         }
