@@ -3,15 +3,18 @@ use thiserror::Error;
 use crate::{
     backends::common::{Backend, Encoder, gpu_types::trie::TrieNode as GpuTrieNode},
     data_type::DataType,
-    encodable_block::{batch_topology::BatchTopology, decoder::DecoderError, sampling::PRng},
+    encodable_block::{
+        batch_topology::BatchTopology, decoder::DecoderError, mixer::attention::ATTENTION_SUFFIX_CAPACITY,
+        sampling::PRng,
+    },
     engine::language_model::LanguageModel,
     trace::Recorder,
     trie::TrieNode,
     utils::trace::trace_host,
 };
 
-// Hardcoded attention suffix bound; a trace is one pass so it cannot chunk like prefill does.
-const MAX_TRACE_TOKENS: usize = 1024;
+// A trace is a single pass, so it cannot chunk around the suffix bound like prefill does.
+const MAX_TRACE_TOKENS: usize = ATTENTION_SUFFIX_CAPACITY;
 
 #[derive(Debug, Error)]
 pub enum RecordTraceError<B: Backend> {
@@ -45,7 +48,9 @@ impl<B: Backend> LanguageModel<B> {
         let context = &self.engine.context;
         let mut transformer_state =
             self.decoder.create_empty_state(Some(token_count), context).map_err(RecordTraceError::Backend)?;
-        transformer_state.prepare(0, token_count, context).map_err(RecordTraceError::Backend)?;
+        transformer_state
+            .prepare(transformer_state.context_length(), token_count, context)
+            .map_err(RecordTraceError::Backend)?;
 
         let mut encoder = Encoder::<B>::new_with_name(context, Some("trace")).map_err(RecordTraceError::Backend)?;
         encoder.attach_recorder(Recorder::new());
