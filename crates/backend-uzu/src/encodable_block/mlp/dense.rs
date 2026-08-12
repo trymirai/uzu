@@ -38,8 +38,9 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         encoder.push_debug_group("mlp (dense)");
 
         let fused_up = self.up.encode(input, batch_dim, encoder)?;
-        let hidden = self.gate.encode(encoder, &fused_up, batch_dim)?;
-        let output = self.down.encode(hidden, batch_dim, encoder)?;
+        let format = self.down.select_activation_format(batch_dim, encoder.context());
+        let down_input = self.gate.encode_for_linear(encoder, &fused_up, batch_dim, format)?;
+        let output = self.down.encode_input(down_input, batch_dim, encoder)?;
 
         encoder.pop_debug_group();
 

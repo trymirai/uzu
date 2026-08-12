@@ -15,7 +15,7 @@ use crate::{
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
     encodable_block::{
-        linear::Linear,
+        linear::{Linear, LinearInput},
         weight_matrix::{WeightMatrix, WeightMatrixError},
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -213,5 +213,39 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         encoder.pop_debug_group();
 
         Ok(output)
+    }
+
+    fn encode_input(
+        &self,
+        input: LinearInput<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        match input {
+            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, encoder),
+            LinearInput::Int8Symmetric {
+                values,
+                scales,
+                group_sums,
+                group_size,
+            } => self.encode_with_a(
+                MatmulA::Int8Symmetric {
+                    values: &values,
+                    scales: &scales,
+                    group_sums: group_sums.as_ref(),
+                    group_size,
+                },
+                batch_dim,
+                encoder,
+            ),
+        }
+    }
+
+    fn select_activation_format(
+        &self,
+        batch_dim: usize,
+        context: &B::Context,
+    ) -> ActivationFormat {
+        Self::select_activation_format(self, batch_dim, context)
     }
 }

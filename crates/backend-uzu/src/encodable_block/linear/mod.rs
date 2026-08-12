@@ -8,7 +8,11 @@ pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE},
+    backends::common::{
+        Allocation, Backend, Encoder,
+        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        kernel::matmul::{A8ActivationPlan, ActivationFormat},
+    },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
@@ -24,6 +28,45 @@ pub trait Linear<B: Backend>: Send + Sync {
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error>;
+
+    fn encode_input(
+        &self,
+        input: LinearInput<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        match input {
+            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, encoder),
+            LinearInput::Int8Symmetric {
+                ..
+            } => {
+                panic!("linear does not support pre-quantized activations")
+            },
+        }
+    }
+
+    fn select_activation_format(
+        &self,
+        _batch_dim: usize,
+        _context: &B::Context,
+    ) -> ActivationFormat {
+        ActivationFormat::Bf16
+    }
+}
+
+pub(crate) enum LinearInput<B: Backend> {
+    FullPrecision(Allocation<B>),
+    Int8Symmetric {
+        values: Allocation<B>,
+        scales: Allocation<B>,
+        group_sums: Option<Allocation<B>>,
+        group_size: u32,
+    },
+}
+
+pub(crate) struct LinearInputPreparation<B: Backend> {
+    pub(crate) input_factors: Allocation<B>,
+    pub(crate) a8_plan: Option<A8ActivationPlan>,
 }
 
 #[derive(Debug, Error)]
@@ -156,9 +199,10 @@ impl<B: Backend> dyn Linear<B> {
             weights_data_type,
             input_data_type,
             output_data_type,
+            false,
             parameter_tree,
         )? {
-            return Ok(linear);
+            return Ok((linear.0, linear.1.map(|preparation| preparation.input_factors)));
         }
 
         let linear = Self::new_mixed_precision(
@@ -169,6 +213,42 @@ impl<B: Backend> dyn Linear<B> {
             weights_data_type,
             input_data_type,
             output_data_type,
+            parameter_tree,
+        )?;
+        Ok((linear, None))
+    }
+
+    pub(crate) fn new_extracting_input_hadamard_for_fusion<const N: usize>(
+        input_dimension: usize,
+        output_dimensions: [usize; N],
+        has_biases: bool,
+        context: &B::Context,
+        data_type: DataType,
+        parameter_tree: &ParameterTree<B>,
+    ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
+        let output_dimension_sum: usize = output_dimensions.iter().sum();
+        if let Some(linear) = RHTLinearWrapper::new_allowing_predecessor_rht(
+            context,
+            input_dimension,
+            output_dimension_sum,
+            has_biases,
+            data_type,
+            data_type,
+            data_type,
+            true,
+            parameter_tree,
+        )? {
+            return Ok(linear);
+        }
+
+        let linear = Self::new_mixed_precision(
+            input_dimension,
+            output_dimensions,
+            has_biases,
+            context,
+            data_type,
+            data_type,
+            data_type,
             parameter_tree,
         )?;
         Ok((linear, None))

@@ -54,21 +54,22 @@ impl<B: Backend> dyn Mlp<B> {
                     &parameter_tree.subtree("up_projection"),
                 )?;
 
-                let (down_projection, down_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
-                    hidden_dimension,
-                    [model_dimension],
-                    dense_config.has_down_biases,
-                    context,
-                    data_type,
-                    &parameter_tree.subtree("down_projection"),
-                )?;
+                let (down_projection, down_input_preparation) =
+                    <dyn Linear<B>>::new_extracting_input_hadamard_for_fusion(
+                        hidden_dimension,
+                        [model_dimension],
+                        dense_config.has_down_biases,
+                        context,
+                        data_type,
+                        &parameter_tree.subtree("down_projection")?,
+                    )?;
 
                 let gate = MlpGateActMulEncodable::new(
                     context,
                     data_type,
                     dense_config.activation.clone(),
                     hidden_dimension,
-                    down_input_hadamard_factors,
+                    down_input_preparation,
                 )
                 .map_err(MlpBlockError::BackendError)?;
 

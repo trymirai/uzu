@@ -6,6 +6,7 @@
 pub mod activation_transform;
 pub mod activation_type;
 pub mod attention;
+pub mod gated_act_mul;
 pub mod gemm;
 pub mod hadamard_order;
 pub mod kv_cache_update;
@@ -19,6 +20,7 @@ pub mod weaver;
 pub use activation_transform::*;
 pub use activation_type::*;
 pub use attention::*;
+pub use gated_act_mul::*;
 pub use hadamard_order::*;
 pub use kv_cache_update::*;
 pub use matmul::*;

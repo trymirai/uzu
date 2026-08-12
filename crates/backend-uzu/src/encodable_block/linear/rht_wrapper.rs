@@ -14,7 +14,7 @@ use crate::{
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
-    encodable_block::linear::{Linear, LinearMatmul, LinearMatmulError},
+    encodable_block::linear::{Linear, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -89,8 +89,9 @@ impl<B: Backend> RHTLinearWrapper<B> {
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
+        allow_a8_predecessor: bool,
         parameter_tree: &ParameterTree<B>,
-    ) -> Result<Option<(Box<dyn Linear<B>>, Option<Allocation<B>>)>, RHTLinearWrapperError<B>> {
+    ) -> Result<Option<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>)>, RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights")?;
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         if !is_input_output_rht(&spec) {
@@ -108,7 +109,9 @@ impl<B: Backend> RHTLinearWrapper<B> {
             parameter_tree,
         )?;
         let a8_plan = inner_linear.prepare_a8(context);
-        if let Some(a8_plan) = a8_plan {
+        if let Some(a8_plan) = a8_plan
+            && !allow_a8_predecessor
+        {
             let wrapper = Self::build_self_contained(
                 context,
                 input_dimension,
@@ -119,7 +122,13 @@ impl<B: Backend> RHTLinearWrapper<B> {
             )?;
             Ok(Some((Box::new(wrapper), None)))
         } else {
-            Ok(Some((Box::new(inner_linear), Some(input_factors))))
+            Ok(Some((
+                Box::new(inner_linear),
+                Some(LinearInputPreparation {
+                    input_factors,
+                    a8_plan,
+                }),
+            )))
         }
     }
 
@@ -198,7 +207,25 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        self.encode_input(LinearInput::FullPrecision(input), batch_dim, encoder)
+    }
+
+    fn encode_input(
+        &self,
+        input: LinearInput<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("linear (rht)");
+
+        let input = match input {
+            LinearInput::FullPrecision(input) => input,
+            input => {
+                let output = self.inner_linear.encode_input(input, batch_dim, encoder);
+                encoder.pop_debug_group();
+                return output;
+            },
+        };
 
         if let Some(a8_input_rht) = &self.a8_input_rht
             && self.inner_linear.select_activation_format(batch_dim, encoder.context()) == ActivationFormat::Int8
