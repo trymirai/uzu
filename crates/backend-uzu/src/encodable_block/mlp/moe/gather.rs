@@ -1,5 +1,4 @@
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{MoeGatherXPerm1DKernel, MoeGatherXPerm2DKernel},
@@ -37,13 +36,13 @@ impl<B: Backend> MoeGather<B> {
         input: &Allocation<B>,
         bucketed_ids: &Allocation<B>,
         sumk: &Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         num_active_experts: usize,
         d_model: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut x_perm =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim * num_active_experts, d_model], self.data_type))?;
+        let mut x_perm = encoder
+            .allocate_scratch_with_shape(&[(batch_dim * num_active_experts as u32), d_model as u32], self.data_type)?;
         encoder.encode_fill(&mut x_perm, 0);
 
         match &self.variant {
@@ -53,7 +52,7 @@ impl<B: Backend> MoeGather<B> {
                 &mut x_perm,
                 sumk,
                 d_model as u32,
-                batch_dim as u32,
+                batch_dim,
                 num_active_experts as u32,
                 encoder,
             ),
@@ -63,7 +62,7 @@ impl<B: Backend> MoeGather<B> {
                 &mut x_perm,
                 sumk,
                 d_model as u32,
-                batch_dim as u32,
+                batch_dim,
                 num_active_experts as u32,
                 encoder,
             ),

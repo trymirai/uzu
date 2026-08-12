@@ -1,5 +1,4 @@
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{
@@ -47,41 +46,39 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         const BLOCK_M: usize = 4;
-        let h_blocks = args.d_ff.div_ceil(BLOCK_M) as u32;
+        let h_blocks = args.d_ff.div_ceil(BLOCK_M as u32);
 
-        let mut tile_counts = encoder.allocate_scratch(size_for_shape(&[args.num_routed_experts], DataType::U32))?;
-        self.counts.encode(args.expert_offsets, &mut tile_counts, args.num_routed_experts as u32, h_blocks, encoder);
+        let mut tile_counts = encoder.allocate_scratch_with_shape(&[args.num_routed_experts], DataType::U32)?;
+        self.counts.encode(args.expert_offsets, &mut tile_counts, args.num_routed_experts, h_blocks, encoder);
 
-        let mut tile_offsets =
-            encoder.allocate_scratch(size_for_shape(&[args.num_routed_experts + 1], DataType::U32))?;
-        let mut total_tiles = encoder.allocate_scratch(size_for_shape(&[1], DataType::U32))?;
-        self.scan.encode(&tile_counts, &mut tile_offsets, &mut total_tiles, args.num_routed_experts as u32, encoder);
+        let mut tile_offsets = encoder.allocate_scratch_with_shape(&[args.num_routed_experts + 1], DataType::U32)?;
+        let mut total_tiles = encoder.allocate_scratch_with_shape(&[1], DataType::U32)?;
+        self.scan.encode(&tile_counts, &mut tile_offsets, &mut total_tiles, args.num_routed_experts, encoder);
 
-        let mut row_expert_map = encoder.allocate_scratch(size_for_shape(&[args.total_rows], DataType::U32))?;
+        let mut row_expert_map = encoder.allocate_scratch_with_shape(&[args.total_rows], DataType::U32)?;
         self.row_map.encode(
             args.expert_offsets,
             &mut row_expert_map,
-            args.total_rows as u32,
-            args.num_routed_experts as u32,
+            args.total_rows,
+            args.num_routed_experts,
             encoder,
         );
 
-        let mut tile_map =
-            encoder.allocate_scratch(size_for_shape(&[args.total_rows * h_blocks as usize * 3], DataType::U32))?;
+        let mut tile_map = encoder.allocate_scratch_with_shape(&[args.total_rows, h_blocks, 3], DataType::U32)?;
         self.build_map.encode(
             args.expert_offsets,
             &tile_offsets,
             &row_expert_map,
             &mut tile_map,
-            args.total_rows as u32,
+            args.total_rows,
             h_blocks,
             encoder,
         );
 
-        let mut dispatch_args = encoder.allocate_scratch(size_for_shape(&[3], DataType::U32))?;
+        let mut dispatch_args = encoder.allocate_scratch_with_shape(&[3], DataType::U32)?;
         self.dispatch.encode(&total_tiles, &mut dispatch_args, 1, encoder);
 
-        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_ff], DataType::F32))?;
+        let mut hidden = encoder.allocate_scratch_with_shape(&[args.total_rows, args.d_ff], DataType::F32)?;
 
         self.pass_a_indirect.encode(
             args.x_perm,
@@ -89,9 +86,9 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             args.w13_all,
             &mut hidden,
             args.up_biases,
-            args.d_model as u32,
-            args.d_ff as u32,
-            args.num_routed_experts as u32,
+            args.d_model,
+            args.d_ff,
+            args.num_routed_experts,
             args.gate_clip_min,
             args.gate_clip_max,
             args.up_clip_min,
@@ -102,17 +99,17 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             encoder,
         );
 
-        let mut output = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_model], self.data_type))?;
+        let mut output = encoder.allocate_scratch_with_shape(&[args.total_rows, args.d_model], self.data_type)?;
         self.fused_down.encode(
             &hidden,
             &row_expert_map,
             args.w2_all,
             args.down_biases,
             &mut output,
-            args.total_rows as u32,
-            args.d_model as u32,
-            args.d_ff as u32,
-            args.num_routed_experts as u32,
+            args.total_rows,
+            args.d_model,
+            args.d_ff,
+            args.num_routed_experts,
             encoder,
         );
 

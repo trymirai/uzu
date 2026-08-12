@@ -32,7 +32,7 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
     fn encode(
         &self,
         input: Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("mlp (dense)");
