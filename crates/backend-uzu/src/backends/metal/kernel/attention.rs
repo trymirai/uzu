@@ -3,7 +3,6 @@ use std::collections::{HashMap, hash_map::Entry};
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
 use crate::{
-    array::size_for_shape,
     backends::{
         common::{Allocation, BufferArg, Encoder, gpu_types::AttnParams, kernel::attention_gemm::AttentionGemmCore},
         metal::{Metal, context::MetalContext, error::MetalError, kernel::AttentionGemmMetalKernel},
@@ -14,10 +13,10 @@ use crate::{
 
 pub struct AttentionGemmMetalCore {
     kernels: Mutex<HashMap<AttentionGemmKey, AttentionGemmMetalKernel>>,
-    head_dim: usize,
-    num_groups: usize,
-    num_q_heads: usize,
-    sliding_window_size: Option<usize>,
+    head_dim: u32,
+    num_groups: u32,
+    num_q_heads: u32,
+    sliding_window_size: Option<u32>,
     scale: Option<f32>,
     data_type: DataType,
     simd_bk: u32,
@@ -65,7 +64,7 @@ impl AttentionGemmMetalCore {
                 context,
                 self.data_type,
                 bk,
-                self.head_dim as u32,
+                self.head_dim,
                 key.use_mxu,
                 key.align_q,
                 key.align_k,
@@ -121,10 +120,10 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
         arguments: AttentionCoreEncodeArguments<'a, Metal, KT, VT>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<Allocation<Metal>, MetalError> {
-        let mut output = encoder.allocate_constant(size_for_shape(
+        let mut output = encoder.allocate_constant_with_shape(
             &[arguments.suffix_length, self.num_q_heads, self.head_dim],
             self.data_type,
-        ))?;
+        )?;
 
         let use_mxu = arguments.suffix_length >= 64
             && encoder.context().supports_mxu()
@@ -137,15 +136,15 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
         };
         let params = retile_params(
             AttnParams {
-                q_strides: [0, (arguments.suffix_length * self.head_dim) as u64, self.head_dim as u64],
-                k_strides: [0, self.head_dim as u64, (self.num_groups * self.head_dim) as u64],
-                v_strides: [0, self.head_dim as u64, (self.num_groups * self.head_dim) as u64],
-                o_strides: [0, self.head_dim as u64, (self.num_q_heads * self.head_dim) as u64],
-                gqa_factor: (self.num_q_heads / self.num_groups) as u32,
+                q_strides: [0, arguments.suffix_length * self.head_dim, self.head_dim],
+                k_strides: [0, self.head_dim, self.num_groups * self.head_dim],
+                v_strides: [0, self.head_dim, self.num_groups * self.head_dim],
+                o_strides: [0, self.head_dim, self.num_q_heads * self.head_dim],
+                gqa_factor: (self.num_q_heads / self.num_groups),
                 scale: self.scale.unwrap_or(1.0f32 / (self.head_dim as f32).sqrt()),
-                q_len: arguments.suffix_length as u32,
-                k_len: (arguments.state_type.physical_prefix_length() + arguments.suffix_length) as u32,
-                q_off: arguments.state_type.physical_prefix_length() as u32,
+                q_len: arguments.suffix_length,
+                k_len: arguments.state_type.physical_prefix_length() + arguments.suffix_length,
+                q_off: arguments.state_type.physical_prefix_length(),
                 nq_aligned: 0,
                 q_rem: 0,
                 nk: 0,
@@ -170,10 +169,10 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
             params,
             arguments.state_type.ring_params(),
             arguments.trie,
-            self.sliding_window_size.map(|sliding_window_size| sliding_window_size as u32),
+            self.sliding_window_size,
             arguments.sinks,
-            self.num_q_heads as u32,
-            arguments.suffix_length as u32,
+            self.num_q_heads,
+            arguments.suffix_length,
             encoder,
         );
         Ok(output)

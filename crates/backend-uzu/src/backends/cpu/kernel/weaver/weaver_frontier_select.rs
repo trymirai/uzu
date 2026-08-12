@@ -28,9 +28,9 @@ pub fn weaver_frontier_select(
     candidates_per_depth: u32,
 ) {
     if frontier_capacity == 0
-        || frontier_capacity as usize > FRONTIER_MAX_SLOTS
+        || frontier_capacity > FRONTIER_MAX_SLOTS
         || node_count == 0
-        || node_count as usize > FRONTIER_MAX_WIDTH
+        || node_count > FRONTIER_MAX_WIDTH
         || ancestor_stride == 0
         || max_depth == 0
         || tree_slot_count == 0
