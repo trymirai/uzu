@@ -1,26 +1,23 @@
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use shoji::types::{basic::ReasoningEffort, model::Model};
 use uzu::engine::Engine;
 
-use super::preferences::{ThinkingPreference, cycle};
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThinkingPreference {
+    pub level: ReasoningEffort,
+    pub enabled: bool,
+}
 
-const LEVELS: [ReasoningEffort; 5] = [
-    ReasoningEffort::Default,
-    ReasoningEffort::Low,
-    ReasoningEffort::Medium,
-    ReasoningEffort::High,
-    ReasoningEffort::Disabled,
-];
-
-fn level_label(effort: ReasoningEffort) -> &'static str {
-    match effort {
-        ReasoningEffort::Default => "model default",
-        ReasoningEffort::Low => "low",
-        ReasoningEffort::Medium => "medium",
-        ReasoningEffort::High => "high",
-        ReasoningEffort::Disabled => "off",
+impl Default for ThinkingPreference {
+    fn default() -> Self {
+        Self {
+            level: ReasoningEffort::Default,
+            enabled: true,
+        }
     }
 }
 
@@ -49,35 +46,42 @@ impl ThinkingSupport {
         }
     }
 
-    pub fn cycled(
+    /// Resolve a requested effort against what this model can actually do.
+    /// `Ok(Some(effort))` — emit this effort; `Ok(None)` — the request is already
+    /// satisfied by the model's fixed behavior; `Err` — the requested thinking
+    /// state cannot be produced, so the caller must reject the request rather
+    /// than silently ignore it.
+    pub fn fulfill_requested_effort(
         self,
-        delta: i64,
-    ) -> Self {
+        effort: ReasoningEffort,
+    ) -> Result<Option<ReasoningEffort>, String> {
         match self {
-            Self::Levels(effort) => Self::Levels(cycle(&LEVELS, effort, delta as isize)),
-            Self::Toggle(value) => Self::Toggle(!value),
-            other => other,
-        }
-    }
-
-    pub fn write_back(
-        self,
-        preference: &mut ThinkingPreference,
-    ) {
-        match self {
-            Self::Levels(effort) => preference.level = effort,
-            Self::Toggle(value) => preference.enabled = value,
-            Self::AlwaysOn | Self::Unsupported => {},
-        }
-    }
-
-    pub fn value_label(self) -> &'static str {
-        match self {
-            Self::Levels(effort) => level_label(effort),
-            Self::Toggle(true) => "on",
-            Self::Toggle(false) => "off",
-            Self::AlwaysOn => "always on",
-            Self::Unsupported => "not supported",
+            // A levels model applies the exact effort; default needs no explicit message.
+            Self::Levels(_) => Ok(if effort == ReasoningEffort::Default {
+                None
+            } else {
+                Some(effort)
+            }),
+            // A toggle model honors the on/off state; effort levels collapse to on.
+            Self::Toggle(_) => Ok(Some(if effort == ReasoningEffort::Disabled {
+                ReasoningEffort::Disabled
+            } else {
+                ReasoningEffort::Default
+            })),
+            Self::AlwaysOn => {
+                if effort == ReasoningEffort::Disabled {
+                    Err("model always reasons; reasoning cannot be disabled".to_string())
+                } else {
+                    Ok(None)
+                }
+            },
+            Self::Unsupported => {
+                if effort == ReasoningEffort::Disabled {
+                    Ok(None)
+                } else {
+                    Err("model does not support reasoning".to_string())
+                }
+            },
         }
     }
 
@@ -191,7 +195,6 @@ impl ModelCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interactive::components::preferences::ThinkingPreference;
 
     #[test]
     fn toggle_emits_explicit_effort_each_state() {
@@ -220,5 +223,33 @@ mod tests {
         assert_eq!(ThinkingSupport::Unsupported.reasoning_effort(), None);
         assert_eq!(ThinkingSupport::Levels(ReasoningEffort::Default).reasoning_effort(), None);
         assert_eq!(ThinkingSupport::Levels(ReasoningEffort::High).reasoning_effort(), Some(ReasoningEffort::High));
+    }
+
+    #[test]
+    fn fulfill_requested_effort_honors_adjustable_models() {
+        assert_eq!(
+            ThinkingSupport::Levels(ReasoningEffort::Default).fulfill_requested_effort(ReasoningEffort::High),
+            Ok(Some(ReasoningEffort::High))
+        );
+        assert_eq!(
+            ThinkingSupport::Levels(ReasoningEffort::Default).fulfill_requested_effort(ReasoningEffort::Default),
+            Ok(None)
+        );
+        assert_eq!(
+            ThinkingSupport::Toggle(true).fulfill_requested_effort(ReasoningEffort::Low),
+            Ok(Some(ReasoningEffort::Default))
+        );
+        assert_eq!(
+            ThinkingSupport::Toggle(true).fulfill_requested_effort(ReasoningEffort::Disabled),
+            Ok(Some(ReasoningEffort::Disabled))
+        );
+    }
+
+    #[test]
+    fn fulfill_requested_effort_rejects_what_fixed_models_cannot_do() {
+        assert_eq!(ThinkingSupport::AlwaysOn.fulfill_requested_effort(ReasoningEffort::High), Ok(None));
+        assert!(ThinkingSupport::AlwaysOn.fulfill_requested_effort(ReasoningEffort::Disabled).is_err());
+        assert_eq!(ThinkingSupport::Unsupported.fulfill_requested_effort(ReasoningEffort::Disabled), Ok(None));
+        assert!(ThinkingSupport::Unsupported.fulfill_requested_effort(ReasoningEffort::Low).is_err());
     }
 }

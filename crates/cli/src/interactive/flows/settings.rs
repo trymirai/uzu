@@ -1,8 +1,11 @@
 use iocraft::prelude::*;
 
-use crate::interactive::{
-    components::{ApplicationState, ModelSamplingDefaults, Preferences, SamplingMode, Theme, ThinkingSupport},
-    flows::{Flow, FlowEvent},
+use crate::{
+    common::model_capabilities::{ModelSamplingDefaults, ThinkingSupport},
+    interactive::{
+        components::{ApplicationState, Preferences, SamplingMode, Theme, ThinkingSupportExt},
+        flows::{Flow, FlowEvent},
+    },
 };
 
 const LABEL_WIDTH: u16 = 14;
