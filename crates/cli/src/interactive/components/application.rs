@@ -1,4 +1,4 @@
-use std::{fs, io, path::PathBuf};
+use std::path::PathBuf;
 
 use iocraft::prelude::*;
 use shoji::types::model::Model;
@@ -48,9 +48,7 @@ pub struct ApplicationState {
 
 impl ApplicationState {
     pub fn load_preferences() -> Result<Preferences, Box<dyn std::error::Error>> {
-        let filepath = Self::settings_file_path()?;
-        let prefs_str = fs::read_to_string(filepath)?;
-        toml::from_str(&prefs_str).map_err(Into::into)
+        Preferences::load_or_migrate(&Self::settings_file_path("config")?, &Self::settings_file_path("settings")?)
     }
 
     pub fn session_state(&self) -> Option<&dyn SessionState> {
@@ -70,13 +68,7 @@ impl ApplicationState {
         prefs: &Preferences,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.preferences = prefs.clone();
-        let prefs_str = toml::to_string(&self.preferences)?;
-        let settings_file_path = Self::settings_file_path()?;
-        let settings_dir = settings_file_path
-            .parent()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "settings file has no parent directory"))?;
-        fs::create_dir_all(settings_dir)?;
-        fs::write(settings_file_path, prefs_str).map_err(Into::into)
+        self.preferences.store(&Self::settings_file_path("config")?)
     }
 
     pub fn set_theme(
@@ -88,8 +80,8 @@ impl ApplicationState {
         self.set_preferences(&preferences)
     }
 
-    fn settings_file_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-        confy::get_configuration_file_path(APP_IDENTIFIER, "config").map_err(Into::into)
+    fn settings_file_path(name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        confy::get_configuration_file_path(APP_IDENTIFIER, name).map_err(Into::into)
     }
 }
 
@@ -103,7 +95,10 @@ pub fn Application(
     let state = hooks.use_state(|| ApplicationState {
         engine,
         settings: props.settings.clone(),
-        preferences: ApplicationState::load_preferences().unwrap_or_default(),
+        preferences: ApplicationState::load_preferences().unwrap_or_else(|error| {
+            tracing::warn!("Unable to load or migrate CLI preferences: {error}");
+            Preferences::default()
+        }),
         flow: None,
         history: Vec::new(),
         registry: FlowRegistry::default()

@@ -16,7 +16,7 @@ impl Theme {
         vec![Self::blue(), Self::green(), Self::yellow(), Self::red(), Self::purple()]
     }
 
-    fn from_name(name: &str) -> Option<Self> {
+    pub(super) fn from_name(name: &str) -> Option<Self> {
         Self::all().into_iter().find(|theme| theme.name == name)
     }
 
