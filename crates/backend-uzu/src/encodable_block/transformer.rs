@@ -303,7 +303,7 @@ impl<B: Backend> Transformer<B> {
 
             // Layer output is never materialized: the add is deferred into the next layer's norm.
             #[cfg(feature = "trace")]
-            if encoder.is_recording() {
+            {
                 let outputs = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
                 trace!(encoder, "outputs", &outputs, [1, batch_dim.size(), self.model_dim], self.data_type());
             }

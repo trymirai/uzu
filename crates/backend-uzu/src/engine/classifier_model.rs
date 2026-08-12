@@ -151,7 +151,7 @@ impl<B: Backend> ClassifierModel<B> {
         &self,
         input: &[u64],
     ) -> Result<crate::trace::Recorder<B>, ClassifierModelClassifyError<B>> {
-        use crate::{trace::Recorder, utils::trace::trace_host};
+        use crate::utils::trace::trace_host;
 
         if input.is_empty() {
             return Err(ClassifierModelClassifyError::EmptyInput);
@@ -162,7 +162,6 @@ impl<B: Backend> ClassifierModel<B> {
         }
 
         let mut encoder = Encoder::<B>::new(&self.context).map_err(ClassifierModelClassifyError::Backend)?;
-        encoder.attach_recorder(Recorder::new());
 
         let mut token_ids = encoder
             .allocate_constant(input.len() * DataType::U32.size_in_bytes())
@@ -180,9 +179,9 @@ impl<B: Backend> ClassifierModel<B> {
         drop(logits);
         drop(token_ids);
 
-        let mut completed =
+        let completed =
             encoder.end_encoding().submit().wait_until_completed().map_err(ClassifierModelClassifyError::Backend)?;
 
-        Ok(completed.take_recorder().expect("recorder was attached before encoding"))
+        Ok(completed.into_recorder())
     }
 }

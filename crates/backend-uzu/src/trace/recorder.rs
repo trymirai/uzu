@@ -73,6 +73,12 @@ impl<B: Backend> Recorder<B> {
         Ok(())
     }
 
+    pub fn clear(&mut self) {
+        self.arrays.clear();
+        self.scope.clear();
+        self.scope_lengths.clear();
+    }
+
     pub fn is_empty(&self) -> bool {
         self.arrays.is_empty()
     }

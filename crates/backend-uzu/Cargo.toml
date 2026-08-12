@@ -13,7 +13,7 @@ build = "build/main.rs"
 workspace = true
 
 [features]
-default = ["cpu", "metal", "grammar", "trace"]
+default = ["cpu", "metal", "grammar"]
 
 cpu = []
 

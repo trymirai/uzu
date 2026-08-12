@@ -1,3 +1,6 @@
+#[cfg(feature = "capability-trace")]
+use std::path::PathBuf;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -47,12 +50,12 @@ enum Commands {
     #[cfg(feature = "capability-trace")]
     Trace {
         #[arg(long, value_name = "DIR")]
-        model_path: String,
+        model_path: PathBuf,
         /// User message to run the forward pass on.
         #[arg(long, value_name = "TEXT")]
         message: String,
         #[arg(long, value_name = "FILE")]
-        output_path: String,
+        output_path: PathBuf,
     },
 }
 
@@ -83,7 +86,7 @@ async fn main() -> Result<()> {
             model_path,
             message,
             output_path,
-        }) => trace::run_trace(model_path, message, output_path).await?,
+        }) => trace::run_trace(&model_path, &message, &output_path).await?,
         None => interactive::run_interactive(cli.model).await?,
     }
 

@@ -16,15 +16,13 @@ struct Prompt {
 }
 
 pub async fn run_trace(
-    model_path: String,
-    message: String,
-    output_path: String,
+    model_path: &Path,
+    message: &str,
+    output_path: &Path,
 ) -> Result<()> {
-    let model_path = Path::new(&model_path);
-    let prompt = encode_prompt(model_path, &message)?;
+    let prompt = encode_prompt(model_path, message)?;
     println!("Prompt tokenized to {} tokens", prompt.token_ids.len());
 
-    let output_path = Path::new(&output_path);
     let output = record_trace(model_path, &prompt.token_ids, output_path, Some(prompt.metadata()?))?;
 
     println!("Recorded {} arrays to {}", output.array_count, output_path.display());
@@ -55,7 +53,13 @@ fn encode_prompt(
         "eos_token": codec.eos_token,
         "enable_thinking": true,
     });
-    let rendered = render(&codec.prompt_template, &request)?;
+
+    let rendered = chat_template_environment(codec.prompt_template)
+        .context("Invalid prompt template")?
+        .get_template(TEMPLATE_NAME)
+        .expect("template was just registered")
+        .render(context!(..minijinja::Value::from_serialize(request)))
+        .context("Failed to render prompt template")?;
 
     let tokenizer = Tokenizer::from_file(model_path.join("tokenizer.json"))
         .map_err(|error| anyhow::anyhow!("Failed to load tokenizer: {error}"))?;
@@ -73,21 +77,6 @@ fn encode_prompt(
         token_ids: encoding.get_ids().iter().map(|token_id| *token_id as u64).collect(),
         tokens: encoding.get_tokens().to_vec(),
     })
-}
-
-// Context matches lalamo's ChatCodec.render_request so both sides tokenize the same text.
-fn render(
-    template: &str,
-    request: &Value,
-) -> Result<String> {
-    let environment = chat_template_environment(template).context("Invalid prompt template")?;
-    let rendered = environment
-        .get_template(TEMPLATE_NAME)
-        .expect("template was just registered")
-        .render(context!(..minijinja::Value::from_serialize(request)))
-        .context("Failed to render prompt template")?;
-
-    Ok(rendered)
 }
 
 impl Prompt {
