@@ -999,6 +999,7 @@ dependencies = [
  "chrono",
  "clap",
  "comfy-table",
+ "confy",
  "crossterm",
  "dirs",
  "dotenvy",

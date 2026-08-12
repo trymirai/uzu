@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, io, path::PathBuf};
 
 use iocraft::prelude::*;
 use shoji::types::model::Model;
@@ -11,6 +11,7 @@ use uzu::{
 use crate::{
     common::model_capabilities::ModelCapabilities,
     interactive::{
+        APP_IDENTIFIER,
         components::{CommandInput, HistoryCell, HistoryCellType, Logo, Preferences, SelectedModel, Theme},
         flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
         helpers::SYMBOL_COMMAND,
@@ -20,7 +21,6 @@ use crate::{
 };
 
 const HISTORY_LIMIT: usize = 20;
-const PREFERENCES_FILE_NAME: &str = "config.toml";
 
 #[derive(Default, Props)]
 pub struct ApplicationProps {
@@ -48,7 +48,8 @@ pub struct ApplicationState {
 
 impl ApplicationState {
     pub fn load_preferences() -> Result<Preferences, Box<dyn std::error::Error>> {
-        let prefs_str = fs::read_to_string(PREFERENCES_FILE_NAME)?;
+        let filepath = Self::settings_file_path()?;
+        let prefs_str = fs::read_to_string(filepath)?;
         toml::from_str(&prefs_str).map_err(Into::into)
     }
 
@@ -70,7 +71,12 @@ impl ApplicationState {
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.preferences = prefs.clone();
         let prefs_str = toml::to_string(&self.preferences)?;
-        fs::write(PREFERENCES_FILE_NAME, prefs_str).map_err(Into::into)
+        let settings_file_path = Self::settings_file_path()?;
+        let settings_dir = settings_file_path
+            .parent()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "settings file has no parent directory"))?;
+        fs::create_dir_all(settings_dir)?;
+        fs::write(settings_file_path, prefs_str).map_err(Into::into)
     }
 
     pub fn set_theme(
@@ -80,6 +86,10 @@ impl ApplicationState {
         let mut preferences = self.preferences.clone();
         preferences.theme = theme;
         self.set_preferences(&preferences)
+    }
+
+    fn settings_file_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+        confy::get_configuration_file_path(APP_IDENTIFIER, "config").map_err(Into::into)
     }
 }
 

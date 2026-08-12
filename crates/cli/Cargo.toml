@@ -24,6 +24,7 @@ backend-uzu.workspace = true
 chrono.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
+confy.workspace = true
 crossterm.workspace = true
 dirs.workspace = true
 dotenvy.workspace = true
