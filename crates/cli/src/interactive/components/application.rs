@@ -117,7 +117,16 @@ pub fn Application(
         let mut state = state;
         async move {
             let initial_model = match requested_model {
-                Some(model) => resolve_model_id(&engine, model).await.unwrap_or(None),
+                Some(model) => match resolve_model_id(&engine, model).await {
+                    Ok(model) => model,
+                    Err(error) => {
+                        state.write().history.push(HistoryCellType::CommandResult {
+                            result: format!("Failed to resolve model: {error}"),
+                        });
+                        state.write().flow = Some(Box::new(ModelRegistriesFlow));
+                        return;
+                    },
+                },
                 None => None,
             };
 

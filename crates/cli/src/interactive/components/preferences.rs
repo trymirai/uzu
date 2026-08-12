@@ -56,9 +56,10 @@ impl Preferences {
         let legacy: LegacyConfig = toml::from_str(&fs::read_to_string(legacy_path)?)?;
 
         if let Some(raw) = legacy.settings.get("cli_preferences") {
-            let legacy_preferences: LegacyPreferences = serde_json::from_str(raw)?;
-            preferences.thinking = legacy_preferences.thinking;
-            preferences.sampling = legacy_preferences.sampling;
+            if let Ok(legacy_preferences) = serde_json::from_str::<LegacyPreferences>(raw) {
+                preferences.thinking = legacy_preferences.thinking;
+                preferences.sampling = legacy_preferences.sampling;
+            }
         }
         if let Some(raw) = legacy.settings.get("app") {
             let app_settings: LegacyAppSettings = serde_json::from_str(raw)?;
@@ -70,7 +71,6 @@ impl Preferences {
         }
 
         preferences.store(config_path)?;
-        fs::remove_file(legacy_path)?;
         Ok(preferences)
     }
 
