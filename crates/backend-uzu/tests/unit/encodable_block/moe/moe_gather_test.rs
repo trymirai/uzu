@@ -38,7 +38,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
             &x_allocation,
             &ids_allocation,
             &sumk_allocation,
-            input.t,
+            input.t as u32,
             input.sum_k / input.t,
             input.d_model,
             &mut encoder,

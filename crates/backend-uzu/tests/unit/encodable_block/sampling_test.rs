@@ -41,7 +41,7 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
     method: &SamplingMethod,
     batch_size: usize,
 ) -> Result<SamplingTestResults, TestCaseError> {
-    let sampling = Sampling::new(T::data_type(), vocab_size);
+    let sampling = Sampling::new(T::data_type(), vocab_size as u32);
 
     let mut logits_allocation =
         context.create_allocation(logits.len() * T::data_type().size_in_bytes(), AllocationType::Global).unwrap();

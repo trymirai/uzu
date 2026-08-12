@@ -137,7 +137,7 @@ mod quantize {
         let kernel = ActivationTransform::quantize(
             context.as_ref(),
             DataType::F32,
-            activation_group_size,
+            activation_group_size as u32,
             sum_group_size.map(|size| size as u32),
         )
         .expect("quantize transform");
@@ -227,7 +227,7 @@ mod quantize {
 
     #[uzu_test]
     fn quantize_with_group_sums_matches_cpu() {
-        check_quantize(128, true, Some(BLOCK_SIZE));
+        check_quantize(128, true, Some(BLOCK_SIZE as usize));
     }
 
     #[uzu_test]

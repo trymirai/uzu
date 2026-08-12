@@ -133,7 +133,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let transform = ActivationTransform::<Cpu>::quantize(
             &context,
             T::data_type(),
-            activation_group_size,
+            activation_group_size as u32,
             sum_group_size.map(|group_size| group_size as u32),
         )
         .expect("CPU activation quantization transform");

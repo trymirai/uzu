@@ -23,10 +23,10 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
     const HEAD_DIM: usize = 128;
     let arguments = TreeVerifyNewArguments {
         data_type: DataType::BF16,
-        num_k_heads: K_HEADS,
-        num_v_heads: V_HEADS,
-        head_k_dim: HEAD_DIM,
-        head_v_dim: HEAD_DIM,
+        num_k_heads: K_HEADS as u32,
+        num_v_heads: V_HEADS as u32,
+        head_k_dim: HEAD_DIM as u32,
+        head_v_dim: HEAD_DIM as u32,
     };
     let context = <Metal as Backend>::Context::new().unwrap();
     let started = Instant::now();
@@ -69,7 +69,7 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
                             log_decay: &log_decay,
                             beta: &beta,
                             h0: &h0,
-                            tree_size,
+                            tree_size: tree_size as u32,
                         },
                         encoder,
                     )

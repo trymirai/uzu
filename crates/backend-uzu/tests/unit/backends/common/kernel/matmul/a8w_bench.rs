@@ -237,7 +237,7 @@ fn bench_bits(
             k,
             n,
             bits,
-            HADAMARD_TRANSFORM_BLOCK_SIZE as u32,
+            HADAMARD_TRANSFORM_BLOCK_SIZE,
             0xA8_00 ^ u64::from(bits) ^ k as u64 ^ n as u64,
         );
         let mut output = alloc_allocation::<Metal, bf16>(context, m * n);

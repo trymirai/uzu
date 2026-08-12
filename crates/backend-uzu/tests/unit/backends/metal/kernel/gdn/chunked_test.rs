@@ -140,7 +140,7 @@ fn run_prefill<T: ArrayElement>(
                         value_head_dim: HEAD_V_DIM as u32,
                         key_dim: case.key_dim as u32,
                         value_dim: case.value_dim as u32,
-                        suffix_len: case.suffix_len,
+                        suffix_len: case.suffix_len as u32,
                     },
                     &mut encoder,
                 )
@@ -185,7 +185,7 @@ fn chunked_prefill_matches_recurrent_prefill() {
     }
 
     for suffix_len in [CHUNK_SIZE - 1, CHUNK_SIZE, CHUNK_SIZE + 1, CHUNK_SIZE * 2 + 1] {
-        let case = test_case(suffix_len);
+        let case = test_case(suffix_len as usize);
         let (recurrent_out, recurrent_state) = run_prefill::<bf16>(&context, &case, PrefillMode::Recurrent);
         let (chunked_out, chunked_state) = run_prefill::<bf16>(&context, &case, PrefillMode::Chunked);
 

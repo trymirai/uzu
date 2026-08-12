@@ -321,7 +321,7 @@ fn test_moe_pipeline_breakdown_decode() {
         let gather_perf = run_perf_with_warmup("Gather", 2, 5, || {
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
             let x_perm = gather
-                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t, k, d_model, &mut encoder)
+                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k, d_model, &mut encoder)
                 .expect("failed to encode MoE gather");
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
             drop(x_perm);
@@ -331,7 +331,7 @@ fn test_moe_pipeline_breakdown_decode() {
         let (x_perm_buf, x_perm_completed) = {
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
             let x_perm = gather
-                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t, k, d_model, &mut encoder)
+                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k, d_model, &mut encoder)
                 .expect("failed to encode MoE gather");
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
             (x_perm, completed)
@@ -348,10 +348,10 @@ fn test_moe_pipeline_breakdown_decode() {
                         w2_all: &w2_buf,
                         up_biases: &up_biases_buf,
                         down_biases: &down_biases_buf,
-                        total_rows: sum_k,
-                        d_model,
-                        d_ff,
-                        num_routed_experts: e,
+                        total_rows: sum_k as u32,
+                        d_model: d_model as u32,
+                        d_ff: d_ff as u32,
+                        num_routed_experts: e as u32,
                         gate_clip_min: f32::NEG_INFINITY,
                         gate_clip_max: 20.0,
                         up_clip_min: -19.0,
