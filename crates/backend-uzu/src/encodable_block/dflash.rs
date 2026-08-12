@@ -25,7 +25,7 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
     utils::maybe_mut::MaybeMut,
 };
 
@@ -72,8 +72,6 @@ pub struct TopKCandidates<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum DFlashNewError<B: Backend> {
-    #[error("Parameter loader error: {0}")]
-    ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Linear error: {0}")]
     Linear(#[from] LinearBlockError<B>),
     #[error("Normalization error: {0}")]
@@ -114,7 +112,7 @@ impl<B: Backend> DFlash<B> {
             false,
             context,
             data_type,
-            &parameter_tree.subtree("context_projection")?,
+            &parameter_tree.subtree("context_projection"),
         )?;
         let projected_feature_norm = Normalization::new(
             config.model_dim,
@@ -123,10 +121,10 @@ impl<B: Backend> DFlash<B> {
             PostLayerScalar::None,
             data_type,
             &config.context_norm_config,
-            &parameter_tree.subtree("context_norm")?,
+            &parameter_tree.subtree("context_norm"),
             context,
         )?;
-        let layers_tree = parameter_tree.subtree("layers")?;
+        let layers_tree = parameter_tree.subtree("layers");
         let first_layer_config = config.layer_configs.first().expect("DFlash draft model must have at least one layer");
         let AnyTokenMixerConfig::AttentionConfig(attention_config) = &first_layer_config.mixer_config else {
             return Err(DFlashNewError::InvalidAttentionConfig("DFlash layers must use attention mixers"));
@@ -138,7 +136,7 @@ impl<B: Backend> DFlash<B> {
             false,
             context,
             data_type,
-            &parameter_tree.subtree("state_kv_projection")?,
+            &parameter_tree.subtree("state_kv_projection"),
         )?;
         let layers = config
             .layer_configs
@@ -152,7 +150,7 @@ impl<B: Backend> DFlash<B> {
                     config.layer_configs.len(),
                     layer_config,
                     index,
-                    &layers_tree.subtree(&index.to_string())?,
+                    &layers_tree.subtree(&index.to_string()),
                     data_type,
                 )
             })
@@ -164,7 +162,7 @@ impl<B: Backend> DFlash<B> {
             PostLayerScalar::None,
             data_type,
             &config.output_norm_config,
-            &parameter_tree.subtree("output_norm")?,
+            &parameter_tree.subtree("output_norm"),
             context,
         )?;
         let top_k =

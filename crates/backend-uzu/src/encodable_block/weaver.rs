@@ -23,7 +23,7 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         weaver_layer::{PreparedPrefixAttention, WeaverLayer},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
 };
 
 pub(crate) const DATA_TYPE: DataType = DataType::BF16;
@@ -97,8 +97,6 @@ pub struct Weaver<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum WeaverNewError<B: Backend> {
-    #[error("parameter loader error: {0}")]
-    ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("linear error: {0}")]
     Linear(#[from] LinearBlockError<B>),
     #[error("mlp error: {0}")]
@@ -170,7 +168,7 @@ impl<B: Backend> Weaver<B> {
             PostLayerScalar::None,
             DATA_TYPE,
             &config.norm_config,
-            &parameter_tree.subtree("embedding_norm")?,
+            &parameter_tree.subtree("embedding_norm"),
             context,
         )?;
         let hidden_state_norm = Normalization::new(
@@ -180,7 +178,7 @@ impl<B: Backend> Weaver<B> {
             PostLayerScalar::None,
             DATA_TYPE,
             &config.norm_config,
-            &parameter_tree.subtree("hidden_state_norm")?,
+            &parameter_tree.subtree("hidden_state_norm"),
             context,
         )?;
         let token_embedding_projection = <dyn Linear<B>>::new(
@@ -189,11 +187,11 @@ impl<B: Backend> Weaver<B> {
             true,
             context,
             DATA_TYPE,
-            &parameter_tree.subtree("embedding_projection")?,
+            &parameter_tree.subtree("embedding_projection"),
         )?;
-        let layer_parameters = parameter_tree.subtree("blocks")?;
+        let layer_parameters = parameter_tree.subtree("blocks");
         let layers = (0..config.num_layers)
-            .map(|index| WeaverLayer::new(context, config, index > 0, &layer_parameters.subtree(&index.to_string())?))
+            .map(|index| WeaverLayer::new(context, config, index > 0, &layer_parameters.subtree(&index.to_string())))
             .collect::<Result<Box<[_]>, WeaverNewError<B>>>()?;
         let readout_norm = Normalization::new(
             config.model_dim,
@@ -202,7 +200,7 @@ impl<B: Backend> Weaver<B> {
             PostLayerScalar::None,
             DATA_TYPE,
             &config.norm_config,
-            &parameter_tree.subtree("output_norm")?,
+            &parameter_tree.subtree("output_norm"),
             context,
         )?;
         let hidden_state_projection = <dyn Linear<B>>::new(
@@ -211,7 +209,7 @@ impl<B: Backend> Weaver<B> {
             true,
             context,
             DATA_TYPE,
-            &parameter_tree.subtree("hidden_state_projection")?,
+            &parameter_tree.subtree("hidden_state_projection"),
         )?;
         let readout_query_projection = <dyn Linear<B>>::new(
             config.model_dim,
@@ -219,7 +217,7 @@ impl<B: Backend> Weaver<B> {
             false,
             context,
             DATA_TYPE,
-            &parameter_tree.subtree("query_projection")?,
+            &parameter_tree.subtree("query_projection"),
         )?;
         let top_children =
             <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context).map_err(WeaverNewError::Backend)?;

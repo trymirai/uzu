@@ -38,7 +38,7 @@ pub enum NormalizationNewError<B: Backend> {
 pub struct Normalization<B: Backend> {
     epsilon: f32,
     scale_offset: Option<f32>,
-    scales: Allocation<B>,
+    scales: Option<Allocation<B>>,
     biases: Option<Allocation<B>>,
     element_count: usize,
     hadamard_factors: Option<Allocation<B>>,
@@ -64,7 +64,10 @@ impl<B: Backend> Normalization<B> {
             ShortcutMode::Add => (true, true),
         };
 
-        let scales = parameter_tree.leaf("scales")?.validate(&[element_count], DataType::F32)?.read_allocation()?;
+        let scales = config
+            .has_scale
+            .then(|| parameter_tree.leaf("scales")?.validate(&[element_count], DataType::F32)?.read_allocation())
+            .transpose()?;
         let biases = config
             .has_biases
             .then(|| parameter_tree.leaf("biases")?.validate(&[element_count], DataType::F32)?.read_allocation())
@@ -91,6 +94,7 @@ impl<B: Backend> Normalization<B> {
             scale_residual_sum,
             scale_output,
             biases.is_some(),
+            scales.is_some(),
         )
         .map_err(NormalizationNewError::Backend)?;
 
@@ -123,7 +127,7 @@ impl<B: Backend> Normalization<B> {
         let mut output = encoder.allocate_scratch(size_for_shape(&[row_count, self.element_count], self.data_type))?;
         self.kernel.encode(
             Some((input, row_offset_bytes)),
-            &self.scales,
+            self.scales.as_ref(),
             self.biases.as_ref(),
             &mut output,
             shortcut,
