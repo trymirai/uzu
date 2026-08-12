@@ -21,23 +21,23 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-pub(super) struct LinearProjection<B: Backend> {
+pub(super) struct QKVGProjection<B: Backend> {
     pub(super) lin: Box<dyn Linear<B>>,
     pub(super) norm: Option<QKVNorm<B>>,
 }
 
-impl<B: Backend> LinearProjection<B> {
+impl<B: Backend> QKVGProjection<B> {
     fn project(
         &self,
         hidden: Allocation<B>,
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut projected = self.lin.encode(hidden, batch_dim, encoder)?;
+        let mut qkvg = self.lin.encode(hidden, batch_dim, encoder)?;
         if let Some(norm) = &self.norm {
-            norm.encode(&mut projected, batch_dim, encoder)?;
+            norm.encode(&mut qkvg, batch_dim, encoder)?;
         }
-        Ok(projected)
+        Ok(qkvg)
     }
 }
 
@@ -50,12 +50,12 @@ impl<B: Backend> Attention<B> {
         state: Option<MaybeMut<AttentionState<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let projected = self.qkv.project(hidden, batch_dim.size(), encoder)?;
+        let qkvg = self.qkvg_projection.project(hidden, batch_dim.size(), encoder)?;
 
         let mut attention_output = match state {
             Some(MaybeMut::Mut(state)) => {
                 let queries = self.prepare_kv_and_queries(
-                    &projected,
+                    &qkvg,
                     state.keys.as_mut(),
                     state.values.as_mut(),
                     state.state_type.physical_prefix_length(),
@@ -67,13 +67,13 @@ impl<B: Backend> Attention<B> {
                 self.run_core(&queries, batch_dim, state, encoder)?
             },
             Some(MaybeMut::Const(state)) => {
-                // KV sharing: the packed projection produces queries and an optional gate only.
-                let queries = self.prepare_queries(&projected, precalculated_rope, batch_dim.size(), encoder)?;
+                // KV sharing: QKVG contains queries and an optional gate only.
+                let queries = self.prepare_queries(&qkvg, precalculated_rope, batch_dim.size(), encoder)?;
                 self.run_core(&queries, batch_dim, state, encoder)?
             },
             None => {
                 let Some(num_kv_heads) = self.num_kv_heads else {
-                    panic!("stateless attention doesn't support query-only projection");
+                    panic!("stateless attention doesn't support query-only QKVG");
                 };
                 assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
 
@@ -83,7 +83,7 @@ impl<B: Backend> Attention<B> {
                     .allocate_scratch_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)?;
 
                 let queries = self.prepare_kv_and_queries(
-                    &projected,
+                    &qkvg,
                     &mut keys,
                     &mut values,
                     0,
@@ -123,13 +123,13 @@ impl<B: Backend> Attention<B> {
 
         if let Some(gate_kernel) = &self.gate_kernel {
             let gate_dim = self.num_q_heads * self.head_dim;
-            let gate_offset = self.projection_dim - gate_dim;
+            let gate_offset = self.qkvg_dim - gate_dim;
             gate_kernel.encode(
-                (&projected, gate_offset as usize * self.data_type.size_in_bytes()),
+                (&qkvg, gate_offset as usize * self.data_type.size_in_bytes()),
                 &mut attention_output,
                 gate_dim,
                 batch_dim.size(),
-                self.projection_dim,
+                self.qkvg_dim,
                 encoder,
             );
         }
@@ -144,7 +144,7 @@ impl<B: Backend> Attention<B> {
         state: &mut AttentionState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        if let Some(norm) = &self.qkv.norm {
+        if let Some(norm) = &self.qkvg_projection.norm {
             norm.encode_key_value(&mut key_value, batch_dim, encoder)?;
         }
         self.prepare_kv_and_queries(
@@ -206,7 +206,7 @@ impl<B: Backend> Attention<B> {
         let input_row_stride = if num_q_heads == 0 {
             2 * num_kv_heads * self.head_dim
         } else {
-            self.projection_dim
+            self.qkvg_dim
         };
         let mut queries = if num_q_heads == 0 {
             encoder.allocate_scratch(self.data_type.size_in_bytes())?
@@ -234,7 +234,7 @@ impl<B: Backend> Attention<B> {
 
     fn prepare_queries(
         &self,
-        query: &Allocation<B>,
+        qkvg: &Allocation<B>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: u32,
         encoder: &mut Encoder<B>,
@@ -242,7 +242,7 @@ impl<B: Backend> Attention<B> {
         let mut queries =
             encoder.allocate_scratch_for_shape(&[self.num_q_heads, batch_dim, self.head_dim], self.data_type)?;
         self.prepare.encode(
-            query,
+            qkvg,
             &mut queries,
             None::<&mut Allocation<B>>,
             None::<&mut Allocation<B>>,
@@ -253,7 +253,7 @@ impl<B: Backend> Attention<B> {
             self.head_dim,
             precalculated_rope.map(|rope| rope.dim),
             None,
-            self.projection_dim,
+            self.qkvg_dim,
             batch_dim,
             encoder,
         );

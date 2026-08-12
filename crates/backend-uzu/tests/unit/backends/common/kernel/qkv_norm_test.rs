@@ -18,7 +18,7 @@ use crate::{
 };
 
 struct Input<InputT: ArrayElement + Float, ScaleT: ArrayElement + Float, OutputT: ArrayElement + Float> {
-    qkv: Box<[OutputT]>,
+    qkvg: Box<[OutputT]>,
     scales: Box<[ScaleT]>,
     batch_size: u32,
     num_q_heads: u32,
@@ -90,7 +90,7 @@ fn get_test_data<
     let qkv_data: Vec<OutputT> = qkv_data_f32.iter().map(|&x| OutputT::from(x).unwrap()).collect();
 
     let input = Input {
-        qkv: qkv_data.into_boxed_slice(),
+        qkvg: qkv_data.into_boxed_slice(),
         scales: scale_data.into_boxed_slice(),
         batch_size,
         num_q_heads,
@@ -133,14 +133,14 @@ fn get_output<
     )
     .expect("Failed to create QKVNormKernel");
 
-    let mut qkv = alloc_allocation_with_data::<B, OutputT>(&context, &input.qkv);
+    let mut qkvg = alloc_allocation_with_data::<B, OutputT>(&context, &input.qkvg);
     let scales = input.has_scales.then(|| alloc_allocation_with_data::<B, ScaleT>(&context, &input.scales));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         None::<&Allocation<B>>,
         scales.as_ref(),
-        &mut qkv,
+        &mut qkvg,
         input.batch_size,
         input.num_q_heads + 2 * input.num_kv_heads + input.num_gate_heads,
         input.head_dim,
@@ -153,7 +153,7 @@ fn get_output<
     );
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    allocation_to_vec(&qkv)
+    allocation_to_vec(&qkvg)
 }
 
 fn test_internal<
@@ -237,14 +237,14 @@ fn test_addressing<
     let num_q_heads = input.num_q_heads as usize;
     let head_dim = input.head_dim as usize;
     let k_start = num_q_heads * head_dim;
-    let qkv_len = input.qkv.len();
+    let qkv_len = input.qkvg.len();
 
     for_each_non_cpu_backend!(|B| {
         let output = get_output::<B, InputT, ScaleT, OutputT, AccumT>(&input);
 
         // Q heads should be modified (different from input)
         for i in 0..(num_q_heads * head_dim) {
-            let orig = input.qkv[i].to_f32().unwrap();
+            let orig = input.qkvg[i].to_f32().unwrap();
             let out = output[i].to_f32().unwrap();
             assert!(
                 (out - orig).abs() > 0.001,
@@ -256,7 +256,7 @@ fn test_addressing<
 
         // K and V heads should be unchanged
         for i in k_start..qkv_len {
-            let orig = input.qkv[i].to_f32().unwrap();
+            let orig = input.qkvg[i].to_f32().unwrap();
             let out = output[i].to_f32().unwrap();
             assert!(
                 (out - orig).abs() < 1e-6,
@@ -283,13 +283,13 @@ fn test_v_addressing<
     let num_kv_heads = input.num_kv_heads as usize;
     let head_dim = input.head_dim as usize;
     let v_start = (num_q_heads + num_kv_heads) * head_dim;
-    let qkv_len = input.qkv.len();
+    let qkv_len = input.qkvg.len();
 
     for_each_non_cpu_backend!(|B| {
         let output = get_output::<B, InputT, ScaleT, OutputT, AccumT>(&input);
 
         for i in 0..v_start {
-            let orig = input.qkv[i].to_f32().unwrap();
+            let orig = input.qkvg[i].to_f32().unwrap();
             let out = output[i].to_f32().unwrap();
             assert!(
                 (out - orig).abs() < 1e-6,
@@ -302,7 +302,7 @@ fn test_v_addressing<
         }
 
         for i in v_start..qkv_len {
-            let orig = input.qkv[i].to_f32().unwrap();
+            let orig = input.qkvg[i].to_f32().unwrap();
             let out = output[i].to_f32().unwrap();
             assert!(
                 (out - orig).abs() > 0.001,
@@ -316,7 +316,7 @@ fn test_v_addressing<
 
 fn test_gated_row_stride_internal() {
     let (input, _) = get_test_data::<f32, f32, f32, f32>(0, 4, false, false);
-    let qkv_row = input.qkv.to_vec();
+    let qkv_row = input.qkvg.to_vec();
     let gate_heads = input.num_q_heads;
     let gate_len = (gate_heads * input.head_dim) as usize;
     let qkv_len = qkv_row.len();
@@ -328,7 +328,7 @@ fn test_gated_row_stride_internal() {
         .collect::<Vec<_>>()
         .into_boxed_slice();
     let input = Input {
-        qkv: qkvg,
+        qkvg,
         batch_size: 2,
         num_gate_heads: gate_heads,
         ..input
@@ -338,10 +338,10 @@ fn test_gated_row_stride_internal() {
         for batch in 0..input.batch_size as usize {
             let row_offset = batch * row_len;
             for index in row_offset..row_offset + (input.num_q_heads * input.head_dim) as usize {
-                assert_ne!(output[index], input.qkv[index], "Q was not normalized on {backend}");
+                assert_ne!(output[index], input.qkvg[index], "Q was not normalized on {backend}");
             }
             for index in row_offset + qkv_len..row_offset + row_len {
-                assert_eq!(output[index], input.qkv[index], "gate was modified on {backend}");
+                assert_eq!(output[index], input.qkvg[index], "gate was modified on {backend}");
             }
         }
     };

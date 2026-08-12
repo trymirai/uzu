@@ -21,7 +21,7 @@ struct Config {
 }
 
 fn get_output<T: ArrayElement + Float, B: Backend>(
-    gate_data: &[T],
+    qkvg_data: &[T],
     output_data: &[T],
     config: &Config,
 ) -> Vec<T> {
@@ -29,19 +29,19 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let kernel = <<B as Backend>::Kernels as Kernels>::SigmoidGateKernel::new(&context, T::data_type())
         .expect("Failed to create SigmoidGateKernel");
 
-    let gate_allocation = alloc_allocation_with_data::<B, T>(&context, gate_data);
+    let qkvg = alloc_allocation_with_data::<B, T>(&context, qkvg_data);
     let mut output = alloc_allocation_with_data::<B, T>(&context, output_data);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     let gate_dim = config.num_heads * config.head_dim;
     let gate_offset = (config.num_heads + 2 * config.num_kv_heads) * config.head_dim;
-    let projection_dim = gate_offset + gate_dim;
+    let qkvg_dim = gate_offset + gate_dim;
     kernel.encode(
-        (&gate_allocation, gate_offset as usize * size_of::<T>()),
+        (&qkvg, gate_offset as usize * size_of::<T>()),
         &mut output,
         gate_dim,
         config.suffix_length,
-        projection_dim,
+        qkvg_dim,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -53,11 +53,11 @@ fn run_test<T: ArrayElement + Float + Debug>(config: &Config) {
     let size = (config.suffix_length * config.num_heads * config.head_dim) as usize;
     let gate_dim = (config.num_heads * config.head_dim) as usize;
     let gate_offset = ((config.num_heads + 2 * config.num_kv_heads) * config.head_dim) as usize;
-    let projection_dim = gate_offset + gate_dim;
+    let qkvg_dim = gate_offset + gate_dim;
 
-    let gate_f32 = (0..config.suffix_length as usize)
+    let qkvg_f32 = (0..config.suffix_length as usize)
         .flat_map(|row| {
-            (0..projection_dim).map(move |column| {
+            (0..qkvg_dim).map(move |column| {
                 if column < gate_offset {
                     return -100.0;
                 }
@@ -68,13 +68,13 @@ fn run_test<T: ArrayElement + Float + Debug>(config: &Config) {
         .collect::<Vec<_>>();
     let output_f32: Vec<f32> = (0..size).map(|i| (i as f32) * 0.05 + 0.5).collect();
 
-    let gate_data: Vec<T> = gate_f32.iter().map(|&v| T::from(v).unwrap()).collect();
+    let qkvg_data: Vec<T> = qkvg_f32.iter().map(|&v| T::from(v).unwrap()).collect();
     let output_data: Vec<T> = output_f32.iter().map(|&v| T::from(v).unwrap()).collect();
     let expected = (0..size)
         .map(|output_index| {
             let batch_index = output_index / gate_dim;
             let gate_index = output_index % gate_dim;
-            let gate = gate_data[batch_index * projection_dim + gate_offset + gate_index].to_f32().unwrap();
+            let gate = qkvg_data[batch_index * qkvg_dim + gate_offset + gate_index].to_f32().unwrap();
             let sigmoid = 1.0 / (1.0 + (-gate).exp());
             T::from(output_data[output_index].to_f32().unwrap() * sigmoid).unwrap()
         })
@@ -105,10 +105,10 @@ fn run_test<T: ArrayElement + Float + Debug>(config: &Config) {
         }
     };
 
-    let result = get_output::<T, Cpu>(&gate_data, &output_data, config);
+    let result = get_output::<T, Cpu>(&qkvg_data, &output_data, config);
     assert_output(&result, std::any::type_name::<Cpu>());
     for_each_non_cpu_backend!(|B| {
-        let result = get_output::<T, B>(&gate_data, &output_data, config);
+        let result = get_output::<T, B>(&qkvg_data, &output_data, config);
         assert_output(&result, std::any::type_name::<B>());
     });
 }

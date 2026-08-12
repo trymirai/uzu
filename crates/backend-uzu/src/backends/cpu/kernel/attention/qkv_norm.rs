@@ -15,11 +15,11 @@ pub fn qkv_norm<
     OutputT: ArrayElement + Float,
     AccumT: ArrayElement + Float,
 >(
-    #[optional(!in_place)] qkv_input: Option<*const InputT>,
+    #[optional(!in_place)] qkvg_input: Option<*const InputT>,
     #[optional(has_scales)] scales: Option<*const ScaleT>,
-    qkv_output: *mut OutputT,
+    qkvg_output: *mut OutputT,
     batch_size: u32,
-    total_heads: u32,
+    qkvg_heads: u32,
     head_dim: u32,
     epsilon: f32,
     scale_offset: f32,
@@ -29,33 +29,33 @@ pub fn qkv_norm<
     #[specialize] in_place: bool,
     #[specialize] has_scales: bool,
 ) {
-    let qkv_input = match in_place {
-        true => qkv_output as *const InputT,
-        false => qkv_input.unwrap(),
+    let qkvg_input = match in_place {
+        true => qkvg_output as *const InputT,
+        false => qkvg_input.unwrap(),
     };
 
     let head_dim = head_dim as usize;
     let head_offset = head_offset as usize;
     let head_count = head_count as usize;
-    let qkv_stride = total_heads as usize * head_dim;
+    let qkvg_stride = qkvg_heads as usize * head_dim;
     let head_dim_accum = AccumT::from(head_dim).unwrap();
     let epsilon = AccumT::from(epsilon).unwrap();
     let scale_offset = AccumT::from(scale_offset).unwrap();
 
     for batch in 0..(batch_size as usize) {
         for head in 0..head_count {
-            let offset = batch * qkv_stride + (head_offset + head) * head_dim;
+            let offset = batch * qkvg_stride + (head_offset + head) * head_dim;
 
             let mut total_sum = AccumT::zero();
             for i in 0..head_dim {
-                let input_val = unsafe { AccumT::from(*qkv_input.add(offset + i)).unwrap() };
+                let input_val = unsafe { AccumT::from(*qkvg_input.add(offset + i)).unwrap() };
                 total_sum = total_sum + input_val * input_val;
             }
             let mean_square: AccumT = total_sum / head_dim_accum;
             let rms_norm = AccumT::from((mean_square + epsilon).to_f32().unwrap().sqrt().recip()).unwrap();
 
             for i in 0..head_dim {
-                let input_val = unsafe { AccumT::from(*qkv_input.add(offset + i)).unwrap() };
+                let input_val = unsafe { AccumT::from(*qkvg_input.add(offset + i)).unwrap() };
                 let normalized: AccumT = input_val * rms_norm;
                 let result: OutputT = if !has_scales {
                     OutputT::from(normalized).unwrap()
@@ -70,7 +70,7 @@ pub fn qkv_norm<
                         normalized_low * scale_value_low
                     }
                 };
-                unsafe { *qkv_output.add(offset + i) = result };
+                unsafe { *qkvg_output.add(offset + i) = result };
             }
         }
     }

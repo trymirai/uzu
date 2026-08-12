@@ -16,11 +16,11 @@ VARIANTS(ScaleT, float, half, bfloat)
 VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(AccumT, float, half)
 PUBLIC KERNEL(QKVNorm)(
-    const device InputT* qkv_input OPTIONAL(!in_place),
+    const device InputT* qkvg_input OPTIONAL(!in_place),
     const device ScaleT* scales OPTIONAL(has_scales),
-    device OutputT* qkv_output,
+    device OutputT* qkvg_output,
     constant uint& batch_size,
-    constant uint& total_heads,
+    constant uint& qkvg_heads,
     constant uint& head_dim,
     constant float& epsilon,
     constant float& scale_offset,
@@ -34,18 +34,18 @@ PUBLIC KERNEL(QKVNorm)(
     const bool has_scales SPECIALIZE
 ) {
   if (in_place) {
-    qkv_input = (const device InputT*)qkv_output;
+    qkvg_input = (const device InputT*)qkvg_output;
   }
 
   if (head_count == 0u || head_dim == 0u)
     return;
 
   const ulong slice_offset =
-      (ulong)batch_idx * (ulong)total_heads * (ulong)head_dim + (ulong)(head_offset + head_idx) * (ulong)head_dim;
+      (ulong)batch_idx * (ulong)qkvg_heads * (ulong)head_dim + (ulong)(head_offset + head_idx) * (ulong)head_dim;
 
-  const device InputT* input_data = qkv_input + slice_offset;
+  const device InputT* input_data = qkvg_input + slice_offset;
   const device ScaleT* scales_data = scales;
-  device OutputT* output_data = qkv_output + slice_offset;
+  device OutputT* output_data = qkvg_output + slice_offset;
   const uint element_count = head_dim;
 
   AccumT partial_sum = static_cast<AccumT>(0.0f);

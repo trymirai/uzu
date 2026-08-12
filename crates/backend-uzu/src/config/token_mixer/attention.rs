@@ -7,7 +7,8 @@ use crate::config::{
 
 #[uzu_config(super::TokenMixerConfig)]
 pub struct AttentionConfig {
-    pub qkv_projection_config: LinearConfig,
+    /// Unified QKVG projection; ungated attention omits the G output segment.
+    pub qkvg_projection_config: LinearConfig,
     pub out_projection_config: LinearConfig,
 
     pub query_norm_config: Option<NormalizationConfig>,
@@ -21,8 +22,9 @@ pub struct AttentionConfig {
     pub sliding_window_size: Option<u32>,
     pub logit_soft_cap: Option<f32>,
     pub has_sinks: bool,
-    pub has_qkv_biases: bool,
+    pub has_qkvg_biases: bool,
     pub has_out_biases: bool,
+    /// Query-width sigmoid gate appended as the final fused projection segment.
     pub has_gate: bool,
     pub normalize_values: bool,
     pub is_kv_sharing: bool,

@@ -30,7 +30,7 @@ pub struct QKVNorm<B: Backend> {
     value: Option<Head<B>>,
     num_q_heads: u32,
     num_kv_heads: u32,
-    packed_projection_heads: u32,
+    qkvg_heads: u32,
     head_dim: u32,
 }
 
@@ -44,7 +44,7 @@ impl<B: Backend> QKVNorm<B> {
         parameter_tree: &ParameterTree<B>,
         num_q_heads: u32,
         num_kv_heads: u32,
-        packed_projection_heads: u32,
+        qkvg_heads: u32,
         head_dim: u32,
     ) -> Result<Self, QKVNormError<B>> {
         let query = query_config
@@ -79,7 +79,7 @@ impl<B: Backend> QKVNorm<B> {
             value,
             num_q_heads,
             num_kv_heads,
-            packed_projection_heads,
+            qkvg_heads,
             head_dim,
         })
     }
@@ -121,11 +121,11 @@ impl<B: Backend> QKVNorm<B> {
 
     pub fn encode(
         &self,
-        qkv: &mut Allocation<B>,
+        qkvg: &mut Allocation<B>,
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        self.encode_packed(qkv, batch_dim, self.num_q_heads, self.packed_projection_heads, encoder)
+        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.qkvg_heads, encoder)
     }
 
     pub fn encode_key_value(
