@@ -145,4 +145,48 @@ impl<B: Backend> ClassifierModel<B> {
             probabilities,
         })
     }
+
+    /// Runs one classification pass over `input`, capturing every intermediate
+    /// activation under lalamo's `ClassifierActivationTrace` layout.
+    #[cfg(feature = "trace")]
+    pub fn record_trace(
+        &self,
+        input: &[u64],
+    ) -> Result<crate::trace::Recorder<B>, ClassifierModelClassifyError<B>> {
+        use crate::{trace::Recorder, utils::trace::trace_host};
+
+        if input.is_empty() {
+            return Err(ClassifierModelClassifyError::EmptyInput);
+        }
+
+        if self.classifier.max_context_length().is_some_and(|max_context_length| input.len() > max_context_length) {
+            return Err(ClassifierModelClassifyError::ContextOverflow);
+        }
+
+        let mut encoder = Encoder::<B>::new(&self.context).map_err(ClassifierModelClassifyError::Backend)?;
+        encoder.attach_recorder(Recorder::new());
+
+        let mut token_ids = encoder
+            .allocate_constant(input.len() * DataType::U32.size_in_bytes())
+            .map_err(ClassifierModelClassifyError::Backend)?;
+        token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
+
+        // lalamo stores ids and positions as i32; the classifier attends over a
+        // flat sequence, so positions are exactly `0..n`.
+        let host_token_ids = input.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
+        let host_token_positions = (0..input.len() as i32).collect::<Box<[i32]>>();
+        let token_shape = [1, input.len()];
+        trace_host!(encoder, "activation_trace.token_ids", &host_token_ids, token_shape, DataType::I32);
+        trace_host!(encoder, "activation_trace.token_positions", &host_token_positions, token_shape, DataType::I32);
+
+        let logits = self.classifier.encode(&token_ids, input.len(), &mut encoder)?;
+
+        drop(logits);
+        drop(token_ids);
+
+        let mut completed =
+            encoder.end_encoding().submit().wait_until_completed().map_err(ClassifierModelClassifyError::Backend)?;
+
+        Ok(completed.take_recorder().expect("recorder was attached before encoding"))
+    }
 }

@@ -18,6 +18,9 @@ use crate::{
 pub mod state;
 pub mod stream;
 
+#[cfg(feature = "trace")]
+pub mod trace;
+
 #[cfg(grammar)]
 pub mod grammar;
 

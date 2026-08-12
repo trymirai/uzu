@@ -13,6 +13,7 @@ use crate::{
         transformer::{Transformer, TransformerNewError, TransformerState},
     },
     parameters::{ParameterLoaderError, ParameterTree},
+    utils::trace::{trace, trace_let, trace_scope, trace_scope_end},
 };
 
 #[derive(Debug, Error)]
@@ -125,6 +126,10 @@ impl<B: Backend> Decoder<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         encoder.push_debug_group("decoder");
+        // Everything the transformer captures nests under `activation_trace`,
+        // matching lalamo's `DecoderResult.activation_trace`. `logits` sits at
+        // the root, so the scope is closed before it is recorded.
+        trace_scope!(encoder, "activation_trace");
 
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), encoder)?;
 
@@ -151,9 +156,15 @@ impl<B: Backend> Decoder<B> {
             )
             .map_err(DecoderError::Backend)?;
 
+        trace_scope_end!(encoder);
+
         let logits = if let Some(output_range) = output_range {
             let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");
-            Some(self.embedding.encode_readout(output_range.len(), output, self.embedding.data_type(), encoder)?)
+            let logits =
+                self.embedding.encode_readout(output_range.len(), output, self.embedding.data_type(), encoder)?;
+            trace_let!(shape = [1, output_range.len(), self.embedding.vocab_size()]);
+            trace!(encoder, "logits", &logits, shape, self.embedding.data_type());
+            Some(logits)
         } else {
             None
         };

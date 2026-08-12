@@ -99,6 +99,15 @@ rand_distr.workspace = true
 is_close.workspace = true
 ndarray.workspace = true
 rstest.workspace = true
+# The trace example renders chat templates the same way production does, by
+# reusing hanashi's jinja environment rather than reimplementing it.
+hanashi.workspace = true
+minijinja.workspace = true
+minijinja-contrib.workspace = true
+
+[[example]]
+name = "trace"
+required-features = ["trace"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, default-features = true }

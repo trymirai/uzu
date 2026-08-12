@@ -12,7 +12,10 @@ use crate::{
         per_layer_embedding::PerLayerEmbeddingProjection,
     },
     parameters::{ParameterLoaderError, ParameterTree},
-    utils::maybe_mut::MaybeMut,
+    utils::{
+        maybe_mut::MaybeMut,
+        trace::{trace, trace_let, trace_scope, trace_scope_end},
+    },
 };
 
 #[derive(Debug, Error)]
@@ -37,6 +40,10 @@ pub enum TransformerLayerError<B: Backend> {
 
 pub struct TransformerLayer<B: Backend> {
     pub layer_index: usize,
+    #[cfg(feature = "trace")]
+    pub model_dim: usize,
+    #[cfg(feature = "trace")]
+    pub data_type: DataType,
     pub pre_mixer_norm: Option<Normalization<B>>,
     pub kv_source_layer_index: Option<usize>,
     pub mixer: Box<dyn Mixer<B>>,
@@ -180,6 +187,10 @@ impl<B: Backend> TransformerLayer<B> {
 
         Ok(Self {
             layer_index,
+            #[cfg(feature = "trace")]
+            model_dim,
+            #[cfg(feature = "trace")]
+            data_type,
             pre_mixer_norm,
             kv_source_layer_index: layer_config.kv_source_layer_index,
             mixer,
@@ -202,6 +213,8 @@ impl<B: Backend> TransformerLayer<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group(&format!("transformer layer {}", self.layer_index));
+        trace_scope!(encoder, "activation_trace");
+        trace_let!(activations = [1, batch_dim.size(), self.model_dim]);
 
         let hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
             pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut), encoder)?
@@ -210,20 +223,33 @@ impl<B: Backend> TransformerLayer<B> {
             encoder.encode_copy(&input, .., shortcut, ..);
             input
         };
+        // The residual add is fused into the norm, so `shortcut` now holds the
+        // layer's residual input — lalamo's `inputs`. With no pre-mixer norm
+        // lalamo passes `inputs` through unnormalized, which is what the copy
+        // branch above leaves in `hidden`.
+        trace!(encoder, "inputs", shortcut, activations, self.data_type);
+        trace!(encoder, "pre_mixer_norm", &hidden, activations, self.data_type);
 
         // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
         let mut hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
+        trace!(encoder, "mixer", &hidden, activations, self.data_type);
 
         if let Some(post_mixer_norm) = &self.post_mixer_norm {
             hidden = post_mixer_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
+            trace!(encoder, "post_mixer_norm", &hidden, activations, self.data_type);
         }
 
         hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut), encoder)?;
+        // Same fusion again: `shortcut` is now `inputs + mixer`, lalamo's `mlp_inputs`.
+        trace!(encoder, "mlp_inputs", shortcut, activations, self.data_type);
+        trace!(encoder, "pre_mlp_norm", &hidden, activations, self.data_type);
 
         hidden = self.mlp.encode(hidden, batch_dim.size(), encoder)?;
+        trace!(encoder, "mlp", &hidden, activations, self.data_type);
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
             hidden = post_mlp_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
+            trace!(encoder, "post_mlp_norm", &hidden, activations, self.data_type);
         }
 
         if let Some(ple_projection) = &self.ple_projection {
@@ -232,6 +258,7 @@ impl<B: Backend> TransformerLayer<B> {
             encoder.encode_fill(&mut hidden, 0);
         }
 
+        trace_scope_end!(encoder);
         encoder.pop_debug_group();
 
         Ok(hidden)

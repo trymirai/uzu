@@ -13,7 +13,10 @@ use crate::{
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
     parameters::{ParameterLoaderError, ParameterTree},
-    utils::maybe_mut::MaybeMut,
+    utils::{
+        maybe_mut::MaybeMut,
+        trace::{trace, trace_scope, trace_scope_end},
+    },
 };
 
 enum TransformerLayerStateType<B: Backend> {
@@ -158,6 +161,11 @@ impl<B: Backend> Transformer<B> {
         })
     }
 
+    #[cfg(feature = "trace")]
+    fn data_type(&self) -> DataType {
+        self.output_norm.data_type()
+    }
+
     fn capture_residual(
         &self,
         shortcut: &Allocation<B>,
@@ -255,7 +263,17 @@ impl<B: Backend> Transformer<B> {
             .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, encoder))
             .collect::<Result<Box<[_]>, B::Error>>()?;
 
+        #[cfg(feature = "trace")]
+        for (rope_index, rope) in precalculated_ropes.iter().enumerate() {
+            let shape = [1, token_positions.len(), rope.dim];
+            trace_scope!(encoder, "rope_embeddings.{}", rope_index);
+            trace!(encoder, "cosines", &rope.cosines, shape, DataType::F32);
+            trace!(encoder, "sines", &rope.sines, shape, DataType::F32);
+            trace_scope_end!(encoder);
+        }
+
         for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
+            trace_scope!(encoder, "layer_results.{}", layer.layer_index);
             let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
 
             let layer_state = if let Some(state) = &mut state {
@@ -282,6 +300,16 @@ impl<B: Backend> Transformer<B> {
                 layer_state,
                 encoder,
             )?;
+
+            // A layer's output is `mlp_inputs + mlp`, which uzu never
+            // materializes — the add is deferred into the next layer's norm.
+            // Only pay for the extra dispatch while tracing.
+            #[cfg(feature = "trace")]
+            if encoder.is_recording() {
+                let outputs = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
+                trace!(encoder, "outputs", &outputs, [1, batch_dim.size(), self.model_dim], self.data_type());
+            }
+            trace_scope_end!(encoder);
 
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
@@ -317,6 +345,7 @@ impl<B: Backend> Transformer<B> {
 
         let output_normalized =
             self.output_norm.encode(&hidden, output_range.start, output_range.len(), Some(&mut shortcut), encoder)?;
+        trace!(encoder, "output_norm", &output_normalized, [1, output_range.len(), self.model_dim], self.data_type());
 
         Ok(TransformerEncodeOutput {
             output: Some(output_normalized),

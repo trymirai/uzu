@@ -13,6 +13,7 @@ use crate::{
         transformer::{Transformer, TransformerNewError},
     },
     parameters::{ParameterLoaderError, ParameterTree},
+    utils::trace::{trace, trace_let, trace_scope, trace_scope_end},
 };
 
 #[derive(Debug, Error)]
@@ -35,6 +36,8 @@ pub enum ClassifierError<B: Backend> {
 
 pub struct Classifier<B: Backend> {
     hidden_dim: usize,
+    #[cfg(feature = "trace")]
+    num_labels: usize,
     data_type: DataType,
     embedding: Embedding<B>,
     embedding_norm: Normalization<B>,
@@ -98,6 +101,8 @@ impl<B: Backend> Classifier<B> {
 
         Ok(Self {
             hidden_dim: config.hidden_dim,
+            #[cfg(feature = "trace")]
+            num_labels: config.num_labels,
             data_type,
             embedding,
             embedding_norm,
@@ -118,11 +123,13 @@ impl<B: Backend> Classifier<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, ClassifierError<B>> {
         encoder.push_debug_group("classifier");
+        trace_scope!(encoder, "activation_trace");
 
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim, encoder)?;
 
         let hidden =
             self.embedding_norm.encode(&embedded, 0, batch_dim, None, encoder).map_err(ClassifierError::Backend)?;
+        trace!(encoder, "embedding_norm_output", &hidden, [1, batch_dim, self.hidden_dim], self.data_type);
 
         let nodes = (0..batch_dim)
             .map(|index| TrieNode {
@@ -142,8 +149,15 @@ impl<B: Backend> Classifier<B> {
             .allocate_scratch(size_for_shape(&[self.hidden_dim], self.data_type))
             .map_err(ClassifierError::Backend)?;
         self.pooling.encode(&hidden, &mut pooled, batch_dim as u32, self.hidden_dim as u32, 1, encoder);
+        trace!(encoder, "output_pooling", &pooled, [1, self.hidden_dim], self.data_type);
 
         let logits = self.prediction_head.encode(pooled, 1, encoder).map_err(ClassifierError::Backend)?;
+        // lalamo's ClassifierResult carries logits both at the root and inside
+        // the activation trace, so record it under both paths.
+        trace_let!(logits_shape = [1, self.num_labels]);
+        trace!(encoder, "logits", &logits, logits_shape, self.data_type);
+        trace_scope_end!(encoder);
+        trace!(encoder, "logits", &logits, logits_shape, self.data_type);
 
         encoder.pop_debug_group();
 

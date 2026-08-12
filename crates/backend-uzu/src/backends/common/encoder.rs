@@ -13,6 +13,8 @@ use crate::backends::common::{
     CommandBufferInitial, CommandBufferPending, Context,
     hazard_tracker::{Access, HazardTracker},
 };
+#[cfg(feature = "trace")]
+use crate::{array::size_for_shape, data_type::DataType, trace::Recorder};
 
 fn resolve_copy_range(
     range: impl RangeBounds<usize>,
@@ -39,6 +41,8 @@ pub struct Encoder<'encoding, B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
     allocation_pool: Arc<AllocationPool<B>>,
     hazard_tracker: HazardTracker,
+    #[cfg(feature = "trace")]
+    recorder: Option<Recorder<B>>,
 }
 
 impl<'encoding, B: Backend> Encoder<'encoding, B> {
@@ -66,6 +70,8 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
             command_buffer,
             allocation_pool,
             hazard_tracker,
+            #[cfg(feature = "trace")]
+            recorder: None,
         })
     }
 
@@ -184,13 +190,119 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         Executable {
             command_buffer: self.command_buffer.end_encoding(),
             allocation_pool: self.allocation_pool,
+            #[cfg(feature = "trace")]
+            recorder: self.recorder,
         }
+    }
+}
+
+#[cfg(feature = "trace")]
+impl<'encoding, B: Backend> Encoder<'encoding, B> {
+    /// Starts recording activations. The recorder travels with the command
+    /// buffer and is handed back by [`Completed::take_recorder`], so captured
+    /// buffers stay alive until the GPU is done writing them.
+    pub fn attach_recorder(
+        &mut self,
+        recorder: Recorder<B>,
+    ) {
+        self.recorder = Some(recorder);
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.recorder.is_some()
+    }
+
+    pub fn push_trace_scope(
+        &mut self,
+        segment: std::fmt::Arguments<'_>,
+    ) {
+        if let Some(recorder) = &mut self.recorder {
+            recorder.push_scope(segment);
+        }
+    }
+
+    pub fn pop_trace_scope(&mut self) {
+        if let Some(recorder) = &mut self.recorder {
+            recorder.pop_scope();
+        }
+    }
+
+    /// Copies `src` into a fresh buffer and records it under the current scope.
+    ///
+    /// The copy is required because allocations are moved along the encode
+    /// chain and their ranges are recycled once dropped; it goes through
+    /// [`Self::encode_copy`], so the hazard tracker orders it after whatever
+    /// kernel produced `src`.
+    ///
+    /// Destinations are [`AllocationType::Global`] rather than pooled: the
+    /// recorder outlives the encoder's pool, and freeing that pool would pull
+    /// the range out from under a still-live pooled allocation.
+    ///
+    /// Panics if the destination cannot be allocated. This only runs while
+    /// tracing, where failing loudly beats threading a result type through
+    /// every capture point in the forward pass.
+    pub fn trace(
+        &mut self,
+        name: &str,
+        src: &Allocation<B>,
+        shape: &[usize],
+        data_type: DataType,
+    ) {
+        let Some(mut recorder) = self.recorder.take() else {
+            return;
+        };
+
+        let path = recorder.path(name);
+        let byte_count = size_for_shape(shape, data_type);
+        assert!(
+            src.size() >= byte_count,
+            "trace {path} declares {byte_count} bytes but the source allocation holds {}",
+            src.size(),
+        );
+
+        let mut destination = self
+            .context
+            .create_allocation(byte_count, AllocationType::Global)
+            .unwrap_or_else(|error| panic!("failed to allocate trace destination for {path}: {error:?}"));
+        self.encode_copy(src, ..byte_count, &mut destination, ..);
+        recorder.record(path, shape.into(), data_type, destination).expect("failed to record trace array");
+
+        self.recorder = Some(recorder);
+    }
+
+    /// Records host-side data directly, for arrays that have no device-side
+    /// equivalent (uzu runs token ids as `u32`, lalamo's trace wants `i32`).
+    pub fn trace_host<T: NoUninit + AnyBitPattern>(
+        &mut self,
+        name: &str,
+        data: &[T],
+        shape: &[usize],
+        data_type: DataType,
+    ) {
+        let Some(mut recorder) = self.recorder.take() else {
+            return;
+        };
+
+        let path = recorder.path(name);
+        let byte_count = size_for_shape(shape, data_type);
+        assert_eq!(byte_count, size_of_val(data), "trace {path} declares a shape that does not match the data");
+
+        let mut destination = self
+            .context
+            .create_allocation(byte_count, AllocationType::Global)
+            .unwrap_or_else(|error| panic!("failed to allocate trace destination for {path}: {error:?}"));
+        destination.copyin(data);
+        recorder.record(path, shape.into(), data_type, destination).expect("failed to record trace array");
+
+        self.recorder = Some(recorder);
     }
 }
 
 pub struct Executable<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Executable,
     allocation_pool: Arc<AllocationPool<B>>,
+    #[cfg(feature = "trace")]
+    recorder: Option<Recorder<B>>,
 }
 
 impl<B: Backend> Executable<B> {
@@ -198,6 +310,8 @@ impl<B: Backend> Executable<B> {
         Pending {
             command_buffer: self.command_buffer.submit(),
             allocation_pool: self.allocation_pool,
+            #[cfg(feature = "trace")]
+            recorder: self.recorder,
         }
     }
 }
@@ -205,6 +319,8 @@ impl<B: Backend> Executable<B> {
 pub struct Pending<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Pending,
     allocation_pool: Arc<AllocationPool<B>>,
+    #[cfg(feature = "trace")]
+    recorder: Option<Recorder<B>>,
 }
 
 impl<B: Backend> Pending<B> {
@@ -212,6 +328,8 @@ impl<B: Backend> Pending<B> {
         Ok(Completed {
             command_buffer: self.command_buffer.wait_until_completed()?,
             _allocation_pool: self.allocation_pool,
+            #[cfg(feature = "trace")]
+            recorder: self.recorder,
         })
     }
 }
@@ -219,10 +337,20 @@ impl<B: Backend> Pending<B> {
 pub struct Completed<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Completed,
     _allocation_pool: Arc<AllocationPool<B>>,
+    #[cfg(feature = "trace")]
+    recorder: Option<Recorder<B>>,
 }
 
 impl<B: Backend> Completed<B> {
     pub fn gpu_execution_time(&self) -> Duration {
         self.command_buffer.gpu_execution_time()
+    }
+
+    /// Takes back the recorder attached by [`Encoder::attach_recorder`]. Safe
+    /// to read here: the command buffer has completed, so every captured copy
+    /// has landed.
+    #[cfg(feature = "trace")]
+    pub fn take_recorder(&mut self) -> Option<Recorder<B>> {
+        self.recorder.take()
     }
 }

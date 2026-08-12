@@ -107,6 +107,11 @@ impl<B: Backend> Normalization<B> {
         })
     }
 
+    #[cfg(feature = "trace")]
+    pub fn data_type(&self) -> DataType {
+        self.data_type
+    }
+
     pub fn encode(
         &self,
         input: &Allocation<B>,
