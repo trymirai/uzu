@@ -35,7 +35,7 @@ fn apply_rope<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
 #[variants(ElementT, bf16)]
 #[variants(RopeT, f32)]
 pub fn attention_prepare<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
-    qkv: *const ElementT,
+    qkvg: *const ElementT,
     queries: *mut ElementT,
     #[optional(has_kv)] keys: Option<*mut ElementT>,
     #[optional(has_kv)] values: Option<*mut ElementT>,
@@ -93,14 +93,14 @@ pub fn attention_prepare<ElementT: ArrayElement + Float, RopeT: ArrayElement + F
 
     for batch_idx in 0..batch_dim {
         for head_idx in 0..total_heads {
-            let qkv_head = unsafe { qkv.add(batch_idx * input_row_stride + head_idx * head_dim) };
+            let qkvg_head = unsafe { qkvg.add(batch_idx * input_row_stride + head_idx * head_dim) };
             let is_query = !has_kv || head_idx < num_q_heads;
             let is_key = has_kv && head_idx >= num_q_heads && head_idx < num_q_heads + num_kv_heads;
 
             for head_dim_idx in 0..head_dim {
-                let mut element = unsafe { *qkv_head.add(head_dim_idx) };
+                let mut element = unsafe { *qkvg_head.add(head_dim_idx) };
                 if has_rope && head_dim_idx < rope_dim && (is_query || is_key) {
-                    element = apply_rope(qkv_head, cosines, sines, batch_idx, head_dim_idx, rope_dim);
+                    element = apply_rope(qkvg_head, cosines, sines, batch_idx, head_dim_idx, rope_dim);
                 }
 
                 if is_query {

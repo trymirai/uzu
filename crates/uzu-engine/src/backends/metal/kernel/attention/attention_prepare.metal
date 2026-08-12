@@ -27,7 +27,7 @@ template <typename ElementT, typename RopeT>
 VARIANTS(ElementT, bfloat)
 VARIANTS(RopeT, float)
 PUBLIC KERNEL(AttentionPrepare) (
-  const device ElementT* qkv, // [token, input_row_stride], with packed Q/K/V at the start
+  const device ElementT* qkvg, // [token, input_row_stride], with an optional trailing gate
   device ElementT* queries, // [head_idx, token, head_dim]
   device ElementT* keys OPTIONAL(has_kv), // [(kv_token_offset + token), head_idx, head_dim]
   device ElementT* values OPTIONAL(has_kv), // [(kv_token_offset + token), head_idx, head_dim]
@@ -46,14 +46,14 @@ PUBLIC KERNEL(AttentionPrepare) (
   const uint32_t head_idx AXIS(num_q_heads + num_kv_heads.unwrap_or(0) * 2, 1),
   const uint32_t batch_idx AXIS(batch_dim, 1)
 ) {
-  const uint32_t qkv_head_idx = batch_idx * input_row_stride + head_idx * head_dim;
-  const device ElementT* qkv_head = qkv + qkv_head_idx;
+  const uint32_t qkvg_head_idx = batch_idx * input_row_stride + head_idx * head_dim;
+  const device ElementT* qkvg_head = qkvg + qkvg_head_idx;
   const bool is_query = !has_kv || head_idx < num_q_heads;
   const bool is_key = has_kv && head_idx >= num_q_heads && head_idx < num_q_heads + num_kv_heads;
 
-  ElementT element = qkv_head[head_dim_idx];
+  ElementT element = qkvg_head[head_dim_idx];
   if (has_rope && head_dim_idx < rope_dim && (is_query || is_key)) {
-    element = apply_rope(qkv_head, cosines, sines, batch_idx, head_dim_idx, rope_dim);
+    element = apply_rope(qkvg_head, cosines, sines, batch_idx, head_dim_idx, rope_dim);
   }
 
   if (is_query) {
