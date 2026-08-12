@@ -36,7 +36,6 @@ iocraft.workspace = true
 jsonschema.workspace = true
 hanashi.workspace = true
 minijinja.workspace = true
-minijinja-contrib.workspace = true
 nagare.workspace = true
 tokenizers.workspace = true
 ratatui.workspace = true

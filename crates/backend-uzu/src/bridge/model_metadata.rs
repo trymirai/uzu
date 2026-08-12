@@ -12,7 +12,7 @@ pub enum ModelMetadataError {
     UnableToDeserializeConfig(#[from] serde_json::Error),
 }
 
-pub fn resolve_model_specialization(model_path: &Path) -> Result<ModelSpecialization, ModelMetadataError> {
+pub fn model_specialization(model_path: &Path) -> Result<ModelSpecialization, ModelMetadataError> {
     let config_path = model_path.join("config.json");
     let file = File::open(&config_path)?;
     let config: AnyModelConfig = serde_json::from_reader(BufReader::new(file))?;

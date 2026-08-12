@@ -6,4 +6,4 @@ mod helpers;
 mod model_metadata;
 
 pub use backend::UzuLlmBackend;
-pub use model_metadata::resolve_model_specialization;
+pub use model_metadata::model_specialization;

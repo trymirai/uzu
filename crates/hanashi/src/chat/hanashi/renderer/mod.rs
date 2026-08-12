@@ -17,6 +17,19 @@ pub static STRFTIME_NOW_FUNCTION_NAME: &str = "strftime_now";
 pub static RAISE_EXCEPTION_FUNCTION_NAME: &str = "raise_exception";
 pub static TOJSON_FILTER_NAME: &str = "tojson";
 
+/// Jinja environment for chat templates, with the template registered under
+/// [`TEMPLATE_NAME`].
+pub fn chat_template_environment(template: &str) -> Result<Environment<'_>, Error> {
+    let mut environment = Environment::new();
+    environment.set_unknown_method_callback(unknown_method_callback);
+    environment.add_function(STRFTIME_NOW_FUNCTION_NAME, strftime_now);
+    environment.add_function(RAISE_EXCEPTION_FUNCTION_NAME, raise_exception);
+    environment.add_filter(TOJSON_FILTER_NAME, to_json);
+    environment.add_template(TEMPLATE_NAME, template).map_err(|_| Error::InvalidTemplate)?;
+
+    Ok(environment)
+}
+
 pub struct Renderer {
     config: RendererConfig,
 }
