@@ -128,9 +128,9 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
 
     node_token_ids[node] = token;
     node_metadata[uint(MetadataIdx::Depth) * node_count + node] = min(depth, max_depth - 1u);
-    node_metadata[uint(MetadataIdx::AncestorCount) * node_count + node] = min(depth, ancestor_stride);
+    node_metadata[uint(MetadataIdx::AncestorCount) * node_count + node] = depth;
     node_metadata[uint(MetadataIdx::TreeSlot) * node_count + node] = tree_slot;
-    node_valid[node] = real && depth < lookahead_count && depth < max_depth ? 1u : 0u;
+    node_valid[node] = real && depth < lookahead_count ? 1u : 0u;
 
     node_candidate_depth[node] = min(depth, candidate_depth_count - 1u);
   }

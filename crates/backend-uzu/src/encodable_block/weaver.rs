@@ -5,17 +5,17 @@ use crate::{
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::weaver::{
-            CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_NO_WINNER, FrontierIdx, MetadataIdx, TreeIdx,
+            CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FRONTIER_NO_WINNER, FrontierIdx, MetadataIdx,
+            TreeIdx,
         },
         kernel::{
             AncestorAttentionKernel, WeaverFrontierInsertChildrenKernel, WeaverFrontierSelectKernel,
-            WeaverTopChildrenKernel,
+            WeaverTopChildrenKernel, radix_top_k_small::RadixTopKSmall,
         },
     },
     config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
     data_type::DataType,
     encodable_block::{
-        dflash::TopKCandidates,
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError},
         mixer::attention::{AttentionStateType, core::AttentionCoreEncodeArguments, rope::PrecalculatedRoPE},
@@ -29,10 +29,11 @@ use crate::{
 pub(crate) const DATA_TYPE: DataType = DataType::BF16;
 pub(crate) const ROPE_DATA_TYPE: DataType = DataType::F32;
 
-pub struct TreeShape {
+pub struct WeaverTreeShape {
     pub budget: usize,
-    pub frontier_width: usize,
-    pub children_per_node: usize,
+    pub depth: usize,
+    pub expand_per_round: usize,
+    pub expand_width: usize,
 }
 
 pub struct EncodedWeaverTree<B: Backend> {
@@ -87,12 +88,14 @@ pub struct Weaver<B: Backend> {
     readout_norm: Normalization<B>,
     readout_query_projection: Box<dyn Linear<B>>,
     rope_config: AnyRoPEConfig,
+    top_k: <B::Kernels as Kernels>::RadixTopKSmall,
     top_children: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
     frontier_select: <B::Kernels as Kernels>::WeaverFrontierSelectKernel,
     frontier_insert_children: <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel,
     model_dim: usize,
     target_model_dim: usize,
     max_depth: usize,
+    candidate_pool_size: usize,
 }
 
 #[derive(Debug, Error)]
@@ -137,6 +140,7 @@ impl<B: Backend> Weaver<B> {
     pub fn new(
         context: &B::Context,
         config: &WeaverConfig,
+        vocab_size: u32,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, WeaverNewError<B>> {
         if config.num_layers == 0 {
@@ -219,6 +223,8 @@ impl<B: Backend> Weaver<B> {
             DATA_TYPE,
             &parameter_tree.subtree("query_projection"),
         )?;
+        let top_k =
+            <B::Kernels as Kernels>::RadixTopKSmall::new(context, vocab_size).map_err(WeaverNewError::Backend)?;
         let top_children =
             <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context).map_err(WeaverNewError::Backend)?;
         let frontier_select =
@@ -234,13 +240,19 @@ impl<B: Backend> Weaver<B> {
             readout_norm,
             readout_query_projection,
             rope_config: config.rope_config.clone(),
+            top_k,
             top_children,
             frontier_select,
             frontier_insert_children,
             model_dim: config.model_dim,
             target_model_dim: config.target_model_dim,
             max_depth: config.max_depth,
+            candidate_pool_size: config.candidate_pool_size,
         })
+    }
+
+    pub fn max_depth(&self) -> usize {
+        self.max_depth
     }
 
     pub fn encode_tree(
@@ -248,54 +260,80 @@ impl<B: Backend> Weaver<B> {
         target_hidden: &Allocation<B>,
         draft_hidden: &Allocation<B>,
         target_embedding: &Embedding<B>,
-        candidates: &TopKCandidates<B>,
+        logits: &Allocation<B>,
         depth_seeds: &[u64],
         root_token_id: u32,
-        shape: TreeShape,
+        shape: WeaverTreeShape,
         encoder: &mut Encoder<B>,
     ) -> Result<EncodedWeaverTree<B>, WeaverEncodeError<B>> {
         encoder.push_debug_group("weaver tree");
 
-        let tree_slot_count = shape.budget + 1;
-        let frontier_capacity = tree_slot_count * shape.children_per_node;
-        let lookahead_count = self.max_depth.min(candidates.rows);
+        let tree_slot_count = shape.budget;
+        let frontier_capacity = tree_slot_count * shape.expand_width;
         let ancestor_stride = self.max_depth;
         if shape.budget == 0
-            || shape.frontier_width == 0
-            || shape.children_per_node == 0
-            || shape.children_per_node > candidates.candidates_per_row
+            || shape.depth < 2
+            || shape.depth > self.max_depth + 1
+            || shape.expand_per_round == 0
+            || shape.expand_per_round > FRONTIER_MAX_WIDTH
+            || shape.expand_width == 0
+            || shape.expand_width > self.candidate_pool_size
             || frontier_capacity > FRONTIER_MAX_SLOTS
-            || lookahead_count == 0
             || depth_seeds.len() != self.max_depth
         {
             return Err(WeaverEncodeError::InvalidTreeInput);
         }
+        // `depth` counts the root: nodes expand up to `depth - 1` edges from it.
+        let lookahead_count = shape.depth - 1;
+
+        // Rank the draft logits: the top `candidate_pool_size` tokens per
+        // lookahead row form the candidate pool node expansions draw from.
+        let vocab_size = target_embedding.vocab_size();
+        assert!(
+            logits.size() >= lookahead_count * vocab_size * DataType::F32.size_in_bytes(),
+            "draft logits do not cover the lookahead rows"
+        );
+        let mut candidate_ids = encoder
+            .allocate_scratch(size_for_shape(&[lookahead_count, self.candidate_pool_size], DataType::U32))
+            .map_err(WeaverEncodeError::Backend)?;
+        let mut candidate_logits = encoder
+            .allocate_scratch(size_for_shape(&[lookahead_count, self.candidate_pool_size], DataType::F32))
+            .map_err(WeaverEncodeError::Backend)?;
+        self.top_k
+            .encode(
+                logits,
+                &mut candidate_ids,
+                &mut candidate_logits,
+                lookahead_count as u32,
+                self.candidate_pool_size as u32,
+                encoder,
+            )
+            .map_err(WeaverEncodeError::Backend)?;
 
         let rope_positions = (0..=self.max_depth).collect::<Box<[_]>>();
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &rope_positions, encoder)
             .map_err(WeaverEncodeError::Backend)?;
 
-        // Prefix pass: run the target token and the draft lookahead rows through
-        // every layer, collecting per-layer KV caches.
-        let prefix_length = lookahead_count + 1;
+        // Prefix pass: run the target token and one draft row per non-root
+        // chain node through every layer, collecting per-layer KV caches.
         let hidden_row_bytes = self.target_model_dim * DATA_TYPE.size_in_bytes();
         let mut prefix_hidden = encoder
-            .allocate_scratch(size_for_shape(&[prefix_length, self.target_model_dim], DATA_TYPE))
+            .allocate_scratch(size_for_shape(&[shape.depth, self.target_model_dim], DATA_TYPE))
             .map_err(WeaverEncodeError::Backend)?;
         encoder.encode_copy(target_hidden, 0..hidden_row_bytes, &mut prefix_hidden, 0..hidden_row_bytes);
         encoder.encode_copy(
             draft_hidden,
-            hidden_row_bytes..prefix_length * hidden_row_bytes,
+            hidden_row_bytes..shape.depth * hidden_row_bytes,
             &mut prefix_hidden,
-            hidden_row_bytes..prefix_length * hidden_row_bytes,
+            hidden_row_bytes..shape.depth * hidden_row_bytes,
         );
         let normalized_prefix = self
             .hidden_state_norm
-            .encode(&prefix_hidden, 0, prefix_length, None, encoder)
+            .encode(&prefix_hidden, 0, shape.depth, None, encoder)
             .map_err(WeaverEncodeError::Backend)?;
         let mut residual_input = self
             .hidden_state_projection
-            .encode(normalized_prefix, prefix_length, encoder)
+            .encode(normalized_prefix, shape.depth, encoder)
             .map_err(WeaverEncodeError::Backend)?;
         let (last_layer, preceding_layers) = self.layers.split_last().expect("Weaver must have at least one layer");
         let mut residual_state = encoder.allocate_scratch(residual_input.size()).map_err(WeaverEncodeError::Backend)?;
@@ -305,12 +343,12 @@ impl<B: Backend> Weaver<B> {
                 queries,
                 kv_cache,
             } = layer
-                .encode_prefix_attention(&residual_input, &mut residual_state, &rope, prefix_length, encoder)
+                .encode_prefix_attention(&residual_input, &mut residual_state, &rope, shape.depth, encoder)
                 .map_err(WeaverEncodeError::Backend)?;
             let state_type = AttentionStateType::Full {
                 length: 0,
             };
-            let kv_plane_bytes = size_for_shape(&[prefix_length, self.model_dim], DATA_TYPE);
+            let kv_plane_bytes = size_for_shape(&[shape.depth, self.model_dim], DATA_TYPE);
             let attention_output = layer
                 .prefix_attention
                 .encode(
@@ -318,7 +356,7 @@ impl<B: Backend> Weaver<B> {
                         queries: &queries,
                         keys: &kv_cache,
                         values: (&kv_cache, kv_plane_bytes),
-                        suffix_length: prefix_length,
+                        suffix_length: shape.depth,
                         trie: None,
                         sinks: None,
                         state_type: &state_type,
@@ -327,13 +365,13 @@ impl<B: Backend> Weaver<B> {
                 )
                 .map_err(WeaverEncodeError::Backend)?;
             residual_input = layer
-                .encode_post_attention(attention_output, &mut residual_state, prefix_length, encoder)
+                .encode_post_attention(attention_output, &mut residual_state, shape.depth, encoder)
                 .map_err(WeaverEncodeError::Backend)?;
             prefix_kv_layers.push(kv_cache);
         }
         prefix_kv_layers.push(
             last_layer
-                .encode_prefix_attention(&residual_input, &mut residual_state, &rope, prefix_length, encoder)
+                .encode_prefix_attention(&residual_input, &mut residual_state, &rope, shape.depth, encoder)
                 .map_err(WeaverEncodeError::Backend)?
                 .kv_cache,
         );
@@ -360,25 +398,25 @@ impl<B: Backend> Weaver<B> {
             .allocate_constant_from_slice(&vec![0u32; tree_slot_count * ancestor_stride])
             .map_err(WeaverEncodeError::Backend)?;
 
-        let mut initial_node_token_ids = vec![0u32; shape.frontier_width];
+        let mut initial_node_token_ids = vec![0u32; shape.expand_per_round];
         initial_node_token_ids[0] = root_token_id;
-        let mut initial_node_valid = vec![0u32; shape.frontier_width];
+        let mut initial_node_valid = vec![0u32; shape.expand_per_round];
         initial_node_valid[0] = 1;
         let mut node_token_ids =
             encoder.allocate_constant_from_slice(&initial_node_token_ids).map_err(WeaverEncodeError::Backend)?;
         let mut node_metadata = encoder
-            .allocate_constant_from_slice(&vec![0u32; MetadataIdx::COUNT * shape.frontier_width])
+            .allocate_constant_from_slice(&vec![0u32; MetadataIdx::COUNT * shape.expand_per_round])
             .map_err(WeaverEncodeError::Backend)?;
         let mut node_ancestor_indices = encoder
-            .allocate_constant_from_slice(&vec![0u32; shape.frontier_width * ancestor_stride])
+            .allocate_constant_from_slice(&vec![0u32; shape.expand_per_round * ancestor_stride])
             .map_err(WeaverEncodeError::Backend)?;
         let mut node_valid =
             encoder.allocate_constant_from_slice(&initial_node_valid).map_err(WeaverEncodeError::Backend)?;
         let mut node_candidate_ids = encoder
-            .allocate_constant_from_slice(&vec![0u32; shape.frontier_width * candidates.candidates_per_row])
+            .allocate_constant_from_slice(&vec![0u32; shape.expand_per_round * self.candidate_pool_size])
             .map_err(WeaverEncodeError::Backend)?;
         let mut node_candidate_logits = encoder
-            .allocate_constant_from_slice(&vec![0.0f32; shape.frontier_width * candidates.candidates_per_row])
+            .allocate_constant_from_slice(&vec![0.0f32; shape.expand_per_round * self.candidate_pool_size])
             .map_err(WeaverEncodeError::Backend)?;
         let depth_seeds_buffer =
             encoder.allocate_constant_from_slice(depth_seeds).map_err(WeaverEncodeError::Backend)?;
@@ -388,7 +426,7 @@ impl<B: Backend> Weaver<B> {
             let batch_node_count = if batch_start_slot == 0 {
                 1
             } else {
-                shape.frontier_width.min(tree_slot_count - batch_start_slot)
+                shape.expand_per_round.min(tree_slot_count - batch_start_slot)
             };
             if batch_start_slot > 0 {
                 self.frontier_select.encode(
@@ -399,8 +437,8 @@ impl<B: Backend> Weaver<B> {
                     &mut node_metadata,
                     &mut node_ancestor_indices,
                     &mut node_valid,
-                    &candidates.ids,
-                    &candidates.logits,
+                    &candidate_ids,
+                    &candidate_logits,
                     &mut node_candidate_ids,
                     &mut node_candidate_logits,
                     frontier_capacity as u32,
@@ -410,8 +448,8 @@ impl<B: Backend> Weaver<B> {
                     ancestor_stride as u32,
                     self.max_depth as u32,
                     lookahead_count as u32,
-                    candidates.rows as u32,
-                    candidates.candidates_per_row as u32,
+                    lookahead_count as u32,
+                    self.candidate_pool_size as u32,
                     encoder,
                 );
             }
@@ -419,7 +457,7 @@ impl<B: Backend> Weaver<B> {
                 break; // packed-tree slots filled
             }
             let (batch_candidate_ids, batch_candidate_logits) = if batch_start_slot == 0 {
-                (&candidates.ids, &candidates.logits)
+                (&candidate_ids, &candidate_logits)
             } else {
                 (&node_candidate_ids, &node_candidate_logits)
             };
@@ -462,7 +500,7 @@ impl<B: Backend> Weaver<B> {
                     (&node_metadata, MetadataIdx::TreeSlot as usize * metadata_field_bytes),
                     &mut attention_output,
                     batch_node_count as u32,
-                    prefix_length as u32,
+                    shape.depth as u32,
                     ancestor_stride as u32,
                     tree_slot_count as u32,
                     layer.max_depth as u32,
@@ -486,14 +524,14 @@ impl<B: Backend> Weaver<B> {
                 &query,
                 batch_candidate_ids,
                 batch_node_count,
-                candidates.candidates_per_row,
+                self.candidate_pool_size,
                 encoder,
             )?;
             let mut child_token_ids = encoder
-                .allocate_scratch(size_for_shape(&[batch_node_count, shape.children_per_node], DataType::U32))
+                .allocate_scratch(size_for_shape(&[batch_node_count, shape.expand_width], DataType::U32))
                 .map_err(WeaverEncodeError::Backend)?;
             let mut child_logprobs = encoder
-                .allocate_scratch(size_for_shape(&[batch_node_count, shape.children_per_node], DataType::F32))
+                .allocate_scratch(size_for_shape(&[batch_node_count, shape.expand_width], DataType::F32))
                 .map_err(WeaverEncodeError::Backend)?;
             self.top_children.encode(
                 &logit_residuals,
@@ -504,8 +542,8 @@ impl<B: Backend> Weaver<B> {
                 &mut child_token_ids,
                 &mut child_logprobs,
                 batch_node_count as u32,
-                candidates.candidates_per_row as u32,
-                shape.children_per_node as u32,
+                self.candidate_pool_size as u32,
+                shape.expand_width as u32,
                 target_embedding.vocab_size() as u32,
                 encoder,
             );
@@ -520,7 +558,7 @@ impl<B: Backend> Weaver<B> {
                 frontier_capacity as u32,
                 tree_slot_count as u32,
                 batch_node_count as u32,
-                shape.children_per_node as u32,
+                shape.expand_width as u32,
                 encoder,
             );
             batch_start_slot += batch_node_count;

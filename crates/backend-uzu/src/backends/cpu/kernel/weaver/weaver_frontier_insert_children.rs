@@ -24,29 +24,29 @@ pub fn weaver_frontier_insert_children(
     frontier_capacity: u32,
     tree_slot_count: u32,
     node_count: u32,
-    children_per_node: u32,
+    expand_width: u32,
 ) {
-    if frontier_capacity == 0 || tree_slot_count == 0 || children_per_node == 0 {
+    if frontier_capacity == 0 || tree_slot_count == 0 || expand_width == 0 {
         return;
     }
-    let (frontier_capacity, tree_slot_count, node_count, children_per_node) =
-        (frontier_capacity as usize, tree_slot_count as usize, node_count as usize, children_per_node as usize);
+    let (frontier_capacity, tree_slot_count, node_count, expand_width) =
+        (frontier_capacity as usize, tree_slot_count as usize, node_count as usize, expand_width as usize);
     let packed_tree = unsafe { std::slice::from_raw_parts(packed_tree, TreeIdx::COUNT * tree_slot_count) };
     let parent_indices = unsafe {
         std::slice::from_raw_parts(node_metadata.add(MetadataIdx::TreeSlot as usize * node_count), node_count)
     };
     let node_valid = unsafe { std::slice::from_raw_parts(node_valid, node_count) };
-    let child_ids = unsafe { std::slice::from_raw_parts(child_ids, node_count * children_per_node) };
-    let child_logprobs = unsafe { std::slice::from_raw_parts(child_logprobs, node_count * children_per_node) };
+    let child_ids = unsafe { std::slice::from_raw_parts(child_ids, node_count * expand_width) };
+    let child_logprobs = unsafe { std::slice::from_raw_parts(child_logprobs, node_count * expand_width) };
     let frontier = unsafe { std::slice::from_raw_parts_mut(frontier, FrontierIdx::COUNT * frontier_capacity) };
 
-    for index in 0..node_count * children_per_node {
-        let row = index / children_per_node;
+    for index in 0..node_count * expand_width {
+        let row = index / expand_width;
         if node_valid[row] == 0 {
             continue;
         }
         let parent = parent_indices[row] as usize;
-        let slot = parent * children_per_node + index % children_per_node;
+        let slot = parent * expand_width + index % expand_width;
         if parent >= tree_slot_count || slot >= frontier_capacity {
             continue;
         }
