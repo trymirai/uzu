@@ -92,7 +92,12 @@ pub fn Application(
             };
             match engine.model(identifier.clone()).await {
                 Ok(Some(model)) => {
-                    let model_exists = model.is_downloadable() || !model.is_local();
+                    let model_exists = model.is_downloadable()
+                        || !model.is_local()
+                        || matches!(
+                            engine.model_path(&model).await,
+                            Some(path) if std::path::Path::new(&path).exists()
+                        );
                     if !model_exists {
                         state.write().flow = Some(Box::new(ModelRegistriesFlow));
                         return;
