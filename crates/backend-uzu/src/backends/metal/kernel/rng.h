@@ -113,6 +113,8 @@ inline uint philox_next(thread PhiloxState* state) {
   return state->output[state->state_idx++];
 }
 
+/* Uniform in [2^-24, 1-2^-24]: -log(-log(u)) needs (0,1) — u == 1 gives +inf and wins
+ * every argmax. 24 bits only; the full 32 rounds the top 128 values up to 2^32. */
 inline float uniform_float(thread PhiloxState* state) {
-  return float(philox_next(state)) * (1.0f / 4294967296.0f); /* (0,1) */
+  return float(metal::max(philox_next(state) >> 8, 1u)) * (1.0f / 16777216.0f);
 }

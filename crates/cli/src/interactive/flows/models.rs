@@ -4,9 +4,12 @@ use iocraft::prelude::*;
 use shoji::types::model::Model;
 use uzu::storage::types::DownloadState;
 
-use crate::interactive::{
-    components::{ApplicationState, Loading, ModelCapabilities, ModelState, Selector, SelectorItem, SelectorStyle},
-    flows::{Flow, FlowEvent},
+use crate::{
+    common::model_capabilities::ModelCapabilities,
+    interactive::{
+        components::{ApplicationState, Loading, ModelState, Selector, SelectorItem, SelectorStyle},
+        flows::{Flow, FlowEvent},
+    },
 };
 
 pub struct ModelsFlow {
