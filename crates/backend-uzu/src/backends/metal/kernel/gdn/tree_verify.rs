@@ -66,7 +66,7 @@ impl DeltaNetTreeVerify<Metal> for MetalDeltaNetTreeVerify {
         context: &MetalContext,
         arguments: &TreeVerifyNewArguments,
     ) -> Result<Self, MetalError> {
-        let use_mxu = arguments.data_type == DataType::BF16 && context.supports_mxu();
+        let use_mxu = false;
         let transposed_h0 =
             !use_mxu && matches!(context.device_tier(), DeviceTier::SmallLegacy | DeviceTier::SmallApple8);
         Ok(Self {
