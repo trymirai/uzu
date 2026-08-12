@@ -1,7 +1,7 @@
 use proc_macros::uzu_test;
 use shoji::types::basic::PcmBatch;
 
-use super::{N_SAMPLES, WhisperAudioError, WhisperLogMelSpectrogram, validate_pcm_batch, whisper_log_mel_spectrogram};
+use super::{N_SAMPLES, WhisperAudioError, WhisperLogMelFrontend, WhisperLogMelSpectrogram, validate_pcm_batch};
 
 const PCM_REFERENCE: &str = include_str!("../data/whisper/jfk_1s_200ms.s16le.hex");
 const MEL_80_REFERENCE: &str = include_str!("../data/whisper/jfk_1s_200ms.mel80.tsv");
@@ -22,7 +22,8 @@ fn pcm_batch(
 }
 
 fn pcm_error(pcm: &PcmBatch) -> WhisperAudioError {
-    let result = whisper_log_mel_spectrogram(pcm, 128);
+    let mut frontend = WhisperLogMelFrontend::new(128).expect("supported mel shape");
+    let result = frontend.transform(pcm);
     result.expect_err("invalid PCM must be rejected before the transform")
 }
 
@@ -87,9 +88,10 @@ fn requires_normalized_samples() {
 
 #[uzu_test]
 fn rejects_unsupported_mel_bins() {
-    let pcm = pcm_batch(0, 1, vec![0]);
-    let result = whisper_log_mel_spectrogram(&pcm, 96);
-    let error = result.expect_err("unsupported mel shape");
+    let result = WhisperLogMelFrontend::new(96);
+    let Err(error) = result else {
+        panic!("unsupported mel shape must be rejected");
+    };
 
     assert_eq!(error, WhisperAudioError::UnsupportedMelBins(96));
 }
@@ -124,8 +126,9 @@ fn stereo_uses_an_unweighted_arithmetic_downmix() {
         lengths: vec![2],
     };
 
-    let stereo = whisper_log_mel_spectrogram(&stereo, 80).expect("valid stereo PCM");
-    let mono = whisper_log_mel_spectrogram(&mono, 80).expect("valid mono PCM");
+    let mut frontend = WhisperLogMelFrontend::new(80).expect("supported mel shape");
+    let stereo = frontend.transform(&stereo).expect("valid stereo PCM");
+    let mono = frontend.transform(&mono).expect("valid mono PCM");
     assert_eq!(stereo, mono);
 }
 
@@ -165,7 +168,9 @@ fn assert_log_mel_matches(
         channels: 1,
     };
 
-    let actual = whisper_log_mel_spectrogram(&pcm, mel_bin_count).expect("valid reference audio");
+    let mut frontend = WhisperLogMelFrontend::new(mel_bin_count).expect("supported mel shape");
+    assert_eq!(frontend.mel_bin_count(), mel_bin_count);
+    let actual = frontend.transform(&pcm).expect("valid reference audio");
     assert_eq!(actual.shape(), [WhisperLogMelSpectrogram::FRAME_COUNT, mel_bin_count]);
     assert_eq!(actual.mel_bin_count(), mel_bin_count);
 

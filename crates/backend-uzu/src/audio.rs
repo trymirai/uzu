@@ -1,9 +1,9 @@
 //! Host-side audio transforms shared by speech model backends.
 
-use std::{f32::consts::PI, sync::OnceLock};
+use std::{f32::consts::PI, sync::Arc};
 
 use half::f16;
-use rustfft::{FftPlanner, num_complex::Complex};
+use rustfft::{Fft, FftPlanner, num_complex::Complex};
 use shoji::types::basic::PcmBatch;
 use thiserror::Error;
 
@@ -12,9 +12,6 @@ const N_FFT: usize = 400;
 const HOP_LENGTH: usize = 160;
 const N_SAMPLES: usize = 30 * SAMPLE_RATE as usize;
 const N_FRAMES: usize = N_SAMPLES / HOP_LENGTH;
-
-static MEL_80: OnceLock<Box<[f32]>> = OnceLock::new();
-static MEL_128: OnceLock<Box<[f32]>> = OnceLock::new();
 
 /// Invalid PCM or mel geometry for the fixed Whisper audio frontend.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -75,64 +72,113 @@ impl WhisperLogMelSpectrogram {
     }
 }
 
-/// Produces OpenAI Whisper's fixed-shape log-mel encoder input.
+/// Reusable OpenAI Whisper log-mel transform and its fixed-size workspace.
 ///
-/// The input must contain exactly one normalized 16 kHz PCM item of at most 30
-/// seconds. Interleaved channels are combined with an unweighted arithmetic
-/// mean because [`PcmBatch`] carries no channel-layout metadata; callers with
-/// nonuniform channel layouts should downmix first. Short inputs are zero-padded
-/// to 480,000 samples.
-///
-/// The transform applies Whisper's centered periodic-Hann STFT, Slaney mel
-/// filters, and dynamic-range normalization. Like OpenAI's frontend, it omits
-/// the final centered STFT frame and returns `f16` values in frame-major
-/// `[3_000, mel_bin_count]` layout. Only 80- and 128-bin Whisper checkpoints
-/// are supported.
-pub fn whisper_log_mel_spectrogram(
-    pcm: &PcmBatch,
+/// Construction retains the checkpoint-specific Slaney filter bank, periodic
+/// Hann window, RustFFT algorithm, and scratch allocations across calls. One
+/// mutable frontend should therefore be owned by each independently executing
+/// audio stream.
+pub struct WhisperLogMelFrontend {
     mel_bin_count: usize,
-) -> Result<WhisperLogMelSpectrogram, WhisperAudioError> {
-    validate_pcm_batch(pcm)?;
+    filters: Box<[f32]>,
+    window: Box<[f32]>,
+    fft: Arc<dyn Fft<f32>>,
+    audio: Box<[f32]>,
+    spectrum: Box<[Complex<f32>]>,
+    magnitudes: Box<[f32]>,
+    mel: Box<[f32]>,
+}
 
-    let filters = mel_filters(mel_bin_count)?;
-    let audio = downmix_and_pad(pcm);
-    let window =
-        (0..N_FFT).map(|index| 0.5 - 0.5 * (2.0 * PI * index as f32 / N_FFT as f32).cos()).collect::<Box<[_]>>();
-    let mut planner = FftPlanner::<f32>::new();
-    let fft = planner.plan_fft_forward(N_FFT);
-    let mut spectrum = vec![Complex::new(0.0, 0.0); N_FFT];
-    let frequency_bin_count = N_FFT / 2 + 1;
-    let mut magnitudes = vec![0.0f32; N_FRAMES * frequency_bin_count];
+impl WhisperLogMelFrontend {
+    /// Frontend geometry for one 80- or 128-bin Whisper checkpoint.
+    pub fn new(mel_bin_count: usize) -> Result<Self, WhisperAudioError> {
+        if !matches!(mel_bin_count, 80 | 128) {
+            return Err(WhisperAudioError::UnsupportedMelBins(mel_bin_count));
+        }
 
-    for frame_index in 0..N_FRAMES {
-        let start = frame_index as isize * HOP_LENGTH as isize - (N_FFT / 2) as isize;
-        for (window_index, value) in spectrum.iter_mut().enumerate() {
-            let audio_index = reflect_index(start + window_index as isize, audio.len());
-            *value = Complex::new(audio[audio_index] * window[window_index], 0.0);
-        }
-        fft.process(&mut spectrum);
-        for frequency_index in 0..frequency_bin_count {
-            magnitudes[frame_index * frequency_bin_count + frequency_index] = spectrum[frequency_index].norm_sqr();
-        }
+        let filters = create_mel_filters(mel_bin_count);
+        let window =
+            (0..N_FFT).map(|index| 0.5 - 0.5 * (2.0 * PI * index as f32 / N_FFT as f32).cos()).collect::<Box<[_]>>();
+        let mut planner = FftPlanner::<f32>::new();
+        let fft = planner.plan_fft_forward(N_FFT);
+        let frequency_bin_count = N_FFT / 2 + 1;
+
+        Ok(Self {
+            mel_bin_count,
+            filters,
+            window,
+            fft,
+            audio: vec![0.0; N_SAMPLES].into_boxed_slice(),
+            spectrum: vec![Complex::new(0.0, 0.0); N_FFT].into_boxed_slice(),
+            magnitudes: vec![0.0; frequency_bin_count].into_boxed_slice(),
+            mel: vec![0.0; N_FRAMES * mel_bin_count].into_boxed_slice(),
+        })
     }
 
-    let mut mel = vec![0.0f32; N_FRAMES * mel_bin_count];
-    for frame_index in 0..N_FRAMES {
-        for mel_index in 0..mel_bin_count {
-            let filter = &filters[mel_index * frequency_bin_count..(mel_index + 1) * frequency_bin_count];
-            let magnitude = &magnitudes[frame_index * frequency_bin_count..(frame_index + 1) * frequency_bin_count];
-            let energy = filter.iter().zip(magnitude).map(|(weight, value)| weight * value).sum::<f32>();
-            mel[frame_index * mel_bin_count + mel_index] = energy.max(1.0e-10).log10();
-        }
+    /// Number of mel bins selected by the checkpoint geometry.
+    pub fn mel_bin_count(&self) -> usize {
+        self.mel_bin_count
     }
 
-    let maximum = mel.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    let floor = maximum - 8.0;
-    let values = mel.into_iter().map(|value| f16::from_f32((value.max(floor) + 4.0) / 4.0)).collect();
-    Ok(WhisperLogMelSpectrogram {
-        values,
-        mel_bin_count,
-    })
+    /// Produces Whisper's fixed-shape log-mel encoder input.
+    ///
+    /// The input must contain exactly one normalized 16 kHz PCM item of at most
+    /// 30 seconds. Interleaved channels are combined with an unweighted
+    /// arithmetic mean because [`PcmBatch`] carries no channel-layout metadata;
+    /// callers with nonuniform channel layouts should downmix first. Short
+    /// inputs are zero-padded to 480,000 samples.
+    ///
+    /// The transform applies Whisper's centered periodic-Hann STFT, Slaney mel
+    /// filters, and dynamic-range normalization. Like OpenAI's frontend, it
+    /// omits the final centered STFT frame and returns `f16` values in
+    /// frame-major `[3_000, mel_bin_count]` layout.
+    pub fn transform(
+        &mut self,
+        pcm: &PcmBatch,
+    ) -> Result<WhisperLogMelSpectrogram, WhisperAudioError> {
+        validate_pcm_batch(pcm)?;
+        self.downmix_and_pad(pcm);
+
+        let frequency_bin_count = self.magnitudes.len();
+        for frame_index in 0..N_FRAMES {
+            let start = frame_index as isize * HOP_LENGTH as isize - (N_FFT / 2) as isize;
+            for (window_index, value) in self.spectrum.iter_mut().enumerate() {
+                let audio_index = reflect_index(start + window_index as isize, self.audio.len());
+                *value = Complex::new(self.audio[audio_index] * self.window[window_index], 0.0);
+            }
+
+            self.fft.process(&mut self.spectrum);
+            for (magnitude, value) in self.magnitudes.iter_mut().zip(&self.spectrum) {
+                *magnitude = value.norm_sqr();
+            }
+
+            for mel_index in 0..self.mel_bin_count {
+                let filter = &self.filters[mel_index * frequency_bin_count..(mel_index + 1) * frequency_bin_count];
+                let energy = filter.iter().zip(&self.magnitudes).map(|(weight, value)| weight * value).sum::<f32>();
+                self.mel[frame_index * self.mel_bin_count + mel_index] = energy.max(1.0e-10).log10();
+            }
+        }
+
+        let maximum = self.mel.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let floor = maximum - 8.0;
+        let values = self.mel.iter().map(|value| f16::from_f32((value.max(floor) + 4.0) / 4.0)).collect();
+        Ok(WhisperLogMelSpectrogram {
+            values,
+            mel_bin_count: self.mel_bin_count,
+        })
+    }
+
+    /// Equal-channel downmix followed by Whisper's fixed 30-second zero padding.
+    fn downmix_and_pad(
+        &mut self,
+        pcm: &PcmBatch,
+    ) {
+        self.audio.fill(0.0);
+        for (frame_index, frame) in pcm.samples.chunks_exact(pcm.channels as usize).enumerate() {
+            let sum = frame.iter().sum::<f64>();
+            self.audio[frame_index] = (sum / pcm.channels as f64) as f32;
+        }
+    }
 }
 
 /// Single-chunk shape and value contract required by Whisper's frontend.
@@ -172,16 +218,6 @@ fn validate_pcm_batch(pcm: &PcmBatch) -> Result<(), WhisperAudioError> {
     Ok(())
 }
 
-/// Equal-channel downmix followed by Whisper's fixed 30-second zero padding.
-fn downmix_and_pad(pcm: &PcmBatch) -> Vec<f32> {
-    let mut audio = vec![0.0f32; N_SAMPLES];
-    for (frame_index, frame) in pcm.samples.chunks_exact(pcm.channels as usize).enumerate() {
-        let sum = frame.iter().sum::<f64>();
-        audio[frame_index] = (sum / pcm.channels as f64) as f32;
-    }
-    audio
-}
-
 fn reflect_index(
     mut index: isize,
     length: usize,
@@ -195,15 +231,6 @@ fn reflect_index(
         };
     }
     index as usize
-}
-
-fn mel_filters(mel_bin_count: usize) -> Result<&'static [f32], WhisperAudioError> {
-    let filters = match mel_bin_count {
-        80 => MEL_80.get_or_init(|| create_mel_filters(80)),
-        128 => MEL_128.get_or_init(|| create_mel_filters(128)),
-        _ => return Err(WhisperAudioError::UnsupportedMelBins(mel_bin_count)),
-    };
-    Ok(filters)
 }
 
 /// Librosa's default Slaney bank, which OpenAI serialized as `mel_filters.npz`.
