@@ -2,25 +2,16 @@
 //!
 //! ```text
 //! cargo run -p backend-uzu --example trace -- \
-//!   --model workspace/models/0.5.14/Llama-3.2-1B-Instruct \
-//!   --message "Hello, how are you?" \
-//!   --output /tmp/uzu-trace.safetensors
+//!   --model <model dir> --message "Hello, how are you?" --output uzu-trace.safetensors
+//!
+//! lalamo trace <model dir> --input-trace-path uzu-trace.safetensors \
+//!   --output-path lalamo-trace.safetensors
+//! lalamo compare-traces lalamo-trace.safetensors uzu-trace.safetensors
 //! ```
 //!
-//! The result is directly comparable against lalamo:
-//!
-//! ```text
-//! lalamo trace --model-path <same model> \
-//!   --input-trace-path /tmp/uzu-trace.safetensors \
-//!   --output-path /tmp/lalamo-trace.safetensors
-//! lalamo compare-traces /tmp/lalamo-trace.safetensors /tmp/uzu-trace.safetensors
-//! ```
-//!
-//! Passing uzu's own trace back to lalamo as `--input-trace-path` is what keeps
-//! the comparison honest: the file carries `activation_trace.token_ids` and
-//! `activation_trace.token_positions`, so lalamo replays exactly the tokens uzu
-//! saw instead of re-tokenizing. Chat-template drift then shows up as a
-//! metadata difference rather than as a bogus numeric mismatch.
+//! Feeding uzu's trace back as `--input-trace-path` makes lalamo replay uzu's own
+//! token ids instead of re-tokenizing, so template drift shows up as a metadata
+//! difference rather than a numeric mismatch.
 
 use std::{collections::HashMap, error::Error, fs::File, io::BufReader, path::PathBuf, process::ExitCode};
 
@@ -79,9 +70,7 @@ fn parse_args() -> Result<Args, String> {
     })
 }
 
-/// Renders the chat template the way lalamo's `ChatCodec.render_request` does,
-/// so the two sides tokenize the same text: generation prompt on, thinking on,
-/// and the default system prompt prepended when the request has none.
+// Mirrors lalamo's ChatCodec.render_request so both sides tokenize the same text.
 fn render_request(
     codec_config: &Value,
     message: &str,
@@ -129,13 +118,11 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
     let tokenizer = Tokenizer::from_file(args.model.join("tokenizer.json"))
         .map_err(|error| format!("failed to load tokenizer: {error}"))?;
 
-    // The token codec sits at the top level of config.json, not inside the
-    // model config, so it is read straight from the JSON.
+    // The token codec sits at the top level of config.json, not inside the model config.
     let codec_config = config.get("token_codec_config").ok_or("config.json has no token_codec_config")?;
     let (rendered_request, request) = render_request(codec_config, &args.message)?;
 
-    // `add_special_tokens = false`: the template already emits them, and lalamo
-    // encodes the same way.
+    // add_special_tokens = false: the template already emits them, as on lalamo's side.
     let encoding = tokenizer
         .encode(rendered_request.as_str(), false)
         .map_err(|error| format!("failed to tokenize prompt: {error}"))?;
@@ -152,8 +139,6 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         engine.load_language_model(&args.model)?.record_trace(&token_ids)?
     };
 
-    // Same metadata lalamo's `record_tokenization_trace` writes, so a template
-    // divergence is visible by diffing the headers.
     let metadata = HashMap::from([
         ("add_special_tokens".to_owned(), "false".to_owned()),
         ("prompt_template".to_owned(), codec_config["prompt_template"].as_str().unwrap_or_default().to_owned()),
