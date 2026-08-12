@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub struct ParameterMetadata {
-    shape: Box<[usize]>,
+    shape: Box<[u32]>,
     data_type: DataType,
     offset: usize,
     size: usize,
@@ -37,14 +37,14 @@ pub enum ParameterLoaderError<B: Backend> {
     MetadataDeserializationError(#[from] serde_json::Error),
     #[error("Invalid tensor: got {shape:?} @ {data_type:?}, expected {expected_shape:?} @ {expected_data_type:?}")]
     InvalidTensor {
-        shape: Box<[usize]>,
+        shape: Box<[u32]>,
         data_type: DataType,
-        expected_shape: Box<[usize]>,
+        expected_shape: Box<[u32]>,
         expected_data_type: DataType,
     },
     #[error("Invalid tensor byte size: got {size} bytes for {shape:?} @ {data_type:?}, expected {expected_size} bytes")]
     InvalidTensorSize {
-        shape: Box<[usize]>,
+        shape: Box<[u32]>,
         data_type: DataType,
         size: usize,
         expected_size: usize,
@@ -144,7 +144,7 @@ pub struct ParameterLeaf<'a, 'leaf, B: Backend, const VALIDATED: bool> {
 impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, false> {
     pub fn validate(
         self,
-        expected_shape: &[usize],
+        expected_shape: &[u32],
         expected_data_type: DataType,
     ) -> Result<ParameterLeaf<'a, 'leaf, B, true>, ParameterLoaderError<B>> {
         let shape = self.metadata.shape.as_ref();
@@ -157,7 +157,7 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, false> {
                 expected_data_type,
             });
         }
-        let expected_size = size_for_shape(expected_shape, expected_data_type);
+        let expected_size = size_for_shape(expected_shape, &expected_data_type);
         if self.metadata.size != expected_size {
             return Err(ParameterLoaderError::InvalidTensorSize {
                 shape: shape.into(),
