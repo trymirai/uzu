@@ -14,7 +14,7 @@ use crate::{
         transformer::{Transformer, TransformerNewError, TransformerState},
     },
     parameters::ParameterTree,
-    utils::trace::{trace, trace_let, trace_scope, trace_scope_end},
+    utils::trace::{trace, trace_scope, trace_scope_end},
 };
 
 #[derive(Debug, Error)]
@@ -190,7 +190,8 @@ impl<B: Backend> Decoder<B> {
                 true,
                 encoder,
             )?;
-            trace_let!(shape = [1, output_range.len(), self.embedding.vocab_size()]);
+            #[cfg(feature = "trace")]
+            let shape = [1, output_range.len(), self.embedding.vocab_size()];
             trace!(encoder, "logits", &logits, shape, self.embedding.data_type());
             Some(logits)
         } else {
