@@ -5,7 +5,7 @@ use shoji::types::model::ModelSpecialization;
 use super::{Error, Recorder};
 use crate::{
     backends::{common::Backend, select_backend},
-    bridge::resolve_model_specialization,
+    bridge::model_specialization,
     engine::Engine,
 };
 
@@ -19,7 +19,7 @@ pub fn record_trace(
     output_path: &Path,
     metadata: Option<HashMap<String, String>>,
 ) -> Result<TraceOutput, Error> {
-    match resolve_model_specialization(model_path).map_err(Error::backend)? {
+    match model_specialization(model_path).map_err(Error::backend)? {
         ModelSpecialization::Chat {} => record_language_model(model_path, token_ids, output_path, metadata),
         ModelSpecialization::Classification {} => record_classifier(model_path, token_ids, output_path, metadata),
         other => Err(Error::Backend(format!("Tracing is not supported for {} models", other.name()))),

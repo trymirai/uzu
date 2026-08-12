@@ -2,12 +2,8 @@ use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::{Context, Result, bail};
 use backend_uzu::{ChatCodecConfig, trace::record_trace};
-use hanashi::chat::hanashi::renderer::{
-    RAISE_EXCEPTION_FUNCTION_NAME, STRFTIME_NOW_FUNCTION_NAME, TEMPLATE_NAME, TOJSON_FILTER_NAME, raise_exception,
-    strftime_now, to_json,
-};
-use minijinja::{Environment, context};
-use minijinja_contrib::pycompat::unknown_method_callback;
+use hanashi::chat::hanashi::renderer::{TEMPLATE_NAME, chat_template_environment};
+use minijinja::context;
 use serde_json::{Value, json};
 use tokenizers::Tokenizer;
 
@@ -84,16 +80,10 @@ fn render(
     template: &str,
     request: &Value,
 ) -> Result<String> {
-    let mut environment = Environment::new();
-    environment.set_unknown_method_callback(unknown_method_callback);
-    environment.add_function(STRFTIME_NOW_FUNCTION_NAME, strftime_now);
-    environment.add_function(RAISE_EXCEPTION_FUNCTION_NAME, raise_exception);
-    environment.add_filter(TOJSON_FILTER_NAME, to_json);
-    environment.add_template(TEMPLATE_NAME, template).context("Invalid prompt template")?;
-
+    let environment = chat_template_environment(template).context("Invalid prompt template")?;
     let rendered = environment
         .get_template(TEMPLATE_NAME)
-        .expect("template was just added")
+        .expect("template was just registered")
         .render(context!(..minijinja::Value::from_serialize(request)))
         .context("Failed to render prompt template")?;
 

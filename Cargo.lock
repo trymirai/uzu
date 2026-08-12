@@ -937,7 +937,6 @@ dependencies = [
  "iocraft",
  "jsonschema",
  "minijinja",
- "minijinja-contrib",
  "nagare",
  "ratatui",
  "rocket",
