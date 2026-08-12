@@ -1,13 +1,32 @@
 use std::{collections::HashMap, path::Path};
 
+use shoji::types::model::ModelSpecialization;
+
 use super::{Error, Recorder};
-use crate::{backends::select_backend, engine::Engine};
+use crate::{
+    backends::{common::Backend, select_backend},
+    bridge::resolve_model_specialization,
+    engine::Engine,
+};
 
 pub struct TraceOutput {
     pub array_count: usize,
 }
 
-pub fn record_language_model_trace(
+pub fn record_trace(
+    model_path: &Path,
+    token_ids: &[u64],
+    output_path: &Path,
+    metadata: Option<HashMap<String, String>>,
+) -> Result<TraceOutput, Error> {
+    match resolve_model_specialization(model_path).map_err(Error::backend)? {
+        ModelSpecialization::Chat {} => record_language_model(model_path, token_ids, output_path, metadata),
+        ModelSpecialization::Classification {} => record_classifier(model_path, token_ids, output_path, metadata),
+        other => Err(Error::Backend(format!("Tracing is not supported for {} models", other.name()))),
+    }
+}
+
+fn record_language_model(
     model_path: &Path,
     token_ids: &[u64],
     output_path: &Path,
@@ -23,7 +42,7 @@ pub fn record_language_model_trace(
     )
 }
 
-pub fn record_classifier_trace(
+fn record_classifier(
     model_path: &Path,
     token_ids: &[u64],
     output_path: &Path,
@@ -39,7 +58,7 @@ pub fn record_classifier_trace(
     )
 }
 
-fn write<B: crate::backends::common::Backend>(
+fn write<B: Backend>(
     recorder: Recorder<B>,
     output_path: &Path,
     metadata: Option<HashMap<String, String>>,
