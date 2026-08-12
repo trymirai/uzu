@@ -16,7 +16,7 @@ pub fn qkv_norm<
     AccumT: ArrayElement + Float,
 >(
     #[optional(!in_place)] qkv_input: Option<*const InputT>,
-    #[optional(!scale_free)] scales: Option<*const ScaleT>,
+    #[optional(has_scales)] scales: Option<*const ScaleT>,
     qkv_output: *mut OutputT,
     batch_size: u32,
     total_heads: u32,
@@ -27,7 +27,7 @@ pub fn qkv_norm<
     head_count: u32,
     full_layer: bool,
     #[specialize] in_place: bool,
-    #[specialize] scale_free: bool,
+    #[specialize] has_scales: bool,
 ) {
     let qkv_input = match in_place {
         true => qkv_output as *const InputT,
@@ -57,7 +57,7 @@ pub fn qkv_norm<
             for i in 0..head_dim {
                 let input_val = unsafe { AccumT::from(*qkv_input.add(offset + i)).unwrap() };
                 let normalized: AccumT = input_val * rms_norm;
-                let result: OutputT = if scale_free {
+                let result: OutputT = if !has_scales {
                     OutputT::from(normalized).unwrap()
                 } else {
                     let scale_val = unsafe { AccumT::from(*scales.unwrap().add(i)).unwrap() };

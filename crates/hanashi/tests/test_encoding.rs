@@ -574,6 +574,146 @@ fn test_encoding_functiongemma() {
 }
 
 #[test]
+fn test_rendering_muse_glimmer_tool_call_rerender() {
+    let config = HanashiConfig::MuseGlimmer.resolve().unwrap();
+    let renderer = hanashi::chat::hanashi::renderer::Renderer::new(config.rendering);
+
+    let messages = vec![
+        ChatMessage::system().with_text("You are a helpful assistant".to_string()),
+        ChatMessage::user().with_text("What time is it now?".to_string()),
+        ChatMessage::assistant().with_reasoning("Need the current time.".to_string()).with_tool_call(ToolCall {
+            identifier: None,
+            name: "get_current_time".to_string(),
+            arguments: Value::from(serde_json::json!({"timezone": "UTC"})),
+        }),
+        ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+            identifier: None,
+            name: Some("get_current_time".to_string()),
+            value: Value::from(serde_json::json!({"time": "17:03"})),
+        }),
+    ];
+    let rendered = renderer
+        .render(
+            &messages,
+            true,
+            Some(Token {
+                id: 0,
+                value: "<|begin_of_text|>".to_string(),
+                is_special: true,
+            }),
+            None,
+            None,
+        )
+        .unwrap();
+
+    let expected = concat!(
+        "<|begin_of_text|>",
+        "<|start|>system<|message|>You are a helpful assistant",
+        "\n\nReasoning strength: high.",
+        "\n\n# Valid recipients: \"self\", \"user\".<|eot|>",
+        "<|start|>user<|message|>What time is it now?<|eot|>",
+        "<|start|>assistant to=self<|message|>Need the current time.<|eom|>",
+        "<|start|>assistant to=get_current_time<|message|>",
+        "<atem:function_calls>\n<atem:invoke name=\"get_current_time\">\n",
+        "<atem:parameter name=\"timezone\">UTC</atem:parameter>\n",
+        "</atem:invoke>\n</atem:function_calls><|eot|>",
+        "<|start|>tool get_current_time<|message|>",
+        "<tool_output name=\"get_current_time\">\n{\"time\": \"17:03\"}\n</tool_output><|eot|>",
+        "<|start|>assistant",
+    );
+    assert_eq!(rendered, expected);
+}
+
+#[test]
+fn test_encoding_muse_glimmer_tool_call_roundtrip() {
+    let tokenizer_directory = tokenizer_directory("meta-models_Muse-Glimmer-30B");
+    if !tokenizer_directory.exists() {
+        return;
+    }
+    let tokenizer = load_tokenizer("meta-models_Muse-Glimmer-30B");
+
+    let mut encoding = build_encoding(hanashi(HanashiConfig::MuseGlimmer), "meta-models_Muse-Glimmer-30B");
+
+    let messages = vec![
+        ChatMessage::system().with_text("You are a helpful assistant".to_string()),
+        ChatMessage::user().with_text("What time is it now?".to_string()),
+        ChatMessage::assistant().with_reasoning("Need the current time.".to_string()).with_tool_call(ToolCall {
+            identifier: None,
+            name: "get_current_time".to_string(),
+            arguments: Value::from(serde_json::json!({"timezone": "UTC"})),
+        }),
+        ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+            identifier: None,
+            name: Some("get_current_time".to_string()),
+            value: Value::from(serde_json::json!({"time": "17:03"})),
+        }),
+    ];
+    encoding.encode(messages).unwrap();
+
+    let expected = concat!(
+        "<|begin_of_text|>",
+        "<|start|>system<|message|>You are a helpful assistant",
+        "\n\nReasoning strength: high.",
+        "\n\n# Valid recipients: \"self\", \"user\".<|eot|>",
+        "<|start|>user<|message|>What time is it now?<|eot|>",
+        "<|start|>assistant to=self<|message|>Need the current time.<|eom|>",
+        "<|start|>assistant to=get_current_time<|message|>",
+        "<atem:function_calls>\n<atem:invoke name=\"get_current_time\">\n",
+        "<atem:parameter name=\"timezone\">UTC</atem:parameter>\n",
+        "</atem:invoke>\n</atem:function_calls><|eot|>",
+        "<|start|>tool get_current_time<|message|>",
+        "<tool_output name=\"get_current_time\">\n{\"time\": \"17:03\"}\n</tool_output><|eot|>",
+        "<|start|>assistant",
+    );
+    assert_eq!(encoding.state().text(), expected);
+
+    let completion = " to=user<|message|>It is 17:03.<|eot|>";
+    for token_id in tokenizer.encode(completion, false).unwrap().get_ids() {
+        encoding.decode(vec![*token_id]).unwrap();
+    }
+
+    let assistant_message = encoding.state().messages.last().unwrap();
+    assert_eq!(assistant_message.role, ChatRole::Assistant {});
+    assert_eq!(assistant_message.text().unwrap_or_default(), "It is 17:03.");
+}
+
+#[test]
+fn test_decoding_muse_glimmer_reasoning_and_tool_call() {
+    let tokenizer_directory = tokenizer_directory("meta-models_Muse-Glimmer-30B");
+    if !tokenizer_directory.exists() {
+        return;
+    }
+    let tokenizer = load_tokenizer("meta-models_Muse-Glimmer-30B");
+
+    let mut encoding = build_encoding(hanashi(HanashiConfig::MuseGlimmer), "meta-models_Muse-Glimmer-30B");
+    encoding.encode(vec![ChatMessage::user().with_text("Temp?".to_string())]).unwrap();
+
+    let completion = concat!(
+        " to=self<|message|>Need the temperature.<|eom|>",
+        "<|start|>assistant to=get_current_temperature<|message|>",
+        "<atem:function_calls>\n<atem:invoke name=\"get_current_temperature\">\n",
+        "<atem:parameter name=\"city\">Paris</atem:parameter>\n",
+        "<atem:parameter name=\"days\">3</atem:parameter>\n",
+        "<atem:parameter name=\"metric\">true</atem:parameter>\n",
+        "</atem:invoke>\n</atem:function_calls><|eom|>"
+    );
+    for token_id in tokenizer.encode(completion, false).unwrap().get_ids() {
+        encoding.decode(vec![*token_id]).unwrap();
+    }
+
+    let assistant_message = encoding.state().messages.last().unwrap();
+    assert_eq!(assistant_message.role, ChatRole::Assistant {});
+    assert!(assistant_message.content.iter().any(|block| matches!(block, ChatContentBlock::Reasoning { .. })));
+    let tool_calls = assistant_message.tool_calls();
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].name, "get_current_temperature");
+    assert_eq!(
+        tool_calls[0].arguments,
+        Value::from(serde_json::json!({"city": "Paris", "days": "3", "metric": "true"}))
+    );
+}
+
+#[test]
 fn test_rendering_functiongemma_non_object_tool_results() {
     let config = HanashiConfig::FunctionGemma.resolve().unwrap();
     let renderer = hanashi::chat::hanashi::renderer::Renderer::new(config.rendering);

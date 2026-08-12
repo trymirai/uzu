@@ -88,7 +88,7 @@ impl<B: Backend> TransformerLayer<B> {
             data_type,
             layer_config.rope_config.as_ref(),
             &layer_config.mixer_config,
-            &parameter_tree.subtree("mixer")?,
+            &parameter_tree.subtree("mixer"),
             context,
         )?;
 
@@ -104,7 +104,7 @@ impl<B: Backend> TransformerLayer<B> {
                 PostLayerScalar::None,
                 data_type,
                 pre_mixer_norm_config,
-                &parameter_tree.subtree("pre_mixer_norm")?,
+                &parameter_tree.subtree("pre_mixer_norm"),
                 context,
             )?)
         } else {
@@ -122,7 +122,7 @@ impl<B: Backend> TransformerLayer<B> {
                 PostLayerScalar::None,
                 data_type,
                 norm_config,
-                &parameter_tree.subtree("post_mixer_norm")?,
+                &parameter_tree.subtree("post_mixer_norm"),
                 context,
             )?)
         } else {
@@ -134,7 +134,7 @@ impl<B: Backend> TransformerLayer<B> {
             model_dim,
             layer_config.hidden_dim.unwrap_or(hidden_dim),
             context,
-            &parameter_tree.subtree("mlp")?,
+            &parameter_tree.subtree("mlp"),
             data_type,
         )?;
 
@@ -145,7 +145,7 @@ impl<B: Backend> TransformerLayer<B> {
             residual_sum_scalar,
             data_type,
             &layer_config.pre_mlp_norm_config,
-            &parameter_tree.subtree("pre_mlp_norm")?,
+            &parameter_tree.subtree("pre_mlp_norm"),
             context,
         )?;
 
@@ -157,7 +157,7 @@ impl<B: Backend> TransformerLayer<B> {
                 output_scalar,
                 data_type,
                 norm_config,
-                &parameter_tree.subtree("post_mlp_norm")?,
+                &parameter_tree.subtree("post_mlp_norm"),
                 context,
             )?)
         } else {
@@ -165,7 +165,7 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         let ple_projection = layer_config.ple_config.as_ref().map(|ple_config| {
-            let ple_loader = parameter_tree.subtree("ple").expect("Failed to get ple subtree");
+            let ple_loader = parameter_tree.subtree("ple");
             PerLayerEmbeddingProjection::new(
                 context,
                 ple_config,

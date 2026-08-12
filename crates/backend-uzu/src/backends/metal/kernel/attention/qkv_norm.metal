@@ -17,7 +17,7 @@ VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(AccumT, float, half)
 PUBLIC KERNEL(QKVNorm)(
     const device InputT* qkv_input OPTIONAL(!in_place),
-    const device ScaleT* scales OPTIONAL(!scale_free),
+    const device ScaleT* scales OPTIONAL(has_scales),
     device OutputT* qkv_output,
     constant uint& batch_size,
     constant uint& total_heads,
@@ -31,7 +31,7 @@ PUBLIC KERNEL(QKVNorm)(
     const uint head_idx GROUPS(head_count),
     const uint lane_id THREADS(METAL_SIMD_SIZE),
     const bool in_place SPECIALIZE,
-    const bool scale_free SPECIALIZE
+    const bool has_scales SPECIALIZE
 ) {
   if (in_place) {
     qkv_input = (const device InputT*)qkv_output;
@@ -84,7 +84,7 @@ PUBLIC KERNEL(QKVNorm)(
 
       AccumT normalized_high = vals[j] * rms_norm;
 
-      if (scale_free) {
+      if (!has_scales) {
         output_data[i] = static_cast<OutputT>(normalized_high);
       } else if (full_layer) {
         AccumT scale_value_high = static_cast<AccumT>(scales_data[i]) + static_cast<AccumT>(scale_offset);

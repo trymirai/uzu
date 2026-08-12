@@ -70,10 +70,10 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let weights_file = File::open(model_path.join("model.safetensors"))?;
         let weight_loader = ParameterLoader::new(&weights_file, &*context)?;
-        let speculator_tree = weight_loader.tree().subtree("speculator")?;
+        let speculator_tree = weight_loader.tree().subtree("speculator");
 
-        let dflash = DFlash::new(&*context, &config.draft_config, &speculator_tree.subtree("draft_model")?, data_type)?;
-        let weaver = Weaver::new(&*context, &config.weaver_config, &speculator_tree.subtree("weaver")?)?;
+        let dflash = DFlash::new(&*context, &config.draft_config, &speculator_tree.subtree("draft_model"), data_type)?;
+        let weaver = Weaver::new(&*context, &config.weaver_config, &speculator_tree.subtree("weaver"))?;
 
         weight_loader.tree().assert_all_tensors_validated()?;
 
