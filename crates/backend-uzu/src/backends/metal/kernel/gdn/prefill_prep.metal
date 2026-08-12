@@ -15,6 +15,7 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
     device const float* dt_bias,
     device QKT* q_norm_out,
     device QKT* k_norm_out,
+    device float* state_k_norm_out OPTIONAL(write_state_k_norm),
     device T* compact_v_out OPTIONAL(write_compact_v),
     device float* beta_out,
     device float* decay_out,
@@ -27,6 +28,7 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
     const uint hk_idx GROUPS(num_k_heads),
     const bool write_log_decay SPECIALIZE,
     const bool write_compact_v SPECIALIZE,
+    const bool write_state_k_norm SPECIALIZE,
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
   static_assert(HEAD_K_DIM % METAL_SIMD_SIZE == 0, "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE");
@@ -60,21 +62,25 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
   const uint out_base = token_idx * key_dim + hk_idx * HEAD_K_DIM;
   for (uint i = 0; i < elems_per_thread; ++i) {
     const uint idx = lane + i * METAL_SIMD_SIZE;
+    const float k_norm = k_vals[i] * k_inv_norm;
     q_norm_out[out_base + idx] = static_cast<QKT>(q_vals[i] * q_inv_norm * q_scale);
-    k_norm_out[out_base + idx] = static_cast<QKT>(k_vals[i] * k_inv_norm);
+    k_norm_out[out_base + idx] = static_cast<QKT>(k_norm);
+    if (write_state_k_norm) {
+      state_k_norm_out[out_base + idx] = k_norm;
+    }
   }
 
   for (uint group = lane; group < groups_per_head; group += METAL_SIMD_SIZE) {
     const uint hv = hk_idx * groups_per_head + group;
     const float beta_raw = float(in_proj[tok_offset + conv_dim + value_dim + hv]);
     const float a_raw = float(in_proj[tok_offset + conv_dim + value_dim + num_v_heads + hv]);
-    const float log_decay = -fast::exp(a_log[hv]) * activate_softplus(a_raw + dt_bias[hv]);
+    const float log_decay = -exp(a_log[hv]) * activate_softplus(a_raw + dt_bias[hv]);
 
-    beta_out[token_idx * num_v_heads + hv] = 1.0f / (1.0f + fast::exp(-beta_raw));
+    beta_out[token_idx * num_v_heads + hv] = 1.0f / (1.0f + exp(-beta_raw));
     if (write_log_decay) {
       decay_out[token_idx * num_v_heads + hv] = log_decay;
     } else {
-      decay_out[token_idx * num_v_heads + hv] = fast::exp(log_decay);
+      decay_out[token_idx * num_v_heads + hv] = exp(log_decay);
     }
   }
 

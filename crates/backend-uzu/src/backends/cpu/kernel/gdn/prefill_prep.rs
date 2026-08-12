@@ -15,6 +15,7 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, QKT: ArrayElement + Float
     dt_bias: *const f32,
     q_norm_out: *mut QKT,
     k_norm_out: *mut QKT,
+    #[optional(write_state_k_norm)] state_k_norm_out: Option<*mut f32>,
     #[optional(write_compact_v)] compact_v_out: Option<*mut T>,
     beta_out: *mut f32,
     decay_out: *mut f32,
@@ -25,9 +26,8 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, QKT: ArrayElement + Float
     suffix_len: u32,
     #[specialize] write_log_decay: bool,
     #[specialize] write_compact_v: bool,
+    #[specialize] write_state_k_norm: bool,
 ) {
-    assert_eq!(compact_v_out.is_some(), write_compact_v, "compact V output presence mismatch");
-
     let num_v_heads = num_v_heads as usize;
     let num_k_heads = num_k_heads as usize;
     let head_k_dim = HEAD_K_DIM as usize;
@@ -41,7 +41,8 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, QKT: ArrayElement + Float
     for token in 0..suffix_len {
         let tok_offset = token * total_proj_dim;
 
-        if let Some(compact_v_out) = compact_v_out {
+        if write_compact_v {
+            let compact_v_out = compact_v_out.unwrap();
             unsafe {
                 in_proj
                     .add(tok_offset + 2 * key_dim)
@@ -76,7 +77,12 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, QKT: ArrayElement + Float
             let k_inv = 1.0 / (k_sq + 1e-6).sqrt();
             for j in 0..head_k_dim {
                 let v = unsafe { (*in_proj.add(k_off + j)).to_f32().unwrap() };
-                unsafe { *k_norm_out.add(token * key_dim + hk * head_k_dim + j) = QKT::from(v * k_inv).unwrap() };
+                let k_norm = v * k_inv;
+                unsafe { *k_norm_out.add(token * key_dim + hk * head_k_dim + j) = QKT::from(k_norm).unwrap() };
+                if write_state_k_norm {
+                    let state_k_norm_out = state_k_norm_out.unwrap();
+                    unsafe { *state_k_norm_out.add(token * key_dim + hk * head_k_dim + j) = k_norm };
+                }
             }
 
             // Beta and decay for each v-head of this k-head

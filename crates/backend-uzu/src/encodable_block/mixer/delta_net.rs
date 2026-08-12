@@ -38,7 +38,7 @@ enum DeltaNetSuffixStatus<B: Backend> {
     },
     Tree {
         conv_states: Allocation<B>,
-        k: Allocation<B>,
+        state_k_norm: Allocation<B>,
         v: Allocation<B>,
         log_decay: Allocation<B>,
         beta: Allocation<B>,
@@ -79,7 +79,7 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
             },
             DeltaNetSuffixStatus::Tree {
                 conv_states,
-                k,
+                state_k_norm,
                 v,
                 log_decay,
                 beta,
@@ -102,7 +102,7 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                     encoder.allocate_constant(accepted_indices.len() * DataType::U32.size_in_bytes())?;
                 accepted_indices_buffer.copyin(&accepted_indices);
                 self.state_advance.encode(
-                    &k,
+                    &state_k_norm,
                     &v,
                     &log_decay,
                     &beta,
@@ -251,6 +251,7 @@ impl<B: Backend> DeltaNet<B> {
             config.head_dim as u32,
             false,
             false,
+            false,
         )
         .map_err(DeltaNetNewError::Backend)?;
         let delta_net_tree_prep = <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
@@ -258,6 +259,7 @@ impl<B: Backend> DeltaNet<B> {
             outer_data_type,
             outer_data_type,
             config.head_dim as u32,
+            true,
             true,
             true,
         )
@@ -354,6 +356,7 @@ impl<B: Backend> DeltaNet<B> {
         let mut conv_states = encoder
             .allocate_scratch(size_for_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], DataType::F32))?;
         let mut k = encoder.allocate_scratch(size_for_shape(&[tree_size, self.key_dim], self.outer_data_type))?;
+        let mut state_k_norm = encoder.allocate_scratch(size_for_shape(&[tree_size, self.key_dim], DataType::F32))?;
         let mut v = encoder.allocate_scratch(size_for_shape(&[tree_size, self.value_dim], self.outer_data_type))?;
         let mut beta = encoder.allocate_scratch(size_for_shape(&[tree_size, self.num_heads], DataType::F32))?;
         let mut log_decay = encoder.allocate_scratch(size_for_shape(&[tree_size, self.num_heads], DataType::F32))?;
@@ -382,6 +385,7 @@ impl<B: Backend> DeltaNet<B> {
             &self.dt_bias,
             &mut q,
             &mut k,
+            Some(&mut state_k_norm),
             Some(&mut v),
             &mut beta,
             &mut log_decay,
@@ -423,7 +427,7 @@ impl<B: Backend> DeltaNet<B> {
         let output = self.out_projection.encode(delta_output, tree_size, encoder)?;
         state.suffix_status = Some(DeltaNetSuffixStatus::Tree {
             conv_states,
-            k,
+            state_k_norm,
             v,
             log_decay,
             beta,
@@ -598,6 +602,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                     &self.dt_bias,
                     &mut prep_q_norm,
                     &mut prep_k_norm,
+                    None::<&mut Allocation<B>>,
                     None::<&mut Allocation<B>>,
                     &mut prep_beta,
                     &mut prep_decay,

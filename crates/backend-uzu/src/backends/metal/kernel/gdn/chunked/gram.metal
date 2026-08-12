@@ -105,7 +105,7 @@ KERNEL(DeltaNetChunkedGram)(
       }
       const float g_row = g_head[chunk_token_base + row];
       const float g_col = g_head[chunk_token_base + col];
-      return value * fast::exp(g_row - g_col);
+      return value * exp(g_row - g_col);
     });
     const uint dst_base =
         (chunk_idx * num_v_heads + hv_idx) * CHUNK_SIZE * CHUNK_SIZE + row_base * CHUNK_SIZE + col_base;

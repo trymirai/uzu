@@ -54,7 +54,15 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
 
         Ok(Some(Self {
             min_t: MXU_MIN_T,
-            prep: DeltaNetPrefillPrepMetalKernel::new(context, outer_data_type, DataType::F32, head_dim, true, false)?,
+            prep: DeltaNetPrefillPrepMetalKernel::new(
+                context,
+                outer_data_type,
+                DataType::F32,
+                head_dim,
+                true,
+                false,
+                false,
+            )?,
             cumsum: DeltaNetChunkedCumsumMetalKernel::new(context, CHUNK_SIZE as u32)?,
             gram: DeltaNetChunkedGramMetalKernel::new(context, head_dim, CHUNK_SIZE as u32)?,
             a_diag_inv: DeltaNetChunkedADiagInvMetalKernel::new(context, CHUNK_SIZE as u32)?,
@@ -124,6 +132,7 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
             args.dt_bias,
             &mut q_norm,
             &mut k_norm,
+            None::<&mut crate::backends::common::Allocation<Metal>>,
             None::<&mut crate::backends::common::Allocation<Metal>>,
             &mut beta,
             &mut log_decay,

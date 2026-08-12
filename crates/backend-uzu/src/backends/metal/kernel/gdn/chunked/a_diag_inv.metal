@@ -66,7 +66,7 @@ KERNEL(DeltaNetChunkedADiagInv)(
       const float beta_row = beta[row_token * num_v_heads + hv_idx];
       const float g_row = g_head[row_token];
       const float g_col = g_head[col_token];
-      value = beta_row * fast::exp(g_row - g_col) * kk[kk_base + row * CHUNK_SIZE + col];
+      value = beta_row * exp(g_row - g_col) * kk[kk_base + row * CHUNK_SIZE + col];
     }
 
     const uint out_idx =

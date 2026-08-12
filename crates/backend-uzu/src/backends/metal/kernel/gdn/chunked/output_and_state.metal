@@ -146,7 +146,7 @@ KERNEL(DeltaNetChunkedOutputAndState)(
         const float beta_t = beta[token * num_v_heads + hv_idx];
         const float g_t = g_head[token];
         const float value_input = float(value_input_tile[uint(row) * total_proj_dim + uint(col)]);
-        return beta_t * (value_input - fast::exp(g_t) * state_projection);
+        return beta_t * (value_input - exp(g_t) * state_projection);
       });
       residual_acc.store(lane, residual_new_value_tile + token_tile_base * VT, int(VT));
     }
@@ -200,7 +200,7 @@ KERNEL(DeltaNetChunkedOutputAndState)(
           return 0.0f;
         }
         const uint token = token_base + token_tile_base + uint(row);
-        return value * fast::exp(g_head[token]);
+        return value * exp(g_head[token]);
       });
 
       const uint qk_tile_base =
@@ -235,7 +235,7 @@ KERNEL(DeltaNetChunkedOutputAndState)(
       const uint key_tile_base = simdgroup_idx * OUTPUT_STATE_KEY_TILE;
       const uint g_last_token = token_base + (valid_tokens > 0 ? valid_tokens - 1 : 0u);
       const float g_last = g_head[g_last_token];
-      const float state_decay = fast::exp(g_last);
+      const float state_decay = exp(g_last);
 
       ValueKeyFragment state_update_acc;
       state_update_acc.clear();
@@ -262,7 +262,7 @@ KERNEL(DeltaNetChunkedOutputAndState)(
           }
           const uint token = token_base + source_token_block_start + uint(row);
           // beta is already folded into Vnew through R.
-          return value * fast::exp(g_last - g_head[token]);
+          return value * exp(g_last - g_head[token]);
         });
         fragment_mma(state_update_acc, new_value_frag, key_frag);
       }

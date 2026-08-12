@@ -86,6 +86,7 @@ fn run_prefill<T: ArrayElement>(
                 HEAD_K_DIM as u32,
                 false,
                 false,
+                false,
             )
             .expect("prep")
             .encode(
@@ -94,6 +95,7 @@ fn run_prefill<T: ArrayElement>(
                 &dt_bias,
                 &mut q,
                 &mut k,
+                None::<&mut crate::backends::common::Allocation<Metal>>,
                 None::<&mut crate::backends::common::Allocation<Metal>>,
                 &mut beta,
                 &mut decay,

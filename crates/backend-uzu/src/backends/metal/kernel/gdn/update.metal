@@ -71,10 +71,10 @@ PUBLIC KERNEL(DeltaNetUpdate)(
 
   // beta / decay (scalar per head)
   const float beta_raw = float(in_proj[conv_dim + value_dim + hv_idx]);
-  const float beta = 1.0f / (1.0f + fast::exp(-beta_raw));
+  const float beta = 1.0f / (1.0f + exp(-beta_raw));
   const float a_raw = float(in_proj[conv_dim + value_dim + num_v_heads + hv_idx]);
   const float sp = activate_softplus(a_raw + float(dt_bias[hv_idx]));
-  const float decay = fast::exp(-fast::exp(float(a_log[hv_idx])) * sp);
+  const float decay = exp(-exp(float(a_log[hv_idx])) * sp);
 
   // Delta rule over the dv owned by this simd group. State is [Hv, Dv, Dk].
   for (uint dv = sg; dv < head_v_dim; dv += NUM_SG) {

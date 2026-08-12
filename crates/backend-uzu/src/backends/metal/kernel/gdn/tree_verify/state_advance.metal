@@ -14,8 +14,8 @@ template <typename T, uint HEAD_K_DIM>
 VARIANTS(T, float, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 PUBLIC KERNEL(StateAdvance)(
-    // [tree_size, num_k_heads, HEAD_K_DIM]
-    device const T* k_norm,
+    // F32 normalized key for the persistent-state update.
+    device const float* state_k_norm,
     // [tree_size, num_v_heads, HEAD_K_DIM]
     device const T* v,
     // [tree_size, num_v_heads]
@@ -57,10 +57,10 @@ PUBLIC KERNEL(StateAdvance)(
   for (uint accepted_idx = 0; accepted_idx < accepted_len; ++accepted_idx) {
     const uint tree_idx = accepted_indices[accepted_idx];
     const uint tree_head_offset = tree_idx * num_v_heads + hv_idx;
-    const float decay = fast::exp(log_decay_buf[tree_head_offset]);
+    const float decay = exp(log_decay_buf[tree_head_offset]);
     const float beta = beta_buf[tree_head_offset];
     const uint k_offset = tree_idx * key_dim + hk_idx * HEAD_K_DIM + dk_base;
-    const float4 k = float4(*reinterpret_cast<const device vec<T, 4>*>(k_norm + k_offset));
+    const float4 k = *reinterpret_cast<const device float4*>(state_k_norm + k_offset);
 
     state_rows[0] *= decay;
     state_rows[1] *= decay;
