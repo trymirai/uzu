@@ -198,9 +198,6 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
 
 #[cfg(feature = "trace")]
 impl<'encoding, B: Backend> Encoder<'encoding, B> {
-    /// Starts recording activations. The recorder travels with the command
-    /// buffer and is handed back by [`Completed::take_recorder`], so captured
-    /// buffers stay alive until the GPU is done writing them.
     pub fn attach_recorder(
         &mut self,
         recorder: Recorder<B>,
@@ -227,20 +224,8 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         }
     }
 
-    /// Copies `src` into a fresh buffer and records it under the current scope.
-    ///
-    /// The copy is required because allocations are moved along the encode
-    /// chain and their ranges are recycled once dropped; it goes through
-    /// [`Self::encode_copy`], so the hazard tracker orders it after whatever
-    /// kernel produced `src`.
-    ///
-    /// Destinations are [`AllocationType::Global`] rather than pooled: the
-    /// recorder outlives the encoder's pool, and freeing that pool would pull
-    /// the range out from under a still-live pooled allocation.
-    ///
-    /// Panics if the destination cannot be allocated. This only runs while
-    /// tracing, where failing loudly beats threading a result type through
-    /// every capture point in the forward pass.
+    // Copies because encode-chain allocations are moved and their ranges recycled.
+    // Destinations are global: the recorder outlives the encoder's pool.
     pub fn trace(
         &mut self,
         name: &str,
@@ -270,8 +255,6 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         self.recorder = Some(recorder);
     }
 
-    /// Records host-side data directly, for arrays that have no device-side
-    /// equivalent (uzu runs token ids as `u32`, lalamo's trace wants `i32`).
     pub fn trace_host<T: NoUninit + AnyBitPattern>(
         &mut self,
         name: &str,
@@ -346,9 +329,6 @@ impl<B: Backend> Completed<B> {
         self.command_buffer.gpu_execution_time()
     }
 
-    /// Takes back the recorder attached by [`Encoder::attach_recorder`]. Safe
-    /// to read here: the command buffer has completed, so every captured copy
-    /// has landed.
     #[cfg(feature = "trace")]
     pub fn take_recorder(&mut self) -> Option<Recorder<B>> {
         self.recorder.take()

@@ -152,8 +152,7 @@ impl<B: Backend> Classifier<B> {
         trace!(encoder, "output_pooling", &pooled, [1, self.hidden_dim], self.data_type);
 
         let logits = self.prediction_head.encode(pooled, 1, encoder).map_err(ClassifierError::Backend)?;
-        // lalamo's ClassifierResult carries logits both at the root and inside
-        // the activation trace, so record it under both paths.
+        // Recorded under both the activation trace and the root.
         trace_let!(logits_shape = [1, self.num_labels]);
         trace!(encoder, "logits", &logits, logits_shape, self.data_type);
         trace_scope_end!(encoder);

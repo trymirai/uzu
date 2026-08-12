@@ -126,9 +126,6 @@ impl<B: Backend> Decoder<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         encoder.push_debug_group("decoder");
-        // Everything the transformer captures nests under `activation_trace`,
-        // matching lalamo's `DecoderResult.activation_trace`. `logits` sits at
-        // the root, so the scope is closed before it is recorded.
         trace_scope!(encoder, "activation_trace");
 
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), encoder)?;

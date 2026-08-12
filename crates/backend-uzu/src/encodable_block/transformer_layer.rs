@@ -223,10 +223,7 @@ impl<B: Backend> TransformerLayer<B> {
             encoder.encode_copy(&input, .., shortcut, ..);
             input
         };
-        // The residual add is fused into the norm, so `shortcut` now holds the
-        // layer's residual input — lalamo's `inputs`. With no pre-mixer norm
-        // lalamo passes `inputs` through unnormalized, which is what the copy
-        // branch above leaves in `hidden`.
+        // The residual add is fused into the norm, so shortcut now holds the layer input.
         trace!(encoder, "inputs", shortcut, activations, self.data_type);
         trace!(encoder, "pre_mixer_norm", &hidden, activations, self.data_type);
 
@@ -240,7 +237,6 @@ impl<B: Backend> TransformerLayer<B> {
         }
 
         hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut), encoder)?;
-        // Same fusion again: `shortcut` is now `inputs + mixer`, lalamo's `mlp_inputs`.
         trace!(encoder, "mlp_inputs", shortcut, activations, self.data_type);
         trace!(encoder, "pre_mlp_norm", &hidden, activations, self.data_type);
 

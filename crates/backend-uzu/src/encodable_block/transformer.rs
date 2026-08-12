@@ -301,9 +301,7 @@ impl<B: Backend> Transformer<B> {
                 encoder,
             )?;
 
-            // A layer's output is `mlp_inputs + mlp`, which uzu never
-            // materializes — the add is deferred into the next layer's norm.
-            // Only pay for the extra dispatch while tracing.
+            // Layer output is never materialized: the add is deferred into the next layer's norm.
             #[cfg(feature = "trace")]
             if encoder.is_recording() {
                 let outputs = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;

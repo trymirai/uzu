@@ -146,8 +146,6 @@ impl<B: Backend> ClassifierModel<B> {
         })
     }
 
-    /// Runs one classification pass over `input`, capturing every intermediate
-    /// activation under lalamo's `ClassifierActivationTrace` layout.
     #[cfg(feature = "trace")]
     pub fn record_trace(
         &self,
@@ -171,8 +169,6 @@ impl<B: Backend> ClassifierModel<B> {
             .map_err(ClassifierModelClassifyError::Backend)?;
         token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 
-        // lalamo stores ids and positions as i32; the classifier attends over a
-        // flat sequence, so positions are exactly `0..n`.
         let host_token_ids = input.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
         let host_token_positions = (0..input.len() as i32).collect::<Box<[i32]>>();
         let token_shape = [1, input.len()];

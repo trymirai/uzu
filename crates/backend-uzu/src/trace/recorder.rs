@@ -13,13 +13,6 @@ use crate::{
     data_type::DataType,
 };
 
-/// Collects activations of a single forward pass under lalamo's path layout.
-///
-/// Paths are built from a scope stack that mirrors the block hierarchy, so a
-/// capture point only ever names its own field: `Transformer::encode` pushes
-/// `layer_results.3`, `TransformerLayer::encode` pushes `activation_trace`, and
-/// the capture itself contributes `mlp` — yielding
-/// `activation_trace.layer_results.3.activation_trace.mlp`.
 pub struct Recorder<B: Backend> {
     arrays: HashMap<String, Array<B>>,
     scope: String,
@@ -51,7 +44,6 @@ impl<B: Backend> Recorder<B> {
         self.scope.truncate(length);
     }
 
-    /// Full path of `name` under the current scope.
     pub fn path(
         &self,
         name: &str,

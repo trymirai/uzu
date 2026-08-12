@@ -10,9 +10,7 @@ use crate::{
     utils::trace::trace_host,
 };
 
-/// Attention correctness depends on a hardcoded suffix bound, and the prefill
-/// path chunks around it. A trace has to be one uninterrupted pass, so it
-/// cannot chunk — see the NOTE in `engine::language_model::stream::stream`.
+// Hardcoded attention suffix bound; a trace is one pass so it cannot chunk like prefill does.
 const MAX_TRACE_TOKENS: usize = 1024;
 
 #[derive(Debug, Error)]
@@ -30,11 +28,6 @@ pub enum RecordTraceError<B: Backend> {
 }
 
 impl<B: Backend> LanguageModel<B> {
-    /// Runs one forward pass over `token_ids` against a fresh state, capturing
-    /// every intermediate activation under lalamo's trace layout.
-    ///
-    /// This is prefill-shaped on purpose: it mirrors lalamo's tracer, which
-    /// evaluates all tokens at once with no cache carried in.
     pub fn record_trace(
         &self,
         token_ids: &[u64],
@@ -62,9 +55,7 @@ impl<B: Backend> LanguageModel<B> {
             .map_err(RecordTraceError::Backend)?;
         token_ids_allocation.copyin(&token_ids.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 
-        // lalamo's trace stores ids and positions as i32; uzu feeds the decoder
-        // u32, so these two are recorded from the host rather than copied back.
-        // A flat trie over a fresh state means positions are exactly `0..n`.
+        // A flat trie over a fresh state gives positions 0..n.
         let host_token_ids = token_ids.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
         let host_token_positions = (0..token_count as i32).collect::<Box<[i32]>>();
         let token_shape = [1, token_count];
@@ -76,9 +67,7 @@ impl<B: Backend> LanguageModel<B> {
         let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
         let batch_dim = BatchTopology::new(&input_flat_trie_nodes, true);
 
-        // The full output range is what makes the trace comparable: it runs
-        // every layer and produces `output_norm` and `logits` for all tokens,
-        // rather than just the row that would be sampled.
+        // The full output range runs every layer and covers all tokens, not just the sampled row.
         self.decoder.encode(
             &token_ids_allocation,
             &batch_dim,
@@ -88,9 +77,7 @@ impl<B: Backend> LanguageModel<B> {
             &mut encoder,
         )?;
 
-        // Pooled allocations must be released before the encoder's pool is,
-        // otherwise freeing the pool trips over a live range. The captured
-        // arrays are unaffected — they are allocated globally.
+        // Pooled allocations must be released before the pool is.
         drop(token_ids_allocation);
 
         let mut completed =
