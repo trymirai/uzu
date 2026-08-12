@@ -8,7 +8,7 @@ mod attention;
 mod embedding;
 mod gated_act_mul;
 mod gdn;
-mod logit_soft_cap;
+mod logit_transform;
 mod matmul;
 mod moe;
 mod normalization;

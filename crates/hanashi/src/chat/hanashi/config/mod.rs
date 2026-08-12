@@ -56,6 +56,8 @@ pub enum HanashiConfig {
     Qwen35,
     #[serde(rename = "qwen3.6")]
     Qwen36,
+    #[serde(rename = "muse-glimmer")]
+    MuseGlimmer,
 }
 
 impl HanashiConfig {
@@ -116,6 +118,7 @@ impl HanashiConfig {
             HanashiConfig::Qwen3Thinking => resolve_bundled_config("qwen3-thinking"),
             HanashiConfig::Qwen35 => resolve_bundled_config("qwen3.5"),
             HanashiConfig::Qwen36 => resolve_bundled_config("qwen3.6"),
+            HanashiConfig::MuseGlimmer => resolve_bundled_config("muse-glimmer"),
             HanashiConfig::Custom {
                 config,
             } => Ok(config.clone()),

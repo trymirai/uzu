@@ -16,7 +16,7 @@ pub fn normalization<
     AccumT: ArrayElement + Float,
 >(
     #[optional(!in_place)] input: Option<*const InputT>,
-    scales: *const AffineT,
+    #[optional(has_scales)] scales: Option<*const AffineT>,
     #[optional(has_biases)] biases: Option<*const AffineT>,
     output: *mut OutputT,
     #[optional(copy_to_shortcut)] shortcut: Option<*mut InputT>,
@@ -35,10 +35,12 @@ pub fn normalization<
     #[specialize] scale_residual_sum: bool,
     #[specialize] scale_output: bool,
     #[specialize] has_biases: bool,
+    #[specialize] has_scales: bool,
 ) {
     assert_eq!(shortcut.is_some(), copy_to_shortcut);
     assert_eq!(hadamard_factors.is_some(), use_hadamard);
     assert_eq!(biases.is_some(), has_biases);
+    assert_eq!(scales.is_some(), has_scales);
     assert!(copy_to_shortcut || !residual_add);
 
     if use_hadamard {
@@ -95,17 +97,21 @@ pub fn normalization<
             } else {
                 unsafe { AccumT::from(*input.add(batch_offset + i)).unwrap() }
             };
-            let scale_val = unsafe { AccumT::from(*scales.add(i)).unwrap() };
             let normalized: AccumT = (input_val - mean) * rms_inv;
-            let mut result: OutputT = if full_layer {
-                // Full-layer: keep everything in accumulation precision
-                let scale_with_offset: AccumT = scale_val + scale_offset;
-                OutputT::from(normalized * scale_with_offset).unwrap()
+            let mut result: OutputT = if has_scales {
+                let scale_val = unsafe { AccumT::from(*scales.unwrap().add(i)).unwrap() };
+                if full_layer {
+                    // Full-layer: keep everything in accumulation precision
+                    let scale_with_offset: AccumT = scale_val + scale_offset;
+                    OutputT::from(normalized * scale_with_offset).unwrap()
+                } else {
+                    // Only-normalization: cast down to output precision for the scale multiply
+                    let normalized_out = OutputT::from(normalized).unwrap();
+                    let scale_with_offset_out = OutputT::from(scale_val + scale_offset).unwrap();
+                    normalized_out * scale_with_offset_out
+                }
             } else {
-                // Only-normalization: cast down to output precision for the scale multiply
-                let normalized_out = OutputT::from(normalized).unwrap();
-                let scale_with_offset_out = OutputT::from(scale_val + scale_offset).unwrap();
-                normalized_out * scale_with_offset_out
+                OutputT::from(normalized).unwrap()
             };
             if has_biases {
                 let bias = unsafe { AccumT::from(*biases.unwrap().add(i)).unwrap() };
