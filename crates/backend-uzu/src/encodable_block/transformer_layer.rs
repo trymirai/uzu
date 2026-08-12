@@ -27,7 +27,7 @@ pub enum TransformerLayerError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Layer {layer_index} sets post_layer_scalar but has no post_mlp_norm")]
     PostLayerScalarWithoutPostMlpNorm {
-        layer_index: usize,
+        layer_index: u32,
     },
     #[error("Transformer layers except the first one if it doesn't have rht in mixer require pre_mixer_norm_config")]
     MissingPreMixerNormConfig,
@@ -36,9 +36,9 @@ pub enum TransformerLayerError<B: Backend> {
 // TODO: saner shortcut
 
 pub struct TransformerLayer<B: Backend> {
-    pub layer_index: usize,
+    pub layer_index: u32,
     pub pre_mixer_norm: Option<Normalization<B>>,
-    pub kv_source_layer_index: Option<usize>,
+    pub kv_source_layer_index: Option<u32>,
     pub mixer: Box<dyn Mixer<B>>,
     pub post_mixer_norm: Option<Normalization<B>>,
     pub pre_mlp_norm: Normalization<B>,
@@ -50,11 +50,11 @@ pub struct TransformerLayer<B: Backend> {
 impl<B: Backend> TransformerLayer<B> {
     pub fn new(
         context: &B::Context,
-        model_dim: usize,
-        hidden_dim: usize,
-        num_layers: usize,
+        model_dim: u32,
+        hidden_dim: u32,
+        num_layers: u32,
         layer_config: &TransformerLayerConfig,
-        layer_index: usize,
+        layer_index: u32,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, TransformerLayerError<B>> {
@@ -204,7 +204,7 @@ impl<B: Backend> TransformerLayer<B> {
         encoder.push_debug_group(&format!("transformer layer {}", self.layer_index));
 
         let hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
-            pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut), encoder)?
+            pre_mixer_norm.encode(&input, 0, batch_dim.node_count(), Some(shortcut), encoder)?
         } else {
             assert!(self.layer_index == 0);
             encoder.encode_copy(&input, .., shortcut, ..);
@@ -215,20 +215,27 @@ impl<B: Backend> TransformerLayer<B> {
         let mut hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
 
         if let Some(post_mixer_norm) = &self.post_mixer_norm {
-            hidden = post_mixer_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
+            hidden = post_mixer_norm.encode(&hidden, 0, batch_dim.node_count(), None, encoder)?;
         }
 
-        hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut), encoder)?;
+        hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.node_count(), Some(shortcut), encoder)?;
 
-        hidden = self.mlp.encode(hidden, batch_dim.size(), encoder)?;
+        hidden = self.mlp.encode(hidden, batch_dim.node_count(), encoder)?;
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            hidden = post_mlp_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
+            hidden = post_mlp_norm.encode(&hidden, 0, batch_dim.node_count(), None, encoder)?;
         }
 
         if let Some(ple_projection) = &self.ple_projection {
             let per_layer_inputs = per_layer_inputs.expect("per-layer inputs required for PLE layer");
-            ple_projection.encode(self.layer_index, per_layer_inputs, shortcut, &hidden, batch_dim.size(), encoder)?;
+            ple_projection.encode(
+                self.layer_index,
+                per_layer_inputs,
+                shortcut,
+                &hidden,
+                batch_dim.node_count(),
+                encoder,
+            )?;
             encoder.encode_fill(&mut hidden, 0);
         }
 

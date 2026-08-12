@@ -1,7 +1,6 @@
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{Allocation, Backend, Encoder, Kernels, gpu_types::trie::TrieNode, kernel::PoolingMeanKernel},
     config::classifier::{ClassifierConfig, PoolingType},
     data_type::DataType,
@@ -34,7 +33,7 @@ pub enum ClassifierError<B: Backend> {
 }
 
 pub struct Classifier<B: Backend> {
-    hidden_dim: usize,
+    hidden_dim: u32,
     data_type: DataType,
     embedding: Embedding<B>,
     embedding_norm: Normalization<B>,
@@ -52,8 +51,8 @@ impl<B: Backend> Classifier<B> {
     ) -> Result<Self, ClassifierError<B>> {
         let (embedding, _) = Embedding::new(
             context,
-            config.vocab_size as u32,
-            config.transformer_config.model_dim as u32,
+            config.vocab_size,
+            config.transformer_config.model_dim,
             &config.embedding_config,
             &parameter_tree.subtree("embedding")?,
             data_type,
@@ -114,7 +113,7 @@ impl<B: Backend> Classifier<B> {
     pub fn encode(
         &self,
         token_ids: &Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, ClassifierError<B>> {
         encoder.push_debug_group("classifier");
@@ -126,22 +125,22 @@ impl<B: Backend> Classifier<B> {
 
         let nodes = (0..batch_dim)
             .map(|index| TrieNode {
-                trie_start: index as u32,
-                trie_end: (batch_dim - 1) as u32,
-                height: index as u32,
+                trie_start: index,
+                trie_end: (batch_dim - 1),
+                height: index,
             })
             .collect::<Box<[TrieNode]>>();
         let hidden = self
             .transformer
-            .encode(hidden, None, &BatchTopology::new(&nodes, true), Some(0..batch_dim), None, None, encoder)
+            .encode(hidden, None, &BatchTopology::new(&nodes, true), Some(0..batch_dim as usize), None, None, encoder)
             .map_err(ClassifierError::Backend)?
             .output
             .unwrap();
 
         let mut pooled = encoder
-            .allocate_scratch(size_for_shape(&[self.hidden_dim], self.data_type))
+            .allocate_scratch_with_shape(&[self.hidden_dim], self.data_type)
             .map_err(ClassifierError::Backend)?;
-        self.pooling.encode(&hidden, &mut pooled, batch_dim as u32, self.hidden_dim as u32, 1, encoder);
+        self.pooling.encode(&hidden, &mut pooled, batch_dim, self.hidden_dim, 1, encoder);
 
         let logits = self.prediction_head.encode(pooled, 1, encoder).map_err(ClassifierError::Backend)?;
 

@@ -42,10 +42,10 @@ pub struct WeaverLayer<B: Backend> {
 
     // Geometry
     pub attention_scale: f32,
-    pub model_dim: usize,
-    pub num_heads: usize,
-    pub head_dim: usize,
-    pub max_depth: usize,
+    pub model_dim: u32,
+    pub num_heads: u32,
+    pub head_dim: u32,
+    pub max_depth: u32,
 }
 
 impl<B: Backend> WeaverLayer<B> {
@@ -68,7 +68,7 @@ impl<B: Backend> WeaverLayer<B> {
         let attention_scale = 1.0 / (head_dim as f32).sqrt();
         let qkv_projection = <dyn Linear<B>>::new(
             model_dim,
-            [3 * model_dim],
+            [(3 * model_dim)],
             false,
             context,
             DATA_TYPE,
@@ -134,9 +134,8 @@ impl<B: Backend> WeaverLayer<B> {
         let (mlp, up_input_hadamard_factors) =
             <dyn Mlp<B>>::new(&mlp_config, model_dim, hidden_dim, context, &parameter_tree.subtree("mlp")?, DATA_TYPE)?;
         assert!(up_input_hadamard_factors.is_none(), "Weaver MLP does not support input Hadamard factors");
-        let ancestor_attention =
-            <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim as u32, num_heads as u32)
-                .map_err(WeaverNewError::Backend)?;
+        let ancestor_attention = <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim, num_heads)
+            .map_err(WeaverNewError::Backend)?;
         Ok(Self {
             qkv_projection,
             out_projection,
@@ -159,16 +158,16 @@ impl<B: Backend> WeaverLayer<B> {
         residual_input: &Allocation<B>,
         residual_state: &mut Allocation<B>,
         rope: &PrecalculatedRoPE<B>,
-        token_count: usize,
+        token_count: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<PreparedPrefixAttention<B>, B::Error> {
         let attention_input =
             self.pre_attention_norm.encode(residual_input, 0, token_count, Some(residual_state), encoder)?;
         let qkv = self.qkv_projection.encode(attention_input, token_count, encoder)?;
         let mut queries =
-            encoder.allocate_scratch(size_for_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE))?;
-        let kv_plane_bytes = size_for_shape(&[token_count, self.model_dim], DATA_TYPE);
-        let mut kv_cache = encoder.allocate_scratch(size_for_shape(&[2, token_count, self.model_dim], DATA_TYPE))?;
+            encoder.allocate_scratch_with_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE)?;
+        let kv_plane_bytes = size_for_shape(&[token_count, self.model_dim], &DATA_TYPE);
+        let mut kv_cache = encoder.allocate_scratch_with_shape(&[2, token_count, self.model_dim], DATA_TYPE)?;
         let (keys, values) = kv_cache.as_buffer_range_mut().split_at(kv_plane_bytes);
         self.attention_prepare.encode(
             &qkv,
@@ -177,12 +176,12 @@ impl<B: Backend> WeaverLayer<B> {
             Some(values),
             Some(&rope.cosines),
             Some(&rope.sines),
-            self.num_heads as u32,
-            Some(self.num_heads as u32),
-            self.head_dim as u32,
-            Some(rope.dim as u32),
+            self.num_heads,
+            Some(self.num_heads),
+            self.head_dim,
+            Some(rope.dim),
             Some(0),
-            token_count as u32,
+            token_count,
             encoder,
         );
         Ok(PreparedPrefixAttention {
@@ -195,7 +194,7 @@ impl<B: Backend> WeaverLayer<B> {
         &self,
         attention_output: Allocation<B>,
         residual_state: &mut Allocation<B>,
-        token_count: usize,
+        token_count: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let projected_attention = self.out_projection.encode(attention_output, token_count, encoder)?;

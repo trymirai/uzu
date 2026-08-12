@@ -23,7 +23,7 @@ enum TransformerLayerStateType<B: Backend> {
 
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
-    context_length: usize,
+    context_length: u32,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
@@ -33,13 +33,13 @@ pub struct TransformerEncodeOutput<B: Backend> {
 
 impl<B: Backend> TransformerState<B> {
     pub fn context_length(&self) -> usize {
-        self.context_length
+        self.context_length as usize
     }
 
     pub fn prepare(
         &mut self,
-        context_length: usize,
-        suffix_length: usize,
+        context_length: u32,
+        suffix_length: u32,
         context: &B::Context,
     ) -> Result<(), B::Error> {
         for layer_state in &mut self.layer_states {
@@ -55,7 +55,7 @@ impl<B: Backend> TransformerState<B> {
 
     pub fn encode_accept(
         &mut self,
-        accepted_indices: &[usize],
+        accepted_indices: &[u32],
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         encoder.push_debug_group("transformer accept");
@@ -68,7 +68,7 @@ impl<B: Backend> TransformerState<B> {
             layer_state.encode_accept(accepted_indices, encoder)?;
         }
 
-        self.context_length += accepted_indices.len();
+        self.context_length += accepted_indices.len() as u32;
 
         encoder.pop_debug_group();
 
@@ -92,7 +92,7 @@ pub struct Transformer<B: Backend> {
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
     output_norm: Normalization<B>,
-    model_dim: usize,
+    model_dim: u32,
     residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
 }
 
@@ -124,9 +124,9 @@ impl<B: Backend> Transformer<B> {
                     context,
                     transformer_config.model_dim,
                     transformer_config.hidden_dim,
-                    transformer_config.layer_configs.len(),
+                    transformer_config.layer_configs.len() as u32,
                     layer_config,
-                    layer_index,
+                    layer_index as u32,
                     &layer_loader,
                     data_type,
                 )?;
@@ -162,11 +162,11 @@ impl<B: Backend> Transformer<B> {
         &self,
         shortcut: &Allocation<B>,
         hidden: &Allocation<B>,
-        batch_size: usize,
+        batch_size: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let mut output = encoder.allocate_scratch(hidden.size())?;
-        let elements = (batch_size * self.model_dim) as u32;
+        let elements = batch_size * self.model_dim;
         self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, encoder);
         Ok(output)
     }
@@ -212,7 +212,7 @@ impl<B: Backend> Transformer<B> {
                 None => {
                     layer.mixer.create_empty_state(max_context_length, context).map(TransformerLayerStateType::Owned)
                 },
-                Some(kv_source_layer_index) => Ok(TransformerLayerStateType::Shared(kv_source_layer_index)),
+                Some(kv_source_layer_index) => Ok(TransformerLayerStateType::Shared(kv_source_layer_index as usize)),
             })
             .collect::<Result<_, B::Error>>()?;
 
@@ -230,7 +230,7 @@ impl<B: Backend> Transformer<B> {
         per_layer_inputs: Option<&Allocation<B>>,
         batch_dim: &BatchTopology,
         output_range: Option<Range<usize>>,
-        hidden_feature_layer_indices: Option<&[usize]>,
+        hidden_feature_layer_indices: Option<&[u32]>,
         mut state: Option<&mut TransformerState<B>>,
         encoder: &mut Encoder<B>,
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
@@ -246,8 +246,7 @@ impl<B: Backend> Transformer<B> {
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
         let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
-        let token_positions =
-            batch_dim.heights().map(|rel_pos| context_length + rel_pos as usize).collect::<Box<[usize]>>();
+        let token_positions = batch_dim.heights().map(|rel_pos| context_length + rel_pos).collect::<Box<[u32]>>();
 
         let precalculated_ropes = self
             .ropes
@@ -259,7 +258,7 @@ impl<B: Backend> Transformer<B> {
             let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
 
             let layer_state = if let Some(state) = &mut state {
-                Some(match &mut state.layer_states[layer.layer_index] {
+                Some(match &mut state.layer_states[layer.layer_index as usize] {
                     TransformerLayerStateType::Owned(layer_state) => MaybeMut::Mut(layer_state.as_mut()),
                     TransformerLayerStateType::Shared(owned_layer_index) => {
                         let TransformerLayerStateType::Owned(owned_layer) = &state.layer_states[*owned_layer_index]
@@ -286,7 +285,7 @@ impl<B: Backend> Transformer<B> {
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
                     if layer_index == layer.layer_index {
-                        let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
+                        let feature = self.capture_residual(&shortcut, &hidden, batch_dim.node_count(), encoder)?;
                         hidden_features[feature_index] = Some(feature);
                     }
                 }
@@ -315,8 +314,13 @@ impl<B: Backend> Transformer<B> {
             });
         };
 
-        let output_normalized =
-            self.output_norm.encode(&hidden, output_range.start, output_range.len(), Some(&mut shortcut), encoder)?;
+        let output_normalized = self.output_norm.encode(
+            &hidden,
+            output_range.start as u32,
+            output_range.len() as u32,
+            Some(&mut shortcut),
+            encoder,
+        )?;
 
         Ok(TransformerEncodeOutput {
             output: Some(output_normalized),

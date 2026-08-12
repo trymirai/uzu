@@ -69,7 +69,7 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
             Some(QuantizationInfo {
                 mode,
                 method,
-                group_size: group_size as u32,
+                group_size,
             })
         },
     };
@@ -102,8 +102,8 @@ impl<B: Backend> WeightMatrix<B> {
         tree: &ParameterTree<B>,
         spec: AnyWeightMatrixSpec,
         required_layout: Layout,
-        output_dim: usize,
-        input_dim: usize,
+        output_dim: u32,
+        input_dim: u32,
         data_type: DataType,
     ) -> Result<Self, WeightMatrixError<B>> {
         let ParsedWeightSpec {
@@ -118,7 +118,8 @@ impl<B: Backend> WeightMatrix<B> {
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
         let Some(info) = quantization else {
-            let values = tree.leaf("weights")?.validate(&[rows, columns], data_type)?.read_allocation()?;
+            let values =
+                tree.leaf("weights")?.validate(&[rows as u32, columns as u32], data_type)?.read_allocation()?;
             return Ok(Self {
                 values,
                 quantized: None,
@@ -135,16 +136,18 @@ impl<B: Backend> WeightMatrix<B> {
         }
         let groups = columns.div_ceil(group_size);
 
-        let values =
-            tree.leaf("weights")?.validate(&[rows, columns / packing_divisor], storage_data_type)?.read_allocation()?;
-        let scales = tree.leaf("scales")?.validate(&[rows, groups], data_type)?.read_allocation()?;
+        let values = tree
+            .leaf("weights")?
+            .validate(&[rows as u32, (columns / packing_divisor) as u32], storage_data_type)?
+            .read_allocation()?;
+        let scales = tree.leaf("scales")?.validate(&[rows as u32, groups as u32], data_type)?.read_allocation()?;
         let correction = match info.method {
             QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(
-                tree.leaf("biases")?.validate(&[rows, groups], data_type)?.read_allocation()?,
+                tree.leaf("biases")?.validate(&[rows as u32, groups as u32], data_type)?.read_allocation()?,
             ),
             QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(
                 tree.leaf("zero_points")?
-                    .validate(&[rows, groups.div_ceil(packing_divisor)], storage_data_type)?
+                    .validate(&[rows as u32, groups.div_ceil(packing_divisor) as u32], storage_data_type)?
                     .read_allocation()?,
             ),
             QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
@@ -243,11 +246,11 @@ impl<B: Backend> WeightMatrix<B> {
 
 fn physical_shape(
     layout: &Layout,
-    output_dim: usize,
-    input_dim: usize,
+    output_dim: u32,
+    input_dim: u32,
 ) -> (usize, usize) {
     match layout {
-        Layout::OutputInput => (output_dim, input_dim),
-        Layout::InputOutput => (input_dim, output_dim),
+        Layout::OutputInput => (output_dim as usize, input_dim as usize),
+        Layout::InputOutput => (input_dim as usize, output_dim as usize),
     }
 }

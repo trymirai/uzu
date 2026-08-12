@@ -56,8 +56,8 @@ impl<B: Backend> Decoder<B> {
     ) -> Result<Self, DecoderError<B>> {
         let (embedding, readout_input_hadamard_factors) = Embedding::new(
             context,
-            config.vocab_size as u32,
-            config.transformer_config.model_dim as u32,
+            config.vocab_size,
+            config.transformer_config.model_dim,
             &config.embedding_config,
             &parameter_tree.subtree("embedding")?,
             data_type,
@@ -65,7 +65,7 @@ impl<B: Backend> Decoder<B> {
 
         let per_layer_embedding = if let Some(ple_config) = &config.ple_model_config {
             assert_eq!(
-                ple_config.num_layers,
+                ple_config.num_layers as usize,
                 config.transformer_config.layer_configs.len(),
                 "per-layer embedding num_layers must match transformer layer count"
             );
@@ -120,18 +120,18 @@ impl<B: Backend> Decoder<B> {
         token_ids: &Allocation<B>,
         batch_dim: &BatchTopology,
         output_range: Option<Range<usize>>,
-        hidden_feature_layer_indices: Option<&[usize]>,
+        hidden_feature_layer_indices: Option<&[u32]>,
         state: &mut TransformerState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         encoder.push_debug_group("decoder");
 
-        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), encoder)?;
+        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.node_count(), encoder)?;
 
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
             Some(
                 per_layer_embedding
-                    .encode(token_ids, &embedded, batch_dim.size(), encoder)
+                    .encode(token_ids, &embedded, batch_dim.node_count(), encoder)
                     .map_err(DecoderError::Backend)?,
             )
         } else {
@@ -153,7 +153,12 @@ impl<B: Backend> Decoder<B> {
 
         let logits = if let Some(output_range) = output_range {
             let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");
-            Some(self.embedding.encode_readout(output_range.len(), output, self.embedding.data_type(), encoder)?)
+            Some(self.embedding.encode_readout(
+                output_range.len() as u32,
+                output,
+                self.embedding.data_type(),
+                encoder,
+            )?)
         } else {
             None
         };

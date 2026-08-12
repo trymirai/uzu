@@ -24,7 +24,7 @@ pub use gumbel::{gumbel_float, revidx};
 pub use prng::PRng;
 
 pub struct Sampling<B: Backend> {
-    vocab_size: usize,
+    vocab_size: u32,
     data_type: DataType,
     unified_kernels: Mutex<HashMap<UnifiedSamplingKey, <B::Kernels as Kernels>::UnifiedSamplingKernel>>,
 }
@@ -32,7 +32,7 @@ pub struct Sampling<B: Backend> {
 impl<B: Backend> Sampling<B> {
     pub fn new(
         data_type: DataType,
-        vocab_size: usize,
+        vocab_size: u32,
     ) -> Self {
         Self {
             vocab_size,
@@ -51,12 +51,12 @@ pub enum SamplingMethod {
         top_p: Option<f32>,
         min_p: Option<f32>,
         repetition_penalty: Option<f32>,
-        suffix_repetition_length: Option<usize>,
+        suffix_repetition_length: Option<u32>,
     },
 }
 
 impl SamplingMethod {
-    pub fn suffix_repetition_length(&self) -> Option<usize> {
+    pub fn suffix_repetition_length(&self) -> Option<u32> {
         match self {
             SamplingMethod::Greedy => None,
             SamplingMethod::Stochastic {
@@ -126,7 +126,7 @@ impl<B: Backend> Sampling<B> {
 
             let mut logits_copy = encoder.allocate_scratch(logits.as_buffer_range_ref().range().len())?;
             let tensor_copy = <B::Kernels as Kernels>::TensorCopyKernel::new(encoder.context(), self.data_type)?;
-            tensor_copy.encode(logits, &mut logits_copy, (self.vocab_size * sampling_range.len()) as u32, encoder);
+            tensor_copy.encode(logits, &mut logits_copy, self.vocab_size * sampling_range.len() as u32, encoder);
 
             let repetition_penalty_kernel =
                 <B::Kernels as Kernels>::RepetitionPenaltyKernel::new(encoder.context(), self.data_type)?;
@@ -136,8 +136,8 @@ impl<B: Backend> Sampling<B> {
                 context_ring.expect("context_ring is required for repetition_penalty"),
                 token_ids.expect("token_ids is required for repetition_penalty"),
                 repetition_penalty,
-                suffix_repetition_length as u32,
-                self.vocab_size as u32,
+                suffix_repetition_length,
+                self.vocab_size,
                 sampling_range.start as u32,
                 sampling_range.len() as u32,
                 encoder,
@@ -182,7 +182,7 @@ impl<B: Backend> Sampling<B> {
             top_k,
             top_p,
             min_p,
-            self.vocab_size as u32,
+            self.vocab_size,
             sampling_range.len() as u32,
             encoder,
         );
