@@ -47,14 +47,14 @@ impl<B: Backend> Array<B> {
         Ok(Self::expect_new(shape, data_type, destination))
     }
 
-    pub fn capture_host<T: NoUninit + AnyBitPattern>(
+    pub fn capture_slice<T: NoUninit + AnyBitPattern>(
         encoder: &Encoder<B>,
         data: &[T],
         shape: &[usize],
         data_type: DataType,
     ) -> Result<Self, B::Error> {
         let byte_count = size_for_shape(shape, data_type);
-        assert_eq!(byte_count, std::mem::size_of_val(data), "capture_host shape does not match the data");
+        assert_eq!(byte_count, std::mem::size_of_val(data), "capture_slice shape does not match the data");
 
         let mut destination = encoder.context().create_allocation(byte_count, AllocationType::Global)?;
         destination.copyin(data);
