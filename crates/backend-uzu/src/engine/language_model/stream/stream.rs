@@ -545,7 +545,13 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             None
         };
 
-        let full_batch_size = 32;
+        let full_batch_size = self.model.speculator.as_ref().map_or(1, |speculator| {
+            if speculator.has_weaver() {
+                32
+            } else {
+                16
+            }
+        });
         let speculation_batch = self
             .model_state
             .max_context_length
