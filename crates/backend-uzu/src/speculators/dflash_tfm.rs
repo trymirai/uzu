@@ -286,7 +286,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         fn recursive_build(
             nodes: &[ProposalNode],
             index: usize,
-            root_position: usize,
+            root_position: u32,
             #[cfg(grammar)] mut grammar: Option<&mut Grammar>,
             prng: &PRng,
         ) -> TrieNode {
@@ -323,7 +323,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         Ok(recursive_build(
             &nodes,
             0,
-            root_position as usize,
+            root_position,
             #[cfg(grammar)]
             grammar,
             prng,
