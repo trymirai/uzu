@@ -14,7 +14,7 @@ use crate::{
         gpu_types::trie::TrieNode as GpuTrieNode, kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
-    encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod, weaver::TreeShape},
+    encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
     engine::{
         capture::CaptureSpan,
         language_model::{
@@ -23,6 +23,7 @@ use crate::{
             stream::{LanguageModelStreamError, LanguageModelStreamOptions},
         },
     },
+    speculators::dflash_tfm::{DFlashTfmTreeConstructionMethod, DFlashTfmTreeShape},
     trie::TrieNode,
 };
 
@@ -544,10 +545,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             None
         };
 
+        let full_batch_size = 32;
         let speculation_batch = self
             .model_state
             .max_context_length
-            .map_or(32, |max_context_length| 32.min(max_context_length - context_length));
+            .map_or(full_batch_size, |max_context_length| full_batch_size.min(max_context_length - context_length));
 
         let mut pending = Vec::new();
         let (input_trie, chain_copy, full_accept) = if speculation_batch > 1
@@ -565,10 +567,17 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 output_norm,
                 root_token as u32,
                 self.model.decoder.embedding(),
-                TreeShape {
-                    budget: speculation_batch - 1,
-                    frontier_width: 4,
-                    children_per_node: 4,
+                DFlashTfmTreeShape {
+                    budget: speculation_batch,
+                    construction_method: if speculator.has_weaver() {
+                        DFlashTfmTreeConstructionMethod::Weaver {
+                            depth: 16,
+                            expand_per_round: 4,
+                            expand_width: 4,
+                        }
+                    } else {
+                        DFlashTfmTreeConstructionMethod::Argmax
+                    },
                 },
                 #[cfg(grammar)]
                 self.options.grammar.as_mut(),

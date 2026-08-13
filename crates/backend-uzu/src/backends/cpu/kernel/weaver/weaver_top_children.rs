@@ -17,13 +17,13 @@ pub fn weaver_top_children(
     output_model_logprobs: *mut f32,
     rows: u32,
     candidates: u32,
-    children_per_node: u32,
+    expand_width: u32,
     vocab_size: u32,
 ) {
     let rows = rows as usize;
     let candidates = candidates as usize;
-    let children_per_node = children_per_node as usize;
-    if candidates == 0 || candidates > CANDIDATES_MAX || children_per_node == 0 || children_per_node > candidates {
+    let expand_width = expand_width as usize;
+    if candidates == 0 || candidates > CANDIDATES_MAX || expand_width == 0 || expand_width > candidates {
         return;
     }
     for row in 0..rows {
@@ -43,10 +43,10 @@ pub fn weaver_top_children(
         indices.sort_by(|&left, &right| {
             perturbed[right].total_cmp(&perturbed[left]).then_with(|| token(left).cmp(&token(right)))
         });
-        for (rank, index) in indices.into_iter().take(children_per_node).enumerate() {
+        for (rank, index) in indices.into_iter().take(expand_width).enumerate() {
             unsafe {
-                *output_token_ids.add(row * children_per_node + rank) = token(index);
-                *output_model_logprobs.add(row * children_per_node + rank) = logits[index] - log_sum;
+                *output_token_ids.add(row * expand_width + rank) = token(index);
+                *output_model_logprobs.add(row * expand_width + rank) = logits[index] - log_sum;
             }
         }
     }
