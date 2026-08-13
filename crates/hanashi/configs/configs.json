@@ -89,5 +89,12 @@
         "rendering": "qwen3.6",
         "tokens": "qwen3.6",
         "ordering": "default"
+    },
+    {
+        "name": "muse-glimmer",
+        "parsing": "muse-glimmer",
+        "rendering": "muse-glimmer",
+        "tokens": "muse-glimmer",
+        "ordering": "default"
     }
 ]

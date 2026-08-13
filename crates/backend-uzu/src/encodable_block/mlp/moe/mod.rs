@@ -118,8 +118,8 @@ impl<B: Backend> MoeBlock<B> {
 
         let router_renorm = matches!(moe_config.routing_function, AnyRoutingFunction::SoftmaxRouting(_));
 
-        let router_tree = parameter_tree.subtree("router")?;
-        let router_weights_tree = router_tree.subtree("weights")?;
+        let router_tree = parameter_tree.subtree("router");
+        let router_weights_tree = router_tree.subtree("weights");
         let router_spec = router_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let AnyWeightMatrixSpec::FullPrecisionSpec(FullPrecisionSpec {
             layout: Layout::OutputInput,
@@ -135,11 +135,11 @@ impl<B: Backend> MoeBlock<B> {
         let router_biases =
             router_tree.leaf("biases")?.validate(&[moe_config.num_routed_experts], data_type)?.read_allocation()?;
 
-        let experts_tree = parameter_tree.subtree("experts")?;
-        let up_tree = experts_tree.subtree("up_projection")?;
-        let down_tree = experts_tree.subtree("down_projection")?;
-        let up_weights_tree = up_tree.subtree("weights")?;
-        let down_weights_tree = down_tree.subtree("weights")?;
+        let experts_tree = parameter_tree.subtree("experts");
+        let up_tree = experts_tree.subtree("up_projection");
+        let down_tree = experts_tree.subtree("down_projection");
+        let up_weights_tree = up_tree.subtree("weights");
+        let down_weights_tree = down_tree.subtree("weights");
 
         let w13 = up_weights_tree
             .leaf("weights")?

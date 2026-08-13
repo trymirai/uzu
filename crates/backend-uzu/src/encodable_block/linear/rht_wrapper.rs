@@ -87,7 +87,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         output_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, RHTLinearWrapperError<B>> {
-        let weights_tree = parameter_tree.subtree("weights")?;
+        let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             adapter_spec: None,
@@ -107,7 +107,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             .leaf("incoherence_signs.output_signs")?
             .validate(&[output_dimension], DataType::I32)?
             .read_allocation()?;
-        let quantized_weights_tree = weights_tree.subtree("quantized")?;
+        let quantized_weights_tree = weights_tree.subtree("quantized");
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let parsed = parse_spec::<B>(&quantization_spec)?;
         let Some(quantization) = parsed.quantization else {

@@ -5,5 +5,5 @@ use crate::config::{dflash::DFlashDraftConfig, weaver::WeaverConfig};
 #[uzu_config(super::SpeculatorConfig)]
 pub struct DFlashSpeculatorConfig {
     pub draft_config: DFlashDraftConfig,
-    pub weaver_config: WeaverConfig,
+    pub weaver_config: Option<WeaverConfig>,
 }

@@ -11,14 +11,15 @@ pub use crate::encodable_block::dflash::DFlashState;
 #[cfg(grammar)]
 use crate::engine::language_model::grammar::Grammar;
 use crate::{
-    backends::common::{Allocation, AllocationPool, Backend, Encoder},
+    backends::common::{Allocation, AllocationPool, Backend, Encoder, gpu_types::trie::TrieNode as GpuTrieNode},
     config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig, model::SpeculatorModelConfig},
     data_type::DataType,
     encodable_block::{
+        batch_topology::BatchTopology,
         dflash::{DFlash, DFlashEncodeError, DFlashNewError},
         embedding::Embedding,
-        sampling::PRng,
-        weaver::{ProposalNode, TreeShape, Weaver, WeaverEncodeError, WeaverNewError},
+        sampling::{PRng, Sampling, SamplingMethod},
+        weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
     trie::TrieNode,
@@ -32,6 +33,8 @@ pub enum DFlashTreeError<B: Backend> {
     DFlash(#[from] DFlashEncodeError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverEncodeError<B>),
+    #[error("invalid tree shape: {0}")]
+    InvalidTreeShape(String),
 }
 
 #[derive(Debug, Error)]
@@ -50,10 +53,25 @@ pub enum DFlashSpeculatorLoadError<B: Backend> {
     Weaver(#[from] WeaverNewError<B>),
 }
 
+pub enum DFlashTfmTreeConstructionMethod {
+    Argmax,
+    Weaver {
+        depth: usize,
+        expand_per_round: usize,
+        expand_width: usize,
+    },
+}
+
+pub struct DFlashTfmTreeShape {
+    pub budget: usize,
+    pub construction_method: DFlashTfmTreeConstructionMethod,
+}
+
 pub struct DFlashTfmSpeculator<B: Backend> {
     context: Arc<B::Context>,
     dflash: DFlash<B>,
-    weaver: Weaver<B>,
+    weaver: Option<Weaver<B>>,
+    sampling: Sampling<B>,
     config: DFlashSpeculatorConfig,
 }
 
@@ -70,19 +88,37 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let weights_file = File::open(model_path.join("model.safetensors"))?;
         let weight_loader = ParameterLoader::new(&weights_file, &*context)?;
-        let speculator_tree = weight_loader.tree().subtree("speculator")?;
+        let speculator_tree = weight_loader.tree().subtree("speculator");
 
-        let dflash = DFlash::new(&*context, &config.draft_config, &speculator_tree.subtree("draft_model")?, data_type)?;
-        let weaver = Weaver::new(&*context, &config.weaver_config, &speculator_tree.subtree("weaver")?)?;
+        let dflash = DFlash::new(&*context, &config.draft_config, &speculator_tree.subtree("draft_model"), data_type)?;
+        let weaver = config
+            .weaver_config
+            .as_ref()
+            .map(|weaver_config| {
+                Weaver::new(
+                    &*context,
+                    weaver_config,
+                    config.draft_config.vocab_size as u32,
+                    &speculator_tree.subtree("weaver"),
+                )
+            })
+            .transpose()?;
 
         weight_loader.tree().assert_all_tensors_validated()?;
+
+        let sampling = Sampling::new(DataType::F32, config.draft_config.vocab_size);
 
         Ok(Self {
             context,
             dflash,
             weaver,
+            sampling,
             config,
         })
+    }
+
+    pub fn has_weaver(&self) -> bool {
+        self.weaver.is_some()
     }
 
     pub fn hidden_feature_layer_indices(&self) -> &[usize] {
@@ -112,43 +148,135 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         target_output_norm: &Allocation<B>,
         target_output_token: u32,
         target_embedding: &Embedding<B>,
-        shape: TreeShape,
+        shape: DFlashTfmTreeShape,
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
         prng: &PRng,
         allocation_pool: Arc<AllocationPool<B>>,
     ) -> Result<TrieNode, DFlashTreeError<B>> {
-        let candidate_pool_size = self.config.weaver_config.candidate_pool_size;
+        assert!(shape.budget >= 2, "tree budget needs at least a root and one draft token");
 
         let root_position = state.context_length();
 
         let mut encoder = Encoder::new_with_pool_name(&*self.context, allocation_pool, Some("speculator propose"))
             .map_err(DFlashTreeError::Backend)?;
 
-        let dflash_output = self.dflash.encode_draft(
-            state,
-            target_output_token,
-            target_embedding,
-            candidate_pool_size,
-            &mut encoder,
-        )?;
-
-        let max_depth = self.config.weaver_config.max_depth;
-        let depth_seeds =
-            (0..max_depth).map(|depth| prng.derive((root_position + depth) as u64)).collect::<Box<[u64]>>();
-        let tree = self.weaver.encode_tree(
-            target_output_norm,
-            &dflash_output.draft_hidden,
-            target_embedding,
-            &dflash_output.candidates,
-            &depth_seeds,
-            target_output_token,
-            shape,
-            &mut encoder,
-        )?;
-        let completed = encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
-        let nodes = tree.read_nodes();
-        drop(dflash_output);
-        drop(completed);
+        let nodes = match shape.construction_method {
+            DFlashTfmTreeConstructionMethod::Argmax => {
+                if shape.budget > self.dflash.block_size() {
+                    return Err(DFlashTreeError::InvalidTreeShape(format!(
+                        "argmax chain of {} nodes needs {} draft rows, block size is {}",
+                        shape.budget,
+                        shape.budget - 1,
+                        self.dflash.block_size()
+                    )));
+                }
+                let chain_length = shape.budget - 1;
+                let mut nodes = Vec::with_capacity(shape.budget);
+                nodes.push(ProposalNode {
+                    token_id: target_output_token,
+                    depth: 0,
+                    child_indices: vec![1],
+                });
+                let dflash_output = self.dflash.encode_draft(
+                    state,
+                    target_output_token,
+                    target_embedding,
+                    shape.budget,
+                    &mut encoder,
+                )?;
+                let topology_nodes = (0..chain_length)
+                    .map(|index| GpuTrieNode {
+                        trie_start: index as u32,
+                        trie_end: (chain_length - 1) as u32,
+                        height: index as u32,
+                    })
+                    .collect::<Box<[_]>>();
+                let batch_topology = BatchTopology::new(&topology_nodes, true);
+                let sampled = self
+                    .sampling
+                    .encode(
+                        &dflash_output.logits,
+                        None,
+                        None,
+                        None,
+                        None,
+                        &SamplingMethod::Greedy,
+                        &batch_topology,
+                        0..chain_length,
+                        &mut encoder,
+                    )
+                    .map_err(DFlashTreeError::Backend)?;
+                let completed =
+                    encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
+                let tokens = sampled.copyout::<u32>();
+                drop(completed);
+                nodes.extend(tokens.into_iter().enumerate().map(|(index, token_id)| {
+                    let depth = index + 1;
+                    ProposalNode {
+                        token_id,
+                        depth,
+                        child_indices: if depth < chain_length {
+                            vec![depth + 1]
+                        } else {
+                            Vec::new()
+                        },
+                    }
+                }));
+                nodes
+            },
+            DFlashTfmTreeConstructionMethod::Weaver {
+                depth,
+                expand_per_round,
+                expand_width,
+            } => {
+                let weaver =
+                    self.weaver.as_ref().expect("weaver tree construction requires a speculator with weaver weights");
+                if depth < 2 {
+                    return Err(DFlashTreeError::InvalidTreeShape(format!(
+                        "tree depth {depth} needs at least a root and one level"
+                    )));
+                }
+                // `depth` counts the root; the weaver's `max_depth` counts edges.
+                if depth > weaver.max_depth() + 1 {
+                    return Err(DFlashTreeError::InvalidTreeShape(format!(
+                        "requested tree depth {depth} exceeds weaver max depth {}",
+                        weaver.max_depth() + 1
+                    )));
+                }
+                if depth > self.dflash.block_size() {
+                    return Err(DFlashTreeError::InvalidTreeShape(format!(
+                        "tree of depth {depth} needs {} draft rows, block size is {}",
+                        depth - 1,
+                        self.dflash.block_size()
+                    )));
+                }
+                let dflash_output =
+                    self.dflash.encode_draft(state, target_output_token, target_embedding, depth, &mut encoder)?;
+                let depth_seeds = (0..weaver.max_depth())
+                    .map(|depth| prng.derive((root_position + depth) as u64))
+                    .collect::<Box<[u64]>>();
+                let tree = weaver.encode_tree(
+                    target_output_norm,
+                    &dflash_output.draft_hidden,
+                    target_embedding,
+                    &dflash_output.logits,
+                    &depth_seeds,
+                    target_output_token,
+                    WeaverTreeShape {
+                        budget: shape.budget,
+                        depth,
+                        expand_per_round,
+                        expand_width,
+                    },
+                    &mut encoder,
+                )?;
+                let completed =
+                    encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
+                let nodes = tree.read_nodes();
+                drop(completed);
+                nodes
+            },
+        };
 
         fn recursive_build(
             nodes: &[ProposalNode],

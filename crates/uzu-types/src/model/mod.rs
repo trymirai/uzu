@@ -1,11 +1,5 @@
-use crate::backend::UzuBackend;
+mod capability;
+mod source;
 
-mod descriptor;
-
-pub use descriptor::ModelDescriptor;
-
-pub trait UzuModel {
-    type Backend: UzuBackend;
-
-    // TODO
-}
+pub use capability::ModelCapability;
+pub use source::ModelSource;

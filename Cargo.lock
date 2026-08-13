@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "backend-remote"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "async-openai",
  "futures",
@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "backend-uzu"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "bindings"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -597,7 +597,7 @@ dependencies = [
 
 [[package]]
 name = "bindings-types"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "inventory",
  "napi",
@@ -992,7 +992,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "anyhow",
  "backend-uzu",
@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "cli-tools"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "anyhow",
  "clap",
@@ -1519,6 +1519,16 @@ dependencies = [
 
 [[package]]
 name = "darling"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
+dependencies = [
+ "darling_core 0.21.3",
+ "darling_macro 0.21.3",
+]
+
+[[package]]
+name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ae13da2f202d56bd7f91c25fba009e7717a1e4a1cc98a76d844b65ae912e9d"
@@ -1543,6 +1553,19 @@ dependencies = [
 
 [[package]]
 name = "darling_core"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4"
+dependencies = [
+ "fnv",
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "darling_core"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9865a50f7c335f53564bb694ef660825eb8610e0a53d3e11bf1b0d3df31e03b0"
@@ -1561,6 +1584,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
 dependencies = [
  "darling_core 0.20.11",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
+dependencies = [
+ "darling_core 0.21.3",
  "quote",
  "syn 2.0.118",
 ]
@@ -1797,7 +1831,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "download-manager"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1865,6 +1899,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "enumset"
+version = "1.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccc5801fd11762e24d1e420d01d2ac518f2a2ca4329d4fbb6639f2412b6204e0"
+dependencies = [
+ "enumset_derive",
+]
+
+[[package]]
+name = "enumset_derive"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bd536557b58c682b217b8fb199afdff47cd3eff260623f19e77074eb073d63a"
+dependencies = [
+ "darling 0.21.3",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -2442,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "hanashi"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.0",
@@ -3159,7 +3214,7 @@ dependencies = [
 
 [[package]]
 name = "json-transform"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.0",
@@ -3213,7 +3268,7 @@ dependencies = [
 
 [[package]]
 name = "kanka"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "libc",
  "obfstr",
@@ -3233,7 +3288,7 @@ dependencies = [
 
 [[package]]
 name = "keisoku"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "bitflags 2.13.0",
  "kanka",
@@ -3257,7 +3312,7 @@ dependencies = [
 
 [[package]]
 name = "kiban"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3659,7 +3714,7 @@ dependencies = [
 
 [[package]]
 name = "mock-registry"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.0",
@@ -3744,7 +3799,7 @@ dependencies = [
 
 [[package]]
 name = "nagare"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "async-trait",
  "bindings",
@@ -4672,7 +4727,7 @@ dependencies = [
 
 [[package]]
 name = "proc-macros"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -6147,7 +6202,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shoji"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "bindings",
  "bindings-types",
@@ -6666,7 +6721,7 @@ dependencies = [
 
 [[package]]
 name = "test-runner"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "criterion",
  "keisoku",
@@ -6841,7 +6896,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "token-stream-parser"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "indexmap 2.14.0",
  "json-transform",
@@ -7593,7 +7648,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
@@ -7653,7 +7708,10 @@ dependencies = [
 
 [[package]]
 name = "uzu-types"
-version = "0.5.15"
+version = "0.5.16"
+dependencies = [
+ "enumset",
+]
 
 [[package]]
 name = "v_frame"

@@ -27,8 +27,6 @@ pub struct ParameterMetadata {
 pub enum ParameterLoaderError<B: Backend> {
     #[error("Array with key \"{0}\" not found.")]
     KeyNotFound(String),
-    #[error("Couldn't find any arrays with prefix \"{0}\".")]
-    SubtreeNotFound(String),
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Failed to read data")]
@@ -273,16 +271,10 @@ impl<'loader, B: Backend> ParameterTree<'loader, B> {
     pub fn subtree(
         &self,
         name: &str,
-    ) -> Result<Self, ParameterLoaderError<B>> {
-        let new_prefix = self.join_prefix(name);
-        let subtree_prefix = format!("{new_prefix}.");
-        if self.loader.index.keys().any(|key| key.starts_with(&subtree_prefix)) {
-            Ok(Self {
-                loader: self.loader,
-                prefix: Some(new_prefix),
-            })
-        } else {
-            Err(ParameterLoaderError::SubtreeNotFound(new_prefix))
+    ) -> Self {
+        Self {
+            loader: self.loader,
+            prefix: Some(self.join_prefix(name)),
         }
     }
 

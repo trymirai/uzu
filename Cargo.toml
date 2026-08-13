@@ -18,14 +18,15 @@ members = [
     "crates/test-runner",
     "crates/keisoku",
     "crates/kanka",
-    "crates/kiban", "crates/uzu-types",
+    "crates/kiban",
+    "crates/uzu-types",
 ]
 resolver = "3"
 
 [workspace.package]
 edition = "2024"
 rust-version = "1.94"
-version = "0.5.15"
+version = "0.5.16"
 authors = ["Mirai Tech Inc. <contact@getmirai.co>"]
 description = "A high-performance inference engine for AI models"
 readme = "README.md"
@@ -209,6 +210,7 @@ rodio = { version = "0.22.2", default-features = false, features = [
 ] }
 web-sys = "0.3"
 web-time = "1.1"
+enumset = "1.1"
 
 [workspace.lints.clippy]
 # TODO: add large_stack_frames, large_stack_arrays, trivially_copy_pass_by_ref, needless_pass_by_value, map_err_ignore, use_self, cloned_instead_of_copied, manual_let_else, semicolon_if_nothing_returned, uninlined_format_args, lossy_float_literal

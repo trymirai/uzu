@@ -41,7 +41,7 @@ PUBLIC KERNEL(WeaverTopChildren)(
     device float* output_model_logprobs,
     constant uint& rows,
     constant uint& candidates,
-    constant uint& children_per_node,
+    constant uint& expand_width,
     constant uint& vocab_size,
     threadgroup float reduce_float[TOP_CHILDREN_SIMDGROUPS],
     threadgroup uint reduce_score[TOP_CHILDREN_SIMDGROUPS],
@@ -55,7 +55,7 @@ PUBLIC KERNEL(WeaverTopChildren)(
     const uint row GROUPS(rows),
     const uint lid THREADS(TOP_CHILDREN_THREADS)
 ) {
-  if (candidates == 0 || candidates > CANDIDATES_MAX || children_per_node == 0 || children_per_node > candidates) {
+  if (candidates == 0 || candidates > CANDIDATES_MAX || expand_width == 0 || expand_width > candidates) {
     return;
   }
 
@@ -112,7 +112,7 @@ PUBLIC KERNEL(WeaverTopChildren)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  for (uint child = 0; child < children_per_node; ++child) {
+  for (uint child = 0; child < expand_width; ++child) {
     uint local_score = 0u;
     uint local_token = 0xffffffffu;
     uint local_index = 0xffffffffu;
@@ -159,8 +159,8 @@ PUBLIC KERNEL(WeaverTopChildren)(
 
     if (lid == 0) {
       const float winner_logit = candidate_logits[base + winner_index] + float(residual_logits[base + winner_index]);
-      output_token_ids[row * children_per_node + child] = winner_token;
-      output_model_logprobs[row * children_per_node + child] = winner_logit - log_sum;
+      output_token_ids[row * expand_width + child] = winner_token;
+      output_model_logprobs[row * expand_width + child] = winner_logit - log_sum;
     }
     first_active = first_active && first_index != winner_index;
     second_active = second_active && second_index != winner_index;
