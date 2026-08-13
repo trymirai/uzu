@@ -60,7 +60,7 @@ impl<B: Backend> dyn Mlp<B> {
                     dense_config.has_down_biases,
                     context,
                     data_type,
-                    &parameter_tree.subtree("down_projection")?,
+                    &parameter_tree.subtree("down_projection"),
                 )?;
 
                 let gate = MlpGateActMulEncodable::new(

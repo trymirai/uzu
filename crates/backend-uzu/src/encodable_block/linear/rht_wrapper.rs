@@ -92,7 +92,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         allow_prequantized_activation: bool,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Option<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>)>, RHTLinearWrapperError<B>> {
-        let weights_tree = parameter_tree.subtree("weights")?;
+        let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         if !has_input_output_rht(&spec) {
             return Ok(None);
@@ -142,8 +142,8 @@ impl<B: Backend> RHTLinearWrapper<B> {
         weights_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<(Allocation<B>, LinearMatmul<B>), RHTLinearWrapperError<B>> {
-        let weights_tree = parameter_tree.subtree("weights")?;
-        let quantized_weights_tree = weights_tree.subtree("quantized")?;
+        let weights_tree = parameter_tree.subtree("weights");
+        let quantized_weights_tree = weights_tree.subtree("quantized");
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let input_factors = weights_tree
             .leaf("incoherence_signs.input_signs")?
