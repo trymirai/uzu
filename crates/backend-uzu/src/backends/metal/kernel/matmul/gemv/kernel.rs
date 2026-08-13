@@ -69,14 +69,13 @@ impl GemvSpecialization {
         if shape.d_transform.contains(GemmDTransform::RHT) && !shape.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) {
             return None;
         }
-        if is_quant {
-            if shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m >= 5 {
-                return None;
-            }
-        } else {
+        if shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > max_gemv_batch_threshold() {
+            return None;
+        }
+        if !is_quant {
             let mixed_precision = weights_data_type == DataType::F32
                 && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
-            if mixed_precision || shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > max_gemv_batch_threshold() {
+            if mixed_precision {
                 return None;
             }
         }

@@ -12,15 +12,13 @@ use crate::{
         linear::{Linear, LinearBlockError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
 };
 
 #[derive(Debug, Error)]
 pub enum PredictionHeadError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
-    #[error("Parameter loading error: {0}")]
-    Parameter(#[from] ParameterLoaderError<B>),
     #[error("Linear error: {0}")]
     Linear(#[from] LinearBlockError<B>),
     #[error("Normalization error: {0}")]
@@ -51,7 +49,7 @@ impl<B: Backend> PredictionHead<B> {
             config.use_dense_bias,
             context,
             data_type,
-            &parameter_tree.subtree("dense")?,
+            &parameter_tree.subtree("dense"),
         )?;
 
         let activation = config.activation.act_type();
@@ -65,7 +63,7 @@ impl<B: Backend> PredictionHead<B> {
             PostLayerScalar::None,
             data_type,
             &config.normalization_config,
-            &parameter_tree.subtree("norm")?,
+            &parameter_tree.subtree("norm"),
             context,
         )?;
 
@@ -75,7 +73,7 @@ impl<B: Backend> PredictionHead<B> {
             true,
             context,
             data_type,
-            &parameter_tree.subtree("readout")?,
+            &parameter_tree.subtree("readout"),
         )?;
 
         Ok(Self {

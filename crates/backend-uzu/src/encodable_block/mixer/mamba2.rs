@@ -121,7 +121,7 @@ impl<B: Backend> Mamba2<B> {
                 outer_data_type,
                 outer_data_type,
                 INNER_DATA_TYPE,
-                &parameter_tree.subtree("in_projection")?,
+                &parameter_tree.subtree("in_projection"),
             )?;
 
         let gate_bias = parameter_tree.leaf("gate_bias")?.validate(&[inner_dim], INNER_DATA_TYPE)?.read_allocation()?;
@@ -129,7 +129,7 @@ impl<B: Backend> Mamba2<B> {
             .map_err(Mamba2NewError::Backend)?;
 
         let conv_config = &config.conv_config;
-        let conv_tree = parameter_tree.subtree("conv")?;
+        let conv_tree = parameter_tree.subtree("conv");
 
         let conv_weight =
             conv_tree.leaf("weights")?.validate(&[conv_dim, kernel_size], INNER_DATA_TYPE)?.read_allocation()?;
@@ -174,7 +174,7 @@ impl<B: Backend> Mamba2<B> {
             outer_data_type,
             INNER_DATA_TYPE,
             outer_data_type,
-            &parameter_tree.subtree("out_projection")?,
+            &parameter_tree.subtree("out_projection"),
         )?;
 
         Ok((

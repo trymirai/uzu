@@ -35,6 +35,7 @@ impl AttentionConfig {
             scale_offset: None,
             upcast_mode: UpcastMode::FullLayer,
             subtract_mean: false,
+            has_scale: false,
             has_biases: false,
         })
     }

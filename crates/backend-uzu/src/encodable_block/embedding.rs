@@ -6,7 +6,7 @@ use crate::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
-            ActivationTransform, LogitSoftCapKernel,
+            ActivationTransform, LogitTransformKernel,
             matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel},
         },
     },
@@ -65,14 +65,16 @@ pub struct Embedding<B: Backend> {
     tying: EmbeddingTying<B>,
     input_scale: f32,
     data_type: DataType,
-    logit_soft_cap: Option<LogitSoftCap<B>>,
+    logit_transform: Option<LogitTransform<B>>,
     vocab_size: u32,
     model_dim: u32,
 }
 
-struct LogitSoftCap<B: Backend> {
-    value: f32,
-    kernel: <B::Kernels as Kernels>::LogitSoftCapKernel,
+struct LogitTransform<B: Backend> {
+    scale: f32,
+    soft_cap: Option<f32>,
+    kernel: <B::Kernels as Kernels>::LogitTransformKernel,
+    widened_kernel: Option<<B::Kernels as Kernels>::LogitTransformKernel>,
 }
 
 impl<B: Backend> Embedding<B> {
@@ -123,7 +125,7 @@ impl<B: Backend> Embedding<B> {
     ) -> Result<(Self, Option<Allocation<B>>), EmbeddingError<B>> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
-                let embedding_tree = parameter_tree.subtree("embedding")?;
+                let embedding_tree = parameter_tree.subtree("embedding");
                 let embedding_spec = embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
                 let (tying, readout_input_hadamard_factors) = match embedding_spec {
@@ -155,7 +157,7 @@ impl<B: Backend> Embedding<B> {
                         incoherence_processing_mode: IncoherenceProcessingMode::Output,
                         ..
                     }) => {
-                        let incoherence_signs_tree = embedding_tree.subtree("incoherence_signs")?;
+                        let incoherence_signs_tree = embedding_tree.subtree("incoherence_signs");
                         let output_hadamard_factors = Some(
                             incoherence_signs_tree
                                 .leaf("output_signs")?
@@ -171,7 +173,7 @@ impl<B: Backend> Embedding<B> {
 
                         let table = EmbeddingTable::load_with_spec(
                             context,
-                            &embedding_tree.subtree("quantized")?,
+                            &embedding_tree.subtree("quantized"),
                             vocab_size,
                             model_dim,
                             data_type,
@@ -192,7 +194,7 @@ impl<B: Backend> Embedding<B> {
                 (tying, readout_input_hadamard_factors)
             },
             AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
-                let input_embedding_tree = parameter_tree.subtree("input_embedding")?;
+                let input_embedding_tree = parameter_tree.subtree("input_embedding");
                 let input_embedding_spec = input_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
                 let input_table = match input_embedding_spec {
@@ -205,14 +207,14 @@ impl<B: Backend> Embedding<B> {
                     }) => {
                         let output_hadamard_factors = Some(
                             input_embedding_tree
-                                .subtree("incoherence_signs")?
+                                .subtree("incoherence_signs")
                                 .leaf("output_signs")?
                                 .validate(&[model_dim], DataType::I32)?
                                 .read_allocation()?,
                         );
                         EmbeddingTable::load_with_spec(
                             context,
-                            &input_embedding_tree.subtree("quantized")?,
+                            &input_embedding_tree.subtree("quantized"),
                             vocab_size,
                             model_dim,
                             data_type,
@@ -231,7 +233,7 @@ impl<B: Backend> Embedding<B> {
                     )?,
                 };
 
-                let output_embedding_tree = parameter_tree.subtree("output_embedding")?;
+                let output_embedding_tree = parameter_tree.subtree("output_embedding");
                 let output_embedding_spec = output_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
                 let output = match output_embedding_spec {
@@ -243,7 +245,7 @@ impl<B: Backend> Embedding<B> {
                         ..
                     }) => {
                         let matrix = WeightMatrix::load(
-                            &output_embedding_tree.subtree("quantized")?,
+                            &output_embedding_tree.subtree("quantized"),
                             *quantization_spec,
                             Layout::OutputInput,
                             vocab_size,
@@ -255,7 +257,7 @@ impl<B: Backend> Embedding<B> {
                         // input: the shared hidden state must stay untransformed
                         // (e.g. for the speculator).
                         let factors = output_embedding_tree
-                            .subtree("incoherence_signs")?
+                            .subtree("incoherence_signs")
                             .leaf("input_signs")?
                             .validate(&[model_dim], DataType::I32)?
                             .read_allocation()?;
@@ -299,12 +301,29 @@ impl<B: Backend> Embedding<B> {
         };
 
         let input_scale = config.input_scale().unwrap_or(1.0);
-        let logit_soft_cap = if let Some(value) = *config.logit_soft_cap() {
-            let kernel = <B::Kernels as Kernels>::LogitSoftCapKernel::new(context, data_type)
-                .map_err(EmbeddingError::BackendError)?;
-            Some(LogitSoftCap {
-                value,
+        let logit_scale = config.logit_scale().unwrap_or(1.0);
+        let logit_soft_cap = *config.logit_soft_cap();
+        let logit_transform = if logit_scale != 1.0 || logit_soft_cap.is_some() {
+            let kernel =
+                <B::Kernels as Kernels>::LogitTransformKernel::new(context, data_type, logit_soft_cap.is_some())
+                    .map_err(EmbeddingError::BackendError)?;
+            let widened_kernel = if data_type != DataType::F32 {
+                Some(
+                    <B::Kernels as Kernels>::LogitTransformKernel::new(
+                        context,
+                        DataType::F32,
+                        logit_soft_cap.is_some(),
+                    )
+                    .map_err(EmbeddingError::BackendError)?,
+                )
+            } else {
+                None
+            };
+            Some(LogitTransform {
+                scale: logit_scale,
+                soft_cap: logit_soft_cap,
                 kernel,
+                widened_kernel,
             })
         } else {
             None
@@ -315,7 +334,7 @@ impl<B: Backend> Embedding<B> {
                 tying,
                 input_scale,
                 data_type,
-                logit_soft_cap,
+                logit_transform,
                 vocab_size,
                 model_dim,
             },
@@ -414,15 +433,21 @@ impl<B: Backend> Embedding<B> {
             widened.encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
         }
 
-        if let Some(logit_soft_cap) = &self.logit_soft_cap {
+        if let Some(logit_transform) = &self.logit_transform {
             let length = batch_dim * self.vocab_size;
-            if native_output {
-                logit_soft_cap.kernel.encode(&mut output_allocation, length, logit_soft_cap.value, encoder);
+            let kernel = if native_output {
+                &logit_transform.kernel
             } else {
-                let kernel = <B::Kernels as Kernels>::LogitSoftCapKernel::new(encoder.context(), output_data_type)
-                    .map_err(EmbeddingError::BackendError)?;
-                kernel.encode(&mut output_allocation, length, logit_soft_cap.value, encoder);
-            }
+                assert_eq!(output_data_type, DataType::F32, "unsupported readout output data type");
+                logit_transform.widened_kernel.as_ref().expect("widened logit transform kernel is missing")
+            };
+            kernel.encode(
+                &mut output_allocation,
+                length,
+                logit_transform.scale,
+                logit_transform.soft_cap.unwrap_or(0.0),
+                encoder,
+            );
         }
 
         encoder.pop_debug_group();
@@ -468,7 +493,11 @@ impl<B: Backend> Embedding<B> {
             None => input,
         };
 
-        let soft_cap = self.logit_soft_cap.as_ref().map(|cap| cap.value);
+        let fuse_soft_cap = match &self.logit_transform {
+            Some(logit_transform) if logit_transform.scale != 1.0 => None,
+            Some(logit_transform) => logit_transform.soft_cap,
+            None => None,
+        };
         readout
             .lock()
             .encode(
@@ -482,7 +511,7 @@ impl<B: Backend> Embedding<B> {
                     b_transpose: true,
                     d: &mut output,
                     d_transform: MatmulDOps {
-                        soft_cap,
+                        soft_cap: fuse_soft_cap,
                         ..MatmulDOps::none()
                     },
                     gather_indices: Some(token_ids),
@@ -493,6 +522,19 @@ impl<B: Backend> Embedding<B> {
                 encoder,
             )
             .map_err(EmbeddingError::BackendError)?;
+
+        if let Some(logit_transform) = &self.logit_transform
+            && logit_transform.scale != 1.0
+        {
+            let length = (rows * ids_per_row) as u32;
+            logit_transform.kernel.encode(
+                &mut output,
+                length,
+                logit_transform.scale,
+                logit_transform.soft_cap.unwrap_or(0.0),
+                encoder,
+            );
+        }
 
         encoder.pop_debug_group();
 

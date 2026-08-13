@@ -135,20 +135,6 @@ impl<B: Backend> AttentionState<B> {
             kv_cache_update,
         })
     }
-
-    pub(super) fn append_full(
-        &mut self,
-        length: u32,
-    ) {
-        let AttentionStateType::Full {
-            length: state_length,
-        } = &mut self.state_type
-        else {
-            panic!("append_full requires full attention state");
-        };
-        *state_length += length;
-        self.cur_context_length += length;
-    }
 }
 
 impl<B: Backend> MixerState<B> for AttentionState<B> {

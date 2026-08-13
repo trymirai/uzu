@@ -88,7 +88,7 @@ impl<B: Backend> Attention<B> {
         let has_gate = config.gate_projection_config.is_some();
 
         // TODO: qkv and gate should be fused to be qkvg in lalamo
-        let qkv_projection_tree = parameter_tree.subtree("qkv_projection")?;
+        let qkv_projection_tree = parameter_tree.subtree("qkv_projection");
         let qkv_projection_output_dimension = if let Some(num_kv_heads) = num_kv_heads {
             let kv_dim = num_kv_heads * head_dim;
             q_dim + kv_dim + kv_dim
@@ -126,7 +126,7 @@ impl<B: Backend> Attention<B> {
                     false,
                     context,
                     data_type,
-                    &parameter_tree.subtree("gate_projection")?,
+                    &parameter_tree.subtree("gate_projection"),
                 )
             })
             .transpose()?;
@@ -211,7 +211,7 @@ impl<B: Backend> Attention<B> {
             config.has_out_biases,
             context,
             data_type,
-            &parameter_tree.subtree("out_projection")?,
+            &parameter_tree.subtree("out_projection"),
         )?;
 
         Ok((

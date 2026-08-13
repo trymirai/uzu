@@ -69,7 +69,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         let output_dimension_sum: u32 = output_dimensions.iter().sum();
-        let weights_tree = parameter_tree.subtree("weights")?;
+        let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
             spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)
@@ -165,7 +165,7 @@ impl<B: Backend> dyn Linear<B> {
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> Result<Box<dyn Linear<B>>, OutputHadamardLinearError<B>> {
-        let weights_tree = parameter_tree.subtree("weights")?.subtree("quantized")?;
+        let weights_tree = parameter_tree.subtree("weights").subtree("quantized");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
             spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
@@ -199,7 +199,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<B>,
     ) -> Result<(Box<dyn Linear<B>>, Option<Allocation<B>>), LinearBlockError<B>> {
         let output_dimension_sum: u32 = output_dimensions.iter().sum();
-        let weights_tree = parameter_tree.subtree("weights")?;
+        let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         if let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             adapter_spec: None,
@@ -208,7 +208,7 @@ impl<B: Backend> dyn Linear<B> {
             ..
         }) = &spec
         {
-            let quantization_spec = weights_tree.subtree("quantized")?.metadata::<AnyWeightMatrixSpec>("spec")?;
+            let quantization_spec = weights_tree.subtree("quantized").metadata::<AnyWeightMatrixSpec>("spec")?;
             let parsed = parse_spec::<B>(&quantization_spec).ok();
             if parsed.as_ref().is_some_and(|parsed| {
                 int8_activations_eligible::<B>(

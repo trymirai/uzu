@@ -72,7 +72,7 @@ impl<B: Backend> WeaverLayer<B> {
             false,
             context,
             DATA_TYPE,
-            &parameter_tree.subtree("qkv_projection")?,
+            &parameter_tree.subtree("qkv_projection"),
         )?;
         let out_projection = <dyn Linear<B>>::new(
             model_dim,
@@ -80,7 +80,7 @@ impl<B: Backend> WeaverLayer<B> {
             false,
             context,
             DATA_TYPE,
-            &parameter_tree.subtree("out_projection")?,
+            &parameter_tree.subtree("out_projection"),
         )?;
         let prefix_attention = AttentionCores::new(
             AttentionCoreNewArguments {
@@ -112,7 +112,7 @@ impl<B: Backend> WeaverLayer<B> {
             PostLayerScalar::None,
             DATA_TYPE,
             norm_config,
-            &parameter_tree.subtree("pre_attention_norm")?,
+            &parameter_tree.subtree("pre_attention_norm"),
             context,
         )?;
         let pre_mlp_norm = Normalization::new(
@@ -122,7 +122,7 @@ impl<B: Backend> WeaverLayer<B> {
             PostLayerScalar::None,
             DATA_TYPE,
             norm_config,
-            &parameter_tree.subtree("pre_mlp_norm")?,
+            &parameter_tree.subtree("pre_mlp_norm"),
             context,
         )?;
         let mlp_config = AnyMLPConfig::DenseMLPConfig(DenseMLPConfig::unclipped(
@@ -132,7 +132,7 @@ impl<B: Backend> WeaverLayer<B> {
             true,
         ));
         let (mlp, up_input_hadamard_factors) =
-            <dyn Mlp<B>>::new(&mlp_config, model_dim, hidden_dim, context, &parameter_tree.subtree("mlp")?, DATA_TYPE)?;
+            <dyn Mlp<B>>::new(&mlp_config, model_dim, hidden_dim, context, &parameter_tree.subtree("mlp"), DATA_TYPE)?;
         assert!(up_input_hadamard_factors.is_none(), "Weaver MLP does not support input Hadamard factors");
         let ancestor_attention = <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim, num_heads)
             .map_err(WeaverNewError::Backend)?;

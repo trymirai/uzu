@@ -12,7 +12,7 @@ use crate::{
     config::mlp::AnyMLPConfig,
     data_type::DataType,
     encodable_block::linear::{Linear, LinearBlockError},
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
 };
 
 pub trait Mlp<B: Backend>: Send + Sync {
@@ -32,8 +32,6 @@ pub enum MlpBlockError<B: Backend> {
     LinearBlockError(#[from] LinearBlockError<B>),
     #[error("MoeBlock error: {0}")]
     MoeBlockError(#[from] MoeBlockError<B>),
-    #[error("Parameter loader error: {0}")]
-    ParameterLoaderError(#[from] ParameterLoaderError<B>),
 }
 
 impl<B: Backend> dyn Mlp<B> {
@@ -53,7 +51,7 @@ impl<B: Backend> dyn Mlp<B> {
                     dense_config.has_up_biases,
                     context,
                     data_type,
-                    &parameter_tree.subtree("up_projection")?,
+                    &parameter_tree.subtree("up_projection"),
                 )?;
 
                 let (down_projection, down_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
@@ -62,7 +60,7 @@ impl<B: Backend> dyn Mlp<B> {
                     dense_config.has_down_biases,
                     context,
                     data_type,
-                    &parameter_tree.subtree("down_projection")?,
+                    &parameter_tree.subtree("down_projection"),
                 )?;
 
                 let gate = MlpGateActMulEncodable::new(

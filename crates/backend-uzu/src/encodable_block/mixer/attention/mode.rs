@@ -7,12 +7,15 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::Linear,
-        mixer::attention::{
-            Attention,
-            core::AttentionCoreEncodeArguments,
-            qkv_norm::QKVNorm,
-            rope::PrecalculatedRoPE,
-            state::{AttentionState, AttentionStateType},
+        mixer::{
+            MixerState,
+            attention::{
+                Attention,
+                core::AttentionCoreEncodeArguments,
+                qkv_norm::QKVNorm,
+                rope::PrecalculatedRoPE,
+                state::{AttentionState, AttentionStateType},
+            },
         },
     },
     utils::maybe_mut::MaybeMut,
@@ -161,7 +164,7 @@ impl<B: Backend> Attention<B> {
             batch_dim,
             encoder,
         )?;
-        state.append_full(batch_dim);
+        state.encode_accept(&(0..batch_dim).collect::<Box<[u32]>>(), encoder)?;
         Ok(())
     }
 

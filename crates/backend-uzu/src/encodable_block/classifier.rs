@@ -11,15 +11,13 @@ use crate::{
         prediction_head::{PredictionHead, PredictionHeadError},
         transformer::{Transformer, TransformerNewError},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
 };
 
 #[derive(Debug, Error)]
 pub enum ClassifierError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
-    #[error("Parameter loader error: {0}")]
-    ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Embedding error: {0}")]
     EmbeddingError(#[from] EmbeddingError<B>),
     #[error("Normalization error: {0}")]
@@ -54,7 +52,7 @@ impl<B: Backend> Classifier<B> {
             config.vocab_size,
             config.transformer_config.model_dim,
             &config.embedding_config,
-            &parameter_tree.subtree("embedding")?,
+            &parameter_tree.subtree("embedding"),
             data_type,
         )?;
 
@@ -65,7 +63,7 @@ impl<B: Backend> Classifier<B> {
             PostLayerScalar::None,
             data_type,
             &config.embedding_norm_config,
-            &parameter_tree.subtree("embedding_norm")?,
+            &parameter_tree.subtree("embedding_norm"),
             context,
         )?;
 
@@ -74,7 +72,7 @@ impl<B: Backend> Classifier<B> {
             None,
             data_type,
             &config.transformer_config,
-            &parameter_tree.subtree("transformer")?,
+            &parameter_tree.subtree("transformer"),
         )?;
 
         if config.classifier_pooling != PoolingType::Mean {
@@ -91,7 +89,7 @@ impl<B: Backend> Classifier<B> {
             config.num_labels,
             data_type,
             &config.prediction_head_config,
-            &parameter_tree.subtree("prediction_head")?,
+            &parameter_tree.subtree("prediction_head"),
             context,
         )?;
 

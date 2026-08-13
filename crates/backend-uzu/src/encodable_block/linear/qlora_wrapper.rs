@@ -72,7 +72,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             },
         };
 
-        let quantized_tree = weights_tree.subtree("quantized")?;
+        let quantized_tree = weights_tree.subtree("quantized");
         let parsed = parse_spec::<B>(&quantization_spec)?;
         let Some(_) = parsed.quantization else {
             return Err(QLoRALinearWrapperError::UnsupportedConfiguration(

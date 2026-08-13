@@ -203,11 +203,11 @@ impl<B: Backend> DeltaNet<B> {
                 outer_data_type,
                 outer_data_type,
                 outer_data_type,
-                &parameter_tree.subtree("in_proj")?,
+                &parameter_tree.subtree("in_proj"),
             )?;
 
         let conv_config = &config.conv_config;
-        let conv_tree = parameter_tree.subtree("conv")?;
+        let conv_tree = parameter_tree.subtree("conv");
 
         let conv_weight =
             conv_tree.leaf("weights")?.validate(&[conv_dim, config.kernel_size], INNER_DATA_TYPE)?.read_allocation()?;
@@ -296,7 +296,7 @@ impl<B: Backend> DeltaNet<B> {
             outer_data_type,
             outer_data_type,
             outer_data_type,
-            &parameter_tree.subtree("out_proj")?,
+            &parameter_tree.subtree("out_proj"),
         )?;
 
         Ok((

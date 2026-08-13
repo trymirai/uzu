@@ -94,7 +94,7 @@ impl<B: Backend> Engine<B> {
         let decoder = Decoder::new(
             self.context.as_ref(),
             &config.decoder_config,
-            &weight_loader.tree().subtree("decoder")?,
+            &weight_loader.tree().subtree("decoder"),
             data_type,
         )?;
 

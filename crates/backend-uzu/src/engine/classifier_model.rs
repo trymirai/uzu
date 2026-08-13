@@ -59,7 +59,7 @@ impl<B: Backend> Engine<B> {
         let classifier = ClassifierEncodable::new(
             context.as_ref(),
             &config.classifier_config,
-            &weight_loader.tree().subtree("classifier")?,
+            &weight_loader.tree().subtree("classifier"),
             data_type,
         )?;
 

@@ -5,7 +5,6 @@
 
 pub mod activation_transform;
 pub mod activation_type;
-pub mod argmax;
 pub mod attention;
 pub mod gemm;
 pub mod hadamard_order;
@@ -19,7 +18,6 @@ pub mod weaver;
 
 pub use activation_transform::*;
 pub use activation_type::*;
-pub use argmax::*;
 pub use attention::*;
 pub use hadamard_order::*;
 pub use kv_cache_update::*;

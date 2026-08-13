@@ -7,4 +7,5 @@ pub mod untied_embedding;
 pub struct EmbeddingConfig {
     pub input_scale: Option<f32>,
     pub logit_soft_cap: Option<f32>,
+    pub logit_scale: Option<f32>,
 }

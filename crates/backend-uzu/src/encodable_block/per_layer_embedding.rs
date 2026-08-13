@@ -15,15 +15,13 @@ use crate::{
         linear::{Linear, LinearBlockError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
 };
 
 #[derive(Debug, Error)]
 pub enum PerLayerEmbeddingError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
-    #[error("Parameter loading error: {0}")]
-    ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Linear error: {0}")]
@@ -56,7 +54,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
 
         let token_embedding = EmbeddingTable::load(
             context,
-            &parameter_tree.subtree("token_embedding")?,
+            &parameter_tree.subtree("token_embedding"),
             config.ple_vocab_size,
             total_ple_dim,
             data_type,
@@ -68,7 +66,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             false,
             context,
             data_type,
-            &parameter_tree.subtree("model_projection")?,
+            &parameter_tree.subtree("model_projection"),
         )?;
 
         let scale_squared = config.model_projection_scale * config.model_projection_scale;
@@ -84,7 +82,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             PostLayerScalar::ScaleOutput(config.input_scale),
             data_type,
             &projection_norm_config,
-            &parameter_tree.subtree("projection_norm")?,
+            &parameter_tree.subtree("projection_norm"),
             context,
         )?;
 
@@ -176,7 +174,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             false,
             context,
             data_type,
-            &parameter_tree.subtree("gate")?,
+            &parameter_tree.subtree("gate"),
         )?;
         let projection = <dyn Linear<B>>::new(
             config.ple_dim,
@@ -184,7 +182,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             false,
             context,
             data_type,
-            &parameter_tree.subtree("projection")?,
+            &parameter_tree.subtree("projection"),
         )?;
         let norm = Normalization::new(
             model_dim,
@@ -193,7 +191,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             PostLayerScalar::None,
             data_type,
             &config.norm_config,
-            &parameter_tree.subtree("norm")?,
+            &parameter_tree.subtree("norm"),
             context,
         )?;
 

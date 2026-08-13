@@ -9,20 +9,21 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         embedding::{Embedding, EmbeddingError},
+        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
         transformer::{Transformer, TransformerNewError, TransformerState},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
 };
 
 #[derive(Debug, Error)]
 pub enum DecoderError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
-    #[error("Parameter loader error: {0}")]
-    ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Embedding error: {0}")]
     EmbeddingError(#[from] EmbeddingError<B>),
+    #[error("Normalization error: {0}")]
+    Normalization(#[from] NormalizationNewError<B>),
     #[error("Per-layer embedding error: {0}")]
     PerLayerEmbedding(#[from] PerLayerEmbeddingError<B>),
     #[error("Transformer error: {0}")]
@@ -31,6 +32,7 @@ pub enum DecoderError<B: Backend> {
 
 pub struct Decoder<B: Backend> {
     embedding: Embedding<B>,
+    embedding_norm: Option<Normalization<B>>,
     per_layer_embedding: Option<PerLayerEmbedding<B>>,
     transformer: Transformer<B>,
 }
@@ -59,9 +61,26 @@ impl<B: Backend> Decoder<B> {
             config.vocab_size,
             config.transformer_config.model_dim,
             &config.embedding_config,
-            &parameter_tree.subtree("embedding")?,
+            &parameter_tree.subtree("embedding"),
             data_type,
         )?;
+
+        let embedding_norm = config
+            .embedding_norm_config
+            .as_ref()
+            .map(|norm_config| {
+                Normalization::new(
+                    config.transformer_config.model_dim,
+                    None,
+                    ShortcutMode::None,
+                    PostLayerScalar::None,
+                    data_type,
+                    norm_config,
+                    &parameter_tree.subtree("embedding_norm"),
+                    context,
+                )
+            })
+            .transpose()?;
 
         let per_layer_embedding = if let Some(ple_config) = &config.ple_model_config {
             assert_eq!(
@@ -74,7 +93,7 @@ impl<B: Backend> Decoder<B> {
                 ple_config,
                 config.transformer_config.model_dim,
                 data_type,
-                &parameter_tree.subtree("per_layer_embedding")?,
+                &parameter_tree.subtree("per_layer_embedding"),
             )?)
         } else {
             None
@@ -85,11 +104,12 @@ impl<B: Backend> Decoder<B> {
             readout_input_hadamard_factors,
             data_type,
             &config.transformer_config,
-            &parameter_tree.subtree("transformer")?,
+            &parameter_tree.subtree("transformer"),
         )?;
 
         Ok(Self {
             embedding,
+            embedding_norm,
             per_layer_embedding,
             transformer,
         })
@@ -127,6 +147,11 @@ impl<B: Backend> Decoder<B> {
         encoder.push_debug_group("decoder");
 
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), encoder)?;
+        let embedded = if let Some(embedding_norm) = &self.embedding_norm {
+            embedding_norm.encode(&embedded, 0, batch_dim.size(), None, encoder).map_err(DecoderError::Backend)?
+        } else {
+            embedded
+        };
 
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
             Some(
