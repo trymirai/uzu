@@ -3,7 +3,6 @@ use std::borrow::Cow;
 use bytemuck::{AnyBitPattern, NoUninit};
 use safetensors::{Dtype, View};
 
-use super::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{Allocation, AllocationType, Backend, Context, Encoder},
@@ -18,17 +17,19 @@ pub struct Array<B: Backend> {
 }
 
 impl<B: Backend> Array<B> {
+    /// Panics on data types without a safetensors equivalent, which is only I4/U4
+    /// and never an activation.
     pub fn new(
-        shape: Box<[usize]>,
+        shape: &[usize],
         data_type: DataType,
         allocation: Allocation<B>,
-    ) -> Result<Self, Error> {
-        Ok(Self {
-            shape,
+    ) -> Self {
+        Self {
+            shape: shape.into(),
             data_type,
-            dtype: data_type.try_into()?,
+            dtype: data_type.try_into().expect("data type has a safetensors equivalent"),
             allocation,
-        })
+        }
     }
 
     // Global, because encode-chain allocations are moved along and recycled once dropped.
@@ -44,7 +45,7 @@ impl<B: Backend> Array<B> {
         let mut destination = encoder.context().create_allocation(byte_count, AllocationType::Global)?;
         encoder.encode_copy(allocation, ..byte_count, &mut destination, ..);
 
-        Ok(Self::expect_new(shape, data_type, destination))
+        Ok(Self::new(shape, data_type, destination))
     }
 
     pub fn capture_slice<T: NoUninit + AnyBitPattern>(
@@ -59,15 +60,7 @@ impl<B: Backend> Array<B> {
         let mut destination = encoder.context().create_allocation(byte_count, AllocationType::Global)?;
         destination.copyin(data);
 
-        Ok(Self::expect_new(shape, data_type, destination))
-    }
-
-    fn expect_new(
-        shape: &[usize],
-        data_type: DataType,
-        allocation: Allocation<B>,
-    ) -> Self {
-        Self::new(shape.into(), data_type, allocation).expect("activation dtype has a safetensors equivalent")
+        Ok(Self::new(shape, data_type, destination))
     }
 }
 
