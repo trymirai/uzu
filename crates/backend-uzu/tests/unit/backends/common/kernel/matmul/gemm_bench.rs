@@ -45,10 +45,10 @@ fn bench_gemm(c: &mut Criterion) {
 
         for shape in bench_fp_gemm_shapes() {
             let (m, k, n) = (shape.m, shape.k, shape.n);
-            let a = alloc_allocation::<Metal, bf16>(&context, m * k);
-            let b_weights = alloc_allocation::<Metal, bf16>(&context, n * k);
-            let mut d = alloc_allocation::<Metal, bf16>(&context, m * n);
-            group.throughput(Throughput::Elements((2 * m * k * n) as u64));
+            let a = alloc_allocation::<Metal, bf16>(&context, m as usize * k as usize);
+            let b_weights = alloc_allocation::<Metal, bf16>(&context, n as usize * k as usize);
+            let mut d = alloc_allocation::<Metal, bf16>(&context, m as usize * n as usize);
+            group.throughput(Throughput::Elements(2 * u64::from(m) * u64::from(k) * u64::from(n)));
             group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
                 iter_encode_loop::<Metal, _>(&context, b, |encoder| {
                     kernel
@@ -67,9 +67,9 @@ fn bench_gemm(c: &mut Criterion) {
                                 d: &mut d,
                                 d_transform: MatmulDOps::none(),
                                 gather_indices: None,
-                                m: m as u32,
-                                n: n as u32,
-                                k: k as u32,
+                                m,
+                                n,
+                                k,
                             },
                             engine,
                             encoder,

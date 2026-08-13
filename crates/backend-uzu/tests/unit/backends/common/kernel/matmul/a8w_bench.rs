@@ -65,9 +65,9 @@ struct BenchmarkData {
 impl BenchmarkData {
     fn new(
         context: &MetalContext,
-        m: usize,
-        k: usize,
-        n: usize,
+        m: u32,
+        k: u32,
+        n: u32,
         bits: u32,
         group_size: u32,
         seed: u64,
@@ -90,19 +90,20 @@ impl BenchmarkData {
             .collect();
         let rht_factors = alloc_allocation_with_data::<Metal, i32>(context, &rht);
 
-        let groups = k / group_size as usize;
+        let groups = k / group_size;
+        let a_elements = m as usize * k as usize;
         Self {
             unsigned_weights,
             signed_weights,
             weight_scales,
             activations,
             rht_factors,
-            a_working: alloc_allocation::<Metal, bf16>(context, m * k),
-            a_int8: alloc_allocation::<Metal, i8>(context, m * k),
-            a_scales: alloc_allocation::<Metal, f32>(context, m * groups),
-            m: m as u32,
-            k: k as u32,
-            n: n as u32,
+            a_working: alloc_allocation::<Metal, bf16>(context, a_elements),
+            a_int8: alloc_allocation::<Metal, i8>(context, a_elements),
+            a_scales: alloc_allocation::<Metal, f32>(context, m as usize * groups as usize),
+            m,
+            k,
+            n,
             group_size,
             mode: if bits == 4 {
                 QuantizationMode::U4
@@ -240,7 +241,7 @@ fn bench_bits(
             HADAMARD_TRANSFORM_BLOCK_SIZE,
             0xA8_00 ^ u64::from(bits) ^ k as u64 ^ n as u64,
         );
-        let mut output = alloc_allocation::<Metal, bf16>(context, m * n);
+        let mut output = alloc_allocation::<Metal, bf16>(context, m as usize * n as usize);
         let shape_label = format!("{layer}_m{m}_k{k}_n{n}");
 
         let gemv_eligible = GemvSpecialization::select_shape(

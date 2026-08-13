@@ -56,21 +56,23 @@ fn mode_for_bits(bits: u32) -> QuantizationMode {
 
 impl<T: ArrayElement + Float> QuantInput<T> {
     pub fn new(
-        m: usize,
-        k: usize,
-        n: usize,
+        m: u32,
+        k: u32,
+        n: u32,
         group_size: u32,
         bits: u32,
         quant_method: QuantizationMethod,
         seed: u64,
     ) -> Self {
-        let num_groups_k = k.div_ceil(group_size as usize);
+        let num_groups_k = k.div_ceil(group_size) as usize;
+        let (rows, inner, columns) = (m as usize, k as usize, n as usize);
         let mut rng = SmallRng::seed_from_u64(seed);
 
-        let w_packed: Vec<u32> = (0..n * k * bits as usize / 32).map(|_| rng.random_range(0..u32::MAX)).collect();
+        let w_packed: Vec<u32> =
+            (0..columns * inner * bits as usize / 32).map(|_| rng.random_range(0..u32::MAX)).collect();
         let scales: Vec<T> =
-            (0..n * num_groups_k).map(|_| T::from(rng.random_range(0.01f32..0.3f32)).unwrap()).collect();
-        let x: Vec<T> = (0..m * k).map(|_| T::from(rng.random_range(-0.3f32..0.3f32)).unwrap()).collect();
+            (0..columns * num_groups_k).map(|_| T::from(rng.random_range(0.01f32..0.3f32)).unwrap()).collect();
+        let x: Vec<T> = (0..rows * inner).map(|_| T::from(rng.random_range(-0.3f32..0.3f32)).unwrap()).collect();
 
         let zp_stride = if bits == 4 {
             num_groups_k.div_ceil(2)
@@ -80,10 +82,14 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let (zero_points, biases) = match quant_method {
             QuantizationMethod::ScaleBias => (
                 None,
-                Some((0..n * num_groups_k).map(|_| T::from(rng.random_range(-0.03f32..0.03f32)).unwrap()).collect()),
+                Some(
+                    (0..columns * num_groups_k)
+                        .map(|_| T::from(rng.random_range(-0.03f32..0.03f32)).unwrap())
+                        .collect(),
+                ),
             ),
             QuantizationMethod::ScaleZeroPoint => {
-                (Some((0..n * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
+                (Some((0..columns * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
             },
             QuantizationMethod::ScaleSymmetric => (None, None),
         };
@@ -94,9 +100,9 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             zero_points,
             biases,
             x,
-            k: k as u32,
-            n: n as u32,
-            m: m as u32,
+            k,
+            n,
+            m,
             group_size,
             quant_method,
             mode: mode_for_bits(bits),
