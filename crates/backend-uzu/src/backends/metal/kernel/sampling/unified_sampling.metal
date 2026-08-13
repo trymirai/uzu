@@ -5,10 +5,6 @@
 
 #include "../rng.h"
 
-#include "../generated/argmax.h"
-
-using namespace uzu::argmax;
-
 #define THREADGROUP_SIZE 1024
 #define THREADGROUP_SIZE_IN_SIMDS (THREADGROUP_SIZE / METAL_SIMD_SIZE)
 #define BITS_IN_U32 32

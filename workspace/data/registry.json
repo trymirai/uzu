@@ -81,6 +81,15 @@
         ]
     },
     {
+        "repo_id": "meta-models/Muse-Glimmer-30B",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "muse-glimmer"
+            }
+        ]
+    },
+    {
         "repo_id": "openai/gpt-oss-20b",
         "encodings": [
             {

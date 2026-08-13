@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod bench;
+mod common;
 mod interactive;
 mod server;
 mod storage;

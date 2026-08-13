@@ -1,24 +1,10 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::basic::{ReasoningEffort, SamplingMethod, SamplingPolicy};
+use shoji::types::basic::{SamplingMethod, SamplingPolicy};
 use uzu::settings::{SettingKind, Settings, SettingsError};
 
+use crate::common::model_capabilities::ThinkingPreference;
+
 const SETTINGS_PREFERENCES: &str = "cli_preferences";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ThinkingPreference {
-    pub level: ReasoningEffort,
-    pub enabled: bool,
-}
-
-impl Default for ThinkingPreference {
-    fn default() -> Self {
-        Self {
-            level: ReasoningEffort::Default,
-            enabled: true,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]

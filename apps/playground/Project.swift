@@ -18,7 +18,7 @@ let settings: Settings = .settings(
         "DEVELOPMENT_TEAM": "C39GZ239GY",
         "TARGETED_DEVICE_FAMILY": "1,2",
         "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD": "NO",
-        "MARKETING_VERSION": "0.5.14",
+        "MARKETING_VERSION": "0.5.16",
         "CURRENT_PROJECT_VERSION": "2",
     ],
     configurations: [

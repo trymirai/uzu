@@ -122,7 +122,7 @@ impl<B: Backend> ShortConv<B> {
             false,
             context,
             data_type,
-            &parameter_tree.subtree("in_projection")?,
+            &parameter_tree.subtree("in_projection"),
         )?;
 
         let out_projection = <dyn Linear<B>>::new(
@@ -131,10 +131,10 @@ impl<B: Backend> ShortConv<B> {
             false,
             context,
             data_type,
-            &parameter_tree.subtree("out_projection")?,
+            &parameter_tree.subtree("out_projection"),
         )?;
 
-        let conv_tree = parameter_tree.subtree("conv")?;
+        let conv_tree = parameter_tree.subtree("conv");
 
         let conv_data_type = DataType::F32;
         let conv_weight =

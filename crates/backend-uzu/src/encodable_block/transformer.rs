@@ -12,7 +12,7 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
     trace::{Array, RopeTap, TransformerLayerTap, TransformerTap, TransformerTapRequest},
     utils::maybe_mut::MaybeMut,
 };
@@ -82,8 +82,6 @@ impl<B: Backend> TransformerState<B> {
 pub enum TransformerNewError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
-    #[error("Parameter loader error: {0}")]
-    ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Layer error: {0}")]
     Layer(#[from] TransformerLayerError<B>),
     #[error("Normalization error: {0}")]
@@ -113,7 +111,7 @@ impl<B: Backend> Transformer<B> {
             .iter()
             .enumerate()
             .map(|(layer_index, layer_config)| {
-                let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index))?;
+                let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index));
 
                 let rope = layer_config.rope_config.as_ref().map(|layer_rope_config| {
                     ropes.iter().position(|rope_config| rope_config == layer_rope_config).unwrap_or_else(|| {
@@ -144,7 +142,7 @@ impl<B: Backend> Transformer<B> {
             PostLayerScalar::None,
             data_type,
             &transformer_config.output_norm_config,
-            &parameter_tree.subtree("output_norm")?,
+            &parameter_tree.subtree("output_norm"),
             context,
         )?;
 

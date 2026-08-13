@@ -23,16 +23,19 @@ use uuid::Uuid;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
     types::{
-        basic::{Grammar, SamplingMethod},
+        basic::{Grammar, ReasoningEffort, SamplingMethod},
         session::chat::{ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole},
     },
 };
 
-use crate::server::{
-    ServerState,
-    chat_tool_calls::{
-        OaiTool, OaiToolCall, backfill_tool_result_names, choose_tools, insert_tools_message, reply_tool_calls,
-        to_tool_call, tool_call_deltas, tool_call_result_block, withhold_stream_text,
+use crate::{
+    common::model_capabilities::ThinkingSupport,
+    server::{
+        ServerState,
+        chat_tool_calls::{
+            OaiTool, OaiToolCall, backfill_tool_result_names, choose_tools, insert_tools_message, reply_tool_calls,
+            to_tool_call, tool_call_deltas, tool_call_result_block, withhold_stream_text,
+        },
     },
 };
 
@@ -41,6 +44,9 @@ pub struct OaiMessage {
     pub role: String,
     #[serde(default)]
     pub content: Option<String>,
+    // vLLM-style reasoning channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<OaiToolCall>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -70,6 +76,15 @@ pub struct ChatCompletionRequest {
     // Raw value like response_format: a bad tool_choice is our 400, not Rocket's 422.
     #[serde(default)]
     pub tool_choice: Option<serde_json::Value>,
+    // Raw value like response_format: a bad reasoning_effort is our 400, not Rocket's 422.
+    #[serde(default)]
+    pub reasoning_effort: Option<serde_json::Value>,
+    // vLLM-style thinking switch. Raw values like reasoning_effort: malformed ones are our 400.
+    #[serde(default)]
+    pub enable_thinking: Option<serde_json::Value>,
+    // vLLM-style container; only its enable_thinking key is honored, other keys are ignored.
+    #[serde(default)]
+    pub chat_template_kwargs: Option<serde_json::Value>,
     #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
@@ -199,9 +214,148 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
-pub(crate) fn build_messages(request: &ChatCompletionRequest) -> Result<Vec<ChatMessage>, String> {
-    let tools = choose_tools(request.tools.as_deref(), request.tool_choice.as_ref())?;
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MessageBuildError {
+    ToolChoice(String),
+    ReasoningEffort(String),
+    EnableThinking(String),
+    ChatTemplateKwargs(String),
+}
+
+impl MessageBuildError {
+    fn param(&self) -> &'static str {
+        match self {
+            Self::ToolChoice(_) => "tool_choice",
+            Self::ReasoningEffort(_) => "reasoning_effort",
+            Self::EnableThinking(_) => "enable_thinking",
+            Self::ChatTemplateKwargs(_) => "chat_template_kwargs",
+        }
+    }
+
+    fn code(&self) -> &'static str {
+        match self {
+            Self::ToolChoice(_) => "invalid_tool_choice",
+            Self::ReasoningEffort(_) => "invalid_reasoning_effort",
+            Self::EnableThinking(_) => "invalid_enable_thinking",
+            Self::ChatTemplateKwargs(_) => "invalid_chat_template_kwargs",
+        }
+    }
+
+    fn into_detail(self) -> String {
+        match self {
+            Self::ToolChoice(detail)
+            | Self::ReasoningEffort(detail)
+            | Self::EnableThinking(detail)
+            | Self::ChatTemplateKwargs(detail) => detail,
+        }
+    }
+}
+
+fn parse_reasoning_effort(request: &ChatCompletionRequest) -> Result<Option<ReasoningEffort>, String> {
+    let Some(value) = &request.reasoning_effort else {
+        return Ok(None);
+    };
+    let raw = value.as_str().ok_or_else(|| "reasoning_effort must be a string".to_string())?;
+    ReasoningEffort::from_str(raw).map(Some)
+}
+
+fn parse_enable_thinking(request: &ChatCompletionRequest) -> Result<Option<bool>, MessageBuildError> {
+    let top_level = request
+        .enable_thinking
+        .as_ref()
+        .map(|value| {
+            value
+                .as_bool()
+                .ok_or_else(|| MessageBuildError::EnableThinking("enable_thinking must be a boolean".to_string()))
+        })
+        .transpose()?;
+    let template_kwarg = request
+        .chat_template_kwargs
+        .as_ref()
+        .map(|value| {
+            let object = value.as_object().ok_or_else(|| {
+                MessageBuildError::ChatTemplateKwargs("chat_template_kwargs must be an object".to_string())
+            })?;
+            object
+                .get("enable_thinking")
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    value.as_bool().ok_or_else(|| {
+                        MessageBuildError::EnableThinking(
+                            "chat_template_kwargs.enable_thinking must be a boolean".to_string(),
+                        )
+                    })
+                })
+                .transpose()
+        })
+        .transpose()?
+        .flatten();
+    match (top_level, template_kwarg) {
+        (Some(top_level), Some(template_kwarg)) if top_level != template_kwarg => {
+            Err(MessageBuildError::EnableThinking(
+                "enable_thinking and chat_template_kwargs.enable_thinking disagree".to_string(),
+            ))
+        },
+        (top_level, template_kwarg) => Ok(top_level.or(template_kwarg)),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReasoningSource {
+    ReasoningEffort,
+    EnableThinking,
+}
+
+impl ReasoningSource {
+    fn error(
+        self,
+        detail: String,
+    ) -> MessageBuildError {
+        match self {
+            Self::ReasoningEffort => MessageBuildError::ReasoningEffort(detail),
+            Self::EnableThinking => MessageBuildError::EnableThinking(detail),
+        }
+    }
+}
+
+fn requested_reasoning_effort(
+    request: &ChatCompletionRequest
+) -> Result<Option<(ReasoningEffort, ReasoningSource)>, MessageBuildError> {
+    let explicit = parse_reasoning_effort(request).map_err(MessageBuildError::ReasoningEffort)?;
+    let enable = parse_enable_thinking(request)?;
+    match (explicit, enable) {
+        (Some(effort), Some(enable)) if (effort == ReasoningEffort::Disabled) == enable => {
+            Err(MessageBuildError::ReasoningEffort(format!(
+                "reasoning_effort {effort} conflicts with enable_thinking {enable}"
+            )))
+        },
+        (Some(effort), _) => Ok(Some((effort, ReasoningSource::ReasoningEffort))),
+        (None, Some(enable)) => {
+            let toggled = if enable {
+                ReasoningEffort::Default
+            } else {
+                ReasoningEffort::Disabled
+            };
+            Ok(Some((toggled, ReasoningSource::EnableThinking)))
+        },
+        (None, None) => Ok(None),
+    }
+}
+
+pub(crate) fn build_messages(
+    request: &ChatCompletionRequest,
+    thinking_support: ThinkingSupport,
+) -> Result<Vec<ChatMessage>, MessageBuildError> {
+    let tools =
+        choose_tools(request.tools.as_deref(), request.tool_choice.as_ref()).map_err(MessageBuildError::ToolChoice)?;
     let mut messages = to_chat_messages(&request.messages);
+    if let Some((effort, source)) = requested_reasoning_effort(request)? {
+        let fulfilled = thinking_support.fulfill_requested_effort(effort).map_err(|detail| source.error(detail))?;
+        if let Some(effort) = fulfilled {
+            // The engine reads the effort from a reasoning_effort block carried on a system message.
+            messages.insert(0, ChatMessage::system().with_reasoning_effort(effort));
+        }
+    }
     backfill_tool_result_names(&mut messages);
     insert_tools_message(&mut messages, &tools);
     Ok(messages)
@@ -350,6 +504,7 @@ fn error_response(
             message: OaiMessage {
                 role: "assistant".to_string(),
                 content: Some(format!("Error: {message}")),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -418,6 +573,7 @@ async fn run_blocking(
                         message: OaiMessage {
                             role: "assistant".to_string(),
                             content,
+                            reasoning_content: reply.message.reasoning().filter(|reasoning| !reasoning.is_empty()),
                             tool_calls,
                             tool_call_id: None,
                         },
@@ -608,9 +764,9 @@ pub async fn handle_chat_completions(
         Ok(config) => config,
         Err(error) => return invalid_request_response("response_format", error.code(), error.message()),
     };
-    let messages = match build_messages(&request) {
+    let messages = match build_messages(&request, state.thinking_support) {
         Ok(messages) => messages,
-        Err(detail) => return invalid_request_response("tool_choice", "invalid_tool_choice", detail),
+        Err(error) => return invalid_request_response(error.param(), error.code(), error.into_detail()),
     };
 
     if is_stream {
