@@ -94,7 +94,7 @@ impl<B: Backend> Sampling<B> {
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("sampling");
 
-        let sampling_length = sampling_range.end - sampling_range.start;
+        let sampling_length = sampling_range.len() as u32;
 
         let (is_stochastic, temperature, top_k, top_p, min_p, repetition_penalty, suffix_repetition_length) =
             match sampling_method {

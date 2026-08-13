@@ -315,7 +315,7 @@ impl<B: Backend> Transformer<B> {
         let output_normalized = self.output_norm.encode(
             &hidden,
             output_range.start,
-            output_range.end - output_range.start,
+            output_range.len() as u32,
             Some(&mut shortcut),
             encoder,
         )?;
