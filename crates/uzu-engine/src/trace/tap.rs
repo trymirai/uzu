@@ -1,10 +1,7 @@
-//! Field names are the safetensors path segments; `rename` maps them onto lalamo's.
-
 use proc_macros::taps;
 
 taps! {
     pub DecoderTap {
-        // No lalamo counterpart.
         #[tap(skip)]
         embedded,
         #[tap(rename = "activation_trace")]
@@ -15,7 +12,6 @@ taps! {
 
 taps! {
     pub TransformerTap {
-        // Filled by the model's record_trace, not by Transformer::encode.
         token_ids,
         token_positions,
         rope_embeddings: [RopeTap],
@@ -64,11 +60,9 @@ taps! {
 taps! {
     pub ClassifierActivationsTap {
         embedding_norm_output,
-        // lalamo folds these in rather than nesting them.
         #[tap(flatten)]
         transformer: TransformerTap,
         output_pooling,
-        // Also at the root; Array is not Clone, so this is a second capture.
         logits,
     }
 }
