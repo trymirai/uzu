@@ -350,15 +350,15 @@ impl<B: Backend> DeltaNet<B> {
         trie.copyin(batch_dim.nodes());
 
         let mut conv_states =
-            encoder.allocate_scratch_with_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE)?;
-        let mut k = encoder.allocate_scratch_with_shape(&[tree_size, self.key_dim], self.outer_data_type)?;
-        let mut v = encoder.allocate_scratch_with_shape(&[tree_size, self.value_dim], self.outer_data_type)?;
-        let mut beta = encoder.allocate_scratch_with_shape(&[tree_size, self.num_heads], INNER_DATA_TYPE)?;
-        let mut log_decay = encoder.allocate_scratch_with_shape(&[tree_size, self.num_heads], INNER_DATA_TYPE)?;
+            encoder.allocate_scratch_for_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE)?;
+        let mut k = encoder.allocate_scratch_for_shape(&[tree_size, self.key_dim], self.outer_data_type)?;
+        let mut v = encoder.allocate_scratch_for_shape(&[tree_size, self.value_dim], self.outer_data_type)?;
+        let mut beta = encoder.allocate_scratch_for_shape(&[tree_size, self.num_heads], INNER_DATA_TYPE)?;
+        let mut log_decay = encoder.allocate_scratch_for_shape(&[tree_size, self.num_heads], INNER_DATA_TYPE)?;
 
         let mut tree_projected =
-            encoder.allocate_scratch_with_shape(&[tree_size, self.total_proj_dim], self.outer_data_type)?;
-        let mut q = encoder.allocate_scratch_with_shape(&[tree_size, self.key_dim], self.outer_data_type)?;
+            encoder.allocate_scratch_for_shape(&[tree_size, self.total_proj_dim], self.outer_data_type)?;
+        let mut q = encoder.allocate_scratch_for_shape(&[tree_size, self.key_dim], self.outer_data_type)?;
 
         self.conv_tree_scan.encode(
             &in_projected,
@@ -507,7 +507,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         }
 
         let mut delta_output =
-            encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.value_dim], self.outer_data_type)?;
+            encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.value_dim], self.outer_data_type)?;
         if batch_dim.size() == 1 {
             self.conv_update.encode(
                 &self.conv_weight,
@@ -536,7 +536,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 encoder,
             );
         } else {
-            let mut padded = encoder.allocate_scratch_with_shape(
+            let mut padded = encoder.allocate_scratch_for_shape(
                 &[batch_dim.size() + self.kernel_size - 1, self.total_proj_dim],
                 INNER_DATA_TYPE,
             )?;
@@ -583,13 +583,13 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 )?;
             } else {
                 let mut prep_q_norm =
-                    encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.key_dim], INNER_DATA_TYPE)?;
+                    encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.key_dim], INNER_DATA_TYPE)?;
                 let mut prep_k_norm =
-                    encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.key_dim], INNER_DATA_TYPE)?;
+                    encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.key_dim], INNER_DATA_TYPE)?;
                 let mut prep_beta =
-                    encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
+                    encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
                 let mut prep_decay =
-                    encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
+                    encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
                 self.delta_net_prefill_prep.encode(
                     &in_projected,
                     &self.a_log,

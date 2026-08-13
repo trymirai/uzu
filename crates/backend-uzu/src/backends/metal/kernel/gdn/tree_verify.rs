@@ -95,16 +95,16 @@ impl DeltaNetTreeVerify<Metal> for MetalDeltaNetTreeVerify {
         h0_indices.copyin(&[0i32]);
 
         let mut prefix =
-            encoder.allocate_scratch_with_shape(&[layout.tree_size, layout.num_v_heads], INNER_DATA_TYPE)?;
-        let mut a_packed = encoder.allocate_scratch_with_shape(&layout.a_packed_shape(), INNER_DATA_TYPE)?;
+            encoder.allocate_scratch_for_shape(&[layout.tree_size, layout.num_v_heads], INNER_DATA_TYPE)?;
+        let mut a_packed = encoder.allocate_scratch_for_shape(&layout.a_packed_shape(), INNER_DATA_TYPE)?;
         let mut qkd = encoder
-            .allocate_scratch_with_shape(&[layout.num_v_heads, layout.tree_size, layout.tree_size], INNER_DATA_TYPE)?;
-        let mut a_inverse = encoder.allocate_scratch_with_shape(&layout.a_inverse_shape(), INNER_DATA_TYPE)?;
+            .allocate_scratch_for_shape(&[layout.num_v_heads, layout.tree_size, layout.tree_size], INNER_DATA_TYPE)?;
+        let mut a_inverse = encoder.allocate_scratch_for_shape(&layout.a_inverse_shape(), INNER_DATA_TYPE)?;
         let mut kh0 = encoder
-            .allocate_scratch_with_shape(&[layout.tree_size, layout.num_v_heads, layout.head_v_dim], INNER_DATA_TYPE)?;
+            .allocate_scratch_for_shape(&[layout.tree_size, layout.num_v_heads, layout.head_v_dim], INNER_DATA_TYPE)?;
         let mut u = encoder
-            .allocate_scratch_with_shape(&[layout.num_v_heads, layout.tree_size, layout.head_v_dim], INNER_DATA_TYPE)?;
-        let mut output = encoder.allocate_scratch_with_shape(
+            .allocate_scratch_for_shape(&[layout.num_v_heads, layout.tree_size, layout.head_v_dim], INNER_DATA_TYPE)?;
+        let mut output = encoder.allocate_scratch_for_shape(
             &[layout.tree_size, layout.num_v_heads, layout.head_v_dim],
             self.arguments.data_type,
         )?;

@@ -183,7 +183,7 @@ impl<B: Backend> ShortConv<B> {
         state: &mut ShortConvState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut conv_output = encoder.allocate_scratch_with_shape(&[self.hidden_dim], self.data_type)?;
+        let mut conv_output = encoder.allocate_scratch_for_shape(&[self.hidden_dim], self.data_type)?;
         self.short_conv_decode.encode(
             in_projected,
             &self.conv_weight,
@@ -211,7 +211,7 @@ impl<B: Backend> ShortConv<B> {
         let state_stride = self.kernel_size - 1;
         let padded_rows = state_stride + batch_dim;
 
-        let mut padded = encoder.allocate_scratch_with_shape(&[padded_rows, self.hidden_dim], self.data_type)?;
+        let mut padded = encoder.allocate_scratch_for_shape(&[padded_rows, self.hidden_dim], self.data_type)?;
         self.short_conv_pack.encode(
             &state.conv_state,
             in_projected,
@@ -223,7 +223,7 @@ impl<B: Backend> ShortConv<B> {
             encoder,
         );
 
-        let mut conv_output = encoder.allocate_scratch_with_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
+        let mut conv_output = encoder.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
         self.short_conv_prefill.encode(
             &padded,
             in_projected,
@@ -249,9 +249,9 @@ impl<B: Backend> ShortConv<B> {
         state: &mut ShortConvState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
-        let mut conv_output = encoder.allocate_scratch_with_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
+        let mut conv_output = encoder.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
         let mut conv_states =
-            encoder.allocate_scratch_with_shape(&[batch_dim, self.kernel_size - 1, self.hidden_dim], self.data_type)?;
+            encoder.allocate_scratch_for_shape(&[batch_dim, self.kernel_size - 1, self.hidden_dim], self.data_type)?;
         self.short_conv_trie.encode(
             in_projected,
             &self.conv_weight,

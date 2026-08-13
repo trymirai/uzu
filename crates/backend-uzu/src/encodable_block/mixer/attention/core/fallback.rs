@@ -80,11 +80,11 @@ impl<B: Backend> AttentionFallbackCore<B> {
         let scores_len = group_rows * sequence_length;
 
         let mut output =
-            encoder.allocate_constant_with_shape(&[suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
+            encoder.allocate_constant_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
         let mut scores =
-            encoder.allocate_scratch_with_shape(&[self.num_q_heads, suffix_length, sequence_length], self.data_type)?;
+            encoder.allocate_scratch_for_shape(&[self.num_q_heads, suffix_length, sequence_length], self.data_type)?;
         let mut group_scores =
-            encoder.allocate_scratch_with_shape(&[gqa_factor * suffix_length, sequence_length], self.data_type)?;
+            encoder.allocate_scratch_for_shape(&[gqa_factor * suffix_length, sequence_length], self.data_type)?;
 
         for group_index in 0..self.num_groups {
             self.matmul.lock().encode(
@@ -128,7 +128,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
         self.softmax.encode(&mut scores, arguments.sinks, sequence_length, self.num_q_heads, suffix_length, encoder);
 
         let mut group_output =
-            encoder.allocate_scratch_with_shape(&[gqa_factor * suffix_length, self.head_dim], self.data_type)?;
+            encoder.allocate_scratch_for_shape(&[gqa_factor * suffix_length, self.head_dim], self.data_type)?;
 
         for group_index in 0..self.num_groups {
             self.matmul.lock().encode(

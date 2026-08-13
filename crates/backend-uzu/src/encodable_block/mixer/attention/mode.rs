@@ -86,9 +86,9 @@ impl<B: Backend> Attention<B> {
 
                 let qkv = self.qkv.project(hidden, batch_dim.size(), encoder)?;
                 let mut keys = encoder
-                    .allocate_scratch_with_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)?;
+                    .allocate_scratch_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)?;
                 let mut values = encoder
-                    .allocate_scratch_with_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)?;
+                    .allocate_scratch_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)?;
 
                 let queries = self.prepare_kv_and_queries(
                     &qkv,
@@ -208,7 +208,7 @@ impl<B: Backend> Attention<B> {
         let mut queries = if num_q_heads == 0 {
             encoder.allocate_scratch(self.data_type.size_in_bytes())?
         } else {
-            encoder.allocate_scratch_with_shape(&[self.num_q_heads, batch_dim, self.head_dim], self.data_type)?
+            encoder.allocate_scratch_for_shape(&[self.num_q_heads, batch_dim, self.head_dim], self.data_type)?
         };
         self.prepare.encode(
             input,
@@ -236,7 +236,7 @@ impl<B: Backend> Attention<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let mut queries =
-            encoder.allocate_scratch_with_shape(&[self.num_q_heads, batch_dim, self.head_dim], self.data_type)?;
+            encoder.allocate_scratch_for_shape(&[self.num_q_heads, batch_dim, self.head_dim], self.data_type)?;
         self.prepare.encode(
             query,
             &mut queries,

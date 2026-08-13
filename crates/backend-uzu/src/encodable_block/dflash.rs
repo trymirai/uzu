@@ -363,10 +363,10 @@ impl<B: Backend> DFlash<B> {
 
         assert!(candidate_count > 0 && candidate_count <= MAX_K);
         let mut ids = encoder
-            .allocate_scratch_with_shape(&[lookahead_rows, candidate_count], DataType::U32)
+            .allocate_scratch_for_shape(&[lookahead_rows, candidate_count], DataType::U32)
             .map_err(DFlashEncodeError::Backend)?;
         let mut candidate_logits = encoder
-            .allocate_scratch_with_shape(&[lookahead_rows, candidate_count], DataType::F32)
+            .allocate_scratch_for_shape(&[lookahead_rows, candidate_count], DataType::F32)
             .map_err(DFlashEncodeError::Backend)?;
         self.top_k
             .encode(&logits, &mut ids, &mut candidate_logits, lookahead_rows, candidate_count, encoder)

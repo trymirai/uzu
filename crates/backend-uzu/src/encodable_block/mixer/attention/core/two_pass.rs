@@ -56,14 +56,14 @@ impl<B: Backend> AttentionTwoPassCore<B> {
         arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut partials = encoder.allocate_scratch_with_shape(
+        let mut partials = encoder.allocate_scratch_for_shape(
             &[self.num_q_heads * arguments.suffix_length * 32 * self.head_dim],
             INNER_DATA_TYPE,
         )?;
         let mut sums =
-            encoder.allocate_scratch_with_shape(&[self.num_q_heads * arguments.suffix_length * 32], INNER_DATA_TYPE)?;
+            encoder.allocate_scratch_for_shape(&[self.num_q_heads * arguments.suffix_length * 32], INNER_DATA_TYPE)?;
         let mut maxs =
-            encoder.allocate_scratch_with_shape(&[self.num_q_heads * arguments.suffix_length * 32], INNER_DATA_TYPE)?;
+            encoder.allocate_scratch_for_shape(&[self.num_q_heads * arguments.suffix_length * 32], INNER_DATA_TYPE)?;
 
         self.pass_1.encode(
             arguments.queries,
@@ -88,10 +88,8 @@ impl<B: Backend> AttentionTwoPassCore<B> {
             encoder,
         );
 
-        let mut output = encoder.allocate_constant_with_shape(
-            &[arguments.suffix_length, self.num_q_heads, self.head_dim],
-            self.data_type,
-        )?;
+        let mut output = encoder
+            .allocate_constant_for_shape(&[arguments.suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
         self.pass_2.encode(&partials, &sums, &maxs, &mut output, self.num_q_heads, arguments.suffix_length, encoder);
 
         Ok(output)

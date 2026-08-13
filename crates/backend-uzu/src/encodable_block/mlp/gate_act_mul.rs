@@ -42,7 +42,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
         }
-        let mut hidden = encoder.allocate_scratch_with_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
+        let mut hidden = encoder.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
         self.kernel.encode(
             fused_up,
             None::<&Allocation<B>>,

@@ -46,10 +46,8 @@ impl<B: Backend> AttentionSinglePassCore<B> {
         arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut output = encoder.allocate_constant_with_shape(
-            &[arguments.suffix_length, self.num_q_heads, self.head_dim],
-            self.data_type,
-        )?;
+        let mut output = encoder
+            .allocate_constant_for_shape(&[arguments.suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
         self.kernel.encode(
             arguments.queries,
             arguments.keys,

@@ -120,7 +120,7 @@ impl<B: Backend> Normalization<B> {
         let row_size = size_for_shape(&[self.element_count], self.data_type);
         let row_offset_bytes = row_offset as usize * row_size;
         let shortcut = shortcut.map(|shortcut| (shortcut, row_offset_bytes));
-        let mut output = encoder.allocate_scratch_with_shape(&[row_count, self.element_count], self.data_type)?;
+        let mut output = encoder.allocate_scratch_for_shape(&[row_count, self.element_count], self.data_type)?;
         self.kernel.encode(
             Some((input, row_offset_bytes)),
             &self.scales,

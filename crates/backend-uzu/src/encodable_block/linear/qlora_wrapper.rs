@@ -173,7 +173,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         encoder.push_debug_group("linear (qlora)");
 
         let mut intermediate =
-            encoder.allocate_scratch_with_shape(&[batch_dim, self.lora_rank], self.weights_data_type)?;
+            encoder.allocate_scratch_for_shape(&[batch_dim, self.lora_rank], self.weights_data_type)?;
 
         {
             let mut adapter_kernel = self.adapter_down_kernel.lock();
@@ -201,7 +201,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
 
         let base_input = if let Some((input_hadamard_kernel, input_factors)) = &self.input_hadamard {
             let mut base_input =
-                encoder.allocate_scratch_with_shape(&[batch_dim, self.input_dim], self.input_data_type)?;
+                encoder.allocate_scratch_for_shape(&[batch_dim, self.input_dim], self.input_data_type)?;
             input_hadamard_kernel.encode_fp(&input, &mut base_input, input_factors, batch_dim, self.input_dim, encoder);
             base_input
         } else {

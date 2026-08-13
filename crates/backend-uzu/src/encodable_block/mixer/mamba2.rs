@@ -268,11 +268,10 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         let in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
 
         let mut conv_inputs =
-            encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.conv_dim], INNER_DATA_TYPE)?;
+            encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.conv_dim], INNER_DATA_TYPE)?;
         let mut gate =
-            encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
-        let mut time_step =
-            encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
+            encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
+        let mut time_step = encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
         self.split_inproj.encode(
             &in_projected,
             &mut conv_inputs,
@@ -288,11 +287,11 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         );
 
         let mut conv_x =
-            encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
+            encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
         let mut state_b = encoder
-            .allocate_scratch_with_shape(&[batch_dim.size(), self.num_groups, self.state_dim], INNER_DATA_TYPE)?;
+            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_groups, self.state_dim], INNER_DATA_TYPE)?;
         let mut state_c = encoder
-            .allocate_scratch_with_shape(&[batch_dim.size(), self.num_groups, self.state_dim], INNER_DATA_TYPE)?;
+            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_groups, self.state_dim], INNER_DATA_TYPE)?;
         let state_stride = self.kernel_size - 1;
         if batch_dim.size() == 1 {
             self.conv_decode.encode(
@@ -316,7 +315,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
             );
         } else {
             let mut padded = encoder
-                .allocate_scratch_with_shape(&[batch_dim.size() + state_stride, self.conv_dim], INNER_DATA_TYPE)?;
+                .allocate_scratch_for_shape(&[batch_dim.size() + state_stride, self.conv_dim], INNER_DATA_TYPE)?;
             self.conv_pack.encode(
                 &state.conv_state,
                 &conv_inputs,
@@ -348,7 +347,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         }
 
         let mut ssd_output =
-            encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.inner_dim], INNER_DATA_TYPE)?;
+            encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.inner_dim], INNER_DATA_TYPE)?;
         let x_strides = [self.num_heads * self.head_dim, self.head_dim, 1];
         let dt_strides = [self.num_heads, 1];
         let cb_strides = [self.num_groups * self.state_dim, self.state_dim, 1];

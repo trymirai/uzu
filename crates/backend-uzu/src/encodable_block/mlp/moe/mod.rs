@@ -221,9 +221,9 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let num_blocks = batch_dim.div_ceil(256);
         let num_tiles = self.num_routed_experts.div_ceil(512);
 
-        let mut topk_ids = encoder.allocate_scratch_with_shape(&[batch_dim, self.num_active_experts], DataType::I32)?;
+        let mut topk_ids = encoder.allocate_scratch_for_shape(&[batch_dim, self.num_active_experts], DataType::I32)?;
         let mut topk_probs =
-            encoder.allocate_scratch_with_shape(&[batch_dim, self.num_active_experts], self.data_type)?;
+            encoder.allocate_scratch_for_shape(&[batch_dim, self.num_active_experts], self.data_type)?;
 
         encoder.encode_fill(&mut topk_ids, 0xFF);
 
@@ -245,10 +245,10 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             encoder,
         );
 
-        let mut offsets = encoder.allocate_scratch_with_shape(&[self.num_routed_experts + 1], DataType::U32)?;
-        let mut sumk = encoder.allocate_scratch_with_shape(&[1], DataType::U32)?;
+        let mut offsets = encoder.allocate_scratch_for_shape(&[self.num_routed_experts + 1], DataType::U32)?;
+        let mut sumk = encoder.allocate_scratch_for_shape(&[1], DataType::U32)?;
         let scatter_entries = num_blocks * num_tiles * 512;
-        let mut partials = encoder.allocate_scratch_with_shape(&[scatter_entries], DataType::U32)?;
+        let mut partials = encoder.allocate_scratch_for_shape(&[scatter_entries], DataType::U32)?;
         self.counts_offsets_kernel.encode(
             &topk_ids,
             &mut offsets,
@@ -260,11 +260,11 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             encoder,
         );
 
-        let mut block_bases = encoder.allocate_scratch_with_shape(&[scatter_entries], DataType::U32)?;
-        let mut block_alloc = encoder.allocate_scratch_with_shape(&[scatter_entries], DataType::U32)?;
-        let mut bucketed_ids = encoder.allocate_scratch_with_shape(&[total_rows], DataType::I32)?;
-        let mut bucketed_probs = encoder.allocate_scratch_with_shape(&[total_rows], self.data_type)?;
-        let mut tok2row = encoder.allocate_scratch_with_shape(&[total_rows], DataType::I32)?;
+        let mut block_bases = encoder.allocate_scratch_for_shape(&[scatter_entries], DataType::U32)?;
+        let mut block_alloc = encoder.allocate_scratch_for_shape(&[scatter_entries], DataType::U32)?;
+        let mut bucketed_ids = encoder.allocate_scratch_for_shape(&[total_rows], DataType::I32)?;
+        let mut bucketed_probs = encoder.allocate_scratch_for_shape(&[total_rows], self.data_type)?;
+        let mut tok2row = encoder.allocate_scratch_for_shape(&[total_rows], DataType::I32)?;
 
         encoder.encode_fill(&mut tok2row, 0xFF);
 
@@ -329,7 +329,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             self.experts_two_pass_prefill_block.encode(args, encoder)?
         };
 
-        let mut output = encoder.allocate_scratch_with_shape(&[batch_dim, self.model_dim], self.data_type)?;
+        let mut output = encoder.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
         self.finalize_kernel.encode(
             &tok2row,
             &topk_probs,

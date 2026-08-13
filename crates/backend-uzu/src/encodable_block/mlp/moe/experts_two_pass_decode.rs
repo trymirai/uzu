@@ -48,14 +48,14 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         const BLOCK_M: usize = 4;
         let h_blocks = args.d_ff.div_ceil(BLOCK_M as u32);
 
-        let mut tile_counts = encoder.allocate_scratch_with_shape(&[args.num_routed_experts], DataType::U32)?;
+        let mut tile_counts = encoder.allocate_scratch_for_shape(&[args.num_routed_experts], DataType::U32)?;
         self.counts.encode(args.expert_offsets, &mut tile_counts, args.num_routed_experts, h_blocks, encoder);
 
-        let mut tile_offsets = encoder.allocate_scratch_with_shape(&[args.num_routed_experts + 1], DataType::U32)?;
-        let mut total_tiles = encoder.allocate_scratch_with_shape(&[1], DataType::U32)?;
+        let mut tile_offsets = encoder.allocate_scratch_for_shape(&[args.num_routed_experts + 1], DataType::U32)?;
+        let mut total_tiles = encoder.allocate_scratch_for_shape(&[1], DataType::U32)?;
         self.scan.encode(&tile_counts, &mut tile_offsets, &mut total_tiles, args.num_routed_experts, encoder);
 
-        let mut row_expert_map = encoder.allocate_scratch_with_shape(&[args.total_rows], DataType::U32)?;
+        let mut row_expert_map = encoder.allocate_scratch_for_shape(&[args.total_rows], DataType::U32)?;
         self.row_map.encode(
             args.expert_offsets,
             &mut row_expert_map,
@@ -64,7 +64,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             encoder,
         );
 
-        let mut tile_map = encoder.allocate_scratch_with_shape(&[args.total_rows, h_blocks, 3], DataType::U32)?;
+        let mut tile_map = encoder.allocate_scratch_for_shape(&[args.total_rows, h_blocks, 3], DataType::U32)?;
         self.build_map.encode(
             args.expert_offsets,
             &tile_offsets,
@@ -75,10 +75,10 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             encoder,
         );
 
-        let mut dispatch_args = encoder.allocate_scratch_with_shape(&[3], DataType::U32)?;
+        let mut dispatch_args = encoder.allocate_scratch_for_shape(&[3], DataType::U32)?;
         self.dispatch.encode(&total_tiles, &mut dispatch_args, 1, encoder);
 
-        let mut hidden = encoder.allocate_scratch_with_shape(&[args.total_rows, args.d_ff], DataType::F32)?;
+        let mut hidden = encoder.allocate_scratch_for_shape(&[args.total_rows, args.d_ff], DataType::F32)?;
 
         self.pass_a_indirect.encode(
             args.x_perm,
@@ -99,7 +99,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             encoder,
         );
 
-        let mut output = encoder.allocate_scratch_with_shape(&[args.total_rows, args.d_model], self.data_type)?;
+        let mut output = encoder.allocate_scratch_for_shape(&[args.total_rows, args.d_model], self.data_type)?;
         self.fused_down.encode(
             &hidden,
             &row_expert_map,

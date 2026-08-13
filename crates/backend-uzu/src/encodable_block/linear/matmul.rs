@@ -114,7 +114,7 @@ impl<B: Backend> LinearMatmul<B> {
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut output = encoder.allocate_scratch_with_shape(&[batch_dim, self.output_dim], self.output_data_type)?;
+        let mut output = encoder.allocate_scratch_for_shape(&[batch_dim, self.output_dim], self.output_data_type)?;
 
         self.kernel.lock().encode(
             MatmulArguments {

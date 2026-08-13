@@ -282,7 +282,7 @@ impl<B: Backend> Weaver<B> {
         let prefix_length = lookahead_count + 1;
         let hidden_row_bytes = size_for_shape(&[self.target_model_dim], DATA_TYPE);
         let mut prefix_hidden = encoder
-            .allocate_scratch_with_shape(&[prefix_length, self.target_model_dim], DATA_TYPE)
+            .allocate_scratch_for_shape(&[prefix_length, self.target_model_dim], DATA_TYPE)
             .map_err(WeaverEncodeError::Backend)?;
         encoder.encode_copy(target_hidden, 0..hidden_row_bytes, &mut prefix_hidden, 0..hidden_row_bytes);
         encoder.encode_copy(
@@ -453,7 +453,7 @@ impl<B: Backend> Weaver<B> {
                     .encode(attention_input, batch_node_count, encoder)
                     .map_err(WeaverEncodeError::Backend)?;
                 let mut attention_output = encoder
-                    .allocate_scratch_with_shape(&[batch_node_count, self.model_dim], DATA_TYPE)
+                    .allocate_scratch_for_shape(&[batch_node_count, self.model_dim], DATA_TYPE)
                     .map_err(WeaverEncodeError::Backend)?;
                 layer.ancestor_attention.encode(
                     &prefix_kv_layers[layer_index],
@@ -495,10 +495,10 @@ impl<B: Backend> Weaver<B> {
                 encoder,
             )?;
             let mut child_token_ids = encoder
-                .allocate_scratch_with_shape(&[batch_node_count, shape.children_per_node], DataType::U32)
+                .allocate_scratch_for_shape(&[batch_node_count, shape.children_per_node], DataType::U32)
                 .map_err(WeaverEncodeError::Backend)?;
             let mut child_logprobs = encoder
-                .allocate_scratch_with_shape(&[batch_node_count, shape.children_per_node], DataType::F32)
+                .allocate_scratch_for_shape(&[batch_node_count, shape.children_per_node], DataType::F32)
                 .map_err(WeaverEncodeError::Backend)?;
             self.top_children.encode(
                 &logit_residuals,

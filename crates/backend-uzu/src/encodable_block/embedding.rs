@@ -332,7 +332,7 @@ impl<B: Backend> Embedding<B> {
         encoder.push_debug_group("embedding lookup");
 
         let mut output = encoder
-            .allocate_scratch_with_shape(&[batch_dim, self.model_dim], self.data_type)
+            .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
             .map_err(EmbeddingError::BackendError)?;
 
         let table = match &self.tying {
@@ -365,7 +365,7 @@ impl<B: Backend> Embedding<B> {
         let native_output = output_data_type == self.data_type;
         let input_hadamard = self.readout_input_hadamard();
         let mut output_allocation = encoder
-            .allocate_scratch_with_shape(&[batch_dim, self.vocab_size], output_data_type)
+            .allocate_scratch_for_shape(&[batch_dim, self.vocab_size], output_data_type)
             .map_err(EmbeddingError::BackendError)?;
 
         let (matrix, readout) = self.readout_operands();
@@ -448,7 +448,7 @@ impl<B: Backend> Embedding<B> {
         let b = matrix.matmul_b();
 
         let mut output = encoder
-            .allocate_scratch_with_shape(&[rows as u32, ids_per_row as u32], self.data_type)
+            .allocate_scratch_for_shape(&[rows as u32, ids_per_row as u32], self.data_type)
             .map_err(EmbeddingError::BackendError)?;
 
         let mut rht_input: Option<Allocation<B>> = None;

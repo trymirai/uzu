@@ -120,10 +120,8 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
         arguments: AttentionCoreEncodeArguments<'a, Metal, KT, VT>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<Allocation<Metal>, MetalError> {
-        let mut output = encoder.allocate_constant_with_shape(
-            &[arguments.suffix_length, self.num_q_heads, self.head_dim],
-            self.data_type,
-        )?;
+        let mut output = encoder
+            .allocate_constant_for_shape(&[arguments.suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
 
         let use_mxu = arguments.suffix_length >= 64
             && encoder.context().supports_mxu()

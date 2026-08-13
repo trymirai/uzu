@@ -177,10 +177,10 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             let scale_groups_per_row = self.input_dimension.div_ceil(quantize_transform.activation_group_size());
             let sum_groups_per_row =
                 quantize_transform.sum_group_size().map(|group_size| self.input_dimension.div_ceil(group_size));
-            let mut values = encoder.allocate_scratch_with_shape(&[batch_dim, self.input_dimension], DataType::I8)?;
-            let mut scales = encoder.allocate_scratch_with_shape(&[batch_dim, scale_groups_per_row], DataType::F32)?;
+            let mut values = encoder.allocate_scratch_for_shape(&[batch_dim, self.input_dimension], DataType::I8)?;
+            let mut scales = encoder.allocate_scratch_for_shape(&[batch_dim, scale_groups_per_row], DataType::F32)?;
             let mut group_sums = sum_groups_per_row
-                .map(|groups| encoder.allocate_scratch_with_shape(&[batch_dim, groups], DataType::I32))
+                .map(|groups| encoder.allocate_scratch_for_shape(&[batch_dim, groups], DataType::I32))
                 .transpose()?;
 
             quantize_transform.encode_quantize(

@@ -87,7 +87,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         )
     }
 
-    pub fn allocate_constant_with_shape(
+    pub fn allocate_constant_for_shape(
         &mut self,
         shape: &[u32],
         data_type: DataType,
@@ -118,7 +118,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         )
     }
 
-    pub fn allocate_scratch_with_shape(
+    pub fn allocate_scratch_for_shape(
         &mut self,
         shape: &[u32],
         data_type: DataType,
