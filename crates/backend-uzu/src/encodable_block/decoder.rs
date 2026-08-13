@@ -126,12 +126,12 @@ impl<B: Backend> Decoder<B> {
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         encoder.push_debug_group("decoder");
 
-        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.node_count(), encoder)?;
+        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), encoder)?;
 
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
             Some(
                 per_layer_embedding
-                    .encode(token_ids, &embedded, batch_dim.node_count(), encoder)
+                    .encode(token_ids, &embedded, batch_dim.size(), encoder)
                     .map_err(DecoderError::Backend)?,
             )
         } else {

@@ -204,7 +204,7 @@ impl<B: Backend> TransformerLayer<B> {
         encoder.push_debug_group(&format!("transformer layer {}", self.layer_index));
 
         let hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
-            pre_mixer_norm.encode(&input, 0, batch_dim.node_count(), Some(shortcut), encoder)?
+            pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut), encoder)?
         } else {
             assert!(self.layer_index == 0);
             encoder.encode_copy(&input, .., shortcut, ..);
@@ -215,27 +215,20 @@ impl<B: Backend> TransformerLayer<B> {
         let mut hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
 
         if let Some(post_mixer_norm) = &self.post_mixer_norm {
-            hidden = post_mixer_norm.encode(&hidden, 0, batch_dim.node_count(), None, encoder)?;
+            hidden = post_mixer_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
         }
 
-        hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.node_count(), Some(shortcut), encoder)?;
+        hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut), encoder)?;
 
-        hidden = self.mlp.encode(hidden, batch_dim.node_count(), encoder)?;
+        hidden = self.mlp.encode(hidden, batch_dim.size(), encoder)?;
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            hidden = post_mlp_norm.encode(&hidden, 0, batch_dim.node_count(), None, encoder)?;
+            hidden = post_mlp_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
         }
 
         if let Some(ple_projection) = &self.ple_projection {
             let per_layer_inputs = per_layer_inputs.expect("per-layer inputs required for PLE layer");
-            ple_projection.encode(
-                self.layer_index,
-                per_layer_inputs,
-                shortcut,
-                &hidden,
-                batch_dim.node_count(),
-                encoder,
-            )?;
+            ple_projection.encode(self.layer_index, per_layer_inputs, shortcut, &hidden, batch_dim.size(), encoder)?;
             encoder.encode_fill(&mut hidden, 0);
         }
 

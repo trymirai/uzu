@@ -287,7 +287,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                                 Some(&token_ids),
                                 &options.sampling_method,
                                 &batch_dim,
-                                (batch_dim.node_count() - 1) as usize..batch_dim.node_count() as usize,
+                                (batch_dim.size() - 1) as usize..batch_dim.size() as usize,
                                 &mut encoder,
                             )
                             .map_err(LanguageModelStreamError::Backend)?,
@@ -616,7 +616,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             .transformer_state
             .prepare(
                 self.model_state.transformer_state.context_length() as u32,
-                batch_dim.node_count(),
+                batch_dim.size(),
                 &self.model.engine.context,
             )
             .map_err(LanguageModelStreamError::Backend)?;
@@ -627,7 +627,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         let decoder_output = self.model.decoder.encode(
             &token_ids,
             &batch_dim,
-            Some(0..batch_dim.node_count() as usize),
+            Some(0..batch_dim.size() as usize),
             hidden_feature_layer_indices,
             &mut self.model_state.transformer_state,
             &mut encoder,
@@ -700,7 +700,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 Some(&token_ids),
                 &self.options.sampling_method,
                 &batch_dim,
-                0..batch_dim.node_count() as usize,
+                0..batch_dim.size() as usize,
                 &mut encoder,
             )
             .map_err(LanguageModelStreamError::Backend)?;
@@ -712,7 +712,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         if full_accept {
             self.model_state
                 .transformer_state
-                .encode_accept(&(0..batch_dim.node_count()).collect::<Box<[u32]>>(), &mut encoder)
+                .encode_accept(&(0..batch_dim.size()).collect::<Box<[u32]>>(), &mut encoder)
                 .map_err(LanguageModelStreamError::Backend)?;
 
             if let Some(speculator) = self.model.speculator.as_ref() {
@@ -721,7 +721,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     .encode_accept(
                         speculator_state,
                         decoder_output.hidden_features.as_ref().unwrap(),
-                        &(0..batch_dim.node_count()).collect::<Box<[u32]>>(),
+                        &(0..batch_dim.size()).collect::<Box<[u32]>>(),
                         &mut encoder,
                     )
                     .map_err(LanguageModelStreamError::Backend)?;
@@ -732,7 +732,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     &token_ids,
                     self.context_ring.as_mut().unwrap(),
                     suffix_repetition_length,
-                    batch_dim.node_count(),
+                    batch_dim.size(),
                     &mut encoder,
                 );
             }

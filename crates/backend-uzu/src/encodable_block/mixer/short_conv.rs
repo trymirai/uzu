@@ -327,31 +327,30 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
 
         assert!(state.suffix_state.is_none(), "short conv called with state with unaccepted tokens");
 
-        let in_projected = self.in_projection.encode(hidden, batch_dim.node_count(), encoder)?;
+        let in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
 
         let conv_output = if batch_dim.full_accept() {
-            let conv_output = if batch_dim.node_count() == 1 {
+            let conv_output = if batch_dim.size() == 1 {
                 self.encode_decode_conv(&in_projected, state, encoder)?
             } else {
-                self.encode_prefill_conv(&in_projected, batch_dim.node_count(), state, encoder)?
+                self.encode_prefill_conv(&in_projected, batch_dim.size(), state, encoder)?
             };
             state.suffix_state = Some(ShortConvStateSuffixStatus::Flat {
-                suffix_length: batch_dim.node_count(),
+                suffix_length: batch_dim.size(),
             });
             conv_output
         } else {
-            let mut token_parents =
-                encoder.allocate_constant(size_for_shape(&[batch_dim.node_count()], DataType::I32))?;
+            let mut token_parents = encoder.allocate_constant(size_for_shape(&[batch_dim.size()], DataType::I32))?;
             token_parents.copyin(batch_dim.parents());
             let (conv_output, conv_states) =
-                self.encode_trie_conv(&in_projected, batch_dim.node_count(), &token_parents, state, encoder)?;
+                self.encode_trie_conv(&in_projected, batch_dim.size(), &token_parents, state, encoder)?;
             state.suffix_state = Some(ShortConvStateSuffixStatus::Trie {
                 conv_states,
             });
             conv_output
         };
 
-        let output = self.out_projection.encode(conv_output, batch_dim.node_count(), encoder)?;
+        let output = self.out_projection.encode(conv_output, batch_dim.size(), encoder)?;
 
         encoder.pop_debug_group();
 

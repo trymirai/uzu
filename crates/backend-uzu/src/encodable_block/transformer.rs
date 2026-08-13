@@ -285,7 +285,7 @@ impl<B: Backend> Transformer<B> {
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
                     if layer_index == layer.layer_index {
-                        let feature = self.capture_residual(&shortcut, &hidden, batch_dim.node_count(), encoder)?;
+                        let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
                         hidden_features[feature_index] = Some(feature);
                     }
                 }

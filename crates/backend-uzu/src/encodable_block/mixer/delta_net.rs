@@ -343,7 +343,7 @@ impl<B: Backend> DeltaNet<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
-        let tree_size = batch_dim.node_count();
+        let tree_size = batch_dim.size();
         let mut parents = encoder.allocate_constant(size_for_shape(&[tree_size], DataType::I32))?;
         parents.copyin(batch_dim.parents());
         let mut trie = encoder.allocate_constant(tree_size as usize * size_of::<TrieNode>())?;
@@ -496,7 +496,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
 
         assert!(state.suffix_status.is_none(), "delta net called with state with an unaccepted suffix");
 
-        let mut in_projected = self.in_projection.encode(hidden, batch_dim.node_count(), encoder)?;
+        let mut in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
 
         if !batch_dim.full_accept() {
             let output = self.encode_tree_verify(in_projected, batch_dim, state, encoder)?;
@@ -507,8 +507,8 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         }
 
         let mut delta_output =
-            encoder.allocate_scratch_with_shape(&[batch_dim.node_count(), self.value_dim], self.outer_data_type)?;
-        if batch_dim.node_count() == 1 {
+            encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.value_dim], self.outer_data_type)?;
+        if batch_dim.size() == 1 {
             self.conv_update.encode(
                 &self.conv_weight,
                 self.conv_bias.as_ref(),
@@ -537,7 +537,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             );
         } else {
             let mut padded = encoder.allocate_scratch_with_shape(
-                &[(batch_dim.node_count() + (self.kernel_size - 1)), self.total_proj_dim],
+                &[(batch_dim.size() + (self.kernel_size - 1)), self.total_proj_dim],
                 INNER_DATA_TYPE,
             )?;
             self.conv_pack.encode(
@@ -546,7 +546,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 &mut padded,
                 self.kernel_size - 1,
                 self.total_proj_dim,
-                batch_dim.node_count(),
+                batch_dim.size(),
                 self.conv_dim,
                 encoder,
             );
@@ -556,7 +556,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.conv_bias.as_ref(),
                 &mut in_projected,
                 &mut state.conv_state,
-                batch_dim.node_count(),
+                batch_dim.size(),
                 self.kernel_size,
                 self.total_proj_dim,
                 self.kernel_size - 1,
@@ -564,7 +564,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.total_proj_dim,
                 encoder,
             );
-            if let Some(chunked) = self.chunked.as_ref().filter(|chunked| chunked.should_use(batch_dim.node_count())) {
+            if let Some(chunked) = self.chunked.as_ref().filter(|chunked| chunked.should_use(batch_dim.size())) {
                 chunked.encode(
                     DeltaNetChunkedPrefillArgs {
                         in_projected: &in_projected,
@@ -577,19 +577,19 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                         value_head_dim: self.value_head_dim,
                         key_dim: self.key_dim,
                         value_dim: self.value_dim,
-                        suffix_len: batch_dim.node_count(),
+                        suffix_len: batch_dim.size(),
                     },
                     encoder,
                 )?;
             } else {
                 let mut prep_q_norm =
-                    encoder.allocate_scratch_with_shape(&[batch_dim.node_count(), self.key_dim], INNER_DATA_TYPE)?;
+                    encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.key_dim], INNER_DATA_TYPE)?;
                 let mut prep_k_norm =
-                    encoder.allocate_scratch_with_shape(&[batch_dim.node_count(), self.key_dim], INNER_DATA_TYPE)?;
+                    encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.key_dim], INNER_DATA_TYPE)?;
                 let mut prep_beta =
-                    encoder.allocate_scratch_with_shape(&[batch_dim.node_count(), self.num_heads], INNER_DATA_TYPE)?;
+                    encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
                 let mut prep_decay =
-                    encoder.allocate_scratch_with_shape(&[batch_dim.node_count(), self.num_heads], INNER_DATA_TYPE)?;
+                    encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
                 self.delta_net_prefill_prep.encode(
                     &in_projected,
                     &self.a_log,
@@ -603,7 +603,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                     self.num_groups,
                     self.key_dim,
                     self.value_dim,
-                    batch_dim.node_count(),
+                    batch_dim.size(),
                     encoder,
                 );
                 self.delta_net_prefill.encode(
@@ -619,7 +619,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                     self.value_head_dim,
                     self.key_dim,
                     self.value_dim,
-                    batch_dim.node_count(),
+                    batch_dim.size(),
                     self.value_head_dim.div_ceil(16),
                     encoder,
                 );
@@ -634,16 +634,16 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.conv_dim,
                 self.total_proj_dim,
                 self.norm_epsilon,
-                batch_dim.node_count(),
+                batch_dim.size(),
                 encoder,
             );
         }
 
         state.suffix_status = Some(DeltaNetSuffixStatus::Flat {
-            suffix_length: batch_dim.node_count(),
+            suffix_length: batch_dim.size(),
         });
 
-        let output = self.out_projection.encode(delta_output, batch_dim.node_count(), encoder)?;
+        let output = self.out_projection.encode(delta_output, batch_dim.size(), encoder)?;
 
         encoder.pop_debug_group();
 

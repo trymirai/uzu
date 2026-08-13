@@ -265,21 +265,21 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
 
         assert!(state.suffix_length.is_none(), "mamba2 called with state with unaccepted tokens");
 
-        let in_projected = self.in_projection.encode(hidden, batch_dim.node_count(), encoder)?;
+        let in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
 
         let mut conv_inputs =
-            encoder.allocate_scratch_with_shape(&[batch_dim.node_count(), self.conv_dim], INNER_DATA_TYPE)?;
-        let mut gate = encoder
-            .allocate_scratch_with_shape(&[batch_dim.node_count(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
+            encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.conv_dim], INNER_DATA_TYPE)?;
+        let mut gate =
+            encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
         let mut time_step =
-            encoder.allocate_scratch_with_shape(&[batch_dim.node_count(), self.num_heads], INNER_DATA_TYPE)?;
+            encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
         self.split_inproj.encode(
             &in_projected,
             &mut conv_inputs,
             &mut gate,
             &mut time_step,
             &self.gate_bias,
-            batch_dim.node_count(),
+            batch_dim.size(),
             self.conv_dim + self.inner_dim + self.num_heads,
             self.conv_dim,
             self.inner_dim,
@@ -287,14 +287,14 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
             encoder,
         );
 
-        let mut conv_x = encoder
-            .allocate_scratch_with_shape(&[batch_dim.node_count(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
+        let mut conv_x =
+            encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
         let mut state_b = encoder
-            .allocate_scratch_with_shape(&[batch_dim.node_count(), self.num_groups, self.state_dim], INNER_DATA_TYPE)?;
+            .allocate_scratch_with_shape(&[batch_dim.size(), self.num_groups, self.state_dim], INNER_DATA_TYPE)?;
         let mut state_c = encoder
-            .allocate_scratch_with_shape(&[batch_dim.node_count(), self.num_groups, self.state_dim], INNER_DATA_TYPE)?;
+            .allocate_scratch_with_shape(&[batch_dim.size(), self.num_groups, self.state_dim], INNER_DATA_TYPE)?;
         let state_stride = self.kernel_size - 1;
-        if batch_dim.node_count() == 1 {
+        if batch_dim.size() == 1 {
             self.conv_decode.encode(
                 &conv_inputs,
                 &self.conv_weight,
@@ -308,24 +308,22 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 self.conv_dim,
                 state_stride,
                 self.conv_dim,
-                batch_dim.node_count(),
+                batch_dim.size(),
                 self.inner_dim,
                 self.num_groups * self.state_dim,
                 self.activation_type,
                 encoder,
             );
         } else {
-            let mut padded = encoder.allocate_scratch_with_shape(
-                &[(batch_dim.node_count() + state_stride), self.conv_dim],
-                INNER_DATA_TYPE,
-            )?;
+            let mut padded = encoder
+                .allocate_scratch_with_shape(&[(batch_dim.size() + state_stride), self.conv_dim], INNER_DATA_TYPE)?;
             self.conv_pack.encode(
                 &state.conv_state,
                 &conv_inputs,
                 &mut padded,
                 state_stride,
                 self.conv_dim,
-                batch_dim.node_count(),
+                batch_dim.size(),
                 self.conv_dim,
                 encoder,
             );
@@ -337,7 +335,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 &mut state_b,
                 &mut state_c,
                 &mut state.conv_state,
-                batch_dim.node_count(),
+                batch_dim.size(),
                 self.kernel_size,
                 self.conv_dim,
                 state_stride,
@@ -350,12 +348,12 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         }
 
         let mut ssd_output =
-            encoder.allocate_scratch_with_shape(&[batch_dim.node_count(), self.inner_dim], INNER_DATA_TYPE)?;
+            encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.inner_dim], INNER_DATA_TYPE)?;
         let x_strides = [(self.num_heads * self.head_dim), self.head_dim, 1];
         let dt_strides = [self.num_heads, 1];
         let cb_strides = [(self.num_groups * self.state_dim), self.state_dim, 1];
         let group_size = self.num_heads / self.num_groups;
-        if batch_dim.node_count() == 1 {
+        if batch_dim.size() == 1 {
             let state_strides = [
                 (self.num_heads * self.head_dim * self.state_dim),
                 (self.head_dim * self.state_dim),
@@ -378,7 +376,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 &dt_strides,
                 &cb_strides,
                 &state_strides,
-                batch_dim.node_count(),
+                batch_dim.size(),
                 self.num_heads,
                 self.head_dim,
                 encoder,
@@ -395,7 +393,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                     &gate,
                     &mut state.ssm_state,
                     &mut ssd_output,
-                    batch_dim.node_count(),
+                    batch_dim.size(),
                     group_size,
                     self.state_dim,
                     &x_strides,
@@ -415,7 +413,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                     &gate,
                     &mut state.ssm_state,
                     &mut ssd_output,
-                    batch_dim.node_count(),
+                    batch_dim.size(),
                     group_size,
                     self.state_dim,
                     &x_strides,
@@ -429,9 +427,9 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
             }
         }
 
-        state.suffix_length = Some(batch_dim.node_count());
+        state.suffix_length = Some(batch_dim.size());
 
-        let output = self.out_projection.encode(ssd_output, batch_dim.node_count(), encoder)?;
+        let output = self.out_projection.encode(ssd_output, batch_dim.size(), encoder)?;
 
         encoder.pop_debug_group();
 

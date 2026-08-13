@@ -51,7 +51,7 @@ impl<B: Backend> Attention<B> {
         let (hidden, gate) = if let Some(gate_projection) = &self.gate_projection {
             let mut hidden_copy = encoder.allocate_scratch(hidden.size())?;
             encoder.encode_copy(&hidden, .., &mut hidden_copy, ..);
-            let gate = gate_projection.encode(hidden, batch_dim.node_count(), encoder)?;
+            let gate = gate_projection.encode(hidden, batch_dim.size(), encoder)?;
             (hidden_copy, Some(gate))
         } else {
             (hidden, None)
@@ -59,7 +59,7 @@ impl<B: Backend> Attention<B> {
 
         let mut attention_output = match state {
             Some(MaybeMut::Mut(state)) => {
-                let qkv = self.qkv.project(hidden, batch_dim.node_count(), encoder)?;
+                let qkv = self.qkv.project(hidden, batch_dim.size(), encoder)?;
                 let queries = self.prepare_kv_and_queries(
                     &qkv,
                     state.keys.as_mut(),
@@ -67,15 +67,15 @@ impl<B: Backend> Attention<B> {
                     state.state_type.physical_prefix_length() as usize,
                     self.num_q_heads,
                     precalculated_rope,
-                    batch_dim.node_count(),
+                    batch_dim.size(),
                     encoder,
                 )?;
                 self.run_core(&queries, batch_dim, state, encoder)?
             },
             Some(MaybeMut::Const(state)) => {
                 // KV sharing: the packed projection produces queries only.
-                let query = self.qkv.project(hidden, batch_dim.node_count(), encoder)?;
-                let queries = self.prepare_queries(&query, precalculated_rope, batch_dim.node_count(), encoder)?;
+                let query = self.qkv.project(hidden, batch_dim.size(), encoder)?;
+                let queries = self.prepare_queries(&query, precalculated_rope, batch_dim.size(), encoder)?;
                 self.run_core(&queries, batch_dim, state, encoder)?
             },
             None => {
@@ -84,15 +84,11 @@ impl<B: Backend> Attention<B> {
                 };
                 assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
 
-                let qkv = self.qkv.project(hidden, batch_dim.node_count(), encoder)?;
-                let mut keys = encoder.allocate_scratch_with_shape(
-                    &[batch_dim.node_count(), num_kv_heads, self.head_dim],
-                    self.data_type,
-                )?;
-                let mut values = encoder.allocate_scratch_with_shape(
-                    &[batch_dim.node_count(), num_kv_heads, self.head_dim],
-                    self.data_type,
-                )?;
+                let qkv = self.qkv.project(hidden, batch_dim.size(), encoder)?;
+                let mut keys = encoder
+                    .allocate_scratch_with_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)?;
+                let mut values = encoder
+                    .allocate_scratch_with_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)?;
 
                 let queries = self.prepare_kv_and_queries(
                     &qkv,
@@ -101,7 +97,7 @@ impl<B: Backend> Attention<B> {
                     0,
                     self.num_q_heads,
                     precalculated_rope,
-                    batch_dim.node_count(),
+                    batch_dim.size(),
                     encoder,
                 )?;
 
@@ -123,7 +119,7 @@ impl<B: Backend> Attention<B> {
                         queries: &queries,
                         keys: &keys,
                         values: &values,
-                        suffix_length: batch_dim.node_count(),
+                        suffix_length: batch_dim.size(),
                         trie: None,
                         sinks: self.sinks.as_ref(),
                         state_type: &state_type,
@@ -137,11 +133,11 @@ impl<B: Backend> Attention<B> {
             gate_kernel.encode(
                 &gate.unwrap(),
                 &mut attention_output,
-                batch_dim.node_count() * (self.num_q_heads * self.head_dim),
+                batch_dim.size() * (self.num_q_heads * self.head_dim),
                 encoder,
             );
         }
-        self.out_projection.encode(attention_output, batch_dim.node_count(), encoder)
+        self.out_projection.encode(attention_output, batch_dim.size(), encoder)
     }
 
     pub fn append_projected_kv(
@@ -179,7 +175,7 @@ impl<B: Backend> Attention<B> {
         let (core, trie) = if batch_dim.is_flat() {
             (&self.flat_core, None)
         } else {
-            let mut trie = encoder.allocate_constant(batch_dim.node_count() as usize * size_of::<TrieNode>())?;
+            let mut trie = encoder.allocate_constant(batch_dim.size() as usize * size_of::<TrieNode>())?;
             trie.copyin(batch_dim.nodes());
             (&self.trie_core, Some(trie))
         };
@@ -189,7 +185,7 @@ impl<B: Backend> Attention<B> {
                 queries,
                 keys: state.keys.as_ref(),
                 values: state.values.as_ref(),
-                suffix_length: batch_dim.node_count(),
+                suffix_length: batch_dim.size(),
                 trie: trie.as_ref(),
                 sinks: self.sinks.as_ref(),
                 state_type: &state.state_type,

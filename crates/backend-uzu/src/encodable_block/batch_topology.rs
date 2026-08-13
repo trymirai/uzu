@@ -40,7 +40,7 @@ impl<'a> BatchTopology<'a> {
         self.nodes
     }
 
-    pub fn node_count(&self) -> u32 {
+    pub fn size(&self) -> u32 {
         self.nodes.len() as u32
     }
 
