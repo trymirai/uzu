@@ -73,7 +73,7 @@ impl BenchmarkData {
         seed: u64,
     ) -> Self {
         let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed)
-            .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE as usize, None);
+            .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, None);
 
         let unsigned_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
         let signed_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.weights_for_upload());

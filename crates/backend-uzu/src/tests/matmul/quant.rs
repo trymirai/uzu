@@ -112,31 +112,27 @@ impl<T: ArrayElement + Float> QuantInput<T> {
 
     pub fn with_prepared_a(
         mut self,
-        activation_group_size: usize,
+        activation_group_size: u32,
         sum_group_size: Option<u32>,
     ) -> Self {
         self.signed_codes = true;
-        let sum_group_size = sum_group_size.map(|group_size| group_size as usize);
-        let rows = self.m as usize;
-        let columns = self.k as usize;
+        let rows = self.m;
+        let columns = self.k;
         assert!(columns.is_multiple_of(activation_group_size));
         if let Some(group_size) = sum_group_size {
             assert!(columns.is_multiple_of(group_size));
         }
         let context = <Cpu as Backend>::Context::new().expect("CPU context");
         let input = alloc_allocation_with_data::<Cpu, T>(&context, &self.x);
-        let factors = alloc_allocation_with_data::<Cpu, i32>(&context, &vec![1; columns]);
-        let mut values = alloc_allocation::<Cpu, i8>(&context, rows * columns);
-        let mut scales = alloc_allocation::<Cpu, f32>(&context, rows * columns / activation_group_size);
+        let factors = alloc_allocation_with_data::<Cpu, i32>(&context, &vec![1; columns as usize]);
+        let elements = rows as usize * columns as usize;
+        let mut values = alloc_allocation::<Cpu, i8>(&context, elements);
+        let mut scales = alloc_allocation::<Cpu, f32>(&context, elements / activation_group_size as usize);
         let mut group_sums =
-            sum_group_size.map(|group_size| alloc_allocation::<Cpu, i32>(&context, rows * columns / group_size));
-        let transform = ActivationTransform::<Cpu>::quantize(
-            &context,
-            T::data_type(),
-            activation_group_size as u32,
-            sum_group_size.map(|group_size| group_size as u32),
-        )
-        .expect("CPU activation quantization transform");
+            sum_group_size.map(|group_size| alloc_allocation::<Cpu, i32>(&context, elements / group_size as usize));
+        let transform =
+            ActivationTransform::<Cpu>::quantize(&context, T::data_type(), activation_group_size, sum_group_size)
+                .expect("CPU activation quantization transform");
         let mut encoder = Encoder::<Cpu>::new(&context).expect("CPU encoder");
         transform.encode_quantize(
             &input,
@@ -144,8 +140,8 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             &mut scales,
             group_sums.as_mut(),
             &factors,
-            rows as u32,
-            columns as u32,
+            rows,
+            columns,
             &mut encoder,
         );
         encoder.end_encoding().submit().wait_until_completed().expect("CPU activation quantization");
@@ -154,7 +150,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             values: allocation_to_vec(&values),
             scales: allocation_to_vec(&scales),
             group_sums: group_sums.map_or_else(Vec::new, |sums| allocation_to_vec(&sums)),
-            activation_scale_group_size: activation_group_size as u32,
+            activation_scale_group_size: activation_group_size,
         });
         self
     }
