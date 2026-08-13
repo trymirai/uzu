@@ -63,7 +63,15 @@ PUBLIC KERNEL(GatedActMul) (
   if (!QUANTIZED) {
     T result = static_cast<T>(0);
     if (element_in_bounds && (!use_hadamard || simdgroup_in_bounds)) {
-      result = static_cast<T>(gated_act_mul(value, gate, act_type, use_hadamard, gated_idx, hadamard_factors));
+      float gated = gated_act_mul(value, gate, act_type);
+      if (use_hadamard) {
+        gated = simdgroup_input_random_hadamard_transform(
+            static_cast<ushort>(gated_idx % METAL_SIMD_SIZE),
+            gated,
+            hadamard_factors[gated_idx]
+        );
+      }
+      result = static_cast<T>(gated);
     }
     if (element_in_bounds) {
       fp_out[batch_idx * gated_dim + gated_idx] = result;
@@ -73,7 +81,12 @@ PUBLIC KERNEL(GatedActMul) (
 
   float result = 0.0f;
   if (simdgroup_in_bounds) {
-    result = gated_act_mul(value, gate, act_type, true, gated_idx, hadamard_factors);
+    result = gated_act_mul(value, gate, act_type);
+    result = simdgroup_input_random_hadamard_transform(
+        static_cast<ushort>(gated_idx % METAL_SIMD_SIZE),
+        result,
+        hadamard_factors[gated_idx]
+    );
   }
 
   const float maximum = reduce_activation_quantization_group(

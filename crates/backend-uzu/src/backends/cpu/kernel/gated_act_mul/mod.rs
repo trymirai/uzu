@@ -8,7 +8,7 @@ pub(super) fn gated_act_mul<T: Float>(
     gate: T,
     act_type: ActivationType,
 ) -> f32 {
-    value.to_f32().unwrap() * act_type.activate(gate).to_f32().unwrap()
+    (value * act_type.activate(gate)).to_f32().unwrap()
 }
 
 pub mod gated_act_mul;
