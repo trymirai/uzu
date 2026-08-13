@@ -89,10 +89,12 @@ impl<B: Backend> Sampling<B> {
         token_ids: Option<&Allocation<B>>,
         sampling_method: &SamplingMethod,
         batch_dim: &BatchTopology,
-        sampling_range: Range<usize>,
+        sampling_range: Range<u32>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("sampling");
+
+        let sampling_length = sampling_range.end - sampling_range.start;
 
         let (is_stochastic, temperature, top_k, top_p, min_p, repetition_penalty, suffix_repetition_length) =
             match sampling_method {
@@ -126,7 +128,7 @@ impl<B: Backend> Sampling<B> {
 
             let mut logits_copy = encoder.allocate_scratch(logits.as_buffer_range_ref().range().len())?;
             let tensor_copy = <B::Kernels as Kernels>::TensorCopyKernel::new(encoder.context(), self.data_type)?;
-            tensor_copy.encode(logits, &mut logits_copy, self.vocab_size * sampling_range.len() as u32, encoder);
+            tensor_copy.encode(logits, &mut logits_copy, self.vocab_size * sampling_length, encoder);
 
             let repetition_penalty_kernel =
                 <B::Kernels as Kernels>::RepetitionPenaltyKernel::new(encoder.context(), self.data_type)?;
@@ -138,8 +140,8 @@ impl<B: Backend> Sampling<B> {
                 repetition_penalty,
                 suffix_repetition_length,
                 self.vocab_size,
-                sampling_range.start as u32,
-                sampling_range.len() as u32,
+                sampling_range.start,
+                sampling_length,
                 encoder,
             );
             Some(logits_copy)
@@ -171,7 +173,7 @@ impl<B: Backend> Sampling<B> {
         };
 
         let mut output =
-            encoder.context().create_allocation(sampling_range.len() * size_of::<u32>(), AllocationType::Global)?;
+            encoder.context().create_allocation(sampling_length as usize * size_of::<u32>(), AllocationType::Global)?;
 
         kernel.encode(
             logits,
@@ -183,7 +185,7 @@ impl<B: Backend> Sampling<B> {
             top_p,
             min_p,
             self.vocab_size,
-            sampling_range.len() as u32,
+            sampling_length,
             encoder,
         );
 

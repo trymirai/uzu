@@ -202,7 +202,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         None,
                         &SamplingMethod::Greedy,
                         &batch_topology,
-                        0..chain_length as usize,
+                        0..chain_length,
                         &mut encoder,
                     )
                     .map_err(DFlashTreeError::Backend)?;

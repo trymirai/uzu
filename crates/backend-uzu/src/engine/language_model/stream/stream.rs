@@ -277,7 +277,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     let bitmask = None;
 
                     output_norm = decoder_output.final_hidden;
-                    let sampled_row = batch_dim.size() as usize - 1;
+                    let sampled_row = batch_dim.size() - 1;
                     output_tokens = Some(
                         model
                             .sampling
@@ -706,7 +706,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 Some(&token_ids),
                 &self.options.sampling_method,
                 &batch_dim,
-                0..batch_dim.size() as usize,
+                0..batch_dim.size(),
                 &mut encoder,
             )
             .map_err(LanguageModelStreamError::Backend)?;
