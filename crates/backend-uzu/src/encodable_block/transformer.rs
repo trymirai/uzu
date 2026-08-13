@@ -227,7 +227,7 @@ impl<B: Backend> Transformer<B> {
         input: Allocation<B>,
         per_layer_inputs: Option<&Allocation<B>>,
         batch_dim: &BatchTopology,
-        output_range: Option<Range<usize>>,
+        output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         mut state: Option<&mut TransformerState<B>>,
         encoder: &mut Encoder<B>,
@@ -314,8 +314,8 @@ impl<B: Backend> Transformer<B> {
 
         let output_normalized = self.output_norm.encode(
             &hidden,
-            output_range.start as u32,
-            output_range.len() as u32,
+            output_range.start,
+            output_range.end - output_range.start,
             Some(&mut shortcut),
             encoder,
         )?;

@@ -235,7 +235,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 let decoder_output = model.decoder.encode(
                     &token_ids,
                     &batch_dim,
-                    sample_last.then(|| (input_chunk.len() - 1)..input_chunk.len()),
+                    sample_last.then(|| {
+                        let chunk_length = input_chunk.len() as u32;
+                        chunk_length - 1..chunk_length
+                    }),
                     hidden_feature_layer_indices,
                     &mut model_state.transformer_state,
                     &mut encoder,
@@ -633,7 +636,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         let decoder_output = self.model.decoder.encode(
             &token_ids,
             &batch_dim,
-            Some(0..batch_dim.size() as usize),
+            Some(0..batch_dim.size()),
             hidden_feature_layer_indices,
             &mut self.model_state.transformer_state,
             &mut encoder,

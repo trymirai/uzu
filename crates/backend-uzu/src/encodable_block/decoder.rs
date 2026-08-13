@@ -139,7 +139,7 @@ impl<B: Backend> Decoder<B> {
         &self,
         token_ids: &Allocation<B>,
         batch_dim: &BatchTopology,
-        output_range: Option<Range<usize>>,
+        output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         state: &mut TransformerState<B>,
         encoder: &mut Encoder<B>,
@@ -179,7 +179,7 @@ impl<B: Backend> Decoder<B> {
         let logits = if let Some(output_range) = output_range {
             let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");
             Some(self.embedding.encode_readout(
-                output_range.len() as u32,
+                output_range.end - output_range.start,
                 output,
                 self.embedding.data_type(),
                 encoder,
