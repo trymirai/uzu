@@ -1,10 +1,10 @@
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
-        gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
+        Allocation, Backend, Encoder,
+        gpu_types::ActivationType,
         kernel::{
-            GatedActMulKernel,
+            GatedActMul,
             matmul::{A8ActivationPlan, ActivationFormat},
         },
     },
@@ -14,13 +14,13 @@ use crate::{
 };
 
 pub struct MlpGateActMulEncodable<B: Backend> {
-    fp_kernel: <B::Kernels as Kernels>::GatedActMulKernel,
+    fp_kernel: GatedActMul<B>,
     activation: AnyActivation,
     hidden_dim: u32,
     data_type: DataType,
     hadamard_factors: Option<Allocation<B>>,
     a8_plan: Option<A8ActivationPlan>,
-    quantized_kernel: Option<<B::Kernels as Kernels>::GatedActMulKernel>,
+    quantized_kernel: Option<GatedActMul<B>>,
 }
 
 impl<B: Backend> MlpGateActMulEncodable<B> {
@@ -34,31 +34,9 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         let (hadamard_factors, a8_plan) = input_preparation
             .map(|preparation| (Some(preparation.input_factors), preparation.a8_plan))
             .unwrap_or((None, None));
-        let fp_kernel = <B::Kernels as Kernels>::GatedActMulKernel::new(
-            context,
-            data_type,
-            GatedActMulOp::FullPrecision,
-            true,
-            hadamard_factors.is_some(),
-            HADAMARD_TRANSFORM_BLOCK_SIZE as u32,
-            HADAMARD_TRANSFORM_BLOCK_SIZE as u32,
-        )?;
+        let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some())?;
         let quantized_kernel = a8_plan
-            .map(|plan| {
-                <B::Kernels as Kernels>::GatedActMulKernel::new(
-                    context,
-                    data_type,
-                    if plan.sum_group_size.is_some() {
-                        GatedActMulOp::QuantizeWithGroupSums
-                    } else {
-                        GatedActMulOp::Quantize
-                    },
-                    true,
-                    true,
-                    plan.activation_group_size,
-                    plan.sum_group_size.unwrap_or(plan.activation_group_size),
-                )
-            })
+            .map(|plan| GatedActMul::quantized(context, data_type, plan.activation_group_size, plan.sum_group_size))
             .transpose()?;
         Ok(Self {
             fp_kernel,
@@ -88,30 +66,26 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             let kernel = self.quantized_kernel.as_ref().expect("INT8 input requires a quantized gate kernel");
             let mut values = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(
-                &[batch_dim, self.hidden_dim / plan.activation_group_size as usize],
+                &[batch_dim, self.hidden_dim.div_ceil(plan.activation_group_size as usize)],
                 DataType::F32,
             ))?;
             let mut group_sums = plan
                 .sum_group_size
                 .map(|group_size| {
                     encoder.allocate_scratch(size_for_shape(
-                        &[batch_dim, self.hidden_dim / group_size as usize],
+                        &[batch_dim, self.hidden_dim.div_ceil(group_size as usize)],
                         DataType::I32,
                     ))
                 })
                 .transpose()?;
-            kernel.encode(
+            kernel.encode_quantized(
                 fused_up,
-                None::<&Allocation<B>>,
-                None::<&mut Allocation<B>>,
-                Some(&mut values),
-                Some(&mut scales),
+                &mut values,
+                &mut scales,
                 group_sums.as_mut(),
-                Some(self.hadamard_factors.as_ref().expect("INT8 input requires RHT factors")),
+                self.hadamard_factors.as_ref().expect("INT8 input requires RHT factors"),
                 self.hidden_dim as u32,
                 batch_dim as u32,
-                0,
-                0,
                 self.activation.act_type(),
                 encoder,
             );
@@ -123,13 +97,10 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             }
         } else {
             let mut hidden = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;
-            self.fp_kernel.encode(
+            self.fp_kernel.encode_fp(
                 fused_up,
-                None::<&Allocation<B>>,
-                Some(&mut hidden),
-                None::<&mut Allocation<B>>,
-                None::<&mut Allocation<B>>,
-                None::<&mut Allocation<B>>,
+                None,
+                &mut hidden,
                 self.hadamard_factors.as_ref(),
                 self.hidden_dim as u32,
                 batch_dim as u32,

@@ -4,10 +4,12 @@ pub mod activation_transform;
 pub mod attention_gemm;
 pub mod delta_net_chunked_prefill;
 pub mod delta_net_tree_verify;
+pub mod gated_act_mul;
 pub mod matmul;
 pub mod radix_top_k_small;
 
 pub use activation_transform::ActivationTransform;
+pub use gated_act_mul::GatedActMul;
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 

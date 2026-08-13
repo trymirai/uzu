@@ -8,9 +8,9 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder, Kernels,
-            gpu_types::{ActivationType, GatedActMulOp},
-            kernel::{ActivationTransform, GatedActMulKernel},
+            Allocation, Backend, Context, Encoder,
+            gpu_types::ActivationType,
+            kernel::{ActivationTransform, GatedActMul},
         },
         cpu::Cpu,
     },
@@ -48,16 +48,7 @@ fn interleaved_input<T: ArrayElement + Float>(act_type: ActivationType) -> Inter
 
 fn run_interleaved<T: ArrayElement + Float, B: Backend>(input: &InterleavedInput<T>) -> Vec<T> {
     let context = B::Context::new().expect("create context");
-    let kernel = <<B as Backend>::Kernels as Kernels>::GatedActMulKernel::new(
-        &context,
-        T::data_type(),
-        GatedActMulOp::FullPrecision,
-        true,
-        false,
-        32,
-        32,
-    )
-    .expect("create GatedActMulKernel");
+    let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), true, false).expect("create GatedActMul");
 
     let fused_length = (input.batch_dim * 2 * input.gated_dim) as usize;
     let output_length = (input.batch_dim * input.gated_dim) as usize;
@@ -65,14 +56,11 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(input: &InterleavedInput
     let mut output = alloc_allocation::<B, T>(&context, output_length);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
-    kernel.encode(
+    kernel.encode_fp(
         &fused_up,
         None::<&Allocation<B>>,
-        Some(&mut output),
-        None::<&mut Allocation<B>>,
-        None::<&mut Allocation<B>>,
-        None::<&mut Allocation<B>>,
-        None::<&Allocation<B>>,
+        &mut output,
+        None,
         input.gated_dim,
         input.batch_dim,
         0,
@@ -85,19 +73,21 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(input: &InterleavedInput
     allocation_to_vec::<B, T>(&output)
 }
 
-struct QuantizedInterleavedInput {
-    fused_up: Box<[f32]>,
+struct QuantizedInterleavedInput<T> {
+    fused_up: Box<[T]>,
     factors: Box<[i32]>,
     gated_dim: u32,
     batch_dim: u32,
 }
 
-fn quantized_interleaved_input() -> QuantizedInterleavedInput {
+fn quantized_interleaved_input<T: ArrayElement + Float>() -> QuantizedInterleavedInput<T> {
     let gated_dim = 128u32;
     let batch_dim = 3u32;
     let fused_length = (batch_dim * 2 * gated_dim) as usize;
-    let fused_up =
-        (0..fused_length).map(|index| ((index as f32) * 0.017).sin() * 2.0).collect::<Vec<_>>().into_boxed_slice();
+    let fused_up = (0..fused_length)
+        .map(|index| T::from(((index as f32) * 0.017).sin() * 2.0).unwrap())
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
     let factors = (0..gated_dim as usize)
         .map(|index| {
             if index % 3 == 0 {
@@ -116,35 +106,34 @@ fn quantized_interleaved_input() -> QuantizedInterleavedInput {
     }
 }
 
-fn run_unfused_quantized(input: &QuantizedInterleavedInput) -> (Vec<i8>, Vec<f32>, Vec<i32>) {
+fn run_unfused_quantized<T: ArrayElement + Float>(
+    input: &QuantizedInterleavedInput<T>,
+    activation_group_size: usize,
+    sum_group_size: Option<u32>,
+) -> (Vec<i8>, Vec<f32>, Option<Vec<i32>>) {
     let context = <Cpu as Backend>::Context::new().expect("create context");
-    let fused_up = alloc_allocation_with_data::<Cpu, f32>(&context, &input.fused_up);
+    let fused_up = alloc_allocation_with_data::<Cpu, T>(&context, &input.fused_up);
     let factors = alloc_allocation_with_data::<Cpu, i32>(&context, &input.factors);
-    let mut hidden = alloc_allocation::<Cpu, f32>(&context, (input.batch_dim * input.gated_dim) as usize);
+    let mut hidden = alloc_allocation::<Cpu, T>(&context, (input.batch_dim * input.gated_dim) as usize);
     let mut values = alloc_allocation::<Cpu, i8>(&context, (input.batch_dim * input.gated_dim) as usize);
-    let mut scales = alloc_allocation::<Cpu, f32>(&context, (input.batch_dim * input.gated_dim / 128) as usize);
-    let mut group_sums = alloc_allocation::<Cpu, i32>(&context, (input.batch_dim * input.gated_dim / 32) as usize);
-
-    let gate = <<Cpu as Backend>::Kernels as Kernels>::GatedActMulKernel::new(
+    let mut scales = alloc_allocation::<Cpu, f32>(
         &context,
-        f32::data_type(),
-        GatedActMulOp::FullPrecision,
-        true,
-        false,
-        32,
-        32,
-    )
-    .expect("create GatedActMulKernel");
-    let quantize = ActivationTransform::quantize(context.as_ref(), f32::data_type(), 128, Some(32)).expect("quantize");
+        (input.batch_dim * input.gated_dim).div_ceil(activation_group_size as u32) as usize,
+    );
+    let mut group_sums = sum_group_size.map(|group_size| {
+        alloc_allocation::<Cpu, i32>(&context, (input.batch_dim * input.gated_dim).div_ceil(group_size) as usize)
+    });
+
+    let gate = GatedActMul::<Cpu>::full_precision(&context, T::data_type(), true, false).expect("create GatedActMul");
+    let quantize =
+        ActivationTransform::quantize(context.as_ref(), T::data_type(), activation_group_size, sum_group_size)
+            .expect("quantize");
     let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
-    gate.encode(
+    gate.encode_fp(
         &fused_up,
         None::<&Allocation<Cpu>>,
-        Some(&mut hidden),
-        None::<&mut Allocation<Cpu>>,
-        None::<&mut Allocation<Cpu>>,
-        None::<&mut Allocation<Cpu>>,
-        None::<&Allocation<Cpu>>,
+        &mut hidden,
+        None,
         input.gated_dim,
         input.batch_dim,
         0,
@@ -156,7 +145,7 @@ fn run_unfused_quantized(input: &QuantizedInterleavedInput) -> (Vec<i8>, Vec<f32
         &hidden,
         &mut values,
         &mut scales,
-        Some(&mut group_sums),
+        group_sums.as_mut(),
         &factors,
         input.batch_dim,
         input.gated_dim,
@@ -164,71 +153,64 @@ fn run_unfused_quantized(input: &QuantizedInterleavedInput) -> (Vec<i8>, Vec<f32
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (allocation_to_vec(&values), allocation_to_vec(&scales), allocation_to_vec(&group_sums))
+    (
+        allocation_to_vec(&values),
+        allocation_to_vec(&scales),
+        group_sums.map(|group_sums| allocation_to_vec(&group_sums)),
+    )
 }
 
-fn run_fused_quantized<B: Backend>(input: &QuantizedInterleavedInput) -> (Vec<i8>, Vec<f32>, Vec<i32>) {
+fn run_fused_quantized<T: ArrayElement + Float, B: Backend>(
+    input: &QuantizedInterleavedInput<T>,
+    activation_group_size: u32,
+    sum_group_size: Option<u32>,
+) -> (Vec<i8>, Vec<f32>, Option<Vec<i32>>) {
     let context = B::Context::new().expect("create context");
-    let fused_up = alloc_allocation_with_data::<B, f32>(&context, &input.fused_up);
+    let fused_up = alloc_allocation_with_data::<B, T>(&context, &input.fused_up);
     let factors = alloc_allocation_with_data::<B, i32>(&context, &input.factors);
     let mut values = alloc_allocation::<B, i8>(&context, (input.batch_dim * input.gated_dim) as usize);
-    let mut scales = alloc_allocation::<B, f32>(&context, (input.batch_dim * input.gated_dim / 128) as usize);
-    let mut group_sums = alloc_allocation::<B, i32>(&context, (input.batch_dim * input.gated_dim / 32) as usize);
-
-    let gate = <<B as Backend>::Kernels as Kernels>::GatedActMulKernel::new(
+    let mut scales = alloc_allocation::<B, f32>(
         &context,
-        f32::data_type(),
-        GatedActMulOp::QuantizeWithGroupSums,
-        true,
-        true,
-        128,
-        32,
-    )
-    .expect("create GatedActMulKernel");
+        (input.batch_dim * input.gated_dim).div_ceil(activation_group_size) as usize,
+    );
+    let mut group_sums = sum_group_size.map(|group_size| {
+        alloc_allocation::<B, i32>(&context, (input.batch_dim * input.gated_dim).div_ceil(group_size) as usize)
+    });
+
+    let gate = GatedActMul::<B>::quantized(&context, T::data_type(), activation_group_size, sum_group_size)
+        .expect("create GatedActMul");
     let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
-    gate.encode(
+    gate.encode_quantized(
         &fused_up,
-        None::<&Allocation<B>>,
-        None::<&mut Allocation<B>>,
-        Some(&mut values),
-        Some(&mut scales),
-        Some(&mut group_sums),
-        Some(&factors),
+        &mut values,
+        &mut scales,
+        group_sums.as_mut(),
+        &factors,
         input.gated_dim,
         input.batch_dim,
-        0,
-        0,
         ActivationType::SILU,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (allocation_to_vec(&values), allocation_to_vec(&scales), allocation_to_vec(&group_sums))
+    (
+        allocation_to_vec(&values),
+        allocation_to_vec(&scales),
+        group_sums.map(|group_sums| allocation_to_vec(&group_sums)),
+    )
 }
 
-fn run_interleaved_hadamard<B: Backend>(input: &QuantizedInterleavedInput) -> Vec<f32> {
+fn run_interleaved_hadamard<T: ArrayElement + Float, B: Backend>(input: &QuantizedInterleavedInput<T>) -> Vec<T> {
     let context = B::Context::new().expect("create context");
-    let fused_up = alloc_allocation_with_data::<B, f32>(&context, &input.fused_up);
+    let fused_up = alloc_allocation_with_data::<B, T>(&context, &input.fused_up);
     let factors = alloc_allocation_with_data::<B, i32>(&context, &input.factors);
-    let mut output = alloc_allocation::<B, f32>(&context, (input.batch_dim * input.gated_dim) as usize);
-    let kernel = <<B as Backend>::Kernels as Kernels>::GatedActMulKernel::new(
-        &context,
-        f32::data_type(),
-        GatedActMulOp::FullPrecision,
-        true,
-        true,
-        32,
-        32,
-    )
-    .expect("create GatedActMulKernel");
+    let mut output = alloc_allocation::<B, T>(&context, (input.batch_dim * input.gated_dim) as usize);
+    let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), true, true).expect("create GatedActMul");
     let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
-    kernel.encode(
+    kernel.encode_fp(
         &fused_up,
         None::<&Allocation<B>>,
-        Some(&mut output),
-        None::<&mut Allocation<B>>,
-        None::<&mut Allocation<B>>,
-        None::<&mut Allocation<B>>,
+        &mut output,
         Some(&factors),
         input.gated_dim,
         input.batch_dim,
@@ -244,20 +226,29 @@ fn run_interleaved_hadamard<B: Backend>(input: &QuantizedInterleavedInput) -> Ve
 
 #[uzu_test]
 fn test_gated_act_mul_interleaved_hadamard_f32() {
-    let input = quantized_interleaved_input();
-    let expected = run_interleaved_hadamard::<Cpu>(&input);
+    let input = quantized_interleaved_input::<f32>();
+    let expected = run_interleaved_hadamard::<f32, Cpu>(&input);
     for_each_backend!(|B| {
-        let actual = run_interleaved_hadamard::<B>(&input);
+        let actual = run_interleaved_hadamard::<f32, B>(&input);
         assert_eq_float::<f32>(&expected, &actual, 1e-5, "Hadamard gated activation mismatch");
     });
 }
 
 #[uzu_test]
-fn test_gated_act_mul_quantized_matches_unfused() {
-    let input = quantized_interleaved_input();
-    let expected = run_unfused_quantized(&input);
+fn test_gated_act_mul_interleaved_hadamard_bf16() {
+    let input = quantized_interleaved_input::<bf16>();
+    let expected = run_interleaved_hadamard::<bf16, Cpu>(&input);
     for_each_backend!(|B| {
-        let actual = run_fused_quantized::<B>(&input);
+        let actual = run_interleaved_hadamard::<bf16, B>(&input);
+        assert_eq_float::<bf16>(&expected, &actual, 0.02, "BF16 Hadamard gated activation mismatch");
+    });
+}
+
+fn quantized_test<T: ArrayElement + Float>() {
+    let input = quantized_interleaved_input::<T>();
+    let expected = run_unfused_quantized(&input, 128, Some(32));
+    for_each_backend!(|B| {
+        let actual = run_fused_quantized::<T, B>(&input, 128, Some(32));
         for (index, (&actual, &expected)) in actual.0.iter().zip(&expected.0).enumerate() {
             assert!((i32::from(actual) - i32::from(expected)).abs() <= 1, "code {index}: {actual} != {expected}");
         }
@@ -267,6 +258,29 @@ fn test_gated_act_mul_quantized_matches_unfused() {
         }
         assert_eq!(actual.2, expected.2, "group sums mismatch for {}", std::any::type_name::<B>());
     });
+}
+
+fn quantized_without_group_sums_test<T: ArrayElement + Float>() {
+    let input = quantized_interleaved_input::<T>();
+    let expected = run_unfused_quantized(&input, 128, None);
+    for_each_backend!(|B| {
+        let actual = run_fused_quantized::<T, B>(&input, 128, None);
+        assert_eq!(actual.0, expected.0, "codes mismatch for {}", std::any::type_name::<B>());
+        for (&actual, &expected) in actual.1.iter().zip(&expected.1) {
+            assert!((actual - expected).abs() < 1e-5, "scales mismatch for {}", std::any::type_name::<B>());
+        }
+        assert_eq!(actual.2, None, "unexpected group sums for {}", std::any::type_name::<B>());
+    });
+}
+
+#[uzu_test]
+fn test_gated_act_mul_quantized_without_group_sums_f32() {
+    quantized_without_group_sums_test::<f32>();
+}
+
+#[uzu_test]
+fn test_gated_act_mul_quantized_matches_unfused_f32() {
+    quantized_test::<f32>();
 }
 
 fn interleaved_test<T: ArrayElement + Float + Debug + Display>(act_type: ActivationType) {
@@ -344,30 +358,18 @@ fn separate_input<T: ArrayElement + Float>() -> (SeparateInput<T>, Vec<T>) {
 
 fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -> Vec<T> {
     let context = B::Context::new().expect("create context");
-    let kernel = <<B as Backend>::Kernels as Kernels>::GatedActMulKernel::new(
-        &context,
-        T::data_type(),
-        GatedActMulOp::FullPrecision,
-        false,
-        false,
-        32,
-        32,
-    )
-    .expect("create GatedActMulKernel");
+    let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), false, false).expect("create GatedActMul");
 
     let gate_out = alloc_allocation_with_data::<B, T>(&context, &input.gate_out);
     let per_layer_input = alloc_allocation_with_data::<B, T>(&context, &input.per_layer_input);
     let mut output = alloc_allocation::<B, T>(&context, (input.batch_dim * input.gated_dim) as usize);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
-    kernel.encode(
+    kernel.encode_fp(
         &gate_out,
         Some(&per_layer_input),
-        Some(&mut output),
-        None::<&mut Allocation<B>>,
-        None::<&mut Allocation<B>>,
-        None::<&mut Allocation<B>>,
-        None::<&Allocation<B>>,
+        &mut output,
+        None,
         input.gated_dim,
         input.batch_dim,
         input.value_offset,

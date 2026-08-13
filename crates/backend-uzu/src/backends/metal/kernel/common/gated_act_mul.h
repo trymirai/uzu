@@ -9,7 +9,7 @@ using namespace metal;
 using namespace uzu::activation_type;
 
 template <typename T>
-static METAL_FUNC T gated_act_mul_result(
+static METAL_FUNC float gated_act_mul(
     T value,
     T gate,
     ActivationType act_type,
@@ -17,7 +17,8 @@ static METAL_FUNC T gated_act_mul_result(
     uint index,
     const device int32_t* factors
 ) {
-  T result = value * activate(gate, act_type);
+  const T gated = value * activate(gate, act_type);
+  float result = static_cast<float>(gated);
 
   if (use_hadamard) {
     result =

@@ -32,17 +32,20 @@ PUBLIC KERNEL(GatedActMul) (
     const bool use_hadamard SPECIALIZE,
     const uint activation_scale_group_size SPECIALIZE,
     const uint sum_group_size SPECIALIZE,
-    threadgroup float partial_max OPTIONAL(QUANTIZED && activation_scale_group_size > METAL_SIMD_SIZE)[4],
-    threadgroup int partial_sums OPTIONAL(EMITS_GROUP_SUMS && sum_group_size > METAL_SIMD_SIZE)[4],
+    threadgroup float partial_max OPTIONAL(QUANTIZED && activation_scale_group_size > METAL_SIMD_SIZE)[ACTIVATION_QUANT_SIMDGROUPS],
+    threadgroup int partial_sums OPTIONAL(EMITS_GROUP_SUMS && sum_group_size > METAL_SIMD_SIZE)[ACTIVATION_QUANT_SIMDGROUPS],
     uint activation_tile_index GROUPS(gated_dim.div_ceil(ACTIVATION_QUANT_TILE_SIZE)),
     uint batch_idx GROUPS(batch_dim),
     uint thread_index THREADS(ACTIVATION_QUANT_TILE_SIZE),
     const ThreadContext thread_context
 ) {
   const uint gated_idx = activation_tile_index * ACTIVATION_QUANT_TILE_SIZE + thread_index;
+  const uint simdgroup_offset =
+      activation_tile_index * ACTIVATION_QUANT_TILE_SIZE + (thread_index / METAL_SIMD_SIZE) * METAL_SIMD_SIZE;
   const bool in_bounds = gated_idx < gated_dim;
-  T value;
-  T gate;
+  const bool full_simdgroup = simdgroup_offset + METAL_SIMD_SIZE <= gated_dim;
+  T value = static_cast<T>(0);
+  T gate = static_cast<T>(0);
   if (in_bounds) {
     if (interleaved) {
       const uint base = batch_idx * (2 * gated_dim);
@@ -54,17 +57,28 @@ PUBLIC KERNEL(GatedActMul) (
     }
   }
 
-  const T result = in_bounds ? gated_act_mul_result(value, gate, act_type, use_hadamard, gated_idx, hadamard_factors)
-                             : static_cast<T>(0);
   if (!QUANTIZED) {
+    T result = static_cast<T>(0);
+    if (in_bounds && (!use_hadamard || full_simdgroup)) {
+      result = static_cast<T>(gated_act_mul(value, gate, act_type, use_hadamard, gated_idx, hadamard_factors));
+    }
     if (in_bounds) {
       fp_out[batch_idx * gated_dim + gated_idx] = result;
     }
     return;
   }
 
+  float result = 0.0f;
+  if (use_hadamard) {
+    if (full_simdgroup) {
+      result = gated_act_mul(value, gate, act_type, true, gated_idx, hadamard_factors);
+    }
+  } else if (in_bounds) {
+    result = gated_act_mul(value, gate, act_type, false, gated_idx, hadamard_factors);
+  }
+
   const float maximum = reduce_activation_quantization_group(
-      fabs(static_cast<float>(result)),
+      fabs(result),
       activation_scale_group_size,
       partial_max,
       thread_context,
@@ -72,9 +86,8 @@ PUBLIC KERNEL(GatedActMul) (
       [](float x, float y) { return max(x, y); }
   );
   const float scale = isfinite(maximum) && maximum > 0.0f ? maximum / ACTIVATION_QUANT_INT8_MAX : 1.0f;
-  const int8_t code = static_cast<int8_t>(
-      clamp(round(static_cast<float>(result) / scale), -ACTIVATION_QUANT_INT8_MAX, ACTIVATION_QUANT_INT8_MAX)
-  );
+  const int8_t code =
+      static_cast<int8_t>(clamp(round(result / scale), -ACTIVATION_QUANT_INT8_MAX, ACTIVATION_QUANT_INT8_MAX));
   if (in_bounds) {
     q_out[batch_idx * gated_dim + gated_idx] = code;
   }

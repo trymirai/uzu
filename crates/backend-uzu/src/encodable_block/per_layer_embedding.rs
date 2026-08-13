@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Allocation, Backend, Encoder,
-        kernel::{GatedActMulKernel, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
+        kernel::{GatedActMul, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
     },
     config::{
         activation::AnyActivation,
@@ -147,7 +147,7 @@ pub struct PerLayerEmbeddingProjection<B: Backend> {
     gate: Box<dyn Linear<B>>,
     projection: Box<dyn Linear<B>>,
     norm: Normalization<B>,
-    gate_act_mul: <B::Kernels as Kernels>::GatedActMulKernel,
+    gate_act_mul: GatedActMul<B>,
     residual_finalize: <B::Kernels as Kernels>::TensorAddBiasKernel,
     residual_combine: <B::Kernels as Kernels>::TensorAddScaleKernel,
     model_dim: u32,
@@ -195,16 +195,8 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             context,
         )?;
 
-        let gate_act_mul = <B::Kernels as Kernels>::GatedActMulKernel::new(
-            context,
-            data_type,
-            crate::backends::common::gpu_types::GatedActMulOp::FullPrecision,
-            false,
-            false,
-            32,
-            32,
-        )
-        .map_err(PerLayerEmbeddingError::BackendError)?;
+        let gate_act_mul = GatedActMul::full_precision(context, data_type, false, false)
+            .map_err(PerLayerEmbeddingError::BackendError)?;
         let residual_finalize = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true)
             .map_err(PerLayerEmbeddingError::BackendError)?;
         let residual_combine = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, true)
@@ -245,19 +237,16 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         encoder.encode_copy(outputs, .., &mut gate_input, ..);
         let gate_out = self.gate.encode(gate_input, batch_dim, encoder)?;
 
-        let mut activated = encoder.allocate_scratch_for_shape(&[batch_dim, self.ple_dim], self.data_type)?;
-        self.gate_act_mul.encode(
+        let mut activated = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.ple_dim], self.data_type))?;
+        self.gate_act_mul.encode_fp(
             &gate_out,
             Some(per_layer_input),
-            Some(&mut activated),
-            None::<&mut Allocation<B>>,
-            None::<&mut Allocation<B>>,
-            None::<&mut Allocation<B>>,
-            None::<&Allocation<B>>,
-            self.ple_dim,
-            batch_dim,
-            layer_index * self.ple_dim,
-            self.num_layers * self.ple_dim,
+            &mut activated,
+            None,
+            self.ple_dim as u32,
+            batch_dim as u32,
+            (layer_index * self.ple_dim) as u32,
+            (self.num_layers * self.ple_dim) as u32,
             self.activation.act_type(),
             encoder,
         );

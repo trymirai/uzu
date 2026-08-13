@@ -8,6 +8,7 @@ using namespace metal;
 
 UZU_CONST uint ACTIVATION_QUANT_TILE_SIZE = 128;
 UZU_CONST float ACTIVATION_QUANT_INT8_MAX = 127.0f;
+#define ACTIVATION_QUANT_SIMDGROUPS 4
 
 template <typename T, typename SimdReduce, typename Combine>
 METAL_FUNC T reduce_activation_quantization_group(
