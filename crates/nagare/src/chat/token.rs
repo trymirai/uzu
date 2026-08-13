@@ -379,10 +379,11 @@ impl StreamingState<'_> {
         last_stat: bool,
     ) -> ChatReplyStats {
         let speculator_stats = if let Some(metrics) = self.metrics.as_ref()
-            && metrics.num_forward_passes > 0
+            && metrics.num_decode_forward_passes > 0
         {
             Some(ChatReplySpeculatorStats {
-                tokens_per_forward_pass: metrics.num_tokens_accepted as f64 / metrics.num_forward_passes as f64,
+                tokens_per_forward_pass: metrics.num_tokens_accepted as f64 / metrics.num_decode_forward_passes as f64,
+                num_decode_forward_passes: metrics.num_decode_forward_passes as u32,
             })
         } else {
             None
