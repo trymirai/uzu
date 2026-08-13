@@ -105,11 +105,11 @@ impl<B: Backend> LanguageModel<B> {
             let host_token_ids = token_ids.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
             let host_token_positions = (0..token_count as i32).collect::<Box<[i32]>>();
             transformer_tap.token_ids = Some(
-                Array::capture_host(&encoder, &host_token_ids, &shape, DataType::I32)
+                Array::capture_slice(&encoder, &host_token_ids, &shape, DataType::I32)
                     .map_err(RecordTraceError::Backend)?,
             );
             transformer_tap.token_positions = Some(
-                Array::capture_host(&encoder, &host_token_positions, &shape, DataType::I32)
+                Array::capture_slice(&encoder, &host_token_positions, &shape, DataType::I32)
                     .map_err(RecordTraceError::Backend)?,
             );
         }
