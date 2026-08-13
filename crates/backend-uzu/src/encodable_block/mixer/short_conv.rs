@@ -62,9 +62,10 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
                 conv_states,
             } => {
                 let conv_state_size = self.conv_state.size();
+                let accepted_offset = accepted_index as usize * conv_state_size;
                 encoder.encode_copy(
                     &conv_states,
-                    (accepted_index as usize * conv_state_size)..((accepted_index as usize + 1) * conv_state_size),
+                    accepted_offset..accepted_offset + conv_state_size,
                     &mut self.conv_state,
                     ..,
                 );

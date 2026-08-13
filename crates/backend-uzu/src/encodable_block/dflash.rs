@@ -119,7 +119,7 @@ impl<B: Backend> DFlash<B> {
         let layer_kv_dim = 2 * attention_config.num_groups * attention_config.head_dim;
         let state_kv_projection = <dyn Linear<B>>::new(
             config.model_dim,
-            [(config.layer_configs.len() * layer_kv_dim as usize) as u32],
+            [config.layer_configs.len() as u32 * layer_kv_dim],
             false,
             context,
             data_type,
@@ -240,11 +240,10 @@ impl<B: Backend> DFlash<B> {
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, encoder)?;
 
         let projected_kv = self.state_kv_projection.encode(normalized_features, num_tokens as u32, encoder)?;
-        let layer_kv_bytes = self.layer_kv_dim * self.data_type.size_in_bytes() as u32;
-        let kv_chunk =
-            |chunk_index: usize| chunk_index * layer_kv_bytes as usize..(chunk_index + 1) * layer_kv_bytes as usize;
+        let layer_kv_bytes = size_for_shape(&[self.layer_kv_dim], self.data_type);
+        let kv_chunk = |chunk_index: usize| chunk_index * layer_kv_bytes..(chunk_index + 1) * layer_kv_bytes;
         let mut layer_key_values = (0..self.layers.len())
-            .map(|_| encoder.allocate_scratch(num_tokens * layer_kv_bytes as usize))
+            .map(|_| encoder.allocate_scratch(num_tokens * layer_kv_bytes))
             .collect::<Result<Box<[_]>, _>>()?;
         for (layer_index, key_value) in layer_key_values.iter_mut().enumerate() {
             for token_index in 0..num_tokens {

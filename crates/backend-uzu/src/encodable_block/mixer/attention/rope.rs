@@ -27,6 +27,7 @@ impl<B: Backend> PrecalculatedRoPE<B> {
         };
 
         let element_count = token_positions.len() * head_dim as usize;
+        let half_offset = half_dim as usize;
         let mut sines = vec![0.0; element_count];
         let mut cosines = vec![0.0; element_count];
         for pair_index in 0..half_dim {
@@ -92,11 +93,11 @@ impl<B: Backend> PrecalculatedRoPE<B> {
                 let embedding = *token_position as f32 * inverse_frequency;
                 let sine = embedding.sin() * attention_scaling_factor;
                 let cosine = embedding.cos() * attention_scaling_factor;
-                let row_offset = token_index * head_dim as usize;
-                sines[row_offset + pair_index as usize] = sine;
-                sines[row_offset + half_dim as usize + pair_index as usize] = sine;
-                cosines[row_offset + pair_index as usize] = cosine;
-                cosines[row_offset + half_dim as usize + pair_index as usize] = cosine;
+                let pair_offset = token_index * head_dim as usize + pair_index as usize;
+                sines[pair_offset] = sine;
+                sines[pair_offset + half_offset] = sine;
+                cosines[pair_offset] = cosine;
+                cosines[pair_offset + half_offset] = cosine;
             }
         }
 

@@ -175,7 +175,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     &once(0) // offset
                         .chain(once(state_tokens_range.len() as u64)) // length
                         .chain(model_state.tokens[state_tokens_range.clone()].iter().copied()) // tokens
-                        .chain(repeat_n(0, (suffix_repetition_length - state_tokens_range.len() as u32) as usize)) // pad if not full
+                        .chain(repeat_n(0, suffix_repetition_length as usize - state_tokens_range.len())) // pad if not full
                         .map(|x| x as u32)
                         .collect::<Box<[_]>>(),
                 );
@@ -277,6 +277,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     let bitmask = None;
 
                     output_norm = decoder_output.final_hidden;
+                    let sampled_row = batch_dim.size() as usize - 1;
                     output_tokens = Some(
                         model
                             .sampling
@@ -288,7 +289,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                                 Some(&token_ids),
                                 &options.sampling_method,
                                 &batch_dim,
-                                (batch_dim.size() - 1) as usize..batch_dim.size() as usize,
+                                sampled_row..sampled_row + 1,
                                 &mut encoder,
                             )
                             .map_err(LanguageModelStreamError::Backend)?,

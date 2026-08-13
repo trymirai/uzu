@@ -87,14 +87,15 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                 beta,
                 parents,
             } => {
-                assert!(accepted_indices.iter().all(|&index| index < parents.len() as u32));
+                assert!(accepted_indices.iter().all(|&index| (index as usize) < parents.len()));
                 assert_eq!(parents[accepted_indices[0] as usize], -1);
                 assert!(accepted_indices.windows(2).all(|edge| parents[edge[1] as usize] == edge[0] as i32));
 
                 let conv_state_size = self.conv_state.size();
+                let accepted_offset = accepted_index as usize * conv_state_size;
                 encoder.encode_copy(
                     &conv_states,
-                    accepted_index as usize * conv_state_size..(accepted_index as usize + 1) * conv_state_size,
+                    accepted_offset..accepted_offset + conv_state_size,
                     &mut self.conv_state,
                     ..,
                 );

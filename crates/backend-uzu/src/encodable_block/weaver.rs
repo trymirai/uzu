@@ -290,7 +290,7 @@ impl<B: Backend> Weaver<B> {
         // lookahead row form the candidate pool node expansions draw from.
         let vocab_size = target_embedding.vocab_size();
         assert!(
-            logits.size() >= (lookahead_count * vocab_size * DataType::F32.size_in_bytes() as u32) as usize,
+            logits.size() >= size_for_shape(&[lookahead_count, vocab_size], DataType::F32),
             "draft logits do not cover the lookahead rows"
         );
         let mut candidate_ids = encoder
@@ -475,7 +475,7 @@ impl<B: Backend> Weaver<B> {
                 .map_err(WeaverEncodeError::Backend)?;
             let mut residual_state =
                 encoder.allocate_scratch(residual_input.size()).map_err(WeaverEncodeError::Backend)?;
-            let metadata_field_bytes = batch_node_count * DataType::U32.size_in_bytes() as u32;
+            let metadata_field_bytes = size_for_shape(&[batch_node_count], DataType::U32);
             for (layer_index, layer) in self.layers.iter().enumerate() {
                 let attention_input = layer
                     .pre_attention_norm
@@ -496,8 +496,8 @@ impl<B: Backend> Weaver<B> {
                     &rope.sines,
                     &node_metadata,
                     &node_ancestor_indices,
-                    (&node_metadata, MetadataIdx::AncestorCount as usize * metadata_field_bytes as usize),
-                    (&node_metadata, MetadataIdx::TreeSlot as usize * metadata_field_bytes as usize),
+                    (&node_metadata, MetadataIdx::AncestorCount as usize * metadata_field_bytes),
+                    (&node_metadata, MetadataIdx::TreeSlot as usize * metadata_field_bytes),
                     &mut attention_output,
                     batch_node_count,
                     shape.depth,
@@ -523,8 +523,8 @@ impl<B: Backend> Weaver<B> {
             let logit_residuals = target_embedding.encode_readout_sparse(
                 &query,
                 batch_candidate_ids,
-                batch_node_count as usize,
-                self.candidate_pool_size as usize,
+                batch_node_count,
+                self.candidate_pool_size,
                 encoder,
             )?;
             let mut child_token_ids = encoder

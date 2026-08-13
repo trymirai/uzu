@@ -76,8 +76,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
 
         let dt_bytes = self.data_type.size_in_bytes();
         let head_dim_bytes = self.head_dim as usize * dt_bytes;
-        let group_rows = gqa_factor * suffix_length;
-        let scores_len = group_rows * sequence_length;
+        let group_rows = (gqa_factor * suffix_length) as usize;
 
         let mut output =
             encoder.allocate_constant_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
@@ -91,7 +90,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
                 MatmulArguments {
                     a: MatmulA::FullPrecision {
                         values: arguments.queries,
-                        offset: group_index as usize * group_rows as usize * head_dim_bytes,
+                        offset: group_index as usize * group_rows * head_dim_bytes,
                     },
                     b: MatmulB::FullPrecision {
                         b: (arguments.keys, group_index as usize * head_dim_bytes),
@@ -120,7 +119,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
                 gqa_factor,
                 sequence_length,
                 suffix_length,
-                scores_len,
+                gqa_factor * suffix_length * sequence_length,
                 encoder,
             );
         }
@@ -135,7 +134,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
                 MatmulArguments {
                     a: MatmulA::FullPrecision {
                         values: &scores,
-                        offset: group_index as usize * group_rows as usize * sequence_length as usize * dt_bytes,
+                        offset: group_index as usize * group_rows * sequence_length as usize * dt_bytes,
                     },
                     b: MatmulB::FullPrecision {
                         b: (arguments.values, group_index as usize * head_dim_bytes),

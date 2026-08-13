@@ -258,7 +258,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     &mut encoder,
                 )?;
                 let depth_seeds = (0..weaver.max_depth())
-                    .map(|depth| prng.derive((root_position + depth as u32) as u64))
+                    .map(|depth| prng.derive(root_position as u64 + depth as u64))
                     .collect::<Box<[u64]>>();
                 let tree = weaver.encode_tree(
                     target_output_norm,

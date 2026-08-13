@@ -461,8 +461,8 @@ impl<B: Backend> Embedding<B> {
         &self,
         input: &Allocation<B>,
         token_ids: &Allocation<B>,
-        rows: usize,
-        ids_per_row: usize,
+        rows: u32,
+        ids_per_row: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
         encoder.push_debug_group("embedding readout (sparse)");
@@ -473,7 +473,7 @@ impl<B: Backend> Embedding<B> {
         let b = matrix.matmul_b();
 
         let mut output = encoder
-            .allocate_scratch_for_shape(&[rows as u32, ids_per_row as u32], self.data_type)
+            .allocate_scratch_for_shape(&[rows, ids_per_row], self.data_type)
             .map_err(EmbeddingError::BackendError)?;
 
         let mut rht_input: Option<Allocation<B>> = None;
@@ -484,7 +484,7 @@ impl<B: Backend> Embedding<B> {
                     input,
                     &mut transformed,
                     &input_hadamard.factors,
-                    rows as u32,
+                    rows,
                     self.model_dim,
                     encoder,
                 );
@@ -515,8 +515,8 @@ impl<B: Backend> Embedding<B> {
                         ..MatmulDOps::none()
                     },
                     gather_indices: Some(token_ids),
-                    m: rows as u32,
-                    n: ids_per_row as u32,
+                    m: rows,
+                    n: ids_per_row,
                     k: self.model_dim,
                 },
                 encoder,
@@ -526,7 +526,7 @@ impl<B: Backend> Embedding<B> {
         if let Some(logit_transform) = &self.logit_transform
             && logit_transform.scale != 1.0
         {
-            let length = (rows * ids_per_row) as u32;
+            let length = rows * ids_per_row;
             logit_transform.kernel.encode(
                 &mut output,
                 length,
