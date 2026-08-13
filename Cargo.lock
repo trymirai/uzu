@@ -448,6 +448,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "backend-openai"
+version = "0.5.16"
+
+[[package]]
 name = "backend-remote"
 version = "0.5.16"
 dependencies = [
@@ -2195,6 +2199,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "frontend-uzu"
+version = "0.5.16"
+dependencies = [
+ "message-processing",
+ "uzu-types",
+]
+
+[[package]]
 name = "fs-err"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3638,6 +3650,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "message-processing"
+version = "0.5.16"
+dependencies = [
+ "uzu-types",
 ]
 
 [[package]]

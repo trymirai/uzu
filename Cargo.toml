@@ -19,6 +19,9 @@ members = [
     "crates/keisoku",
     "crates/kanka",
     "crates/kiban",
+    "crates/backend-openai",
+    "crates/frontend-uzu",
+    "crates/message-processing",
     "crates/uzu-types",
 ]
 resolver = "3"
@@ -62,6 +65,12 @@ keisoku = { path = "crates/keisoku", default-features = false }
 kanka = { path = "crates/kanka", default-features = false }
 kiban = { path = "crates/kiban", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
+
+backend-openai = { path = "crates/backend-openai", default-features = false }
+frontend-uzu = { path = "crates/frontend-uzu", default-features = false }
+message-processing = { path = "crates/message-processing", default-features = false }
+uzu-types = { path = "crates/uzu-types", default-features = false }
+
 xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgrammar-rs.git", tag = "0.2.3", features = ["tokenizers"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17"

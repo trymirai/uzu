@@ -1,0 +1,19 @@
+[package]
+name = "frontend-uzu"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+message-processing.workspace = true
+uzu-types.workspace = true
+
+[lints]
+workspace = true
