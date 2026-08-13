@@ -225,7 +225,6 @@ impl<B: Backend> TransformerLayer<B> {
             encoder.encode_copy(&input, .., shortcut, ..);
             input
         };
-        // The residual add is fused into the norm, so shortcut now holds the layer input.
         if request.inputs {
             tap.inputs = Some(Array::capture(shortcut, &shape, self.data_type, encoder)?);
         }

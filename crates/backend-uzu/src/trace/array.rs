@@ -17,8 +17,6 @@ pub struct Array<B: Backend> {
 }
 
 impl<B: Backend> Array<B> {
-    /// Panics on data types without a safetensors equivalent, which is only I4/U4
-    /// and never an activation.
     pub fn new(
         shape: &[usize],
         data_type: DataType,
@@ -32,7 +30,6 @@ impl<B: Backend> Array<B> {
         }
     }
 
-    // Global, because encode-chain allocations are moved along and recycled once dropped.
     pub fn capture(
         allocation: &Allocation<B>,
         shape: &[usize],

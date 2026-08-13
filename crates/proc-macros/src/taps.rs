@@ -158,7 +158,6 @@ pub fn taps(input: TokenStream) -> TokenStream {
                     out.push((format!("{prefix}{}", #segment), array));
                 }
             },
-            // flatten contributes no path segment
             FieldKind::Sub(_) if field.flatten => quote! {
                 if let Some(sub) = &self.#field_name {
                     sub.collect(prefix, out);
@@ -182,7 +181,6 @@ pub fn taps(input: TokenStream) -> TokenStream {
             #(#tap_fields,)*
         }
 
-        // Hand-written: deriving would bound B: Default.
         impl<B: crate::backends::common::Backend> Default for #name<B> {
             fn default() -> Self {
                 Self {

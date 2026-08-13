@@ -14,7 +14,6 @@ use crate::{
     trie::TrieNode,
 };
 
-// A trace is a single pass, so it cannot chunk around the suffix bound like prefill does.
 const MAX_TRACE_TOKENS: usize = ATTENTION_SUFFIX_CAPACITY;
 
 #[derive(Debug, Error)]
@@ -49,7 +48,6 @@ impl<B: Backend> LanguageModel<B> {
         self.tap.write(output_path, metadata)
     }
 
-    /// One prefill-shaped pass over `token_ids` against a fresh state.
     pub fn record_trace(
         &mut self,
         token_ids: &[u64],
@@ -84,8 +82,6 @@ impl<B: Backend> LanguageModel<B> {
         let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
         let batch_dim = BatchTopology::new(&input_flat_trie_nodes, true);
 
-        // Full output range: every layer, all tokens. Taking `.tap` off the temporary
-        // drops the rest, whose pooled logits must not outlive the encoder's pool.
         let mut tap = self
             .decoder
             .encode(
@@ -99,7 +95,6 @@ impl<B: Backend> LanguageModel<B> {
             )?
             .tap;
 
-        // Flat trie over a fresh state gives positions 0..n.
         if let Some(transformer_tap) = &mut tap.transformer {
             let shape = [1, token_count];
             let host_token_ids = token_ids.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
@@ -114,7 +109,6 @@ impl<B: Backend> LanguageModel<B> {
             );
         }
 
-        // Pooled allocations must be released before the pool is.
         drop(token_ids_allocation);
 
         encoder.end_encoding().submit().wait_until_completed().map_err(RecordTraceError::Backend)?;
