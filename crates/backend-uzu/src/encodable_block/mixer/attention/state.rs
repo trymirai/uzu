@@ -185,11 +185,11 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
                 let copies = accepted_indices
                     .iter()
                     .copied()
-                    .enumerate()
-                    .filter(|&(index, accepted_index)| index as u32 != accepted_index)
-                    .map(|(index, accepted_index)| Copy {
+                    .zip(0u32..)
+                    .filter(|&(accepted_index, index)| index != accepted_index)
+                    .map(|(accepted_index, index)| Copy {
                         source: *length + accepted_index,
-                        destination: *length + index as u32,
+                        destination: *length + index,
                     })
                     .collect::<Vec<Copy>>();
 

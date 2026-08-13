@@ -45,8 +45,8 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         args: MoeExpertsTwoPassArguments<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        const BLOCK_M: usize = 4;
-        let h_blocks = args.d_ff.div_ceil(BLOCK_M as u32);
+        const BLOCK_M: u32 = 4;
+        let h_blocks = args.d_ff.div_ceil(BLOCK_M);
 
         let mut tile_counts = encoder.allocate_scratch_for_shape(&[args.num_routed_experts], DataType::U32)?;
         self.counts.encode(args.expert_offsets, &mut tile_counts, args.num_routed_experts, h_blocks, encoder);

@@ -94,7 +94,7 @@ impl<B: Backend> DFlash<B> {
         let mask_token_id = config.mask_token_id as u32;
         assert!(config.block_size <= ATTENTION_SUFFIX_CAPACITY, "DFlash block_size exceeds attention suffix capacity");
         let target_feature_projection = <dyn Linear<B>>::new(
-            config.model_dim * config.target_layer_ids.len() as u32,
+            config.model_dim * config.num_target_layers,
             [config.model_dim],
             false,
             context,
@@ -117,9 +117,10 @@ impl<B: Backend> DFlash<B> {
             return Err(DFlashNewError::InvalidAttentionConfig("DFlash layers must use attention mixers"));
         };
         let layer_kv_dim = 2 * attention_config.num_groups * attention_config.head_dim;
+        let num_layers = config.layer_configs.len() as u32;
         let state_kv_projection = <dyn Linear<B>>::new(
             config.model_dim,
-            [config.layer_configs.len() as u32 * layer_kv_dim],
+            [num_layers * layer_kv_dim],
             false,
             context,
             data_type,
@@ -128,15 +129,15 @@ impl<B: Backend> DFlash<B> {
         let layers = config
             .layer_configs
             .iter()
-            .enumerate()
-            .map(|(index, layer_config)| {
+            .zip(0u32..)
+            .map(|(layer_config, index)| {
                 TransformerLayer::new(
                     context,
                     config.model_dim,
                     config.hidden_dim,
-                    config.layer_configs.len() as u32,
+                    num_layers,
                     layer_config,
-                    index as u32,
+                    index,
                     &layers_tree.subtree(&index.to_string()),
                     data_type,
                 )
@@ -165,7 +166,7 @@ impl<B: Backend> DFlash<B> {
             max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
             mask_token_id,
-            target_feature_input_dim: config.model_dim * config.target_layer_ids.len() as u32,
+            target_feature_input_dim: config.model_dim * config.num_target_layers,
             data_type,
         })
     }
@@ -207,7 +208,7 @@ impl<B: Backend> DFlash<B> {
 
         let num_tokens = accepted_indices.len() as u32;
         let captured_layer_count = self.target_feature_input_dim / self.model_dim;
-        assert_eq!(target_features.len(), captured_layer_count as usize);
+        assert_eq!(target_features.len() as u32, captured_layer_count);
         let layer_feature_bytes = size_for_shape(&[self.model_dim], self.data_type);
         assert!(target_features.iter().all(|features| features.size() % layer_feature_bytes == 0));
         let context_length = state.context_length + num_tokens;

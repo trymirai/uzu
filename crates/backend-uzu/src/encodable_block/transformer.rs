@@ -18,7 +18,7 @@ use crate::{
 
 enum TransformerLayerStateType<B: Backend> {
     Owned(Box<dyn MixerState<B>>),
-    Shared(usize),
+    Shared(u32),
 }
 
 pub struct TransformerState<B: Backend> {
@@ -104,11 +104,12 @@ impl<B: Backend> Transformer<B> {
     ) -> Result<Self, TransformerNewError<B>> {
         let mut ropes: Vec<AnyRoPEConfig> = Vec::new();
 
+        let num_layers = transformer_config.layer_configs.len() as u32;
         let layers = transformer_config
             .layer_configs
             .iter()
-            .enumerate()
-            .map(|(layer_index, layer_config)| {
+            .zip(0u32..)
+            .map(|(layer_config, layer_index)| {
                 let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index));
 
                 let rope = layer_config.rope_config.as_ref().map(|layer_rope_config| {
@@ -122,9 +123,9 @@ impl<B: Backend> Transformer<B> {
                     context,
                     transformer_config.model_dim,
                     transformer_config.hidden_dim,
-                    transformer_config.layer_configs.len() as u32,
+                    num_layers,
                     layer_config,
-                    layer_index as u32,
+                    layer_index,
                     &layer_loader,
                     data_type,
                 )?;
@@ -210,7 +211,7 @@ impl<B: Backend> Transformer<B> {
                 None => {
                     layer.mixer.create_empty_state(max_context_length, context).map(TransformerLayerStateType::Owned)
                 },
-                Some(kv_source_layer_index) => Ok(TransformerLayerStateType::Shared(kv_source_layer_index as usize)),
+                Some(kv_source_layer_index) => Ok(TransformerLayerStateType::Shared(kv_source_layer_index)),
             })
             .collect::<Result<_, B::Error>>()?;
 
@@ -259,7 +260,8 @@ impl<B: Backend> Transformer<B> {
                 Some(match &mut state.layer_states[layer.layer_index as usize] {
                     TransformerLayerStateType::Owned(layer_state) => MaybeMut::Mut(layer_state.as_mut()),
                     TransformerLayerStateType::Shared(owned_layer_index) => {
-                        let TransformerLayerStateType::Owned(owned_layer) = &state.layer_states[*owned_layer_index]
+                        let TransformerLayerStateType::Owned(owned_layer) =
+                            &state.layer_states[*owned_layer_index as usize]
                         else {
                             panic!("shared layer doesn't point to an owned layer");
                         };
@@ -315,7 +317,7 @@ impl<B: Backend> Transformer<B> {
         let output_normalized = self.output_norm.encode(
             &hidden,
             output_range.start,
-            output_range.len() as u32,
+            output_range.end - output_range.start,
             Some(&mut shortcut),
             encoder,
         )?;

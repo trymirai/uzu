@@ -58,7 +58,7 @@ pub fn get_max_context_length<B: Backend>(
         } => model.max_context_length(),
         ContextLength::Custom {
             length,
-        } => Some(length.clamp(0, u32::MAX as i64) as u32),
+        } => Some(length.max(0) as u32),
     }
 }
 
@@ -85,11 +85,11 @@ pub fn get_sampling_method<B: Backend>(
                 suffix_repetition_length,
             } => UzuSamplingMethod::Stochastic {
                 temperature: temperature.map(|value| value as f32),
-                top_k: top_k.map(|value| value.clamp(0, u32::MAX as i64) as u32),
+                top_k: top_k.map(|value| value as u32),
                 top_p: top_p.map(|value| value as f32),
                 min_p: min_p.map(|value| value as f32),
                 repetition_penalty: repetition_penalty.map(|value| value as f32),
-                suffix_repetition_length: suffix_repetition_length.map(|value| value.clamp(0, u32::MAX as i64) as u32),
+                suffix_repetition_length: suffix_repetition_length.map(|value| value as u32),
             },
         },
     }

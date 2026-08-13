@@ -84,8 +84,8 @@ impl<B: Backend> Decoder<B> {
 
         let per_layer_embedding = if let Some(ple_config) = &config.ple_model_config {
             assert_eq!(
-                ple_config.num_layers as usize,
-                config.transformer_config.layer_configs.len(),
+                ple_config.num_layers,
+                config.transformer_config.layer_configs.len() as u32,
                 "per-layer embedding num_layers must match transformer layer count"
             );
             Some(PerLayerEmbedding::new(
@@ -179,7 +179,7 @@ impl<B: Backend> Decoder<B> {
         let logits = if let Some(output_range) = output_range {
             let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");
             Some(self.embedding.encode_readout(
-                output_range.len() as u32,
+                output_range.end - output_range.start,
                 output,
                 self.embedding.data_type(),
                 encoder,

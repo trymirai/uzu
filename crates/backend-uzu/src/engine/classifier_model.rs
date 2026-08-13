@@ -64,7 +64,7 @@ impl<B: Backend> Engine<B> {
         )?;
 
         let output_labels = if let Some(output_labels) = config.classifier_config.output_labels {
-            assert!(output_labels.len() == config.classifier_config.num_labels as usize);
+            assert!(output_labels.len() as u32 == config.classifier_config.num_labels);
             output_labels
         } else {
             (0..config.classifier_config.num_labels).map(|index| format!("class_{index}")).collect()

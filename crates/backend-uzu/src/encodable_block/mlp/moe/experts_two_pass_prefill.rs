@@ -58,8 +58,8 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             encoder,
         );
 
-        const COL_TILE_FF: usize = 32; // Must match PASSA_BN in kernel
-        let n_tiles_ff = args.d_ff.div_ceil(COL_TILE_FF as u32);
+        const COL_TILE_FF: u32 = 32; // Must match PASSA_BN in kernel
+        let n_tiles_ff = args.d_ff.div_ceil(COL_TILE_FF);
 
         let mut pass_a_dispatch_args = encoder.allocate_scratch_for_shape(&[3], DataType::U32)?;
         self.dispatch.encode(&total_tiles, &mut pass_a_dispatch_args, n_tiles_ff, encoder);
@@ -86,8 +86,8 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             encoder,
         );
 
-        const COL_TILE_MODEL: usize = 64;
-        let n_tiles_model = args.d_model.div_ceil(COL_TILE_MODEL as u32);
+        const COL_TILE_MODEL: u32 = 64;
+        let n_tiles_model = args.d_model.div_ceil(COL_TILE_MODEL);
 
         let mut pass_b_dispatch_args = encoder.allocate_scratch_for_shape(&[3], DataType::U32)?;
         self.dispatch.encode(&total_tiles, &mut pass_b_dispatch_args, n_tiles_model, encoder);

@@ -17,12 +17,12 @@ impl<'a> BatchTopology<'a> {
         let mut parents = Box::new_uninit_slice(nodes.len());
         let mut is_flat = true;
 
-        for (index, node) in nodes.iter().enumerate() {
+        for (node, index) in nodes.iter().zip(0u32..) {
             stack.truncate(node.height as usize);
-            parents[index].write(stack.last().map(|i| *i as i32).unwrap_or(-1));
-            stack.push(index);
+            parents[index as usize].write(stack.last().map(|i| *i as i32).unwrap_or(-1));
+            stack.push(index as usize);
 
-            is_flat &= node.height == index as u32;
+            is_flat &= node.height == index;
         }
         let parents = unsafe { parents.assume_init() };
 

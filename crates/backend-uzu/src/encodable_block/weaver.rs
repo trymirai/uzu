@@ -269,7 +269,6 @@ impl<B: Backend> Weaver<B> {
         encoder.push_debug_group("weaver tree");
 
         let tree_slot_count = shape.budget;
-        let frontier_capacity = tree_slot_count * shape.expand_width;
         let ancestor_stride = self.max_depth;
         if shape.budget == 0
             || shape.depth < 2
@@ -278,11 +277,12 @@ impl<B: Backend> Weaver<B> {
             || shape.expand_per_round > FRONTIER_MAX_WIDTH
             || shape.expand_width == 0
             || shape.expand_width > self.candidate_pool_size
-            || frontier_capacity > FRONTIER_MAX_SLOTS
-            || depth_seeds.len() != self.max_depth as usize
+            || tree_slot_count > FRONTIER_MAX_SLOTS / shape.expand_width
+            || depth_seeds.len() as u32 != self.max_depth
         {
             return Err(WeaverEncodeError::InvalidTreeInput);
         }
+        let frontier_capacity = tree_slot_count * shape.expand_width;
         // `depth` counts the root: nodes expand up to `depth - 1` edges from it.
         let lookahead_count = shape.depth - 1;
 

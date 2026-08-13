@@ -210,17 +210,14 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     encoder.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
                 let tokens = sampled.copyout::<u32>();
                 drop(completed);
-                nodes.extend(tokens.into_iter().enumerate().map(|(index, token_id)| {
-                    let depth = index as u32 + 1;
-                    ProposalNode {
-                        token_id,
-                        depth,
-                        child_indices: if depth < chain_length {
-                            vec![index + 2]
-                        } else {
-                            Vec::new()
-                        },
-                    }
+                nodes.extend(tokens.into_iter().zip(1u32..).map(|(token_id, depth)| ProposalNode {
+                    token_id,
+                    depth,
+                    child_indices: if depth < chain_length {
+                        vec![depth as usize + 1]
+                    } else {
+                        Vec::new()
+                    },
                 }));
                 nodes
             },
