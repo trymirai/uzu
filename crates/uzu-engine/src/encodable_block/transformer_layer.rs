@@ -367,10 +367,10 @@ impl<B: Backend> TransformerLayer<B> {
         };
         // The residual add is fused into the norm, so shortcut now holds the layer input.
         if request.inputs {
-            tap.inputs = Some(Array::capture(encoder, shortcut, &shape, self.data_type)?);
+            tap.inputs = Some(Array::capture(shortcut, &shape, self.data_type, encoder)?);
         }
         if request.pre_mixer_norm {
-            tap.pre_mixer_norm = Some(Array::capture(encoder, &hidden, &shape, self.data_type)?);
+            tap.pre_mixer_norm = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
         }
 
         let mixer_coefficients = if let Some(convolution) = &self.mixer_conv {
@@ -389,22 +389,22 @@ impl<B: Backend> TransformerLayer<B> {
             hidden = convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), encoder)?;
         }
         if request.mixer {
-            tap.mixer = Some(Array::capture(encoder, &hidden, &shape, self.data_type)?);
+            tap.mixer = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
         }
 
         if let Some(post_mixer_norm) = &self.post_mixer_norm {
             hidden = post_mixer_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
             if request.post_mixer_norm {
-                tap.post_mixer_norm = Some(Array::capture(encoder, &hidden, &shape, self.data_type)?);
+                tap.post_mixer_norm = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
             }
         }
 
         hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut), encoder)?;
         if request.mlp_inputs {
-            tap.mlp_inputs = Some(Array::capture(encoder, shortcut, &shape, self.data_type)?);
+            tap.mlp_inputs = Some(Array::capture(shortcut, &shape, self.data_type, encoder)?);
         }
         if request.pre_mlp_norm {
-            tap.pre_mlp_norm = Some(Array::capture(encoder, &hidden, &shape, self.data_type)?);
+            tap.pre_mlp_norm = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
         }
 
         let mlp_coefficients = if let Some(convolution) = &self.mlp_conv {
@@ -422,13 +422,13 @@ impl<B: Backend> TransformerLayer<B> {
             hidden = convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), encoder)?;
         }
         if request.mlp {
-            tap.mlp = Some(Array::capture(encoder, &hidden, &shape, self.data_type)?);
+            tap.mlp = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
             hidden = post_mlp_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
             if request.post_mlp_norm {
-                tap.post_mlp_norm = Some(Array::capture(encoder, &hidden, &shape, self.data_type)?);
+                tap.post_mlp_norm = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
             }
         }
 

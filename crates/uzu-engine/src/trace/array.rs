@@ -33,25 +33,25 @@ impl<B: Backend> Array<B> {
 
     // Global, because encode-chain allocations are moved along and recycled once dropped.
     pub fn capture(
-        encoder: &mut Encoder<B>,
-        src: &Allocation<B>,
+        allocation: &Allocation<B>,
         shape: &[usize],
         data_type: DataType,
+        encoder: &mut Encoder<B>,
     ) -> Result<Self, B::Error> {
         let byte_count = size_for_shape(shape, data_type);
-        assert!(src.size() >= byte_count, "capture declares more bytes than the source allocation holds");
+        assert!(allocation.size() >= byte_count, "capture declares more bytes than the source allocation holds");
 
         let mut destination = encoder.context().create_allocation(byte_count, AllocationType::Global)?;
-        encoder.encode_copy(src, ..byte_count, &mut destination, ..);
+        encoder.encode_copy(allocation, ..byte_count, &mut destination, ..);
 
         Ok(Self::expect_new(shape, data_type, destination))
     }
 
     pub fn capture_slice<T: NoUninit + AnyBitPattern>(
-        encoder: &Encoder<B>,
         data: &[T],
         shape: &[usize],
         data_type: DataType,
+        encoder: &Encoder<B>,
     ) -> Result<Self, B::Error> {
         let byte_count = size_for_shape(shape, data_type);
         assert_eq!(byte_count, std::mem::size_of_val(data), "capture_slice shape does not match the data");
