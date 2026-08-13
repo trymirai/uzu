@@ -383,32 +383,35 @@ impl<B: Backend> Weaver<B> {
             .collect::<Result<Vec<_>, _>>()
             .map_err(WeaverEncodeError::Backend)?;
 
-        let mut tree_init = vec![0u32; TreeIdx::COUNT * tree_slot_count as usize];
-        for slot in 0..tree_slot_count {
-            tree_init[TreeIdx::ParentSlot as usize * tree_slot_count as usize + slot as usize] = FRONTIER_NO_WINNER;
+        let tree_slots = tree_slot_count as usize;
+        let round_nodes = shape.expand_per_round as usize;
+
+        let mut tree_init = vec![0u32; TreeIdx::COUNT * tree_slots];
+        for slot in 0..tree_slots {
+            tree_init[TreeIdx::ParentSlot as usize * tree_slots + slot] = FRONTIER_NO_WINNER;
         }
-        tree_init[TreeIdx::TokenId as usize * tree_slot_count as usize] = root_token_id;
-        tree_init[TreeIdx::Valid as usize * tree_slot_count as usize] = 1;
+        tree_init[TreeIdx::TokenId as usize * tree_slots] = root_token_id;
+        tree_init[TreeIdx::Valid as usize * tree_slots] = 1;
 
         let mut packed_tree = encoder.allocate_constant_from_slice(&tree_init).map_err(WeaverEncodeError::Backend)?;
         let mut frontier = encoder
             .allocate_constant_from_slice(&vec![0u32; FrontierIdx::COUNT * frontier_capacity as usize])
             .map_err(WeaverEncodeError::Backend)?;
         let mut slot_ancestors = encoder
-            .allocate_constant_from_slice(&vec![0u32; (tree_slot_count * ancestor_stride) as usize])
+            .allocate_constant_from_slice(&vec![0u32; tree_slots * ancestor_stride as usize])
             .map_err(WeaverEncodeError::Backend)?;
 
-        let mut initial_node_token_ids = vec![0u32; shape.expand_per_round as usize];
+        let mut initial_node_token_ids = vec![0u32; round_nodes];
         initial_node_token_ids[0] = root_token_id;
-        let mut initial_node_valid = vec![0u32; shape.expand_per_round as usize];
+        let mut initial_node_valid = vec![0u32; round_nodes];
         initial_node_valid[0] = 1;
         let mut node_token_ids =
             encoder.allocate_constant_from_slice(&initial_node_token_ids).map_err(WeaverEncodeError::Backend)?;
         let mut node_metadata = encoder
-            .allocate_constant_from_slice(&vec![0u32; MetadataIdx::COUNT * shape.expand_per_round as usize])
+            .allocate_constant_from_slice(&vec![0u32; MetadataIdx::COUNT * round_nodes])
             .map_err(WeaverEncodeError::Backend)?;
         let mut node_ancestor_indices = encoder
-            .allocate_constant_from_slice(&vec![0u32; (shape.expand_per_round * ancestor_stride) as usize])
+            .allocate_constant_from_slice(&vec![0u32; round_nodes * ancestor_stride as usize])
             .map_err(WeaverEncodeError::Backend)?;
         let mut node_valid =
             encoder.allocate_constant_from_slice(&initial_node_valid).map_err(WeaverEncodeError::Backend)?;
