@@ -48,7 +48,7 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
         let mut total_tiles = encoder.allocate_scratch_for_shape(&[8], DataType::U32)?;
         self.scan.encode(&tile_counts, &mut tile_offsets, &mut total_tiles, args.num_routed_experts, encoder);
 
-        let mut tile_map = encoder.allocate_scratch_for_shape(&[args.total_rows * 3], DataType::U32)?;
+        let mut tile_map = encoder.allocate_scratch_for_shape(&[args.total_rows, 3], DataType::U32)?;
         self.build.encode(
             args.expert_offsets,
             &tile_offsets,

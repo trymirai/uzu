@@ -42,7 +42,7 @@ impl<B: Backend> MoeGather<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let mut x_perm =
-            encoder.allocate_scratch_for_shape(&[batch_dim * num_active_experts, d_model], self.data_type)?;
+            encoder.allocate_scratch_for_shape(&[batch_dim, num_active_experts, d_model], self.data_type)?;
         encoder.encode_fill(&mut x_perm, 0);
 
         match &self.variant {

@@ -8,6 +8,7 @@ use crate::{
 };
 
 const INNER_DATA_TYPE: DataType = DataType::F32;
+const TWO_PASS_BLOCKS: u32 = 32;
 
 pub struct AttentionTwoPassCore<B: Backend> {
     head_dim: u32,
@@ -57,13 +58,17 @@ impl<B: Backend> AttentionTwoPassCore<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let mut partials = encoder.allocate_scratch_for_shape(
-            &[self.num_q_heads * arguments.suffix_length * 32 * self.head_dim],
+            &[arguments.suffix_length, self.num_q_heads, TWO_PASS_BLOCKS, self.head_dim],
             INNER_DATA_TYPE,
         )?;
-        let mut sums =
-            encoder.allocate_scratch_for_shape(&[self.num_q_heads * arguments.suffix_length * 32], INNER_DATA_TYPE)?;
-        let mut maxs =
-            encoder.allocate_scratch_for_shape(&[self.num_q_heads * arguments.suffix_length * 32], INNER_DATA_TYPE)?;
+        let mut sums = encoder.allocate_scratch_for_shape(
+            &[arguments.suffix_length, self.num_q_heads, TWO_PASS_BLOCKS],
+            INNER_DATA_TYPE,
+        )?;
+        let mut maxs = encoder.allocate_scratch_for_shape(
+            &[arguments.suffix_length, self.num_q_heads, TWO_PASS_BLOCKS],
+            INNER_DATA_TYPE,
+        )?;
 
         self.pass_1.encode(
             arguments.queries,

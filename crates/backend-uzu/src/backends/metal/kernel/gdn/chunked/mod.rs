@@ -95,25 +95,25 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
         let num_blocks = CHUNK_SIZE.div_ceil(BLOCK_SIZE);
         let num_col_pairs = num_blocks.div_ceil(2);
 
-        let mut q_norm = encoder.allocate_scratch_for_shape(&[suffix_len * args.key_dim], INNER_DATA_TYPE)?;
-        let mut k_norm = encoder.allocate_scratch_for_shape(&[suffix_len * args.key_dim], INNER_DATA_TYPE)?;
-        let mut beta = encoder.allocate_scratch_for_shape(&[suffix_len * args.num_heads], INNER_DATA_TYPE)?;
-        let mut log_decay = encoder.allocate_scratch_for_shape(&[suffix_len * args.num_heads], INNER_DATA_TYPE)?;
-        let mut g = encoder.allocate_scratch_for_shape(&[suffix_len * args.num_heads], INNER_DATA_TYPE)?;
+        let mut q_norm = encoder.allocate_scratch_for_shape(&[suffix_len, args.key_dim], INNER_DATA_TYPE)?;
+        let mut k_norm = encoder.allocate_scratch_for_shape(&[suffix_len, args.key_dim], INNER_DATA_TYPE)?;
+        let mut beta = encoder.allocate_scratch_for_shape(&[suffix_len, args.num_heads], INNER_DATA_TYPE)?;
+        let mut log_decay = encoder.allocate_scratch_for_shape(&[suffix_len, args.num_heads], INNER_DATA_TYPE)?;
+        let mut g = encoder.allocate_scratch_for_shape(&[suffix_len, args.num_heads], INNER_DATA_TYPE)?;
         let mut kk = encoder
-            .allocate_scratch_for_shape(&[num_chunks * args.num_groups * CHUNK_SIZE * CHUNK_SIZE], INNER_DATA_TYPE)?;
+            .allocate_scratch_for_shape(&[num_chunks, args.num_groups, CHUNK_SIZE, CHUNK_SIZE], INNER_DATA_TYPE)?;
         let mut qk = encoder
-            .allocate_scratch_for_shape(&[num_chunks * args.num_heads * CHUNK_SIZE * CHUNK_SIZE], INNER_DATA_TYPE)?;
+            .allocate_scratch_for_shape(&[num_chunks, args.num_heads, CHUNK_SIZE, CHUNK_SIZE], INNER_DATA_TYPE)?;
         let mut a_packed = encoder.allocate_scratch_for_shape(
-            &[num_chunks * args.num_heads * num_blocks * num_col_pairs * BLOCK_SIZE * 2 * BLOCK_SIZE],
+            &[num_chunks, args.num_heads, num_blocks, num_col_pairs, BLOCK_SIZE, 2 * BLOCK_SIZE],
             INNER_DATA_TYPE,
         )?;
         let mut a_inv = encoder.allocate_scratch_for_shape(
-            &[num_chunks * args.num_heads * num_blocks * BLOCK_SIZE * BLOCK_SIZE],
+            &[num_chunks, args.num_heads, num_blocks, BLOCK_SIZE, BLOCK_SIZE],
             INNER_DATA_TYPE,
         )?;
         let mut t_mat = encoder
-            .allocate_scratch_for_shape(&[num_chunks * args.num_heads * CHUNK_SIZE * CHUNK_SIZE], DataType::BF16)?;
+            .allocate_scratch_for_shape(&[num_chunks, args.num_heads, CHUNK_SIZE, CHUNK_SIZE], DataType::BF16)?;
 
         self.prep.encode(
             args.in_projected,
