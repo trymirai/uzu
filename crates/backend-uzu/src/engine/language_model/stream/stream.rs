@@ -328,7 +328,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
             let pending = Box::new([encoder.end_encoding().submit()]);
 
-            metrics.num_forward_passes += 1;
+            metrics.num_prefill_forward_passes += 1;
             metrics.num_tokens_prefilled += input.len();
             metrics.num_tokens_proposed += 1;
             metrics.num_tokens_accepted += 1;
@@ -748,7 +748,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         pending.push(encoder.end_encoding().submit());
 
-        self.metrics.num_forward_passes += 1;
+        self.metrics.num_decode_forward_passes += 1;
         self.metrics.num_tokens_proposed += input_flat_trie.len();
         if full_accept {
             self.metrics.num_tokens_accepted += input_flat_trie.len();
