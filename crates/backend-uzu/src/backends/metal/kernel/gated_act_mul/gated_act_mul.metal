@@ -4,13 +4,14 @@
 #include "../common/gated_act_mul.h"
 #include "../common/thread_context.h"
 #include "../generated/gated_act_mul.h"
+#include "../hadamard_transform/hadamard_transform.h"
 
 using namespace metal;
 using namespace uzu::activation_type;
 using namespace uzu::gated_act_mul;
 
 #define NUM_SIMDGROUPS 4
-#define NUM_THREADS (NUM_SIMDGROUPS * METAL_SIMD_SIZE)
+#define NUM_THREADS NUM_SIMDGROUPS* METAL_SIMD_SIZE
 
 #define QUANTIZED (ops == GatedActMulOp::Quantize || ops == GatedActMulOp::QuantizeWithGroupSums)
 #define EMITS_GROUP_SUMS (ops == GatedActMulOp::QuantizeWithGroupSums)

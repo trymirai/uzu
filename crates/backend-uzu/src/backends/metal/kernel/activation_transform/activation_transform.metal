@@ -10,7 +10,7 @@ using namespace metal;
 using namespace uzu::activation_transform;
 
 #define NUM_SIMDGROUPS 4
-#define NUM_THREADS (NUM_SIMDGROUPS * METAL_SIMD_SIZE)
+#define NUM_THREADS NUM_SIMDGROUPS* METAL_SIMD_SIZE
 
 #define QUANTIZED (ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)
 #define EMITS_GROUP_SUMS (ops == ActivationTransformOp::QuantizeWithGroupSums)

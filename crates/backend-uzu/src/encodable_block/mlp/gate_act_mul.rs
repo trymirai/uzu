@@ -60,8 +60,9 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
         }
-        let input = if act_format == ActivationFormat::Int8 && self.a8_plan.is_some() {
-            let plan = self.a8_plan.expect("INT8 input requires an A8 plan");
+        let input = if act_format == ActivationFormat::Int8
+            && let Some(plan) = self.a8_plan
+        {
             let kernel = self.quantized_kernel.as_ref().expect("INT8 input requires a quantized gate kernel");
             let mut values = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(
