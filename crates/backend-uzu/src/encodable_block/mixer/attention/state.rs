@@ -107,7 +107,7 @@ impl<B: Backend> AttentionState<B> {
 
         let max_elements = max_prefix_elements + ATTENTION_SUFFIX_CAPACITY;
         let element_size = attention.num_kv_heads.unwrap() * attention.head_dim;
-        let kv_buffer_bytes = size_for_shape(&[max_elements, element_size], &data_type);
+        let kv_buffer_bytes = size_for_shape(&[max_elements, element_size], data_type);
 
         let is_ring = matches!(state_type, AttentionStateType::Ring { .. });
         let is_sparse = !is_ring && context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS);
@@ -164,8 +164,8 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
 
         assert!(suffix_length <= ATTENTION_SUFFIX_CAPACITY, "attention suffix length exceeds hardcoded capacity");
         let elements_required = context_length + suffix_length;
-        let bytes_required = size_for_shape(&[elements_required, self.element_dim], &self.data_type);
-        let bytes_prepared = size_for_shape(&[self.elements_prepared, self.element_dim], &self.data_type);
+        let bytes_required = size_for_shape(&[elements_required, self.element_dim], self.data_type);
+        let bytes_prepared = size_for_shape(&[self.elements_prepared, self.element_dim], self.data_type);
 
         let keys = (self.keys.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>().unwrap();
         let values = (self.values.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>().unwrap();

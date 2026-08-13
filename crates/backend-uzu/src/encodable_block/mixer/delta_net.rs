@@ -101,7 +101,7 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
 
                 let mut accepted_indices_buffer = encoder.allocate_constant(size_for_shape(
                     &[u32::try_from(accepted_indices.len()).expect("too many accepted indices")],
-                    &DataType::U32,
+                    DataType::U32,
                 ))?;
                 accepted_indices_buffer.copyin(accepted_indices);
                 self.state_advance.encode(
@@ -346,7 +346,7 @@ impl<B: Backend> DeltaNet<B> {
     ) -> Result<Allocation<B>, B::Error> {
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
         let tree_size = batch_dim.node_count();
-        let mut parents = encoder.allocate_constant(size_for_shape(&[tree_size], &DataType::I32))?;
+        let mut parents = encoder.allocate_constant(size_for_shape(&[tree_size], DataType::I32))?;
         parents.copyin(batch_dim.parents());
         let mut trie = encoder.allocate_constant(tree_size as usize * size_of::<TrieNode>())?;
         trie.copyin(batch_dim.nodes());
@@ -448,12 +448,12 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
         let mut conv_state = context.create_allocation(
-            size_for_shape(&[self.conv_dim, (self.kernel_size - 1)], &INNER_DATA_TYPE),
+            size_for_shape(&[self.conv_dim, (self.kernel_size - 1)], INNER_DATA_TYPE),
             AllocationType::Global,
         )?;
 
         let mut ssm_state = context.create_allocation(
-            size_for_shape(&[self.num_heads, self.value_head_dim, self.head_dim], &INNER_DATA_TYPE),
+            size_for_shape(&[self.num_heads, self.value_head_dim, self.head_dim], INNER_DATA_TYPE),
             AllocationType::Global,
         )?;
 

@@ -220,12 +220,12 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
         let mut conv_state = context.create_allocation(
-            size_for_shape(&[self.conv_dim, (self.kernel_size - 1)], &INNER_DATA_TYPE),
+            size_for_shape(&[self.conv_dim, (self.kernel_size - 1)], INNER_DATA_TYPE),
             AllocationType::Global,
         )?;
 
         let mut ssm_state = context.create_allocation(
-            size_for_shape(&[self.num_heads, self.head_dim, self.state_dim], &INNER_DATA_TYPE),
+            size_for_shape(&[self.num_heads, self.head_dim, self.state_dim], INNER_DATA_TYPE),
             AllocationType::Global,
         )?;
 

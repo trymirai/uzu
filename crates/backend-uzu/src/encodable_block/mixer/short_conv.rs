@@ -286,13 +286,13 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
         let mut conv_state = context.create_allocation(
-            size_for_shape(&[(self.kernel_size - 1), self.hidden_dim], &self.data_type),
+            size_for_shape(&[(self.kernel_size - 1), self.hidden_dim], self.data_type),
             AllocationType::Global,
         )?;
 
         let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
         let mut suffix_state = context.create_allocation(
-            size_for_shape(&[suffix_capacity, (self.kernel_size - 1), self.hidden_dim], &self.data_type),
+            size_for_shape(&[suffix_capacity, (self.kernel_size - 1), self.hidden_dim], self.data_type),
             AllocationType::Global,
         )?;
 
@@ -341,7 +341,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
             conv_output
         } else {
             let mut token_parents =
-                encoder.allocate_constant(size_for_shape(&[batch_dim.node_count()], &DataType::I32))?;
+                encoder.allocate_constant(size_for_shape(&[batch_dim.node_count()], DataType::I32))?;
             token_parents.copyin(batch_dim.parents());
             let (conv_output, conv_states) =
                 self.encode_trie_conv(&in_projected, batch_dim.node_count(), &token_parents, state, encoder)?;

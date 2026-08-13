@@ -157,7 +157,7 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, false> {
                 expected_data_type,
             });
         }
-        let expected_size = size_for_shape(expected_shape, &expected_data_type);
+        let expected_size = size_for_shape(expected_shape, expected_data_type);
         if self.metadata.size != expected_size {
             return Err(ParameterLoaderError::InvalidTensorSize {
                 shape: shape.into(),

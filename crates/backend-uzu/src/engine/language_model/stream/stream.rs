@@ -162,7 +162,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     .engine
                     .context
                     .create_allocation(
-                        size_for_shape(&[2 + suffix_repetition_length], &DataType::U32),
+                        size_for_shape(&[2 + suffix_repetition_length], DataType::U32),
                         AllocationType::Global,
                     )
                     .map_err(LanguageModelStreamError::Backend)?;

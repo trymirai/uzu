@@ -166,7 +166,7 @@ impl<B: Backend> WeaverLayer<B> {
         let qkv = self.qkv_projection.encode(attention_input, token_count, encoder)?;
         let mut queries =
             encoder.allocate_scratch_with_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE)?;
-        let kv_plane_bytes = size_for_shape(&[token_count, self.model_dim], &DATA_TYPE);
+        let kv_plane_bytes = size_for_shape(&[token_count, self.model_dim], DATA_TYPE);
         let mut kv_cache = encoder.allocate_scratch_with_shape(&[2, token_count, self.model_dim], DATA_TYPE)?;
         let (keys, values) = kv_cache.as_buffer_range_mut().split_at(kv_plane_bytes);
         self.attention_prepare.encode(

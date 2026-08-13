@@ -280,7 +280,7 @@ impl<B: Backend> Weaver<B> {
         // Prefix pass: run the target token and the draft lookahead rows through
         // every layer, collecting per-layer KV caches.
         let prefix_length = lookahead_count + 1;
-        let hidden_row_bytes = size_for_shape(&[self.target_model_dim], &DATA_TYPE);
+        let hidden_row_bytes = size_for_shape(&[self.target_model_dim], DATA_TYPE);
         let mut prefix_hidden = encoder
             .allocate_scratch_with_shape(&[prefix_length, self.target_model_dim], DATA_TYPE)
             .map_err(WeaverEncodeError::Backend)?;
@@ -312,7 +312,7 @@ impl<B: Backend> Weaver<B> {
             let state_type = AttentionStateType::Full {
                 length: 0,
             };
-            let kv_plane_bytes = size_for_shape(&[prefix_length, self.model_dim], &DATA_TYPE);
+            let kv_plane_bytes = size_for_shape(&[prefix_length, self.model_dim], DATA_TYPE);
             let attention_output = layer
                 .prefix_attention
                 .encode(
@@ -341,7 +341,7 @@ impl<B: Backend> Weaver<B> {
         );
 
         // Per-layer KV cache for tree nodes, one slot per packed-tree slot.
-        let node_kv_size = size_for_shape(&[2, tree_slot_count, self.model_dim], &DATA_TYPE);
+        let node_kv_size = size_for_shape(&[2, tree_slot_count, self.model_dim], DATA_TYPE);
         let mut node_kv_layers = (0..self.layers.len())
             .map(|_| encoder.allocate_scratch(node_kv_size))
             .collect::<Result<Vec<_>, _>>()

@@ -225,7 +225,7 @@ impl<B: Backend> DFlash<B> {
         let num_tokens = accepted_indices.len();
         let captured_layer_count = self.target_feature_input_dim / self.model_dim;
         assert_eq!(target_features.len(), captured_layer_count as usize);
-        let layer_feature_bytes = size_for_shape(&[self.model_dim], &self.data_type);
+        let layer_feature_bytes = size_for_shape(&[self.model_dim], self.data_type);
         assert!(target_features.iter().all(|features| features.size() % layer_feature_bytes == 0));
         let context_length = state.context_length + num_tokens as u32;
         assert!(context_length <= state.context_capacity, "DFlash state capacity exceeded");
@@ -349,7 +349,7 @@ impl<B: Backend> DFlash<B> {
 
         // The first block row is the target's output token; only the lookahead rows are ranked.
         let lookahead_rows = batch_dim - 1;
-        let row_bytes = size_for_shape(&[target_embedding.model_dim()], &DataType::BF16);
+        let row_bytes = size_for_shape(&[target_embedding.model_dim()], DataType::BF16);
         let mut lookahead_hidden = encoder
             .allocate_scratch((lookahead_rows * row_bytes as u32) as usize)
             .map_err(DFlashEncodeError::Backend)?;

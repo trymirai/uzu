@@ -92,7 +92,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         shape: &[u32],
         data_type: DataType,
     ) -> Result<Allocation<B>, B::Error> {
-        self.allocate_constant(size_for_shape(shape, &data_type))
+        self.allocate_constant(size_for_shape(shape, data_type))
     }
 
     pub fn allocate_constant_from_slice<T: NoUninit + AnyBitPattern>(
@@ -123,7 +123,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         shape: &[u32],
         data_type: DataType,
     ) -> Result<Allocation<B>, B::Error> {
-        self.allocate_scratch(size_for_shape(shape, &data_type))
+        self.allocate_scratch(size_for_shape(shape, data_type))
     }
 
     pub fn encode_copy<
