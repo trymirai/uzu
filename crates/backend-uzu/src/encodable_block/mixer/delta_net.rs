@@ -1,12 +1,9 @@
-use std::mem::size_of;
-
 use thiserror::Error;
 
 use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, AllocationType, Backend, Context, Encoder, Kernels,
-        gpu_types::trie::TrieNode,
         kernel::{
             Conv1dPackKernel, ConvTreeScanKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel,
             DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
@@ -100,9 +97,7 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                     ..,
                 );
 
-                let mut accepted_indices_buffer =
-                    encoder.allocate_constant(size_for_shape(&[accepted_indices.len() as u32], DataType::U32))?;
-                accepted_indices_buffer.copyin(accepted_indices);
+                let accepted_indices_buffer = encoder.allocate_constant_from_slice(accepted_indices)?;
                 self.state_advance.encode(
                     &k,
                     &v,
@@ -345,10 +340,8 @@ impl<B: Backend> DeltaNet<B> {
     ) -> Result<Allocation<B>, B::Error> {
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
         let tree_size = batch_dim.size();
-        let mut parents = encoder.allocate_constant(size_for_shape(&[tree_size], DataType::I32))?;
-        parents.copyin(batch_dim.parents());
-        let mut trie = encoder.allocate_constant(tree_size as usize * size_of::<TrieNode>())?;
-        trie.copyin(batch_dim.nodes());
+        let parents = encoder.allocate_constant_from_slice(batch_dim.parents())?;
+        let trie = encoder.allocate_constant_from_slice(batch_dim.nodes())?;
 
         let mut conv_states =
             encoder.allocate_scratch_for_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE)?;

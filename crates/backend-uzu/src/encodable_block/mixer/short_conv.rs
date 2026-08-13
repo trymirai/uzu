@@ -341,8 +341,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
             });
             conv_output
         } else {
-            let mut token_parents = encoder.allocate_constant(size_for_shape(&[batch_dim.size()], DataType::I32))?;
-            token_parents.copyin(batch_dim.parents());
+            let token_parents = encoder.allocate_constant_from_slice(batch_dim.parents())?;
             let (conv_output, conv_states) =
                 self.encode_trie_conv(&in_projected, batch_dim.size(), &token_parents, state, encoder)?;
             state.suffix_state = Some(ShortConvStateSuffixStatus::Trie {

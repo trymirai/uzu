@@ -80,8 +80,8 @@ impl<B: Backend> AttentionFallbackCore<B> {
 
         let mut output =
             encoder.allocate_constant_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
-        let mut scores =
-            encoder.allocate_scratch_for_shape(&[self.num_q_heads, suffix_length, sequence_length], self.data_type)?;
+        let mut scores = encoder
+            .allocate_scratch_for_shape(&[self.num_q_heads * suffix_length * sequence_length], self.data_type)?;
         let mut group_scores =
             encoder.allocate_scratch_for_shape(&[gqa_factor * suffix_length, sequence_length], self.data_type)?;
 
