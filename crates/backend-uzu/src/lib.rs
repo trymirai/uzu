@@ -15,7 +15,6 @@ pub mod data_type;
 
 pub mod engine;
 
-#[cfg(feature = "trace")]
 pub mod trace;
 
 pub use config::token_codec::chat_codec::ChatCodecConfig;

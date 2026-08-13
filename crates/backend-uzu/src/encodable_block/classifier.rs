@@ -13,8 +13,13 @@ use crate::{
         transformer::{Transformer, TransformerNewError},
     },
     parameters::{ParameterLoaderError, ParameterTree},
-    utils::trace::{trace, trace_scope, trace_scope_end},
+    trace::{Array, ClassifierActivationsTap, ClassifierActivationsTapRequest, ClassifierTap, ClassifierTapRequest},
 };
+
+pub struct ClassifierEncodeOutput<B: Backend> {
+    pub logits: Allocation<B>,
+    pub tap: ClassifierTap<B>,
+}
 
 #[derive(Debug, Error)]
 pub enum ClassifierError<B: Backend> {
@@ -36,7 +41,6 @@ pub enum ClassifierError<B: Backend> {
 
 pub struct Classifier<B: Backend> {
     hidden_dim: usize,
-    #[cfg(feature = "trace")]
     num_labels: usize,
     data_type: DataType,
     embedding: Embedding<B>,
@@ -101,7 +105,6 @@ impl<B: Backend> Classifier<B> {
 
         Ok(Self {
             hidden_dim: config.hidden_dim,
-            #[cfg(feature = "trace")]
             num_labels: config.num_labels,
             data_type,
             embedding,
@@ -120,16 +123,24 @@ impl<B: Backend> Classifier<B> {
         &self,
         token_ids: &Allocation<B>,
         batch_dim: usize,
+        tap_request: Option<&ClassifierTapRequest>,
         encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, ClassifierError<B>> {
+    ) -> Result<ClassifierEncodeOutput<B>, ClassifierError<B>> {
         encoder.push_debug_group("classifier");
-        trace_scope!(encoder, "activation_trace");
+
+        let request = tap_request.unwrap_or(&ClassifierTapRequest::NONE);
+        let activations_request = request.activations.as_ref().unwrap_or(&ClassifierActivationsTapRequest::NONE);
+        let mut activations = ClassifierActivationsTap::default();
 
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim, encoder)?;
 
         let hidden =
             self.embedding_norm.encode(&embedded, 0, batch_dim, None, encoder).map_err(ClassifierError::Backend)?;
-        trace!(encoder, "embedding_norm_output", &hidden, [1, batch_dim, self.hidden_dim], self.data_type);
+        if activations_request.embedding_norm_output {
+            let shape = [1, batch_dim, self.hidden_dim];
+            activations.embedding_norm_output =
+                Some(Array::capture(encoder, &hidden, &shape, self.data_type).map_err(ClassifierError::Backend)?);
+        }
 
         let nodes = (0..batch_dim)
             .map(|index| TrieNode {
@@ -138,29 +149,56 @@ impl<B: Backend> Classifier<B> {
                 height: index as u32,
             })
             .collect::<Box<[TrieNode]>>();
-        let hidden = self
+        let transformer_output = self
             .transformer
-            .encode(hidden, None, &BatchTopology::new(&nodes, true), Some(0..batch_dim), None, None, encoder)
-            .map_err(ClassifierError::Backend)?
-            .output
-            .unwrap();
+            .encode(
+                hidden,
+                None,
+                &BatchTopology::new(&nodes, true),
+                Some(0..batch_dim),
+                None,
+                None,
+                activations_request.transformer.as_ref(),
+                encoder,
+            )
+            .map_err(ClassifierError::Backend)?;
+        activations.transformer = activations_request.transformer.is_some().then_some(transformer_output.tap);
+        let hidden = transformer_output.output.unwrap();
 
         let mut pooled = encoder
             .allocate_scratch(size_for_shape(&[self.hidden_dim], self.data_type))
             .map_err(ClassifierError::Backend)?;
         self.pooling.encode(&hidden, &mut pooled, batch_dim as u32, self.hidden_dim as u32, 1, encoder);
-        trace!(encoder, "output_pooling", &pooled, [1, self.hidden_dim], self.data_type);
+        if activations_request.output_pooling {
+            let shape = [1, self.hidden_dim];
+            activations.output_pooling =
+                Some(Array::capture(encoder, &pooled, &shape, self.data_type).map_err(ClassifierError::Backend)?);
+        }
 
         let logits = self.prediction_head.encode(pooled, 1, encoder).map_err(ClassifierError::Backend)?;
-        // Recorded under both the activation trace and the root.
-        #[cfg(feature = "trace")]
+        // lalamo carries the logits at the root and inside the activation trace, and
+        // `Array` owns its allocation, so each path gets its own capture.
         let logits_shape = [1, self.num_labels];
-        trace!(encoder, "logits", &logits, logits_shape, self.data_type);
-        trace_scope_end!(encoder);
-        trace!(encoder, "logits", &logits, logits_shape, self.data_type);
+        if activations_request.logits {
+            activations.logits = Some(
+                Array::capture(encoder, &logits, &logits_shape, self.data_type).map_err(ClassifierError::Backend)?,
+            );
+        }
+        let mut tap = ClassifierTap {
+            logits: None,
+            activations: request.activations.is_some().then_some(activations),
+        };
+        if request.logits {
+            tap.logits = Some(
+                Array::capture(encoder, &logits, &logits_shape, self.data_type).map_err(ClassifierError::Backend)?,
+            );
+        }
 
         encoder.pop_debug_group();
 
-        Ok(logits)
+        Ok(ClassifierEncodeOutput {
+            logits,
+            tap,
+        })
     }
 }

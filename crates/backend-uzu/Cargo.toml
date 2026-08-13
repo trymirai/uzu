@@ -29,8 +29,6 @@ metal = [
 
 grammar = ["dep:xgrammar", "dep:schemars"]
 
-trace = ["dep:safetensors"]
-
 [build-dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -67,7 +65,7 @@ monostate.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
 rangemap.workspace = true
-safetensors = { workspace = true, optional = true }
+safetensors.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 xxhash-rust = { workspace = true, features = ["xxh3"] }
 memmap2.workspace = true
@@ -100,10 +98,6 @@ is_close.workspace = true
 ndarray.workspace = true
 rstest.workspace = true
 clap.workspace = true
-
-[[example]]
-name = "trace"
-required-features = ["trace"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, default-features = true }

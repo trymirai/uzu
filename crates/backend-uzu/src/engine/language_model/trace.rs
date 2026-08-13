@@ -1,3 +1,5 @@
+use std::{collections::HashMap, path::Path};
+
 use thiserror::Error;
 
 use crate::{
@@ -8,9 +10,8 @@ use crate::{
         sampling::PRng,
     },
     engine::language_model::LanguageModel,
-    trace::Recorder,
+    trace::{Array, DecoderTap, DecoderTapRequest},
     trie::TrieNode,
-    utils::trace::trace_host,
 };
 
 // A trace is a single pass, so it cannot chunk around the suffix bound like prefill does.
@@ -28,13 +29,34 @@ pub enum RecordTraceError<B: Backend> {
     TooManyTokens {
         token_count: usize,
     },
+    #[error("Trace error: {0}")]
+    Trace(#[from] crate::trace::Error),
 }
 
 impl<B: Backend> LanguageModel<B> {
-    pub fn record_trace(
+    pub fn tap(&self) -> &DecoderTap<B> {
+        &self.tap
+    }
+
+    pub fn write_trace(
         &self,
+        output_path: &Path,
+        metadata: Option<HashMap<String, String>>,
+    ) -> Result<(), crate::trace::Error> {
+        if let Some(parent) = output_path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
+        self.tap.write(output_path, metadata)
+    }
+
+    /// Runs one forward pass over `token_ids` against a fresh state and keeps the
+    /// captured activations. Prefill-shaped on purpose: it mirrors lalamo's tracer,
+    /// which evaluates all tokens at once with no cache carried in.
+    pub fn record_trace(
+        &mut self,
         token_ids: &[u64],
-    ) -> Result<Recorder<B>, RecordTraceError<B>> {
+        request: &DecoderTapRequest,
+    ) -> Result<&DecoderTap<B>, RecordTraceError<B>> {
         let token_count = token_ids.len();
         if token_count == 0 {
             return Err(RecordTraceError::EmptyInput);
@@ -59,30 +81,50 @@ impl<B: Backend> LanguageModel<B> {
             .map_err(RecordTraceError::Backend)?;
         token_ids_allocation.copyin(&token_ids.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 
-        let host_token_ids = token_ids.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
-        let host_token_positions = (0..token_count as i32).collect::<Box<[i32]>>();
-        let token_shape = [1, token_count];
-        trace_host!(encoder, "activation_trace.token_ids", &host_token_ids, token_shape, DataType::I32);
-        trace_host!(encoder, "activation_trace.token_positions", &host_token_positions, token_shape, DataType::I32);
-
         let input_trie = TrieNode::flat(0, token_ids, &PRng::new(0));
         let input_flat_trie = input_trie.linearize();
         let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
         let batch_dim = BatchTopology::new(&input_flat_trie_nodes, true);
 
-        self.decoder.encode(
-            &token_ids_allocation,
-            &batch_dim,
-            Some(0..token_count),
-            None,
-            &mut transformer_state,
-            &mut encoder,
-        )?;
+        // The full output range runs every layer and covers all tokens, not just the
+        // sampled row. Taking `.tap` off the temporary drops the rest of the output —
+        // its pooled logits must not outlive the encoder's pool.
+        let mut tap = self
+            .decoder
+            .encode(
+                &token_ids_allocation,
+                &batch_dim,
+                Some(0..token_count),
+                None,
+                &mut transformer_state,
+                Some(request),
+                &mut encoder,
+            )?
+            .tap;
 
+        // A flat trie over a fresh state gives positions 0..n. lalamo stores both as
+        // i32; uzu feeds the decoder u32, so these have no device counterpart.
+        if let Some(transformer_tap) = &mut tap.transformer {
+            let shape = [1, token_count];
+            let host_token_ids = token_ids.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
+            let host_token_positions = (0..token_count as i32).collect::<Box<[i32]>>();
+            transformer_tap.token_ids = Some(
+                Array::capture_host(&encoder, &host_token_ids, &shape, DataType::I32)
+                    .map_err(RecordTraceError::Backend)?,
+            );
+            transformer_tap.token_positions = Some(
+                Array::capture_host(&encoder, &host_token_positions, &shape, DataType::I32)
+                    .map_err(RecordTraceError::Backend)?,
+            );
+        }
+
+        // Pooled allocations must be released before the pool is.
         drop(token_ids_allocation);
 
-        let completed = encoder.end_encoding().submit().wait_until_completed().map_err(RecordTraceError::Backend)?;
+        encoder.end_encoding().submit().wait_until_completed().map_err(RecordTraceError::Backend)?;
 
-        Ok(completed.into_recorder())
+        self.tap = tap;
+
+        Ok(&self.tap)
     }
 }

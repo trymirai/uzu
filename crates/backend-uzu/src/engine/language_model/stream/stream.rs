@@ -236,6 +236,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     sample_last.then(|| (input_chunk.len() - 1)..input_chunk.len()),
                     hidden_feature_layer_indices,
                     &mut model_state.transformer_state,
+                    None,
                     &mut encoder,
                 )?;
                 let logits = decoder_output.logits;
@@ -625,6 +626,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             Some(0..batch_dim.size()),
             hidden_feature_layer_indices,
             &mut self.model_state.transformer_state,
+            None,
             &mut encoder,
         )?;
         let logits = decoder_output.logits.unwrap();

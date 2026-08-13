@@ -13,8 +13,6 @@ use crate::backends::common::{
     CommandBufferInitial, CommandBufferPending, Context,
     hazard_tracker::{Access, HazardTracker},
 };
-#[cfg(feature = "trace")]
-use crate::{array::size_for_shape, data_type::DataType, trace::Recorder};
 
 fn resolve_copy_range(
     range: impl RangeBounds<usize>,
@@ -41,8 +39,6 @@ pub struct Encoder<'encoding, B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
     allocation_pool: Arc<AllocationPool<B>>,
     hazard_tracker: HazardTracker,
-    #[cfg(feature = "trace")]
-    recorder: Recorder<B>,
 }
 
 impl<'encoding, B: Backend> Encoder<'encoding, B> {
@@ -70,8 +66,6 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
             command_buffer,
             allocation_pool,
             hazard_tracker,
-            #[cfg(feature = "trace")]
-            recorder: Recorder::new(),
         })
     }
 
@@ -127,7 +121,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         let src_range = resolve_copy_range(src_range, src_buffer_range.range().len(), "source");
         let dst_range = resolve_copy_range(dst_range, dst_buffer_range.range().len(), "destination");
         let byte_len = src_range.len();
-        assert_eq!(byte_len as usize, dst_range.len() as usize, "copy range lengths must match");
+        assert_eq!(byte_len, dst_range.len(), "copy range lengths must match");
         assert!(byte_len > 0, "zero-sized copies are not allowed");
         let src_buffer_range = src_buffer_range.subrange(src_range);
         let dst_buffer_range = dst_buffer_range.subrange(dst_range);
@@ -190,79 +184,13 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         Executable {
             command_buffer: self.command_buffer.end_encoding(),
             allocation_pool: self.allocation_pool,
-            #[cfg(feature = "trace")]
-            recorder: self.recorder,
         }
-    }
-}
-
-#[cfg(feature = "trace")]
-impl<'encoding, B: Backend> Encoder<'encoding, B> {
-    pub fn clear_recordings(&mut self) {
-        self.recorder.clear();
-    }
-
-    pub fn push_trace_scope(
-        &mut self,
-        segment: std::fmt::Arguments<'_>,
-    ) {
-        self.recorder.push_scope(segment);
-    }
-
-    pub fn pop_trace_scope(&mut self) {
-        self.recorder.pop_scope();
-    }
-
-    // Copies because encode-chain allocations are moved and their ranges recycled.
-    // Destinations are global: the recorder outlives the encoder's pool.
-    pub fn trace(
-        &mut self,
-        name: &str,
-        src: &Allocation<B>,
-        shape: &[usize],
-        data_type: DataType,
-    ) {
-        let path = self.recorder.path(name);
-        let byte_count = size_for_shape(shape, data_type);
-        assert!(
-            src.size() >= byte_count,
-            "trace {path} declares {byte_count} bytes but the source allocation holds {}",
-            src.size(),
-        );
-
-        let mut destination = self
-            .context
-            .create_allocation(byte_count, AllocationType::Global)
-            .unwrap_or_else(|error| panic!("failed to allocate trace destination for {path}: {error:?}"));
-        self.encode_copy(src, ..byte_count, &mut destination, ..);
-        self.recorder.record(path, shape.into(), data_type, destination).expect("failed to record trace array");
-    }
-
-    pub fn trace_host<T: NoUninit + AnyBitPattern>(
-        &mut self,
-        name: &str,
-        data: &[T],
-        shape: &[usize],
-        data_type: DataType,
-    ) {
-        let path = self.recorder.path(name);
-        let byte_count = size_for_shape(shape, data_type);
-        assert_eq!(byte_count, size_of_val(data), "trace {path} declares a shape that does not match the data");
-
-        let mut destination = self
-            .context
-            .create_allocation(byte_count, AllocationType::Global)
-            .unwrap_or_else(|error| panic!("failed to allocate trace destination for {path}: {error:?}"));
-        destination.copyin(data);
-        self.recorder.record(path, shape.into(), data_type, destination).expect("failed to record trace array");
     }
 }
 
 pub struct Executable<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Executable,
     allocation_pool: Arc<AllocationPool<B>>,
-    #[cfg(feature = "trace")]
-    recorder: Recorder<B>,
 }
 
 impl<B: Backend> Executable<B> {
@@ -270,8 +198,6 @@ impl<B: Backend> Executable<B> {
         Pending {
             command_buffer: self.command_buffer.submit(),
             allocation_pool: self.allocation_pool,
-            #[cfg(feature = "trace")]
-            recorder: self.recorder,
         }
     }
 }
@@ -279,8 +205,6 @@ impl<B: Backend> Executable<B> {
 pub struct Pending<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Pending,
     allocation_pool: Arc<AllocationPool<B>>,
-    #[cfg(feature = "trace")]
-    recorder: Recorder<B>,
 }
 
 impl<B: Backend> Pending<B> {
@@ -288,8 +212,6 @@ impl<B: Backend> Pending<B> {
         Ok(Completed {
             command_buffer: self.command_buffer.wait_until_completed()?,
             _allocation_pool: self.allocation_pool,
-            #[cfg(feature = "trace")]
-            recorder: self.recorder,
         })
     }
 }
@@ -297,17 +219,10 @@ impl<B: Backend> Pending<B> {
 pub struct Completed<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Completed,
     _allocation_pool: Arc<AllocationPool<B>>,
-    #[cfg(feature = "trace")]
-    recorder: Recorder<B>,
 }
 
 impl<B: Backend> Completed<B> {
     pub fn gpu_execution_time(&self) -> Duration {
         self.command_buffer.gpu_execution_time()
-    }
-
-    #[cfg(feature = "trace")]
-    pub fn into_recorder(self) -> Recorder<B> {
-        self.recorder
     }
 }

@@ -17,7 +17,6 @@ default = ["backend-cpu", "backend-metal", "capability-grammar"]
 backend-cpu = ["uzu/backend-cpu"]
 backend-metal = ["uzu/backend-metal"]
 capability-grammar = ["uzu/capability-grammar"]
-capability-trace = ["backend-uzu/trace"]
 
 [dependencies]
 anyhow.workspace = true

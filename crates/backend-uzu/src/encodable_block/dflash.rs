@@ -333,9 +333,11 @@ impl<B: Backend> DFlash<B> {
                     Some(&rope),
                     &batch_topology,
                     Some(MaybeMut::Mut(mixer_state.as_mut())),
+                    None,
                     encoder,
                 )
-                .map_err(DFlashEncodeError::Backend)?;
+                .map_err(DFlashEncodeError::Backend)?
+                .hidden;
         }
         let draft_hidden = self
             .output_norm

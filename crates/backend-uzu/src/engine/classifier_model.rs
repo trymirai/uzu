@@ -25,6 +25,7 @@ pub struct ClassifierModel<B: Backend> {
     classifier: ClassifierEncodable<B>,
     output_labels: Box<[String]>,
     data_type: DataType,
+    tap: crate::trace::ClassifierTap<B>,
 }
 
 #[derive(Debug, Error)]
@@ -77,6 +78,7 @@ impl<B: Backend> Engine<B> {
             classifier,
             output_labels,
             data_type,
+            tap: crate::trace::ClassifierTap::default(),
         })
     }
 }
@@ -113,7 +115,7 @@ impl<B: Backend> ClassifierModel<B> {
             .map_err(ClassifierModelClassifyError::Backend)?;
         token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 
-        let logits = self.classifier.encode(&token_ids, input.len(), &mut encoder)?;
+        let logits = self.classifier.encode(&token_ids, input.len(), None, &mut encoder)?.logits;
 
         let mut output_buffer = self
             .context
@@ -146,12 +148,28 @@ impl<B: Backend> ClassifierModel<B> {
         })
     }
 
-    #[cfg(feature = "trace")]
-    pub fn record_trace(
+    pub fn tap(&self) -> &crate::trace::ClassifierTap<B> {
+        &self.tap
+    }
+
+    pub fn write_trace(
         &self,
+        output_path: &Path,
+        metadata: Option<HashMap<String, String>>,
+    ) -> Result<(), crate::trace::Error> {
+        if let Some(parent) = output_path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
+        self.tap.write(output_path, metadata)
+    }
+
+    /// Runs one classification pass and keeps the captured activations.
+    pub fn record_trace(
+        &mut self,
         input: &[u64],
-    ) -> Result<crate::trace::Recorder<B>, ClassifierModelClassifyError<B>> {
-        use crate::utils::trace::trace_host;
+        request: &crate::trace::ClassifierTapRequest,
+    ) -> Result<&crate::trace::ClassifierTap<B>, ClassifierModelClassifyError<B>> {
+        use crate::{data_type::DataType, trace::Array};
 
         if input.is_empty() {
             return Err(ClassifierModelClassifyError::EmptyInput);
@@ -168,20 +186,31 @@ impl<B: Backend> ClassifierModel<B> {
             .map_err(ClassifierModelClassifyError::Backend)?;
         token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 
-        let host_token_ids = input.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
-        let host_token_positions = (0..input.len() as i32).collect::<Box<[i32]>>();
-        let token_shape = [1, input.len()];
-        trace_host!(encoder, "activation_trace.token_ids", &host_token_ids, token_shape, DataType::I32);
-        trace_host!(encoder, "activation_trace.token_positions", &host_token_positions, token_shape, DataType::I32);
+        let output = self.classifier.encode(&token_ids, input.len(), Some(request), &mut encoder)?;
+        let mut tap = output.tap;
 
-        let logits = self.classifier.encode(&token_ids, input.len(), &mut encoder)?;
+        // The classifier attends over a flat sequence, so positions are 0..n.
+        if let Some(transformer_tap) = tap.activations.as_mut().and_then(|a| a.transformer.as_mut()) {
+            let shape = [1, input.len()];
+            let host_token_ids = input.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
+            let host_token_positions = (0..input.len() as i32).collect::<Box<[i32]>>();
+            transformer_tap.token_ids = Some(
+                Array::capture_host(&encoder, &host_token_ids, &shape, DataType::I32)
+                    .map_err(ClassifierModelClassifyError::Backend)?,
+            );
+            transformer_tap.token_positions = Some(
+                Array::capture_host(&encoder, &host_token_positions, &shape, DataType::I32)
+                    .map_err(ClassifierModelClassifyError::Backend)?,
+            );
+        }
 
-        drop(logits);
+        drop(output.logits);
         drop(token_ids);
 
-        let completed =
-            encoder.end_encoding().submit().wait_until_completed().map_err(ClassifierModelClassifyError::Backend)?;
+        encoder.end_encoding().submit().wait_until_completed().map_err(ClassifierModelClassifyError::Backend)?;
 
-        Ok(completed.into_recorder())
+        self.tap = tap;
+
+        Ok(&self.tap)
     }
 }

@@ -13,10 +13,8 @@ use crate::{
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
     parameters::{ParameterLoaderError, ParameterTree},
-    utils::{
-        maybe_mut::MaybeMut,
-        trace::{trace, trace_scope, trace_scope_end},
-    },
+    trace::{Array, RopeTap, TransformerLayerTap, TransformerTap, TransformerTapRequest},
+    utils::maybe_mut::MaybeMut,
 };
 
 enum TransformerLayerStateType<B: Backend> {
@@ -32,6 +30,7 @@ pub struct TransformerState<B: Backend> {
 pub struct TransformerEncodeOutput<B: Backend> {
     pub output: Option<Allocation<B>>,
     pub hidden_features: Option<Box<[Allocation<B>]>>,
+    pub tap: TransformerTap<B>,
 }
 
 impl<B: Backend> TransformerState<B> {
@@ -161,7 +160,6 @@ impl<B: Backend> Transformer<B> {
         })
     }
 
-    #[cfg(feature = "trace")]
     fn data_type(&self) -> DataType {
         self.output_norm.data_type()
     }
@@ -240,8 +238,13 @@ impl<B: Backend> Transformer<B> {
         output_range: Option<Range<usize>>,
         hidden_feature_layer_indices: Option<&[usize]>,
         mut state: Option<&mut TransformerState<B>>,
+        tap_request: Option<&TransformerTapRequest>,
         encoder: &mut Encoder<B>,
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
+        let request = tap_request.unwrap_or(&TransformerTapRequest::NONE);
+        let layer_request = request.layers.as_ref();
+        let mut tap = TransformerTap::default();
+
         let mut hidden = input;
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
@@ -263,17 +266,23 @@ impl<B: Backend> Transformer<B> {
             .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, encoder))
             .collect::<Result<Box<[_]>, B::Error>>()?;
 
-        #[cfg(feature = "trace")]
-        for (rope_index, rope) in precalculated_ropes.iter().enumerate() {
-            let shape = [1, token_positions.len(), rope.dim];
-            trace_scope!(encoder, "rope_embeddings.{}", rope_index);
-            trace!(encoder, "cosines", &rope.cosines, shape, DataType::F32);
-            trace!(encoder, "sines", &rope.sines, shape, DataType::F32);
-            trace_scope_end!(encoder);
+        if let Some(rope_request) = &request.rope_embeddings {
+            for rope in precalculated_ropes.iter() {
+                let shape = [1, token_positions.len(), rope.dim];
+                tap.rope_embeddings.push(RopeTap {
+                    cosines: rope_request
+                        .cosines
+                        .then(|| Array::capture(encoder, &rope.cosines, &shape, DataType::F32))
+                        .transpose()?,
+                    sines: rope_request
+                        .sines
+                        .then(|| Array::capture(encoder, &rope.sines, &shape, DataType::F32))
+                        .transpose()?,
+                });
+            }
         }
 
         for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
-            trace_scope!(encoder, "layer_results.{}", layer.layer_index);
             let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
 
             let layer_state = if let Some(state) = &mut state {
@@ -291,23 +300,33 @@ impl<B: Backend> Transformer<B> {
                 None
             };
 
-            hidden = layer.encode(
+            let layer_output = layer.encode(
                 hidden,
                 &mut shortcut,
                 per_layer_inputs,
                 precalculated_rope,
                 batch_dim,
                 layer_state,
+                layer_request.and_then(|layer_request| layer_request.activations.as_ref()),
                 encoder,
             )?;
+            hidden = layer_output.hidden;
 
-            // Layer output is never materialized: the add is deferred into the next layer's norm.
-            #[cfg(feature = "trace")]
-            {
-                let outputs = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
-                trace!(encoder, "outputs", &outputs, [1, batch_dim.size(), self.model_dim], self.data_type());
+            if let Some(layer_request) = layer_request {
+                // A layer's output is never materialized: the add is deferred into the
+                // next layer's norm, so it has to be recomputed to be captured.
+                let outputs = layer_request
+                    .outputs
+                    .then(|| {
+                        let residual = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
+                        Array::capture(encoder, &residual, &[1, batch_dim.size(), self.model_dim], self.data_type())
+                    })
+                    .transpose()?;
+                tap.layers.push(TransformerLayerTap {
+                    outputs,
+                    activations: Some(layer_output.tap),
+                });
             }
-            trace_scope_end!(encoder);
 
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
@@ -338,16 +357,21 @@ impl<B: Backend> Transformer<B> {
             return Ok(TransformerEncodeOutput {
                 output: None,
                 hidden_features,
+                tap,
             });
         };
 
         let output_normalized =
             self.output_norm.encode(&hidden, output_range.start, output_range.len(), Some(&mut shortcut), encoder)?;
-        trace!(encoder, "output_norm", &output_normalized, [1, output_range.len(), self.model_dim], self.data_type());
+        if request.output_norm {
+            let shape = [1, output_range.len(), self.model_dim];
+            tap.output_norm = Some(Array::capture(encoder, &output_normalized, &shape, self.data_type())?);
+        }
 
         Ok(TransformerEncodeOutput {
             output: Some(output_normalized),
             hidden_features,
+            tap,
         })
     }
 }
