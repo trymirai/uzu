@@ -161,7 +161,7 @@ impl<B: Backend> Decoder<B> {
         if request.embedded {
             let shape = [1, batch_dim.size(), self.embedding.model_dim()];
             tap.embedded = Some(
-                Array::capture(encoder, &embedded, &shape, self.embedding.data_type())
+                Array::capture(&embedded, &shape, self.embedding.data_type(), encoder)
                     .map_err(DecoderError::Backend)?,
             );
         }
@@ -198,7 +198,7 @@ impl<B: Backend> Decoder<B> {
             if request.logits {
                 let shape = [1, output_range.len(), self.embedding.vocab_size()];
                 tap.logits = Some(
-                    Array::capture(encoder, &logits, &shape, self.embedding.data_type())
+                    Array::capture(&logits, &shape, self.embedding.data_type(), encoder)
                         .map_err(DecoderError::Backend)?,
                 );
             }

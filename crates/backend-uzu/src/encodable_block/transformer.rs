@@ -270,11 +270,11 @@ impl<B: Backend> Transformer<B> {
                 tap.rope_embeddings.push(RopeTap {
                     cosines: rope_request
                         .cosines
-                        .then(|| Array::capture(encoder, &rope.cosines, &shape, DataType::F32))
+                        .then(|| Array::capture(&rope.cosines, &shape, DataType::F32, encoder))
                         .transpose()?,
                     sines: rope_request
                         .sines
-                        .then(|| Array::capture(encoder, &rope.sines, &shape, DataType::F32))
+                        .then(|| Array::capture(&rope.sines, &shape, DataType::F32, encoder))
                         .transpose()?,
                 });
             }
@@ -316,7 +316,7 @@ impl<B: Backend> Transformer<B> {
                     .outputs
                     .then(|| {
                         let residual = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
-                        Array::capture(encoder, &residual, &[1, batch_dim.size(), self.model_dim], self.data_type())
+                        Array::capture(&residual, &[1, batch_dim.size(), self.model_dim], self.data_type(), encoder)
                     })
                     .transpose()?;
                 tap.layers.push(TransformerLayerTap {
@@ -362,7 +362,7 @@ impl<B: Backend> Transformer<B> {
             self.output_norm.encode(&hidden, output_range.start, output_range.len(), Some(&mut shortcut), encoder)?;
         if request.output_norm {
             let shape = [1, output_range.len(), self.model_dim];
-            tap.output_norm = Some(Array::capture(encoder, &output_normalized, &shape, self.data_type())?);
+            tap.output_norm = Some(Array::capture(&output_normalized, &shape, self.data_type(), encoder)?);
         }
 
         Ok(TransformerEncodeOutput {

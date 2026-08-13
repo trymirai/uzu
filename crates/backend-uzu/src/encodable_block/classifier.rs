@@ -137,7 +137,7 @@ impl<B: Backend> Classifier<B> {
         if activations_request.embedding_norm_output {
             let shape = [1, batch_dim, self.hidden_dim];
             activations.embedding_norm_output =
-                Some(Array::capture(encoder, &hidden, &shape, self.data_type).map_err(ClassifierError::Backend)?);
+                Some(Array::capture(&hidden, &shape, self.data_type, encoder).map_err(ClassifierError::Backend)?);
         }
 
         let nodes = (0..batch_dim)
@@ -170,14 +170,14 @@ impl<B: Backend> Classifier<B> {
         if activations_request.output_pooling {
             let shape = [1, self.hidden_dim];
             activations.output_pooling =
-                Some(Array::capture(encoder, &pooled, &shape, self.data_type).map_err(ClassifierError::Backend)?);
+                Some(Array::capture(&pooled, &shape, self.data_type, encoder).map_err(ClassifierError::Backend)?);
         }
 
         let logits = self.prediction_head.encode(pooled, 1, encoder).map_err(ClassifierError::Backend)?;
         let logits_shape = [1, self.num_labels];
         if activations_request.logits {
             activations.logits = Some(
-                Array::capture(encoder, &logits, &logits_shape, self.data_type).map_err(ClassifierError::Backend)?,
+                Array::capture(&logits, &logits_shape, self.data_type, encoder).map_err(ClassifierError::Backend)?,
             );
         }
         let mut tap = ClassifierTap {
@@ -186,7 +186,7 @@ impl<B: Backend> Classifier<B> {
         };
         if request.logits {
             tap.logits = Some(
-                Array::capture(encoder, &logits, &logits_shape, self.data_type).map_err(ClassifierError::Backend)?,
+                Array::capture(&logits, &logits_shape, self.data_type, encoder).map_err(ClassifierError::Backend)?,
             );
         }
 

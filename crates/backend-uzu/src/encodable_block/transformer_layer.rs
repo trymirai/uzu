@@ -227,42 +227,42 @@ impl<B: Backend> TransformerLayer<B> {
         };
         // The residual add is fused into the norm, so shortcut now holds the layer input.
         if request.inputs {
-            tap.inputs = Some(Array::capture(encoder, shortcut, &shape, self.data_type)?);
+            tap.inputs = Some(Array::capture(shortcut, &shape, self.data_type, encoder)?);
         }
         if request.pre_mixer_norm {
-            tap.pre_mixer_norm = Some(Array::capture(encoder, &hidden, &shape, self.data_type)?);
+            tap.pre_mixer_norm = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
         }
 
         // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
         let mut hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
         if request.mixer {
-            tap.mixer = Some(Array::capture(encoder, &hidden, &shape, self.data_type)?);
+            tap.mixer = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
         }
 
         if let Some(post_mixer_norm) = &self.post_mixer_norm {
             hidden = post_mixer_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
             if request.post_mixer_norm {
-                tap.post_mixer_norm = Some(Array::capture(encoder, &hidden, &shape, self.data_type)?);
+                tap.post_mixer_norm = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
             }
         }
 
         hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut), encoder)?;
         if request.mlp_inputs {
-            tap.mlp_inputs = Some(Array::capture(encoder, shortcut, &shape, self.data_type)?);
+            tap.mlp_inputs = Some(Array::capture(shortcut, &shape, self.data_type, encoder)?);
         }
         if request.pre_mlp_norm {
-            tap.pre_mlp_norm = Some(Array::capture(encoder, &hidden, &shape, self.data_type)?);
+            tap.pre_mlp_norm = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
         }
 
         hidden = self.mlp.encode(hidden, batch_dim.size(), encoder)?;
         if request.mlp {
-            tap.mlp = Some(Array::capture(encoder, &hidden, &shape, self.data_type)?);
+            tap.mlp = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
             hidden = post_mlp_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
             if request.post_mlp_norm {
-                tap.post_mlp_norm = Some(Array::capture(encoder, &hidden, &shape, self.data_type)?);
+                tap.post_mlp_norm = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
             }
         }
 
