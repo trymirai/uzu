@@ -158,8 +158,7 @@ pub fn taps(input: TokenStream) -> TokenStream {
                     out.push((format!("{prefix}{}", #segment), array));
                 }
             },
-            // `flatten` contributes no segment, so a sub-tap's fields land directly
-            // in the parent's namespace.
+            // flatten contributes no path segment
             FieldKind::Sub(_) if field.flatten => quote! {
                 if let Some(sub) = &self.#field_name {
                     sub.collect(prefix, out);
@@ -183,7 +182,7 @@ pub fn taps(input: TokenStream) -> TokenStream {
             #(#tap_fields,)*
         }
 
-        // Hand-written so the backend parameter does not pick up a `Default` bound.
+        // Hand-written: deriving would bound B: Default.
         impl<B: crate::backends::common::Backend> Default for #name<B> {
             fn default() -> Self {
                 Self {
@@ -193,8 +192,6 @@ pub fn taps(input: TokenStream) -> TokenStream {
         }
 
         impl<B: crate::backends::common::Backend> #name<B> {
-            /// Appends every captured array as `(path, array)`. Field names are the
-            /// path segments, so the struct tree is the safetensors layout.
             pub fn collect<'a>(
                 &'a self,
                 prefix: &str,
@@ -236,12 +233,10 @@ pub fn taps(input: TokenStream) -> TokenStream {
         }
 
         impl #request_name {
-            /// Nothing captured. Encode paths fall back to this when given no request.
             pub const NONE: Self = Self {
                 #(#none_fields,)*
             };
 
-            /// Every array in this subtree, recursively.
             pub fn all() -> Self {
                 Self {
                     #(#all_fields,)*

@@ -49,9 +49,7 @@ impl<B: Backend> LanguageModel<B> {
         self.tap.write(output_path, metadata)
     }
 
-    /// Runs one forward pass over `token_ids` against a fresh state and keeps the
-    /// captured activations. Prefill-shaped on purpose: it mirrors lalamo's tracer,
-    /// which evaluates all tokens at once with no cache carried in.
+    /// One prefill-shaped pass over `token_ids` against a fresh state.
     pub fn record_trace(
         &mut self,
         token_ids: &[u64],
@@ -86,9 +84,8 @@ impl<B: Backend> LanguageModel<B> {
         let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
         let batch_dim = BatchTopology::new(&input_flat_trie_nodes, true);
 
-        // The full output range runs every layer and covers all tokens, not just the
-        // sampled row. Taking `.tap` off the temporary drops the rest of the output —
-        // its pooled logits must not outlive the encoder's pool.
+        // Full output range: every layer, all tokens. Taking `.tap` off the temporary
+        // drops the rest, whose pooled logits must not outlive the encoder's pool.
         let mut tap = self
             .decoder
             .encode(
@@ -102,8 +99,7 @@ impl<B: Backend> LanguageModel<B> {
             )?
             .tap;
 
-        // A flat trie over a fresh state gives positions 0..n. lalamo stores both as
-        // i32; uzu feeds the decoder u32, so these have no device counterpart.
+        // Flat trie over a fresh state gives positions 0..n.
         if let Some(transformer_tap) = &mut tap.transformer {
             let shape = [1, token_count];
             let host_token_ids = token_ids.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
