@@ -45,10 +45,12 @@ impl MetalCompiler {
         fs::create_dir_all(&output_directory)
             .with_context(|| format!("cannot create {}", output_directory.display()))?;
 
-        let metallib_compressed = match env::var("OPT_LEVEL").context("missing OPT_LEVEL")?.as_str() {
-            "0" | "1" | "2" => false, // treat opt-level 0/1/2 as debug/test build where size doesn't matter
-            _ => true,                // treat everything else (3,s,z) as release build where size matters
-        };
+        // TODO: triggers false positive in xprotect
+        let mettlib_compressed = false;
+        // let metallib_compressed = match env::var("OPT_LEVEL").context("missing OPT_LEVEL")?.as_str() {
+        //     "0" | "1" | "2" => false, // treat opt-level 0/1/2 as debug/test build where size doesn't matter
+        //     _ => true,                // treat everything else (3,s,z) as release build where size matters
+        // };
 
         let toolchain = MetalToolchain::from_env_with_include_dir(Some(gpu_types_directory.clone()))
             .context("cannot create toolchain")?;
