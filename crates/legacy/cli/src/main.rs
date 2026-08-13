@@ -1,4 +1,3 @@
-#[cfg(feature = "capability-trace")]
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -10,7 +9,6 @@ mod common;
 mod interactive;
 mod server;
 mod storage;
-#[cfg(feature = "capability-trace")]
 mod trace;
 
 #[derive(Parser)]
@@ -72,7 +70,6 @@ enum Commands {
         download_manager: storage::DownloadManagerCliType,
     },
     /// Record an activation trace of a single forward pass, in lalamo's layout.
-    #[cfg(feature = "capability-trace")]
     Trace {
         #[arg(long, value_name = "DIR")]
         model_path: PathBuf,
@@ -109,7 +106,6 @@ async fn main() -> Result<()> {
         Some(Commands::Storage {
             download_manager,
         }) => storage::run(download_manager).await?,
-        #[cfg(feature = "capability-trace")]
         Some(Commands::Trace {
             model_path,
             message,

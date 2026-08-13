@@ -54,11 +54,11 @@ fn encode_prompt(
         "enable_thinking": true,
     });
 
-    let rendered = chat_template_environment(codec.prompt_template)
+    let rendered = chat_template_environment(&codec.prompt_template)
         .context("Invalid prompt template")?
         .get_template(TEMPLATE_NAME)
         .expect("template was just registered")
-        .render(context!(..minijinja::Value::from_serialize(request)))
+        .render(context!(..minijinja::Value::from_serialize(&request)))
         .context("Failed to render prompt template")?;
 
     let tokenizer = Tokenizer::from_file(model_path.join("tokenizer.json"))

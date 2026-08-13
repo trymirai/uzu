@@ -14,7 +14,7 @@ use crate::{
         transformer::{Transformer, TransformerNewError, TransformerState},
     },
     parameters::ParameterTree,
-    utils::trace::{trace, trace_scope, trace_scope_end},
+    trace::{Array, DecoderTap, DecoderTapRequest},
 };
 
 #[derive(Debug, Error)]
@@ -40,6 +40,7 @@ pub struct Decoder<B: Backend> {
 
 pub struct DecoderEncodeOutput<B: Backend> {
     pub logits: Option<Allocation<B>>,
+    pub tap: DecoderTap<B>,
     #[allow(dead_code)]
     pub hidden_features: Option<Box<[Allocation<B>]>>,
     #[allow(dead_code)]
@@ -143,10 +144,13 @@ impl<B: Backend> Decoder<B> {
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         state: &mut TransformerState<B>,
+        tap_request: Option<&DecoderTapRequest>,
         encoder: &mut Encoder<B>,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         encoder.push_debug_group("decoder");
-        trace_scope!(encoder, "activation_trace");
+
+        let request = tap_request.unwrap_or(&DecoderTapRequest::NONE);
+        let mut tap = DecoderTap::default();
 
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), encoder)?;
         let embedded = if let Some(embedding_norm) = &self.embedding_norm {
@@ -154,6 +158,13 @@ impl<B: Backend> Decoder<B> {
         } else {
             embedded
         };
+        if request.embedded {
+            let shape = [1, batch_dim.size(), self.embedding.model_dim()];
+            tap.embedded = Some(
+                Array::capture(encoder, &embedded, &shape, self.embedding.data_type())
+                    .map_err(DecoderError::Backend)?,
+            );
+        }
 
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
             Some(
@@ -174,11 +185,11 @@ impl<B: Backend> Decoder<B> {
                 output_range.clone(),
                 hidden_feature_layer_indices,
                 Some(state),
+                request.transformer.as_ref(),
                 encoder,
             )
             .map_err(DecoderError::Backend)?;
-
-        trace_scope_end!(encoder);
+        tap.transformer = request.transformer.is_some().then_some(transformer_output.tap);
 
         let logits = if let Some(output_range) = output_range {
             let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");
@@ -190,9 +201,13 @@ impl<B: Backend> Decoder<B> {
                 true,
                 encoder,
             )?;
-            #[cfg(feature = "trace")]
-            let shape = [1, output_range.len(), self.embedding.vocab_size()];
-            trace!(encoder, "logits", &logits, shape, self.embedding.data_type());
+            if request.logits {
+                let shape = [1, output_range.len(), self.embedding.vocab_size()];
+                tap.logits = Some(
+                    Array::capture(encoder, &logits, &shape, self.embedding.data_type())
+                        .map_err(DecoderError::Backend)?,
+                );
+            }
             Some(logits)
         } else {
             None
@@ -207,6 +222,7 @@ impl<B: Backend> Decoder<B> {
 
         Ok(DecoderEncodeOutput {
             logits,
+            tap,
             hidden_features: transformer_output.hidden_features,
             final_hidden,
         })
