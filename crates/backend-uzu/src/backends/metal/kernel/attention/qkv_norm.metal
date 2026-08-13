@@ -20,7 +20,7 @@ PUBLIC KERNEL(QKVNorm)(
     const device ScaleT* scales OPTIONAL(has_scales),
     device OutputT* qkvg_output,
     constant uint& batch_size,
-    constant uint& qkvg_heads,
+    constant uint& input_row_stride,
     constant uint& head_dim,
     constant float& epsilon,
     constant float& scale_offset,
@@ -41,7 +41,7 @@ PUBLIC KERNEL(QKVNorm)(
     return;
 
   const ulong slice_offset =
-      (ulong)batch_idx * (ulong)qkvg_heads * (ulong)head_dim + (ulong)(head_offset + head_idx) * (ulong)head_dim;
+      (ulong)batch_idx * (ulong)input_row_stride + (ulong)(head_offset + head_idx) * (ulong)head_dim;
 
   const device InputT* input_data = qkvg_input + slice_offset;
   const device ScaleT* scales_data = scales;
