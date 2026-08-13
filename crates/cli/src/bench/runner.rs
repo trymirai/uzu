@@ -12,7 +12,7 @@ use uzu::{
     types::{
         basic::SamplingMethod,
         model::ModelAccessibility,
-        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyPowerStats},
     },
 };
 
@@ -103,6 +103,14 @@ impl BenchRunner {
             }
             let generate_tokens_per_second = mean(&generate_tokens_per_second);
 
+            let power_stats_list =
+                replies.iter().filter_map(|reply| reply.stats.power_stats.as_ref()).collect::<Vec<_>>();
+            let power_stats = aggregate_power_stats(&power_stats_list);
+            let joules_per_token = power_stats.as_ref().and_then(|power| {
+                let tokens_count = tokens_count_input + tokens_count_output;
+                (tokens_count > 0).then(|| power.energy_joules / tokens_count as f64)
+            });
+
             let result = BenchResult {
                 task: self.task.clone(),
                 device: device.clone(),
@@ -115,6 +123,8 @@ impl BenchRunner {
                 time_to_first_token,
                 prompt_tokens_per_second,
                 generate_tokens_per_second,
+                power_stats,
+                joules_per_token,
                 text: text.unwrap_or("".to_string()),
             };
             results.push(result);
@@ -180,4 +190,19 @@ impl BenchRunner {
 
         Ok(None)
     }
+}
+
+fn aggregate_power_stats(power_stats_list: &[&ChatReplyPowerStats]) -> Option<ChatReplyPowerStats> {
+    let average_watts =
+        |rail: fn(&ChatReplyPowerStats) -> f64| mean(&power_stats_list.iter().copied().map(rail).collect::<Vec<f64>>());
+
+    Some(ChatReplyPowerStats {
+        samples_count: power_stats_list.iter().map(|power| power.samples_count).sum(),
+        average_cpu_watts: average_watts(|power| power.average_cpu_watts)?,
+        average_gpu_watts: average_watts(|power| power.average_gpu_watts)?,
+        average_ane_watts: average_watts(|power| power.average_ane_watts)?,
+        average_ram_watts: average_watts(|power| power.average_ram_watts)?,
+        average_total_watts: average_watts(|power| power.average_total_watts)?,
+        energy_joules: power_stats_list.iter().map(|power| power.energy_joules).sum(),
+    })
 }
