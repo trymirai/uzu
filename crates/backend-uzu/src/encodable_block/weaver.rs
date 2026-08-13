@@ -251,8 +251,8 @@ impl<B: Backend> Weaver<B> {
         })
     }
 
-    pub fn max_depth(&self) -> usize {
-        self.max_depth as usize
+    pub fn max_depth(&self) -> u32 {
+        self.max_depth
     }
 
     pub fn encode_tree(

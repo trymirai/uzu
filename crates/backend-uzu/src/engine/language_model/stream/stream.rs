@@ -553,7 +553,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         let full_batch_size = 32;
         let speculation_batch = self.model_state.max_context_length.map_or(full_batch_size, |max_context_length| {
-            full_batch_size.min(max_context_length - context_length as usize)
+            full_batch_size.min(max_context_length as u32 - context_length)
         });
 
         let mut pending = Vec::new();

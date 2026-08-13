@@ -56,14 +56,14 @@ pub enum DFlashSpeculatorLoadError<B: Backend> {
 pub enum DFlashTfmTreeConstructionMethod {
     Argmax,
     Weaver {
-        depth: usize,
-        expand_per_round: usize,
-        expand_width: usize,
+        depth: u32,
+        expand_per_round: u32,
+        expand_width: u32,
     },
 }
 
 pub struct DFlashTfmTreeShape {
-    pub budget: usize,
+    pub budget: u32,
     pub construction_method: DFlashTfmTreeConstructionMethod,
 }
 
@@ -171,7 +171,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     )));
                 }
                 let chain_length = shape.budget - 1;
-                let mut nodes = Vec::with_capacity(shape.budget);
+                let mut nodes = Vec::with_capacity(shape.budget as usize);
                 nodes.push(ProposalNode {
                     token_id: target_output_token,
                     depth: 0,
@@ -181,14 +181,14 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     state,
                     target_output_token,
                     target_embedding,
-                    shape.budget as u32,
+                    shape.budget,
                     &mut encoder,
                 )?;
                 let topology_nodes = (0..chain_length)
                     .map(|index| GpuTrieNode {
-                        trie_start: index as u32,
-                        trie_end: (chain_length - 1) as u32,
-                        height: index as u32,
+                        trie_start: index,
+                        trie_end: chain_length - 1,
+                        height: index,
                     })
                     .collect::<Box<[_]>>();
                 let batch_topology = BatchTopology::new(&topology_nodes, true);
@@ -202,7 +202,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         None,
                         &SamplingMethod::Greedy,
                         &batch_topology,
-                        0..chain_length,
+                        0..chain_length as usize,
                         &mut encoder,
                     )
                     .map_err(DFlashTreeError::Backend)?;
@@ -215,7 +215,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     ProposalNode {
                         token_id,
                         depth: depth as u32,
-                        child_indices: if depth < chain_length {
+                        child_indices: if depth < chain_length as usize {
                             vec![depth + 1]
                         } else {
                             Vec::new()
@@ -250,13 +250,8 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         self.dflash.block_size()
                     )));
                 }
-                let dflash_output = self.dflash.encode_draft(
-                    state,
-                    target_output_token,
-                    target_embedding,
-                    depth as u32,
-                    &mut encoder,
-                )?;
+                let dflash_output =
+                    self.dflash.encode_draft(state, target_output_token, target_embedding, depth, &mut encoder)?;
                 let depth_seeds = (0..weaver.max_depth())
                     .map(|depth| prng.derive(root_position as u64 + depth as u64))
                     .collect::<Box<[u64]>>();
@@ -268,10 +263,10 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     &depth_seeds,
                     target_output_token,
                     WeaverTreeShape {
-                        budget: shape.budget as u32,
-                        depth: depth as u32,
-                        expand_per_round: expand_per_round as u32,
-                        expand_width: expand_width as u32,
+                        budget: shape.budget,
+                        depth,
+                        expand_per_round,
+                        expand_width,
                     },
                     &mut encoder,
                 )?;

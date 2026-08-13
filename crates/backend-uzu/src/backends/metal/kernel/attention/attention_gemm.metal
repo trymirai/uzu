@@ -82,14 +82,14 @@ KERNEL(AttentionGemm)(
 
   using InputType = metal::conditional_t<USE_MXU, T, AccumType>;
 
-  q += batch_idx * params.q_strides[0] + head_idx * uint64_t(params.q_strides[1]) +
+  q += batch_idx * uint64_t(params.q_strides[0]) + head_idx * uint64_t(params.q_strides[1]) +
        q_tile_idx * int64_t(BLOCK_QUERY_ROWS) * params.q_strides[2];
 
   const int kv_head_idx = int(head_idx) / params.gqa_factor;
-  k += batch_idx * params.k_strides[0] + int64_t(kv_head_idx) * params.k_strides[1];
-  v += batch_idx * params.v_strides[0] + int64_t(kv_head_idx) * params.v_strides[1];
+  k += batch_idx * uint64_t(params.k_strides[0]) + int64_t(kv_head_idx) * params.k_strides[1];
+  v += batch_idx * uint64_t(params.v_strides[0]) + int64_t(kv_head_idx) * params.v_strides[1];
 
-  o += batch_idx * params.o_strides[0] + head_idx * uint64_t(params.o_strides[1]) +
+  o += batch_idx * uint64_t(params.o_strides[0]) + head_idx * uint64_t(params.o_strides[1]) +
        q_tile_idx * int64_t(BLOCK_QUERY_ROWS) * params.o_strides[2];
 
   if (is_trie) {
