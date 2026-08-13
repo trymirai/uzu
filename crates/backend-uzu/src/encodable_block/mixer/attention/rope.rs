@@ -108,7 +108,7 @@ impl<B: Backend> PrecalculatedRoPE<B> {
         Ok(Self {
             cosines: cosines_allocation,
             sines: sines_allocation,
-            dim: (*rope_config.head_dim()),
+            dim: *rope_config.head_dim(),
         })
     }
 }

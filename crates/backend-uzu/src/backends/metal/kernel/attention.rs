@@ -140,7 +140,7 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
                 k_strides: [0, self.head_dim, self.num_groups * self.head_dim],
                 v_strides: [0, self.head_dim, self.num_groups * self.head_dim],
                 o_strides: [0, self.head_dim, self.num_q_heads * self.head_dim],
-                gqa_factor: (self.num_q_heads / self.num_groups),
+                gqa_factor: self.num_q_heads / self.num_groups,
                 scale: self.scale.unwrap_or(1.0f32 / (self.head_dim as f32).sqrt()),
                 q_len: arguments.suffix_length,
                 k_len: arguments.state_type.physical_prefix_length() + arguments.suffix_length,

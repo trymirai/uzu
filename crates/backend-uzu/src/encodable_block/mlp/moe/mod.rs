@@ -142,7 +142,7 @@ impl<B: Backend> MoeBlock<B> {
 
         let w13 = up_weights_tree
             .leaf("weights")?
-            .validate(&[moe_config.num_routed_experts, (moe_config.expert_hidden_dim * 2), model_dim], data_type)?
+            .validate(&[moe_config.num_routed_experts, moe_config.expert_hidden_dim * 2, model_dim], data_type)?
             .read_allocation()?;
         let w2 = down_weights_tree
             .leaf("weights")?
@@ -150,7 +150,7 @@ impl<B: Backend> MoeBlock<B> {
             .read_allocation()?;
         let up_biases = up_tree
             .leaf("biases")?
-            .validate(&[moe_config.num_routed_experts, (moe_config.expert_hidden_dim * 2)], data_type)?
+            .validate(&[moe_config.num_routed_experts, moe_config.expert_hidden_dim * 2], data_type)?
             .read_allocation()?;
         let down_biases = down_tree
             .leaf("biases")?

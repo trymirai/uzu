@@ -180,10 +180,10 @@ impl<B: Backend> DFlash<B> {
             top_k,
             rope_config: config.rope_config.clone(),
             model_dim: config.model_dim,
-            max_context_length: (*config.rope_config.max_sequence_length()) as usize,
+            max_context_length: *config.rope_config.max_sequence_length() as usize,
             block_size: config.block_size,
             mask_token_id,
-            target_feature_input_dim: (config.model_dim * config.target_layer_ids.len() as u32),
+            target_feature_input_dim: config.model_dim * config.target_layer_ids.len() as u32,
             data_type,
         })
     }

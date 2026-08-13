@@ -220,7 +220,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
         let mut conv_state = context.create_allocation(
-            size_for_shape(&[self.conv_dim, (self.kernel_size - 1)], INNER_DATA_TYPE),
+            size_for_shape(&[self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE),
             AllocationType::Global,
         )?;
 
@@ -316,7 +316,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
             );
         } else {
             let mut padded = encoder
-                .allocate_scratch_with_shape(&[(batch_dim.size() + state_stride), self.conv_dim], INNER_DATA_TYPE)?;
+                .allocate_scratch_with_shape(&[batch_dim.size() + state_stride, self.conv_dim], INNER_DATA_TYPE)?;
             self.conv_pack.encode(
                 &state.conv_state,
                 &conv_inputs,
@@ -349,17 +349,13 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
 
         let mut ssd_output =
             encoder.allocate_scratch_with_shape(&[batch_dim.size(), self.inner_dim], INNER_DATA_TYPE)?;
-        let x_strides = [(self.num_heads * self.head_dim), self.head_dim, 1];
+        let x_strides = [self.num_heads * self.head_dim, self.head_dim, 1];
         let dt_strides = [self.num_heads, 1];
-        let cb_strides = [(self.num_groups * self.state_dim), self.state_dim, 1];
+        let cb_strides = [self.num_groups * self.state_dim, self.state_dim, 1];
         let group_size = self.num_heads / self.num_groups;
         if batch_dim.size() == 1 {
-            let state_strides = [
-                (self.num_heads * self.head_dim * self.state_dim),
-                (self.head_dim * self.state_dim),
-                self.state_dim,
-                1,
-            ];
+            let state_strides =
+                [self.num_heads * self.head_dim * self.state_dim, self.head_dim * self.state_dim, self.state_dim, 1];
             self.ssd_update.encode(
                 &conv_x,
                 &time_step,
@@ -382,7 +378,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 encoder,
             );
         } else {
-            let state_strides = [(self.head_dim * self.state_dim), self.state_dim, 1];
+            let state_strides = [self.head_dim * self.state_dim, self.state_dim, 1];
             match &self.ssd_prefill {
                 Mamba2SSDPrefillVariant::Universal(ssd_prefill) => ssd_prefill.encode(
                     &conv_x,

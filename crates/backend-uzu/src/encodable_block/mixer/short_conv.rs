@@ -118,7 +118,7 @@ impl<B: Backend> ShortConv<B> {
 
         let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
             hidden_dim,
-            [(hidden_dim * 3)],
+            [hidden_dim * 3],
             false,
             context,
             data_type,
@@ -250,8 +250,8 @@ impl<B: Backend> ShortConv<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
         let mut conv_output = encoder.allocate_scratch_with_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
-        let mut conv_states = encoder
-            .allocate_scratch_with_shape(&[batch_dim, (self.kernel_size - 1), self.hidden_dim], self.data_type)?;
+        let mut conv_states =
+            encoder.allocate_scratch_with_shape(&[batch_dim, self.kernel_size - 1, self.hidden_dim], self.data_type)?;
         self.short_conv_trie.encode(
             in_projected,
             &self.conv_weight,
@@ -286,13 +286,13 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
         let mut conv_state = context.create_allocation(
-            size_for_shape(&[(self.kernel_size - 1), self.hidden_dim], self.data_type),
+            size_for_shape(&[self.kernel_size - 1, self.hidden_dim], self.data_type),
             AllocationType::Global,
         )?;
 
         let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
         let mut suffix_state = context.create_allocation(
-            size_for_shape(&[suffix_capacity, (self.kernel_size - 1), self.hidden_dim], self.data_type),
+            size_for_shape(&[suffix_capacity, self.kernel_size - 1, self.hidden_dim], self.data_type),
             AllocationType::Global,
         )?;
 

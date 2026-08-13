@@ -126,7 +126,7 @@ impl<B: Backend> Classifier<B> {
         let nodes = (0..batch_dim)
             .map(|index| TrieNode {
                 trie_start: index,
-                trie_end: (batch_dim - 1),
+                trie_end: batch_dim - 1,
                 height: index,
             })
             .collect::<Box<[TrieNode]>>();

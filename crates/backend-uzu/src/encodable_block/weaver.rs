@@ -154,13 +154,13 @@ impl<B: Backend> Weaver<B> {
         if *config.rope_config.head_dim() != head_dim {
             return Err(WeaverNewError::InvalidRopeHeadDim {
                 expected: head_dim,
-                actual: (*config.rope_config.head_dim()),
+                actual: *config.rope_config.head_dim(),
             });
         }
         if *config.rope_config.max_sequence_length() <= config.max_depth {
             return Err(WeaverNewError::InvalidRopeLength {
                 max_depth: config.max_depth,
-                actual: (*config.rope_config.max_sequence_length()),
+                actual: *config.rope_config.max_sequence_length(),
             });
         }
         let token_embedding_norm = Normalization::new(

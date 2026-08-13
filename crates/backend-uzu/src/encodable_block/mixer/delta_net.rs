@@ -349,8 +349,8 @@ impl<B: Backend> DeltaNet<B> {
         let mut trie = encoder.allocate_constant(tree_size as usize * size_of::<TrieNode>())?;
         trie.copyin(batch_dim.nodes());
 
-        let mut conv_states = encoder
-            .allocate_scratch_with_shape(&[tree_size, self.conv_dim, (self.kernel_size - 1)], INNER_DATA_TYPE)?;
+        let mut conv_states =
+            encoder.allocate_scratch_with_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE)?;
         let mut k = encoder.allocate_scratch_with_shape(&[tree_size, self.key_dim], self.outer_data_type)?;
         let mut v = encoder.allocate_scratch_with_shape(&[tree_size, self.value_dim], self.outer_data_type)?;
         let mut beta = encoder.allocate_scratch_with_shape(&[tree_size, self.num_heads], INNER_DATA_TYPE)?;
@@ -446,7 +446,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
         let mut conv_state = context.create_allocation(
-            size_for_shape(&[self.conv_dim, (self.kernel_size - 1)], INNER_DATA_TYPE),
+            size_for_shape(&[self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE),
             AllocationType::Global,
         )?;
 
@@ -537,7 +537,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             );
         } else {
             let mut padded = encoder.allocate_scratch_with_shape(
-                &[(batch_dim.size() + (self.kernel_size - 1)), self.total_proj_dim],
+                &[batch_dim.size() + self.kernel_size - 1, self.total_proj_dim],
                 INNER_DATA_TYPE,
             )?;
             self.conv_pack.encode(

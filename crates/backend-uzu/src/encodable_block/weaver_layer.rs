@@ -68,7 +68,7 @@ impl<B: Backend> WeaverLayer<B> {
         let attention_scale = 1.0 / (head_dim as f32).sqrt();
         let qkv_projection = <dyn Linear<B>>::new(
             model_dim,
-            [(3 * model_dim)],
+            [3 * model_dim],
             false,
             context,
             DATA_TYPE,

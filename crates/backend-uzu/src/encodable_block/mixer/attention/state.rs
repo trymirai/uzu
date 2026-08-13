@@ -202,8 +202,8 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
                     .enumerate()
                     .filter(|&(index, accepted_index)| index as u32 != accepted_index)
                     .map(|(index, accepted_index)| Copy {
-                        source: (*length + accepted_index),
-                        destination: (*length + index as u32),
+                        source: *length + accepted_index,
+                        destination: *length + index as u32,
                     })
                     .collect::<Vec<Copy>>();
 

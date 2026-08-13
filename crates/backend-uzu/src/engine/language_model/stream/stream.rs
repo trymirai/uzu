@@ -197,7 +197,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 .transformer_state
                 .prepare(
                     (model_state.transformer_state.context_length() + (number_of_batches - 1) * max_batch_size) as u32,
-                    (usize::min(max_batch_size, input.len())) as u32,
+                    usize::min(max_batch_size, input.len()) as u32,
                     &model.engine.context,
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
