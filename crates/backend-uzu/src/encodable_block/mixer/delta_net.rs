@@ -99,10 +99,8 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                     ..,
                 );
 
-                let mut accepted_indices_buffer = encoder.allocate_constant(size_for_shape(
-                    &[u32::try_from(accepted_indices.len()).expect("too many accepted indices")],
-                    DataType::U32,
-                ))?;
+                let mut accepted_indices_buffer =
+                    encoder.allocate_constant(size_for_shape(&[accepted_indices.len() as u32], DataType::U32))?;
                 accepted_indices_buffer.copyin(accepted_indices);
                 self.state_advance.encode(
                     &k,

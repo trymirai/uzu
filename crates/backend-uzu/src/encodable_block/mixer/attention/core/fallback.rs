@@ -76,10 +76,8 @@ impl<B: Backend> AttentionFallbackCore<B> {
 
         let dt_bytes = self.data_type.size_in_bytes();
         let head_dim_bytes = self.head_dim as usize * dt_bytes;
-        let group_rows = gqa_factor as usize * suffix_length as usize;
-
-        let scores_len =
-            u32::try_from(group_rows * sequence_length as usize).expect("attention score buffer exceeds u32 elements");
+        let group_rows = gqa_factor * suffix_length;
+        let scores_len = group_rows * sequence_length;
 
         let mut output =
             encoder.allocate_constant_with_shape(&[suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
@@ -93,7 +91,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
                 MatmulArguments {
                     a: MatmulA::FullPrecision {
                         values: arguments.queries,
-                        offset: group_index as usize * group_rows * head_dim_bytes,
+                        offset: group_index as usize * group_rows as usize * head_dim_bytes,
                     },
                     b: MatmulB::FullPrecision {
                         b: (arguments.keys, group_index as usize * head_dim_bytes),
@@ -137,7 +135,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
                 MatmulArguments {
                     a: MatmulA::FullPrecision {
                         values: &scores,
-                        offset: group_index as usize * group_rows * sequence_length as usize * dt_bytes,
+                        offset: group_index as usize * group_rows as usize * sequence_length as usize * dt_bytes,
                     },
                     b: MatmulB::FullPrecision {
                         b: (arguments.values, group_index as usize * head_dim_bytes),
