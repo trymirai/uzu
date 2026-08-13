@@ -96,7 +96,7 @@ impl<B: Backend> Attention<B> {
             q_dim
         };
         let (qkv_projection, in_projection_input_hadamard_factors) = if !has_gate {
-            <dyn Linear<B>>::new_extracting_input_hadamard(
+            <dyn Linear<B>>::new_with_input_rht(
                 hidden_dim,
                 [qkv_projection_output_dimension],
                 config.has_qkv_biases,

@@ -54,7 +54,7 @@ pub trait Linear<B: Backend>: Send + Sync {
     }
 }
 
-pub(crate) enum LinearInput<B: Backend> {
+pub enum LinearInput<B: Backend> {
     FullPrecision(Allocation<B>),
     Int8Symmetric {
         values: Allocation<B>,
@@ -64,9 +64,9 @@ pub(crate) enum LinearInput<B: Backend> {
     },
 }
 
-pub(crate) struct LinearInputPreparation<B: Backend> {
-    pub(crate) input_factors: Allocation<B>,
-    pub(crate) a8_plan: Option<A8ActivationPlan>,
+pub struct LinearInputPreparation<B: Backend> {
+    pub input_factors: Allocation<B>,
+    pub a8_plan: Option<A8ActivationPlan>,
 }
 
 #[derive(Debug, Error)]
@@ -180,9 +180,9 @@ impl<B: Backend> dyn Linear<B> {
         )
     }
 
-    pub fn new_extracting_input_hadamard_mixed_precision<const N: usize>(
-        input_dimension: u32,
-        output_dimensions: [u32; N],
+    pub fn new_with_input_rht_mixed_precision<const N: usize>(
+        input_dimension: usize,
+        output_dimensions: [usize; N],
         has_biases: bool,
         context: &B::Context,
         weights_data_type: DataType,
@@ -191,7 +191,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<B>,
     ) -> Result<(Box<dyn Linear<B>>, Option<Allocation<B>>), LinearBlockError<B>> {
         let output_dimension_sum: usize = output_dimensions.iter().sum();
-        if let Some(linear) = RHTLinearWrapper::new_allowing_predecessor_rht(
+        if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
             context,
             input_dimension,
             output_dimension_sum,
@@ -218,7 +218,7 @@ impl<B: Backend> dyn Linear<B> {
         Ok((linear, None))
     }
 
-    pub(crate) fn new_extracting_input_hadamard_for_fusion<const N: usize>(
+    pub fn new_for_fused_input<const N: usize>(
         input_dimension: usize,
         output_dimensions: [usize; N],
         has_biases: bool,
@@ -227,7 +227,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<B>,
     ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
         let output_dimension_sum: usize = output_dimensions.iter().sum();
-        if let Some(linear) = RHTLinearWrapper::new_allowing_predecessor_rht(
+        if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
             context,
             input_dimension,
             output_dimension_sum,
@@ -254,15 +254,15 @@ impl<B: Backend> dyn Linear<B> {
         Ok((linear, None))
     }
 
-    pub fn new_extracting_input_hadamard<const N: usize>(
-        input_dimension: u32,
-        output_dimensions: [u32; N],
+    pub fn new_with_input_rht<const N: usize>(
+        input_dimension: usize,
+        output_dimensions: [usize; N],
         has_biases: bool,
         context: &B::Context,
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<(Box<dyn Linear<B>>, Option<Allocation<B>>), LinearBlockError<B>> {
-        Self::new_extracting_input_hadamard_mixed_precision(
+        Self::new_with_input_rht_mixed_precision(
             input_dimension,
             output_dimensions,
             has_biases,

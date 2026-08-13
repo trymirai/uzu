@@ -3,12 +3,12 @@ use num_traits::Float;
 use crate::backends::common::gpu_types::activation_type::ActivationType;
 
 #[inline]
-pub(super) fn gated_act_mul_value<T: Float>(
+pub(super) fn gated_act_mul<T: Float>(
     value: T,
     gate: T,
     act_type: ActivationType,
-) -> T {
-    T::from(value.to_f32().unwrap() * act_type.activate(gate).to_f32().unwrap()).unwrap()
+) -> f32 {
+    value.to_f32().unwrap() * act_type.activate(gate).to_f32().unwrap()
 }
 
 pub mod gated_act_mul;

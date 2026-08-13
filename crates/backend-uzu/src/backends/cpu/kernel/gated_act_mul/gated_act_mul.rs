@@ -2,7 +2,6 @@ use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
-use super::gated_act_mul_value;
 use crate::{
     array::ArrayElement,
     backends::{
@@ -58,11 +57,14 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
                 (batch * gated_dim + gated, unsafe { *value_operand.unwrap().add(value_index) })
             };
             let gate = unsafe { *act_operand.add(act_index) };
-            let result = gated_act_mul_value(value, gate, act_type);
+            let result = super::gated_act_mul(value, gate, act_type);
             if let Some(transformed) = transformed.as_mut() {
-                transformed[gated] = result.to_f32().unwrap();
+                transformed[gated] = result;
             } else {
-                unsafe { *fp_out.expect("FP gate activation requires fp_out").add(batch * gated_dim + gated) = result };
+                unsafe {
+                    *fp_out.expect("FP gate activation requires fp_out").add(batch * gated_dim + gated) =
+                        T::from(result).unwrap();
+                }
             }
         }
 

@@ -32,8 +32,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         input_preparation: Option<LinearInputPreparation<B>>,
     ) -> Result<Self, B::Error> {
         let (hadamard_factors, a8_plan) = input_preparation
-            .map(|preparation| (Some(preparation.input_factors), preparation.a8_plan))
-            .unwrap_or((None, None));
+            .map_or((None, None), |preparation| (Some(preparation.input_factors), preparation.a8_plan));
         let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some())?;
         let quantized_kernel = a8_plan
             .map(|plan| GatedActMul::quantized(context, data_type, plan.activation_group_size, plan.sum_group_size))
@@ -54,14 +53,14 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         encoder: &mut Encoder<B>,
         fused_up: &Allocation<B>,
         batch_dim: usize,
-        format: ActivationFormat,
+        act_format: ActivationFormat,
     ) -> Result<LinearInput<B>, B::Error> {
         encoder.push_debug_group("gate act mul");
 
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
         }
-        let input = if format == ActivationFormat::Int8 && self.a8_plan.is_some() {
+        let input = if act_format == ActivationFormat::Int8 && self.a8_plan.is_some() {
             let plan = self.a8_plan.expect("INT8 input requires an A8 plan");
             let kernel = self.quantized_kernel.as_ref().expect("INT8 input requires a quantized gate kernel");
             let mut values = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], DataType::I8))?;

@@ -38,7 +38,7 @@ pub struct RHTLinearWrapper<B: Backend> {
     input_dimension: u32,
 }
 
-fn is_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
+fn has_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
     matches!(
         spec,
         AnyWeightMatrixSpec::HybridSpec(HybridSpec {
@@ -63,7 +63,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
     ) -> Result<Self, RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        if !is_input_output_rht(&spec) {
+        if !has_input_output_rht(&spec) {
             return Err(RHTLinearWrapperError::UnsupportedConfiguration(format!("{spec:?}")));
         }
 
@@ -81,7 +81,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         Self::build_self_contained(context, input_dimension, input_data_type, input_factors, inner_linear, a8_plan)
     }
 
-    pub(super) fn new_allowing_predecessor_rht(
+    pub(super) fn try_new_with_input_preparation(
         context: &B::Context,
         input_dimension: usize,
         output_dimension: usize,
@@ -89,12 +89,12 @@ impl<B: Backend> RHTLinearWrapper<B> {
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
-        allow_a8_predecessor: bool,
+        allow_prequantized_activation: bool,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Option<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>)>, RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights")?;
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        if !is_input_output_rht(&spec) {
+        if !has_input_output_rht(&spec) {
             return Ok(None);
         }
 
@@ -110,7 +110,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )?;
         let a8_plan = inner_linear.prepare_a8(context);
         if let Some(a8_plan) = a8_plan
-            && !allow_a8_predecessor
+            && !allow_prequantized_activation
         {
             let wrapper = Self::build_self_contained(
                 context,

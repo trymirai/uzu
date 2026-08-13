@@ -113,7 +113,7 @@ impl<B: Backend> Mamba2<B> {
         }
 
         let (in_projection, in_projection_input_hadamard_factors) =
-            <dyn Linear<B>>::new_extracting_input_hadamard_mixed_precision(
+            <dyn Linear<B>>::new_with_input_rht_mixed_precision(
                 hidden_dim,
                 [conv_dim, inner_dim, num_heads],
                 config.has_in_biases,

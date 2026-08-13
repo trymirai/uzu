@@ -45,7 +45,7 @@ impl<B: Backend> dyn Mlp<B> {
     ) -> Result<(Box<dyn Mlp<B>>, Option<Allocation<B>>), MlpBlockError<B>> {
         match config {
             AnyMLPConfig::DenseMLPConfig(dense_config) => {
-                let (up_projection, up_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
+                let (up_projection, up_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
                     model_dimension,
                     [2 * hidden_dimension],
                     dense_config.has_up_biases,
@@ -54,15 +54,14 @@ impl<B: Backend> dyn Mlp<B> {
                     &parameter_tree.subtree("up_projection"),
                 )?;
 
-                let (down_projection, down_input_preparation) =
-                    <dyn Linear<B>>::new_extracting_input_hadamard_for_fusion(
-                        hidden_dimension,
-                        [model_dimension],
-                        dense_config.has_down_biases,
-                        context,
-                        data_type,
-                        &parameter_tree.subtree("down_projection")?,
-                    )?;
+                let (down_projection, down_input_preparation) = <dyn Linear<B>>::new_for_fused_input(
+                    hidden_dimension,
+                    [model_dimension],
+                    dense_config.has_down_biases,
+                    context,
+                    data_type,
+                    &parameter_tree.subtree("down_projection")?,
+                )?;
 
                 let gate = MlpGateActMulEncodable::new(
                     context,

@@ -4,7 +4,7 @@ use crate::backends::common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE;
 
 pub const INT8_SYMMETRIC_QUANTIZATION_MAXIMUM: f32 = 127.0;
 
-pub(crate) use activation_transform::quantize_transformed_row;
+pub use activation_transform::quantize_transformed_row;
 
 pub fn min_max_symmetric_divisor(values: &[f32]) -> f32 {
     let (min, max) =

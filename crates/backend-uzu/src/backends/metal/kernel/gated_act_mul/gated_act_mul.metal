@@ -42,11 +42,11 @@ PUBLIC KERNEL(GatedActMul) (
   const uint gated_idx = activation_tile_index * ACTIVATION_QUANT_TILE_SIZE + thread_index;
   const uint simdgroup_offset =
       activation_tile_index * ACTIVATION_QUANT_TILE_SIZE + (thread_index / METAL_SIMD_SIZE) * METAL_SIMD_SIZE;
-  const bool in_bounds = gated_idx < gated_dim;
-  const bool full_simdgroup = simdgroup_offset + METAL_SIMD_SIZE <= gated_dim;
+  const bool element_in_bounds = gated_idx < gated_dim;
+  const bool simdgroup_in_bounds = simdgroup_offset + METAL_SIMD_SIZE <= gated_dim;
   T value = static_cast<T>(0);
   T gate = static_cast<T>(0);
-  if (in_bounds) {
+  if (element_in_bounds) {
     if (interleaved) {
       const uint base = batch_idx * (2 * gated_dim);
       value = act_operand[base + gated_idx];
@@ -59,22 +59,18 @@ PUBLIC KERNEL(GatedActMul) (
 
   if (!QUANTIZED) {
     T result = static_cast<T>(0);
-    if (in_bounds && (!use_hadamard || full_simdgroup)) {
+    if (element_in_bounds && (!use_hadamard || simdgroup_in_bounds)) {
       result = static_cast<T>(gated_act_mul(value, gate, act_type, use_hadamard, gated_idx, hadamard_factors));
     }
-    if (in_bounds) {
+    if (element_in_bounds) {
       fp_out[batch_idx * gated_dim + gated_idx] = result;
     }
     return;
   }
 
   float result = 0.0f;
-  if (use_hadamard) {
-    if (full_simdgroup) {
-      result = gated_act_mul(value, gate, act_type, true, gated_idx, hadamard_factors);
-    }
-  } else if (in_bounds) {
-    result = gated_act_mul(value, gate, act_type, false, gated_idx, hadamard_factors);
+  if (simdgroup_in_bounds) {
+    result = gated_act_mul(value, gate, act_type, true, gated_idx, hadamard_factors);
   }
 
   const float maximum = reduce_activation_quantization_group(
@@ -88,7 +84,7 @@ PUBLIC KERNEL(GatedActMul) (
   const float scale = isfinite(maximum) && maximum > 0.0f ? maximum / ACTIVATION_QUANT_INT8_MAX : 1.0f;
   const int8_t code =
       static_cast<int8_t>(clamp(round(result / scale), -ACTIVATION_QUANT_INT8_MAX, ACTIVATION_QUANT_INT8_MAX));
-  if (in_bounds) {
+  if (element_in_bounds) {
     q_out[batch_idx * gated_dim + gated_idx] = code;
   }
 
