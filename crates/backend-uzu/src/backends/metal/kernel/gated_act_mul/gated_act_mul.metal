@@ -9,6 +9,9 @@ using namespace metal;
 using namespace uzu::activation_type;
 using namespace uzu::gated_act_mul;
 
+#define NUM_SIMDGROUPS 4
+#define NUM_THREADS (NUM_SIMDGROUPS * METAL_SIMD_SIZE)
+
 #define QUANTIZED (ops == GatedActMulOp::Quantize || ops == GatedActMulOp::QuantizeWithGroupSums)
 #define EMITS_GROUP_SUMS (ops == GatedActMulOp::QuantizeWithGroupSums)
 
@@ -32,11 +35,11 @@ PUBLIC KERNEL(GatedActMul) (
     const bool use_hadamard SPECIALIZE,
     const uint activation_scale_group_size SPECIALIZE,
     const uint sum_group_size SPECIALIZE,
-    threadgroup float partial_max OPTIONAL(QUANTIZED && activation_scale_group_size > METAL_SIMD_SIZE)[ACTIVATION_QUANT_SIMDGROUPS],
-    threadgroup int partial_sums OPTIONAL(EMITS_GROUP_SUMS && sum_group_size > METAL_SIMD_SIZE)[ACTIVATION_QUANT_SIMDGROUPS],
-    uint activation_tile_index GROUPS(gated_dim.div_ceil(ACTIVATION_QUANT_TILE_SIZE)),
+    threadgroup float partial_max OPTIONAL(QUANTIZED && activation_scale_group_size > METAL_SIMD_SIZE)[NUM_SIMDGROUPS],
+    threadgroup int partial_sums OPTIONAL(EMITS_GROUP_SUMS && sum_group_size > METAL_SIMD_SIZE)[NUM_SIMDGROUPS],
+    uint activation_tile_index GROUPS(gated_dim.div_ceil(NUM_THREADS)),
     uint batch_idx GROUPS(batch_dim),
-    uint thread_index THREADS(ACTIVATION_QUANT_TILE_SIZE),
+    uint thread_index THREADS(NUM_THREADS),
     const ThreadContext thread_context
 ) {
   const uint gated_idx = activation_tile_index * ACTIVATION_QUANT_TILE_SIZE + thread_index;

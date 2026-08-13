@@ -9,6 +9,9 @@
 using namespace metal;
 using namespace uzu::activation_transform;
 
+#define NUM_SIMDGROUPS 4
+#define NUM_THREADS (NUM_SIMDGROUPS * METAL_SIMD_SIZE)
+
 #define QUANTIZED (ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)
 #define EMITS_GROUP_SUMS (ops == ActivationTransformOp::QuantizeWithGroupSums)
 
@@ -27,11 +30,11 @@ PUBLIC KERNEL(ActivationTransform)(
     const bool in_place SPECIALIZE,
     const uint activation_scale_group_size SPECIALIZE,
     const uint sum_group_size SPECIALIZE,
-    threadgroup float partial_max OPTIONAL(QUANTIZED && activation_scale_group_size > METAL_SIMD_SIZE)[ACTIVATION_QUANT_SIMDGROUPS],
-    threadgroup int partial_sums OPTIONAL(EMITS_GROUP_SUMS && sum_group_size > METAL_SIMD_SIZE)[ACTIVATION_QUANT_SIMDGROUPS],
-    uint activation_tile_index GROUPS(element_count.div_ceil(128)),
+    threadgroup float partial_max OPTIONAL(QUANTIZED && activation_scale_group_size > METAL_SIMD_SIZE)[NUM_SIMDGROUPS],
+    threadgroup int partial_sums OPTIONAL(EMITS_GROUP_SUMS && sum_group_size > METAL_SIMD_SIZE)[NUM_SIMDGROUPS],
+    uint activation_tile_index GROUPS(element_count.div_ceil(NUM_THREADS)),
     uint batch_index GROUPS(batch_size),
-    uint thread_index THREADS(128),
+    uint thread_index THREADS(NUM_THREADS),
     const ThreadContext thread_context
 ) {
   (void)thread_index;
