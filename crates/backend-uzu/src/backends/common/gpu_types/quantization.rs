@@ -16,8 +16,8 @@ pub enum QuantizationMode {
 }
 
 impl QuantizationMode {
-    pub fn packing_divisor(&self) -> usize {
-        let bits = DataType::from(*self).size_in_bits();
+    pub fn packing_divisor(&self) -> u32 {
+        let bits = DataType::from(*self).size_in_bits() as u32;
         assert_eq!(8 % bits, 0, "QuantizationMode bit width ({bits}) must divide 8 evenly");
         8 / bits
     }

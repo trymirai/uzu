@@ -292,7 +292,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         ) -> TrieNode {
             let node = &nodes[index];
             let mut trie_node =
-                TrieNode::new(node.token_id as u64, prng.derive((root_position + node.depth as usize) as u64));
+                TrieNode::new(node.token_id as u64, prng.derive(root_position as u64 + node.depth as u64));
             for &child_index in &node.child_indices {
                 #[cfg(grammar)]
                 if let Some(grammar) = grammar.as_mut()

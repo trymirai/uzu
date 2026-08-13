@@ -128,17 +128,15 @@ impl<B: Backend> WeightMatrix<B> {
         let group_size = info.group_size;
         let packing_divisor = info.mode.packing_divisor();
         let storage_data_type = info.mode.storage_type();
-        if !columns.is_multiple_of(packing_divisor as u32) {
+        if !columns.is_multiple_of(packing_divisor) {
             return Err(WeightMatrixError::UnsupportedConfiguration(format!(
                 "stored columns {columns} are not divisible by packing divisor {packing_divisor}"
             )));
         }
         let groups = columns.div_ceil(group_size);
 
-        let values = tree
-            .leaf("weights")?
-            .validate(&[rows, columns / packing_divisor as u32], storage_data_type)?
-            .read_allocation()?;
+        let values =
+            tree.leaf("weights")?.validate(&[rows, columns / packing_divisor], storage_data_type)?.read_allocation()?;
         let scales = tree.leaf("scales")?.validate(&[rows, groups], data_type)?.read_allocation()?;
         let correction = match info.method {
             QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(
@@ -146,7 +144,7 @@ impl<B: Backend> WeightMatrix<B> {
             ),
             QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(
                 tree.leaf("zero_points")?
-                    .validate(&[rows, groups.div_ceil(packing_divisor as u32)], storage_data_type)?
+                    .validate(&[rows, groups.div_ceil(packing_divisor)], storage_data_type)?
                     .read_allocation()?,
             ),
             QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,

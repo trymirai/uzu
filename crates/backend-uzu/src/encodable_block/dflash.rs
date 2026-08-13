@@ -46,7 +46,7 @@ pub struct DFlash<B: Backend> {
     output_norm: Normalization<B>,
     rope_config: AnyRoPEConfig,
     model_dim: u32,
-    max_context_length: usize,
+    max_context_length: u32,
     block_size: u32,
     mask_token_id: u32,
     target_feature_input_dim: u32,
@@ -162,7 +162,7 @@ impl<B: Backend> DFlash<B> {
             output_norm,
             rope_config: config.rope_config.clone(),
             model_dim: config.model_dim,
-            max_context_length: *config.rope_config.max_sequence_length() as usize,
+            max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
             mask_token_id,
             target_feature_input_dim: config.model_dim * config.target_layer_ids.len() as u32,
@@ -179,10 +179,7 @@ impl<B: Backend> DFlash<B> {
         context_capacity: u32,
         context: &B::Context,
     ) -> Result<DFlashState<B>, B::Error> {
-        assert!(
-            context_capacity <= self.max_context_length as u32,
-            "DFlash state capacity exceeds configured RoPE capacity"
-        );
+        assert!(context_capacity <= self.max_context_length, "DFlash state capacity exceeds configured RoPE capacity");
         let layer_states = self
             .layers
             .iter()
@@ -208,17 +205,17 @@ impl<B: Backend> DFlash<B> {
 
         encoder.push_debug_group("dflash accept");
 
-        let num_tokens = accepted_indices.len();
+        let num_tokens = accepted_indices.len() as u32;
         let captured_layer_count = self.target_feature_input_dim / self.model_dim;
         assert_eq!(target_features.len(), captured_layer_count as usize);
         let layer_feature_bytes = size_for_shape(&[self.model_dim], self.data_type);
         assert!(target_features.iter().all(|features| features.size() % layer_feature_bytes == 0));
-        let context_length = state.context_length + num_tokens as u32;
+        let context_length = state.context_length + num_tokens;
         assert!(context_length <= state.context_capacity, "DFlash state capacity exceeded");
-        assert!(context_length <= self.max_context_length as u32, "DFlash context exceeds configured RoPE capacity");
+        assert!(context_length <= self.max_context_length, "DFlash context exceeds configured RoPE capacity");
 
-        let mut packed_target_features = encoder
-            .allocate_scratch(num_tokens * self.target_feature_input_dim as usize * self.data_type.size_in_bytes())?;
+        let mut packed_target_features =
+            encoder.allocate_scratch_for_shape(&[num_tokens, self.target_feature_input_dim], self.data_type)?;
         for (layer_index, features) in target_features.iter().enumerate() {
             for (token_index, &accepted_index) in accepted_indices.iter().enumerate() {
                 let source_start = accepted_index as usize * layer_feature_bytes;
@@ -232,21 +229,20 @@ impl<B: Backend> DFlash<B> {
                 );
             }
         }
-        let projected_features =
-            self.target_feature_projection.encode(packed_target_features, num_tokens as u32, encoder)?;
+        let projected_features = self.target_feature_projection.encode(packed_target_features, num_tokens, encoder)?;
         let normalized_features =
-            self.projected_feature_norm.encode(&projected_features, 0, num_tokens as u32, None, encoder)?;
-        let token_positions = (state.context_length..state.context_length + num_tokens as u32).collect::<Box<[_]>>();
+            self.projected_feature_norm.encode(&projected_features, 0, num_tokens, None, encoder)?;
+        let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, encoder)?;
 
-        let projected_kv = self.state_kv_projection.encode(normalized_features, num_tokens as u32, encoder)?;
+        let projected_kv = self.state_kv_projection.encode(normalized_features, num_tokens, encoder)?;
         let layer_kv_bytes = size_for_shape(&[self.layer_kv_dim], self.data_type);
         let kv_chunk = |chunk_index: usize| chunk_index * layer_kv_bytes..(chunk_index + 1) * layer_kv_bytes;
         let mut layer_key_values = (0..self.layers.len())
-            .map(|_| encoder.allocate_scratch(num_tokens * layer_kv_bytes))
+            .map(|_| encoder.allocate_scratch(num_tokens as usize * layer_kv_bytes))
             .collect::<Result<Box<[_]>, _>>()?;
         for (layer_index, key_value) in layer_key_values.iter_mut().enumerate() {
-            for token_index in 0..num_tokens {
+            for token_index in 0..num_tokens as usize {
                 encoder.encode_copy(
                     &projected_kv,
                     kv_chunk(token_index * self.layers.len() + layer_index),
@@ -258,17 +254,17 @@ impl<B: Backend> DFlash<B> {
         for ((layer, mixer_state), key_value) in
             self.layers.iter().zip(state.layer_states.iter_mut()).zip(layer_key_values)
         {
-            mixer_state.prepare(state.context_length, num_tokens as u32, encoder.context())?;
+            mixer_state.prepare(state.context_length, num_tokens, encoder.context())?;
             let attention = (layer.mixer.as_ref() as &dyn Any)
                 .downcast_ref::<Attention<B>>()
                 .expect("DFlash draft layers must use attention mixers");
             let attention_state = (mixer_state.as_mut() as &mut dyn Any)
                 .downcast_mut::<AttentionState<B>>()
                 .expect("DFlash draft layer states must be attention states");
-            attention.append_projected_kv(key_value, &rope, num_tokens as u32, attention_state, encoder)?;
+            attention.append_projected_kv(key_value, &rope, num_tokens, attention_state, encoder)?;
         }
 
-        state.context_length += num_tokens as u32;
+        state.context_length += num_tokens;
 
         encoder.pop_debug_group();
 
@@ -287,7 +283,7 @@ impl<B: Backend> DFlash<B> {
 
         assert!(batch_size >= 2 && batch_size <= self.block_size, "batch size exceeds DFlash block size");
         assert!(
-            state.context_length + batch_size <= self.max_context_length as u32,
+            state.context_length + batch_size <= self.max_context_length,
             "DFlash block positions exceed configured RoPE capacity"
         );
 
@@ -333,9 +329,10 @@ impl<B: Backend> DFlash<B> {
             .map_err(DFlashEncodeError::Backend)?;
 
         let row_bytes = size_for_shape(&[target_embedding.model_dim()], DataType::BF16);
+        let lookahead_rows = row_bytes..batch_size as usize * row_bytes;
         let mut lookahead_hidden =
-            encoder.allocate_scratch((batch_size as usize - 1) * row_bytes).map_err(DFlashEncodeError::Backend)?;
-        encoder.encode_copy(&draft_hidden, row_bytes..batch_size as usize * row_bytes, &mut lookahead_hidden, ..);
+            encoder.allocate_scratch(lookahead_rows.len()).map_err(DFlashEncodeError::Backend)?;
+        encoder.encode_copy(&draft_hidden, lookahead_rows, &mut lookahead_hidden, ..);
         let logits = target_embedding.encode_readout(batch_size - 1, &lookahead_hidden, DataType::F32, encoder)?;
 
         encoder.pop_debug_group();
