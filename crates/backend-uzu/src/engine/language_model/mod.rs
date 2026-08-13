@@ -117,7 +117,7 @@ impl<B: Backend> Engine<B> {
         let generation_config = config.generation_config;
 
         #[cfg(grammar)]
-        let vocab_size = config.decoder_config.vocab_size;
+        let vocab_size = config.decoder_config.vocab_size as usize;
 
         Ok(LanguageModel {
             engine: self.clone(),
@@ -127,7 +127,7 @@ impl<B: Backend> Engine<B> {
             context_ring_update,
             generation_config,
             #[cfg(grammar)]
-            vocab_size: vocab_size as usize,
+            vocab_size,
         })
     }
 }
