@@ -163,7 +163,6 @@ impl<B: Backend> ClassifierModel<B> {
         self.tap.write(output_path, metadata)
     }
 
-    /// Runs one classification pass and keeps the captured activations.
     pub fn record_trace(
         &mut self,
         input: &[u64],
@@ -189,7 +188,6 @@ impl<B: Backend> ClassifierModel<B> {
         let output = self.classifier.encode(&token_ids, input.len(), Some(request), &mut encoder)?;
         let mut tap = output.tap;
 
-        // The classifier attends over a flat sequence, so positions are 0..n.
         if let Some(transformer_tap) = tap.activations.as_mut().and_then(|a| a.transformer.as_mut()) {
             let shape = [1, input.len()];
             let host_token_ids = input.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();

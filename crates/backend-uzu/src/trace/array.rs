@@ -31,10 +31,7 @@ impl<B: Backend> Array<B> {
         })
     }
 
-    /// Copies `src` into a fresh global allocation. The copy goes through
-    /// [`Encoder::encode_copy`], so the hazard tracker orders it after whatever
-    /// kernel produced `src`. A global allocation is required because encode-chain
-    /// allocations are moved along and their ranges recycled once dropped.
+    // Global, because encode-chain allocations are moved along and recycled once dropped.
     pub fn capture(
         encoder: &mut Encoder<B>,
         src: &Allocation<B>,
@@ -50,8 +47,6 @@ impl<B: Backend> Array<B> {
         Ok(Self::expect_new(shape, data_type, destination))
     }
 
-    /// For arrays that exist only on the host, such as the i32 token ids uzu feeds
-    /// the decoder as u32.
     pub fn capture_host<T: NoUninit + AnyBitPattern>(
         encoder: &Encoder<B>,
         data: &[T],
@@ -67,7 +62,6 @@ impl<B: Backend> Array<B> {
         Ok(Self::expect_new(shape, data_type, destination))
     }
 
-    // Only I4/U4 lack a safetensors dtype, and activations are never either.
     fn expect_new(
         shape: &[usize],
         data_type: DataType,

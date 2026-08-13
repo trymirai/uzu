@@ -311,8 +311,7 @@ impl<B: Backend> Transformer<B> {
             hidden = layer_output.hidden;
 
             if let Some(layer_request) = layer_request {
-                // A layer's output is never materialized: the add is deferred into the
-                // next layer's norm, so it has to be recomputed to be captured.
+                // Never materialized: the add is deferred into the next layer's norm.
                 let outputs = layer_request
                     .outputs
                     .then(|| {

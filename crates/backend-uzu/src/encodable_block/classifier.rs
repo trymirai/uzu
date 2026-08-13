@@ -174,8 +174,6 @@ impl<B: Backend> Classifier<B> {
         }
 
         let logits = self.prediction_head.encode(pooled, 1, encoder).map_err(ClassifierError::Backend)?;
-        // lalamo carries the logits at the root and inside the activation trace, and
-        // `Array` owns its allocation, so each path gets its own capture.
         let logits_shape = [1, self.num_labels];
         if activations_request.logits {
             activations.logits = Some(

@@ -1,12 +1,10 @@
-//! Tap trees. Field names are the safetensors path segments, so these
-//! declarations *are* the trace layout; `#[tap(rename)]` maps uzu's block names
-//! onto the ones lalamo expects.
+//! Field names are the safetensors path segments; `rename` maps them onto lalamo's.
 
 use proc_macros::taps;
 
 taps! {
     pub DecoderTap {
-        // uzu materializes the embedding lookup, lalamo does not name it.
+        // No lalamo counterpart.
         #[tap(skip)]
         embedded,
         #[tap(rename = "activation_trace")]
@@ -17,8 +15,7 @@ taps! {
 
 taps! {
     pub TransformerTap {
-        // Host-built i32 arrays with no device counterpart; filled by the model's
-        // `record_trace` once encoding is done, not by `Transformer::encode`.
+        // Filled by the model's record_trace, not by Transformer::encode.
         token_ids,
         token_positions,
         rope_embeddings: [RopeTap],
@@ -67,13 +64,11 @@ taps! {
 taps! {
     pub ClassifierActivationsTap {
         embedding_norm_output,
-        // lalamo folds the transformer's arrays straight into the classifier's
-        // activation trace rather than nesting them.
+        // lalamo folds these in rather than nesting them.
         #[tap(flatten)]
         transformer: TransformerTap,
         output_pooling,
-        // Also present at the root; `Array` owns its allocation and is not `Clone`,
-        // so this one is captured separately.
+        // Also at the root; Array is not Clone, so this is a second capture.
         logits,
     }
 }
