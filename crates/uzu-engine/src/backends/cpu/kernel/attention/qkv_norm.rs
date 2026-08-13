@@ -19,7 +19,7 @@ pub fn qkv_norm<
     #[optional(has_scales)] scales: Option<*const ScaleT>,
     qkvg_output: *mut OutputT,
     batch_size: u32,
-    qkvg_heads: u32,
+    input_row_stride: u32,
     head_dim: u32,
     epsilon: f32,
     scale_offset: f32,
@@ -37,14 +37,14 @@ pub fn qkv_norm<
     let head_dim = head_dim as usize;
     let head_offset = head_offset as usize;
     let head_count = head_count as usize;
-    let qkvg_stride = qkvg_heads as usize * head_dim;
+    let input_row_stride = input_row_stride as usize;
     let head_dim_accum = AccumT::from(head_dim).unwrap();
     let epsilon = AccumT::from(epsilon).unwrap();
     let scale_offset = AccumT::from(scale_offset).unwrap();
 
     for batch in 0..(batch_size as usize) {
         for head in 0..head_count {
-            let offset = batch * qkvg_stride + (head_offset + head) * head_dim;
+            let offset = batch * input_row_stride + (head_offset + head) * head_dim;
 
             let mut total_sum = AccumT::zero();
             for i in 0..head_dim {

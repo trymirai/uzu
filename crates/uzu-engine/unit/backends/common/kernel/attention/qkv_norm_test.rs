@@ -23,7 +23,7 @@ struct Input<InputT: ArrayElement + Float, ScaleT: ArrayElement + Float, OutputT
     batch_size: u32,
     num_q_heads: u32,
     num_kv_heads: u32,
-    num_gate_heads: u32,
+    input_row_stride: u32,
     head_dim: u32,
     epsilon: f32,
     scale_offset: f32,
@@ -95,7 +95,7 @@ fn get_test_data<
         batch_size,
         num_q_heads,
         num_kv_heads,
-        num_gate_heads: 0,
+        input_row_stride: qkv_width as u32,
         head_dim,
         epsilon,
         scale_offset,
@@ -142,7 +142,7 @@ fn get_output<
         scales.as_ref(),
         &mut qkvg,
         input.batch_size,
-        input.num_q_heads + 2 * input.num_kv_heads + input.num_gate_heads,
+        input.input_row_stride,
         input.head_dim,
         input.epsilon,
         input.scale_offset,
@@ -316,10 +316,9 @@ fn test_v_addressing<
 fn test_gated_row_stride_internal() {
     let (input, _) = get_test_data::<f32, f32, f32, f32>(0, 4, false, false);
     let qkv_row = input.qkvg.to_vec();
-    let gate_heads = input.num_q_heads;
-    let gate_len = (gate_heads * input.head_dim) as usize;
+    let gate_len = (input.num_q_heads * input.head_dim) as usize;
     let qkv_len = qkv_row.len();
-    let row_len = qkv_len + gate_len;
+    let input_row_stride = qkv_len + gate_len;
     let qkvg = (0..2)
         .flat_map(|batch| {
             qkv_row.iter().copied().chain((0..gate_len).map(move |index| 10.0 + batch as f32 + index as f32 * 0.01))
@@ -329,17 +328,17 @@ fn test_gated_row_stride_internal() {
     let input = Input {
         qkvg,
         batch_size: 2,
-        num_gate_heads: gate_heads,
+        input_row_stride: input_row_stride as u32,
         ..input
     };
 
     let assert_addressing = |output: &[f32], backend: &str| {
         for batch in 0..input.batch_size as usize {
-            let row_offset = batch * row_len;
+            let row_offset = batch * input_row_stride;
             for index in row_offset..row_offset + (input.num_q_heads * input.head_dim) as usize {
                 assert_ne!(output[index], input.qkvg[index], "Q was not normalized on {backend}");
             }
-            for index in row_offset + qkv_len..row_offset + row_len {
+            for index in row_offset + qkv_len..row_offset + input_row_stride {
                 assert_eq!(output[index], input.qkvg[index], "gate was modified on {backend}");
             }
         }

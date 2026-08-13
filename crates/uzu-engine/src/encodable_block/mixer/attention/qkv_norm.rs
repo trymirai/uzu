@@ -30,7 +30,7 @@ pub struct QKVNorm<B: Backend> {
     value: Option<Head<B>>,
     num_q_heads: u32,
     num_kv_heads: u32,
-    qkvg_heads: u32,
+    projection_row_stride: u32,
     head_dim: u32,
 }
 
@@ -44,7 +44,7 @@ impl<B: Backend> QKVNorm<B> {
         parameter_tree: &ParameterTree<B>,
         num_q_heads: u32,
         num_kv_heads: u32,
-        qkvg_heads: u32,
+        projection_row_stride: u32,
         head_dim: u32,
     ) -> Result<Self, QKVNormError<B>> {
         let query = query_config
@@ -79,7 +79,7 @@ impl<B: Backend> QKVNorm<B> {
             value,
             num_q_heads,
             num_kv_heads,
-            qkvg_heads,
+            projection_row_stride,
             head_dim,
         })
     }
@@ -125,7 +125,7 @@ impl<B: Backend> QKVNorm<B> {
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.qkvg_heads, encoder)
+        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, encoder)
     }
 
     pub fn encode_key_value(
@@ -142,7 +142,7 @@ impl<B: Backend> QKVNorm<B> {
         buffer: &mut Allocation<B>,
         batch_dim: u32,
         q_heads: u32,
-        packed_heads: u32,
+        input_row_stride: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         encoder.push_debug_group("qkv norm");
@@ -161,7 +161,7 @@ impl<B: Backend> QKVNorm<B> {
                 head.scales.as_ref(),
                 &mut *buffer,
                 batch_dim,
-                packed_heads,
+                input_row_stride,
                 self.head_dim,
                 head.config.epsilon,
                 head.config.scale_offset.unwrap_or(0.0),

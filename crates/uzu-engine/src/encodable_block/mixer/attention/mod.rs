@@ -13,7 +13,7 @@ use crate::{
         mixer::{
             Mixer, MixerState,
             attention::{
-                mode::QKVGProjection,
+                mode::LinearProjection,
                 qkv_norm::{QKVNorm, QKVNormError},
                 rope::PrecalculatedRoPE,
             },
@@ -38,8 +38,8 @@ pub struct Attention<B: Backend> {
     ring_capacity: Option<u32>,
     max_rope_length: Option<u32>,
     data_type: DataType,
-    qkvg_dim: u32,
-    qkvg_projection: QKVGProjection<B>,
+    projection_dim: u32,
+    projection: LinearProjection<B>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     sinks: Option<Allocation<B>>,
     kernel: <B::Kernels as Kernels>::AttentionKernel,
@@ -81,32 +81,31 @@ impl<B: Backend> Attention<B> {
 
         let q_dim = num_q_heads * head_dim;
 
-        let qkvg_projection_tree = parameter_tree.subtree("qkvg_projection");
+        let projection_tree = parameter_tree.subtree("qkvg_projection");
         let qkv_dim = if let Some(num_kv_heads) = num_kv_heads {
             let kv_dim = num_kv_heads * head_dim;
             q_dim + kv_dim + kv_dim
         } else {
             q_dim
         };
-        let qkvg_dim = if config.has_gate {
+        let projection_dim = if config.has_gate {
             qkv_dim + q_dim
         } else {
             qkv_dim
         };
-        let (qkvg_projection, qkvg_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
+        let (projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
             hidden_dim,
-            [qkvg_dim],
+            [projection_dim],
             config.has_qkvg_biases,
             context,
             data_type,
-            &qkvg_projection_tree,
+            &projection_tree,
         )?;
 
         let query_norm_config = config.query_norm_config.clone();
         // TODO: Fix lalamo config, those two must be None if kv sharing.
         let key_norm_config = (!is_kv_sharing).then(|| config.key_norm_config.clone()).flatten();
         let value_norm_config = (!is_kv_sharing).then(|| config.value_norm_config()).flatten();
-        let qkvg_heads = qkvg_dim / head_dim;
         let qkv_norm = (query_norm_config.is_some() || key_norm_config.is_some() || value_norm_config.is_some())
             .then(|| {
                 QKVNorm::new(
@@ -118,7 +117,7 @@ impl<B: Backend> Attention<B> {
                     parameter_tree,
                     config.num_heads,
                     num_kv_heads.unwrap_or(0), // TODO: should take option
-                    qkvg_heads,
+                    projection_dim,
                     config.head_dim,
                 )
             })
@@ -180,9 +179,9 @@ impl<B: Backend> Attention<B> {
                 ring_capacity,
                 max_rope_length,
                 data_type,
-                qkvg_dim,
-                qkvg_projection: QKVGProjection {
-                    lin: qkvg_projection,
+                projection_dim,
+                projection: LinearProjection {
+                    lin: projection,
                     norm: qkv_norm,
                 },
                 prepare,
@@ -191,7 +190,7 @@ impl<B: Backend> Attention<B> {
                 gate_kernel,
                 out_projection,
             },
-            qkvg_projection_input_hadamard_factors,
+            in_projection_input_hadamard_factors,
         ))
     }
 }

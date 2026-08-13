@@ -7,7 +7,6 @@ use crate::config::{
 
 #[uzu_config(super::TokenMixerConfig)]
 pub struct AttentionConfig {
-    /// Unified QKVG projection; ungated attention omits the G output segment.
     pub qkvg_projection_config: LinearConfig,
     pub out_projection_config: LinearConfig,
 

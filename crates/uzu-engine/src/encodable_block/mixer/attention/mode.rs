@@ -15,12 +15,12 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-pub(super) struct QKVGProjection<B: Backend> {
+pub(super) struct LinearProjection<B: Backend> {
     pub(super) lin: Box<dyn Linear<B>>,
     pub(super) norm: Option<QKVNorm<B>>,
 }
 
-impl<B: Backend> QKVGProjection<B> {
+impl<B: Backend> LinearProjection<B> {
     fn project(
         &self,
         hidden: Allocation<B>,
@@ -44,7 +44,7 @@ impl<B: Backend> Attention<B> {
         state: Option<MaybeMut<AttentionState<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let qkvg = self.qkvg_projection.project(hidden, batch_dim.size(), encoder)?;
+        let qkvg = self.projection.project(hidden, batch_dim.size(), encoder)?;
 
         let mut attention_output = match state {
             Some(MaybeMut::Mut(state)) => {
@@ -107,13 +107,13 @@ impl<B: Backend> Attention<B> {
 
         if let Some(gate_kernel) = &self.gate_kernel {
             let gate_dim = self.num_q_heads * self.head_dim;
-            let gate_offset = self.qkvg_dim - gate_dim;
+            let gate_offset = self.projection_dim - gate_dim;
             gate_kernel.encode(
                 (&qkvg, gate_offset as usize * self.data_type.size_in_bytes()),
                 &mut attention_output,
                 gate_dim,
                 batch_dim.size(),
-                self.qkvg_dim,
+                self.projection_dim,
                 encoder,
             );
         }
@@ -128,7 +128,7 @@ impl<B: Backend> Attention<B> {
         state: &mut AttentionState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        if let Some(norm) = &self.qkvg_projection.norm {
+        if let Some(norm) = &self.projection.norm {
             norm.encode_key_value(&mut key_value, batch_dim, encoder)?;
         }
         let prefix_len = state.view().prefix_len();
@@ -191,7 +191,7 @@ impl<B: Backend> Attention<B> {
         let input_row_stride = if num_q_heads == 0 {
             2 * num_kv_heads * self.head_dim
         } else {
-            self.qkvg_dim
+            self.projection_dim
         };
         let mut queries = if num_q_heads == 0 {
             encoder.allocate_scratch(self.data_type.size_in_bytes())?
@@ -238,7 +238,7 @@ impl<B: Backend> Attention<B> {
             self.head_dim,
             precalculated_rope.map(|rope| rope.dim),
             None,
-            self.qkvg_dim,
+            self.projection_dim,
             batch_dim,
             encoder,
         );
