@@ -5,6 +5,7 @@ pub fn moe_tile_counts(
     #[allow(unused)] offsets: *const u32,
     #[allow(unused)] tile_counts: *mut u32,
     #[allow(unused)] e: u32,
+    #[allow(unused)] row_tile_size: u32,
 ) {
     todo!()
 }
@@ -26,6 +27,7 @@ pub fn moe_build_tile_map(
     #[allow(unused)] tile_counts: *const u32,
     #[allow(unused)] tile_map: *mut u32,
     #[allow(unused)] e: u32,
+    #[allow(unused)] row_tile_size: u32,
 ) {
     todo!()
 }

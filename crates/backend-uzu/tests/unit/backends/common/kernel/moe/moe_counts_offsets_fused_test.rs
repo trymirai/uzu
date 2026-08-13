@@ -47,8 +47,10 @@ fn get_output<B: Backend>(
     };
     let mut offsets = alloc_allocation::<B, u32>(&context, e + 1);
     let mut sum_k = alloc_allocation::<B, u32>(&context, 1);
+    let num_blocks = t.div_ceil(256);
     let num_tiles = e.div_ceil(512).max(1);
-    let mut partials = alloc_allocation::<B, u32>(&context, num_tiles * 512);
+    let partial_entries = (num_blocks * num_tiles * 512).max(1);
+    let mut partials = alloc_allocation::<B, u32>(&context, partial_entries);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
@@ -65,14 +67,24 @@ fn get_output<B: Backend>(
 
     let offsets = allocation_to_vec::<B, u32>(&offsets);
     let sum_k = allocation_to_vec::<B, u32>(&sum_k)[0];
-    let partials = allocation_prefix_to_vec::<B, u32>(&partials, e);
+    let partials = allocation_prefix_to_vec::<B, u32>(&partials, partial_entries);
+    let partials = (0..num_blocks)
+        .flat_map(|block_id| {
+            let partials = &partials;
+            (0..e).map(move |expert_id| {
+                let tile_id = expert_id / 512;
+                let tile_expert_id = expert_id % 512;
+                partials[(block_id * num_tiles + tile_id) * 512 + tile_expert_id]
+            })
+        })
+        .collect();
 
     (offsets, sum_k, partials)
 }
 
 #[uzu_test]
 fn test_counts_offsets_fused_parity_random() {
-    let shapes = vec![(1usize, 4usize), (7, 16), (64, 64), (1024, 128)];
+    let shapes = vec![(1usize, 4usize), (7, 16), (64, 64), (257, 160), (1024, 128)];
     let ks = vec![1usize, 2usize, 4usize];
 
     for &(t, e) in &shapes {
@@ -92,6 +104,23 @@ fn test_counts_offsets_fused_parity_random() {
             });
         }
     }
+}
+
+#[uzu_test]
+fn test_counts_offsets_fused_preserves_scatter_block_histograms() {
+    let (t, e, k) = (257usize, 2usize, 1usize);
+    let mut topk_ids = vec![0i32; t];
+    topk_ids[256] = 1;
+    let expected_offsets = vec![0, 256, 257];
+    let expected_partials = vec![256, 0, 0, 1];
+
+    for_each_backend!(|B| {
+        let (offsets, sum_k, partials) = get_output::<B>(&topk_ids, t, e, k);
+        let backend_name = std::any::type_name::<B>();
+        assert_eq!(offsets, expected_offsets, "offsets mismatch backend={}", backend_name);
+        assert_eq!(sum_k, t as u32, "sum mismatch backend={}", backend_name);
+        assert_eq!(partials, expected_partials, "scatter-block partials mismatch backend={}", backend_name);
+    });
 }
 
 #[uzu_test]

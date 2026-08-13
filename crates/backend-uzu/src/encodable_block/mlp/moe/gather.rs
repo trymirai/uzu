@@ -44,8 +44,8 @@ impl<B: Backend> MoeGather<B> {
     ) -> Result<Allocation<B>, B::Error> {
         let mut x_perm =
             encoder.allocate_scratch(size_for_shape(&[batch_dim * num_active_experts, d_model], self.data_type))?;
-        encoder.encode_fill(&mut x_perm, 0);
 
+        // The routing invariants supply every routed row, so gather initializes the allocation completely.
         match &self.variant {
             MoeGatherVariant::OneD(kernel) => kernel.encode(
                 input,

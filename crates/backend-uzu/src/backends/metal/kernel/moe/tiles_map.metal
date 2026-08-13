@@ -2,19 +2,18 @@
 #include <metal_atomic>
 #include "../common/dsl.h"
 
-#define BM 16
-
-// Compute per-expert tile counts: tiles_e = ceil((seg_len)/BM)
+// Compute per-expert tile counts for the schedule's selected row tile.
 PUBLIC KERNEL(MoeTileCounts)(
     device const uint* offsets, // [e+1]
     device uint* tile_counts,   // [e]
     constant uint& e,
+    constant uint& row_tile_size,
     const uint gid AXIS(e, 256)
 ) {
   const uint start = offsets[gid];
   const uint end = offsets[gid + 1];
   const uint seg_len = (end > start) ? (end - start) : 0u;
-  const uint tiles = (seg_len == 0u) ? 0u : ((seg_len + BM - 1u) / BM);
+  const uint tiles = (seg_len == 0u) ? 0u : ((seg_len + row_tile_size - 1u) / row_tile_size);
   tile_counts[gid] = tiles;
 }
 
@@ -79,6 +78,7 @@ PUBLIC KERNEL(MoeBuildTileMap)(
     device const uint* tile_counts,      // [e]
     device uint* tile_map,               // [3*total_tiles]
     constant uint& e,
+    constant uint& row_tile_size,
     uint gid AXIS(e, 256)
 ) {
   const uint start = offsets[gid];
@@ -88,7 +88,7 @@ PUBLIC KERNEL(MoeBuildTileMap)(
     const uint idx = base + t;
     tile_map[3u * idx + 0u] = gid;
     tile_map[3u * idx + 1u] = start;
-    tile_map[3u * idx + 2u] = t * BM;
+    tile_map[3u * idx + 2u] = t * row_tile_size;
   }
 }
 

@@ -1,4 +1,6 @@
 pub mod counts_offsets_fused;
+pub mod experts_mxfp4_decode;
+pub mod experts_mxfp4_prefill;
 pub mod experts_two_pass_decode;
 pub mod experts_two_pass_prefill;
 pub mod finalize;

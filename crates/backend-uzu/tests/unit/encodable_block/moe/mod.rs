@@ -1,10 +1,14 @@
 use super::{
+    experts_mxfp4_decode::{MoeExpertsMxfp4Arguments, MoeExpertsMxfp4DecodeBlock},
+    experts_mxfp4_prefill::MoeExpertsMxfp4PrefillBlock,
     experts_two_pass_decode::MoeExpertsTwoPassDecodeBlock,
     experts_two_pass_prefill::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock},
     gather::MoeGather,
 };
 
 mod moe_block_e2e_test;
+mod moe_block_mxfp4_test;
+mod moe_experts_mxfp4_test;
 mod moe_experts_perf_test;
 mod moe_experts_test;
 mod moe_perf_test;
