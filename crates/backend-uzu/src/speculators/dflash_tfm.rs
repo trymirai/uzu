@@ -211,12 +211,12 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 let tokens = sampled.copyout::<u32>();
                 drop(completed);
                 nodes.extend(tokens.into_iter().enumerate().map(|(index, token_id)| {
-                    let depth = index + 1;
+                    let depth = index as u32 + 1;
                     ProposalNode {
                         token_id,
-                        depth: depth as u32,
-                        child_indices: if depth < chain_length as usize {
-                            vec![depth + 1]
+                        depth,
+                        child_indices: if depth < chain_length {
+                            vec![index + 2]
                         } else {
                             Vec::new()
                         },

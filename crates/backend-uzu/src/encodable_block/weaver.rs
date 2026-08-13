@@ -113,7 +113,7 @@ pub enum WeaverNewError<B: Backend> {
     #[error("model_dim must be divisible by num_heads")]
     InvalidHeadConfig,
     #[error("candidate_pool_size must be in 1..={max}, got {0}", max = CANDIDATES_MAX)]
-    InvalidCandidatePoolSize(usize),
+    InvalidCandidatePoolSize(u32),
     #[error("rope head_dim {actual} does not match model_dim / num_heads = {expected}")]
     InvalidRopeHeadDim {
         expected: u32,
@@ -150,7 +150,7 @@ impl<B: Backend> Weaver<B> {
             return Err(WeaverNewError::InvalidHeadConfig);
         }
         if config.candidate_pool_size == 0 || config.candidate_pool_size > CANDIDATES_MAX {
-            return Err(WeaverNewError::InvalidCandidatePoolSize(config.candidate_pool_size as usize));
+            return Err(WeaverNewError::InvalidCandidatePoolSize(config.candidate_pool_size));
         }
         let head_dim = config.model_dim / config.num_heads;
         if *config.rope_config.head_dim() != head_dim {
