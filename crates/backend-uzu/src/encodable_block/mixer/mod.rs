@@ -51,11 +51,11 @@ impl<'a, B: Backend> MaybeMut<'a, dyn MixerState<B>> {
 pub trait Mixer<B: Backend>: Any + Send + Sync {
     fn speculation_supported(&self) -> bool;
 
-    fn max_context_length(&self) -> Option<usize>;
+    fn max_context_length(&self) -> Option<u32>;
 
     fn create_empty_state(
         &self,
-        max_context_length: Option<usize>,
+        max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error>;
 

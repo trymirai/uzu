@@ -277,13 +277,13 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         true
     }
 
-    fn max_context_length(&self) -> Option<usize> {
+    fn max_context_length(&self) -> Option<u32> {
         None
     }
 
     fn create_empty_state(
         &self,
-        _max_context_length: Option<usize>,
+        _max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
         let mut conv_state = context.create_allocation(

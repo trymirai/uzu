@@ -119,7 +119,7 @@ impl<B: Backend> Decoder<B> {
         self.transformer.speculation_supported()
     }
 
-    pub fn max_context_length(&self) -> Option<usize> {
+    pub fn max_context_length(&self) -> Option<u32> {
         self.transformer.max_context_length()
     }
 
@@ -129,7 +129,7 @@ impl<B: Backend> Decoder<B> {
 
     pub fn create_empty_state(
         &self,
-        max_context_length: Option<usize>,
+        max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<TransformerState<B>, B::Error> {
         self.transformer.create_empty_state(max_context_length, context)

@@ -48,7 +48,7 @@ pub fn get_grammar(
 pub fn get_max_context_length<B: Backend>(
     model: &LanguageModel<B>,
     context_length: ContextLength,
-) -> Option<usize> {
+) -> Option<u32> {
     match context_length {
         ContextLength::Default {
             ..
@@ -58,7 +58,7 @@ pub fn get_max_context_length<B: Backend>(
         } => model.max_context_length(),
         ContextLength::Custom {
             length,
-        } => Some(length.max(0) as usize),
+        } => Some(length.max(0) as u32),
     }
 }
 

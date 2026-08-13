@@ -102,7 +102,11 @@ impl<B: Backend> ClassifierModel<B> {
             return Err(ClassifierModelClassifyError::EmptyInput);
         }
 
-        if self.classifier.max_context_length().is_some_and(|max_context_length| input.len() > max_context_length) {
+        if self
+            .classifier
+            .max_context_length()
+            .is_some_and(|max_context_length| input.len() > max_context_length as usize)
+        {
             return Err(ClassifierModelClassifyError::ContextOverflow);
         }
 

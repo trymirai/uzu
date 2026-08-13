@@ -142,7 +142,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         if model_state
             .max_context_length
-            .is_some_and(|max_context_length| model_state.tokens.len() + input.len() > max_context_length)
+            .is_some_and(|max_context_length| model_state.tokens.len() + input.len() > max_context_length as usize)
         {
             return Err(LanguageModelStreamError::ContextOverflow);
         }
@@ -521,11 +521,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         let context_length = self.model_state.transformer_state.context_length();
 
-        if self
-            .model_state
-            .max_context_length
-            .is_some_and(|max_context_length| context_length >= max_context_length as u32)
-        {
+        if self.model_state.max_context_length.is_some_and(|max_context_length| context_length >= max_context_length) {
             self.decoding_state = DecodingState::Halted;
             return Ok(Some(
                 prev_output
@@ -552,9 +548,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         };
 
         let full_batch_size = 32;
-        let speculation_batch = self.model_state.max_context_length.map_or(full_batch_size, |max_context_length| {
-            full_batch_size.min(max_context_length as u32 - context_length)
-        });
+        let speculation_batch = self
+            .model_state
+            .max_context_length
+            .map_or(full_batch_size, |max_context_length| full_batch_size.min(max_context_length - context_length));
 
         let mut pending = Vec::new();
         let (input_trie, chain_copy, full_accept) = if speculation_batch > 1

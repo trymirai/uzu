@@ -173,10 +173,10 @@ impl<B: Backend> Transformer<B> {
         self.layers.iter().all(|(layer, _rope)| layer.mixer.speculation_supported())
     }
 
-    pub fn max_context_length(&self) -> Option<usize> {
+    pub fn max_context_length(&self) -> Option<u32> {
         self.layers.iter().map(|(layer, _rope_index)| layer.mixer.max_context_length()).fold(None, |acc, el| {
             match (acc, el) {
-                (Some(a), Some(b)) => Some(usize::min(a, b)),
+                (Some(a), Some(b)) => Some(u32::min(a, b)),
                 (Some(x), None) | (None, Some(x)) => Some(x),
                 (None, None) => None,
             }
@@ -200,7 +200,7 @@ impl<B: Backend> Transformer<B> {
 
     pub fn create_empty_state(
         &self,
-        max_context_length: Option<usize>,
+        max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<TransformerState<B>, B::Error> {
         let layer_states = self

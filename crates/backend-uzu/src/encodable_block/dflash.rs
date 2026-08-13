@@ -183,7 +183,7 @@ impl<B: Backend> DFlash<B> {
         let layer_states = self
             .layers
             .iter()
-            .map(|layer| layer.mixer.create_empty_state(Some(context_capacity as usize), context))
+            .map(|layer| layer.mixer.create_empty_state(Some(context_capacity), context))
             .collect::<Result<Box<[_]>, B::Error>>()?;
         Ok(DFlashState {
             layer_states,

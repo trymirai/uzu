@@ -39,7 +39,7 @@ pub struct Attention<B: Backend> {
     num_kv_heads: Option<u32>,
     is_causal: bool,
     sliding_window_size: Option<u32>,
-    max_rope_length: Option<usize>,
+    max_rope_length: Option<u32>,
     data_type: DataType,
     qkv: LinearProjection<B>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
@@ -81,7 +81,7 @@ impl<B: Backend> Attention<B> {
 
         let is_causal = config.is_causal;
         let sliding_window_size = config.sliding_window_size;
-        let max_rope_length = rope_config.map(|rope_config| *rope_config.max_sequence_length() as usize);
+        let max_rope_length = rope_config.map(|rope_config| *rope_config.max_sequence_length());
 
         let q_dim = num_q_heads * head_dim;
 
@@ -245,13 +245,13 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         true
     }
 
-    fn max_context_length(&self) -> Option<usize> {
+    fn max_context_length(&self) -> Option<u32> {
         self.max_rope_length
     }
 
     fn create_empty_state(
         &self,
-        max_context_length: Option<usize>,
+        max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
         Ok(Box::new(AttentionState::create_empty(self, max_context_length, context)?))

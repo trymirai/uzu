@@ -133,11 +133,11 @@ impl<B: Backend> Engine<B> {
 }
 
 impl<B: Backend> LanguageModel<B> {
-    pub fn max_context_length(&self) -> Option<usize> {
+    pub fn max_context_length(&self) -> Option<u32> {
         self.decoder.max_context_length()
     }
 
-    pub fn recommended_context_length(&self) -> Option<usize> {
+    pub fn recommended_context_length(&self) -> Option<u32> {
         let max_context_length = self.max_context_length();
 
         // TODO: This is not the correct way to do it, there should be a real memory model
@@ -157,7 +157,7 @@ impl<B: Backend> LanguageModel<B> {
                 16384
             };
 
-            Some(usize::min(max_context_length, platform_recommended_context_length))
+            Some(u32::min(max_context_length, platform_recommended_context_length))
         } else {
             // We just assume that unlimited context means constant state size on all mixers and is thus free
             None

@@ -104,7 +104,7 @@ impl<B: Backend> Classifier<B> {
         })
     }
 
-    pub fn max_context_length(&self) -> Option<usize> {
+    pub fn max_context_length(&self) -> Option<u32> {
         self.transformer.max_context_length()
     }
 

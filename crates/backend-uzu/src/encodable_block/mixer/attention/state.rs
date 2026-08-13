@@ -69,7 +69,7 @@ pub struct AttentionState<B: Backend> {
 impl<B: Backend> AttentionState<B> {
     pub fn create_empty(
         attention: &Attention<B>,
-        max_context_length: Option<usize>,
+        max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
         if let Some(max_context_length) = max_context_length {
@@ -86,11 +86,11 @@ impl<B: Backend> AttentionState<B> {
         {
             sliding_window_size
         } else if let Some(max_context_length) = max_context_length {
-            max_context_length as u32
+            max_context_length
         } else {
             attention
                 .max_rope_length
-                .expect("Cannot create full attention state with unlimited length for with no RoPE") as u32
+                .expect("Cannot create full attention state with unlimited length for with no RoPE")
         };
 
         let state_type = if attention.is_causal && attention.sliding_window_size.is_some() {
