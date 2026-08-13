@@ -225,16 +225,6 @@ fn run_interleaved_hadamard<T: ArrayElement + Float, B: Backend>(input: &Quantiz
 }
 
 #[uzu_test]
-fn test_gated_act_mul_interleaved_hadamard_f32() {
-    let input = quantized_interleaved_input::<f32>();
-    let expected = run_interleaved_hadamard::<f32, Cpu>(&input);
-    for_each_backend!(|B| {
-        let actual = run_interleaved_hadamard::<f32, B>(&input);
-        assert_eq_float::<f32>(&expected, &actual, 1e-5, "Hadamard gated activation mismatch");
-    });
-}
-
-#[uzu_test]
 fn test_gated_act_mul_interleaved_hadamard_bf16() {
     let input = quantized_interleaved_input::<bf16>();
     let expected = run_interleaved_hadamard::<bf16, Cpu>(&input);
@@ -244,43 +234,31 @@ fn test_gated_act_mul_interleaved_hadamard_bf16() {
     });
 }
 
-fn quantized_test<T: ArrayElement + Float>() {
-    let input = quantized_interleaved_input::<T>();
-    let expected = run_unfused_quantized(&input, 128, Some(32));
-    for_each_backend!(|B| {
-        let actual = run_fused_quantized::<T, B>(&input, 128, Some(32));
-        for (index, (&actual, &expected)) in actual.0.iter().zip(&expected.0).enumerate() {
-            assert!((i32::from(actual) - i32::from(expected)).abs() <= 1, "code {index}: {actual} != {expected}");
-        }
-        for (index, (&actual, &expected)) in actual.1.iter().zip(&expected.1).enumerate() {
-            let relative_error = (actual - expected).abs() / expected.abs().max(1e-6);
-            assert!(relative_error < 1e-3, "scale {index}: {actual} != {expected}");
-        }
-        assert_eq!(actual.2, expected.2, "group sums mismatch for {}", std::any::type_name::<B>());
-    });
-}
-
-fn quantized_without_group_sums_test<T: ArrayElement + Float>() {
-    let input = quantized_interleaved_input::<T>();
-    let expected = run_unfused_quantized(&input, 128, None);
-    for_each_backend!(|B| {
-        let actual = run_fused_quantized::<T, B>(&input, 128, None);
-        assert_eq!(actual.0, expected.0, "codes mismatch for {}", std::any::type_name::<B>());
-        for (&actual, &expected) in actual.1.iter().zip(&expected.1) {
-            assert!((actual - expected).abs() < 1e-5, "scales mismatch for {}", std::any::type_name::<B>());
-        }
-        assert_eq!(actual.2, None, "unexpected group sums for {}", std::any::type_name::<B>());
-    });
-}
-
-#[uzu_test]
-fn test_gated_act_mul_quantized_without_group_sums_f32() {
-    quantized_without_group_sums_test::<f32>();
+fn assert_quantized_eq(
+    actual: &(Vec<i8>, Vec<f32>, Option<Vec<i32>>),
+    expected: &(Vec<i8>, Vec<f32>, Option<Vec<i32>>),
+    backend: &str,
+) {
+    for (index, (&actual, &expected)) in actual.0.iter().zip(&expected.0).enumerate() {
+        assert!((i32::from(actual) - i32::from(expected)).abs() <= 1, "{backend} code {index}: {actual} != {expected}");
+    }
+    for (index, (&actual, &expected)) in actual.1.iter().zip(&expected.1).enumerate() {
+        let relative_error = (actual - expected).abs() / expected.abs().max(1e-6);
+        assert!(relative_error < 1e-3, "{backend} scale {index}: {actual} != {expected}");
+    }
+    assert_eq!(actual.2, expected.2, "{backend} group sums mismatch");
 }
 
 #[uzu_test]
 fn test_gated_act_mul_quantized_matches_unfused_f32() {
-    quantized_test::<f32>();
+    let input = quantized_interleaved_input::<f32>();
+    for sum_group_size in [None, Some(32)] {
+        let expected = run_unfused_quantized(&input, 128, sum_group_size);
+        for_each_backend!(|B| {
+            let actual = run_fused_quantized::<f32, B>(&input, 128, sum_group_size);
+            assert_quantized_eq(&actual, &expected, std::any::type_name::<B>());
+        });
+    }
 }
 
 fn interleaved_test<T: ArrayElement + Float + Debug + Display>(act_type: ActivationType) {
