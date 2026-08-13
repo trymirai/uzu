@@ -196,7 +196,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             model_state
                 .transformer_state
                 .prepare(
-                    (model_state.transformer_state.context_length() + (number_of_batches - 1) * max_batch_size) as u32,
+                    model_state.transformer_state.context_length() + ((number_of_batches - 1) * max_batch_size) as u32,
                     usize::min(max_batch_size, input.len()) as u32,
                     &model.engine.context,
                 )
@@ -519,7 +519,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         let context_length = self.model_state.transformer_state.context_length();
 
-        if self.model_state.max_context_length.is_some_and(|max_context_length| context_length >= max_context_length) {
+        if self
+            .model_state
+            .max_context_length
+            .is_some_and(|max_context_length| context_length >= max_context_length as u32)
+        {
             self.decoding_state = DecodingState::Halted;
             return Ok(Some(
                 prev_output
@@ -548,7 +552,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         let speculation_batch = self
             .model_state
             .max_context_length
-            .map_or(32, |max_context_length| 32.min(max_context_length - context_length));
+            .map_or(32, |max_context_length| 32.min(max_context_length - context_length as usize));
 
         let mut pending = Vec::new();
         let (input_trie, chain_copy, full_accept) = if speculation_batch > 1
@@ -614,11 +618,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         self.model_state
             .transformer_state
-            .prepare(
-                self.model_state.transformer_state.context_length() as u32,
-                batch_dim.size(),
-                &self.model.engine.context,
-            )
+            .prepare(self.model_state.transformer_state.context_length(), batch_dim.size(), &self.model.engine.context)
             .map_err(LanguageModelStreamError::Backend)?;
 
         let hidden_feature_layer_indices =

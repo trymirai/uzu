@@ -65,7 +65,7 @@ pub enum AttentionNewError<B: Backend> {
 
 impl<B: Backend> Attention<B> {
     pub fn new(
-        hidden_dim: usize,
+        hidden_dim: u32,
         data_type: DataType,
         rope_config: Option<&AnyRoPEConfig>,
         config: &AttentionConfig,
@@ -97,7 +97,7 @@ impl<B: Backend> Attention<B> {
         };
         let (qkv_projection, in_projection_input_hadamard_factors) = if !has_gate {
             <dyn Linear<B>>::new_extracting_input_hadamard(
-                hidden_dim as u32,
+                hidden_dim,
                 [qkv_projection_output_dimension],
                 config.has_qkv_biases,
                 context,
@@ -107,7 +107,7 @@ impl<B: Backend> Attention<B> {
         } else {
             (
                 <dyn Linear<B>>::new(
-                    hidden_dim as u32,
+                    hidden_dim,
                     [qkv_projection_output_dimension],
                     config.has_qkv_biases,
                     context,
@@ -121,7 +121,7 @@ impl<B: Backend> Attention<B> {
         let gate_projection = has_gate
             .then(|| {
                 <dyn Linear<B>>::new(
-                    hidden_dim as u32,
+                    hidden_dim,
                     [q_dim],
                     false,
                     context,
@@ -207,7 +207,7 @@ impl<B: Backend> Attention<B> {
 
         let out_projection = <dyn Linear<B>>::new(
             q_dim,
-            [hidden_dim as u32],
+            [hidden_dim],
             config.has_out_biases,
             context,
             data_type,

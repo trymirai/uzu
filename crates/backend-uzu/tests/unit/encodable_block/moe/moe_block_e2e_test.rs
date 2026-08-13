@@ -382,8 +382,9 @@ fn run_moe_parity_test_internal<B: Backend>(
     );
 
     let gather = MoeGather::<B>::new(ctx, DataType::BF16).expect("gather");
-    let x_perm_buf =
-        gather.encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k, d_model, &mut encoder).expect("gather");
+    let x_perm_buf = gather
+        .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k as u32, d_model as u32, &mut encoder)
+        .expect("gather");
 
     let total_rows = t * k;
 

@@ -93,7 +93,7 @@ impl<B: Backend> dyn Mixer<B> {
         match config {
             AnyTokenMixerConfig::AttentionConfig(config) => {
                 let (attention, in_projection_input_hadamard_factors) =
-                    Attention::new(hidden_dim as usize, data_type, rope_config, config, parameter_tree, context)?;
+                    Attention::new(hidden_dim, data_type, rope_config, config, parameter_tree, context)?;
 
                 Ok((Box::new(attention), in_projection_input_hadamard_factors))
             },

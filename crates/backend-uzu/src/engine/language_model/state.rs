@@ -46,7 +46,9 @@ impl<B: Backend> LanguageModel<B> {
             .speculator
             .as_ref()
             .map(|speculator| {
-                speculator.empty_state(max_context_length.expect("speculator doesn't support unlimited state capacity"))
+                speculator.empty_state(
+                    (max_context_length.expect("speculator doesn't support unlimited state capacity")) as u32,
+                )
             })
             .transpose()
             .map_err(LanguageModelCreateEmptyStateError::Backend)?;

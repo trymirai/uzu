@@ -91,9 +91,9 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
     pub fn empty_state(
         &self,
-        context_capacity: usize,
+        context_capacity: u32,
     ) -> Result<DFlashState<B>, B::Error> {
-        self.dflash.empty_state(context_capacity as u32, &self.context)
+        self.dflash.empty_state(context_capacity, &self.context)
     }
 
     pub fn encode_accept(
@@ -134,7 +134,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let max_depth = self.config.weaver_config.max_depth;
         let depth_seeds =
-            (0..max_depth).map(|depth| prng.derive((root_position + depth as usize) as u64)).collect::<Box<[u64]>>();
+            (0..max_depth).map(|depth| prng.derive((root_position + depth) as u64)).collect::<Box<[u64]>>();
         let tree = self.weaver.encode_tree(
             target_output_norm,
             &dflash_output.draft_hidden,
@@ -190,7 +190,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         Ok(recursive_build(
             &nodes,
             0,
-            root_position,
+            root_position as usize,
             #[cfg(grammar)]
             grammar,
             prng,

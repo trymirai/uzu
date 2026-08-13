@@ -321,7 +321,7 @@ fn test_moe_pipeline_breakdown_decode() {
         let gather_perf = run_perf_with_warmup("Gather", 2, 5, || {
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
             let x_perm = gather
-                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k, d_model, &mut encoder)
+                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k as u32, d_model as u32, &mut encoder)
                 .expect("failed to encode MoE gather");
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
             drop(x_perm);
@@ -331,7 +331,7 @@ fn test_moe_pipeline_breakdown_decode() {
         let (x_perm_buf, x_perm_completed) = {
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
             let x_perm = gather
-                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k, d_model, &mut encoder)
+                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k as u32, d_model as u32, &mut encoder)
                 .expect("failed to encode MoE gather");
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
             (x_perm, completed)

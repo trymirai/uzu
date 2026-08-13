@@ -39,8 +39,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
             &ids_allocation,
             &sumk_allocation,
             input.t as u32,
-            input.sum_k / input.t,
-            input.d_model,
+            (input.sum_k / input.t) as u32,
+            input.d_model as u32,
             &mut encoder,
         )
         .expect("Failed to encode MoE gather");

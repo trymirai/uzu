@@ -300,8 +300,8 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             &bucketed_ids,
             &sumk,
             batch_dim,
-            self.num_active_experts as usize,
-            self.model_dim as usize,
+            self.num_active_experts,
+            self.model_dim,
             encoder,
         )?;
 

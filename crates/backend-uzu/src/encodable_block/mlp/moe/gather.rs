@@ -37,35 +37,21 @@ impl<B: Backend> MoeGather<B> {
         bucketed_ids: &Allocation<B>,
         sumk: &Allocation<B>,
         batch_dim: u32,
-        num_active_experts: usize,
-        d_model: usize,
+        num_active_experts: u32,
+        d_model: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut x_perm = encoder
-            .allocate_scratch_for_shape(&[batch_dim * num_active_experts as u32, d_model as u32], self.data_type)?;
+        let mut x_perm =
+            encoder.allocate_scratch_for_shape(&[batch_dim * num_active_experts, d_model], self.data_type)?;
         encoder.encode_fill(&mut x_perm, 0);
 
         match &self.variant {
-            MoeGatherVariant::OneD(kernel) => kernel.encode(
-                input,
-                bucketed_ids,
-                &mut x_perm,
-                sumk,
-                d_model as u32,
-                batch_dim,
-                num_active_experts as u32,
-                encoder,
-            ),
-            MoeGatherVariant::TwoD(kernel) => kernel.encode(
-                input,
-                bucketed_ids,
-                &mut x_perm,
-                sumk,
-                d_model as u32,
-                batch_dim,
-                num_active_experts as u32,
-                encoder,
-            ),
+            MoeGatherVariant::OneD(kernel) => {
+                kernel.encode(input, bucketed_ids, &mut x_perm, sumk, d_model, batch_dim, num_active_experts, encoder)
+            },
+            MoeGatherVariant::TwoD(kernel) => {
+                kernel.encode(input, bucketed_ids, &mut x_perm, sumk, d_model, batch_dim, num_active_experts, encoder)
+            },
         };
 
         Ok(x_perm)

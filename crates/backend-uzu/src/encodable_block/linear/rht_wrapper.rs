@@ -46,10 +46,10 @@ pub(super) fn int8_activations_eligible<B: Backend>(
     let (Some(info), Layout::OutputInput) = (spec.quantization, &spec.layout) else {
         return false;
     };
-    let group_size = info.group_size as usize;
+    let group_size = info.group_size;
     matches!(group_size, 32 | 64 | 128)
         && input_dimension.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
-        && input_dimension.is_multiple_of(group_size as u32)
+        && input_dimension.is_multiple_of(group_size)
         && input_dimension.is_multiple_of(activation_group_size)
 }
 

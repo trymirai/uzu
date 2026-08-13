@@ -36,8 +36,8 @@ pub struct DFlashState<B: Backend> {
 }
 
 impl<B: Backend> DFlashState<B> {
-    pub fn context_length(&self) -> usize {
-        self.context_length as usize
+    pub fn context_length(&self) -> u32 {
+        self.context_length
     }
 }
 
