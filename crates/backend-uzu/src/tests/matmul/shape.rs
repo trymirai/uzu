@@ -3,16 +3,16 @@ use derive_more::Display;
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
 #[display("M[{m}]K[{k}]N[{n}]")]
 pub struct Shape {
-    pub m: usize,
-    pub k: usize,
-    pub n: usize,
+    pub m: u32,
+    pub k: u32,
+    pub n: u32,
 }
 
 impl Shape {
     pub const fn new(
-        m: usize,
-        k: usize,
-        n: usize,
+        m: u32,
+        k: u32,
+        n: u32,
     ) -> Self {
         Self {
             m,
@@ -49,16 +49,16 @@ pub fn bench_fp_gemm_shapes() -> impl Iterator<Item = Shape> {
     BENCH_FP_GEMM.iter().copied()
 }
 
-const BENCH_NK: &[(usize, usize)] =
+const BENCH_NK: &[(u32, u32)] =
     &[(2048, 2048), (2048, 4096), (4096, 4096), (4096, 14336), (14336, 4096), (14336, 14336)];
 
 pub fn bench_quant_gemm_shapes(bits: u32) -> impl Iterator<Item = Shape> {
-    let block_size: usize = if bits == 4 {
+    let block_size: u32 = if bits == 4 {
         512
     } else {
         256
     };
-    let ms = &[4usize, 5, 6, 7, 8, 16, 32, 48, 64];
+    let ms = &[4u32, 5, 6, 7, 8, 16, 32, 48, 64];
     BENCH_NK
         .iter()
         .filter(move |&&(n, k)| n % 32 == 0 && k % block_size == 0)
@@ -66,19 +66,19 @@ pub fn bench_quant_gemm_shapes(bits: u32) -> impl Iterator<Item = Shape> {
 }
 
 pub fn bench_quant_gemv_shapes(bits: u32) -> impl Iterator<Item = Shape> {
-    let block_size: usize = if bits == 4 {
+    let block_size: u32 = if bits == 4 {
         512
     } else {
         256
     };
-    let nk: &[(usize, usize)] = &[(4096, 4096), (4096, 14336), (14336, 4096), (14336, 14336)];
-    let ms = &[1usize, 2, 4];
+    let nk: &[(u32, u32)] = &[(4096, 4096), (4096, 14336), (14336, 4096), (14336, 14336)];
+    let ms = &[1u32, 2, 4];
     nk.iter()
         .filter(move |&&(n, k)| n % 8 == 0 && k % block_size == 0)
         .flat_map(move |&(n, k)| ms.iter().map(move |&m| Shape::new(m, k, n)))
 }
 
-const QWEN3_LAYERS: &[(&str, usize, usize)] = &[
+const QWEN3_LAYERS: &[(&str, u32, u32)] = &[
     ("0.8b_qkv", 1024, 3072),
     ("0.8b_o", 2048, 1024),
     ("0.8b_gate", 1024, 2048),
@@ -99,12 +99,12 @@ const QWEN3_LAYERS: &[(&str, usize, usize)] = &[
 ];
 
 pub fn qwen3_layer_shapes(bits: u32) -> impl Iterator<Item = (&'static str, Shape)> {
-    let block_size: usize = if bits == 4 {
+    let block_size: u32 = if bits == 4 {
         512
     } else {
         256
     };
-    let ms = &[1usize, 2, 4, 8, 16, 32, 64];
+    let ms = &[1u32, 2, 4, 8, 16, 32, 64];
     QWEN3_LAYERS
         .iter()
         .filter(move |&&(_, k, _)| k.is_multiple_of(block_size))

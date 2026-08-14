@@ -19,12 +19,12 @@ use crate::{
 
 enum TransformerLayerStateType<B: Backend> {
     Owned(Box<dyn MixerState<B>>),
-    Shared(usize),
+    Shared(u32),
 }
 
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
-    context_length: usize,
+    context_length: u32,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
@@ -34,14 +34,14 @@ pub struct TransformerEncodeOutput<B: Backend> {
 }
 
 impl<B: Backend> TransformerState<B> {
-    pub fn context_length(&self) -> usize {
+    pub fn context_length(&self) -> u32 {
         self.context_length
     }
 
     pub fn prepare(
         &mut self,
-        context_length: usize,
-        suffix_length: usize,
+        context_length: u32,
+        suffix_length: u32,
         context: &B::Context,
     ) -> Result<(), B::Error> {
         for layer_state in &mut self.layer_states {
@@ -57,7 +57,7 @@ impl<B: Backend> TransformerState<B> {
 
     pub fn encode_accept(
         &mut self,
-        accepted_indices: &[usize],
+        accepted_indices: &[u32],
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         encoder.push_debug_group("transformer accept");
@@ -70,7 +70,7 @@ impl<B: Backend> TransformerState<B> {
             layer_state.encode_accept(accepted_indices, encoder)?;
         }
 
-        self.context_length += accepted_indices.len();
+        self.context_length += accepted_indices.len() as u32;
 
         encoder.pop_debug_group();
 
@@ -92,7 +92,7 @@ pub struct Transformer<B: Backend> {
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
     output_norm: Normalization<B>,
-    model_dim: usize,
+    model_dim: u32,
     residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
 }
 
@@ -106,11 +106,12 @@ impl<B: Backend> Transformer<B> {
     ) -> Result<Self, TransformerNewError<B>> {
         let mut ropes: Vec<AnyRoPEConfig> = Vec::new();
 
+        let num_layers = transformer_config.layer_configs.len() as u32;
         let layers = transformer_config
             .layer_configs
             .iter()
-            .enumerate()
-            .map(|(layer_index, layer_config)| {
+            .zip(0u32..)
+            .map(|(layer_config, layer_index)| {
                 let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index));
 
                 let rope = layer_config.rope_config.as_ref().map(|layer_rope_config| {
@@ -124,7 +125,7 @@ impl<B: Backend> Transformer<B> {
                     context,
                     transformer_config.model_dim,
                     transformer_config.hidden_dim,
-                    transformer_config.layer_configs.len(),
+                    num_layers,
                     layer_config,
                     layer_index,
                     &layer_loader,
@@ -166,11 +167,11 @@ impl<B: Backend> Transformer<B> {
         &self,
         shortcut: &Allocation<B>,
         hidden: &Allocation<B>,
-        batch_size: usize,
+        batch_size: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let mut output = encoder.allocate_scratch(hidden.size())?;
-        let elements = (batch_size * self.model_dim) as u32;
+        let elements = batch_size * self.model_dim;
         self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, encoder);
         Ok(output)
     }
@@ -179,10 +180,10 @@ impl<B: Backend> Transformer<B> {
         self.layers.iter().all(|(layer, _rope)| layer.mixer.speculation_supported())
     }
 
-    pub fn max_context_length(&self) -> Option<usize> {
+    pub fn max_context_length(&self) -> Option<u32> {
         self.layers.iter().map(|(layer, _rope_index)| layer.mixer.max_context_length()).fold(None, |acc, el| {
             match (acc, el) {
-                (Some(a), Some(b)) => Some(usize::min(a, b)),
+                (Some(a), Some(b)) => Some(u32::min(a, b)),
                 (Some(x), None) | (None, Some(x)) => Some(x),
                 (None, None) => None,
             }
@@ -206,7 +207,7 @@ impl<B: Backend> Transformer<B> {
 
     pub fn create_empty_state(
         &self,
-        max_context_length: Option<usize>,
+        max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<TransformerState<B>, B::Error> {
         let layer_states = self
@@ -233,8 +234,8 @@ impl<B: Backend> Transformer<B> {
         input: Allocation<B>,
         per_layer_inputs: Option<&Allocation<B>>,
         batch_dim: &BatchTopology,
-        output_range: Option<Range<usize>>,
-        hidden_feature_layer_indices: Option<&[usize]>,
+        output_range: Option<Range<u32>>,
+        hidden_feature_layer_indices: Option<&[u32]>,
         mut state: Option<&mut TransformerState<B>>,
         tap_request: Option<&TransformerTapRequest>,
         encoder: &mut Encoder<B>,
@@ -255,8 +256,7 @@ impl<B: Backend> Transformer<B> {
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
         let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
-        let token_positions =
-            batch_dim.heights().map(|rel_pos| context_length + rel_pos as usize).collect::<Box<[usize]>>();
+        let token_positions = batch_dim.heights().map(|rel_pos| context_length + rel_pos).collect::<Box<[u32]>>();
 
         let precalculated_ropes = self
             .ropes
@@ -266,7 +266,7 @@ impl<B: Backend> Transformer<B> {
 
         if let Some(rope_request) = &request.rope_embeddings {
             for rope in precalculated_ropes.iter() {
-                let shape = [1, token_positions.len(), rope.dim];
+                let shape = [1, token_positions.len() as u32, rope.dim];
                 tap.rope_embeddings.push(RopeTap {
                     cosines: rope_request
                         .cosines
@@ -284,10 +284,11 @@ impl<B: Backend> Transformer<B> {
             let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
 
             let layer_state = if let Some(state) = &mut state {
-                Some(match &mut state.layer_states[layer.layer_index] {
+                Some(match &mut state.layer_states[layer.layer_index as usize] {
                     TransformerLayerStateType::Owned(layer_state) => MaybeMut::Mut(layer_state.as_mut()),
                     TransformerLayerStateType::Shared(owned_layer_index) => {
-                        let TransformerLayerStateType::Owned(owned_layer) = &state.layer_states[*owned_layer_index]
+                        let TransformerLayerStateType::Owned(owned_layer) =
+                            &state.layer_states[*owned_layer_index as usize]
                         else {
                             panic!("shared layer doesn't point to an owned layer");
                         };
@@ -357,10 +358,11 @@ impl<B: Backend> Transformer<B> {
             });
         };
 
+        let row_count = output_range.end - output_range.start;
         let output_normalized =
-            self.output_norm.encode(&hidden, output_range.start, output_range.len(), Some(&mut shortcut), encoder)?;
+            self.output_norm.encode(&hidden, output_range.start, row_count, Some(&mut shortcut), encoder)?;
         if request.output_norm {
-            let shape = [1, output_range.len(), self.model_dim];
+            let shape = [1, row_count, self.model_dim];
             tap.output_norm = Some(Array::capture(&output_normalized, &shape, self.data_type(), encoder)?);
         }
 

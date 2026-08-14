@@ -33,7 +33,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
         unimplemented!("not supported yet");
     }
 
-    let packing_divisor = quantization_mode.packing_divisor() as u32;
+    let packing_divisor = quantization_mode.packing_divisor();
     let weights_stride = model_dim / packing_divisor;
     let num_groups = model_dim.div_ceil(group_size);
     let zero_points_stride = match quantization_mode {

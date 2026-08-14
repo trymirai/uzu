@@ -167,8 +167,8 @@ pub fn SelectedModel(
         }
     });
 
-    let theme = state.read().theme.clone();
-    let preferences = state.read().preferences;
+    let theme = state.read().theme().clone();
+    let preferences = state.read().preferences().clone();
     let model_data = state.read().model_state.as_ref().map(|model_state| {
         let session_status = model_state.session_state.as_deref().and_then(|session_state| session_state.status_text());
         (model_state.model.clone(), model_state.download_state.clone(), session_status, model_state.capabilities)

@@ -11,12 +11,11 @@ pub struct Mamba2Config {
     pub conv_config: SeparableCausalConvConfig,
     pub activation: AnyActivation,
 
-    pub kernel_size: usize,
-    pub num_heads: usize,
-    pub num_groups: usize,
-    pub head_dim: usize,
-    pub state_dim: usize,
-
+    pub kernel_size: u32,
+    pub num_heads: u32,
+    pub num_groups: u32,
+    pub head_dim: u32,
+    pub state_dim: u32,
     pub has_in_biases: bool,
     pub has_out_biases: bool,
 }

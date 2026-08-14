@@ -1,7 +1,6 @@
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{Allocation, Backend, Encoder, Kernels, gpu_types::trie::TrieNode, kernel::PoolingMeanKernel},
     config::classifier::{ClassifierConfig, PoolingType},
     data_type::DataType,
@@ -38,8 +37,8 @@ pub enum ClassifierError<B: Backend> {
 }
 
 pub struct Classifier<B: Backend> {
-    hidden_dim: usize,
-    num_labels: usize,
+    hidden_dim: u32,
+    num_labels: u32,
     data_type: DataType,
     embedding: Embedding<B>,
     embedding_norm: Normalization<B>,
@@ -57,8 +56,8 @@ impl<B: Backend> Classifier<B> {
     ) -> Result<Self, ClassifierError<B>> {
         let (embedding, _) = Embedding::new(
             context,
-            config.vocab_size as u32,
-            config.transformer_config.model_dim as u32,
+            config.vocab_size,
+            config.transformer_config.model_dim,
             &config.embedding_config,
             &parameter_tree.subtree("embedding"),
             data_type,
@@ -113,14 +112,14 @@ impl<B: Backend> Classifier<B> {
         })
     }
 
-    pub fn max_context_length(&self) -> Option<usize> {
+    pub fn max_context_length(&self) -> Option<u32> {
         self.transformer.max_context_length()
     }
 
     pub fn encode(
         &self,
         token_ids: &Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         tap_request: Option<&ClassifierTapRequest>,
         encoder: &mut Encoder<B>,
     ) -> Result<ClassifierEncodeOutput<B>, ClassifierError<B>> {
@@ -142,9 +141,9 @@ impl<B: Backend> Classifier<B> {
 
         let nodes = (0..batch_dim)
             .map(|index| TrieNode {
-                trie_start: index as u32,
-                trie_end: (batch_dim - 1) as u32,
-                height: index as u32,
+                trie_start: index,
+                trie_end: batch_dim - 1,
+                height: index,
             })
             .collect::<Box<[TrieNode]>>();
         let transformer_output = self
@@ -163,10 +162,9 @@ impl<B: Backend> Classifier<B> {
         activations.transformer = activations_request.transformer.is_some().then_some(transformer_output.tap);
         let hidden = transformer_output.output.unwrap();
 
-        let mut pooled = encoder
-            .allocate_scratch(size_for_shape(&[self.hidden_dim], self.data_type))
-            .map_err(ClassifierError::Backend)?;
-        self.pooling.encode(&hidden, &mut pooled, batch_dim as u32, self.hidden_dim as u32, 1, encoder);
+        let mut pooled =
+            encoder.allocate_scratch_for_shape(&[self.hidden_dim], self.data_type).map_err(ClassifierError::Backend)?;
+        self.pooling.encode(&hidden, &mut pooled, batch_dim, self.hidden_dim, 1, encoder);
         if activations_request.output_pooling {
             let shape = [1, self.hidden_dim];
             activations.output_pooling =

@@ -11,9 +11,9 @@ pub struct DeltaNetConfig {
     pub out_proj_config: LinearConfig,
     pub norm_config: NormalizationConfig,
 
-    pub num_heads: usize,
-    pub num_groups: usize,
-    pub head_dim: usize,
-    pub value_head_dim: usize,
-    pub kernel_size: usize,
+    pub num_heads: u32,
+    pub num_groups: u32,
+    pub head_dim: u32,
+    pub value_head_dim: u32,
+    pub kernel_size: u32,
 }

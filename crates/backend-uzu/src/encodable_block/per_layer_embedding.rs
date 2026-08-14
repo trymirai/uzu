@@ -1,7 +1,6 @@
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{GatedActMulKernel, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
@@ -36,9 +35,9 @@ pub struct PerLayerEmbedding<B: Backend> {
     model_projection: Box<dyn Linear<B>>,
     projection_norm: Normalization<B>,
     add_scale: <B::Kernels as Kernels>::TensorAddScaleKernel,
-    ple_dim: usize,
-    num_layers: usize,
-    model_dim: usize,
+    ple_dim: u32,
+    num_layers: u32,
+    model_dim: u32,
     fused_token_scale: f32,
     data_type: DataType,
 }
@@ -47,7 +46,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
     pub fn new(
         context: &B::Context,
         config: &PLEModelConfig,
-        model_dim: usize,
+        model_dim: u32,
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
@@ -107,7 +106,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         &self,
         token_ids: &Allocation<B>,
         inner_features: &Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("per layer embedding");
@@ -116,30 +115,24 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let total_rows = batch_dim * self.num_layers;
         let total_elements = batch_dim * total_ple_dim;
 
-        let mut token_ple = encoder.allocate_scratch(size_for_shape(&[batch_dim, total_ple_dim], self.data_type))?;
-        self.token_embedding.encode_lookup(
-            token_ids,
-            &mut token_ple,
-            batch_dim as u32,
-            self.fused_token_scale,
-            encoder,
-        );
+        let mut token_ple = encoder.allocate_scratch_for_shape(&[batch_dim, total_ple_dim], self.data_type)?;
+        self.token_embedding.encode_lookup(token_ids, &mut token_ple, batch_dim, self.fused_token_scale, encoder);
 
         let mut model_projection_input =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.model_dim], self.data_type))?;
+            encoder.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
         encoder.encode_copy(inner_features, .., &mut model_projection_input, ..);
         let model_projected = self.model_projection.encode(model_projection_input, batch_dim, encoder)?;
 
         let model_normed = self.projection_norm.encode(&model_projected, 0, total_rows, None, encoder)?;
 
         let mut per_layer_inputs =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.num_layers, self.ple_dim], self.data_type))?;
+            encoder.allocate_scratch_for_shape(&[batch_dim, self.num_layers, self.ple_dim], self.data_type)?;
         self.add_scale.encode(
             Some(&token_ple),
             &model_normed,
             &mut per_layer_inputs,
-            total_elements as u32,
-            total_elements as u32,
+            total_elements,
+            total_elements,
             1.0,
             encoder,
         );
@@ -157,9 +150,9 @@ pub struct PerLayerEmbeddingProjection<B: Backend> {
     gate_act_mul: <B::Kernels as Kernels>::GatedActMulKernel,
     residual_finalize: <B::Kernels as Kernels>::TensorAddBiasKernel,
     residual_combine: <B::Kernels as Kernels>::TensorAddScaleKernel,
-    model_dim: usize,
-    ple_dim: usize,
-    num_layers: usize,
+    model_dim: u32,
+    ple_dim: u32,
+    num_layers: u32,
     activation: AnyActivation,
     post_layer_scalar: f32,
     data_type: DataType,
@@ -169,8 +162,8 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
     pub fn new(
         context: &B::Context,
         config: &PLELayerConfig,
-        model_dim: usize,
-        num_layers: usize,
+        model_dim: u32,
+        num_layers: u32,
         post_layer_scalar: f32,
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
@@ -227,40 +220,33 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
 
     pub fn encode(
         &self,
-        layer_index: usize,
+        layer_index: u32,
         per_layer_input: &Allocation<B>,
         outputs: &mut Allocation<B>,
         hidden: &Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         encoder.push_debug_group("per layer embedding projection");
 
         let length = batch_dim * self.model_dim;
 
-        self.residual_finalize.encode(
-            None::<&Allocation<B>>,
-            hidden,
-            &mut *outputs,
-            length as u32,
-            length as u32,
-            encoder,
-        );
+        self.residual_finalize.encode(None::<&Allocation<B>>, hidden, &mut *outputs, length, length, encoder);
 
-        let mut gate_input = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.model_dim], self.data_type))?;
+        let mut gate_input = encoder.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
         encoder.encode_copy(outputs, .., &mut gate_input, ..);
         let gate_out = self.gate.encode(gate_input, batch_dim, encoder)?;
 
-        let mut activated = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.ple_dim], self.data_type))?;
+        let mut activated = encoder.allocate_scratch_for_shape(&[batch_dim, self.ple_dim], self.data_type)?;
         self.gate_act_mul.encode(
             &gate_out,
             Some(per_layer_input),
             &mut activated,
             None::<&Allocation<B>>,
-            self.ple_dim as u32,
-            batch_dim as u32,
-            (layer_index * self.ple_dim) as u32,
-            (self.num_layers * self.ple_dim) as u32,
+            self.ple_dim,
+            batch_dim,
+            layer_index * self.ple_dim,
+            self.num_layers * self.ple_dim,
             self.activation.act_type(),
             encoder,
         );
@@ -272,8 +258,8 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             None::<&Allocation<B>>,
             &normed,
             &mut *outputs,
-            length as u32,
-            length as u32,
+            length,
+            length,
             self.post_layer_scalar,
             encoder,
         );

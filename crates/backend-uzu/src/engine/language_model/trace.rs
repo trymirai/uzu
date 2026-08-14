@@ -14,7 +14,7 @@ use crate::{
     trie::TrieNode,
 };
 
-const MAX_TRACE_TOKENS: usize = ATTENTION_SUFFIX_CAPACITY;
+const MAX_TRACE_TOKENS: u32 = ATTENTION_SUFFIX_CAPACITY;
 
 #[derive(Debug, Error)]
 pub enum RecordTraceError<B: Backend> {
@@ -26,7 +26,7 @@ pub enum RecordTraceError<B: Backend> {
     EmptyInput,
     #[error("Trace input has {token_count} tokens, more than the {MAX_TRACE_TOKENS} a single pass supports")]
     TooManyTokens {
-        token_count: usize,
+        token_count: u32,
     },
     #[error("Trace error: {0}")]
     Trace(#[from] crate::trace::Error),
@@ -53,8 +53,8 @@ impl<B: Backend> LanguageModel<B> {
         token_ids: &[u64],
         request: &DecoderTapRequest,
     ) -> Result<&DecoderTap<B>, RecordTraceError<B>> {
-        let token_count = token_ids.len();
-        if token_count == 0 {
+        let token_count = token_ids.len() as u32;
+        if token_ids.is_empty() {
             return Err(RecordTraceError::EmptyInput);
         }
         if token_count > MAX_TRACE_TOKENS {
@@ -73,7 +73,7 @@ impl<B: Backend> LanguageModel<B> {
         let mut encoder = Encoder::<B>::new_with_name(context, Some("trace")).map_err(RecordTraceError::Backend)?;
 
         let mut token_ids_allocation = encoder
-            .allocate_constant(token_count * DataType::U32.size_in_bytes())
+            .allocate_constant(token_ids.len() * DataType::U32.size_in_bytes())
             .map_err(RecordTraceError::Backend)?;
         token_ids_allocation.copyin(&token_ids.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 

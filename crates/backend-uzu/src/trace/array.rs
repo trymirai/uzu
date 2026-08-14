@@ -10,7 +10,9 @@ use crate::{
 };
 
 pub struct Array<B: Backend> {
-    shape: Box<[usize]>,
+    shape: Box<[u32]>,
+    // safetensors' View wants usize, so keep a converted copy rather than rebuild it per call
+    view_shape: Box<[usize]>,
     data_type: DataType,
     dtype: Dtype,
     allocation: Allocation<B>,
@@ -18,12 +20,13 @@ pub struct Array<B: Backend> {
 
 impl<B: Backend> Array<B> {
     pub fn new(
-        shape: &[usize],
+        shape: &[u32],
         data_type: DataType,
         allocation: Allocation<B>,
     ) -> Self {
         Self {
             shape: shape.into(),
+            view_shape: shape.iter().map(|dim| *dim as usize).collect(),
             data_type,
             dtype: data_type.try_into().expect("data type has a safetensors equivalent"),
             allocation,
@@ -32,7 +35,7 @@ impl<B: Backend> Array<B> {
 
     pub fn capture(
         allocation: &Allocation<B>,
-        shape: &[usize],
+        shape: &[u32],
         data_type: DataType,
         encoder: &mut Encoder<B>,
     ) -> Result<Self, B::Error> {
@@ -47,7 +50,7 @@ impl<B: Backend> Array<B> {
 
     pub fn capture_slice<T: NoUninit + AnyBitPattern>(
         data: &[T],
-        shape: &[usize],
+        shape: &[u32],
         data_type: DataType,
         encoder: &Encoder<B>,
     ) -> Result<Self, B::Error> {
@@ -67,7 +70,7 @@ impl<B: Backend> View for &Array<B> {
     }
 
     fn shape(&self) -> &[usize] {
-        &self.shape
+        &self.view_shape
     }
 
     fn data(&self) -> Cow<'_, [u8]> {

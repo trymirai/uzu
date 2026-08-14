@@ -13,5 +13,5 @@ pub struct GenerationConfig {
     pub repetition_penalty: Option<f32>,
     pub presence_penalty: Option<Unsupported>,
     pub frequency_penalty: Option<Unsupported>,
-    pub suffix_repetition_length: Option<usize>,
+    pub suffix_repetition_length: Option<u32>,
 }

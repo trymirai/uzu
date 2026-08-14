@@ -232,6 +232,7 @@ uzu_bench = "dinghy_apple_runner_macros::bench_case"
 
 [profile.dev]
 opt-level = 1
+overflow-checks = true
 
 [profile.dev.package."*"]
 opt-level = 2
@@ -244,3 +245,4 @@ lto = "thin"
 
 [profile.test]
 opt-level = 2
+overflow-checks = true

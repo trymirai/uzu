@@ -382,7 +382,9 @@ fn run_moe_parity_test_internal<B: Backend>(
     );
 
     let gather = MoeGather::<B>::new(ctx, DataType::BF16).expect("gather");
-    let x_perm_buf = gather.encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t, k, d_model, &mut encoder).expect("gather");
+    let x_perm_buf = gather
+        .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k as u32, d_model as u32, &mut encoder)
+        .expect("gather");
 
     let total_rows = t * k;
 
@@ -394,10 +396,10 @@ fn run_moe_parity_test_internal<B: Backend>(
         w2_all: &w2_buf,
         up_biases: &up_biases_buf,
         down_biases: &down_biases_buf,
-        total_rows,
-        d_model,
-        d_ff,
-        num_routed_experts: e,
+        total_rows: total_rows as u32,
+        d_model: d_model as u32,
+        d_ff: d_ff as u32,
+        num_routed_experts: e as u32,
         gate_clip_min: gate_clip.0,
         gate_clip_max: gate_clip.1,
         up_clip_min: up_clip.0,

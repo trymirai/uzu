@@ -1,4 +1,3 @@
-mod app_settings;
 mod application;
 mod command_input;
 mod gradient;
@@ -14,14 +13,13 @@ mod text_input;
 mod theme;
 mod thinking_support_ext;
 
-pub use app_settings::AppSettings;
 pub use application::{Application, ApplicationState, ModelState};
 pub use command_input::CommandInput;
 pub use gradient::Gradient;
 pub use history_cell::{HistoryCell, HistoryCellType, TranscriptItem};
 pub use loading::Loading;
 pub use logo::Logo;
-pub use preferences::{Preferences, SamplingMode};
+pub use preferences::Preferences;
 pub use progress_bar::ProgressBar;
 pub use rendered_text::RenderedText;
 pub use selected_model::SelectedModel;

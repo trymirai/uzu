@@ -12,7 +12,7 @@ pub struct LanguageModelState<B: Backend> {
     pub(super) prng: PRng,
     pub(super) transformer_state: TransformerState<B>,
     pub(super) speculator_state: Option<DFlashState<B>>,
-    pub(super) max_context_length: Option<usize>,
+    pub(super) max_context_length: Option<u32>,
 }
 
 impl<B: Backend> LanguageModelState<B> {
@@ -30,7 +30,7 @@ pub enum LanguageModelCreateEmptyStateError<B: Backend> {
 impl<B: Backend> LanguageModel<B> {
     pub fn create_empty_state(
         &self,
-        max_context_length: Option<usize>,
+        max_context_length: Option<u32>,
     ) -> Result<LanguageModelState<B>, LanguageModelCreateEmptyStateError<B>> {
         let tokens = Vec::new();
         let last_output_token = None;
