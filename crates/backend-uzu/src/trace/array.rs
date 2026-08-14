@@ -42,7 +42,7 @@ impl<B: Backend> Array<B> {
         let byte_count = size_for_shape(shape, data_type);
         assert!(allocation.size() >= byte_count, "capture declares more bytes than the source allocation holds");
 
-        let mut destination = encoder.context().create_allocation(byte_count, AllocationType::Global)?;
+        let mut destination = encoder.context.create_allocation(byte_count, AllocationType::Global)?;
         encoder.encode_copy(allocation, ..byte_count, &mut destination, ..);
 
         Ok(Self::new(shape, data_type, destination))
@@ -57,7 +57,7 @@ impl<B: Backend> Array<B> {
         let byte_count = size_for_shape(shape, data_type);
         assert_eq!(byte_count, std::mem::size_of_val(data), "capture_slice shape does not match the data");
 
-        let mut destination = encoder.context().create_allocation(byte_count, AllocationType::Global)?;
+        let mut destination = encoder.context.create_allocation(byte_count, AllocationType::Global)?;
         destination.copyin(data);
 
         Ok(Self::new(shape, data_type, destination))

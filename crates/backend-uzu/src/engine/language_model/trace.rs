@@ -33,10 +33,6 @@ pub enum RecordTraceError<B: Backend> {
 }
 
 impl<B: Backend> LanguageModel<B> {
-    pub fn tap(&self) -> &DecoderTap<B> {
-        &self.tap
-    }
-
     pub fn write_trace(
         &self,
         output_path: &Path,
@@ -67,7 +63,7 @@ impl<B: Backend> LanguageModel<B> {
         let mut transformer_state =
             self.decoder.create_empty_state(Some(token_count), context).map_err(RecordTraceError::Backend)?;
         transformer_state
-            .prepare(transformer_state.context_length(), token_count, context)
+            .prepare(transformer_state.context_length, token_count, context)
             .map_err(RecordTraceError::Backend)?;
 
         let mut encoder = Encoder::<B>::new_with_name(context, Some("trace")).map_err(RecordTraceError::Backend)?;

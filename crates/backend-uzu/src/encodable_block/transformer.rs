@@ -24,7 +24,7 @@ enum TransformerLayerStateType<B: Backend> {
 
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
-    context_length: u32,
+    pub context_length: u32,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
@@ -34,10 +34,6 @@ pub struct TransformerEncodeOutput<B: Backend> {
 }
 
 impl<B: Backend> TransformerState<B> {
-    pub fn context_length(&self) -> u32 {
-        self.context_length
-    }
-
     pub fn prepare(
         &mut self,
         context_length: u32,
@@ -93,6 +89,7 @@ pub struct Transformer<B: Backend> {
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
     output_norm: Normalization<B>,
     model_dim: u32,
+    data_type: DataType,
     residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
 }
 
@@ -155,12 +152,9 @@ impl<B: Backend> Transformer<B> {
             layers,
             output_norm,
             model_dim: transformer_config.model_dim,
+            data_type,
             residual_add,
         })
-    }
-
-    fn data_type(&self) -> DataType {
-        self.output_norm.data_type()
     }
 
     fn capture_residual(
@@ -316,7 +310,7 @@ impl<B: Backend> Transformer<B> {
                     .outputs
                     .then(|| {
                         let residual = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
-                        Array::capture(&residual, &[1, batch_dim.size(), self.model_dim], self.data_type(), encoder)
+                        Array::capture(&residual, &[1, batch_dim.size(), self.model_dim], self.data_type, encoder)
                     })
                     .transpose()?;
                 tap.layers.push(TransformerLayerTap {
@@ -363,7 +357,7 @@ impl<B: Backend> Transformer<B> {
             self.output_norm.encode(&hidden, output_range.start, row_count, Some(&mut shortcut), encoder)?;
         if request.output_norm {
             let shape = [1, row_count, self.model_dim];
-            tap.output_norm = Some(Array::capture(&output_normalized, &shape, self.data_type(), encoder)?);
+            tap.output_norm = Some(Array::capture(&output_normalized, &shape, self.data_type, encoder)?);
         }
 
         Ok(TransformerEncodeOutput {

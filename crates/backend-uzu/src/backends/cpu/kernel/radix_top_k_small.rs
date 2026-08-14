@@ -38,14 +38,14 @@ impl RadixTopKSmall<Cpu> for CpuRadixTopKSmall {
         let k = k as usize;
         assert!(rows > 0 && k > 0 && k <= MAX_K as usize && k <= columns);
         let input = input.as_buffer_range_ref();
-        let input = SendPtr(unsafe { (&*input.buffer().get()).as_ptr().add(input.range().start).cast::<f32>() });
+        let input = SendPtr(unsafe { (&*input.buffer.get()).as_ptr().add(input.range().start).cast::<f32>() });
         let output_ids = output_ids.as_buffer_range_mut();
         let output_ids = SendPtrMut(unsafe {
-            (&mut *output_ids.buffer().get()).as_mut_ptr().add(output_ids.range().start).cast::<u32>()
+            (&mut *output_ids.buffer.get()).as_mut_ptr().add(output_ids.range().start).cast::<u32>()
         });
         let output_scores = output_scores.as_buffer_range_mut();
         let output_scores = SendPtrMut(unsafe {
-            (&mut *output_scores.buffer().get()).as_mut_ptr().add(output_scores.range().start).cast::<f32>()
+            (&mut *output_scores.buffer.get()).as_mut_ptr().add(output_scores.range().start).cast::<f32>()
         });
         encoder.as_command_buffer_mut().push_command(move || {
             let values = unsafe { std::slice::from_raw_parts(input.as_ptr(), rows * columns) };

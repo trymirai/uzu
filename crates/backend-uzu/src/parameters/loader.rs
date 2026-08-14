@@ -197,7 +197,7 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
         let range = buffer_range.range();
         let destination = unsafe {
             std::slice::from_raw_parts_mut(
-                (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start),
+                (buffer_range.buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start),
                 range.len(),
             )
         };

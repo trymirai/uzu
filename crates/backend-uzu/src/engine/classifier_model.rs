@@ -152,10 +152,6 @@ impl<B: Backend> ClassifierModel<B> {
         })
     }
 
-    pub fn tap(&self) -> &crate::trace::ClassifierTap<B> {
-        &self.tap
-    }
-
     pub fn write_trace(
         &self,
         output_path: &Path,

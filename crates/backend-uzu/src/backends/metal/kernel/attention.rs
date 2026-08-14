@@ -124,7 +124,7 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
             .allocate_constant_for_shape(&[arguments.suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
 
         let use_mxu = arguments.suffix_length >= 64
-            && encoder.context().supports_mxu()
+            && encoder.context.supports_mxu()
             && matches!(self.data_type, DataType::BF16 | DataType::F16)
             && matches!(self.head_dim, 64 | 128);
         let (bq, bk) = if use_mxu {
@@ -157,7 +157,7 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
             align_q: params.q_rem == 0,
             align_k: params.k_rem == 0,
         };
-        let kernel = self.get_or_create(encoder.context(), key)?;
+        let kernel = self.get_or_create(encoder.context, key)?;
 
         kernel.encode(
             arguments.queries,

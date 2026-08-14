@@ -43,7 +43,7 @@ pub struct Normalization<B: Backend> {
     element_count: u32,
     hadamard_factors: Option<Allocation<B>>,
     post_layer_scalar_value: f32,
-    data_type: DataType,
+    pub data_type: DataType,
     kernel: <B::Kernels as Kernels>::NormalizationKernel,
 }
 
@@ -109,10 +109,6 @@ impl<B: Backend> Normalization<B> {
             data_type,
             kernel,
         })
-    }
-
-    pub fn data_type(&self) -> DataType {
-        self.data_type
     }
 
     pub fn encode(

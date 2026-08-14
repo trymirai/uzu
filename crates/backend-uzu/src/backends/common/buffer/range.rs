@@ -8,7 +8,7 @@ use std::ops::Range;
 use crate::backends::common::Buffer;
 
 pub struct BufferRangeRef<'a, B: Buffer> {
-    buffer: &'a B,
+    pub buffer: &'a B,
     range: Range<usize>,
 }
 
@@ -21,10 +21,6 @@ impl<'a, B: Buffer> BufferRangeRef<'a, B> {
             buffer,
             range,
         }
-    }
-
-    pub fn buffer(&self) -> &'a B {
-        self.buffer
     }
 
     pub fn range(&self) -> Range<usize> {
@@ -49,7 +45,7 @@ pub trait AsBufferRangeRef {
 }
 
 pub struct BufferRangeMut<'a, B: Buffer> {
-    buffer: &'a B,
+    pub buffer: &'a B,
     range: Range<usize>,
 }
 
@@ -92,10 +88,6 @@ impl<'a, B: Buffer> BufferRangeMut<'a, B> {
                 range: split..self.range.end,
             },
         )
-    }
-
-    pub fn buffer(&self) -> &'a B {
-        self.buffer
     }
 
     pub fn range(&self) -> Range<usize> {
