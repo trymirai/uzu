@@ -37,6 +37,7 @@ pub enum TransformerLayerError<B: Backend> {
 
 pub struct TransformerLayer<B: Backend> {
     pub layer_index: u32,
+    debug_label: Box<str>,
     pub pre_mixer_norm: Option<Normalization<B>>,
     pub kv_source_layer_index: Option<u32>,
     pub mixer: Box<dyn Mixer<B>>,
@@ -180,6 +181,7 @@ impl<B: Backend> TransformerLayer<B> {
 
         Ok(Self {
             layer_index,
+            debug_label: format!("transformer layer {layer_index}").into_boxed_str(),
             pre_mixer_norm,
             kv_source_layer_index: layer_config.kv_source_layer_index,
             mixer,
@@ -201,7 +203,7 @@ impl<B: Backend> TransformerLayer<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group(&format!("transformer layer {}", self.layer_index));
+        encoder.push_debug_group(&self.debug_label);
 
         let hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
             pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut), encoder)?

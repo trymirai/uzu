@@ -405,7 +405,9 @@ pub fn encode_accesses_call(arguments: &[ArgumentEmission]) -> TokenStream {
         quote! {}
     } else {
         quote! {
-            encoder.access(&[#(#access_expressions),*].into_iter().flatten().collect::<Vec<_>>());
+            if <crate::backends::metal::Metal as crate::backends::common::Backend>::NEEDS_BARRIERS {
+                encoder.access(&[#(#access_expressions),*].into_iter().flatten().collect::<Vec<_>>());
+            }
         }
     }
 }

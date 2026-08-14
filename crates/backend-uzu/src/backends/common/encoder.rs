@@ -187,6 +187,9 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         &mut self,
         accesses: &[Access],
     ) {
+        if !B::NEEDS_BARRIERS {
+            return;
+        }
         if let Some((after, before)) = self.hazard_tracker.access(accesses) {
             self.command_buffer.encode_barrier(after, before);
         }

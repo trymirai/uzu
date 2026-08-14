@@ -43,6 +43,7 @@ pub struct MetalContext {
     pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: Mutex<MetalSparseHeapPool>,
     device_tier: DeviceTier,
+    supports_mxu: bool,
     weak_self: Weak<MetalContext>,
     #[cfg(test)]
     timeline_shared_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
@@ -50,7 +51,7 @@ pub struct MetalContext {
 
 impl MetalContext {
     pub fn supports_mxu(&self) -> bool {
-        self.device.supports_mxu()
+        self.supports_mxu
     }
 
     pub(crate) fn device_tier(&self) -> DeviceTier {
@@ -156,6 +157,7 @@ impl Context for MetalContext {
 
         let gpu_core_count = device.gpu_core_count();
         let device_tier = device_tier_for_device(gpu_core_count, device.as_ref());
+        let supports_mxu = device.supports_mxu();
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = Metal::ALLOCATION_GRANULARITY;
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
@@ -175,6 +177,7 @@ impl Context for MetalContext {
             pipeline_cache: Mutex::new(HashMap::new()),
             sparse_heap_pool: Mutex::new(sparse_pool),
             device_tier,
+            supports_mxu,
             weak_self: weak_self.clone(),
             #[cfg(test)]
             timeline_shared_event,
@@ -269,7 +272,7 @@ impl Context for MetalContext {
         if self.device.supports_placement_sparse_resources() {
             capabilities |= DeviceCapabilities::SPARSE_BUFFERS;
         }
-        if self.device.supports_mxu() {
+        if self.supports_mxu {
             capabilities |= DeviceCapabilities::NATIVE_INT8_MATMUL;
         }
         capabilities

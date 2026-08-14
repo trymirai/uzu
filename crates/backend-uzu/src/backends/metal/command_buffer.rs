@@ -21,6 +21,9 @@ use crate::backends::{
 
 static DEBUG_ENCODER_LABELS: LazyLock<bool> = LazyLock::new(|| std::env::var("UZU_METAL_DEBUG_ENCODER_LABELS").is_ok());
 
+static DEBUG_GROUPS: LazyLock<bool> =
+    LazyLock::new(|| *DEBUG_ENCODER_LABELS || std::env::var("METAL_CAPTURE_ENABLED").is_ok());
+
 pub struct MetalCommandBuffer;
 
 impl CommandBuffer for MetalCommandBuffer {
@@ -203,6 +206,10 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         &mut self,
         name: &str,
     ) {
+        if !*DEBUG_GROUPS {
+            return;
+        }
+
         if *DEBUG_ENCODER_LABELS {
             self.ensure_none();
         }
@@ -220,6 +227,10 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
     }
 
     fn pop_debug_group(&mut self) {
+        if !*DEBUG_GROUPS {
+            return;
+        }
+
         if *DEBUG_ENCODER_LABELS {
             self.ensure_none();
         }

@@ -177,3 +177,104 @@ fn test_trie_manual_tree() {
 
     verify_tree(&trie_root, &rng)
 }
+
+fn reference_accept(
+    trie_root: &TrieNode,
+    flat_trie: &crate::trie::FlatTrie,
+    sampled_tokens: &[u64],
+) -> Vec<(usize, u64, u64)> {
+    let mut current = trie_root;
+    let mut accepted = Vec::new();
+    loop {
+        let index = flat_trie.index(current).unwrap();
+        let sampled = sampled_tokens[index];
+        accepted.push((index, current.token(), sampled));
+        let Some(next) = current.get(sampled) else {
+            break;
+        };
+        current = next;
+    }
+    accepted
+}
+
+struct TestRng(u64);
+
+impl TestRng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+
+    fn below(
+        &mut self,
+        bound: u64,
+    ) -> u64 {
+        self.next() % bound
+    }
+}
+
+fn grow_random_trie(
+    node: &mut TrieNode,
+    depth: usize,
+    rng: &mut TestRng,
+) {
+    if depth == 0 {
+        return;
+    }
+    let children = rng.below(4);
+    for child in 0..children {
+        let mut next = TrieNode::new(child, rng.next());
+        grow_random_trie(&mut next, depth - 1, rng);
+        node.add(next).unwrap();
+    }
+}
+
+#[uzu_test]
+fn test_trie_accept_matches_reference() {
+    let mut rng = TestRng(0x9E3779B97F4A7C15);
+
+    for case in 0..200 {
+        let mut trie_root = TrieNode::new(0, rng.next());
+        grow_random_trie(&mut trie_root, 1 + (case % 5), &mut rng);
+        let flat_trie = trie_root.linearize();
+
+        let sampled_tokens: Vec<u64> = (0..flat_trie.len()).map(|_| rng.below(5)).collect();
+
+        let accepted = flat_trie
+            .accept(
+                &sampled_tokens,
+                #[cfg(grammar)]
+                None,
+            )
+            .unwrap();
+        let expected = reference_accept(&trie_root, &flat_trie, &sampled_tokens);
+
+        assert_eq!(accepted.as_ref(), expected.as_slice(), "case {case}");
+    }
+}
+
+#[uzu_test]
+fn test_trie_accept_full_chain() {
+    let mut trie_root = TrieNode::new(0, 0);
+    let mut node = &mut trie_root;
+    for token in 1..32u64 {
+        node.add(TrieNode::new(token, token)).unwrap();
+        node = &mut node.next[0];
+    }
+    let flat_trie = trie_root.linearize();
+    let sampled_tokens: Vec<u64> = (1..=flat_trie.len() as u64).collect();
+
+    let accepted = flat_trie
+        .accept(
+            &sampled_tokens,
+            #[cfg(grammar)]
+            None,
+        )
+        .unwrap();
+    let expected = reference_accept(&trie_root, &flat_trie, &sampled_tokens);
+
+    assert_eq!(accepted.len(), 32, "the whole chain must be accepted");
+    assert_eq!(accepted.as_ref(), expected.as_slice());
+}

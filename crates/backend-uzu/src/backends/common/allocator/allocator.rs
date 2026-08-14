@@ -83,6 +83,13 @@ pub struct AllocationPool<B: Backend> {
     pool_number: usize,
 }
 
+impl<B: Backend> AllocationPool<B> {
+    #[cfg(test)]
+    pub(crate) fn pool_number(&self) -> usize {
+        self.pool_number
+    }
+}
+
 impl<B: Backend> Drop for AllocationPool<B> {
     fn drop(&mut self) {
         self.allocator.free_pool(self)
@@ -106,6 +113,7 @@ pub struct Allocator<B: Backend> {
     context: Weak<B::Context>,
     allocator_buffers: Mutex<Vec<AllocatorBuffer<B>>>,
     next_pool_number: AtomicUsize,
+    free_pool_numbers: Mutex<Vec<usize>>,
     peak_memory_usage: AtomicUsize,
 }
 
@@ -115,6 +123,7 @@ impl<B: Backend> Allocator<B> {
             context,
             allocator_buffers: Mutex::new(Vec::new()),
             next_pool_number: AtomicUsize::new(0),
+            free_pool_numbers: Mutex::new(Vec::new()),
             peak_memory_usage: AtomicUsize::new(0),
         })
     }
@@ -187,7 +196,11 @@ impl<B: Backend> Allocator<B> {
         self: &Arc<Self>,
         reusable: bool,
     ) -> AllocationPool<B> {
-        let pool_number = self.next_pool_number.fetch_add(1, Ordering::Relaxed);
+        let pool_number = self
+            .free_pool_numbers
+            .lock()
+            .pop()
+            .unwrap_or_else(|| self.next_pool_number.fetch_add(1, Ordering::Relaxed));
 
         AllocationPool {
             reusable,
@@ -238,6 +251,8 @@ impl<B: Backend> Allocator<B> {
         if allocator_buffers.len() > 1 {
             allocator_buffers.sort_by_key(|allocator_buffer| allocator_buffer.range_allocator.total_available());
         }
+
+        self.free_pool_numbers.lock().push(pool.pool_number);
     }
 
     fn restore_buffer_order(
@@ -265,3 +280,7 @@ impl<B: Backend> Allocator<B> {
 #[cfg(all(test, backend = "metal"))]
 #[path = "../../../../tests/unit/backends/common/allocator/allocator.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/backends/common/allocator/pool_recycling_test.rs"]
+mod pool_recycling_tests;

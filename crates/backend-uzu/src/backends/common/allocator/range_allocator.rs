@@ -285,6 +285,11 @@ impl RangeAllocator {
         self.total_available
     }
 
+    #[cfg(test)]
+    pub(crate) fn pool_slot_count(&self) -> usize {
+        self.pool_live_allocations.len()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.free_ranges.total_len() == self.full_len
     }

@@ -65,6 +65,7 @@ impl TrieNode {
         Ok(self.next.len() - 1)
     }
 
+    #[cfg(test)]
     pub fn get(
         &self,
         token: u64,
@@ -197,10 +198,7 @@ impl<'a> FlatTrie<'a> {
         any_non_full
     }
 
-    pub fn root(&self) -> Option<&TrieNode> {
-        self.tokens.first().map(|n| n.node)
-    }
-
+    #[cfg(test)]
     pub fn index(
         &self,
         node: &'a TrieNode,
@@ -208,15 +206,31 @@ impl<'a> FlatTrie<'a> {
         self.tokens.iter().position(|n| std::ptr::eq(n.node, node))
     }
 
+    fn child_index(
+        &self,
+        parent: usize,
+        token: u64,
+    ) -> Option<usize> {
+        let subtrie_end = self.tokens[parent].subtrie_range.1;
+        let mut child = parent + 1;
+        while child <= subtrie_end {
+            if self.tokens[child].node.token == token {
+                return Some(child);
+            }
+            child = self.tokens[child].subtrie_range.1 + 1;
+        }
+        None
+    }
+
     pub fn accept(
         &self,
         sampled_tokens: &[u64],
         #[cfg(grammar)] mut grammar: Option<&mut Grammar>,
     ) -> Result<Box<[(usize, u64, u64)]>, TrieAcceptError> {
-        let mut current_token = self.root().unwrap();
+        let mut current_token_index = 0usize;
         let mut accepted = Vec::new();
         loop {
-            let current_token_index = self.index(current_token).unwrap();
+            let current_token = self.tokens[current_token_index].node;
             let current_token_id = sampled_tokens[current_token_index];
 
             accepted.push((current_token_index, current_token.token, current_token_id));
@@ -227,7 +241,7 @@ impl<'a> FlatTrie<'a> {
                 grammar.accept_token(current_token_id)?;
             }
 
-            let Some(next_token) = current_token.get(current_token_id) else {
+            let Some(next_token_index) = self.child_index(current_token_index, current_token_id) else {
                 break;
             };
 
@@ -236,7 +250,7 @@ impl<'a> FlatTrie<'a> {
                 assert!(!grammar.is_terminated(), "Grammar has terminated but llm continued generation");
             }
 
-            current_token = next_token;
+            current_token_index = next_token_index;
         }
 
         Ok(accepted.into_boxed_slice())

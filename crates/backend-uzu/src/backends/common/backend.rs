@@ -11,6 +11,8 @@ pub trait Backend: Debug + Clone + Send + Sync + 'static {
     type Error: Error + Debug;
 
     const NAME: &'static str;
+    /// False when `encode_barrier` is a no-op; the encoder then skips hazard tracking.
+    const NEEDS_BARRIERS: bool;
     const MIN_ALLOCATION_ALIGNMENT: usize;
     const MAX_ALLOCATION_ALIGNMENT: usize;
     const ALLOCATION_GRANULARITY: usize;
