@@ -7,7 +7,7 @@ use nagare::{
     tool::uzu_tool_function,
 };
 use shoji::types::{
-    basic::{CancelToken, ToolCall},
+    basic::{CancelToken, ReasoningEffort, ToolCall},
     model::Model,
     session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyStats, ChatRole},
 };
@@ -177,14 +177,15 @@ pub async fn run_session(
         None => thinking_support.with_preference(&thinking).reasoning_effort(),
     };
 
-    let user_message = ChatMessage::user().with_text(text);
-    let mut messages = vec![user_message];
+    let mut messages = Vec::<ChatMessage>::new();
     if let Some(reasoning_effort) = reasoning_effort
         && session.messages().await.is_empty()
     {
         let system_message = ChatMessage::system().with_reasoning_effort(reasoning_effort);
-        messages.insert(0, system_message);
+        messages.push(system_message);
     };
+    messages.push(ChatMessage::user().with_text(text));
+
     let reply_config = ChatReplyConfig::default().with_sampling_policy(state.read().preferences().sampling.policy());
     {
         let mut state = state.write();

@@ -1,4 +1,4 @@
-use std::{error::Error, fs, io, path::Path};
+use std::{collections::HashMap, error::Error, fs, io, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -14,25 +14,6 @@ pub struct Preferences {
     pub thinking: ThinkingPreference,
     pub sampling: SamplingPreferences,
     pub selected_model_id: Option<String>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct LegacyConfig {
-    settings: std::collections::HashMap<String, String>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct LegacyAppSettings {
-    selected_model_id: Option<String>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct LegacyPreferences {
-    thinking: ThinkingPreference,
-    sampling: SamplingPreferences,
 }
 
 impl Preferences {
@@ -53,19 +34,20 @@ impl Preferences {
         } else {
             Self::default()
         };
-        let legacy: LegacyConfig = toml::from_str(&fs::read_to_string(legacy_path)?)?;
 
-        if let Some(raw) = legacy.settings.get("cli_preferences")
-            && let Ok(legacy_preferences) = serde_json::from_str::<LegacyPreferences>(raw)
+        let mut legacy: HashMap<String, HashMap<String, String>> = toml::from_str(&fs::read_to_string(legacy_path)?)?;
+        let settings = legacy.remove("settings").unwrap_or_default();
+        if let Some(raw) = settings.get("cli_preferences")
+            && let Ok(legacy_preferences) = serde_json::from_str::<Self>(raw)
         {
             preferences.thinking = legacy_preferences.thinking;
             preferences.sampling = legacy_preferences.sampling;
         }
-        if let Some(raw) = legacy.settings.get("app") {
-            let app_settings: LegacyAppSettings = serde_json::from_str(raw)?;
+        if let Some(raw) = settings.get("app") {
+            let app_settings: Self = serde_json::from_str(raw)?;
             preferences.selected_model_id = app_settings.selected_model_id;
         }
-        if let Some(name) = legacy.settings.get("theme") {
+        if let Some(name) = settings.get("theme") {
             preferences.theme = Theme::from_name(name)
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("unknown legacy theme: {name}")))?;
         }
