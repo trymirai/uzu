@@ -1,3 +1,5 @@
+pub mod chat;
+
 pub fn add(
     left: u64,
     right: u64,

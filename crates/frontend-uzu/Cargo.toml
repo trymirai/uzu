@@ -12,6 +12,7 @@ license.workspace = true
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [dependencies]
+kiban.workspace = true
 message-processing.workspace = true
 uzu-types.workspace = true
 

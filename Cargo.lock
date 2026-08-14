@@ -2202,6 +2202,7 @@ dependencies = [
 name = "frontend-uzu"
 version = "0.5.16"
 dependencies = [
+ "kiban",
  "message-processing",
  "uzu-types",
 ]
@@ -7730,6 +7731,8 @@ name = "uzu-types"
 version = "0.5.16"
 dependencies = [
  "enumset",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
