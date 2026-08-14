@@ -36,6 +36,7 @@ static T threadgroup_raking_prefix_exclusive_sum(T value, threadgroup T* shared,
 }
 
 #define BLOCK_SIZE 128
+#define SCATTER_BLOCK_SIZE 256
 #define TILE_E 512
 
 // Single-kernel fused: count all experts + scan to offsets
@@ -44,14 +45,14 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
     device const int* topk_ids,
     device uint* offsets,   // output: exclusive scan [E+1]
     device uint* sum_k_out, // output: total count [1]
-    device uint* partials,  // output: partials [num_tiles * TILE_E] (for block_bases)
+    device uint* partials,  // output: partials [num_blocks * num_tiles * TILE_E] (for block_bases)
     constant uint& t_input,
     constant uint& e_input,
     constant uint& k_input,
     threadgroup _atomic<uint> tg_hist[TILE_E],
     threadgroup uint scan_shared[BLOCK_SIZE],
     threadgroup uint reduce_shared[BLOCK_SIZE],
-    threadgroup uint counts_shared[BLOCK_SIZE], // Cache counts in threadgroup memory
+    threadgroup uint counts_shared[TILE_E], // Cache global counts in threadgroup memory
     threadgroup uint& carry,
     const ThreadContext thread_context,
     const uint lid THREADS(128)
@@ -67,40 +68,51 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
   // ═══════════════════════════════════════════════════════════
   // PHASE 1: Count tokens per expert using tiled histogram
   // ═══════════════════════════════════════════════════════════
-  // Tile over E dimension
+  const uint num_blocks = (t_input + SCATTER_BLOCK_SIZE - 1) / SCATTER_BLOCK_SIZE;
+  const uint num_tiles = (e_input + TILE_E - 1) / TILE_E;
+
+  // Tile over E dimension.
   for (uint e0 = 0; e0 < e_input; e0 += TILE_E) {
     const uint tile_e = (e0 + TILE_E <= e_input) ? TILE_E : (e_input - e0);
+    const uint tile_id = e0 / TILE_E;
 
-    // Zero threadgroup histogram
     for (uint e = lid; e < tile_e; e += BLOCK_SIZE) {
-      atomic_store_explicit(&tg_hist[e], 0u, memory_order_relaxed);
+      counts_shared[e0 + e] = 0u;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    // Process all tokens in strided fashion
-    // Since we have only 1 threadgroup, we need to cover all T tokens
-    for (uint t = lid; t < t_input; t += BLOCK_SIZE) {
-      const uint base = t * k_input;
-      for (uint k = 0; k < k_input; ++k) {
-        int eid = topk_ids[base + k];
-        if (eid >= 0) {
-          uint ue = uint(eid);
-          if (ue >= e0 && ue < e0 + tile_e) {
-            uint te = ue - e0;
-            atomic_fetch_add_explicit(&tg_hist[te], 1u, memory_order_relaxed);
+    // Scatter consumes one partial histogram per 256-token block.
+    for (uint block_id = 0; block_id < num_blocks; ++block_id) {
+      for (uint e = lid; e < tile_e; e += BLOCK_SIZE) {
+        atomic_store_explicit(&tg_hist[e], 0u, memory_order_relaxed);
+      }
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+
+      const uint t_start = block_id * SCATTER_BLOCK_SIZE;
+      const uint t_end = min(t_start + SCATTER_BLOCK_SIZE, t_input);
+      for (uint t = t_start + lid; t < t_end; t += BLOCK_SIZE) {
+        const uint base = t * k_input;
+        for (uint k = 0; k < k_input; ++k) {
+          int eid = topk_ids[base + k];
+          if (eid >= 0) {
+            uint ue = uint(eid);
+            if (ue >= e0 && ue < e0 + tile_e) {
+              uint te = ue - e0;
+              atomic_fetch_add_explicit(&tg_hist[te], 1u, memory_order_relaxed);
+            }
           }
         }
       }
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+      threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    // Write final counts and partials for this tile
-    for (uint e = lid; e < tile_e; e += BLOCK_SIZE) {
-      const uint count_val = atomic_load_explicit(&tg_hist[e], memory_order_relaxed);
-      counts_shared[e0 + e] = count_val;
-      partials[e0 + e] = count_val;
+      for (uint e = lid; e < tile_e; e += BLOCK_SIZE) {
+        const uint count_val = atomic_load_explicit(&tg_hist[e], memory_order_relaxed);
+        counts_shared[e0 + e] += count_val;
+        const uint partial_idx = (block_id * num_tiles + tile_id) * TILE_E + e;
+        partials[partial_idx] = count_val;
+      }
+      threadgroup_barrier(mem_flags::mem_threadgroup);
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -115,7 +127,7 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
     uint remaining = e_input - base;
     uint chunk_n = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
 
-    uint v = (lid < chunk_n) ? counts_shared[lid] : 0u;
+    uint v = (lid < chunk_n) ? counts_shared[base + lid] : 0u;
 
     uint prefix_local = threadgroup_raking_prefix_exclusive_sum<BLOCK_SIZE>(v, scan_shared, (ushort)lid);
     uint prefix_global = prefix_local + carry;

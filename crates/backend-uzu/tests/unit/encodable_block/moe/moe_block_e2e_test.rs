@@ -143,6 +143,35 @@ fn moe_cpu_reference(
     output
 }
 
+/// Every routed top-k entry occupies exactly one expert-major row.
+fn assert_route_map_is_bijection<B: Backend>(
+    bucketed_ids: &Allocation<B>,
+    tok2row: &Allocation<B>,
+    sumk: &Allocation<B>,
+    t: usize,
+    k: usize,
+) {
+    let expected_routes = t * k;
+    let sumk = allocation_to_vec::<B, u32>(sumk);
+    let sumk = sumk[0] as usize;
+    assert_eq!(sumk, expected_routes, "all router outputs should be valid");
+
+    let bucketed_ids = allocation_prefix_to_vec::<B, i32>(bucketed_ids, sumk);
+    let tok2row = allocation_prefix_to_vec::<B, i32>(tok2row, expected_routes);
+    let mut rows = Vec::with_capacity(expected_routes);
+
+    for (route_idx, row) in tok2row.into_iter().enumerate() {
+        let row = usize::try_from(row).unwrap_or_else(|_| panic!("route {route_idx} maps to negative row {row}"));
+        assert!(row < sumk, "route {route_idx} maps past the {sumk}-row output: {row}");
+        assert_eq!(bucketed_ids[row], (route_idx / k) as i32, "route {route_idx} maps to the wrong token at row {row}");
+        rows.push(row);
+    }
+
+    rows.sort_unstable();
+    let expected_rows = (0..sumk).collect::<Vec<_>>();
+    assert_eq!(rows, expected_rows, "route map must contain every output row exactly once");
+}
+
 // Main entry point - automatically tests both modes for T>1
 fn run_moe_parity_test<B: Backend>(
     ctx: &B::Context,
@@ -423,6 +452,8 @@ fn run_moe_parity_test_internal<B: Backend>(
     eprintln!("[E2E] All kernels encoded. Committing ONCE and waiting...");
     let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
     eprintln!("[E2E] GPU execution completed");
+
+    assert_route_map_is_bijection::<B>(&bucketed_ids_buf, &tok2row_buf, &sumk_buf, t, k);
 
     // Read GPU output
     let y_out_bf16 = allocation_prefix_to_vec::<B, bf16>(&y_out_buf, t * d_model);
@@ -851,6 +882,27 @@ fn test_bucket_stress() {
             (f32::NEG_INFINITY, f32::INFINITY),
             0xE2E_0010,
             "BucketStress_T8_E8_K2",
+        );
+    })
+}
+
+#[uzu_test]
+fn test_scatter_block_boundary() {
+    for_each_non_cpu_backend!(|B| {
+        let ctx = create_context::<B>();
+        run_moe_parity_test_internal::<B>(
+            &ctx,
+            257, // t (crosses the 256-token scatter block)
+            2,   // e
+            1,   // k
+            4,   // d_model
+            4,   // d_ff
+            2,   // gating_code (SwiGLU)
+            1.0,
+            (f32::NEG_INFINITY, f32::INFINITY),
+            (f32::NEG_INFINITY, f32::INFINITY),
+            0xE2E_0032,
+            "ScatterBlockBoundary_T257",
         );
     })
 }
