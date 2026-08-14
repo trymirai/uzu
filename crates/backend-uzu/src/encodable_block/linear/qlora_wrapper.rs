@@ -2,7 +2,6 @@ use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
@@ -42,9 +41,9 @@ pub struct QLoRALinearWrapper<B: Backend> {
     adapter_up_kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     adapter_down: Allocation<B>,
     adapter_up: Allocation<B>,
-    input_dim: usize,
-    output_dim: usize,
-    lora_rank: usize,
+    input_dim: u32,
+    output_dim: u32,
+    lora_rank: u32,
     weights_data_type: DataType,
     input_data_type: DataType,
 }
@@ -54,10 +53,10 @@ impl<B: Backend> QLoRALinearWrapper<B> {
         context: &B::Context,
         quantization_spec: AnyWeightMatrixSpec,
         adapter_spec: LowRankSpec,
-        incoherence_block_size: Option<usize>,
+        incoherence_block_size: Option<u32>,
         incoherence_processing_mode: IncoherenceProcessingMode,
-        input_dim: usize,
-        output_dim: usize,
+        input_dim: u32,
+        output_dim: u32,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
@@ -168,13 +167,13 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
     fn encode(
         &self,
         input: Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("linear (qlora)");
 
         let mut intermediate =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.weights_data_type))?;
+            encoder.allocate_scratch_for_shape(&[batch_dim, self.lora_rank], self.weights_data_type)?;
 
         {
             let mut adapter_kernel = self.adapter_down_kernel.lock();
@@ -192,9 +191,9 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                     d: &mut intermediate,
                     d_transform: MatmulDOps::none(),
                     gather_indices: None,
-                    m: batch_dim as u32,
-                    n: self.lora_rank as u32,
-                    k: self.input_dim as u32,
+                    m: batch_dim,
+                    n: self.lora_rank,
+                    k: self.input_dim,
                 },
                 encoder,
             )?;
@@ -202,15 +201,8 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
 
         let base_input = if let Some((input_hadamard_kernel, input_factors)) = &self.input_hadamard {
             let mut base_input =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dim], self.input_data_type))?;
-            input_hadamard_kernel.encode_fp(
-                &input,
-                &mut base_input,
-                input_factors,
-                batch_dim as u32,
-                self.input_dim as u32,
-                encoder,
-            );
+                encoder.allocate_scratch_for_shape(&[batch_dim, self.input_dim], self.input_data_type)?;
+            input_hadamard_kernel.encode_fp(&input, &mut base_input, input_factors, batch_dim, self.input_dim, encoder);
             base_input
         } else {
             input
@@ -237,22 +229,16 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                         ..MatmulDOps::none()
                     },
                     gather_indices: None,
-                    m: batch_dim as u32,
-                    n: self.output_dim as u32,
-                    k: self.lora_rank as u32,
+                    m: batch_dim,
+                    n: self.output_dim,
+                    k: self.lora_rank,
                 },
                 encoder,
             )?;
         }
 
         if let Some((output_hadamard_kernel, output_factors)) = &self.output_hadamard {
-            output_hadamard_kernel.encode_fp_in_place(
-                &mut output,
-                output_factors,
-                batch_dim as u32,
-                self.output_dim as u32,
-                encoder,
-            );
+            output_hadamard_kernel.encode_fp_in_place(&mut output, output_factors, batch_dim, self.output_dim, encoder);
         }
 
         encoder.pop_debug_group();

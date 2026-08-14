@@ -23,7 +23,7 @@ pub fn weaver_top_children(
     let rows = rows as usize;
     let candidates = candidates as usize;
     let expand_width = expand_width as usize;
-    if candidates == 0 || candidates > CANDIDATES_MAX || expand_width == 0 || expand_width > candidates {
+    if candidates == 0 || candidates > CANDIDATES_MAX as usize || expand_width == 0 || expand_width > candidates {
         return;
     }
     for row in 0..rows {

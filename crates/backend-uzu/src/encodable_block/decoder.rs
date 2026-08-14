@@ -58,8 +58,8 @@ impl<B: Backend> Decoder<B> {
     ) -> Result<Self, DecoderError<B>> {
         let (embedding, readout_input_hadamard_factors) = Embedding::new(
             context,
-            config.vocab_size as u32,
-            config.transformer_config.model_dim as u32,
+            config.vocab_size,
+            config.transformer_config.model_dim,
             &config.embedding_config,
             &parameter_tree.subtree("embedding"),
             data_type,
@@ -85,7 +85,7 @@ impl<B: Backend> Decoder<B> {
         let per_layer_embedding = if let Some(ple_config) = &config.ple_model_config {
             assert_eq!(
                 ple_config.num_layers,
-                config.transformer_config.layer_configs.len(),
+                config.transformer_config.layer_configs.len() as u32,
                 "per-layer embedding num_layers must match transformer layer count"
             );
             Some(PerLayerEmbedding::new(
@@ -119,7 +119,7 @@ impl<B: Backend> Decoder<B> {
         self.transformer.speculation_supported()
     }
 
-    pub fn max_context_length(&self) -> Option<usize> {
+    pub fn max_context_length(&self) -> Option<u32> {
         self.transformer.max_context_length()
     }
 
@@ -129,7 +129,7 @@ impl<B: Backend> Decoder<B> {
 
     pub fn create_empty_state(
         &self,
-        max_context_length: Option<usize>,
+        max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<TransformerState<B>, B::Error> {
         self.transformer.create_empty_state(max_context_length, context)
@@ -139,8 +139,8 @@ impl<B: Backend> Decoder<B> {
         &self,
         token_ids: &Allocation<B>,
         batch_dim: &BatchTopology,
-        output_range: Option<Range<usize>>,
-        hidden_feature_layer_indices: Option<&[usize]>,
+        output_range: Option<Range<u32>>,
+        hidden_feature_layer_indices: Option<&[u32]>,
         state: &mut TransformerState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
@@ -178,7 +178,12 @@ impl<B: Backend> Decoder<B> {
 
         let logits = if let Some(output_range) = output_range {
             let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");
-            Some(self.embedding.encode_readout(output_range.len(), output, self.embedding.data_type(), encoder)?)
+            Some(self.embedding.encode_readout(
+                output_range.end - output_range.start,
+                output,
+                self.embedding.data_type(),
+                encoder,
+            )?)
         } else {
             None
         };

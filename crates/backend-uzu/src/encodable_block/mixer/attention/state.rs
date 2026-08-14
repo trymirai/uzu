@@ -1,6 +1,7 @@
 use std::any::Any;
 
 use crate::{
+    array::size_for_shape,
     backends::common::{
         Backend, Buffer, Context, DeviceCapabilities, Encoder, Kernels, SparseBuffer,
         gpu_types::{Copy, ring::RingParams},
@@ -10,21 +11,21 @@ use crate::{
     encodable_block::mixer::{MixerState, attention::Attention},
 };
 
-pub(crate) const ATTENTION_SUFFIX_CAPACITY: usize = 1024; // TODO: remove hardcoded suffix capacity
+pub(crate) const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
 
 pub enum AttentionStateType {
     Full {
-        length: usize,
+        length: u32,
     },
     Ring {
-        offset: usize,
-        length: usize,
-        max_length: usize,
+        offset: u32,
+        length: u32,
+        max_length: u32,
     },
 }
 
 impl AttentionStateType {
-    pub fn physical_prefix_length(&self) -> usize {
+    pub fn physical_prefix_length(&self) -> u32 {
         match self {
             Self::Full {
                 length,
@@ -47,16 +48,16 @@ impl AttentionStateType {
         };
 
         Some(RingParams {
-            ring_offset: *offset as u32,
-            ring_length: *length as u32,
+            ring_offset: *offset,
+            ring_length: *length,
         })
     }
 }
 
 pub struct AttentionState<B: Backend> {
-    pub cur_context_length: usize,
-    pub elements_prepared: usize,
-    pub element_dim: usize,
+    pub cur_context_length: u32,
+    pub elements_prepared: u32,
+    pub element_dim: u32,
     pub data_type: DataType,
     pub state_type: AttentionStateType,
     pub is_sparse: bool,
@@ -68,7 +69,7 @@ pub struct AttentionState<B: Backend> {
 impl<B: Backend> AttentionState<B> {
     pub fn create_empty(
         attention: &Attention<B>,
-        max_context_length: Option<usize>,
+        max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
         if let Some(max_context_length) = max_context_length {
@@ -106,7 +107,7 @@ impl<B: Backend> AttentionState<B> {
 
         let max_elements = max_prefix_elements + ATTENTION_SUFFIX_CAPACITY;
         let element_size = attention.num_kv_heads.unwrap() * attention.head_dim;
-        let kv_buffer_bytes = max_elements * element_size * data_type.size_in_bytes();
+        let kv_buffer_bytes = size_for_shape(&[max_elements, element_size], data_type);
 
         let is_ring = matches!(state_type, AttentionStateType::Ring { .. });
         let is_sparse = !is_ring && context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS);
@@ -139,8 +140,8 @@ impl<B: Backend> AttentionState<B> {
 impl<B: Backend> MixerState<B> for AttentionState<B> {
     fn prepare(
         &mut self,
-        context_length: usize,
-        suffix_length: usize,
+        context_length: u32,
+        suffix_length: u32,
         context: &B::Context,
     ) -> Result<(), B::Error> {
         if !self.is_sparse {
@@ -149,8 +150,8 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
 
         assert!(suffix_length <= ATTENTION_SUFFIX_CAPACITY, "attention suffix length exceeds hardcoded capacity");
         let elements_required = context_length + suffix_length;
-        let bytes_required = elements_required * self.element_dim * self.data_type.size_in_bytes();
-        let bytes_prepared = self.elements_prepared * self.element_dim * self.data_type.size_in_bytes();
+        let bytes_required = size_for_shape(&[elements_required, self.element_dim], self.data_type);
+        let bytes_prepared = size_for_shape(&[self.elements_prepared, self.element_dim], self.data_type);
 
         let keys = (self.keys.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>().unwrap();
         let values = (self.values.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>().unwrap();
@@ -172,7 +173,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
 
     fn encode_accept(
         &mut self,
-        accepted_indices: &[usize],
+        accepted_indices: &[u32],
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         assert!(accepted_indices.is_sorted_by(|a, b| a < b), "invalid accepted indicies");
@@ -184,15 +185,15 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
                 let copies = accepted_indices
                     .iter()
                     .copied()
-                    .enumerate()
-                    .filter(|(index, accepted_index)| index != accepted_index)
-                    .map(|(index, accepted_index)| Copy {
-                        source: (*length + accepted_index) as u32,
-                        destination: (*length + index) as u32,
+                    .zip(0u32..)
+                    .filter(|&(accepted_index, index)| index != accepted_index)
+                    .map(|(accepted_index, index)| Copy {
+                        source: *length + accepted_index,
+                        destination: *length + index,
                     })
                     .collect::<Vec<Copy>>();
 
-                *length += accepted_indices.len();
+                *length += accepted_indices.len() as u32;
 
                 copies
             },
@@ -204,8 +205,8 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
                 let mut copies = Vec::new();
                 for accepted_index in accepted_indices {
                     copies.push(Copy {
-                        source: (*max_length + accepted_index) as u32,
-                        destination: ((*offset + *length) % *max_length) as u32,
+                        source: *max_length + *accepted_index,
+                        destination: (*offset + *length) % *max_length,
                     });
 
                     if length < max_length {
@@ -224,12 +225,12 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
                 self.values.as_mut(),
                 copies_chunk,
                 copies_chunk.len() as u32,
-                self.element_dim as u32,
+                self.element_dim,
                 encoder,
             );
         }
 
-        self.cur_context_length += accepted_indices.len();
+        self.cur_context_length += accepted_indices.len() as u32;
 
         Ok(())
     }

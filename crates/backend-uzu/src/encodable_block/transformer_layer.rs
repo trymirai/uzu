@@ -27,7 +27,7 @@ pub enum TransformerLayerError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Layer {layer_index} sets post_layer_scalar but has no post_mlp_norm")]
     PostLayerScalarWithoutPostMlpNorm {
-        layer_index: usize,
+        layer_index: u32,
     },
     #[error("Transformer layers except the first one if it doesn't have rht in mixer require pre_mixer_norm_config")]
     MissingPreMixerNormConfig,
@@ -36,9 +36,9 @@ pub enum TransformerLayerError<B: Backend> {
 // TODO: saner shortcut
 
 pub struct TransformerLayer<B: Backend> {
-    pub layer_index: usize,
+    pub layer_index: u32,
     pub pre_mixer_norm: Option<Normalization<B>>,
-    pub kv_source_layer_index: Option<usize>,
+    pub kv_source_layer_index: Option<u32>,
     pub mixer: Box<dyn Mixer<B>>,
     pub post_mixer_norm: Option<Normalization<B>>,
     pub pre_mlp_norm: Normalization<B>,
@@ -50,11 +50,11 @@ pub struct TransformerLayer<B: Backend> {
 impl<B: Backend> TransformerLayer<B> {
     pub fn new(
         context: &B::Context,
-        model_dim: usize,
-        hidden_dim: usize,
-        num_layers: usize,
+        model_dim: u32,
+        hidden_dim: u32,
+        num_layers: u32,
         layer_config: &TransformerLayerConfig,
-        layer_index: usize,
+        layer_index: u32,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, TransformerLayerError<B>> {

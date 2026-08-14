@@ -15,6 +15,6 @@ pub mod yarn_rope;
 )]
 pub struct RoPEConfig {
     pub base: f32,
-    pub max_sequence_length: usize,
-    pub head_dim: usize,
+    pub max_sequence_length: u32,
+    pub head_dim: u32,
 }

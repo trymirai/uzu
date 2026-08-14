@@ -15,14 +15,14 @@ mod single_pass;
 mod two_pass;
 
 pub struct AttentionCoreNewArguments {
-    pub head_dim: usize,
-    pub num_groups: usize,
-    pub num_q_heads: usize,
+    pub head_dim: u32,
+    pub num_groups: u32,
+    pub num_q_heads: u32,
     pub has_sinks: bool,
     pub is_kv_cache_ring: bool,
     pub is_causal: bool,
     pub is_trie: bool,
-    pub sliding_window_size: Option<usize>,
+    pub sliding_window_size: Option<u32>,
     pub scale: Option<f32>,
     pub data_type: DataType,
 }
@@ -31,7 +31,7 @@ pub struct AttentionCoreEncodeArguments<'a, B: Backend, KT: BufferArg<'a, B>, VT
     pub queries: &'a Allocation<B>,
     pub keys: KT,
     pub values: VT,
-    pub suffix_length: usize,
+    pub suffix_length: u32,
     pub trie: Option<&'a Allocation<B>>,
     pub sinks: Option<&'a Allocation<B>>,
     pub state_type: &'a AttentionStateType,

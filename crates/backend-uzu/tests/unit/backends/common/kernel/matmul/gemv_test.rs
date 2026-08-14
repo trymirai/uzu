@@ -242,7 +242,7 @@ fn gemv_gather() {
         (8, QuantizationMethod::ScaleZeroPoint),
     ] {
         let (m, k, vocab, ids_per_row, group_size) = (8usize, 128usize, 64usize, 8usize, 32u32);
-        let input = QuantInput::<bf16>::new(m, k, vocab, group_size, bits, method, 0x5EED);
+        let input = QuantInput::<bf16>::new(m as u32, k as u32, vocab as u32, group_size, bits, method, 0x5EED);
         let ids: Vec<u32> = (0..m * ids_per_row).map(|i| ((i * 37 + 11) % vocab) as u32).collect();
         // K_SPLIT == 1 keeps k in one reduction, so gather and dense share the exact accumulation.
         check_gather!(m, vocab, ids, ids_per_row, 0.05, |B| {

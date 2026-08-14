@@ -2,7 +2,6 @@ use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{
@@ -38,15 +37,15 @@ pub struct LinearMatmul<B: Backend> {
     matrix: WeightMatrix<B>,
     biases: Option<Allocation<B>>,
     output_hadamard_factors: Option<Allocation<B>>,
-    input_dim: usize,
-    output_dim: usize,
+    input_dim: u32,
+    output_dim: u32,
     output_data_type: DataType,
 }
 
 fn load_biases<B: Backend>(
     weights_data_type: DataType,
     output_data_type: DataType,
-    output_dim: usize,
+    output_dim: u32,
     parameter_tree: Option<&ParameterTree<B>>,
 ) -> Result<Option<Allocation<B>>, LinearMatmulError<B>> {
     if parameter_tree.is_some() && weights_data_type != output_data_type {
@@ -65,8 +64,8 @@ impl<B: Backend> LinearMatmul<B> {
     pub fn load(
         context: &B::Context,
         spec: AnyWeightMatrixSpec,
-        input_dim: usize,
-        output_dim: usize,
+        input_dim: u32,
+        output_dim: u32,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
@@ -112,11 +111,10 @@ impl<B: Backend> LinearMatmul<B> {
     pub(super) fn encode_with_a(
         &self,
         a: MatmulA<'_, B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut output =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
+        let mut output = encoder.allocate_scratch_for_shape(&[batch_dim, self.output_dim], self.output_data_type)?;
 
         self.kernel.lock().encode(
             MatmulArguments {
@@ -127,9 +125,9 @@ impl<B: Backend> LinearMatmul<B> {
                 d: &mut output,
                 d_transform: self.d_ops(),
                 gather_indices: None,
-                m: batch_dim as u32,
-                n: self.output_dim as u32,
-                k: self.input_dim as u32,
+                m: batch_dim,
+                n: self.output_dim,
+                k: self.input_dim,
             },
             encoder,
         )?;
@@ -151,14 +149,14 @@ impl<B: Backend> LinearMatmul<B> {
 
     pub(super) fn select_path(
         &self,
-        batch_dim: usize,
+        batch_dim: u32,
         context: &B::Context,
     ) -> MatmulPath {
         let b = self.matmul_b();
         let shape = MatmulShape {
-            m: batch_dim as u32,
-            n: self.output_dim as u32,
-            k: self.input_dim as u32,
+            m: batch_dim,
+            n: self.output_dim,
+            k: self.input_dim,
             b_transpose: true,
             b_leading_dimension: None,
             b_prologue: b.b_prologue(),
@@ -177,7 +175,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
     fn encode(
         &self,
         input: Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("matmul");

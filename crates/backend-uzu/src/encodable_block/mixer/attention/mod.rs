@@ -34,12 +34,12 @@ pub(crate) use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, AttentionState
 pub mod rope;
 
 pub struct Attention<B: Backend> {
-    head_dim: usize,
-    num_q_heads: usize,
-    num_kv_heads: Option<usize>,
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: Option<u32>,
     is_causal: bool,
-    sliding_window_size: Option<usize>,
-    max_rope_length: Option<usize>,
+    sliding_window_size: Option<u32>,
+    max_rope_length: Option<u32>,
     data_type: DataType,
     qkv: LinearProjection<B>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
@@ -65,7 +65,7 @@ pub enum AttentionNewError<B: Backend> {
 
 impl<B: Backend> Attention<B> {
     pub fn new(
-        hidden_dim: usize,
+        hidden_dim: u32,
         data_type: DataType,
         rope_config: Option<&AnyRoPEConfig>,
         config: &AttentionConfig,
@@ -245,13 +245,13 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         true
     }
 
-    fn max_context_length(&self) -> Option<usize> {
+    fn max_context_length(&self) -> Option<u32> {
         self.max_rope_length
     }
 
     fn create_empty_state(
         &self,
-        max_context_length: Option<usize>,
+        max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
         Ok(Box::new(AttentionState::create_empty(self, max_context_length, context)?))

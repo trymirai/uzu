@@ -49,7 +49,7 @@ pub struct HashMetadata {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TensorInfo {
     pub dtype: Dtype,
-    pub shape: Vec<usize>,
+    pub shape: Vec<u32>,
     pub data_offsets: (usize, usize),
 }
 

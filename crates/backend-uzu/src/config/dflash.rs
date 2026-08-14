@@ -7,13 +7,13 @@ use crate::config::{
 
 #[uzu_config]
 pub struct DFlashDraftConfig {
-    pub model_dim: usize,
-    pub hidden_dim: usize,
-    pub block_size: usize,
+    pub model_dim: u32,
+    pub hidden_dim: u32,
+    pub block_size: u32,
     pub mask_token_id: u64,
-    pub target_layer_ids: Box<[usize]>,
-    pub num_target_layers: usize,
-    pub vocab_size: usize,
+    pub target_layer_ids: Box<[u32]>,
+    pub num_target_layers: u32,
+    pub vocab_size: u32,
     pub context_projection_config: LinearConfig,
     pub context_norm_config: NormalizationConfig,
     pub rope_config: AnyRoPEConfig,

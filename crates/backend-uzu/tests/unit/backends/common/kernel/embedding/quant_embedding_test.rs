@@ -45,7 +45,7 @@ fn get_test_data<T: ArrayElement + Float>(quant_mode: QuantizationMode) -> (Inpu
 
     let token_ids: Box<[u32]> = Box::new([2, 5, 0]);
 
-    let packing_divisor = quant_mode.packing_divisor() as u32;
+    let packing_divisor = quant_mode.packing_divisor();
     let weights_stride = model_dim / packing_divisor;
     let weights: Vec<u8> = (0..vocab_size as usize * weights_stride as usize)
         .map(|i| ((i % 16) as u8) | ((((i + 3) % 16) as u8) * 16))
@@ -88,7 +88,7 @@ fn get_test_data_zero_point_group16<T: ArrayElement + Float>() -> (Input<T>, Vec
 
     let token_ids: Box<[u32]> = Box::new([2, 5, 0]);
 
-    let packing_divisor = quant_mode.packing_divisor() as u32;
+    let packing_divisor = quant_mode.packing_divisor();
     let weights_stride = model_dim / packing_divisor;
     let weights: Vec<u8> = (0..vocab_size as usize * weights_stride as usize)
         .map(|i| ((i % 16) as u8) | ((((i + 3) % 16) as u8) * 16))

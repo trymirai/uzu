@@ -1,6 +1,6 @@
-pub const CANDIDATES_MAX: usize = 512;
-pub const TOP_CHILDREN_THREADS: usize = 256;
-pub const TOP_CHILDREN_SIMDGROUPS: usize = 8;
+pub const CANDIDATES_MAX: u32 = 512;
+pub const TOP_CHILDREN_THREADS: u32 = 256;
+pub const TOP_CHILDREN_SIMDGROUPS: u32 = 8;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -46,8 +46,8 @@ impl MetadataIdx {
 }
 
 pub const FRONTIER_NO_WINNER: u32 = !0;
-pub const FRONTIER_SELECT_THREADS: usize = 256;
-pub const FRONTIER_SELECT_SIMDGROUPS: usize = 8;
-pub const FRONTIER_ENTRIES_PER_THREAD: usize = 8;
-pub const FRONTIER_MAX_SLOTS: usize = 2048;
-pub const FRONTIER_MAX_WIDTH: usize = 32;
+pub const FRONTIER_SELECT_THREADS: u32 = 256;
+pub const FRONTIER_SELECT_SIMDGROUPS: u32 = 8;
+pub const FRONTIER_ENTRIES_PER_THREAD: u32 = 8;
+pub const FRONTIER_MAX_SLOTS: u32 = 2048;
+pub const FRONTIER_MAX_WIDTH: u32 = 32;
