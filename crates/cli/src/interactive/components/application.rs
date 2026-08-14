@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use iocraft::prelude::*;
 use shoji::types::model::Model;
 use uzu::{
@@ -9,12 +11,11 @@ use uzu::{
 use crate::{
     common::model_capabilities::ModelCapabilities,
     interactive::{
-        components::{
-            CommandInput, HistoryCell, HistoryCellType, Logo, Preferences, SelectedModel, Theme,
-            app_settings::AppSettings,
-        },
+        APP_IDENTIFIER,
+        components::{CommandInput, HistoryCell, HistoryCellType, Logo, Preferences, SelectedModel, Theme},
         flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
         helpers::SYMBOL_COMMAND,
+        model::resolve_model_id,
         sessions::{self, SessionState},
     },
 };
@@ -25,9 +26,6 @@ const HISTORY_LIMIT: usize = 20;
 pub struct ApplicationProps {
     pub engine: Option<Engine>,
     pub settings: Option<Settings>,
-    pub theme: Option<Theme>,
-    pub preferences: Option<Preferences>,
-    pub app_settings: Option<AppSettings>,
     pub model: Option<String>,
 }
 
@@ -39,11 +37,9 @@ pub struct ModelState {
 }
 
 pub struct ApplicationState {
+    preferences: Preferences,
     pub engine: Engine,
     pub settings: Option<Settings>,
-    pub theme: Theme,
-    pub preferences: Preferences,
-    pub app_settings: AppSettings,
     pub flow: Option<Box<dyn Flow>>,
     pub history: Vec<HistoryCellType>,
     pub registry: FlowRegistry,
@@ -51,8 +47,41 @@ pub struct ApplicationState {
 }
 
 impl ApplicationState {
+    pub fn load_preferences() -> Result<Preferences, Box<dyn std::error::Error>> {
+        Preferences::load_or_migrate(&Self::settings_file_path("config")?, &Self::settings_file_path("settings")?)
+    }
+
     pub fn session_state(&self) -> Option<&dyn SessionState> {
         self.model_state.as_ref().and_then(|model_state| model_state.session_state.as_deref())
+    }
+
+    pub fn preferences(&self) -> &Preferences {
+        &self.preferences
+    }
+
+    pub fn theme(&self) -> &Theme {
+        &self.preferences.theme
+    }
+
+    pub fn set_preferences(
+        &mut self,
+        prefs: &Preferences,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.preferences = prefs.clone();
+        self.preferences.store(&Self::settings_file_path("config")?)
+    }
+
+    pub fn set_theme(
+        &mut self,
+        theme: Theme,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut preferences = self.preferences.clone();
+        preferences.theme = theme;
+        self.set_preferences(&preferences)
+    }
+
+    fn settings_file_path(name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        confy::get_configuration_file_path(APP_IDENTIFIER, name).map_err(Into::into)
     }
 }
 
@@ -66,9 +95,10 @@ pub fn Application(
     let state = hooks.use_state(|| ApplicationState {
         engine,
         settings: props.settings.clone(),
-        theme: props.theme.clone().unwrap_or_default(),
-        preferences: props.preferences.unwrap_or_default(),
-        app_settings: props.app_settings.clone().unwrap_or_default(),
+        preferences: ApplicationState::load_preferences().unwrap_or_else(|error| {
+            tracing::warn!("Unable to load or migrate CLI preferences: {error}");
+            Preferences::default()
+        }),
         flow: None,
         history: Vec::new(),
         registry: FlowRegistry::default()
@@ -80,12 +110,26 @@ pub fn Application(
         model_state: None,
     });
     let (width, _) = hooks.use_terminal_size();
+    let requested_model = props.model.clone().or_else(|| state.read().preferences().selected_model_id.clone());
 
     hooks.use_future({
         let engine = state.read().engine.clone();
-        let initial_model = props.model.clone();
         let mut state = state;
         async move {
+            let initial_model = match requested_model {
+                Some(model) => match resolve_model_id(&engine, model).await {
+                    Ok(model) => model,
+                    Err(error) => {
+                        state.write().history.push(HistoryCellType::CommandResult {
+                            result: format!("Failed to resolve model: {error}"),
+                        });
+                        state.write().flow = Some(Box::new(ModelRegistriesFlow));
+                        return;
+                    },
+                },
+                None => None,
+            };
+
             let Some(identifier) = initial_model else {
                 state.write().flow = Some(Box::new(ModelRegistriesFlow));
                 return;
@@ -280,7 +324,7 @@ pub fn Application(
                         width: 100pct,
                         height: 1u16,
                         border_style: BorderStyle::Single,
-                        border_color: state.read().theme.accent_color,
+                        border_color: state.read().theme().accent_color,
                         border_edges: Some(Edges::Top),
                     )
                     #(flow_component)
@@ -328,8 +372,8 @@ pub fn Application(
                 width: width,
             ) {
                 View(
-                    padding_left: state.read().theme.padding(),
-                    padding_right: state.read().theme.padding(),
+                    padding_left: state.read().theme().padding(),
+                    padding_right: state.read().theme().padding(),
                 ) {
                     Logo
                 }
@@ -343,7 +387,7 @@ pub fn Application(
                     flex_direction: FlexDirection::Column,
                     column_gap: 0,
                 ) {
-                    View(height: state.read().theme.padding())
+                    View(height: state.read().theme().padding())
                     #(selected_model_component)
                     #(input_component)
                 }
