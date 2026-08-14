@@ -16,7 +16,9 @@ mod flows;
 mod helpers;
 mod list;
 mod model;
+mod sampling;
 mod sessions;
+mod util;
 
 const APP_IDENTIFIER: &str = "com.trymirai.cli";
 
