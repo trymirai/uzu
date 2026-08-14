@@ -261,8 +261,8 @@ impl AttentionGemmGrouped {
         let kv_length = arguments.cache.prefix_len() + suffix_length;
         let mut output =
             encoder.allocate_constant_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], DataType::BF16)?;
-        let gpu_core_count = encoder.context().gpu_core_count;
-        let core = self.get_or_create(encoder.context(), mask)?;
+        let gpu_core_count = encoder.context.gpu_core_count;
+        let core = self.get_or_create(encoder.context, mask)?;
         let num_splits = choose_splits(
             core.head_dim,
             suffix_length,

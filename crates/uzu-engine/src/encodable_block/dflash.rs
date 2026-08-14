@@ -27,15 +27,11 @@ use crate::{
 
 pub struct DFlashState<B: Backend> {
     layer_states: Box<[Box<dyn MixerState<B>>]>,
-    context_length: u32,
+    pub context_length: u32,
     context_capacity: u32,
 }
 
-impl<B: Backend> DFlashState<B> {
-    pub fn context_length(&self) -> u32 {
-        self.context_length
-    }
-}
+impl<B: Backend> DFlashState<B> {}
 
 pub struct DFlash<B: Backend> {
     target_feature_projection: Box<dyn Linear<B>>,
@@ -47,7 +43,7 @@ pub struct DFlash<B: Backend> {
     rope_config: AnyRoPEConfig,
     model_dim: u32,
     max_context_length: u32,
-    block_size: u32,
+    pub block_size: u32,
     mask_token_id: u32,
     target_feature_input_dim: u32,
     data_type: DataType,
@@ -171,10 +167,6 @@ impl<B: Backend> DFlash<B> {
         })
     }
 
-    pub fn block_size(&self) -> u32 {
-        self.block_size
-    }
-
     pub fn empty_state(
         &self,
         context_capacity: u32,
@@ -255,7 +247,7 @@ impl<B: Backend> DFlash<B> {
         for ((layer, mixer_state), key_value) in
             self.layers.iter().zip(state.layer_states.iter_mut()).zip(layer_key_values)
         {
-            mixer_state.prepare(state.context_length, num_tokens, encoder.context())?;
+            mixer_state.prepare(state.context_length, num_tokens, encoder.context)?;
             let attention = (layer.mixer.as_ref() as &dyn Any)
                 .downcast_ref::<Attention<B>>()
                 .expect("DFlash draft layers must use attention mixers");
@@ -310,7 +302,7 @@ impl<B: Backend> DFlash<B> {
         let mut residual = encoder.allocate_scratch(hidden.size()).map_err(DFlashEncodeError::Backend)?;
         for (layer, mixer_state) in self.layers.iter().zip(state.layer_states.iter_mut()) {
             mixer_state
-                .prepare(state.context_length, batch_size, encoder.context())
+                .prepare(state.context_length, batch_size, encoder.context)
                 .map_err(DFlashEncodeError::Backend)?;
             hidden = layer
                 .encode(
@@ -331,7 +323,7 @@ impl<B: Backend> DFlash<B> {
             .encode(&hidden, 0, batch_size, Some(&mut residual), encoder)
             .map_err(DFlashEncodeError::Backend)?;
 
-        let row_bytes = size_for_shape(&[target_embedding.model_dim()], DataType::BF16);
+        let row_bytes = size_for_shape(&[target_embedding.model_dim], DataType::BF16);
         let lookahead_rows = row_bytes..batch_size as usize * row_bytes;
         let mut lookahead_hidden =
             encoder.allocate_scratch(lookahead_rows.len()).map_err(DFlashEncodeError::Backend)?;
@@ -339,7 +331,7 @@ impl<B: Backend> DFlash<B> {
         let logits = target_embedding.encode_readout(
             batch_size - 1,
             &lookahead_hidden,
-            target_embedding.vocab_size(),
+            target_embedding.vocab_size,
             None,
             false,
             encoder,

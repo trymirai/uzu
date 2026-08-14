@@ -56,10 +56,10 @@ enum EmbeddingTying<B: Backend> {
 pub struct Embedding<B: Backend> {
     tying: EmbeddingTying<B>,
     input_scale: f32,
-    data_type: DataType,
+    pub data_type: DataType,
     logit_transform: Option<LogitTransform<B>>,
-    vocab_size: u32,
-    model_dim: u32,
+    pub vocab_size: u32,
+    pub model_dim: u32,
 }
 
 struct LogitTransform<B: Backend> {
@@ -69,14 +69,6 @@ struct LogitTransform<B: Backend> {
 }
 
 impl<B: Backend> Embedding<B> {
-    pub fn vocab_size(&self) -> u32 {
-        self.vocab_size
-    }
-
-    pub fn model_dim(&self) -> u32 {
-        self.model_dim
-    }
-
     pub fn new(
         context: &B::Context,
         vocab_size: u32,

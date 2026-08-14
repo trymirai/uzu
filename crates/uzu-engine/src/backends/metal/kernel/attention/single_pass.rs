@@ -55,7 +55,7 @@ impl AttentionSinglePass {
             &[arguments.suffix_length, config.num_q_heads, config.head_dim],
             config.data_type,
         )?;
-        let kernel = self.get_or_create(encoder.context(), arguments.trie.is_some())?;
+        let kernel = self.get_or_create(encoder.context, arguments.trie.is_some())?;
         kernel.encode(
             arguments.queries,
             arguments.keys,

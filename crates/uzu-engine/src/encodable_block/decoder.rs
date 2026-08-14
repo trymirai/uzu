@@ -159,10 +159,9 @@ impl<B: Backend> Decoder<B> {
             embedded
         };
         if request.embedded {
-            let shape = [1, batch_dim.size(), self.embedding.model_dim()];
+            let shape = [1, batch_dim.size(), self.embedding.model_dim];
             tap.embedded = Some(
-                Array::capture(&embedded, &shape, self.embedding.data_type(), encoder)
-                    .map_err(DecoderError::Backend)?,
+                Array::capture(&embedded, &shape, self.embedding.data_type, encoder).map_err(DecoderError::Backend)?,
             );
         }
 
@@ -193,18 +192,13 @@ impl<B: Backend> Decoder<B> {
 
         let logits = if let Some(output_range) = output_range {
             let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");
-            let logits = self.embedding.encode_readout(
-                output_range.end - output_range.start,
-                output,
-                self.embedding.vocab_size(),
-                None,
-                true,
-                encoder,
-            )?;
+            let row_count = output_range.end - output_range.start;
+            let logits =
+                self.embedding.encode_readout(row_count, output, self.embedding.vocab_size, None, true, encoder)?;
             if request.logits {
-                let shape = [1, output_range.len(), self.embedding.vocab_size()];
+                let shape = [1, row_count, self.embedding.vocab_size];
                 tap.logits = Some(
-                    Array::capture(&logits, &shape, self.embedding.data_type(), encoder)
+                    Array::capture(&logits, &shape, self.embedding.data_type, encoder)
                         .map_err(DecoderError::Backend)?,
                 );
             }
