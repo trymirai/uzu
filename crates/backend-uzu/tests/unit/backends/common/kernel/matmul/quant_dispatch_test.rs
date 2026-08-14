@@ -19,7 +19,7 @@ use crate::{
             kernel::{
                 Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{MatmulDOps, MatmulError, MatmulKernel},
+                matmul::{MatmulDOps, MatmulError, MatmulKernel, MatmulRouting},
             },
         },
         cpu::Cpu,
@@ -740,7 +740,7 @@ fn run_widened_f32<B: Backend>(
                 b_transpose: true,
                 d: &mut y,
                 d_transform: MatmulDOps::none(),
-                gather_indices: None,
+                routing: MatmulRouting::Dense,
                 m: input.m,
                 n: input.n,
                 k: input.k,

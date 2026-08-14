@@ -10,7 +10,7 @@ use crate::{
             AllocationType, Backend, Context, Encoder,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulRouting},
             },
         },
         cpu::Cpu,
@@ -171,7 +171,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
             b_transpose: input.case.b_transpose,
             d: &mut d_allocation,
             d_transform,
-            gather_indices: None,
+            routing: MatmulRouting::Dense,
             m,
             n,
             k,

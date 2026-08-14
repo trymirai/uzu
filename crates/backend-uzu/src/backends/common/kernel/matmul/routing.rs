@@ -1,4 +1,4 @@
-use super::{MatmulA, MatmulArguments};
+use super::{MatmulA, MatmulArguments, MatmulRoutingKind};
 use crate::backends::common::{
     Backend, BufferArg,
     gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
@@ -16,7 +16,7 @@ pub struct MatmulShape {
     pub b_group_size: Option<u32>,
     pub signed_codes: bool,
     pub a_full_precision: bool,
-    pub gathered: bool,
+    pub routing: MatmulRoutingKind,
     pub d_transform: GemmDTransform,
 }
 
@@ -35,7 +35,7 @@ impl MatmulShape {
             b_group_size: arguments.b.group_size(),
             signed_codes: arguments.b.signed_codes(),
             a_full_precision: matches!(arguments.a, MatmulA::FullPrecision { .. }),
-            gathered: arguments.gather_indices.is_some(),
+            routing: arguments.routing.kind(),
             d_transform: arguments.d_transform.mask(),
         }
     }

@@ -15,7 +15,7 @@ use crate::{
             },
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulRoutingKind, MatmulShape},
             },
         },
         metal::{
@@ -143,6 +143,19 @@ impl GemmKernel {
         plan: GemmPlan,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        let routing = arguments.routing.kind();
+        if routing != MatmulRoutingKind::Dense {
+            let routing = match routing {
+                MatmulRoutingKind::SparseReadout => "sparse readout",
+                MatmulRoutingKind::Gathered => "gathered assignments",
+                MatmulRoutingKind::Dense => unreachable!(),
+            };
+            return Err(MatmulError::UnsupportedRouting {
+                path: "Gemm",
+                routing,
+            }
+            .into());
+        }
         let shape = MatmulShape::from_arguments(&arguments);
         self.problem(shape, encoder.context().supports_mxu())
             .validate_engine(plan.engine)

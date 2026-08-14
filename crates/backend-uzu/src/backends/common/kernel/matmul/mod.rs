@@ -1,4 +1,5 @@
 mod arguments;
+mod assignment;
 mod d_ops;
 mod error;
 mod kernel;
@@ -7,6 +8,7 @@ mod matmul_b;
 pub mod routing;
 
 pub use arguments::MatmulArguments;
+pub use assignment::{GatheredMatmul, MatmulMatrixMap, MatmulRouting, MatmulRoutingKind, MatmulRowMap};
 pub use d_ops::MatmulDOps;
 pub use error::MatmulError;
 pub use kernel::MatmulKernel;

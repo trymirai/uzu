@@ -5,7 +5,7 @@ use crate::{
         Allocation, Backend, BufferArg, Encoder, Kernels,
         kernel::{
             AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, SoftmaxKernel,
-            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulRouting},
         },
     },
     data_type::DataType,
@@ -102,7 +102,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
                         ab_scale: scale,
                         ..MatmulDOps::none()
                     },
-                    gather_indices: None,
+                    routing: MatmulRouting::Dense,
                     m: gqa_factor * suffix_length,
                     n: sequence_length,
                     k: self.head_dim,
@@ -143,7 +143,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
                     b_transpose: false,
                     d: &mut group_output,
                     d_transform: MatmulDOps::none(),
-                    gather_indices: None,
+                    routing: MatmulRouting::Dense,
                     m: gqa_factor * suffix_length,
                     n: self.head_dim,
                     k: sequence_length,

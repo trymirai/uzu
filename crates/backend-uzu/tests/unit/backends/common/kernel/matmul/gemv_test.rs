@@ -13,7 +13,7 @@ use crate::{
             gpu_types::QuantizationMethod,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulRouting},
             },
         },
         cpu::Cpu,
@@ -57,17 +57,23 @@ fn get_test_data<T: ArrayElement + Float>(
     (input, expected)
 }
 
-// Encode one GEMV (dense, or a per-row B-row gather when `gather_indices` is set) and copy out.
+// Encode one GEMV (dense, or a per-row sparse B-row readout) and copy out.
 fn run_gemv<'a, B: Backend, T: ArrayElement + Float>(
     context: &B::Context,
     a: &'a Allocation<B>,
     b: MatmulB<'a, B>,
-    gather_indices: Option<&'a Allocation<B>>,
+    b_rows: Option<&'a Allocation<B>>,
     m: usize,
     n_out: usize,
     k: usize,
     soft_cap: Option<f32>,
 ) -> Vec<T> {
+    let routing = match b_rows {
+        Some(b_rows) => MatmulRouting::SparseReadout {
+            b_rows,
+        },
+        None => MatmulRouting::Dense,
+    };
     let mut d = alloc_allocation::<B, T>(context, m * n_out);
     let mut kernel =
         <B::Kernels as Kernels>::MatmulKernel::new(context, T::data_type(), T::data_type(), T::data_type())
@@ -88,7 +94,7 @@ fn run_gemv<'a, B: Backend, T: ArrayElement + Float>(
                     soft_cap,
                     ..MatmulDOps::none()
                 },
-                gather_indices,
+                routing,
                 m: m as u32,
                 n: n_out as u32,
                 k: k as u32,

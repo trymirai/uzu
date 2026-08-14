@@ -11,7 +11,7 @@ use crate::{
             Backend,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulRouting},
             },
         },
         metal::{GemmEngine, Metal},
@@ -66,7 +66,7 @@ fn bench_gemm(c: &mut Criterion) {
                                 b_transpose: true,
                                 d: &mut d,
                                 d_transform: MatmulDOps::none(),
-                                gather_indices: None,
+                                routing: MatmulRouting::Dense,
                                 m,
                                 n,
                                 k,

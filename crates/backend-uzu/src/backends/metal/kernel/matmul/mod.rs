@@ -11,7 +11,7 @@ use crate::{
         common::{
             BufferArg, Encoder,
             gpu_types::gemm::GemmTiling,
-            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulPath, MatmulShape},
+            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulPath, MatmulRoutingKind, MatmulShape},
         },
         metal::{Metal, context::MetalContext, error::MetalError},
     },
@@ -39,7 +39,7 @@ impl MatmulMetalKernel {
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> bool {
-        if shape.gathered || plan.engine != gemm::GemmEngine::Mxu {
+        if shape.routing != MatmulRoutingKind::Dense || plan.engine != gemm::GemmEngine::Mxu {
             return false;
         }
         match (shape.m, shape.n == shape.k, (weights_data_type, input_data_type, output_data_type)) {
@@ -136,6 +136,13 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        if arguments.routing.kind() == MatmulRoutingKind::Gathered {
+            return Err(MatmulError::UnsupportedRouting {
+                path: "MetalMatmul",
+                routing: "gathered assignments",
+            }
+            .into());
+        }
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = match self.select_dispatch(&shape, encoder.context()) {
             MatmulDispatch::Gemv(gemv) => {
@@ -144,11 +151,11 @@ impl MatmulKernel for MatmulMetalKernel {
             MatmulDispatch::Gemm(plan) => plan,
         };
 
-        // TODO: remove after GatherGEMM is supported
-        if arguments.gather_indices.is_some() {
+        // Sparse readout selects one B row per output element and currently has no GEMM path.
+        if arguments.routing.kind() == MatmulRoutingKind::SparseReadout {
             return Err(MetalError::KernelDispatchFailed(
                 format!(
-                    "gathered readout requires the GEMV path, but shape (m={}, n={}) routes to GEMM",
+                    "sparse readout requires the GEMV path, but shape (m={}, n={}) routes to GEMM",
                     arguments.m, arguments.n
                 )
                 .into(),

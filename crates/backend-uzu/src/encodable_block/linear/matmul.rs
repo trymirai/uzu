@@ -6,7 +6,10 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{
             Kernels,
-            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulPath, MatmulShape},
+            matmul::{
+                MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulPath, MatmulRouting,
+                MatmulRoutingKind, MatmulShape,
+            },
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
@@ -124,7 +127,7 @@ impl<B: Backend> LinearMatmul<B> {
                 b_transpose: true,
                 d: &mut output,
                 d_transform: self.d_ops(),
-                gather_indices: None,
+                routing: MatmulRouting::Dense,
                 m: batch_dim,
                 n: self.output_dim,
                 k: self.input_dim,
@@ -164,7 +167,7 @@ impl<B: Backend> LinearMatmul<B> {
             b_group_size: b.group_size(),
             signed_codes: b.signed_codes(),
             a_full_precision: true,
-            gathered: false,
+            routing: MatmulRoutingKind::Dense,
             d_transform: self.d_ops().mask(),
         };
         self.kernel.lock().select_path(&shape, context)

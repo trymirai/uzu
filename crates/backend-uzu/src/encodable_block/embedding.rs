@@ -7,7 +7,7 @@ use crate::{
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationTransform, LogitTransformKernel,
-            matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel, MatmulRouting},
         },
     },
     config::{
@@ -415,7 +415,7 @@ impl<B: Backend> Embedding<B> {
             b_transpose: true,
             d: &mut output_allocation,
             d_transform: MatmulDOps::none(),
-            gather_indices: None,
+            routing: MatmulRouting::Dense,
             m: batch_dim,
             n: self.vocab_size,
             k: self.model_dim,
@@ -514,7 +514,9 @@ impl<B: Backend> Embedding<B> {
                         soft_cap: fuse_soft_cap,
                         ..MatmulDOps::none()
                     },
-                    gather_indices: Some(token_ids),
+                    routing: MatmulRouting::SparseReadout {
+                        b_rows: token_ids,
+                    },
                     m: rows,
                     n: ids_per_row,
                     k: self.model_dim,

@@ -3,6 +3,7 @@ use crate::backends::common::{Allocation, Backend, gpu_types::gemm::GemmAPrologu
 pub enum MatmulA<'a, B: Backend> {
     FullPrecision {
         values: &'a Allocation<B>,
+        /// Byte offset from the start of `values` to the logical first element.
         offset: usize,
     },
     Int8Symmetric {

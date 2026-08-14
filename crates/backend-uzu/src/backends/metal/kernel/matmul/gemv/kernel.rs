@@ -12,7 +12,9 @@ use crate::{
                 HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
-            kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
+            kernel::matmul::{
+                MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulRouting, MatmulRoutingKind, MatmulShape,
+            },
         },
         metal::{Metal, context::MetalContext, device_tier::DeviceTier, kernel::GemvMetalKernel},
     },
@@ -109,7 +111,7 @@ impl GemvSpecialization {
             k_split: tile.k_split,
             results_per_simdgroup: tile.results_per_simdgroup,
             num_simdgroups: tile.num_simdgroups,
-            gathered: shape.gathered,
+            gathered: shape.routing == MatmulRoutingKind::SparseReadout,
             signed_codes: shape.signed_codes,
         })
     }
@@ -192,9 +194,21 @@ impl GemvDispatch {
             m,
             n,
             k,
-            gather_indices,
+            routing,
             ..
         } = arguments;
+        let gather_indices = match routing {
+            MatmulRouting::Dense => None,
+            MatmulRouting::SparseReadout {
+                b_rows,
+            } => Some(b_rows),
+            MatmulRouting::Gathered(_) => {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "Gemv",
+                    routing: "gathered assignments",
+                });
+            },
+        };
         let MatmulA::FullPrecision {
             values: a,
             offset: a_offset,

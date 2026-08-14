@@ -6,7 +6,7 @@ use crate::{
             gpu_types::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel, MatmulRouting},
             },
         },
         cpu::{Cpu, context::CpuContext, error::CpuError},
@@ -58,6 +58,16 @@ impl MatmulKernel for MatmulCpuKernel {
         arguments: MatmulArguments<'a, 'b, 'd, Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), CpuError> {
+        if matches!(arguments.routing, MatmulRouting::Gathered(_)) {
+            return super::gathered::encode(
+                arguments,
+                self.weights_data_type,
+                self.input_data_type,
+                self.output_data_type,
+                encoder,
+            );
+        }
+
         let output_scale = arguments.d_transform.ab_scale;
         let accumulate = arguments.d_transform.accumulate;
         let bias_alloc = arguments.d_transform.bias;
@@ -73,9 +83,16 @@ impl MatmulKernel for MatmulCpuKernel {
             m,
             n,
             k,
-            gather_indices,
+            routing,
             ..
         } = arguments;
+        let gather_indices = match routing {
+            MatmulRouting::Dense => None,
+            MatmulRouting::SparseReadout {
+                b_rows,
+            } => Some(b_rows),
+            MatmulRouting::Gathered(_) => unreachable!(),
+        };
 
         let m_u = m as usize;
         let n_u = n as usize;
