@@ -1,6 +1,7 @@
 use std::io::IsTerminal;
 
 use iocraft::prelude::*;
+use shoji::types::basic::ReasoningEffort;
 use uzu::{
     engine::{Engine, EngineConfig, EngineError},
     settings::SettingsError,
@@ -43,6 +44,7 @@ impl CliApplication {
     pub async fn run_with_model(
         &self,
         model: Option<String>,
+        reasoning_effort: Option<ReasoningEffort>,
     ) -> Result<(), CliError> {
         if !std::io::stdout().is_terminal() {
             return Err(CliError::RenderingError {
@@ -57,6 +59,7 @@ impl CliApplication {
                 engine: Some(self.engine.clone()),
                 settings,
                 model,
+                reasoning_effort,
             )
         }
         .render_loop()

@@ -160,8 +160,7 @@ pub async fn run_session(
 
     let user_message = ChatMessage::user().with_text(text);
     let mut messages = vec![user_message];
-    if let Some(reasoning_effort) =
-        thinking_support.with_preference(&state.read().preferences().thinking).reasoning_effort()
+    if let Some(reasoning_effort) = thinking_support.with_preference(&state.read().thinking()).reasoning_effort()
         && session.messages().await.is_empty()
     {
         let system_message = ChatMessage::system().with_reasoning_effort(reasoning_effort);
