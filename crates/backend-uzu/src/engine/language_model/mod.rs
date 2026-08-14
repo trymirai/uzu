@@ -17,6 +17,7 @@ use crate::{
 
 pub mod state;
 pub mod stream;
+pub mod trace;
 
 #[cfg(grammar)]
 pub mod grammar;
@@ -28,6 +29,7 @@ pub struct LanguageModel<B: Backend> {
     sampling: Sampling<B>,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
+    tap: crate::trace::DecoderTap<B>,
     #[cfg(grammar)]
     vocab_size: usize,
 }
@@ -126,6 +128,7 @@ impl<B: Backend> Engine<B> {
             sampling,
             context_ring_update,
             generation_config,
+            tap: crate::trace::DecoderTap::default(),
             #[cfg(grammar)]
             vocab_size,
         })

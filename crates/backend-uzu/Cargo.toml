@@ -65,6 +65,7 @@ monostate.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
 rangemap.workspace = true
+safetensors.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 xxhash-rust = { workspace = true, features = ["xxh3"] }
 memmap2.workspace = true
@@ -96,6 +97,7 @@ rand_distr.workspace = true
 is_close.workspace = true
 ndarray.workspace = true
 rstest.workspace = true
+clap.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, default-features = true }

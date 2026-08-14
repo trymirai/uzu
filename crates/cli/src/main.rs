@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -6,6 +8,7 @@ mod common;
 mod interactive;
 mod server;
 mod storage;
+mod trace;
 
 #[derive(Parser)]
 #[command(name = "cli", bin_name = "cli")]
@@ -42,6 +45,16 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = storage::DownloadManagerCliType::default())]
         download_manager: storage::DownloadManagerCliType,
     },
+    /// Record an activation trace of a single forward pass, in lalamo's layout.
+    Trace {
+        #[arg(long, value_name = "DIR")]
+        model_path: PathBuf,
+        /// User message to run the forward pass on.
+        #[arg(long, value_name = "TEXT")]
+        message: String,
+        #[arg(long, value_name = "FILE")]
+        output_path: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -66,6 +79,11 @@ async fn main() -> Result<()> {
         Some(Commands::Storage {
             download_manager,
         }) => storage::run(download_manager).await?,
+        Some(Commands::Trace {
+            model_path,
+            message,
+            output_path,
+        }) => trace::run_trace(&model_path, &message, &output_path).await?,
         None => interactive::run_interactive(cli.model).await?,
     }
 

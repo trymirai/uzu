@@ -71,7 +71,7 @@ impl MatmulMetalKernel {
             self.weights_data_type,
             self.input_data_type,
             self.output_data_type,
-            context.device_tier(),
+            context.device_tier,
         );
         let problem = GemmProblem::new(*shape, self.weights_data_type, self.output_data_type, context.supports_mxu());
         let plan = problem.select_plan();
@@ -137,7 +137,7 @@ impl MatmulKernel for MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        let plan = match self.select_dispatch(&shape, encoder.context()) {
+        let plan = match self.select_dispatch(&shape, encoder.context) {
             MatmulDispatch::Gemv(gemv) => {
                 return self.gemv.encode(arguments, gemv, encoder).map_err(MetalError::from);
             },

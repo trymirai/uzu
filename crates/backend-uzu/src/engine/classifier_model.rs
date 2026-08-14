@@ -25,6 +25,7 @@ pub struct ClassifierModel<B: Backend> {
     classifier: ClassifierEncodable<B>,
     output_labels: Box<[String]>,
     data_type: DataType,
+    tap: crate::trace::ClassifierTap<B>,
 }
 
 #[derive(Debug, Error)]
@@ -77,6 +78,7 @@ impl<B: Backend> Engine<B> {
             classifier,
             output_labels,
             data_type,
+            tap: crate::trace::ClassifierTap::default(),
         })
     }
 }
@@ -117,7 +119,7 @@ impl<B: Backend> ClassifierModel<B> {
             .map_err(ClassifierModelClassifyError::Backend)?;
         token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 
-        let logits = self.classifier.encode(&token_ids, input.len() as u32, &mut encoder)?;
+        let logits = self.classifier.encode(&token_ids, input.len() as u32, None, &mut encoder)?.logits;
 
         let mut output_buffer = self
             .context
@@ -148,5 +150,66 @@ impl<B: Backend> ClassifierModel<B> {
             logits,
             probabilities,
         })
+    }
+
+    pub fn write_trace(
+        &self,
+        output_path: &Path,
+        metadata: Option<HashMap<String, String>>,
+    ) -> Result<(), crate::trace::Error> {
+        if let Some(parent) = output_path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
+        self.tap.write(output_path, metadata)
+    }
+
+    pub fn record_trace(
+        &mut self,
+        input: &[u64],
+        request: &crate::trace::ClassifierTapRequest,
+    ) -> Result<&crate::trace::ClassifierTap<B>, ClassifierModelClassifyError<B>> {
+        use crate::{data_type::DataType, trace::Array};
+
+        if input.is_empty() {
+            return Err(ClassifierModelClassifyError::EmptyInput);
+        }
+
+        let token_count = input.len() as u32;
+        if self.classifier.max_context_length().is_some_and(|max_context_length| token_count > max_context_length) {
+            return Err(ClassifierModelClassifyError::ContextOverflow);
+        }
+
+        let mut encoder = Encoder::<B>::new(&self.context).map_err(ClassifierModelClassifyError::Backend)?;
+
+        let mut token_ids = encoder
+            .allocate_constant(input.len() * DataType::U32.size_in_bytes())
+            .map_err(ClassifierModelClassifyError::Backend)?;
+        token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
+
+        let output = self.classifier.encode(&token_ids, token_count, Some(request), &mut encoder)?;
+        let mut tap = output.tap;
+
+        if let Some(transformer_tap) = tap.activations.as_mut().and_then(|a| a.transformer.as_mut()) {
+            let shape = [1, token_count];
+            let host_token_ids = input.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
+            let host_token_positions = (0..input.len() as i32).collect::<Box<[i32]>>();
+            transformer_tap.token_ids = Some(
+                Array::capture_slice(&host_token_ids, &shape, DataType::I32, &encoder)
+                    .map_err(ClassifierModelClassifyError::Backend)?,
+            );
+            transformer_tap.token_positions = Some(
+                Array::capture_slice(&host_token_positions, &shape, DataType::I32, &encoder)
+                    .map_err(ClassifierModelClassifyError::Backend)?,
+            );
+        }
+
+        drop(output.logits);
+        drop(token_ids);
+
+        encoder.end_encoding().submit().wait_until_completed().map_err(ClassifierModelClassifyError::Backend)?;
+
+        self.tap = tap;
+
+        Ok(&self.tap)
     }
 }

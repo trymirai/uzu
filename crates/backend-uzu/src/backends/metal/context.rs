@@ -42,7 +42,7 @@ pub struct MetalContext {
     library_cache: Mutex<HashMap<usize, Retained<ProtocolObject<dyn MTLLibrary>>>>,
     pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: Mutex<MetalSparseHeapPool>,
-    device_tier: DeviceTier,
+    pub(crate) device_tier: DeviceTier,
     weak_self: Weak<MetalContext>,
     #[cfg(test)]
     timeline_shared_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
@@ -51,10 +51,6 @@ pub struct MetalContext {
 impl MetalContext {
     pub fn supports_mxu(&self) -> bool {
         self.device.supports_mxu()
-    }
-
-    pub(crate) fn device_tier(&self) -> DeviceTier {
-        self.device_tier
     }
 
     pub(super) fn update_peak_memory_usage(&self) {
@@ -224,7 +220,7 @@ impl Context for MetalContext {
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
-        let sparse_page_size = self.sparse_heap_pool.lock().page_size();
+        let sparse_page_size = self.sparse_heap_pool.lock().page_size;
         let context = self.weak_self.upgrade().ok_or(MetalError::CannotCreateBuffer)?;
         MetalSparseBuffer::new(context, capacity, sparse_page_size)
     }

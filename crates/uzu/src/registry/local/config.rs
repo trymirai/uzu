@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use backend_uzu::bridge::resolve_model_specialization;
+use backend_uzu::bridge::model_specialization;
 use shoji::types::model::Model;
 
 use crate::registry::RegistryError;
@@ -67,10 +67,9 @@ impl Config {
             message: format!("Local model {} has no local path", model.identifier),
         })?;
         let model_path = PathBuf::from(model_path);
-        let specialization =
-            resolve_model_specialization(&model_path).map_err(|error| RegistryError::UnableToGetModels {
-                message: format!("Unable to resolve specialization for {}: {error}", model_path.display()),
-            })?;
+        let specialization = model_specialization(&model_path).map_err(|error| RegistryError::UnableToGetModels {
+            message: format!("Unable to resolve specialization for {}: {error}", model_path.display()),
+        })?;
         model.specializations = vec![specialization];
         Ok(model)
     }

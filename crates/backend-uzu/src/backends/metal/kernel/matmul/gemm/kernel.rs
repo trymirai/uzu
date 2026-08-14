@@ -133,7 +133,7 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        let plan = self.select_plan_for_engine(&shape, engine, encoder.context())?;
+        let plan = self.select_plan_for_engine(&shape, engine, encoder.context)?;
         self.encode_plan(arguments, plan, encoder)
     }
 
@@ -144,7 +144,7 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        self.problem(shape, encoder.context().supports_mxu())
+        self.problem(shape, encoder.context.supports_mxu())
             .validate_engine(plan.engine)
             .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))?;
 
@@ -273,7 +273,7 @@ impl GemmKernel {
                     GemmAPrologueKind::FullPrecision,
                     None,
                 )?;
-                let kernel = self.get_or_create(encoder.context(), specialization)?;
+                let kernel = self.get_or_create(encoder.context, specialization)?;
                 kernel.encode(
                     Some((a, a_offset)),
                     weights,
@@ -395,7 +395,7 @@ impl GemmKernel {
                         a_prologue,
                         a_group_size,
                     )?;
-                    let kernel = self.get_or_create(encoder.context(), specialization)?;
+                    let kernel = self.get_or_create(encoder.context, specialization)?;
                     kernel.encode(
                         a_full_precision,
                         weights,
@@ -496,7 +496,7 @@ impl GemmKernel {
             use_morton: false,
             ab_scale: 1.0,
         };
-        let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
+        let part_kernel = self.get_or_create(encoder.context, part_spec)?;
         part_kernel.encode(
             a_full_precision,
             weights,
@@ -530,7 +530,7 @@ impl GemmKernel {
         } else {
             None
         };
-        let reduce = self.get_or_create_split_k_reduce(encoder.context(), reduce_transform)?;
+        let reduce = self.get_or_create_split_k_reduce(encoder.context, reduce_transform)?;
         reduce.encode((&temp, 0usize), &mut *d, bias_arg, elem as u32, split_k, group_count, n, scale_arg, encoder);
 
         if output_transform.contains(GemmDTransform::RHT)

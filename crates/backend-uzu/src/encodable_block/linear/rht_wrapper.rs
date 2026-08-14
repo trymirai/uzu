@@ -172,11 +172,11 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         encoder.push_debug_group("linear (rht)");
 
         if let Some(quantize_transform) = &self.quantize_transform
-            && self.inner_linear.select_path(batch_dim, encoder.context()) == MatmulPath::Gemm
+            && self.inner_linear.select_path(batch_dim, encoder.context) == MatmulPath::Gemm
         {
-            let scale_groups_per_row = self.input_dimension.div_ceil(quantize_transform.activation_group_size());
+            let scale_groups_per_row = self.input_dimension.div_ceil(quantize_transform.activation_group_size);
             let sum_groups_per_row =
-                quantize_transform.sum_group_size().map(|group_size| self.input_dimension.div_ceil(group_size));
+                quantize_transform.sum_group_size.map(|group_size| self.input_dimension.div_ceil(group_size));
             let mut values = encoder.allocate_scratch_for_shape(&[batch_dim, self.input_dimension], DataType::I8)?;
             let mut scales = encoder.allocate_scratch_for_shape(&[batch_dim, scale_groups_per_row], DataType::F32)?;
             let mut group_sums = sum_groups_per_row
@@ -198,7 +198,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                     values: &values,
                     scales: &scales,
                     group_sums: group_sums.as_ref(),
-                    group_size: quantize_transform.activation_group_size(),
+                    group_size: quantize_transform.activation_group_size,
                 },
                 batch_dim,
                 encoder,
