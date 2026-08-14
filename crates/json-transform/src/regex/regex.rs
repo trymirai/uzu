@@ -1,7 +1,18 @@
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock, RwLock},
+};
+
 use crate::{
     TransformError,
     regex::{RegexCaptures, RegexEngine},
 };
+
+// Patterns come from schemas, but nothing forces that, so the cache is bounded.
+const CACHE_LIMIT: usize = 256;
+
+static STANDARD: LazyLock<RwLock<HashMap<String, Arc<Regex>>>> = LazyLock::new(Default::default);
+static EXTENDED: LazyLock<RwLock<HashMap<String, Arc<Regex>>>> = LazyLock::new(Default::default);
 
 pub enum Regex {
     Standard(regex::Regex),
@@ -25,6 +36,28 @@ impl Regex {
                 })
             },
         }
+    }
+
+    /// Compiles a pattern once per process instead of once per call.
+    pub fn cached(
+        pattern: &str,
+        engine: &RegexEngine,
+    ) -> Result<Arc<Self>, TransformError> {
+        let cache = match engine {
+            RegexEngine::Standard => &STANDARD,
+            RegexEngine::Extended => &EXTENDED,
+        };
+
+        if let Some(regex) = cache.read().unwrap().get(pattern) {
+            return Ok(regex.clone());
+        }
+
+        let regex = Arc::new(Self::new(pattern, engine)?);
+        let mut cache = cache.write().unwrap();
+        if cache.len() < CACHE_LIMIT {
+            cache.insert(pattern.to_string(), regex.clone());
+        }
+        Ok(regex)
     }
 
     pub fn as_str(&self) -> &str {

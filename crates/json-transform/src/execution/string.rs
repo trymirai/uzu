@@ -26,7 +26,7 @@ pub fn execute_regex_replace(
     let Value::String(text) = input else {
         return Ok(Value::Null);
     };
-    let regex = Regex::new(pattern, regex_engine)?;
+    let regex = Regex::cached(pattern, regex_engine)?;
     let replaced = regex.replace_all(&text, template);
     Ok(Value::String(replaced))
 }
@@ -40,7 +40,7 @@ pub fn execute_regex_find_all(
     let Value::String(text) = input else {
         return Ok(Value::Null);
     };
-    let regex = Regex::new(pattern, regex_engine)?;
+    let regex = Regex::cached(pattern, regex_engine)?;
     let matches: Vec<Value> = regex
         .captures_iter(&text)
         .iter()
