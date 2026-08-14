@@ -66,6 +66,10 @@ impl ApplicationState {
         self.thinking_override.unwrap_or(self.preferences.thinking)
     }
 
+    pub fn reasoning_effort_override(&self) -> Option<ReasoningEffort> {
+        self.thinking_override.map(|preference| preference.level)
+    }
+
     pub fn theme(&self) -> &Theme {
         &self.preferences.theme
     }

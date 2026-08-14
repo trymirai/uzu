@@ -169,6 +169,7 @@ pub fn SelectedModel(
 
     let theme = state.read().theme().clone();
     let preferences = state.read().preferences().clone();
+    let thinking = state.read().thinking();
     let model_data = state.read().model_state.as_ref().map(|model_state| {
         let session_status = model_state.session_state.as_deref().and_then(|session_state| session_state.status_text());
         (model_state.model.clone(), model_state.download_state.clone(), session_status, model_state.capabilities)
@@ -201,7 +202,7 @@ pub fn SelectedModel(
             let padding = theme.padding();
             let padding_wide = theme.padding_wide();
             let chat_indicator = (model.is_chat_capable() && (is_downloaded || !model.is_downloadable())).then(|| {
-                let thinking = match capabilities.thinking.with_preference(&preferences.thinking) {
+                let thinking = match capabilities.thinking.with_preference(&thinking) {
                     ThinkingSupport::Unsupported => None,
                     support => Some(support.value_label()),
                 };
