@@ -6,18 +6,21 @@ use std::{
 
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DeviceCapabilities},
-    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, dense_buffer::CpuBuffer, error::CpuError},
+    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, dense_buffer::CpuBuffer, error::CpuError, parallel::Pool},
 };
 
 pub struct CpuContext {
     allocator: Arc<Allocator<Cpu>>,
     command_queue: mpsc::Sender<Box<dyn FnOnce() + Send>>,
+    pool: Arc<Pool>,
 }
 
-impl Context for CpuContext {
-    type Backend = Cpu;
+impl CpuContext {
+    pub(crate) fn pool(&self) -> &Arc<Pool> {
+        &self.pool
+    }
 
-    fn new() -> Result<Arc<Self>, CpuError> {
+    pub(crate) fn with_threads(threads: usize) -> Arc<Self> {
         let (command_queue_sender, command_queue_receiever) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
 
         thread::spawn(|| {
@@ -26,10 +29,21 @@ impl Context for CpuContext {
             }
         });
 
-        Ok(Arc::new_cyclic(|weak_self| CpuContext {
+        let pool = Arc::new(Pool::new(threads));
+
+        Arc::new_cyclic(|weak_self| CpuContext {
             allocator: Allocator::new(weak_self.clone()),
             command_queue: command_queue_sender,
-        }))
+            pool,
+        })
+    }
+}
+
+impl Context for CpuContext {
+    type Backend = Cpu;
+
+    fn new() -> Result<Arc<Self>, CpuError> {
+        Ok(Self::with_threads(crate::backends::cpu::parallel::available_threads()))
     }
 
     fn create_buffer(
