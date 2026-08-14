@@ -31,8 +31,6 @@ pub struct DFlashState<B: Backend> {
     context_capacity: u32,
 }
 
-impl<B: Backend> DFlashState<B> {}
-
 pub struct DFlash<B: Backend> {
     target_feature_projection: Box<dyn Linear<B>>,
     projected_feature_norm: Normalization<B>,
