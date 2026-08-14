@@ -9,12 +9,13 @@ use shoji::traits::backend::chat_token::TokenStreamMetrics;
 #[cfg(grammar)]
 use crate::engine::language_model::grammar::Grammar;
 use crate::{
+    array::size_for_shape,
     backends::common::{
         Allocation, AllocationPool, AllocationType, Backend, Context, Encoder, Pending,
         gpu_types::trie::TrieNode as GpuTrieNode, kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
-    encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod, weaver::TreeShape},
+    encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
     engine::{
         capture::CaptureSpan,
         language_model::{
@@ -23,6 +24,7 @@ use crate::{
             stream::{LanguageModelStreamError, LanguageModelStreamOptions},
         },
     },
+    speculators::dflash_tfm::{DFlashTfmTreeConstructionMethod, DFlashTfmTreeShape},
     trie::TrieNode,
 };
 
@@ -140,7 +142,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         if model_state
             .max_context_length
-            .is_some_and(|max_context_length| model_state.tokens.len() + input.len() > max_context_length)
+            .is_some_and(|max_context_length| model_state.tokens.len() + input.len() > max_context_length as usize)
         {
             return Err(LanguageModelStreamError::ContextOverflow);
         }
@@ -161,19 +163,19 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     .engine
                     .context
                     .create_allocation(
-                        (2 + suffix_repetition_length) * DataType::U32.size_in_bytes(),
+                        size_for_shape(&[2 + suffix_repetition_length], DataType::U32),
                         AllocationType::Global,
                     )
                     .map_err(LanguageModelStreamError::Backend)?;
 
-                let state_tokens_range =
-                    model_state.tokens.len().saturating_sub(suffix_repetition_length)..model_state.tokens.len();
+                let state_tokens_range = model_state.tokens.len().saturating_sub(suffix_repetition_length as usize)
+                    ..model_state.tokens.len();
 
                 context_ring.copyin(
                     &once(0) // offset
                         .chain(once(state_tokens_range.len() as u64)) // length
                         .chain(model_state.tokens[state_tokens_range.clone()].iter().copied()) // tokens
-                        .chain(repeat_n(0, suffix_repetition_length - state_tokens_range.len())) // pad if not full
+                        .chain(repeat_n(0, suffix_repetition_length as usize - state_tokens_range.len())) // pad if not full
                         .map(|x| x as u32)
                         .collect::<Box<[_]>>(),
                 );
@@ -195,8 +197,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             model_state
                 .transformer_state
                 .prepare(
-                    model_state.transformer_state.context_length() + (number_of_batches - 1) * max_batch_size,
-                    usize::min(max_batch_size, input.len()),
+                    model_state.transformer_state.context_length() + ((number_of_batches - 1) * max_batch_size) as u32,
+                    usize::min(max_batch_size, input.len()) as u32,
                     &model.engine.context,
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
@@ -233,7 +235,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 let decoder_output = model.decoder.encode(
                     &token_ids,
                     &batch_dim,
-                    sample_last.then(|| (input_chunk.len() - 1)..input_chunk.len()),
+                    sample_last.then(|| input_chunk.len() as u32 - 1..input_chunk.len() as u32),
                     hidden_feature_layer_indices,
                     &mut model_state.transformer_state,
                     &mut encoder,
@@ -275,6 +277,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     let bitmask = None;
 
                     output_norm = decoder_output.final_hidden;
+                    let sampled_row = batch_dim.size() - 1;
                     output_tokens = Some(
                         model
                             .sampling
@@ -286,7 +289,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                                 Some(&token_ids),
                                 &options.sampling_method,
                                 &batch_dim,
-                                (batch_dim.size() - 1)..batch_dim.size(),
+                                sampled_row..sampled_row + 1,
                                 &mut encoder,
                             )
                             .map_err(LanguageModelStreamError::Backend)?,
@@ -295,7 +298,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
                 model_state
                     .transformer_state
-                    .encode_accept(&(0..input_chunk.len()).collect::<Box<[usize]>>(), &mut encoder)
+                    .encode_accept(&(0..input_chunk.len() as u32).collect::<Box<[u32]>>(), &mut encoder)
                     .map_err(LanguageModelStreamError::Backend)?;
 
                 if let Some(speculator) = model.speculator.as_ref() {
@@ -304,7 +307,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         .encode_accept(
                             speculator_state,
                             decoder_output.hidden_features.as_ref().unwrap(),
-                            &(0..input_chunk.len()).collect::<Box<[usize]>>(),
+                            &(0..input_chunk.len() as u32).collect::<Box<[u32]>>(),
                             &mut encoder,
                         )
                         .map_err(LanguageModelStreamError::Backend)?;
@@ -314,7 +317,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     model.context_ring_update.encode(
                         &token_ids,
                         context_ring.as_mut().unwrap(),
-                        suffix_repetition_length as u32,
+                        suffix_repetition_length,
                         input_chunk.len() as u32,
                         &mut encoder,
                     );
@@ -325,7 +328,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
             let pending = Box::new([encoder.end_encoding().submit()]);
 
-            metrics.num_forward_passes += 1;
+            metrics.num_prefill_forward_passes += 1;
             metrics.num_tokens_prefilled += input.len();
             metrics.num_tokens_proposed += 1;
             metrics.num_tokens_accepted += 1;
@@ -433,7 +436,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         };
                         return Ok(Some(output_token_id));
                     } else {
-                        let accepted_token_indicies = full.iter().map(|(i, _, _)| *i).collect::<Box<[usize]>>();
+                        let accepted_token_indicies = full.iter().map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
                         let accepted_input_token_ids = full.iter().map(|(_, t, _)| *t).collect::<Box<[u64]>>();
                         let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
                         let mut encoder = Encoder::<B>::new_with_pool_name(
@@ -480,7 +483,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             self.model.context_ring_update.encode(
                                 &accepted_input_token_ids_const,
                                 self.context_ring.as_mut().unwrap(),
-                                suffix_repetition_length as u32,
+                                suffix_repetition_length,
                                 full.len() as u32,
                                 &mut encoder,
                             );
@@ -544,10 +547,17 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             None
         };
 
+        let full_batch_size = self.model.speculator.as_ref().map_or(1, |speculator| {
+            if speculator.has_weaver() {
+                32
+            } else {
+                16
+            }
+        });
         let speculation_batch = self
             .model_state
             .max_context_length
-            .map_or(32, |max_context_length| 32.min(max_context_length - context_length));
+            .map_or(full_batch_size, |max_context_length| full_batch_size.min(max_context_length - context_length));
 
         let mut pending = Vec::new();
         let (input_trie, chain_copy, full_accept) = if speculation_batch > 1
@@ -565,10 +575,17 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 output_norm,
                 root_token as u32,
                 self.model.decoder.embedding(),
-                TreeShape {
-                    budget: speculation_batch - 1,
-                    frontier_width: 4,
-                    children_per_node: 4,
+                DFlashTfmTreeShape {
+                    budget: speculation_batch,
+                    construction_method: if speculator.has_weaver() {
+                        DFlashTfmTreeConstructionMethod::Weaver {
+                            depth: 16,
+                            expand_per_round: 4,
+                            expand_width: 4,
+                        }
+                    } else {
+                        DFlashTfmTreeConstructionMethod::Argmax
+                    },
                 },
                 #[cfg(grammar)]
                 self.options.grammar.as_mut(),
@@ -707,7 +724,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         if full_accept {
             self.model_state
                 .transformer_state
-                .encode_accept(&(0..batch_dim.size()).collect::<Box<[usize]>>(), &mut encoder)
+                .encode_accept(&(0..batch_dim.size()).collect::<Box<[u32]>>(), &mut encoder)
                 .map_err(LanguageModelStreamError::Backend)?;
 
             if let Some(speculator) = self.model.speculator.as_ref() {
@@ -716,7 +733,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     .encode_accept(
                         speculator_state,
                         decoder_output.hidden_features.as_ref().unwrap(),
-                        &(0..batch_dim.size()).collect::<Box<[usize]>>(),
+                        &(0..batch_dim.size()).collect::<Box<[u32]>>(),
                         &mut encoder,
                     )
                     .map_err(LanguageModelStreamError::Backend)?;
@@ -726,8 +743,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 self.model.context_ring_update.encode(
                     &token_ids,
                     self.context_ring.as_mut().unwrap(),
-                    suffix_repetition_length as u32,
-                    batch_dim.size() as u32,
+                    suffix_repetition_length,
+                    batch_dim.size(),
                     &mut encoder,
                 );
             }
@@ -737,7 +754,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         pending.push(encoder.end_encoding().submit());
 
-        self.metrics.num_forward_passes += 1;
+        self.metrics.num_decode_forward_passes += 1;
         self.metrics.num_tokens_proposed += input_flat_trie.len();
         if full_accept {
             self.metrics.num_tokens_accepted += input_flat_trie.len();
@@ -831,7 +848,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                 )
                 .unwrap();
                 let accepted_token_indicies =
-                    full.iter().take(num_accepted + 1).map(|(i, _, _)| *i).collect::<Box<[usize]>>();
+                    full.iter().take(num_accepted + 1).map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
                 self.model_state.transformer_state.encode_accept(&accepted_token_indicies, &mut encoder).unwrap();
                 if let Some(speculator) = self.model.speculator.as_ref() {
                     speculator

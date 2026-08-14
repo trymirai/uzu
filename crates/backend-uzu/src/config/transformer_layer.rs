@@ -13,9 +13,9 @@ pub struct TransformerLayerConfig {
     pub pre_mlp_norm_config: NormalizationConfig,
     pub mlp_config: AnyMLPConfig,
     pub post_mlp_norm_config: Option<NormalizationConfig>,
-    pub hidden_dim: Option<usize>,
+    pub hidden_dim: Option<u32>,
     pub ple_config: Option<PLELayerConfig>,
     pub has_post_layer_scalar: bool,
-    pub kv_source_layer_index: Option<usize>,
+    pub kv_source_layer_index: Option<u32>,
     pub rope_config: Option<AnyRoPEConfig>,
 }

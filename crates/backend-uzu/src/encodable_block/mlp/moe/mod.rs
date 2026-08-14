@@ -10,7 +10,6 @@ use gather::MoeGather;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::ActivationType,
@@ -44,10 +43,10 @@ pub struct MoeBlock<B: Backend> {
     w2: Allocation<B>,
     up_biases: Allocation<B>,
     down_biases: Allocation<B>,
-    model_dim: usize,
-    hidden_dim: usize,
-    num_routed_experts: usize,
-    num_active_experts: usize,
+    model_dim: u32,
+    hidden_dim: u32,
+    num_routed_experts: u32,
+    num_active_experts: u32,
     gate_clip_min: f32,
     gate_clip_max: f32,
     up_clip_min: f32,
@@ -84,7 +83,7 @@ impl<B: Backend> MoeBlock<B> {
     pub fn new(
         context: &B::Context,
         moe_config: &MixtureOfExpertsConfig,
-        model_dim: usize,
+        model_dim: u32,
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, MoeBlockError<B>> {
@@ -213,7 +212,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
     fn encode(
         &self,
         input: Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("mlp (moe)");
@@ -222,10 +221,9 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let num_blocks = batch_dim.div_ceil(256);
         let num_tiles = self.num_routed_experts.div_ceil(512);
 
-        let mut topk_ids =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.num_active_experts], DataType::I32))?;
+        let mut topk_ids = encoder.allocate_scratch_for_shape(&[batch_dim, self.num_active_experts], DataType::I32)?;
         let mut topk_probs =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.num_active_experts], self.data_type))?;
+            encoder.allocate_scratch_for_shape(&[batch_dim, self.num_active_experts], self.data_type)?;
 
         encoder.encode_fill(&mut topk_ids, 0xFF);
 
@@ -237,36 +235,36 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             None::<&Allocation<B>>,
             &mut topk_ids,
             &mut topk_probs,
-            batch_dim as u32,
-            self.model_dim as u32,
-            self.num_routed_experts as u32,
-            self.num_active_experts as u32,
+            batch_dim,
+            self.model_dim,
+            self.num_routed_experts,
+            self.num_active_experts,
             self.router_renorm,
             None::<f32>,
             None::<f32>,
             encoder,
         );
 
-        let mut offsets = encoder.allocate_scratch(size_for_shape(&[self.num_routed_experts + 1], DataType::U32))?;
-        let mut sumk = encoder.allocate_scratch(size_for_shape(&[1], DataType::U32))?;
+        let mut offsets = encoder.allocate_scratch_for_shape(&[self.num_routed_experts + 1], DataType::U32)?;
+        let mut sumk = encoder.allocate_scratch_for_shape(&[1], DataType::U32)?;
         let scatter_entries = num_blocks * num_tiles * 512;
-        let mut partials = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
+        let mut partials = encoder.allocate_scratch_for_shape(&[scatter_entries], DataType::U32)?;
         self.counts_offsets_kernel.encode(
             &topk_ids,
             &mut offsets,
             &mut sumk,
             &mut partials,
-            batch_dim as u32,
-            self.num_routed_experts as u32,
-            self.num_active_experts as u32,
+            batch_dim,
+            self.num_routed_experts,
+            self.num_active_experts,
             encoder,
         );
 
-        let mut block_bases = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
-        let mut block_alloc = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
-        let mut bucketed_ids = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
-        let mut bucketed_probs = encoder.allocate_scratch(size_for_shape(&[total_rows], self.data_type))?;
-        let mut tok2row = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
+        let mut block_bases = encoder.allocate_scratch_for_shape(&[scatter_entries], DataType::U32)?;
+        let mut block_alloc = encoder.allocate_scratch_for_shape(&[scatter_entries], DataType::U32)?;
+        let mut bucketed_ids = encoder.allocate_scratch_for_shape(&[total_rows], DataType::I32)?;
+        let mut bucketed_probs = encoder.allocate_scratch_for_shape(&[total_rows], self.data_type)?;
+        let mut tok2row = encoder.allocate_scratch_for_shape(&[total_rows], DataType::I32)?;
 
         encoder.encode_fill(&mut tok2row, 0xFF);
 
@@ -274,9 +272,9 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             &partials,
             &mut block_bases,
             &mut block_alloc,
-            self.num_routed_experts as u32,
-            num_blocks as u32,
-            num_tiles as u32,
+            self.num_routed_experts,
+            num_blocks,
+            num_tiles,
             0u32,
             encoder,
         );
@@ -288,11 +286,11 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             &block_alloc,
             &mut bucketed_ids,
             &mut bucketed_probs,
-            batch_dim as u32,
-            self.num_routed_experts as u32,
-            self.num_active_experts as u32,
-            num_blocks as u32,
-            num_tiles as u32,
+            batch_dim,
+            self.num_routed_experts,
+            self.num_active_experts,
+            num_blocks,
+            num_tiles,
             &mut tok2row,
             encoder,
         );
@@ -331,15 +329,15 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             self.experts_two_pass_prefill_block.encode(args, encoder)?
         };
 
-        let mut output = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.model_dim], self.data_type))?;
+        let mut output = encoder.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
         self.finalize_kernel.encode(
             &tok2row,
             &topk_probs,
             &y_partial,
             &mut output,
-            batch_dim as u32,
-            self.model_dim as u32,
-            self.num_active_experts as u32,
+            batch_dim,
+            self.model_dim,
+            self.num_active_experts,
             encoder,
         );
 

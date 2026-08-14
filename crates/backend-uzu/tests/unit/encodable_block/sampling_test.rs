@@ -39,9 +39,9 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
     bitmask: Option<&[u32]>,
     vocab_size: usize,
     method: &SamplingMethod,
-    batch_size: usize,
+    batch_size: u32,
 ) -> Result<SamplingTestResults, TestCaseError> {
-    let sampling = Sampling::new(T::data_type(), vocab_size);
+    let sampling = Sampling::new(T::data_type(), vocab_size as u32);
 
     let mut logits_allocation =
         context.create_allocation(logits.len() * T::data_type().size_in_bytes(), AllocationType::Global).unwrap();
@@ -63,9 +63,9 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
 
     let nodes = (0..batch_size)
         .map(|index| TrieNode {
-            trie_start: index as u32,
-            trie_end: (batch_size - 1) as u32,
-            height: index as u32,
+            trie_start: index,
+            trie_end: batch_size - 1,
+            height: index,
         })
         .collect::<Box<[_]>>();
     let batch_topology = BatchTopology::new(&nodes, true);
@@ -182,7 +182,7 @@ fn test_sampling_prop() {
                 bitmask.as_ref().map(Box::as_ref),
                 sampling_case.vocab_size,
                 &sampling_case.method,
-                sampling_case.batch_size,
+                sampling_case.batch_size as u32,
             ))
             .compare_results()?
         });

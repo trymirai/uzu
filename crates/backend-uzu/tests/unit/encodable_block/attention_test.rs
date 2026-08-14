@@ -321,9 +321,9 @@ fn run_gemm_attention(
     let core = <<Metal as Backend>::Kernels as Kernels>::AttentionGemmCore::new(
         context,
         &AttentionCoreNewArguments {
-            head_dim,
-            num_groups: num_kv_heads,
-            num_q_heads: num_heads,
+            head_dim: head_dim as u32,
+            num_groups: num_kv_heads as u32,
+            num_q_heads: num_heads as u32,
             has_sinks: sinks.is_some(),
             is_kv_cache_ring: false,
             is_causal,
@@ -349,7 +349,7 @@ fn run_gemm_attention(
         queries: &query_allocation,
         keys: &key_allocation,
         values: &value_allocation,
-        suffix_length: seq_len,
+        suffix_length: seq_len as u32,
         trie: None,
         sinks: sinks_allocation.as_ref(),
         state_type: &state_type,

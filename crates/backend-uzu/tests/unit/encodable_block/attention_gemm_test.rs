@@ -83,9 +83,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
     let new_arguments = AttentionCoreNewArguments {
-        head_dim: input.head_dim,
-        num_groups: input.num_kv_heads,
-        num_q_heads: input.num_heads,
+        head_dim: input.head_dim as u32,
+        num_groups: input.num_kv_heads as u32,
+        num_q_heads: input.num_heads as u32,
         has_sinks: false,
         is_kv_cache_ring: false,
         is_causal: input.do_causal,
@@ -101,14 +101,14 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let segment_prefix_length = input.sequence_length - input.suffix_length;
     let state_type = AttentionStateType::Full {
-        length: segment_prefix_length,
+        length: segment_prefix_length as u32,
     };
 
     let args = AttentionCoreEncodeArguments {
         queries: &queries_allocation,
         keys: &keys_allocation,
         values: &values_allocation,
-        suffix_length: input.suffix_length,
+        suffix_length: input.suffix_length as u32,
         trie: None,
         sinks: None,
         state_type: &state_type,

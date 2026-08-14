@@ -50,7 +50,7 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     #[cfg(grammar)]
     tokenizer: Arc<Tokenizer>,
     stop_token_ids: Vec<i32>,
-    max_context_length: Option<usize>,
+    max_context_length: Option<u32>,
 }
 
 impl<B: Backend> UzuChatTokenBackendInstance<B> {
@@ -167,7 +167,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
 impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
     fn max_context_length(&self) -> Option<usize> {
-        self.max_context_length
+        self.max_context_length.map(|max_context_length| max_context_length as usize)
     }
 
     fn stop_token_ids(&self) -> Option<Box<[u64]>> {

@@ -7,11 +7,15 @@ use std::{
 
 use bytemuck::{AnyBitPattern, NoUninit};
 
-use crate::backends::common::{
-    AccessFlags, Allocation, AllocationPool, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer,
-    BufferGpuAddressRangeExt, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-    CommandBufferInitial, CommandBufferPending, Context,
-    hazard_tracker::{Access, HazardTracker},
+use crate::{
+    array::size_for_shape,
+    backends::common::{
+        AccessFlags, Allocation, AllocationPool, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer,
+        BufferGpuAddressRangeExt, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
+        CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
+        hazard_tracker::{Access, HazardTracker},
+    },
+    data_type::DataType,
 };
 
 fn resolve_copy_range(
@@ -83,6 +87,14 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         )
     }
 
+    pub fn allocate_constant_for_shape(
+        &mut self,
+        shape: &[u32],
+        data_type: DataType,
+    ) -> Result<Allocation<B>, B::Error> {
+        self.allocate_constant(size_for_shape(shape, data_type))
+    }
+
     pub fn allocate_constant_from_slice<T: NoUninit + AnyBitPattern>(
         &mut self,
         data: &[T],
@@ -104,6 +116,14 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
                 cpu_available: false,
             },
         )
+    }
+
+    pub fn allocate_scratch_for_shape(
+        &mut self,
+        shape: &[u32],
+        data_type: DataType,
+    ) -> Result<Allocation<B>, B::Error> {
+        self.allocate_scratch(size_for_shape(shape, data_type))
     }
 
     pub fn encode_copy<

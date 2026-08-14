@@ -14,6 +14,6 @@ pub enum IncoherenceProcessingMode {
 pub struct HybridSpec {
     pub quantization_spec: Box<AnyWeightMatrixSpec>,
     pub adapter_spec: Option<Box<AnyWeightMatrixSpec>>,
-    pub incoherence_block_size: Option<usize>,
+    pub incoherence_block_size: Option<u32>,
     pub incoherence_processing_mode: IncoherenceProcessingMode,
 }

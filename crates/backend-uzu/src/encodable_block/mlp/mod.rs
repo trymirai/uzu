@@ -19,7 +19,7 @@ pub trait Mlp<B: Backend>: Send + Sync {
     fn encode(
         &self,
         input: Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error>;
 }
@@ -37,8 +37,8 @@ pub enum MlpBlockError<B: Backend> {
 impl<B: Backend> dyn Mlp<B> {
     pub fn new(
         config: &AnyMLPConfig,
-        model_dimension: usize,
-        hidden_dimension: usize,
+        model_dimension: u32,
+        hidden_dimension: u32,
         context: &B::Context,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
