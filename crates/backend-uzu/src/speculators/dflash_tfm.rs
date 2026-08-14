@@ -155,19 +155,19 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
     ) -> Result<TrieNode, DFlashTreeError<B>> {
         assert!(shape.budget >= 2, "tree budget needs at least a root and one draft token");
 
-        let root_position = state.context_length();
+        let root_position = state.context_length;
 
         let mut encoder = Encoder::new_with_pool_name(&*self.context, allocation_pool, Some("speculator propose"))
             .map_err(DFlashTreeError::Backend)?;
 
         let nodes = match shape.construction_method {
             DFlashTfmTreeConstructionMethod::Argmax => {
-                if shape.budget > self.dflash.block_size() {
+                if shape.budget > self.dflash.block_size {
                     return Err(DFlashTreeError::InvalidTreeShape(format!(
                         "argmax chain of {} nodes needs {} draft rows, block size is {}",
                         shape.budget,
                         shape.budget - 1,
-                        self.dflash.block_size()
+                        self.dflash.block_size
                     )));
                 }
                 let chain_length = shape.budget - 1;
@@ -234,22 +234,22 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     )));
                 }
                 // `depth` counts the root; the weaver's `max_depth` counts edges.
-                if depth > weaver.max_depth() + 1 {
+                if depth > weaver.max_depth + 1 {
                     return Err(DFlashTreeError::InvalidTreeShape(format!(
                         "requested tree depth {depth} exceeds weaver max depth {}",
-                        weaver.max_depth() + 1
+                        weaver.max_depth + 1
                     )));
                 }
-                if depth > self.dflash.block_size() {
+                if depth > self.dflash.block_size {
                     return Err(DFlashTreeError::InvalidTreeShape(format!(
                         "tree of depth {depth} needs {} draft rows, block size is {}",
                         depth - 1,
-                        self.dflash.block_size()
+                        self.dflash.block_size
                     )));
                 }
                 let dflash_output =
                     self.dflash.encode_draft(state, target_output_token, target_embedding, depth, &mut encoder)?;
-                let depth_seeds = (0..weaver.max_depth())
+                let depth_seeds = (0..weaver.max_depth)
                     .map(|depth| prng.derive(root_position as u64 + depth as u64))
                     .collect::<Box<[u64]>>();
                 let tree = weaver.encode_tree(

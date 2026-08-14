@@ -181,7 +181,7 @@ impl<B: Backend> Decoder<B> {
             Some(self.embedding.encode_readout(
                 output_range.end - output_range.start,
                 output,
-                self.embedding.data_type(),
+                self.embedding.data_type,
                 encoder,
             )?)
         } else {

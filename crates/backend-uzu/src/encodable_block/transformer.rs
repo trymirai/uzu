@@ -23,7 +23,7 @@ enum TransformerLayerStateType<B: Backend> {
 
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
-    context_length: u32,
+    pub context_length: u32,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
@@ -32,10 +32,6 @@ pub struct TransformerEncodeOutput<B: Backend> {
 }
 
 impl<B: Backend> TransformerState<B> {
-    pub fn context_length(&self) -> u32 {
-        self.context_length
-    }
-
     pub fn prepare(
         &mut self,
         context_length: u32,

@@ -197,7 +197,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             model_state
                 .transformer_state
                 .prepare(
-                    model_state.transformer_state.context_length() + ((number_of_batches - 1) * max_batch_size) as u32,
+                    model_state.transformer_state.context_length + ((number_of_batches - 1) * max_batch_size) as u32,
                     usize::min(max_batch_size, input.len()) as u32,
                     &model.engine.context,
                 )
@@ -519,7 +519,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 DecodingState::Invalid => unreachable!(),
             };
 
-        let context_length = self.model_state.transformer_state.context_length();
+        let context_length = self.model_state.transformer_state.context_length;
 
         if self.model_state.max_context_length.is_some_and(|max_context_length| context_length >= max_context_length) {
             self.decoding_state = DecodingState::Halted;
@@ -630,7 +630,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         self.model_state
             .transformer_state
-            .prepare(self.model_state.transformer_state.context_length(), batch_dim.size(), &self.model.engine.context)
+            .prepare(self.model_state.transformer_state.context_length, batch_dim.size(), &self.model.engine.context)
             .map_err(LanguageModelStreamError::Backend)?;
 
         let hidden_feature_layer_indices =

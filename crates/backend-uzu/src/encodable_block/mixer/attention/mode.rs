@@ -85,7 +85,7 @@ impl<B: Backend> Attention<B> {
                 let Some(num_kv_heads) = self.num_kv_heads else {
                     panic!("stateless attention doesn't support query-only projection");
                 };
-                assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
+                assert!(batch_dim.is_flat, "stateless attention doesn't support trie");
 
                 let qkv = self.qkv.project(hidden, batch_dim.size(), encoder)?;
                 let mut keys = encoder
@@ -175,11 +175,11 @@ impl<B: Backend> Attention<B> {
         state: &AttentionState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let (core, trie) = if batch_dim.is_flat() {
+        let (core, trie) = if batch_dim.is_flat {
             (&self.flat_core, None)
         } else {
             let mut trie = encoder.allocate_constant(batch_dim.size() as usize * size_of::<TrieNode>())?;
-            trie.copyin(batch_dim.nodes());
+            trie.copyin(batch_dim.nodes);
             (&self.trie_core, Some(trie))
         };
 

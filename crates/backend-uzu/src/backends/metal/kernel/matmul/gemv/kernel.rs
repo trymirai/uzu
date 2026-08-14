@@ -212,7 +212,7 @@ impl GemvDispatch {
             specialization.num_simdgroups,
         ));
 
-        let context = encoder.context();
+        let context = encoder.context;
         let pipeline = self.get_or_create(context, specialization)?;
 
         match b {

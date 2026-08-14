@@ -288,7 +288,7 @@ fn bench_a8w(c: &mut Criterion) {
     if !context.supports_mxu() {
         return;
     }
-    let device_tier = context.device_tier();
+    let device_tier = context.device_tier;
 
     let prepare = ActivationTransform::<Metal>::quantize(&context, DataType::BF16, 128, None).expect("prepare kernel");
     let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, true).expect("hadamard kernel");

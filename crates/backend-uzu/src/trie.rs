@@ -24,7 +24,7 @@ pub enum TrieAcceptError {
 
 #[derive(Debug)]
 pub struct TrieNode {
-    token: u64,
+    pub token: u64,
     seed: u64,
     next: Vec<TrieNode>,
 }
@@ -70,11 +70,6 @@ impl TrieNode {
         token: u64,
     ) -> Option<&TrieNode> {
         self.next.iter().find(|n| n.token == token)
-    }
-
-    #[cfg(test)]
-    pub fn token(&self) -> u64 {
-        self.token
     }
 
     pub fn flat(
