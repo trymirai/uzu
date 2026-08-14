@@ -672,6 +672,10 @@ fn aggregate_stats(
     })
     .map(|tokens_per_forward_pass| ChatReplySpeculatorStats {
         tokens_per_forward_pass,
+        num_decode_forward_passes: stats
+            .iter()
+            .filter_map(|stats| stats.speculator_stats.as_ref().map(|stats| stats.num_decode_forward_passes))
+            .sum(),
     });
 
     ChatReplyStats {

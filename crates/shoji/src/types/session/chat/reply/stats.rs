@@ -16,6 +16,7 @@ pub struct ChatReplyPowerStats {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ChatReplySpeculatorStats {
     pub tokens_per_forward_pass: f64,
+    pub num_decode_forward_passes: u32,
 }
 
 #[bindings::export(Structure(Class))]

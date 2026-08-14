@@ -22,10 +22,10 @@ pub fn quantize_symmetric_i8(
     (value / divisor).round().clamp(-INT8_SYMMETRIC_QUANTIZATION_MAXIMUM, INT8_SYMMETRIC_QUANTIZATION_MAXIMUM) as i8
 }
 
-pub(crate) fn hadamard_transform(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE]) {
+pub(crate) fn hadamard_transform(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize]) {
     let mut stride = 1;
-    while stride < HADAMARD_TRANSFORM_BLOCK_SIZE {
-        for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
+    while stride < HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
+        for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
             if lane & stride == 0 {
                 let a = values[lane];
                 let b = values[lane | stride];

@@ -6,10 +6,10 @@ using namespace metal;
 
 namespace uzu::attention {
 typedef struct {
-  uint64_t q_strides[3];
-  uint64_t k_strides[3];
-  uint64_t v_strides[3];
-  uint64_t o_strides[3];
+  uint32_t q_strides[3];
+  uint32_t k_strides[3];
+  uint32_t v_strides[3];
+  uint32_t o_strides[3];
   uint32_t gqa_factor;
   float scale;
   uint32_t q_len;

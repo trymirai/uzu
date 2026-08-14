@@ -1,15 +1,14 @@
 use crate::{
-    array::size_for_shape,
     backends::common::{Allocation, Backend, BufferArg, Encoder, Kernels, kernel::AttentionSinglePassKernel},
     data_type::DataType,
     encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
 };
 
 pub struct AttentionSinglePassCore<B: Backend> {
-    head_dim: usize,
-    num_groups: usize,
-    num_q_heads: usize,
-    sliding_window_size: Option<usize>,
+    head_dim: u32,
+    num_groups: u32,
+    num_q_heads: u32,
+    sliding_window_size: Option<u32>,
     scale: Option<f32>,
     data_type: DataType,
     kernel: <B::Kernels as Kernels>::AttentionSinglePassKernel,
@@ -23,7 +22,7 @@ impl<B: Backend> AttentionSinglePassCore<B> {
         let kernel = <B::Kernels as Kernels>::AttentionSinglePassKernel::new(
             context,
             arguments.data_type,
-            arguments.head_dim as u32,
+            arguments.head_dim,
             arguments.has_sinks,
             arguments.is_kv_cache_ring,
             arguments.is_causal,
@@ -47,28 +46,26 @@ impl<B: Backend> AttentionSinglePassCore<B> {
         arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut output = encoder.allocate_constant(size_for_shape(
-            &[arguments.suffix_length, self.num_q_heads, self.head_dim],
-            self.data_type,
-        ))?;
+        let mut output = encoder
+            .allocate_constant_for_shape(&[arguments.suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
         self.kernel.encode(
             arguments.queries,
             arguments.keys,
             arguments.values,
             &mut output,
-            (self.num_q_heads / self.num_groups) as u32,
-            (arguments.state_type.physical_prefix_length() + arguments.suffix_length) as u32,
-            self.head_dim as u32,
-            (self.num_groups * self.head_dim) as u32,
-            self.head_dim as u32,
-            (self.num_groups * self.head_dim) as u32,
+            self.num_q_heads / self.num_groups,
+            arguments.state_type.physical_prefix_length() + arguments.suffix_length,
+            self.head_dim,
+            self.num_groups * self.head_dim,
+            self.head_dim,
+            self.num_groups * self.head_dim,
             arguments.state_type.ring_params(),
             self.scale.unwrap_or(1.0f32 / (self.head_dim as f32).sqrt()),
             arguments.trie,
-            self.sliding_window_size.map(|sliding_window_size| sliding_window_size as u32),
+            self.sliding_window_size,
             arguments.sinks,
-            self.num_q_heads as u32,
-            arguments.suffix_length as u32,
+            self.num_q_heads,
+            arguments.suffix_length,
             encoder,
         );
 

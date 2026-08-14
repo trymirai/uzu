@@ -11,11 +11,11 @@ pub struct MixtureOfExpertsConfig {
     pub router_config: LinearConfig,
     pub routing_function: AnyRoutingFunction,
 
-    pub num_routed_experts: usize,
-    pub num_active_routed_experts: usize,
+    pub num_routed_experts: u32,
+    pub num_active_routed_experts: u32,
     pub router_has_biases: bool,
 
-    pub num_shared_experts: usize,
-    pub expert_hidden_dim: usize,
+    pub num_shared_experts: u32,
+    pub expert_hidden_dim: u32,
     pub gate_config: Option<LinearConfig>,
 }

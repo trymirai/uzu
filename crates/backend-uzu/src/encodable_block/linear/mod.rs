@@ -26,7 +26,7 @@ pub trait Linear<B: Backend>: Send + Sync {
     fn encode(
         &self,
         input: Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error>;
 }
@@ -59,8 +59,8 @@ pub enum OutputHadamardLinearError<B: Backend> {
 
 impl<B: Backend> dyn Linear<B> {
     pub fn new_mixed_precision<const N: usize>(
-        input_dimension: usize,
-        output_dimensions: [usize; N],
+        input_dimension: u32,
+        output_dimensions: [u32; N],
         has_biases: bool,
         context: &B::Context,
         weights_data_type: DataType,
@@ -68,7 +68,7 @@ impl<B: Backend> dyn Linear<B> {
         output_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
-        let output_dimension_sum: usize = output_dimensions.iter().sum();
+        let output_dimension_sum: u32 = output_dimensions.iter().sum();
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
@@ -135,8 +135,8 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new<const N: usize>(
-        input_dimension: usize,
-        output_dimensions: [usize; N],
+        input_dimension: u32,
+        output_dimensions: [u32; N],
         has_biases: bool,
         context: &B::Context,
         data_type: DataType,
@@ -158,8 +158,8 @@ impl<B: Backend> dyn Linear<B> {
         context: &B::Context,
         parameter_tree: &ParameterTree<B>,
         output_factors: Allocation<B>,
-        input_dim: usize,
-        output_dim: usize,
+        input_dim: u32,
+        output_dim: u32,
         has_biases: bool,
         weights_data_type: DataType,
         input_data_type: DataType,
@@ -189,8 +189,8 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_extracting_input_hadamard_mixed_precision<const N: usize>(
-        input_dimension: usize,
-        output_dimensions: [usize; N],
+        input_dimension: u32,
+        output_dimensions: [u32; N],
         has_biases: bool,
         context: &B::Context,
         weights_data_type: DataType,
@@ -198,7 +198,7 @@ impl<B: Backend> dyn Linear<B> {
         output_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<(Box<dyn Linear<B>>, Option<Allocation<B>>), LinearBlockError<B>> {
-        let output_dimension_sum: usize = output_dimensions.iter().sum();
+        let output_dimension_sum: u32 = output_dimensions.iter().sum();
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         if let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
@@ -217,7 +217,7 @@ impl<B: Backend> dyn Linear<B> {
                     input_dimension,
                     input_data_type,
                     output_data_type,
-                    ACTIVATION_SCALE_GROUP_SIZE as usize,
+                    ACTIVATION_SCALE_GROUP_SIZE,
                 )
             }) {
                 let linear = RHTLinearWrapper::new(
@@ -269,8 +269,8 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_extracting_input_hadamard<const N: usize>(
-        input_dimension: usize,
-        output_dimensions: [usize; N],
+        input_dimension: u32,
+        output_dimensions: [u32; N],
         has_biases: bool,
         context: &B::Context,
         data_type: DataType,

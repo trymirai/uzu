@@ -117,6 +117,8 @@ pub struct ChatCompletionUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spec_verify_ct: Option<u32>,
 }
 
 #[derive(Serialize, Clone)]
@@ -485,6 +487,10 @@ fn usage_from_stats(stats: &ChatReplyStats) -> ChatCompletionUsage {
         prompt_tokens,
         completion_tokens,
         total_tokens: prompt_tokens + completion_tokens,
+        spec_verify_ct: stats
+            .speculator_stats
+            .as_ref()
+            .map(|speculator_stats| speculator_stats.num_decode_forward_passes),
     }
 }
 

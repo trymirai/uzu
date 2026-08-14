@@ -29,10 +29,10 @@ pub struct ClassifierConfig {
     pub transformer_config: TransformerConfig,
     pub prediction_head_config: PredictionHeadConfig,
 
-    pub vocab_size: usize,
-    pub model_dim: usize,
-    pub hidden_dim: usize,
-    pub num_labels: usize,
+    pub vocab_size: u32,
+    pub model_dim: u32,
+    pub hidden_dim: u32,
+    pub num_labels: u32,
     pub classifier_pooling: PoolingType,
     pub output_labels: Option<Box<[String]>>,
 }

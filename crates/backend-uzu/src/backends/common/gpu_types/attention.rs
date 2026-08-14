@@ -10,10 +10,10 @@
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct AttnParams {
-    pub q_strides: [u64; 3],
-    pub k_strides: [u64; 3],
-    pub v_strides: [u64; 3],
-    pub o_strides: [u64; 3],
+    pub q_strides: [u32; 3],
+    pub k_strides: [u32; 3],
+    pub v_strides: [u32; 3],
+    pub o_strides: [u32; 3],
     pub gqa_factor: u32,
     pub scale: f32,
     /// Query length (suffix length)
