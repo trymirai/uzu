@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use iocraft::prelude::*;
-use shoji::types::model::Model;
+use shoji::types::{basic::ReasoningEffort, model::Model};
 use uzu::{
     engine::Engine,
     settings::Settings,
@@ -9,7 +9,7 @@ use uzu::{
 };
 
 use crate::{
-    common::model_capabilities::ModelCapabilities,
+    common::model_capabilities::{ModelCapabilities, ThinkingPreference},
     interactive::{
         APP_IDENTIFIER,
         components::{CommandInput, HistoryCell, HistoryCellType, Logo, Preferences, SelectedModel, Theme},
@@ -27,6 +27,7 @@ pub struct ApplicationProps {
     pub engine: Option<Engine>,
     pub settings: Option<Settings>,
     pub model: Option<String>,
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 pub struct ModelState {
@@ -38,6 +39,8 @@ pub struct ModelState {
 
 pub struct ApplicationState {
     preferences: Preferences,
+    /// Session-scoped thinking override from the command line; never persisted.
+    thinking_override: Option<ThinkingPreference>,
     pub engine: Engine,
     pub settings: Option<Settings>,
     pub flow: Option<Box<dyn Flow>>,
@@ -59,6 +62,14 @@ impl ApplicationState {
         &self.preferences
     }
 
+    pub fn thinking(&self) -> ThinkingPreference {
+        self.thinking_override.unwrap_or(self.preferences.thinking)
+    }
+
+    pub fn reasoning_effort_override(&self) -> Option<ReasoningEffort> {
+        self.thinking_override.map(|preference| preference.level)
+    }
+
     pub fn theme(&self) -> &Theme {
         &self.preferences.theme
     }
@@ -67,6 +78,9 @@ impl ApplicationState {
         &mut self,
         prefs: &Preferences,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if prefs.thinking != self.preferences.thinking {
+            self.thinking_override = None;
+        }
         self.preferences = prefs.clone();
         self.preferences.store(&Self::settings_file_path("config")?)
     }
@@ -98,6 +112,10 @@ pub fn Application(
         preferences: ApplicationState::load_preferences().unwrap_or_else(|error| {
             tracing::warn!("Unable to load or migrate CLI preferences: {error}");
             Preferences::default()
+        }),
+        thinking_override: props.reasoning_effort.map(|effort| ThinkingPreference {
+            level: effort,
+            enabled: effort != ReasoningEffort::Disabled,
         }),
         flow: None,
         history: Vec::new(),
