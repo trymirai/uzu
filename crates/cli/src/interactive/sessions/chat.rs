@@ -7,7 +7,7 @@ use nagare::{
     tool::uzu_tool_function,
 };
 use shoji::types::{
-    basic::{CancelToken, ReasoningEffort, ToolCall},
+    basic::{CancelToken, ToolCall},
     model::Model,
     session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyStats, ChatRole},
 };
