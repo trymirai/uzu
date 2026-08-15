@@ -164,15 +164,11 @@ pub fn Application(
                         state.write().flow = Some(Box::new(ModelRegistriesFlow));
                         return;
                     }
-                    let summary = format!("Model: {}", model.name());
                     state.write().model_state = Some(ModelState {
                         model,
                         download_state: DownloadState::not_downloaded(0),
                         session_state: None,
                         capabilities: ModelCapabilities::default(),
-                    });
-                    state.write().history.push(HistoryCellType::CommandResult {
-                        result: summary,
                     });
                 },
                 Ok(None) => {
