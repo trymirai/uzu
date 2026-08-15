@@ -667,16 +667,7 @@ fn aggregate_stats(
     current: &ChatReplyStats,
 ) -> ChatReplyStats {
     let stats = completed.iter().chain(std::iter::once(current)).collect::<Vec<_>>();
-    let speculator_stats = average_optional_f64(&stats, |stats| {
-        stats.speculator_stats.as_ref().map(|stats| stats.tokens_per_forward_pass)
-    })
-    .map(|tokens_per_forward_pass| ChatReplySpeculatorStats {
-        tokens_per_forward_pass,
-        num_decode_forward_passes: stats
-            .iter()
-            .filter_map(|stats| stats.speculator_stats.as_ref().map(|stats| stats.num_decode_forward_passes))
-            .sum(),
-    });
+    let speculator_stats = aggregate_speculator_stats(&stats);
 
     ChatReplyStats {
         duration: stats.iter().map(|stats| stats.duration).sum(),
@@ -689,6 +680,23 @@ fn aggregate_stats(
         speculator_stats,
         power_stats: aggregate_power_stats(&stats),
     }
+}
+
+fn aggregate_speculator_stats(stats: &[&ChatReplyStats]) -> Option<ChatReplySpeculatorStats> {
+    let (num_decode_tokens, num_decode_forward_passes) = stats
+        .iter()
+        .filter_map(|stats| stats.speculator_stats.as_ref())
+        .fold((0.0, 0_u32), |(tokens, passes), stats| {
+            (
+                tokens + stats.tokens_per_forward_pass * f64::from(stats.num_decode_forward_passes),
+                passes + stats.num_decode_forward_passes,
+            )
+        });
+
+    (num_decode_forward_passes > 0).then(|| ChatReplySpeculatorStats {
+        tokens_per_forward_pass: num_decode_tokens / f64::from(num_decode_forward_passes),
+        num_decode_forward_passes,
+    })
 }
 
 fn aggregate_generate_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
@@ -746,15 +754,6 @@ fn duration_weighted_power(
     } else {
         stats.iter().map(|(_, power)| value(power)).sum::<f64>() / stats.len() as f64
     }
-}
-
-fn average_optional_f64(
-    stats: &[&ChatReplyStats],
-    value: impl Fn(&ChatReplyStats) -> Option<f64>,
-) -> Option<f64> {
-    let values = stats.iter().filter_map(|stats| value(stats));
-    let (sum, count) = values.fold((0.0, 0_u32), |(sum, count), value| (sum + value, count + 1));
-    (count > 0).then(|| sum / f64::from(count))
 }
 
 fn find_tools_definitions(messages: &mut [ChatMessage]) -> Option<&mut Vec<ToolNamespace>> {
