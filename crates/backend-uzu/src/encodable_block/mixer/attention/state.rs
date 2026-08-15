@@ -138,6 +138,8 @@ impl<B: Backend> AttentionState<B> {
 }
 
 impl<B: Backend> MixerState<B> for AttentionState<B> {
+    type Mixer = Attention<B>;
+
     fn prepare(
         &mut self,
         context_length: u32,

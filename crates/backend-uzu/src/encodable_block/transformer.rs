@@ -8,7 +8,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        mixer::{MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{DynMixerState, attention::rope::PrecalculatedRoPE},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
@@ -17,7 +17,7 @@ use crate::{
 };
 
 enum TransformerLayerStateType<B: Backend> {
-    Owned(Box<dyn MixerState<B>>),
+    Owned(Box<dyn DynMixerState<B>>),
     Shared(u32),
 }
 

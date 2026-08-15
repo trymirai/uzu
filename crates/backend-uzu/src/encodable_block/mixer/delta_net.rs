@@ -53,6 +53,8 @@ pub struct DeltaNetState<B: Backend> {
 }
 
 impl<B: Backend> MixerState<B> for DeltaNetState<B> {
+    type Mixer = DeltaNet<B>;
+
     fn prepare(
         &mut self,
         _context_length: u32,
@@ -426,6 +428,8 @@ impl<B: Backend> DeltaNet<B> {
 }
 
 impl<B: Backend> Mixer<B> for DeltaNet<B> {
+    type State = DeltaNetState<B>;
+
     fn speculation_supported(&self) -> bool {
         self.tree_verify.is_some()
     }
@@ -438,7 +442,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         &self,
         _max_context_length: Option<u32>,
         context: &B::Context,
-    ) -> Result<Box<dyn MixerState<B>>, B::Error> {
+    ) -> Result<DeltaNetState<B>, B::Error> {
         let mut conv_state = context.create_allocation(
             size_for_shape(&[self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE),
             AllocationType::Global,
@@ -462,12 +466,12 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             self.num_groups,
         )?;
 
-        Ok(Box::new(DeltaNetState {
+        Ok(DeltaNetState {
             conv_state,
             ssm_state,
             suffix_status: None,
             state_advance,
-        }))
+        })
     }
 
     fn encode(
@@ -475,7 +479,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         hidden: Allocation<B>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
-        state: Option<MaybeMut<dyn MixerState<B>>>,
+        state: Option<MaybeMut<DeltaNetState<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("delta net");
@@ -483,7 +487,6 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         assert!(precalculated_rope.is_none(), "unexpected rope for delta net mixer");
 
         let state = state.expect("delta net requires state");
-        let state = state.downcast::<DeltaNetState<B>>().expect("incorrect type of delta net state");
         let MaybeMut::Mut(state) = state else {
             panic!("delta net doesn't support immutable state");
         };

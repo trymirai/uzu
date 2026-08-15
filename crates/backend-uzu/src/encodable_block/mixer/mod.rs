@@ -25,6 +25,8 @@ pub mod mamba2;
 pub mod short_conv;
 
 pub trait MixerState<B: Backend>: Any + Send {
+    type Mixer: Mixer<B, State = Self>;
+
     fn prepare(
         &mut self,
         context_length: u32,
@@ -39,7 +41,41 @@ pub trait MixerState<B: Backend>: Any + Send {
     ) -> Result<(), B::Error>;
 }
 
-impl<'a, B: Backend> MaybeMut<'a, dyn MixerState<B>> {
+pub trait DynMixerState<B: Backend>: Any + Send {
+    fn prepare(
+        &mut self,
+        context_length: u32,
+        suffix_length: u32,
+        context: &B::Context,
+    ) -> Result<(), B::Error>;
+
+    fn encode_accept(
+        &mut self,
+        accepted_indices: &[u32],
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error>;
+}
+
+impl<B: Backend, T: MixerState<B>> DynMixerState<B> for T {
+    fn prepare(
+        &mut self,
+        context_length: u32,
+        suffix_length: u32,
+        context: &B::Context,
+    ) -> Result<(), B::Error> {
+        MixerState::prepare(self, context_length, suffix_length, context)
+    }
+
+    fn encode_accept(
+        &mut self,
+        accepted_indices: &[u32],
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        MixerState::encode_accept(self, accepted_indices, encoder)
+    }
+}
+
+impl<'a, B: Backend> MaybeMut<'a, dyn DynMixerState<B>> {
     pub fn downcast<T: MixerState<B>>(self) -> Option<MaybeMut<'a, T>> {
         match self {
             MaybeMut::Const(value) => (value as &dyn Any).downcast_ref::<T>().map(MaybeMut::Const),
@@ -49,6 +85,8 @@ impl<'a, B: Backend> MaybeMut<'a, dyn MixerState<B>> {
 }
 
 pub trait Mixer<B: Backend>: Any + Send + Sync {
+    type State: MixerState<B, Mixer = Self>;
+
     fn speculation_supported(&self) -> bool;
 
     fn max_context_length(&self) -> Option<u32>;
@@ -57,16 +95,71 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
         &self,
         max_context_length: Option<u32>,
         context: &B::Context,
-    ) -> Result<Box<dyn MixerState<B>>, B::Error>;
+    ) -> Result<Self::State, B::Error>;
 
     fn encode(
         &self,
         hidden: Allocation<B>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
-        state: Option<MaybeMut<dyn MixerState<B>>>,
+        state: Option<MaybeMut<Self::State>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error>;
+}
+
+pub trait DynMixer<B: Backend>: Any + Send + Sync {
+    fn speculation_supported(&self) -> bool;
+
+    fn max_context_length(&self) -> Option<u32>;
+
+    fn create_empty_state(
+        &self,
+        max_context_length: Option<u32>,
+        context: &B::Context,
+    ) -> Result<Box<dyn DynMixerState<B>>, B::Error>;
+
+    fn encode(
+        &self,
+        hidden: Allocation<B>,
+        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        batch_dim: &BatchTopology,
+        state: Option<MaybeMut<dyn DynMixerState<B>>>,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error>;
+}
+
+impl<B: Backend, T: Mixer<B>> DynMixer<B> for T {
+    fn speculation_supported(&self) -> bool {
+        Mixer::speculation_supported(self)
+    }
+
+    fn max_context_length(&self) -> Option<u32> {
+        Mixer::max_context_length(self)
+    }
+
+    fn create_empty_state(
+        &self,
+        max_context_length: Option<u32>,
+        context: &B::Context,
+    ) -> Result<Box<dyn DynMixerState<B>>, B::Error> {
+        Ok(Box::new(Mixer::create_empty_state(self, max_context_length, context)?))
+    }
+
+    fn encode(
+        &self,
+        hidden: Allocation<B>,
+        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        batch_dim: &BatchTopology,
+        state: Option<MaybeMut<dyn DynMixerState<B>>>,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        let state = state.map(|state| {
+            state
+                .downcast::<T::State>()
+                .unwrap_or_else(|| panic!("incorrect mixer state type: expected {}", std::any::type_name::<T::State>()))
+        });
+        Mixer::encode(self, hidden, precalculated_rope, batch_dim, state, encoder)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -81,7 +174,7 @@ pub enum MixerNewError<B: Backend> {
     ShortConv(#[from] ShortConvNewError<B>),
 }
 
-impl<B: Backend> dyn Mixer<B> {
+impl<B: Backend> dyn DynMixer<B> {
     pub fn new(
         hidden_dim: u32,
         data_type: DataType,
@@ -89,7 +182,7 @@ impl<B: Backend> dyn Mixer<B> {
         config: &AnyTokenMixerConfig,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
-    ) -> Result<(Box<dyn Mixer<B>>, Option<Allocation<B>>), MixerNewError<B>> {
+    ) -> Result<(Box<dyn DynMixer<B>>, Option<Allocation<B>>), MixerNewError<B>> {
         match config {
             AnyTokenMixerConfig::AttentionConfig(config) => {
                 let (attention, in_projection_input_hadamard_factors) =

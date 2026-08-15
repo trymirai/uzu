@@ -11,7 +11,7 @@ use crate::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError},
         mixer::{
-            Mixer, MixerState,
+            Mixer,
             attention::{
                 core::{AttentionCoreNewArguments, AttentionCores},
                 mode::LinearProjection,
@@ -241,6 +241,8 @@ impl<B: Backend> Attention<B> {
 }
 
 impl<B: Backend> Mixer<B> for Attention<B> {
+    type State = AttentionState<B>;
+
     fn speculation_supported(&self) -> bool {
         true
     }
@@ -253,8 +255,8 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         &self,
         max_context_length: Option<u32>,
         context: &B::Context,
-    ) -> Result<Box<dyn MixerState<B>>, B::Error> {
-        Ok(Box::new(AttentionState::create_empty(self, max_context_length, context)?))
+    ) -> Result<AttentionState<B>, B::Error> {
+        AttentionState::create_empty(self, max_context_length, context)
     }
 
     fn encode(
@@ -262,15 +264,13 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         hidden: Allocation<B>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
-        state: Option<MaybeMut<dyn MixerState<B>>>,
+        state: Option<MaybeMut<AttentionState<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("attention");
 
         assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
 
-        let state =
-            state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
         let output = self.attend(hidden, precalculated_rope, batch_dim, state, encoder)?;
 
         encoder.pop_debug_group();

@@ -6,7 +6,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        mixer::{Mixer, MixerNewError, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{DynMixer, DynMixerState, MixerNewError, attention::rope::PrecalculatedRoPE},
         mlp::{Mlp, MlpBlockError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         per_layer_embedding::PerLayerEmbeddingProjection,
@@ -39,7 +39,7 @@ pub struct TransformerLayer<B: Backend> {
     pub layer_index: u32,
     pub pre_mixer_norm: Option<Normalization<B>>,
     pub kv_source_layer_index: Option<u32>,
-    pub mixer: Box<dyn Mixer<B>>,
+    pub mixer: Box<dyn DynMixer<B>>,
     pub post_mixer_norm: Option<Normalization<B>>,
     pub pre_mlp_norm: Normalization<B>,
     pub mlp: Box<dyn Mlp<B>>,
@@ -83,7 +83,7 @@ impl<B: Backend> TransformerLayer<B> {
             _ => (PostLayerScalar::None, PostLayerScalar::None),
         };
 
-        let (mixer, mixer_hadamard_factors) = <dyn Mixer<B>>::new(
+        let (mixer, mixer_hadamard_factors) = <dyn DynMixer<B>>::new(
             model_dim,
             data_type,
             layer_config.rope_config.as_ref(),
@@ -198,7 +198,7 @@ impl<B: Backend> TransformerLayer<B> {
         per_layer_inputs: Option<&Allocation<B>>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
-        state: Option<MaybeMut<dyn MixerState<B>>>,
+        state: Option<MaybeMut<dyn DynMixerState<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group(&format!("transformer layer {}", self.layer_index));

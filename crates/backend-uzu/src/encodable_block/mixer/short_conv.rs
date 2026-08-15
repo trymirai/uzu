@@ -32,6 +32,8 @@ pub struct ShortConvState<B: Backend> {
 }
 
 impl<B: Backend> MixerState<B> for ShortConvState<B> {
+    type Mixer = ShortConv<B>;
+
     fn prepare(
         &mut self,
         _context_length: u32,
@@ -273,6 +275,8 @@ impl<B: Backend> ShortConv<B> {
 }
 
 impl<B: Backend> Mixer<B> for ShortConv<B> {
+    type State = ShortConvState<B>;
+
     fn speculation_supported(&self) -> bool {
         true
     }
@@ -285,7 +289,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         &self,
         _max_context_length: Option<u32>,
         context: &B::Context,
-    ) -> Result<Box<dyn MixerState<B>>, B::Error> {
+    ) -> Result<ShortConvState<B>, B::Error> {
         let mut conv_state = context.create_allocation(
             size_for_shape(&[self.kernel_size - 1, self.hidden_dim], self.data_type),
             AllocationType::Global,
@@ -302,10 +306,10 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         zero_encoder.encode_fill(&mut suffix_state, 0);
         zero_encoder.end_encoding().submit().wait_until_completed()?;
 
-        Ok(Box::new(ShortConvState {
+        Ok(ShortConvState {
             conv_state,
             suffix_state: None,
-        }))
+        })
     }
 
     fn encode(
@@ -313,7 +317,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         hidden: Allocation<B>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
-        state: Option<MaybeMut<dyn MixerState<B>>>,
+        state: Option<MaybeMut<ShortConvState<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("short conv");
@@ -321,7 +325,6 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         assert!(precalculated_rope.is_none(), "unexpected rope for short conv mixer");
 
         let state = state.expect("short conv requires state");
-        let state = state.downcast::<ShortConvState<B>>().expect("incorrect type of short conv state");
         let MaybeMut::Mut(state) = state else {
             panic!("incorrect state access for short conv state");
         };

@@ -12,7 +12,7 @@ use crate::{
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError},
         mixer::{
-            MixerState,
+            Mixer, MixerState,
             attention::{
                 ATTENTION_SUFFIX_CAPACITY, Attention, AttentionNewError, AttentionState, rope::PrecalculatedRoPE,
             },
@@ -26,7 +26,7 @@ use crate::{
 };
 
 pub struct DFlashState<B: Backend> {
-    layer_states: Box<[Box<dyn MixerState<B>>]>,
+    layer_states: Box<[AttentionState<B>]>,
     context_length: u32,
     context_capacity: u32,
 }
@@ -189,13 +189,19 @@ impl<B: Backend> DFlash<B> {
         let layer_states = self
             .layers
             .iter()
-            .map(|layer| layer.mixer.create_empty_state(Some(context_capacity), context))
+            .map(|layer| Mixer::create_empty_state(Self::layer_attention(layer), Some(context_capacity), context))
             .collect::<Result<Box<[_]>, B::Error>>()?;
         Ok(DFlashState {
             layer_states,
             context_length: 0,
             context_capacity,
         })
+    }
+
+    fn layer_attention(layer: &TransformerLayer<B>) -> &Attention<B> {
+        (layer.mixer.as_ref() as &dyn Any)
+            .downcast_ref::<Attention<B>>()
+            .expect("DFlash draft layers must use attention mixers")
     }
 
     pub fn encode_accept(
@@ -261,13 +267,7 @@ impl<B: Backend> DFlash<B> {
             self.layers.iter().zip(state.layer_states.iter_mut()).zip(layer_key_values)
         {
             mixer_state.prepare(state.context_length, num_tokens, encoder.context())?;
-            let attention = (layer.mixer.as_ref() as &dyn Any)
-                .downcast_ref::<Attention<B>>()
-                .expect("DFlash draft layers must use attention mixers");
-            let attention_state = (mixer_state.as_mut() as &mut dyn Any)
-                .downcast_mut::<AttentionState<B>>()
-                .expect("DFlash draft layer states must be attention states");
-            attention.append_projected_kv(key_value, &rope, num_tokens, attention_state, encoder)?;
+            Self::layer_attention(layer).append_projected_kv(key_value, &rope, num_tokens, mixer_state, encoder)?;
         }
 
         state.context_length += num_tokens;
@@ -324,7 +324,7 @@ impl<B: Backend> DFlash<B> {
                     None,
                     Some(&rope),
                     &batch_topology,
-                    Some(MaybeMut::Mut(mixer_state.as_mut())),
+                    Some(MaybeMut::Mut(mixer_state)),
                     encoder,
                 )
                 .map_err(DFlashEncodeError::Backend)?;

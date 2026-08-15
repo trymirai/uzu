@@ -30,6 +30,8 @@ pub struct Mamba2State<B: Backend> {
 }
 
 impl<B: Backend> MixerState<B> for Mamba2State<B> {
+    type Mixer = Mamba2<B>;
+
     fn prepare(
         &mut self,
         _context_length: u32,
@@ -206,6 +208,8 @@ impl<B: Backend> Mamba2<B> {
 }
 
 impl<B: Backend> Mixer<B> for Mamba2<B> {
+    type State = Mamba2State<B>;
+
     fn speculation_supported(&self) -> bool {
         false
     }
@@ -218,7 +222,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         &self,
         _max_context_length: Option<u32>,
         context: &B::Context,
-    ) -> Result<Box<dyn MixerState<B>>, B::Error> {
+    ) -> Result<Mamba2State<B>, B::Error> {
         let mut conv_state = context.create_allocation(
             size_for_shape(&[self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE),
             AllocationType::Global,
@@ -234,11 +238,11 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         zero_encoder.encode_fill(&mut ssm_state, 0);
         zero_encoder.end_encoding().submit().wait_until_completed()?;
 
-        Ok(Box::new(Mamba2State {
+        Ok(Mamba2State {
             conv_state,
             ssm_state,
             suffix_length: None,
-        }))
+        })
     }
 
     fn encode(
@@ -246,7 +250,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         hidden: Allocation<B>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
-        state: Option<MaybeMut<dyn MixerState<B>>>,
+        state: Option<MaybeMut<Mamba2State<B>>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("mamba2");
@@ -258,7 +262,6 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         }
 
         let state = state.expect("mamba2 requires state");
-        let state = state.downcast::<Mamba2State<B>>().expect("incorrect type of mamba2 state");
         let MaybeMut::Mut(state) = state else {
             panic!("mamba2 doesn't support immutable state");
         };
