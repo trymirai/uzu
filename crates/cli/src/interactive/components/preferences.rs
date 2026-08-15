@@ -34,9 +34,9 @@ impl Preferences {
         } else {
             Self::default()
         };
+
         let mut legacy: HashMap<String, HashMap<String, String>> = toml::from_str(&fs::read_to_string(legacy_path)?)?;
         let settings = legacy.remove("settings").unwrap_or_default();
-
         if let Some(raw) = settings.get("cli_preferences")
             && let Ok(legacy_preferences) = serde_json::from_str::<Self>(raw)
         {
