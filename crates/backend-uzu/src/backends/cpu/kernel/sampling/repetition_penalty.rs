@@ -25,6 +25,9 @@ pub fn repetition_penalty<T: ArrayElement + Float + NumCast>(
         token_id: usize,
         repetition_penalty: f32,
     ) {
+        if token_id >= vocab_size {
+            return;
+        }
         let offset = sample_index * vocab_size + token_id;
         let logit = unsafe { (*original_logits.add(offset)).to_f32().unwrap() };
         let penalized = if logit > 0.0 {

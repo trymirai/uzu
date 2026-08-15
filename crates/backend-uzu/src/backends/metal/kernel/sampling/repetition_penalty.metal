@@ -40,6 +40,10 @@ PUBLIC KERNEL(RepetitionPenalty)(
     token_id = token_ids[source_index - ring.ring_length];
   }
 
+  if (token_id >= vocab_size) {
+    return;
+  }
+
   const uint32_t logit_offset = sample_index * vocab_size + token_id;
   const float logit = static_cast<float>(original_logits[logit_offset]);
   const float penalized = logit > 0.0 ? logit / repetition_penalty : logit * repetition_penalty;

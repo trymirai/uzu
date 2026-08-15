@@ -12,6 +12,7 @@ mod normalization_test;
 mod pooling;
 mod qkv_norm_test;
 mod radix_top_k_small_test;
+mod repetition_penalty_test;
 mod short_conv;
 mod ssm;
 mod tensor_add_bias_test;
