@@ -231,3 +231,21 @@ fn test_trie_prune_to_budget_tie_keeps_parent() {
     root.prune_to_budget(2);
     verify_pruned(&root, &[0, 1]);
 }
+
+#[uzu_test]
+fn test_trie_prune_by_logprob_threshold() {
+    let mut trie = sample_tree();
+    trie.prune_by_logprob_threshold(-0.25);
+    verify_pruned(&trie, &[0, 1, 2]);
+}
+
+#[uzu_test]
+fn test_trie_prune_to_depth() {
+    let mut trie = sample_tree();
+    trie.prune_to_depth(1);
+    verify_pruned(&trie, &[0, 1, 2, 3]);
+
+    let mut trie = sample_tree();
+    trie.prune_to_depth(0);
+    verify_pruned(&trie, &[0]);
+}
