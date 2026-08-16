@@ -183,6 +183,9 @@ impl Engine {
         if let Some(openrouter_api_key) = config.openrouter_api_key {
             openai_configs.push(OpenAIConfig::openrouter(openrouter_api_key));
         }
+        if let Some(orcarouter_api_key) = config.orcarouter_api_key {
+            openai_configs.push(OpenAIConfig::orcarouter(orcarouter_api_key));
+        }
         for config in openai_configs {
             let registry = OpenAIRegistry::new(config.clone())?;
             let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;

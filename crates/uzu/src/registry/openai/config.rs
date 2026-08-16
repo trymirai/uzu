@@ -141,6 +141,18 @@ impl Config {
             None,
         )
     }
+
+    pub fn orcarouter(api_key: String) -> Self {
+        Self::new(
+            "orcarouter".to_string(),
+            "OrcaRouter".to_string(),
+            "https://api.orcarouter.ai/v1".to_string(),
+            Some(api_key.clone()),
+            ApiType::Responses,
+            None,
+            None,
+        )
+    }
 }
 
 impl From<Config> for BackendConfig {
