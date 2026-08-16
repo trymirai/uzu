@@ -53,11 +53,14 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
     for (uint entry = 0; entry < FRONTIER_ENTRIES_PER_THREAD; ++entry) {
       const uint slot = lid + entry * FRONTIER_SELECT_THREADS;
       if (entry_active[entry]) {
+        const uint depth = frontier[uint(FrontierIdx::Depth) * frontier_capacity + slot];
         const uint key = frontier[uint(FrontierIdx::PathScoreKey) * frontier_capacity + slot];
         const uint parent = frontier[uint(FrontierIdx::ParentSlot) * frontier_capacity + slot];
         const uint token = frontier[uint(FrontierIdx::TokenId) * frontier_capacity + slot];
-        if (key > local.x || (key == local.x && (parent < local.y || (parent == local.y && token < local.z)))) {
-          local = uint4(key, parent, token, slot);
+        const uint packed_key = ((depth < lookahead_count ? 1u : 0u) << 31) | (key >> 1);
+        if (packed_key > local.x ||
+            (packed_key == local.x && (parent < local.y || (parent == local.y && token < local.z)))) {
+          local = uint4(packed_key, parent, token, slot);
         }
       }
     }
@@ -127,17 +130,20 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
     }
 
     node_token_ids[node] = token;
-    node_metadata[uint(MetadataIdx::Depth) * node_count + node] = min(depth, max_depth - 1u);
+    node_metadata[uint(MetadataIdx::Depth) * node_count + node] = depth < lookahead_count ? depth : PADDING_DEPTH;
     node_metadata[uint(MetadataIdx::AncestorCount) * node_count + node] = depth;
     node_metadata[uint(MetadataIdx::TreeSlot) * node_count + node] = tree_slot;
     node_valid[node] = real && depth < lookahead_count ? 1u : 0u;
 
-    node_candidate_depth[node] = min(depth, candidate_depth_count - 1u);
+    node_candidate_depth[node] = depth;
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   for (uint node = 0; node < node_count; ++node) {
+    if (node_candidate_depth[node] >= candidate_depth_count) {
+      continue;
+    }
     const uint source = node_candidate_depth[node] * candidates_per_depth;
     const uint destination = node * candidates_per_depth;
     for (uint candidate = lid; candidate < candidates_per_depth; candidate += FRONTIER_SELECT_THREADS) {

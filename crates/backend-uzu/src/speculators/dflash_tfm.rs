@@ -56,14 +56,16 @@ pub enum DFlashSpeculatorLoadError<B: Backend> {
 pub enum DFlashTfmTreeConstructionMethod {
     Argmax,
     Weaver {
-        depth: u32,
+        rounds: u32,
         expand_per_round: u32,
         expand_width: u32,
     },
 }
 
 pub struct DFlashTfmTreeShape {
-    pub budget: u32,
+    pub tree_budget: u32,
+    pub max_tree_depth: u32,
+    pub dflash_depth_override: Option<u32>,
     pub construction_method: DFlashTfmTreeConstructionMethod,
 }
 
@@ -153,7 +155,15 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         prng: &PRng,
         allocation_pool: Arc<AllocationPool<B>>,
     ) -> Result<TrieNode, DFlashTreeError<B>> {
-        assert!(shape.budget >= 2, "tree budget needs at least a root and one draft token");
+        assert!(shape.tree_budget >= 2, "tree budget needs at least a root and one draft token");
+
+        let block_size = self.dflash.block_size();
+        let dflash_depth = shape.dflash_depth_override.unwrap_or(block_size);
+        if !(2..=block_size).contains(&dflash_depth) {
+            return Err(DFlashTreeError::InvalidTreeShape(format!(
+                "dflash depth {dflash_depth} is outside 2..={block_size}"
+            )));
+        }
 
         let root_position = state.context_length();
 
@@ -162,26 +172,27 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let nodes = match shape.construction_method {
             DFlashTfmTreeConstructionMethod::Argmax => {
-                if shape.budget > self.dflash.block_size() {
+                if shape.tree_budget > dflash_depth {
                     return Err(DFlashTreeError::InvalidTreeShape(format!(
-                        "argmax chain of {} nodes needs {} draft rows, block size is {}",
-                        shape.budget,
-                        shape.budget - 1,
-                        self.dflash.block_size()
+                        "argmax chain of {} nodes needs {} draft rows, dflash depth is {}",
+                        shape.tree_budget,
+                        shape.tree_budget - 1,
+                        dflash_depth
                     )));
                 }
-                let chain_length = shape.budget - 1;
-                let mut nodes = Vec::with_capacity(shape.budget as usize);
+                let chain_length = shape.tree_budget - 1;
+                let mut nodes = Vec::with_capacity(shape.tree_budget as usize);
                 nodes.push(ProposalNode {
                     token_id: target_output_token,
                     depth: 0,
+                    logprob: 0.0,
                     child_indices: vec![1],
                 });
                 let dflash_output = self.dflash.encode_draft(
                     state,
                     target_output_token,
                     target_embedding,
-                    shape.budget,
+                    dflash_depth,
                     &mut encoder,
                 )?;
                 let topology_nodes = (0..chain_length)
@@ -213,6 +224,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 nodes.extend(tokens.into_iter().zip(1u32..).map(|(token_id, depth)| ProposalNode {
                     token_id,
                     depth,
+                    logprob: 0.0,
                     child_indices: if depth < chain_length {
                         vec![depth as usize + 1]
                     } else {
@@ -222,33 +234,35 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 nodes
             },
             DFlashTfmTreeConstructionMethod::Weaver {
-                depth,
+                rounds,
                 expand_per_round,
                 expand_width,
             } => {
                 let weaver =
                     self.weaver.as_ref().expect("weaver tree construction requires a speculator with weaver weights");
-                if depth < 2 {
+                // `max_depth` counts the root; the weaver's `max_depth` counts edges.
+                if shape.max_tree_depth < 2 || shape.max_tree_depth > weaver.max_depth() + 1 {
                     return Err(DFlashTreeError::InvalidTreeShape(format!(
-                        "tree depth {depth} needs at least a root and one level"
-                    )));
-                }
-                // `depth` counts the root; the weaver's `max_depth` counts edges.
-                if depth > weaver.max_depth() + 1 {
-                    return Err(DFlashTreeError::InvalidTreeShape(format!(
-                        "requested tree depth {depth} exceeds weaver max depth {}",
+                        "tree max_depth {} is outside 2..={}",
+                        shape.max_tree_depth,
                         weaver.max_depth() + 1
                     )));
                 }
-                if depth > self.dflash.block_size() {
+                if shape.max_tree_depth > dflash_depth {
                     return Err(DFlashTreeError::InvalidTreeShape(format!(
-                        "tree of depth {depth} needs {} draft rows, block size is {}",
-                        depth - 1,
-                        self.dflash.block_size()
+                        "tree of max_depth {} needs {} draft rows, dflash depth is {}",
+                        shape.max_tree_depth,
+                        shape.max_tree_depth - 1,
+                        dflash_depth
                     )));
                 }
-                let dflash_output =
-                    self.dflash.encode_draft(state, target_output_token, target_embedding, depth, &mut encoder)?;
+                let dflash_output = self.dflash.encode_draft(
+                    state,
+                    target_output_token,
+                    target_embedding,
+                    dflash_depth,
+                    &mut encoder,
+                )?;
                 let depth_seeds = (0..weaver.max_depth())
                     .map(|depth| prng.derive(root_position as u64 + depth as u64))
                     .collect::<Box<[u64]>>();
@@ -260,8 +274,10 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     &depth_seeds,
                     target_output_token,
                     WeaverTreeShape {
-                        budget: shape.budget,
-                        depth,
+                        tree_budget: shape.tree_budget,
+                        max_depth: shape.max_tree_depth,
+                        dflash_depth,
+                        rounds,
                         expand_per_round,
                         expand_width,
                     },
@@ -283,8 +299,11 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             prng: &PRng,
         ) -> TrieNode {
             let node = &nodes[index];
-            let mut trie_node =
-                TrieNode::new(node.token_id as u64, prng.derive(root_position as u64 + node.depth as u64));
+            let mut trie_node = TrieNode::new(
+                node.token_id as u64,
+                prng.derive(root_position as u64 + node.depth as u64),
+                node.logprob,
+            );
             for &child_index in &node.child_indices {
                 #[cfg(grammar)]
                 if let Some(grammar) = grammar.as_mut()
@@ -312,13 +331,15 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             trie_node
         }
 
-        Ok(recursive_build(
+        let mut trie = recursive_build(
             &nodes,
             0,
             root_position,
             #[cfg(grammar)]
             grammar,
             prng,
-        ))
+        );
+        trie.prune_to_budget(shape.tree_budget as usize);
+        Ok(trie)
     }
 }

@@ -42,7 +42,8 @@ fn ancestor_attention<const HEAD_DIM: u32>(
             let current_row = current_qkv.add(row * qkv_width);
 
             let depth = *node_metadata.add(MetadataIdx::Depth as usize * row_count + row);
-            let position = depth.min(max_depth - 1) as usize + 1;
+            assert!(depth < max_depth, "node metadata depth must be rope-safe");
+            let position = depth as usize + 1;
             let rotate = |component: usize| {
                 let mut rotated = vec![bf16::ZERO; model_dim];
                 for head in 0..num_heads {

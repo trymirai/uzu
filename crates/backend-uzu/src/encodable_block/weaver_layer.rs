@@ -28,23 +28,18 @@ pub struct PreparedPrefixAttention<B: Backend> {
 }
 
 pub struct WeaverLayer<B: Backend> {
-    // Attention
     pub pre_attention_norm: Normalization<B>,
     pub qkv_projection: Box<dyn Linear<B>>,
-    pub attention_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
+    attention_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     pub prefix_attention: AttentionCores<B>,
     pub ancestor_attention: <B::Kernels as Kernels>::AncestorAttentionKernel,
-    pub out_projection: Box<dyn Linear<B>>,
-
-    // MLP
-    pub pre_mlp_norm: Normalization<B>,
-    pub mlp: Box<dyn Mlp<B>>,
-
-    // Geometry
+    out_projection: Box<dyn Linear<B>>,
+    pre_mlp_norm: Normalization<B>,
+    mlp: Box<dyn Mlp<B>>,
     pub attention_scale: f32,
-    pub model_dim: u32,
-    pub num_heads: u32,
-    pub head_dim: u32,
+    model_dim: u32,
+    num_heads: u32,
+    head_dim: u32,
     pub max_depth: u32,
 }
 
