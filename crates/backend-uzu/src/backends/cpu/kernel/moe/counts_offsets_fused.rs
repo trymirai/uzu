@@ -2,67 +2,69 @@ use proc_macros::kernel;
 
 #[kernel(MoeCountsOffsetsFused)]
 pub fn moe_counts_offsets_fused(
-    topk_ids: *const i32,
-    offsets: *mut u32,
-    sum_k_out: *mut u32,
-    partials: *mut u32,
-    t_input: u32,
-    e_input: u32,
-    k_input: u32,
+    selected_expert_ids: *const i32,
+    expert_offsets: *mut u32,
+    total_routed_row_count: *mut u32,
+    scatter_block_expert_counts: *mut u32,
+    token_count: u32,
+    expert_count: u32,
+    selected_experts_per_token: u32,
 ) {
-    let e = e_input as usize;
-    let t = t_input as usize;
-    let k = k_input as usize;
+    let expert_count = expert_count as usize;
+    let token_count = token_count as usize;
+    let selected_experts_per_token = selected_experts_per_token as usize;
 
-    if e == 0 {
+    if expert_count == 0 {
         unsafe {
-            *offsets = 0;
-            *sum_k_out = 0;
+            *expert_offsets = 0;
+            *total_routed_row_count = 0;
         }
         return;
     }
 
     const SCATTER_BLOCK_SIZE: usize = 256;
-    const TILE_E: usize = 512;
-    let num_blocks = t.div_ceil(SCATTER_BLOCK_SIZE);
-    let num_tiles = e.div_ceil(TILE_E);
+    const EXPERT_TILE_SIZE: usize = 512;
+    let scatter_block_count = token_count.div_ceil(SCATTER_BLOCK_SIZE);
+    let expert_tile_count = expert_count.div_ceil(EXPERT_TILE_SIZE);
 
     // Phase 1: Count tokens per expert and per scatter block.
-    let mut counts = vec![0u32; e];
-    for block_id in 0..num_blocks {
-        let mut block_counts = vec![0u32; e];
-        let t_start = block_id * SCATTER_BLOCK_SIZE;
-        let t_end = (t_start + SCATTER_BLOCK_SIZE).min(t);
-        for ti in t_start..t_end {
-            let base = ti * k;
-            for kk in 0..k {
-                let eid = unsafe { *topk_ids.add(base + kk) };
-                if eid >= 0 {
-                    let ue = eid as usize;
-                    if ue < e {
-                        counts[ue] += 1;
-                        block_counts[ue] += 1;
+    let mut total_expert_counts = vec![0u32; expert_count];
+    for scatter_block_index in 0..scatter_block_count {
+        let mut expert_counts_in_block = vec![0u32; expert_count];
+        let token_block_start = scatter_block_index * SCATTER_BLOCK_SIZE;
+        let token_block_end = (token_block_start + SCATTER_BLOCK_SIZE).min(token_count);
+        for token_index in token_block_start..token_block_end {
+            let selected_expert_row_start = token_index * selected_experts_per_token;
+            for selected_expert_slot in 0..selected_experts_per_token {
+                let selected_expert_id =
+                    unsafe { *selected_expert_ids.add(selected_expert_row_start + selected_expert_slot) };
+                if selected_expert_id >= 0 {
+                    let expert_index = selected_expert_id as usize;
+                    if expert_index < expert_count {
+                        total_expert_counts[expert_index] += 1;
+                        expert_counts_in_block[expert_index] += 1;
                     }
                 }
             }
         }
 
-        for (expert_id, count) in block_counts.into_iter().enumerate() {
-            let tile_id = expert_id / TILE_E;
-            let tile_expert_id = expert_id % TILE_E;
-            let partial_idx = (block_id * num_tiles + tile_id) * TILE_E + tile_expert_id;
-            unsafe { *partials.add(partial_idx) = count };
+        for (expert_index, expert_count_in_block) in expert_counts_in_block.into_iter().enumerate() {
+            let expert_tile_index = expert_index / EXPERT_TILE_SIZE;
+            let expert_index_in_tile = expert_index % EXPERT_TILE_SIZE;
+            let partial_count_index =
+                (scatter_block_index * expert_tile_count + expert_tile_index) * EXPERT_TILE_SIZE + expert_index_in_tile;
+            unsafe { *scatter_block_expert_counts.add(partial_count_index) = expert_count_in_block };
         }
     }
 
     // Phase 2: Exclusive prefix scan to produce offsets
-    let mut sum = 0u32;
-    for i in 0..e {
-        unsafe { *offsets.add(i) = sum };
-        sum += counts[i];
+    let mut expert_offset_carry = 0u32;
+    for expert_index in 0..expert_count {
+        unsafe { *expert_offsets.add(expert_index) = expert_offset_carry };
+        expert_offset_carry += total_expert_counts[expert_index];
     }
     unsafe {
-        *offsets.add(e) = sum;
-        *sum_k_out = sum;
+        *expert_offsets.add(expert_count) = expert_offset_carry;
+        *total_routed_row_count = expert_offset_carry;
     }
 }

@@ -35,32 +35,32 @@ static T threadgroup_raking_prefix_exclusive_sum(T value, threadgroup T* shared,
   return result;
 }
 
-#define BLOCK_SIZE 128
+#define THREADGROUP_SIZE 128
 #define SCATTER_BLOCK_SIZE 256
-#define TILE_E 512
+#define EXPERT_TILE_SIZE 512
 
 // Single-kernel fused: count all experts + scan to offsets
 // This kernel is launched with SINGLE threadgroup
 PUBLIC KERNEL(MoeCountsOffsetsFused)(
-    device const int* topk_ids,
-    device uint* offsets,   // output: exclusive scan [E+1]
-    device uint* sum_k_out, // output: total count [1]
-    device uint* partials,  // output: partials [num_blocks * num_tiles * TILE_E] (for block_bases)
-    constant uint& t_input,
-    constant uint& e_input,
-    constant uint& k_input,
-    threadgroup _atomic<uint> tg_hist[TILE_E],
-    threadgroup uint scan_shared[BLOCK_SIZE],
-    threadgroup uint reduce_shared[BLOCK_SIZE],
-    threadgroup uint counts_shared[TILE_E], // Cache global counts in threadgroup memory
-    threadgroup uint& carry,
+    device const int* selected_expert_ids,
+    device uint* expert_offsets,              // output: exclusive scan [expert_count + 1]
+    device uint* total_routed_row_count,      // output: total count [1]
+    device uint* scatter_block_expert_counts, // output: partial histograms for block_bases
+    constant uint& token_count,
+    constant uint& expert_count,
+    constant uint& selected_experts_per_token,
+    threadgroup _atomic<uint> threadgroup_expert_histogram[EXPERT_TILE_SIZE],
+    threadgroup uint prefix_scan_scratch[THREADGROUP_SIZE],
+    threadgroup uint reduction_scratch[THREADGROUP_SIZE],
+    threadgroup uint total_expert_counts[EXPERT_TILE_SIZE], // Cache global counts in threadgroup memory
+    threadgroup uint& expert_offset_carry,
     const ThreadContext thread_context,
-    const uint lid THREADS(128)
+    const uint thread_index_in_threadgroup THREADS(128)
 ) {
-  if (e_input == 0) {
-    if (lid == 0) {
-      offsets[0] = 0u;
-      sum_k_out[0] = 0u;
+  if (expert_count == 0) {
+    if (thread_index_in_threadgroup == 0) {
+      expert_offsets[0] = 0u;
+      total_routed_row_count[0] = 0u;
     }
     return;
   }
@@ -68,48 +68,55 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
   // ═══════════════════════════════════════════════════════════
   // PHASE 1: Count tokens per expert using tiled histogram
   // ═══════════════════════════════════════════════════════════
-  const uint num_blocks = (t_input + SCATTER_BLOCK_SIZE - 1) / SCATTER_BLOCK_SIZE;
-  const uint num_tiles = (e_input + TILE_E - 1) / TILE_E;
+  const uint scatter_block_count = (token_count + SCATTER_BLOCK_SIZE - 1) / SCATTER_BLOCK_SIZE;
+  const uint expert_tile_count = (expert_count + EXPERT_TILE_SIZE - 1) / EXPERT_TILE_SIZE;
 
-  // Tile over E dimension.
-  for (uint e0 = 0; e0 < e_input; e0 += TILE_E) {
-    const uint tile_e = (e0 + TILE_E <= e_input) ? TILE_E : (e_input - e0);
-    const uint tile_id = e0 / TILE_E;
+  // Tile over the expert dimension.
+  for (uint expert_tile_start = 0; expert_tile_start < expert_count; expert_tile_start += EXPERT_TILE_SIZE) {
+    const uint expert_tile_size =
+        (expert_tile_start + EXPERT_TILE_SIZE <= expert_count) ? EXPERT_TILE_SIZE : (expert_count - expert_tile_start);
+    const uint expert_tile_index = expert_tile_start / EXPERT_TILE_SIZE;
 
-    for (uint e = lid; e < tile_e; e += BLOCK_SIZE) {
-      counts_shared[e0 + e] = 0u;
+    for (uint expert_index_in_tile = thread_index_in_threadgroup; expert_index_in_tile < expert_tile_size;
+         expert_index_in_tile += THREADGROUP_SIZE) {
+      total_expert_counts[expert_tile_start + expert_index_in_tile] = 0u;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // Scatter consumes one partial histogram per 256-token block.
-    for (uint block_id = 0; block_id < num_blocks; ++block_id) {
-      for (uint e = lid; e < tile_e; e += BLOCK_SIZE) {
-        atomic_store_explicit(&tg_hist[e], 0u, memory_order_relaxed);
+    for (uint scatter_block_index = 0; scatter_block_index < scatter_block_count; ++scatter_block_index) {
+      for (uint expert_index_in_tile = thread_index_in_threadgroup; expert_index_in_tile < expert_tile_size;
+           expert_index_in_tile += THREADGROUP_SIZE) {
+        atomic_store_explicit(&threadgroup_expert_histogram[expert_index_in_tile], 0u, memory_order_relaxed);
       }
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
-      const uint t_start = block_id * SCATTER_BLOCK_SIZE;
-      const uint t_end = min(t_start + SCATTER_BLOCK_SIZE, t_input);
-      for (uint t = t_start + lid; t < t_end; t += BLOCK_SIZE) {
-        const uint base = t * k_input;
-        for (uint k = 0; k < k_input; ++k) {
-          int eid = topk_ids[base + k];
-          if (eid >= 0) {
-            uint ue = uint(eid);
-            if (ue >= e0 && ue < e0 + tile_e) {
-              uint te = ue - e0;
-              atomic_fetch_add_explicit(&tg_hist[te], 1u, memory_order_relaxed);
+      const uint token_block_start = scatter_block_index * SCATTER_BLOCK_SIZE;
+      const uint token_block_end = min(token_block_start + SCATTER_BLOCK_SIZE, token_count);
+      for (uint token_index = token_block_start + thread_index_in_threadgroup; token_index < token_block_end;
+           token_index += THREADGROUP_SIZE) {
+        const uint selected_expert_row_start = token_index * selected_experts_per_token;
+        for (uint selected_expert_slot = 0; selected_expert_slot < selected_experts_per_token; ++selected_expert_slot) {
+          int selected_expert_id = selected_expert_ids[selected_expert_row_start + selected_expert_slot];
+          if (selected_expert_id >= 0) {
+            uint expert_index = uint(selected_expert_id);
+            if (expert_index >= expert_tile_start && expert_index < expert_tile_start + expert_tile_size) {
+              uint expert_index_in_tile = expert_index - expert_tile_start;
+              atomic_fetch_add_explicit(&threadgroup_expert_histogram[expert_index_in_tile], 1u, memory_order_relaxed);
             }
           }
         }
       }
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
-      for (uint e = lid; e < tile_e; e += BLOCK_SIZE) {
-        const uint count_val = atomic_load_explicit(&tg_hist[e], memory_order_relaxed);
-        counts_shared[e0 + e] += count_val;
-        const uint partial_idx = (block_id * num_tiles + tile_id) * TILE_E + e;
-        partials[partial_idx] = count_val;
+      for (uint expert_index_in_tile = thread_index_in_threadgroup; expert_index_in_tile < expert_tile_size;
+           expert_index_in_tile += THREADGROUP_SIZE) {
+        const uint scatter_block_expert_count =
+            atomic_load_explicit(&threadgroup_expert_histogram[expert_index_in_tile], memory_order_relaxed);
+        total_expert_counts[expert_tile_start + expert_index_in_tile] += scatter_block_expert_count;
+        const uint partial_count_index =
+            (scatter_block_index * expert_tile_count + expert_tile_index) * EXPERT_TILE_SIZE + expert_index_in_tile;
+        scatter_block_expert_counts[partial_count_index] = scatter_block_expert_count;
       }
       threadgroup_barrier(mem_flags::mem_threadgroup);
     }
@@ -118,33 +125,43 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
   // ═══════════════════════════════════════════════════════════
   // PHASE 2: Compute exclusive prefix scan on counts
   // ═══════════════════════════════════════════════════════════
-  if (lid == 0) {
-    carry = 0u;
+  if (thread_index_in_threadgroup == 0) {
+    expert_offset_carry = 0u;
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  for (uint base = 0; base < e_input; base += BLOCK_SIZE) {
-    uint remaining = e_input - base;
-    uint chunk_n = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
+  for (uint expert_chunk_start = 0; expert_chunk_start < expert_count; expert_chunk_start += THREADGROUP_SIZE) {
+    uint remaining_expert_count = expert_count - expert_chunk_start;
+    uint expert_chunk_size = remaining_expert_count < THREADGROUP_SIZE ? remaining_expert_count : THREADGROUP_SIZE;
 
-    uint v = (lid < chunk_n) ? counts_shared[base + lid] : 0u;
+    uint expert_route_count = (thread_index_in_threadgroup < expert_chunk_size)
+                                  ? total_expert_counts[expert_chunk_start + thread_index_in_threadgroup]
+                                  : 0u;
 
-    uint prefix_local = threadgroup_raking_prefix_exclusive_sum<BLOCK_SIZE>(v, scan_shared, (ushort)lid);
-    uint prefix_global = prefix_local + carry;
-    if (lid < chunk_n) {
-      offsets[base + lid] = prefix_global;
+    uint expert_offset_in_chunk = threadgroup_raking_prefix_exclusive_sum<THREADGROUP_SIZE>(
+        expert_route_count,
+        prefix_scan_scratch,
+        (ushort)thread_index_in_threadgroup
+    );
+    uint expert_offset = expert_offset_in_chunk + expert_offset_carry;
+    if (thread_index_in_threadgroup < expert_chunk_size) {
+      expert_offsets[expert_chunk_start + thread_index_in_threadgroup] = expert_offset;
     }
 
-    uint block_sum = threadgroup_cooperative_reduce<SimdReduceSum<uint>, BLOCK_SIZE>(v, reduce_shared, thread_context);
-    if (lid == 0) {
-      carry += block_sum;
+    uint expert_chunk_route_count = threadgroup_cooperative_reduce<SimdReduceSum<uint>, THREADGROUP_SIZE>(
+        expert_route_count,
+        reduction_scratch,
+        thread_context
+    );
+    if (thread_index_in_threadgroup == 0) {
+      expert_offset_carry += expert_chunk_route_count;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
   // Write final offset and total
-  if (lid == 0) {
-    offsets[e_input] = carry;
-    sum_k_out[0] = carry;
+  if (thread_index_in_threadgroup == 0) {
+    expert_offsets[expert_count] = expert_offset_carry;
+    total_routed_row_count[0] = expert_offset_carry;
   }
 }
