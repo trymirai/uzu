@@ -8,7 +8,9 @@ use router::MoeRouter;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, gpu_types::ActivationType},
+    backends::common::{
+        Allocation, Backend, Encoder, gpu_types::ActivationType, kernel::matmul::routing::MAX_EXPERT_COUNT,
+    },
     config::{
         mlp::mixture_of_experts::MixtureOfExpertsConfig,
         weight_matrix::{AnyWeightMatrixSpec, Layout, full_precision_spec::FullPrecisionSpec},
@@ -20,6 +22,24 @@ use crate::{
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
+
+const MAX_MODEL_DIM: u32 = 4096;
+const MAX_ACTIVE_EXPERT_COUNT: u32 = 128;
+
+fn valid_model_dim(model_dim: u32) -> bool {
+    model_dim > 0 && model_dim <= MAX_MODEL_DIM && model_dim.is_multiple_of(4)
+}
+
+fn valid_routed_expert_count(expert_count: u32) -> bool {
+    (1..=MAX_EXPERT_COUNT).contains(&expert_count)
+}
+
+fn valid_active_expert_count(
+    active_expert_count: u32,
+    routed_expert_count: u32,
+) -> bool {
+    (1..=MAX_ACTIVE_EXPERT_COUNT.min(routed_expert_count)).contains(&active_expert_count)
+}
 
 pub struct MoeBlock<B: Backend> {
     router: MoeRouter<B>,
@@ -75,16 +95,13 @@ impl<B: Backend> MoeBlock<B> {
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, MoeBlockError<B>> {
-        if model_dim == 0 || model_dim > 4096 || !model_dim.is_multiple_of(4) {
+        if !valid_model_dim(model_dim) {
             return Err(MoeBlockError::InvalidModelDim);
         }
-        if moe_config.num_routed_experts == 0 || moe_config.num_routed_experts > 512 {
+        if !valid_routed_expert_count(moe_config.num_routed_experts) {
             return Err(MoeBlockError::InvalidRoutedExpertCount);
         }
-        if moe_config.num_active_routed_experts == 0
-            || moe_config.num_active_routed_experts > 128
-            || moe_config.num_active_routed_experts > moe_config.num_routed_experts
-        {
+        if !valid_active_expert_count(moe_config.num_active_routed_experts, moe_config.num_routed_experts) {
             return Err(MoeBlockError::InvalidActiveExpertCount);
         }
         if moe_config.num_shared_experts != 0 {

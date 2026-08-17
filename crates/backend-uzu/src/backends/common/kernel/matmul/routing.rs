@@ -18,6 +18,8 @@ pub struct A8ActivationPlan {
     pub sum_group_size: Option<u32>,
 }
 
+pub const MAX_EXPERT_COUNT: u32 = 512;
+
 /// The physical A-row layout used by direct expert routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpertInput {

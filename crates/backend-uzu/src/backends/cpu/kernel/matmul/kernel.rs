@@ -8,7 +8,10 @@ use crate::{
             gpu_types::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{ExpertInput, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
+                matmul::{
+                    ExpertInput, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel,
+                    routing::MAX_EXPERT_COUNT, validate_matmul_storage,
+                },
             },
         },
         cpu::{Cpu, context::CpuContext, error::CpuError},
@@ -68,7 +71,7 @@ impl MatmulKernel for MatmulCpuKernel {
             .into());
         }
         if let Some(routes) = arguments.expert_routes {
-            if routes.expert_count.get() > 512 {
+            if routes.expert_count.get() > MAX_EXPERT_COUNT {
                 return Err(MatmulError::UnsupportedRouting {
                     path: "CpuMatmul",
                     reason: "expert routing supports at most 512 experts",
@@ -183,6 +186,14 @@ impl MatmulKernel for MatmulCpuKernel {
                 }
                 .into());
             }
+        }
+        if let Err(error) = validate_matmul_storage(&arguments, self.input_data_type, self.output_data_type) {
+            return Err(MatmulError::InvalidStorage {
+                path: "CpuMatmul",
+                operand: error.operand,
+                reason: error.reason,
+            }
+            .into());
         }
 
         let output_scale = arguments.d_transform.ab_scale;

@@ -15,7 +15,10 @@ use crate::{
             gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
             kernel::{
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{A8ActivationPlan, ActivationFormat, MatmulArguments, MatmulError, MatmulKernel, MatmulShape},
+                matmul::{
+                    A8ActivationPlan, ActivationFormat, MatmulArguments, MatmulError, MatmulKernel, MatmulShape,
+                    routing::MAX_EXPERT_COUNT, validate_matmul_storage,
+                },
             },
         },
         metal::{Metal, context::MetalContext, error::MetalError},
@@ -213,7 +216,7 @@ impl MatmulKernel for MatmulMetalKernel {
                 }
                 .into());
             }
-            if routes.expert_count.get() > 512 {
+            if routes.expert_count.get() > MAX_EXPERT_COUNT {
                 return Err(MatmulError::UnsupportedRouting {
                     path: "MetalMatmul",
                     reason: "expert routing supports at most 512 experts",
@@ -317,6 +320,14 @@ impl MatmulKernel for MatmulMetalKernel {
             return Err(MatmulError::UnsupportedRouting {
                 path: "MetalMatmul",
                 reason: "F16 Metal matmul is supported only for direct expert routes",
+            }
+            .into());
+        }
+        if let Err(error) = validate_matmul_storage(&arguments, self.input_data_type, self.output_data_type) {
+            return Err(MatmulError::InvalidStorage {
+                path: "MetalMatmul",
+                operand: error.operand,
+                reason: error.reason,
             }
             .into());
         }

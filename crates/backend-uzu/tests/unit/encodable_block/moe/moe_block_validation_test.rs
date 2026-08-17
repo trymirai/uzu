@@ -4,7 +4,7 @@ use proc_macros::uzu_test;
 use serde_json::{Value, json};
 use tempfile::NamedTempFile;
 
-use super::super::{MoeBlock, MoeBlockError};
+use super::super::{MoeBlock, MoeBlockError, valid_active_expert_count, valid_model_dim, valid_routed_expert_count};
 use crate::{
     backends::{
         common::{Backend, Context},
@@ -87,6 +87,7 @@ fn model_dim_error(model_dim: u32) -> MoeBlockError<Cpu> {
 
 #[uzu_test]
 fn rejects_invalid_routed_expert_counts() {
+    assert!(valid_routed_expert_count(512));
     for routed_experts in [0, 513] {
         assert!(matches!(constructor_error(routed_experts, 1), MoeBlockError::InvalidRoutedExpertCount));
     }
@@ -94,6 +95,7 @@ fn rejects_invalid_routed_expert_counts() {
 
 #[uzu_test]
 fn rejects_invalid_active_expert_counts() {
+    assert!(valid_active_expert_count(128, 512));
     for (routed_experts, active_experts) in [(1, 0), (1, 2), (512, 129)] {
         assert!(matches!(constructor_error(routed_experts, active_experts), MoeBlockError::InvalidActiveExpertCount));
     }
@@ -101,6 +103,7 @@ fn rejects_invalid_active_expert_counts() {
 
 #[uzu_test]
 fn rejects_router_dimensions_beyond_its_threadgroup_cache() {
+    assert!(valid_model_dim(4096));
     for model_dim in [0, 2, 4100] {
         assert!(matches!(model_dim_error(model_dim), MoeBlockError::InvalidModelDim));
     }

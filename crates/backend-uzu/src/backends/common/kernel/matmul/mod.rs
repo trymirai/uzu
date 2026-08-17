@@ -7,6 +7,7 @@ mod matmul_b;
 pub mod routing;
 
 pub use arguments::MatmulArguments;
+pub(crate) use arguments::validate_matmul_storage;
 pub use d_ops::MatmulDOps;
 pub use error::MatmulError;
 pub use kernel::MatmulKernel;
