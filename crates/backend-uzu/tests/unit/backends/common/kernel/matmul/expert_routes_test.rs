@@ -13,37 +13,32 @@ use crate::{
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
     },
 };
 
-fn run(
+fn run<B: Backend>(
     input: &[f32],
     weights: &[f32],
     expert_ids: &[i32],
     expert_biases: &[f32],
     input_layout: ExpertInput,
+    routes_per_token: u32,
+    expert_count: u32,
+    k: usize,
+    n: usize,
 ) -> Vec<f32> {
-    const ROUTES: usize = 4;
-    const ROUTES_PER_TOKEN: u32 = 2;
-    const EXPERTS: u32 = 3;
-    const K: usize = 3;
-    const N: usize = 2;
-
-    let context = <Cpu as Backend>::Context::new().expect("create CPU context");
-    let input = alloc_allocation_with_data::<Cpu, f32>(context.as_ref(), input);
-    let weights = alloc_allocation_with_data::<Cpu, f32>(context.as_ref(), weights);
-    let expert_ids = alloc_allocation_with_data::<Cpu, i32>(context.as_ref(), expert_ids);
-    let expert_biases = alloc_allocation_with_data::<Cpu, f32>(context.as_ref(), expert_biases);
-    let mut output = alloc_allocation::<Cpu, f32>(context.as_ref(), ROUTES * N);
-    let mut kernel = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
-        context.as_ref(),
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-    )
-    .expect("create matmul");
-    let mut encoder = Encoder::<Cpu>::new(context.as_ref()).expect("create encoder");
+    let routes = expert_ids.len();
+    let context = B::Context::new().expect("create backend context");
+    let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), input);
+    let weights = alloc_allocation_with_data::<B, f32>(context.as_ref(), weights);
+    let expert_ids = alloc_allocation_with_data::<B, i32>(context.as_ref(), expert_ids);
+    let expert_biases = alloc_allocation_with_data::<B, f32>(context.as_ref(), expert_biases);
+    let mut output = alloc_allocation::<B, f32>(context.as_ref(), routes * n);
+    let mut kernel =
+        <B::Kernels as Kernels>::MatmulKernel::new(context.as_ref(), DataType::F32, DataType::F32, DataType::F32)
+            .expect("create matmul");
+    let mut encoder = Encoder::<B>::new(context.as_ref()).expect("create encoder");
 
     kernel
         .encode(
@@ -62,20 +57,20 @@ fn run(
                 gather_indices: None,
                 expert_routes: Some(ExpertRoutes {
                     expert_ids: &expert_ids,
-                    routes_per_token: NonZeroU32::new(ROUTES_PER_TOKEN).unwrap(),
-                    expert_count: NonZeroU32::new(EXPERTS).unwrap(),
+                    routes_per_token: NonZeroU32::new(routes_per_token).unwrap(),
+                    expert_count: NonZeroU32::new(expert_count).unwrap(),
                     input: input_layout,
                     expert_biases: Some(&expert_biases),
                 }),
-                m: ROUTES as u32,
-                n: N as u32,
-                k: K as u32,
+                m: routes as u32,
+                n: n as u32,
+                k: k as u32,
             },
             &mut encoder,
         )
         .expect("encode routed matmul");
     encoder.end_encoding().submit().wait_until_completed().expect("execute routed matmul");
-    allocation_to_vec::<Cpu, f32>(&output)
+    allocation_to_vec::<B, f32>(&output)
 }
 
 fn weights() -> Vec<f32> {
@@ -91,12 +86,16 @@ fn weights() -> Vec<f32> {
 
 #[uzu_test]
 fn token_rows_feed_route_major_experts_directly() {
-    let actual = run(
+    let actual = run::<Cpu>(
         &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
         &weights(),
         &[1, 0, 1, -1],
         &[0.1, 0.2, 1.0, 2.0, 10.0, 20.0],
         ExpertInput::Tokens,
+        2,
+        3,
+        3,
+        2,
     );
 
     assert_eq_float(&[4.0, 8.0, 1.1, 2.2, 7.0, 17.0, 0.0, 0.0], &actual, 1e-6, "token routes");
@@ -104,13 +103,47 @@ fn token_rows_feed_route_major_experts_directly() {
 
 #[uzu_test]
 fn route_rows_reuse_the_same_expert_ids() {
-    let actual = run(
+    let actual = run::<Cpu>(
         &[1.0, 2.0, 3.0, 7.0, 8.0, 9.0, 4.0, 5.0, 6.0, 10.0, 11.0, 12.0],
         &weights(),
         &[1, 0, 1, -1],
         &[0.1, 0.2, 1.0, 2.0, 10.0, 20.0],
         ExpertInput::Routes,
+        2,
+        3,
+        3,
+        2,
     );
 
     assert_eq_float(&[4.0, 8.0, 7.1, 8.2, 7.0, 17.0, 0.0, 0.0], &actual, 1e-6, "route rows");
+}
+
+#[uzu_test]
+fn accelerators_match_cpu_for_direct_routes() {
+    const ROUTES: usize = 4;
+    const ROUTES_PER_TOKEN: u32 = 2;
+    const EXPERTS: u32 = 3;
+    const K: usize = 128;
+    const N: usize = 64;
+
+    let expert_ids = [1, 0, 1, -1];
+    let weights: Vec<f32> = (0..EXPERTS as usize * N * K).map(|index| (index % 23) as f32 * 0.01 - 0.11).collect();
+    let biases: Vec<f32> = (0..EXPERTS as usize * N).map(|index| (index % 7) as f32 * 0.02).collect();
+
+    for input_layout in [ExpertInput::Tokens, ExpertInput::Routes] {
+        let input_rows = if input_layout == ExpertInput::Tokens {
+            ROUTES / ROUTES_PER_TOKEN as usize
+        } else {
+            ROUTES
+        };
+        let input: Vec<f32> = (0..input_rows * K).map(|index| (index % 19) as f32 * 0.03 - 0.27).collect();
+        let expected =
+            run::<Cpu>(&input, &weights, &expert_ids, &biases, input_layout, ROUTES_PER_TOKEN, EXPERTS, K, N);
+
+        for_each_non_cpu_backend!(|B| {
+            let actual =
+                run::<B>(&input, &weights, &expert_ids, &biases, input_layout, ROUTES_PER_TOKEN, EXPERTS, K, N);
+            assert_eq_float(&expected, &actual, 1e-4, "direct expert routes");
+        });
+    }
 }

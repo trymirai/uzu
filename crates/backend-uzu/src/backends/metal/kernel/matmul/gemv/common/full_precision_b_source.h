@@ -13,10 +13,12 @@ struct FullPrecisionBSource {
       const device AT* a,
       const device uint* gather_indices,
       bool gathered,
+      uint matrix_idx,
       uint in_vec_size,
       uint out_vec_size,
       uint out_row,
-      uint batch_idx,
+      uint assignment_idx,
+      uint a_row,
       uint simd_lane,
       uint k_slice
   ) {
@@ -28,16 +30,16 @@ struct FullPrecisionBSource {
     const uint k_stride = K_SPLIT * block_size;
     const uint k_start = k_slice * block_size;
     const uint thread_k = simd_lane * values_per_thread + k_start;
-    const device AT* input = a + batch_idx * in_vec_size + thread_k;
+    const device AT* input = a + a_row * in_vec_size + thread_k;
 
     // One advancing weight pointer per output row; base row = out_row (dense) or gather index.
-    const uint base_row = gathered ? 0u : out_row;
+    const uint base_row = matrix_idx * out_vec_size + (gathered ? 0u : out_row);
     const device BT* weights = reinterpret_cast<const device BT*>(b);
     weights += base_row * in_vec_size + thread_k;
     thread const device BT* weight_rows[RESULTS_PER_SIMDGROUP];
     METAL_PRAGMA_UNROLL
     for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-      const uint addr_row = gathered ? gather_indices[batch_idx * out_vec_size + out_row + row] : row;
+      const uint addr_row = gathered ? gather_indices[assignment_idx * out_vec_size + out_row + row] : row;
       weight_rows[row] = weights + addr_row * in_vec_size;
     }
 

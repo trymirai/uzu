@@ -24,6 +24,7 @@ fn shape(
         a_full_precision: true,
         gathered: false,
         expert_routed: false,
+        expert_bias: false,
         d_transform: GemmDTransform::empty(),
     }
 }

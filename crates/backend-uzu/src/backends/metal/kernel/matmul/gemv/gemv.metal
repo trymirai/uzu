@@ -63,15 +63,22 @@ KERNEL(Gemv)(
     const device int32_t* hadamard_factors
         OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
     const device uint* gather_indices OPTIONAL(gathered),
+    const device int* expert_ids OPTIONAL(expert_routed),
+    const device BT* expert_biases OPTIONAL(expert_bias),
     const constant uint& in_vec_size,
     const constant uint& out_vec_size,
     const constant uint& batch_size,
     const constant float& ab_scale,
     const constant uint& group_count_x,
+    const constant uint& routes_per_token,
+    const constant uint& expert_count,
+    const constant bool& route_inputs,
     const constant float& soft_cap
         OPTIONAL(output_transform.contains(GemmDTransform::SOFT_CAP)),
     const GemmDTransform output_transform SPECIALIZE,
     const bool gathered SPECIALIZE,
+    const bool expert_routed SPECIALIZE,
+    const bool expert_bias SPECIALIZE,
     const bool signed_codes SPECIALIZE,
     threadgroup float shared_results[NUM_SIMDGROUPS * RESULTS_PER_SIMDGROUP],
     const uint batch_idx GROUPS(batch_size),
@@ -81,6 +88,21 @@ KERNEL(Gemv)(
 ) {
   typedef float U;
   thread U result[RESULTS_PER_SIMDGROUP] = {0};
+
+  uint matrix_idx = 0;
+  uint a_row = batch_idx;
+  if (expert_routed) {
+    const int expert = expert_ids[batch_idx];
+    if (expert < 0 || uint(expert) >= expert_count) {
+      const uint thread_index = simd_group * 32 + simd_lane;
+      for (uint column = thread_index; column < out_vec_size; column += NUM_SIMDGROUPS * 32) {
+        d[batch_idx * out_vec_size + column] = DT(0);
+      }
+      return;
+    }
+    matrix_idx = uint(expert);
+    a_row = route_inputs ? batch_idx : batch_idx / routes_per_token;
+  }
 
   OutputTile<K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP> tile =
       OutputTile<K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::make(out_block_idx, simd_group, out_vec_size);
@@ -95,10 +117,12 @@ KERNEL(Gemv)(
       a,
       gather_indices,
       gathered,
+      matrix_idx,
       in_vec_size,
       out_vec_size,
       tile.out_row,
       batch_idx,
+      a_row,
       simd_lane,
       tile.k_slice,
       signed_codes
@@ -117,6 +141,7 @@ KERNEL(Gemv)(
       result,
       d,
       output_bias,
+      expert_bias ? expert_biases + matrix_idx * out_vec_size : nullptr,
       hadamard_factors,
       shared_results,
       ab_scale,

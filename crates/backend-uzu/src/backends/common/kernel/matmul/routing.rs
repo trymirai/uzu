@@ -64,6 +64,7 @@ pub struct MatmulShape {
     pub a_full_precision: bool,
     pub gathered: bool,
     pub expert_routed: bool,
+    pub expert_bias: bool,
     pub d_transform: GemmDTransform,
 }
 
@@ -84,6 +85,7 @@ impl MatmulShape {
             a_full_precision: matches!(arguments.a, MatmulA::FullPrecision { .. }),
             gathered: arguments.gather_indices.is_some(),
             expert_routed: arguments.expert_routes.is_some(),
+            expert_bias: arguments.expert_routes.is_some_and(|routes| routes.expert_biases.is_some()),
             d_transform: arguments.d_transform.mask(),
         }
     }
