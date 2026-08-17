@@ -117,10 +117,10 @@ impl<B: Backend> dyn Linear<B> {
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 adapter_spec: None,
-                incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+                incoherence_block_size: Some(block_size),
                 incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
                 ..
-            }) => Ok(Box::new(RHTLinearWrapper::new(
+            }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(RHTLinearWrapper::new(
                 context,
                 input_dimension,
                 output_dimension_sum,

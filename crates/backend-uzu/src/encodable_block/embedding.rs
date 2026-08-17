@@ -153,10 +153,10 @@ impl<B: Backend> Embedding<B> {
                     AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                         quantization_spec,
                         adapter_spec: None,
-                        incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+                        incoherence_block_size: Some(block_size),
                         incoherence_processing_mode: IncoherenceProcessingMode::Output,
                         ..
-                    }) => {
+                    }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => {
                         let incoherence_signs_tree = embedding_tree.subtree("incoherence_signs");
                         let output_hadamard_factors = Some(
                             incoherence_signs_tree
@@ -201,10 +201,10 @@ impl<B: Backend> Embedding<B> {
                     AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                         quantization_spec,
                         adapter_spec: None,
-                        incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+                        incoherence_block_size: Some(block_size),
                         incoherence_processing_mode: IncoherenceProcessingMode::Output,
                         ..
-                    }) => {
+                    }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => {
                         let output_hadamard_factors = Some(
                             input_embedding_tree
                                 .subtree("incoherence_signs")
@@ -240,10 +240,10 @@ impl<B: Backend> Embedding<B> {
                     AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                         quantization_spec,
                         adapter_spec: None,
-                        incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+                        incoherence_block_size: Some(block_size),
                         incoherence_processing_mode: IncoherenceProcessingMode::Input,
                         ..
-                    }) => {
+                    }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => {
                         let matrix = WeightMatrix::load(
                             &output_embedding_tree.subtree("quantized"),
                             *quantization_spec,

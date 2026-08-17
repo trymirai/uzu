@@ -131,11 +131,11 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let context = <Cpu as Backend>::Context::new().expect("CPU context");
         let input = alloc_allocation_with_data::<Cpu, T>(&context, &self.x);
         let factors = alloc_allocation_with_data::<Cpu, i32>(&context, &vec![1; columns as usize]);
-        let elements = rows as usize * columns as usize;
-        let mut values = alloc_allocation::<Cpu, i8>(&context, elements);
-        let mut scales = alloc_allocation::<Cpu, f32>(&context, elements / activation_group_size as usize);
-        let mut group_sums =
-            sum_group_size.map(|group_size| alloc_allocation::<Cpu, i32>(&context, elements / group_size as usize));
+        let element_count = rows * columns;
+        let mut values = alloc_allocation::<Cpu, i8>(&context, element_count as usize);
+        let mut scales = alloc_allocation::<Cpu, f32>(&context, (element_count / activation_group_size) as usize);
+        let mut group_sums = sum_group_size
+            .map(|group_size| alloc_allocation::<Cpu, i32>(&context, (element_count / group_size) as usize));
         let transform =
             ActivationTransform::<Cpu>::quantize(&context, T::data_type(), activation_group_size, sum_group_size)
                 .expect("CPU activation quantization transform");

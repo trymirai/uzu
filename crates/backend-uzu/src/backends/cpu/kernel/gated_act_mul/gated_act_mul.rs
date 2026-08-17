@@ -39,12 +39,12 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
     assert!(!quantize || use_hadamard, "quantized gate activation requires RHT");
     assert!(!quantize || gated_dim.is_multiple_of(activation_scale_group_size));
     assert!(!emit_group_sums || gated_dim.is_multiple_of(sum_group_size));
+    assert!(!use_hadamard || gated_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
 
     let gated_dim = gated_dim as usize;
     let batch_dim = batch_dim as usize;
     let activation_scale_group_size = activation_scale_group_size as usize;
     let sum_group_size = sum_group_size as usize;
-    assert!(!use_hadamard || gated_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
 
     for batch in 0..batch_dim {
         let mut transformed = use_hadamard.then(|| vec![0.0f32; gated_dim]);
@@ -70,14 +70,15 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
 
         if let Some(transformed) = transformed.as_mut() {
             let factors = hadamard_factors.expect("Hadamard factors are required");
-            for stripe_start in (0..gated_dim).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE) {
-                let mut stripe = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE];
-                for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
+            for stripe_start in (0..gated_dim).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE as usize) {
+                let mut stripe = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize];
+                for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
                     let gated = stripe_start + lane;
                     stripe[lane] = transformed[gated] * unsafe { *factors.add(gated) } as f32;
                 }
                 hadamard_transform(&mut stripe);
-                transformed[stripe_start..stripe_start + HADAMARD_TRANSFORM_BLOCK_SIZE].copy_from_slice(&stripe);
+                transformed[stripe_start..stripe_start + HADAMARD_TRANSFORM_BLOCK_SIZE as usize]
+                    .copy_from_slice(&stripe);
             }
 
             if quantize {

@@ -30,9 +30,16 @@ pub enum RHTLinearWrapperError<B: Backend> {
     UnsupportedConfiguration(String),
 }
 
+enum InputRht<B: Backend> {
+    FullPrecision(ActivationTransform<B>),
+    A8 {
+        fallback: ActivationTransform<B>,
+        a8: ActivationTransform<B>,
+    },
+}
+
 pub struct RHTLinearWrapper<B: Backend> {
-    bf16_input_rht: ActivationTransform<B>,
-    a8_input_rht: Option<ActivationTransform<B>>,
+    input_rht: InputRht<B>,
     input_factors: Allocation<B>,
     inner_linear: LinearMatmul<B>,
     input_dimension: u32,
@@ -43,10 +50,10 @@ fn has_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
         spec,
         AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             adapter_spec: None,
-            incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+            incoherence_block_size: Some(block_size),
             incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
             ..
-        })
+        }) if *block_size == HADAMARD_TRANSFORM_BLOCK_SIZE
     )
 }
 
@@ -178,21 +185,25 @@ impl<B: Backend> RHTLinearWrapper<B> {
     ) -> Result<Self, RHTLinearWrapperError<B>> {
         let input_transform = ActivationTransform::input_rht(context, input_data_type, true)
             .map_err(RHTLinearWrapperError::BackendError)?;
-        let a8_input_rht = a8_plan
-            .map(|plan| {
-                ActivationTransform::quantize(
+        let input_rht = match a8_plan {
+            Some(plan) => {
+                let quantized = ActivationTransform::quantize(
                     context,
                     input_data_type,
-                    plan.activation_group_size as usize,
+                    plan.activation_group_size,
                     plan.sum_group_size,
                 )
-            })
-            .transpose()
-            .map_err(RHTLinearWrapperError::BackendError)?;
+                .map_err(RHTLinearWrapperError::BackendError)?;
+                InputRht::A8 {
+                    fallback: input_transform,
+                    a8: quantized,
+                }
+            },
+            None => InputRht::FullPrecision(input_transform),
+        };
 
         Ok(Self {
-            bf16_input_rht: input_transform,
-            a8_input_rht,
+            input_rht,
             input_factors,
             inner_linear,
             input_dimension,
@@ -227,22 +238,25 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             },
         };
 
-        if let Some(a8_input_rht) = &self.a8_input_rht
+        if let InputRht::A8 {
+            a8: quantized,
+            ..
+        } = &self.input_rht
             && self.inner_linear.select_activation_format(batch_dim, encoder.context()) == ActivationFormat::Int8
         {
-            let activation_group_size = a8_input_rht.activation_group_size();
-            let scale_groups_per_row = self.input_dimension.div_ceil(activation_group_size);
+            let activation_group_size = quantized.activation_group_size();
+            let scale_groups_per_row = self.input_dimension.div_ceil(activation_group_size as usize);
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, scale_groups_per_row], DataType::F32))?;
-            let mut group_sums = a8_input_rht
+            let mut group_sums = quantized
                 .sum_group_size()
                 .map(|group_size| self.input_dimension.div_ceil(group_size as usize))
                 .map(|groups| encoder.allocate_scratch(size_for_shape(&[batch_dim, groups], DataType::I32)))
                 .transpose()?;
 
-            a8_input_rht.encode_quantize(
+            quantized.encode_quantize(
                 &input,
                 &mut values,
                 &mut scales,
@@ -257,7 +271,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                     values: &values,
                     scales: &scales,
                     group_sums: group_sums.as_ref(),
-                    group_size: activation_group_size as u32,
+                    group_size: activation_group_size,
                 },
                 batch_dim,
                 encoder,
@@ -268,7 +282,14 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         }
 
         let mut input = input;
-        self.bf16_input_rht.encode_fp_in_place(
+        let full_precision = match &self.input_rht {
+            InputRht::FullPrecision(transform)
+            | InputRht::A8 {
+                fallback: transform,
+                ..
+            } => transform,
+        };
+        full_precision.encode_fp_in_place(
             &mut input,
             &self.input_factors,
             batch_dim,
