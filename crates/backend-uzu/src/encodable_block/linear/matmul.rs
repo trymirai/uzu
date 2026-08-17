@@ -2,17 +2,21 @@ use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{
             Kernels,
-            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulPath, MatmulShape},
+            matmul::{
+                A8ActivationPlan, ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel,
+                MatmulShape,
+            },
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
     encodable_block::{
-        linear::Linear,
+        linear::{Linear, LinearInput},
         weight_matrix::{WeightMatrix, WeightMatrixError},
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -104,8 +108,15 @@ impl<B: Backend> LinearMatmul<B> {
         })
     }
 
-    pub(super) fn make_codes_signed(&mut self) {
+    pub(super) fn prepare_a8(
+        &mut self,
+        context: &B::Context,
+    ) -> Option<A8ActivationPlan> {
+        let mut candidate = self.matmul_shape(1, false);
+        candidate.signed_codes = true;
+        let plan = self.kernel.lock().a8_activation_plan(&candidate, context)?;
         self.matrix.make_codes_signed();
+        Some(plan)
     }
 
     pub(super) fn encode_with_a(
@@ -114,7 +125,8 @@ impl<B: Backend> LinearMatmul<B> {
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut output = encoder.allocate_scratch_for_shape(&[batch_dim, self.output_dim], self.output_data_type)?;
+        let mut output =
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
         self.kernel.lock().encode(
             MatmulArguments {
@@ -135,6 +147,40 @@ impl<B: Backend> LinearMatmul<B> {
         Ok(output)
     }
 
+    fn matmul_shape(
+        &self,
+        batch_dim: u32,
+        a_full_precision: bool,
+    ) -> MatmulShape {
+        let b = self.matmul_b();
+        MatmulShape {
+            m: batch_dim,
+            n: self.output_dim,
+            k: self.input_dim,
+            b_transpose: true,
+            b_leading_dimension: None,
+            b_prologue: b.b_prologue(),
+            b_bits: b.bits_per_b(),
+            b_group_size: b.group_size(),
+            signed_codes: b.signed_codes(),
+            a_full_precision,
+            gathered: false,
+            d_transform: self.d_ops().mask(),
+        }
+    }
+
+    pub(super) fn select_activation_format(
+        &self,
+        batch_dim: u32,
+        context: &B::Context,
+    ) -> ActivationFormat {
+        if !self.matmul_b().signed_codes() {
+            return ActivationFormat::Bf16;
+        }
+        let bf16_shape = self.matmul_shape(batch_dim, true);
+        self.kernel.lock().select_activation_format(&bf16_shape, context)
+    }
+
     fn matmul_b(&self) -> MatmulB<'_, B> {
         self.matrix.matmul_b()
     }
@@ -145,29 +191,6 @@ impl<B: Backend> LinearMatmul<B> {
             rht_factors: self.output_hadamard_factors.as_ref(),
             ..MatmulDOps::none()
         }
-    }
-
-    pub(super) fn select_path(
-        &self,
-        batch_dim: u32,
-        context: &B::Context,
-    ) -> MatmulPath {
-        let b = self.matmul_b();
-        let shape = MatmulShape {
-            m: batch_dim,
-            n: self.output_dim,
-            k: self.input_dim,
-            b_transpose: true,
-            b_leading_dimension: None,
-            b_prologue: b.b_prologue(),
-            b_bits: b.bits_per_b(),
-            b_group_size: b.group_size(),
-            signed_codes: b.signed_codes(),
-            a_full_precision: true,
-            gathered: false,
-            d_transform: self.d_ops().mask(),
-        };
-        self.kernel.lock().select_path(&shape, context)
     }
 }
 
@@ -192,5 +215,39 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         encoder.pop_debug_group();
 
         Ok(output)
+    }
+
+    fn encode_input(
+        &self,
+        input: LinearInput<B>,
+        batch_dim: u32,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        match input {
+            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, encoder),
+            LinearInput::Int8Symmetric {
+                values,
+                scales,
+                group_sums,
+                group_size,
+            } => self.encode_with_a(
+                MatmulA::Int8Symmetric {
+                    values: &values,
+                    scales: &scales,
+                    group_sums: group_sums.as_ref(),
+                    group_size,
+                },
+                batch_dim,
+                encoder,
+            ),
+        }
+    }
+
+    fn select_activation_format(
+        &self,
+        batch_dim: u32,
+        context: &B::Context,
+    ) -> ActivationFormat {
+        Self::select_activation_format(self, batch_dim, context)
     }
 }

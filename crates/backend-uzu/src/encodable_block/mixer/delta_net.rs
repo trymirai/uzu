@@ -191,7 +191,7 @@ impl<B: Backend> DeltaNet<B> {
         let total_proj_dim = conv_dim + value_dim + config.num_heads + config.num_heads;
 
         let (in_projection, in_projection_input_hadamard_factors) =
-            <dyn Linear<B>>::new_extracting_input_hadamard_mixed_precision(
+            <dyn Linear<B>>::new_with_input_rht_mixed_precision(
                 hidden_dim,
                 [total_proj_dim],
                 false,

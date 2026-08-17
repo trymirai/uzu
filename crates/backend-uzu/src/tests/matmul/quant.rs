@@ -64,15 +64,13 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         quant_method: QuantizationMethod,
         seed: u64,
     ) -> Self {
-        let num_groups_k = k.div_ceil(group_size) as usize;
-        let (rows, inner, columns) = (m as usize, k as usize, n as usize);
+        let num_groups_k = k.div_ceil(group_size);
         let mut rng = SmallRng::seed_from_u64(seed);
 
-        let w_packed: Vec<u32> =
-            (0..columns * inner * bits as usize / 32).map(|_| rng.random_range(0..u32::MAX)).collect();
+        let w_packed: Vec<u32> = (0..(n * k * bits / 32) as usize).map(|_| rng.random_range(0..u32::MAX)).collect();
         let scales: Vec<T> =
-            (0..columns * num_groups_k).map(|_| T::from(rng.random_range(0.01f32..0.3f32)).unwrap()).collect();
-        let x: Vec<T> = (0..rows * inner).map(|_| T::from(rng.random_range(-0.3f32..0.3f32)).unwrap()).collect();
+            (0..(n * num_groups_k) as usize).map(|_| T::from(rng.random_range(0.01f32..0.3f32)).unwrap()).collect();
+        let x: Vec<T> = (0..(m * k) as usize).map(|_| T::from(rng.random_range(-0.3f32..0.3f32)).unwrap()).collect();
 
         let zp_stride = if bits == 4 {
             num_groups_k.div_ceil(2)
@@ -83,13 +81,13 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             QuantizationMethod::ScaleBias => (
                 None,
                 Some(
-                    (0..columns * num_groups_k)
+                    (0..(n * num_groups_k) as usize)
                         .map(|_| T::from(rng.random_range(-0.03f32..0.03f32)).unwrap())
                         .collect(),
                 ),
             ),
             QuantizationMethod::ScaleZeroPoint => {
-                (Some((0..columns * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
+                (Some((0..(n * zp_stride) as usize).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
             },
             QuantizationMethod::ScaleSymmetric => (None, None),
         };
@@ -131,11 +129,11 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let context = <Cpu as Backend>::Context::new().expect("CPU context");
         let input = alloc_allocation_with_data::<Cpu, T>(&context, &self.x);
         let factors = alloc_allocation_with_data::<Cpu, i32>(&context, &vec![1; columns as usize]);
-        let elements = rows as usize * columns as usize;
-        let mut values = alloc_allocation::<Cpu, i8>(&context, elements);
-        let mut scales = alloc_allocation::<Cpu, f32>(&context, elements / activation_group_size as usize);
-        let mut group_sums =
-            sum_group_size.map(|group_size| alloc_allocation::<Cpu, i32>(&context, elements / group_size as usize));
+        let element_count = rows * columns;
+        let mut values = alloc_allocation::<Cpu, i8>(&context, element_count as usize);
+        let mut scales = alloc_allocation::<Cpu, f32>(&context, (element_count / activation_group_size) as usize);
+        let mut group_sums = sum_group_size
+            .map(|group_size| alloc_allocation::<Cpu, i32>(&context, (element_count / group_size) as usize));
         let transform =
             ActivationTransform::<Cpu>::quantize(&context, T::data_type(), activation_group_size, sum_group_size)
                 .expect("CPU activation quantization transform");

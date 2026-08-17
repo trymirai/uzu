@@ -1,9 +1,10 @@
 use thiserror::Error;
 
 use crate::{
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        kernel::{GatedActMulKernel, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
+        kernel::{GatedActMul, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
     },
     config::{
         activation::AnyActivation,
@@ -115,18 +116,18 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let total_rows = batch_dim * self.num_layers;
         let total_elements = batch_dim * total_ple_dim;
 
-        let mut token_ple = encoder.allocate_scratch_for_shape(&[batch_dim, total_ple_dim], self.data_type)?;
+        let mut token_ple = encoder.allocate_scratch(size_for_shape(&[batch_dim, total_ple_dim], self.data_type))?;
         self.token_embedding.encode_lookup(token_ids, &mut token_ple, batch_dim, self.fused_token_scale, encoder);
 
         let mut model_projection_input =
-            encoder.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.model_dim], self.data_type))?;
         encoder.encode_copy(inner_features, .., &mut model_projection_input, ..);
         let model_projected = self.model_projection.encode(model_projection_input, batch_dim, encoder)?;
 
         let model_normed = self.projection_norm.encode(&model_projected, 0, total_rows, None, encoder)?;
 
         let mut per_layer_inputs =
-            encoder.allocate_scratch_for_shape(&[batch_dim, self.num_layers, self.ple_dim], self.data_type)?;
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.num_layers, self.ple_dim], self.data_type))?;
         self.add_scale.encode(
             Some(&token_ple),
             &model_normed,
@@ -147,7 +148,7 @@ pub struct PerLayerEmbeddingProjection<B: Backend> {
     gate: Box<dyn Linear<B>>,
     projection: Box<dyn Linear<B>>,
     norm: Normalization<B>,
-    gate_act_mul: <B::Kernels as Kernels>::GatedActMulKernel,
+    gate_act_mul: GatedActMul<B>,
     residual_finalize: <B::Kernels as Kernels>::TensorAddBiasKernel,
     residual_combine: <B::Kernels as Kernels>::TensorAddScaleKernel,
     model_dim: u32,
@@ -195,7 +196,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             context,
         )?;
 
-        let gate_act_mul = <B::Kernels as Kernels>::GatedActMulKernel::new(context, data_type, false, false)
+        let gate_act_mul = GatedActMul::full_precision(context, data_type, false, false)
             .map_err(PerLayerEmbeddingError::BackendError)?;
         let residual_finalize = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true)
             .map_err(PerLayerEmbeddingError::BackendError)?;
@@ -233,16 +234,16 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
 
         self.residual_finalize.encode(None::<&Allocation<B>>, hidden, &mut *outputs, length, length, encoder);
 
-        let mut gate_input = encoder.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
+        let mut gate_input = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.model_dim], self.data_type))?;
         encoder.encode_copy(outputs, .., &mut gate_input, ..);
         let gate_out = self.gate.encode(gate_input, batch_dim, encoder)?;
 
-        let mut activated = encoder.allocate_scratch_for_shape(&[batch_dim, self.ple_dim], self.data_type)?;
-        self.gate_act_mul.encode(
+        let mut activated = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.ple_dim], self.data_type))?;
+        self.gate_act_mul.encode_fp(
             &gate_out,
             Some(per_layer_input),
             &mut activated,
-            None::<&Allocation<B>>,
+            None,
             self.ple_dim,
             batch_dim,
             layer_index * self.ple_dim,

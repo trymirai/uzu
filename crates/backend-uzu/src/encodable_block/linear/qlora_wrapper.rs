@@ -64,7 +64,11 @@ impl<B: Backend> QLoRALinearWrapper<B> {
     ) -> Result<Self, QLoRALinearWrapperError<B>> {
         let use_incoherence_signs = match (incoherence_block_size, incoherence_processing_mode) {
             (None, _) => false,
-            (Some(HADAMARD_TRANSFORM_BLOCK_SIZE), IncoherenceProcessingMode::InputOutput) => true,
+            (Some(block_size), IncoherenceProcessingMode::InputOutput)
+                if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE =>
+            {
+                true
+            },
             (incoherence_block_size, incoherence_processing_mode) => {
                 return Err(QLoRALinearWrapperError::UnsupportedConfiguration(format!(
                     "incoherence block_size={incoherence_block_size:?}, processing_mode={incoherence_processing_mode:?}"

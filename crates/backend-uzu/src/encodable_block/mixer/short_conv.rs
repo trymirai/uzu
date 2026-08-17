@@ -117,7 +117,7 @@ impl<B: Backend> ShortConv<B> {
             )));
         }
 
-        let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
+        let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
             hidden_dim,
             [hidden_dim * 3],
             false,
