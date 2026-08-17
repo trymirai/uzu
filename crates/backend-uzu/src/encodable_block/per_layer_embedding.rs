@@ -155,6 +155,7 @@ pub struct PerLayerEmbeddingProjection<B: Backend> {
     ple_dim: u32,
     num_layers: u32,
     activation: AnyActivation,
+    activation_alpha: Option<f32>,
     post_layer_scalar: f32,
     data_type: DataType,
 }
@@ -196,8 +197,18 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             context,
         )?;
 
-        let gate_act_mul = GatedActMul::full_precision(context, data_type, false, false)
-            .map_err(PerLayerEmbeddingError::BackendError)?;
+        let activation_alpha = config.activation.alpha();
+        let activation_alpha = (activation_alpha != 1.0).then_some(activation_alpha);
+        let gate_act_mul = GatedActMul::full_precision(
+            context,
+            data_type,
+            false,
+            false,
+            activation_alpha.is_some(),
+            false,
+            false,
+        )
+        .map_err(PerLayerEmbeddingError::BackendError)?;
         let residual_finalize = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true)
             .map_err(PerLayerEmbeddingError::BackendError)?;
         let residual_combine = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, true)
@@ -214,6 +225,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             ple_dim: config.ple_dim,
             num_layers,
             activation: config.activation.clone(),
+            activation_alpha,
             post_layer_scalar,
             data_type,
         })
@@ -249,6 +261,11 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             layer_index * self.ple_dim,
             self.num_layers * self.ple_dim,
             self.activation.act_type(),
+            self.activation_alpha,
+            None,
+            None,
+            None,
+            None,
             encoder,
         );
 
