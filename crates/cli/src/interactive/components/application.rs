@@ -51,7 +51,7 @@ pub struct ApplicationState {
 
 impl ApplicationState {
     pub fn load_preferences() -> Result<Preferences, Box<dyn std::error::Error>> {
-        Preferences::load_or_migrate(&Self::settings_file_path("config")?, &Self::settings_file_path("settings")?)
+        Preferences::load(&Self::settings_file_path("config")?)
     }
 
     pub fn session_state(&self) -> Option<&dyn SessionState> {
