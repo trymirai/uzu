@@ -109,6 +109,12 @@ impl RoutedGemm {
                 reason: "accumulation and RHT are not supported for grouped expert routes",
             });
         }
+        if !arguments.b_transpose || arguments.b_leading_dimension.is_some() {
+            return Err(MatmulError::UnsupportedRouting {
+                path: "RoutedGemm",
+                reason: "grouped expert routes require contiguous output-input weights",
+            });
+        }
         let routes = arguments.expert_routes.ok_or(MatmulError::UnsupportedRouting {
             path: "RoutedGemm",
             reason: "expert route metadata is required",

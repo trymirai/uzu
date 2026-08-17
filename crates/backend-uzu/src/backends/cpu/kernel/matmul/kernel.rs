@@ -68,6 +68,34 @@ impl MatmulKernel for MatmulCpuKernel {
             .into());
         }
         if let Some(routes) = arguments.expert_routes {
+            if routes.expert_count.get() > 512 {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "CpuMatmul",
+                    reason: "expert routing supports at most 512 experts",
+                }
+                .into());
+            }
+            if matches!(
+                &arguments.b,
+                MatmulB::ScaleBiasDequant { .. }
+                    | MatmulB::ScaleZeroPointDequant { .. }
+                    | MatmulB::ScaleSymmetricDequant { .. }
+            ) {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "CpuMatmul",
+                    reason: "quantized weight banks are not supported with direct expert routes",
+                }
+                .into());
+            }
+            if routes.expert_biases.is_some()
+                && arguments.d_transform.mask().contains(crate::backends::common::gpu_types::gemm::GemmDTransform::RHT)
+            {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "CpuMatmul",
+                    reason: "expert bias banks cannot be combined with output RHT",
+                }
+                .into());
+            }
             if routes.expert_ids.size() < arguments.m as usize * size_of::<i32>() {
                 return Err(MatmulError::UnsupportedRouting {
                     path: "CpuMatmul",
@@ -91,6 +119,39 @@ impl MatmulKernel for MatmulCpuKernel {
                     reason: "expert bias bank must contain expert_count * N values",
                 }
                 .into());
+            }
+            if let MatmulB::FullPrecision {
+                b,
+            } = &arguments.b
+            {
+                let leading_dimension = arguments.b_leading_dimension.unwrap_or(if arguments.b_transpose {
+                    arguments.k
+                } else {
+                    arguments.n
+                });
+                let major_dimension = if arguments.b_transpose {
+                    arguments.n
+                } else {
+                    arguments.k
+                };
+                let minimum_leading_dimension = if arguments.b_transpose {
+                    arguments.k
+                } else {
+                    arguments.n
+                };
+                let required_bytes = (routes.expert_count.get() as usize)
+                    .checked_mul(major_dimension as usize)
+                    .and_then(|size| size.checked_mul(leading_dimension as usize))
+                    .and_then(|size| size.checked_mul(self.weights_data_type.size_in_bytes()));
+                if leading_dimension < minimum_leading_dimension
+                    || required_bytes.is_none_or(|required| (*b).into_parts().2 < required)
+                {
+                    return Err(MatmulError::UnsupportedRouting {
+                        path: "CpuMatmul",
+                        reason: "full-precision weight bank layout or storage does not cover every expert matrix",
+                    }
+                    .into());
+                }
             }
         }
         if let MatmulB::Microfloat {

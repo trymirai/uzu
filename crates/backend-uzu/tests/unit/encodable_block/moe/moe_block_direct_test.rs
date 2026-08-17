@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use half::bf16;
+use half::{bf16, f16};
 use proc_macros::uzu_test;
 use serde_json::{Map, Value, json};
 use tempfile::NamedTempFile;
@@ -48,7 +48,12 @@ fn config() -> MixtureOfExpertsConfig {
     .expect("valid MoE configuration")
 }
 
-fn parameter_file() -> NamedTempFile {
+fn parameter_file(data_type: DataType) -> NamedTempFile {
+    let dtype = match data_type {
+        DataType::F16 => "F16",
+        DataType::BF16 => "BF16",
+        _ => panic!("unsupported full-precision test data type"),
+    };
     let mut header = Map::new();
     header.insert(
         "__metadata__".into(),
@@ -69,11 +74,11 @@ fn parameter_file() -> NamedTempFile {
     ];
     let mut offset = 0usize;
     for (name, shape) in tensors {
-        let end = offset + size_for_shape(&shape, DataType::BF16);
+        let end = offset + size_for_shape(&shape, data_type);
         header.insert(
             name.into(),
             json!({
-                "dtype": "BF16",
+                "dtype": dtype,
                 "shape": shape,
                 "data_offsets": [offset, end]
             }),
@@ -252,7 +257,7 @@ fn run<B: Backend>(
     let file = if microfloat {
         microfloat_parameter_file()
     } else {
-        parameter_file()
+        parameter_file(DataType::BF16)
     };
     let loader = if microfloat {
         ParameterLoader::<B>::new(file.as_file(), context.as_ref())
@@ -277,6 +282,27 @@ fn run<B: Backend>(
     values
 }
 
+fn run_f16<B: Backend>(token_count: u32) -> Vec<f16> {
+    let context = B::Context::new().expect("create context");
+    let file = parameter_file(DataType::F16);
+    let loader = ParameterLoader::<B>::new_random(file.as_file(), context.as_ref(), 41).expect("load F16 parameters");
+    let tree = loader.tree();
+    let block = MoeBlock::<B>::new(context.as_ref(), &config(), MODEL_DIM, DataType::F16, &tree)
+        .expect("construct F16 MoeBlock");
+    tree.assert_all_tensors_validated().expect("validate all F16 parameters");
+
+    let input: Vec<f16> =
+        (0..token_count * MODEL_DIM).map(|index| f16::from_f32((index % 17) as f32 * 0.03 - 0.2)).collect();
+    let input = alloc_allocation_with_data::<B, f16>(context.as_ref(), &input);
+    let mut encoder = Encoder::<B>::new(context.as_ref()).expect("create encoder");
+    let output = block.encode(input, token_count, &mut encoder).expect("encode F16 MoeBlock");
+    let completed = encoder.end_encoding().submit().wait_until_completed().expect("execute F16 MoeBlock");
+    let values = allocation_to_vec::<B, f16>(&output);
+    drop(output);
+    drop(completed);
+    values
+}
+
 #[uzu_test]
 fn direct_routes_cover_decode_and_prefill() {
     for token_count in [1, 33, 257] {
@@ -295,6 +321,17 @@ fn microfloat_experts_cover_decode_and_prefill() {
         for_each_non_cpu_backend!(|B| {
             let actual = run::<B>(token_count, true);
             assert_eq_float(&expected, &actual, 0.15, "microfloat MoeBlock routes");
+        });
+    }
+}
+
+#[uzu_test]
+fn full_precision_f16_experts_remain_supported() {
+    for token_count in [1, 33] {
+        let expected = run_f16::<crate::backends::cpu::Cpu>(token_count);
+        for_each_non_cpu_backend!(|B| {
+            let actual = run_f16::<B>(token_count);
+            assert_eq_float(&expected, &actual, 0.15, "F16 MoeBlock routes");
         });
     }
 }

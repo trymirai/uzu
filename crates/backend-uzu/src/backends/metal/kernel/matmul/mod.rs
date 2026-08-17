@@ -111,7 +111,7 @@ impl MatmulKernel for MatmulMetalKernel {
         output_data_type: DataType,
     ) -> Result<Self, MetalError> {
         for data_type in [weights_data_type, input_data_type, output_data_type] {
-            if !matches!(data_type, DataType::BF16 | DataType::F32) {
+            if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
                 return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
             }
         }
@@ -197,6 +197,34 @@ impl MatmulKernel for MatmulMetalKernel {
             .into());
         }
         if let Some(routes) = arguments.expert_routes {
+            if matches!(
+                &arguments.b,
+                crate::backends::common::kernel::matmul::MatmulB::ScaleBiasDequant { .. }
+                    | crate::backends::common::kernel::matmul::MatmulB::ScaleZeroPointDequant { .. }
+                    | crate::backends::common::kernel::matmul::MatmulB::ScaleSymmetricDequant { .. }
+            ) {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "MetalMatmul",
+                    reason: "quantized weight banks are not supported with direct expert routes",
+                }
+                .into());
+            }
+            if routes.expert_biases.is_some()
+                && arguments.d_transform.mask().contains(crate::backends::common::gpu_types::gemm::GemmDTransform::RHT)
+            {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "MetalMatmul",
+                    reason: "expert bias banks cannot be combined with output RHT",
+                }
+                .into());
+            }
+            if routes.expert_count.get() > 512 {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "MetalMatmul",
+                    reason: "expert routing supports at most 512 experts",
+                }
+                .into());
+            }
             if routes.expert_ids.size() < arguments.m as usize * size_of::<i32>() {
                 return Err(MatmulError::UnsupportedRouting {
                     path: "MetalMatmul",
@@ -222,6 +250,39 @@ impl MatmulKernel for MatmulMetalKernel {
                     reason: "expert bias bank must contain expert_count * N values",
                 }
                 .into());
+            }
+            if let crate::backends::common::kernel::matmul::MatmulB::FullPrecision {
+                b,
+            } = &arguments.b
+            {
+                let leading_dimension = arguments.b_leading_dimension.unwrap_or(if arguments.b_transpose {
+                    arguments.k
+                } else {
+                    arguments.n
+                });
+                let major_dimension = if arguments.b_transpose {
+                    arguments.n
+                } else {
+                    arguments.k
+                };
+                let minimum_leading_dimension = if arguments.b_transpose {
+                    arguments.k
+                } else {
+                    arguments.n
+                };
+                let required_bytes = (routes.expert_count.get() as usize)
+                    .checked_mul(major_dimension as usize)
+                    .and_then(|size| size.checked_mul(leading_dimension as usize))
+                    .and_then(|size| size.checked_mul(self.weights_data_type.size_in_bytes()));
+                if leading_dimension < minimum_leading_dimension
+                    || required_bytes.is_none_or(|required| (*b).into_parts().2 < required)
+                {
+                    return Err(MatmulError::UnsupportedRouting {
+                        path: "MetalMatmul",
+                        reason: "full-precision weight bank layout or storage does not cover every expert matrix",
+                    }
+                    .into());
+                }
             }
         }
         if let crate::backends::common::kernel::matmul::MatmulB::Microfloat {
@@ -254,6 +315,15 @@ impl MatmulKernel for MatmulMetalKernel {
                 }
                 .into());
             }
+        }
+        if arguments.expert_routes.is_none()
+            && [self.weights_data_type, self.input_data_type, self.output_data_type].contains(&DataType::F16)
+        {
+            return Err(MatmulError::UnsupportedRouting {
+                path: "MetalMatmul",
+                reason: "F16 Metal matmul is supported only for direct expert routes",
+            }
+            .into());
         }
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = match self.select_dispatch(&shape, encoder.context()) {

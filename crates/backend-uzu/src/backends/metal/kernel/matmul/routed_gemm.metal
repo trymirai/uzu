@@ -11,9 +11,9 @@ using namespace uzu::gemm;
 #define ROUTED_COLUMNS 128
 
 template <typename AT, typename BT, typename DT, bool MICROFLOAT, uint GROUP_SIZE>
-VARIANTS(AT, bfloat, float)
-VARIANTS(BT, bfloat, float)
-VARIANTS(DT, bfloat, float)
+VARIANTS(AT, half, bfloat, float)
+VARIANTS(BT, half, bfloat, float)
+VARIANTS(DT, half, bfloat, float)
 VARIANTS(MICROFLOAT, false, true)
 VARIANTS(GROUP_SIZE, 0, 16, 32)
 CONSTRAINT(MICROFLOAT == (GROUP_SIZE != 0))
