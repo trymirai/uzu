@@ -3,7 +3,7 @@ use std::collections::{HashMap, hash_map::Entry};
 use crate::{
     backends::{
         common::{
-            BufferArg, Encoder,
+            Buffer, BufferArg, Encoder,
             gpu_types::gemm::GemmDTransform,
             kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
         },
@@ -16,10 +16,35 @@ use crate::{
     data_type::DataType,
 };
 
+#[derive(Clone, Copy)]
+struct RoutedBufferSlice<'a> {
+    buffer: &'a dyn Buffer<Backend = Metal>,
+    offset: usize,
+    length: usize,
+}
+
+impl<'a> RoutedBufferSlice<'a> {
+    fn from_arg<T: BufferArg<'a, Metal>>(argument: T) -> Self {
+        let (buffer, offset, length) = argument.into_parts();
+        Self {
+            buffer,
+            offset,
+            length,
+        }
+    }
+}
+
+impl<'a> BufferArg<'a, Metal> for RoutedBufferSlice<'a> {
+    fn into_parts(self) -> (&'a dyn Buffer<Backend = Metal>, usize, usize) {
+        (self.buffer, self.offset, self.length)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct RoutedGemmSpecialization {
     output_transform: GemmDTransform,
     expert_bias: bool,
+    microfloat_group_size: Option<u32>,
 }
 
 pub(super) struct RoutedGemm {
@@ -61,6 +86,8 @@ impl RoutedGemm {
                     self.input_data_type,
                     self.weights_data_type,
                     self.output_data_type,
+                    specialization.microfloat_group_size.is_some(),
+                    specialization.microfloat_group_size.unwrap_or(0),
                     specialization.output_transform,
                     specialization.expert_bias,
                 )
@@ -96,14 +123,32 @@ impl RoutedGemm {
                 reason: "prepared int8 activations are not supported",
             });
         };
-        let MatmulB::FullPrecision {
-            b: weights,
-        } = arguments.b
-        else {
-            return Err(MatmulError::UnsupportedRouting {
-                path: "RoutedGemm",
-                reason: "grouped expert routes currently require full-precision weights",
-            });
+        let (weights, scales, global_scales, microfloat_group_size): (
+            RoutedBufferSlice<'b>,
+            Option<RoutedBufferSlice<'b>>,
+            Option<RoutedBufferSlice<'b>>,
+            Option<u32>,
+        ) = match arguments.b {
+            MatmulB::FullPrecision {
+                b,
+            } => (RoutedBufferSlice::from_arg(b), None, None, None),
+            MatmulB::Microfloat {
+                codes,
+                scales,
+                global_scales,
+                metadata,
+            } => (
+                RoutedBufferSlice::from_arg(codes),
+                Some(RoutedBufferSlice::from_arg(scales)),
+                Some(RoutedBufferSlice::from_arg(global_scales)),
+                Some(metadata.group_size()),
+            ),
+            _ => {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "RoutedGemm",
+                    reason: "grouped expert routes require full-precision or microfloat weights",
+                });
+            },
         };
 
         let expert_count = routes.expert_count.get();
@@ -123,11 +168,14 @@ impl RoutedGemm {
         let specialization = RoutedGemmSpecialization {
             output_transform,
             expert_bias: routes.expert_biases.is_some(),
+            microfloat_group_size,
         };
         let pipeline = self.get_or_create(encoder.context(), specialization)?;
         let row_partitions = route_count.div_ceil(64).clamp(1, 16);
         pipeline.encode(
             weights,
+            scales,
+            global_scales,
             (input, input_offset),
             &mut *arguments.d,
             arguments.d_transform.bias,

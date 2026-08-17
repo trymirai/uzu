@@ -3,19 +3,25 @@
 #include "../common/dsl.h"
 #include "../common/soft_cap.h"
 #include "../generated/gemm.h"
+#include "common/microfloat.h"
 
 using namespace metal;
 using namespace uzu::gemm;
 
 #define ROUTED_COLUMNS 128
 
-template <typename AT, typename BT, typename DT>
+template <typename AT, typename BT, typename DT, bool MICROFLOAT, uint GROUP_SIZE>
 VARIANTS(AT, bfloat, float)
 VARIANTS(BT, bfloat, float)
 VARIANTS(DT, bfloat, float)
+VARIANTS(MICROFLOAT, false, true)
+VARIANTS(GROUP_SIZE, 0, 16, 32)
+CONSTRAINT(MICROFLOAT == (GROUP_SIZE != 0))
 CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
 KERNEL(RoutedGemm)(
-    device const BT* b,
+    device const uchar* b,
+    device const uchar* scales OPTIONAL(MICROFLOAT),
+    device const BT* global_scales OPTIONAL(MICROFLOAT),
     device const AT* a,
     device DT* d,
     device const BT* output_bias
@@ -47,7 +53,12 @@ KERNEL(RoutedGemm)(
 
   const uint begin = offsets[expert];
   const uint end = offsets[expert + 1];
-  const device BT* weight_row = b + (ulong(expert) * n + column) * k;
+  const ulong bank_row = ulong(expert) * n + column;
+  const device BT* full_precision_weights = reinterpret_cast<const device BT*>(b);
+  float global_scale = 1.0f;
+  if constexpr (MICROFLOAT) {
+    global_scale = float(global_scales[expert]);
+  }
 
   for (uint grouped = begin + partition; grouped < end; grouped += row_partitions) {
     const uint route = grouped_routes[grouped];
@@ -58,7 +69,16 @@ KERNEL(RoutedGemm)(
     const device AT* input_row = a + ulong(a_row) * k;
     float value = 0.0f;
     for (uint inner = 0; inner < k; ++inner) {
-      value = fma(float(input_row[inner]), float(weight_row[inner]), value);
+      float weight;
+      if constexpr (MICROFLOAT) {
+        const uchar packed = b[bank_row * (k / 2) + inner / 2];
+        const uint code = (inner & 1u) == 0u ? packed & 0x0fu : packed >> 4u;
+        const uint exponent = scales[bank_row * (k / GROUP_SIZE) + inner / GROUP_SIZE];
+        weight = decode_mxfp4(code, exponent, global_scale);
+      } else {
+        weight = float(full_precision_weights[bank_row * k + inner]);
+      }
+      value = fma(float(input_row[inner]), weight, value);
     }
 
     value *= ab_scale;

@@ -18,8 +18,6 @@ use crate::{
     },
 };
 
-const ROUTES: usize = 4;
-const ROUTES_PER_TOKEN: u32 = 2;
 const EXPERTS: usize = 3;
 const K: usize = 32;
 const N: usize = 4;
@@ -38,13 +36,32 @@ fn packed_codes() -> Vec<u8> {
     codes
 }
 
-fn run<B: Backend>(group_size: u32) -> (Vec<f32>, Vec<f32>) {
-    let input: Vec<f32> = (0..2 * K).map(|index| (index % 11) as f32 * 0.1 - 0.4).collect();
+fn run<B: Backend>(
+    group_size: u32,
+    route_count: usize,
+    routes_per_token: u32,
+    input_layout: ExpertInput,
+) -> (Vec<f32>, Vec<f32>) {
+    let input_rows = if input_layout == ExpertInput::Tokens {
+        assert!(route_count.is_multiple_of(routes_per_token as usize));
+        route_count / routes_per_token as usize
+    } else {
+        route_count
+    };
+    let input: Vec<f32> = (0..input_rows * K).map(|index| (index % 11) as f32 * 0.1 - 0.4).collect();
     let codes = packed_codes();
-    let scales = vec![127u8; EXPERTS * N * K / group_size as usize];
+    let scales: Vec<u8> = (0..EXPERTS * N * K / group_size as usize).map(|index| 126 + (index % 3) as u8).collect();
     let global_scales = [1.0f32, 2.0, 0.5];
     let biases: Vec<f32> = (0..EXPERTS * N).map(|index| index as f32 * 0.01).collect();
-    let expert_ids = [1i32, 0, 1, -1];
+    let expert_ids: Vec<i32> = (0..route_count)
+        .map(|route| {
+            if route % 7 == 3 {
+                -1
+            } else {
+                ((route * 2 + 1) % EXPERTS) as i32
+            }
+        })
+        .collect();
     let metadata = MicrofloatMetadata::new(
         MicrofloatFormat::Mxfp4,
         4,
@@ -63,7 +80,7 @@ fn run<B: Backend>(group_size: u32) -> (Vec<f32>, Vec<f32>) {
     let global_scales_alloc = alloc_allocation_with_data::<B, f32>(context.as_ref(), &global_scales);
     let biases_alloc = alloc_allocation_with_data::<B, f32>(context.as_ref(), &biases);
     let ids_alloc = alloc_allocation_with_data::<B, i32>(context.as_ref(), &expert_ids);
-    let mut output = alloc_allocation::<B, f32>(context.as_ref(), ROUTES * N);
+    let mut output = alloc_allocation::<B, f32>(context.as_ref(), route_count * N);
     let mut kernel =
         <B::Kernels as Kernels>::MatmulKernel::new(context.as_ref(), DataType::F32, DataType::F32, DataType::F32)
             .unwrap();
@@ -88,12 +105,12 @@ fn run<B: Backend>(group_size: u32) -> (Vec<f32>, Vec<f32>) {
                 gather_indices: None,
                 expert_routes: Some(ExpertRoutes {
                     expert_ids: &ids_alloc,
-                    routes_per_token: NonZeroU32::new(ROUTES_PER_TOKEN).unwrap(),
+                    routes_per_token: NonZeroU32::new(routes_per_token).unwrap(),
                     expert_count: NonZeroU32::new(EXPERTS as u32).unwrap(),
-                    input: ExpertInput::Tokens,
+                    input: input_layout,
                     expert_biases: Some(&biases_alloc),
                 }),
-                m: ROUTES as u32,
+                m: route_count as u32,
                 n: N as u32,
                 k: K as u32,
             },
@@ -103,14 +120,18 @@ fn run<B: Backend>(group_size: u32) -> (Vec<f32>, Vec<f32>) {
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     let actual = allocation_to_vec::<B, f32>(&output);
 
-    let mut expected = vec![0.0f32; ROUTES * N];
-    for route in 0..ROUTES {
+    let mut expected = vec![0.0f32; route_count * N];
+    for route in 0..route_count {
         let expert = expert_ids[route];
         if expert < 0 {
             continue;
         }
         let expert = expert as usize;
-        let token = route / ROUTES_PER_TOKEN as usize;
+        let input_row = if input_layout == ExpertInput::Tokens {
+            route / routes_per_token as usize
+        } else {
+            route
+        };
         for row in 0..N {
             let mut value = biases[expert * N + row];
             for inner in 0..K {
@@ -120,7 +141,8 @@ fn run<B: Backend>(group_size: u32) -> (Vec<f32>, Vec<f32>) {
                 } else {
                     packed >> 4
                 };
-                value += input[token * K + inner] * decode_mxfp4(code, 127, global_scales[expert]);
+                let scale_index = (expert * N + row) * K / group_size as usize + inner / group_size as usize;
+                value += input[input_row * K + inner] * decode_mxfp4(code, scales[scale_index], global_scales[expert]);
             }
             expected[route * N + row] = value;
         }
@@ -129,13 +151,17 @@ fn run<B: Backend>(group_size: u32) -> (Vec<f32>, Vec<f32>) {
 }
 
 #[uzu_test]
-fn cpu_decodes_group_16_and_32_route_banks() {
-    for group_size in [16, 32] {
-        let (cpu, expected) = run::<Cpu>(group_size);
-        assert_eq_float(&expected, &cpu, 1e-5, "CPU MXFP4 expert routes");
-        for_each_non_cpu_backend!(|B| {
-            let (actual, _) = run::<B>(group_size);
-            assert_eq_float(&cpu, &actual, 1e-4, "Metal MXFP4 expert routes");
-        });
+fn backends_decode_direct_and_grouped_microfloat_routes() {
+    for (route_count, routes_per_token) in [(4, 2), (33, 3)] {
+        for group_size in [16, 32] {
+            for input_layout in [ExpertInput::Tokens, ExpertInput::Routes] {
+                let (cpu, expected) = run::<Cpu>(group_size, route_count, routes_per_token, input_layout);
+                assert_eq_float(&expected, &cpu, 1e-5, "CPU MXFP4 expert routes");
+                for_each_non_cpu_backend!(|B| {
+                    let (actual, _) = run::<B>(group_size, route_count, routes_per_token, input_layout);
+                    assert_eq_float(&cpu, &actual, 1e-4, "Metal MXFP4 expert routes");
+                });
+            }
+        }
     }
 }
