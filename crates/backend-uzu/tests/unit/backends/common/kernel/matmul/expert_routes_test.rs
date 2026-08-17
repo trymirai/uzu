@@ -147,3 +147,34 @@ fn accelerators_match_cpu_for_direct_routes() {
         });
     }
 }
+
+#[uzu_test]
+fn grouped_prefill_routes_remain_route_major() {
+    const ROUTES: usize = 33;
+    const ROUTES_PER_TOKEN: u32 = 3;
+    const EXPERTS: u32 = 5;
+    const K: usize = 37;
+    const N: usize = 17;
+
+    let mut expert_ids: Vec<i32> = (0..ROUTES).map(|route| ((route * 7 + 1) % 4) as i32).collect();
+    expert_ids[19] = -1;
+    let weights: Vec<f32> = (0..EXPERTS as usize * N * K).map(|index| (index % 29) as f32 * 0.007 - 0.09).collect();
+    let biases: Vec<f32> = (0..EXPERTS as usize * N).map(|index| (index % 11) as f32 * 0.013).collect();
+
+    for input_layout in [ExpertInput::Tokens, ExpertInput::Routes] {
+        let input_rows = if input_layout == ExpertInput::Tokens {
+            ROUTES / ROUTES_PER_TOKEN as usize
+        } else {
+            ROUTES
+        };
+        let input: Vec<f32> = (0..input_rows * K).map(|index| (index % 31) as f32 * 0.009 - 0.12).collect();
+        let expected =
+            run::<Cpu>(&input, &weights, &expert_ids, &biases, input_layout, ROUTES_PER_TOKEN, EXPERTS, K, N);
+
+        for_each_non_cpu_backend!(|B| {
+            let actual =
+                run::<B>(&input, &weights, &expert_ids, &biases, input_layout, ROUTES_PER_TOKEN, EXPERTS, K, N);
+            assert_eq_float(&expected, &actual, 1e-4, "private grouped expert routes");
+        });
+    }
+}
