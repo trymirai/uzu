@@ -314,7 +314,8 @@ fn test_v_addressing<
     });
 }
 
-fn test_gated_row_stride_internal() {
+#[uzu_test]
+fn test_gated_row_stride() {
     let (input, _) = get_test_data::<f32, f32, f32, f32>(0, 4, false, false);
     let qkv_row = input.qkvg.to_vec();
     let gate_len = (input.num_q_heads * input.head_dim) as usize;
@@ -440,9 +441,4 @@ fn test_v_addressing_f32_f32_f32_f32() {
 #[uzu_test]
 fn test_v_addressing_bf16_bf16_bf16_f32() {
     test_v_addressing::<bf16, bf16, bf16, f32>();
-}
-
-#[uzu_test]
-fn test_gated_row_stride() {
-    test_gated_row_stride_internal();
 }
