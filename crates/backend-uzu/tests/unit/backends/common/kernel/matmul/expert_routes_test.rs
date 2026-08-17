@@ -365,7 +365,7 @@ fn maximum_expert_and_active_route_boundaries_are_safe() {
         K,
         N,
     );
-    let mut expected = vec![1.0, 2.0].repeat(ROUTES_PER_TOKEN);
+    let mut expected = [1.0, 2.0].repeat(ROUTES_PER_TOKEN);
     expected[(ROUTES_PER_TOKEN - 1) * N..].fill(0.0);
     assert_eq_float(&expected, &cpu, 1e-6, "CPU route boundaries");
     for_each_non_cpu_backend!(|B| {
