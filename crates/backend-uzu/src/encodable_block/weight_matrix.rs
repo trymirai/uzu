@@ -5,8 +5,12 @@ use crate::{
         Allocation, Backend,
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::matmul::MatmulB,
+        microfloat::{MicrofloatFormat, MicrofloatLayout, MicrofloatMetadata},
     },
-    config::weight_matrix::{AnyWeightMatrixSpec, Layout},
+    config::weight_matrix::{
+        AnyWeightMatrixSpec, Layout,
+        microfloat_spec::{MicrofloatScaleMode, MicrofloatSpec},
+    },
     data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -26,16 +30,24 @@ pub struct QuantizationInfo {
     pub group_size: u32,
 }
 
+#[derive(Clone, Copy)]
+pub struct MicrofloatInfo {
+    pub format: MicrofloatFormat,
+    pub bits: u32,
+    pub group_size: u32,
+}
+
 pub struct ParsedWeightSpec {
     pub layout: Layout,
     pub quantization: Option<QuantizationInfo>,
+    pub microfloat: Option<MicrofloatInfo>,
 }
 
 pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeightSpec, WeightMatrixError<B>> {
-    let (layout, quantized) = match spec {
-        AnyWeightMatrixSpec::FullPrecisionSpec(spec) => (spec.layout.clone(), None),
+    let (layout, quantized, microfloat) = match spec {
+        AnyWeightMatrixSpec::FullPrecisionSpec(spec) => (spec.layout.clone(), None, None),
         AnyWeightMatrixSpec::MLXSpec(spec) => {
-            (spec.layout.clone(), Some((spec.bits, spec.group_size, QuantizationMethod::ScaleBias)))
+            (spec.layout.clone(), Some((spec.bits, spec.group_size, QuantizationMethod::ScaleBias)), None)
         },
         AnyWeightMatrixSpec::IntSpec(spec) => (
             spec.layout.clone(),
@@ -48,7 +60,42 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
                     QuantizationMethod::ScaleZeroPoint
                 },
             )),
+            None,
         ),
+        AnyWeightMatrixSpec::MicrofloatSpec(MicrofloatSpec {
+            bits,
+            group_size,
+            scale_mode,
+            layout,
+            ..
+        }) => {
+            let format = match scale_mode {
+                MicrofloatScaleMode::Mxfp4 => MicrofloatFormat::Mxfp4,
+                MicrofloatScaleMode::Nvfp4 => {
+                    return Err(WeightMatrixError::UnsupportedConfiguration(
+                        "NVFP4 runtime storage is not supported".into(),
+                    ));
+                },
+            };
+            let group_size = u32::try_from(*group_size).map_err(|_| {
+                WeightMatrixError::UnsupportedConfiguration(format!("microfloat group size {group_size} exceeds u32"))
+            })?;
+            let runtime_layout = match layout {
+                Layout::OutputInput => MicrofloatLayout::OutputInput,
+                Layout::InputOutput => MicrofloatLayout::InputOutput,
+            };
+            MicrofloatMetadata::new(format, *bits, group_size, runtime_layout, 1, 1, group_size)
+                .map_err(|error| WeightMatrixError::UnsupportedConfiguration(error.to_string()))?;
+            (
+                layout.clone(),
+                None,
+                Some(MicrofloatInfo {
+                    format,
+                    bits: *bits,
+                    group_size,
+                }),
+            )
+        },
         spec => return Err(WeightMatrixError::UnsupportedConfiguration(format!("{spec:?}"))),
     };
     let quantization = match quantized {
@@ -76,6 +123,7 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
     Ok(ParsedWeightSpec {
         layout,
         quantization,
+        microfloat,
     })
 }
 
@@ -92,9 +140,16 @@ struct Quantized<B: Backend> {
     signed_codes: bool,
 }
 
+struct Microfloat<B: Backend> {
+    scales: Allocation<B>,
+    global_scales: Allocation<B>,
+    metadata: MicrofloatMetadata,
+}
+
 pub struct WeightMatrix<B: Backend> {
     values: Allocation<B>,
     quantized: Option<Quantized<B>>,
+    microfloat: Option<Microfloat<B>>,
 }
 
 impl<B: Backend> WeightMatrix<B> {
@@ -106,9 +161,36 @@ impl<B: Backend> WeightMatrix<B> {
         input_dim: u32,
         data_type: DataType,
     ) -> Result<Self, WeightMatrixError<B>> {
+        Self::load_impl(tree, spec, required_layout, 1, output_dim, input_dim, data_type, false)
+    }
+
+    pub fn load_bank(
+        tree: &ParameterTree<B>,
+        spec: AnyWeightMatrixSpec,
+        required_layout: Layout,
+        matrix_count: u32,
+        output_dim: u32,
+        input_dim: u32,
+        data_type: DataType,
+    ) -> Result<Self, WeightMatrixError<B>> {
+        Self::load_impl(tree, spec, required_layout, matrix_count, output_dim, input_dim, data_type, true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn load_impl(
+        tree: &ParameterTree<B>,
+        spec: AnyWeightMatrixSpec,
+        required_layout: Layout,
+        matrix_count: u32,
+        output_dim: u32,
+        input_dim: u32,
+        data_type: DataType,
+        banked: bool,
+    ) -> Result<Self, WeightMatrixError<B>> {
         let ParsedWeightSpec {
             layout,
             quantization,
+            microfloat,
         } = parse_spec(&spec)?;
         if layout != required_layout {
             return Err(WeightMatrixError::UnsupportedConfiguration(format!(
@@ -117,11 +199,56 @@ impl<B: Backend> WeightMatrix<B> {
         }
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
-        let Some(info) = quantization else {
-            let values = tree.leaf("weights")?.validate(&[rows, columns], data_type)?.read_allocation()?;
+        if let Some(info) = microfloat {
+            let runtime_layout = match layout {
+                Layout::OutputInput => MicrofloatLayout::OutputInput,
+                Layout::InputOutput => MicrofloatLayout::InputOutput,
+            };
+            let metadata = MicrofloatMetadata::new(
+                info.format,
+                info.bits,
+                info.group_size,
+                runtime_layout,
+                matrix_count,
+                rows,
+                columns,
+            )
+            .map_err(|error| WeightMatrixError::UnsupportedConfiguration(error.to_string()))?;
+            let values = tree
+                .leaf("weights")?
+                .validate(&bank_shape(matrix_count, &[rows, columns / 2], banked), DataType::U8)?
+                .read_allocation()?;
+            let scales = tree
+                .leaf("scales")?
+                .validate(&bank_shape(matrix_count, &[rows, columns / info.group_size], banked), DataType::U8)?
+                .read_allocation()?;
+            let global_scale_shape = if banked {
+                vec![matrix_count]
+            } else {
+                vec![1]
+            };
+            let global_scales =
+                tree.leaf("global_scale")?.validate(&global_scale_shape, data_type)?.read_allocation()?;
             return Ok(Self {
                 values,
                 quantized: None,
+                microfloat: Some(Microfloat {
+                    scales,
+                    global_scales,
+                    metadata,
+                }),
+            });
+        }
+
+        let Some(info) = quantization else {
+            let values = tree
+                .leaf("weights")?
+                .validate(&bank_shape(matrix_count, &[rows, columns], banked), data_type)?
+                .read_allocation()?;
+            return Ok(Self {
+                values,
+                quantized: None,
+                microfloat: None,
             });
         };
 
@@ -134,22 +261,30 @@ impl<B: Backend> WeightMatrix<B> {
             )));
         }
         let groups = columns.div_ceil(group_size);
-
-        let values =
-            tree.leaf("weights")?.validate(&[rows, columns / packing_divisor], storage_data_type)?.read_allocation()?;
-        let scales = tree.leaf("scales")?.validate(&[rows, groups], data_type)?.read_allocation()?;
+        let values = tree
+            .leaf("weights")?
+            .validate(&bank_shape(matrix_count, &[rows, columns / packing_divisor], banked), storage_data_type)?
+            .read_allocation()?;
+        let scales = tree
+            .leaf("scales")?
+            .validate(&bank_shape(matrix_count, &[rows, groups], banked), data_type)?
+            .read_allocation()?;
         let correction = match info.method {
             QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(
-                tree.leaf("biases")?.validate(&[rows, groups], data_type)?.read_allocation()?,
+                tree.leaf("biases")?
+                    .validate(&bank_shape(matrix_count, &[rows, groups], banked), data_type)?
+                    .read_allocation()?,
             ),
             QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(
                 tree.leaf("zero_points")?
-                    .validate(&[rows, groups.div_ceil(packing_divisor)], storage_data_type)?
+                    .validate(
+                        &bank_shape(matrix_count, &[rows, groups.div_ceil(packing_divisor)], banked),
+                        storage_data_type,
+                    )?
                     .read_allocation()?,
             ),
             QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
         };
-
         Ok(Self {
             values,
             quantized: Some(Quantized {
@@ -158,6 +293,7 @@ impl<B: Backend> WeightMatrix<B> {
                 info,
                 signed_codes: false,
             }),
+            microfloat: None,
         })
     }
 
@@ -170,7 +306,10 @@ impl<B: Backend> WeightMatrix<B> {
     }
 
     pub fn scales(&self) -> Option<&Allocation<B>> {
-        self.quantized.as_ref().map(|quantized| &quantized.scales)
+        self.microfloat
+            .as_ref()
+            .map(|microfloat| &microfloat.scales)
+            .or_else(|| self.quantized.as_ref().map(|quantized| &quantized.scales))
     }
 
     pub fn zero_points(&self) -> Option<&Allocation<B>> {
@@ -188,6 +327,14 @@ impl<B: Backend> WeightMatrix<B> {
     }
 
     pub fn matmul_b(&self) -> MatmulB<'_, B> {
+        if let Some(microfloat) = self.microfloat.as_ref() {
+            return MatmulB::Microfloat {
+                codes: &self.values,
+                scales: &microfloat.scales,
+                global_scales: &microfloat.global_scales,
+                metadata: microfloat.metadata,
+            };
+        }
         let Some(quantized) = self.quantized.as_ref() else {
             return MatmulB::FullPrecision {
                 b: &self.values,
@@ -250,4 +397,15 @@ fn physical_shape(
         Layout::OutputInput => (output_dim, input_dim),
         Layout::InputOutput => (input_dim, output_dim),
     }
+}
+
+fn bank_shape(
+    matrix_count: u32,
+    matrix_shape: &[u32],
+    banked: bool,
+) -> Vec<u32> {
+    if !banked {
+        return matrix_shape.to_vec();
+    }
+    std::iter::once(matrix_count).chain(matrix_shape.iter().copied()).collect()
 }

@@ -2,6 +2,7 @@ use crate::{
     backends::common::{
         Allocation, Backend, BufferArg,
         gpu_types::{QuantizationMode, gemm::GemmBPrologueKind},
+        microfloat::MicrofloatMetadata,
     },
     data_type::DataType,
 };
@@ -9,6 +10,12 @@ use crate::{
 pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
     FullPrecision {
         b: TB,
+    },
+    Microfloat {
+        codes: &'a Allocation<B>,
+        scales: &'a Allocation<B>,
+        global_scales: &'a Allocation<B>,
+        metadata: MicrofloatMetadata,
     },
     ScaleBiasDequant {
         b: &'a Allocation<B>,
@@ -40,6 +47,9 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
         match self {
             Self::FullPrecision {
                 ..
+            }
+            | Self::Microfloat {
+                ..
             } => GemmBPrologueKind::FullPrecision,
             Self::ScaleBiasDequant {
                 ..
@@ -58,6 +68,10 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
             Self::FullPrecision {
                 ..
             } => None,
+            Self::Microfloat {
+                metadata,
+                ..
+            } => Some(metadata.bits()),
             Self::ScaleBiasDequant {
                 mode,
                 ..
@@ -78,6 +92,10 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
             Self::FullPrecision {
                 ..
             } => None,
+            Self::Microfloat {
+                metadata,
+                ..
+            } => Some(metadata.group_size()),
             Self::ScaleBiasDequant {
                 group_size,
                 ..
@@ -97,6 +115,9 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
         match self {
             Self::FullPrecision {
                 ..
+            }
+            | Self::Microfloat {
+                ..
             } => false,
             Self::ScaleBiasDequant {
                 signed_codes,
@@ -110,6 +131,16 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
                 signed_codes,
                 ..
             } => *signed_codes,
+        }
+    }
+
+    pub fn microfloat_metadata(&self) -> Option<MicrofloatMetadata> {
+        match self {
+            Self::Microfloat {
+                metadata,
+                ..
+            } => Some(*metadata),
+            _ => None,
         }
     }
 }

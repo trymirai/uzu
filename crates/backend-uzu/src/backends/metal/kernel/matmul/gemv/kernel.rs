@@ -260,6 +260,14 @@ impl GemvDispatch {
                     encoder,
                 );
             },
+            MatmulB::Microfloat {
+                ..
+            } => {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "Gemv",
+                    reason: "microfloat Metal execution is not implemented",
+                });
+            },
             quant_b @ (MatmulB::ScaleBiasDequant {
                 ..
             }
@@ -288,6 +296,9 @@ impl GemvDispatch {
                         ..
                     } => (w, scales, None, None),
                     MatmulB::FullPrecision {
+                        ..
+                    }
+                    | MatmulB::Microfloat {
                         ..
                     } => unreachable!(),
                 };

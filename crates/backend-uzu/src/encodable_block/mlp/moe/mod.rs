@@ -14,7 +14,10 @@ use crate::{
         weight_matrix::{AnyWeightMatrixSpec, Layout, full_precision_spec::FullPrecisionSpec},
     },
     data_type::DataType,
-    encodable_block::mlp::Mlp,
+    encodable_block::{
+        mlp::Mlp,
+        weight_matrix::{WeightMatrix, WeightMatrixError},
+    },
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -29,6 +32,8 @@ pub enum MoeBlockError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
+    #[error("Expert weight loading error: {0}")]
+    WeightMatrixError(#[from] WeightMatrixError<B>),
     #[error("MoE requires 0 < model_dim <= 4096 and model_dim % 4 == 0")]
     InvalidModelDim,
     #[error("MoE num_routed_experts must be > 0 and <= 512")]
@@ -43,11 +48,26 @@ pub enum MoeBlockError<B: Backend> {
     UnsupportedNoBiases,
     #[error("Unsupported MoE router configuration: {0}")]
     UnsupportedRouterConfiguration(String),
+    #[error("Unsupported MoE {projection} weight configuration: {spec}")]
+    UnsupportedExpertWeightConfiguration {
+        projection: &'static str,
+        spec: String,
+    },
     #[error("Unsupported MoE expert activation: {0:?}")]
     UnsupportedExpertActivation(ActivationType),
 }
 
 impl<B: Backend> MoeBlock<B> {
+    fn expert_spec(weights_tree: &ParameterTree<B>) -> Result<AnyWeightMatrixSpec, ParameterLoaderError<B>> {
+        match weights_tree.metadata::<AnyWeightMatrixSpec>("spec") {
+            Ok(spec) => Ok(spec),
+            Err(ParameterLoaderError::KeyNotFound(_)) => {
+                Ok(serde_json::from_str(r#"{"type":"FullPrecisionSpec","layout":"output_input"}"#)?)
+            },
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn new(
         context: &B::Context,
         moe_config: &MixtureOfExpertsConfig,
@@ -104,16 +124,40 @@ impl<B: Backend> MoeBlock<B> {
         let experts_tree = parameter_tree.subtree("experts");
         let up_tree = experts_tree.subtree("up_projection");
         let down_tree = experts_tree.subtree("down_projection");
-        let w13 = up_tree
-            .subtree("weights")
-            .leaf("weights")?
-            .validate(&[moe_config.num_routed_experts, moe_config.expert_hidden_dim * 2, model_dim], data_type)?
-            .read_allocation()?;
-        let w2 = down_tree
-            .subtree("weights")
-            .leaf("weights")?
-            .validate(&[moe_config.num_routed_experts, model_dim, moe_config.expert_hidden_dim], data_type)?
-            .read_allocation()?;
+        let up_weights_tree = up_tree.subtree("weights");
+        let up_spec = Self::expert_spec(&up_weights_tree)?;
+        if !matches!(&up_spec, AnyWeightMatrixSpec::FullPrecisionSpec(_) | AnyWeightMatrixSpec::MicrofloatSpec(_)) {
+            return Err(MoeBlockError::UnsupportedExpertWeightConfiguration {
+                projection: "up-projection",
+                spec: format!("{up_spec:?}"),
+            });
+        }
+        let w13 = WeightMatrix::load_bank(
+            &up_weights_tree,
+            up_spec,
+            Layout::OutputInput,
+            moe_config.num_routed_experts,
+            moe_config.expert_hidden_dim * 2,
+            model_dim,
+            data_type,
+        )?;
+        let down_weights_tree = down_tree.subtree("weights");
+        let down_spec = Self::expert_spec(&down_weights_tree)?;
+        if !matches!(&down_spec, AnyWeightMatrixSpec::FullPrecisionSpec(_) | AnyWeightMatrixSpec::MicrofloatSpec(_)) {
+            return Err(MoeBlockError::UnsupportedExpertWeightConfiguration {
+                projection: "down-projection",
+                spec: format!("{down_spec:?}"),
+            });
+        }
+        let w2 = WeightMatrix::load_bank(
+            &down_weights_tree,
+            down_spec,
+            Layout::OutputInput,
+            moe_config.num_routed_experts,
+            model_dim,
+            moe_config.expert_hidden_dim,
+            data_type,
+        )?;
         let up_biases = up_tree
             .leaf("biases")?
             .validate(&[moe_config.num_routed_experts, moe_config.expert_hidden_dim * 2], data_type)?

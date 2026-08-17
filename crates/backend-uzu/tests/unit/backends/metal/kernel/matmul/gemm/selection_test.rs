@@ -20,6 +20,7 @@ fn shape(
         b_prologue: GemmBPrologueKind::FullPrecision,
         b_bits: None,
         b_group_size: None,
+        b_microfloat: None,
         signed_codes: false,
         a_full_precision: true,
         gathered: false,

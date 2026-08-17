@@ -93,6 +93,26 @@ impl MatmulKernel for MatmulCpuKernel {
                 .into());
             }
         }
+        if let MatmulB::Microfloat {
+            codes,
+            scales,
+            global_scales,
+            metadata,
+        } = &arguments.b
+            && (!arguments.b_transpose
+                || arguments.b_leading_dimension.is_some()
+                || metadata.rows() != arguments.n
+                || metadata.columns() != arguments.k
+                || codes.size() < metadata.required_code_bytes()
+                || scales.size() < metadata.required_scale_bytes()
+                || global_scales.size() < metadata.matrix_count() as usize * self.weights_data_type.size_in_bytes())
+        {
+            return Err(MatmulError::UnsupportedRouting {
+                path: "CpuMatmul",
+                reason: "microfloat storage does not match the requested matrix bank",
+            }
+            .into());
+        }
 
         let output_scale = arguments.d_transform.ab_scale;
         let accumulate = arguments.d_transform.accumulate;
@@ -244,6 +264,9 @@ impl MatmulKernel for MatmulCpuKernel {
                 },
                 WeightData::FullPrecision {
                     ..
+                }
+                | WeightData::Microfloat {
+                    ..
                 } => None,
             };
 
@@ -358,6 +381,28 @@ impl MatmulKernel for MatmulCpuKernel {
                                         -scale * midpoint
                                     };
                                     scale * quantized_value + bias_term
+                                },
+                                WeightData::Microfloat {
+                                    codes,
+                                    scales,
+                                    global_scales,
+                                    metadata,
+                                } => {
+                                    let code_index = matrix * metadata.code_matrix_stride()
+                                        + b_col * metadata.code_row_stride()
+                                        + inner / 2;
+                                    let packed = *codes.as_ptr().add(code_index);
+                                    let code = if inner.is_multiple_of(2) {
+                                        packed & 0x0f
+                                    } else {
+                                        packed >> 4
+                                    };
+                                    let scale_index = matrix * metadata.scale_matrix_stride()
+                                        + b_col * metadata.scale_row_stride()
+                                        + inner / metadata.group_size() as usize;
+                                    let exponent = *scales.as_ptr().add(scale_index);
+                                    let global_scale = read_f32(global_scales.as_ptr(), weights_data_type, matrix);
+                                    crate::backends::common::microfloat::decode_mxfp4(code, exponent, global_scale)
                                 },
                             };
                             accumulator += a_value * b_value;
