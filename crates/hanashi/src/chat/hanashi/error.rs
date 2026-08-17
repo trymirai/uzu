@@ -12,8 +12,6 @@ pub enum Error {
     ConfigNotFound(String),
     #[error("Config '{0}' is invalid")]
     InvalidConfig(String),
-    #[error("Unable to load tokenizer")]
-    UnableToLoadTokenizer,
     #[error("Unable to encode text")]
     UnableToEncodeText,
     #[error("Unable to decode token")]
