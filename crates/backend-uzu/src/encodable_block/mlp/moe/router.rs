@@ -14,13 +14,29 @@ fn checked_route_count(
 
 pub struct MoeRoutes<B: Backend> {
     pub expert_ids: Allocation<B>,
-    pub weights: Allocation<B>,
+    pub route_weights: Allocation<B>,
     pub token_count: u32,
     pub routes_per_token: NonZeroU32,
     route_count: u32,
 }
 
 impl<B: Backend> MoeRoutes<B> {
+    pub(super) fn from_parts(
+        expert_ids: Allocation<B>,
+        route_weights: Allocation<B>,
+        token_count: u32,
+        routes_per_token: NonZeroU32,
+    ) -> Option<Self> {
+        let route_count = checked_route_count(token_count, routes_per_token.get())?;
+        Some(Self {
+            expert_ids,
+            route_weights,
+            token_count,
+            routes_per_token,
+            route_count,
+        })
+    }
+
     pub fn route_count(&self) -> u32 {
         self.route_count
     }
@@ -71,9 +87,13 @@ impl<B: Backend> MoeRouter<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<MoeRoutes<B>, B::Error> {
         let routes_per_token = self.routes_per_token.get();
-        let route_count = checked_route_count(token_count, routes_per_token).expect("MoE route count must fit in u32");
+        // `Mlp::encode` can only return `B::Error`, so it cannot surface a
+        // configuration error for a caller-supplied token count. Check before
+        // allocation or dispatch; exceeding u32 route indexing is a caller
+        // contract violation.
+        checked_route_count(token_count, routes_per_token).expect("MoE route count must fit in u32");
         let mut expert_ids = encoder.allocate_scratch_for_shape(&[token_count, routes_per_token], DataType::I32)?;
-        let mut weights = encoder.allocate_scratch_for_shape(&[token_count, routes_per_token], self.data_type)?;
+        let mut route_weights = encoder.allocate_scratch_for_shape(&[token_count, routes_per_token], self.data_type)?;
         encoder.encode_fill(&mut expert_ids, 0xFF);
         self.kernel.encode(
             input,
@@ -82,7 +102,7 @@ impl<B: Backend> MoeRouter<B> {
             None::<&Allocation<B>>,
             None::<&Allocation<B>>,
             &mut expert_ids,
-            &mut weights,
+            &mut route_weights,
             token_count,
             self.model_dim,
             self.expert_count,
@@ -92,13 +112,8 @@ impl<B: Backend> MoeRouter<B> {
             None::<f32>,
             encoder,
         );
-        Ok(MoeRoutes {
-            expert_ids,
-            weights,
-            token_count,
-            routes_per_token: self.routes_per_token,
-            route_count,
-        })
+        Ok(MoeRoutes::from_parts(expert_ids, route_weights, token_count, self.routes_per_token)
+            .expect("route count was checked before allocating router outputs"))
     }
 }
 

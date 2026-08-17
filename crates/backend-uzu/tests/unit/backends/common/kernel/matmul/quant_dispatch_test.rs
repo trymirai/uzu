@@ -720,7 +720,11 @@ fn run_widened_f32<B: Backend>(
     context: &B::Context,
     input: &QuantInput<bf16>,
 ) -> Vec<f32> {
-    use crate::{backends::common::kernel::matmul::MatmulA, data_type::DataType, tests::helpers::alloc_allocation};
+    use crate::{
+        backends::common::kernel::matmul::{MatmulA, MatmulRouting},
+        data_type::DataType,
+        tests::helpers::alloc_allocation,
+    };
     let buffers = QuantBuffers::<B, bf16>::allocate(context, input);
     let mut y = alloc_allocation::<B, f32>(context, (input.m as usize) * (input.n as usize));
     let mut matmul =
@@ -740,8 +744,7 @@ fn run_widened_f32<B: Backend>(
                 b_transpose: true,
                 d: &mut y,
                 d_transform: MatmulDOps::none(),
-                gather_indices: None,
-                expert_routes: None,
+                routing: MatmulRouting::Dense,
                 m: input.m,
                 n: input.n,
                 k: input.k,

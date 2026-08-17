@@ -20,6 +20,7 @@ fn fp_policy_cases() {
         (LARGE,        1,  1536,  256, true,  tile(8, 1, 1)),
         (SMALL_APPLE9, 1,  1536,  256, true,  tile(8, 2, 1)),
         (LARGE,        8, 12288, 1536, true,  tile(8, 1, 4)),
+        (LARGE,        8,     3,  128, true,  tile(8, 1, 1)),
         (LARGE,        1,  1536, 12288, true, tile(8, 8, 4)),
         (SMALL_LEGACY, 1, 262144, 1536, true, tile(8, 1, 4)),
         (LARGE_LEGACY, 1, 262144, 1536, true, tile(8, 8, 1)),

@@ -85,6 +85,20 @@ fn model_dim_error(model_dim: u32) -> MoeBlockError<Cpu> {
     }
 }
 
+fn hidden_dim_error(hidden_dim: u32) -> MoeBlockError<Cpu> {
+    let context = <Cpu as Backend>::Context::new().expect("create CPU context");
+    let file = empty_parameter_file();
+    let loader =
+        ParameterLoader::<Cpu>::new_random(file.as_file(), context.as_ref(), 0).expect("load empty parameter file");
+    let mut config = config(1, 1);
+    config.expert_hidden_dim = hidden_dim;
+
+    match MoeBlock::<Cpu>::new(context.as_ref(), &config, 16, DataType::BF16, &loader.tree()) {
+        Ok(_) => panic!("invalid hidden dimension was accepted"),
+        Err(error) => error,
+    }
+}
+
 #[uzu_test]
 fn rejects_invalid_routed_expert_counts() {
     assert!(valid_routed_expert_count(512));
@@ -106,5 +120,12 @@ fn rejects_router_dimensions_beyond_its_threadgroup_cache() {
     assert!(valid_model_dim(4096));
     for model_dim in [0, 2, 4100] {
         assert!(matches!(model_dim_error(model_dim), MoeBlockError::InvalidModelDim));
+    }
+}
+
+#[uzu_test]
+fn rejects_invalid_expert_hidden_dimensions() {
+    for hidden_dim in [0, u32::MAX] {
+        assert!(matches!(hidden_dim_error(hidden_dim), MoeBlockError::InvalidExpertHiddenDim));
     }
 }

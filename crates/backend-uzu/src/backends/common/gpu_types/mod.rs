@@ -11,6 +11,7 @@ pub mod gemm;
 pub mod hadamard_order;
 pub mod kv_cache_update;
 pub mod matmul;
+pub mod moe;
 pub mod quantization;
 pub mod quantization_method;
 pub mod ring;

@@ -9,9 +9,12 @@ use super::super::MoeBlock;
 use crate::{
     array::size_for_shape,
     backends::common::{Backend, Context, Encoder},
-    config::mlp::mixture_of_experts::MixtureOfExpertsConfig,
+    config::{
+        mlp::mixture_of_experts::MixtureOfExpertsConfig,
+        weight_matrix::{AnyWeightMatrixSpec, Layout},
+    },
     data_type::DataType,
-    encodable_block::mlp::Mlp,
+    encodable_block::{mlp::Mlp, weight_matrix::WeightMatrix},
     parameters::ParameterLoader,
     tests::{
         assert::assert_eq_float,
@@ -19,8 +22,8 @@ use crate::{
     },
 };
 
-const MODEL_DIM: u32 = 16;
-const HIDDEN_DIM: u32 = 32;
+const MODEL_DIM: u32 = 32;
+const HIDDEN_DIM: u32 = 64;
 const EXPERTS: u32 = 4;
 const ROUTES_PER_TOKEN: u32 = 2;
 
@@ -130,6 +133,89 @@ fn add_tensor(
 
 fn bf16_bytes(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
     values.into_iter().flat_map(|value| bf16::from_f32(value).to_le_bytes()).collect()
+}
+
+fn fixture_e2m1(code: u8) -> f32 {
+    const VALUES: [f32; 16] = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0];
+    VALUES[usize::from(code)]
+}
+
+fn fixture_microfloat_weight(
+    up_projection: bool,
+    expert: usize,
+    row: usize,
+    column: usize,
+) -> f32 {
+    let (rows, columns, group_size) = if up_projection {
+        ((2 * HIDDEN_DIM) as usize, MODEL_DIM as usize, 16usize)
+    } else {
+        (MODEL_DIM as usize, HIDDEN_DIM as usize, 32usize)
+    };
+    let element = (expert * rows + row) * columns + column;
+    let byte = element / 2;
+    let (low, high, exponent, outer_scale) = if up_projection {
+        (
+            (byte % 7 + 1) as u8,
+            ((byte * 3 + 1) % 7 + 1) as u8,
+            123 + ((expert * rows + row) * (columns / group_size) + column / group_size) % 3,
+            [0.5, 0.75, 1.0, 1.25][expert],
+        )
+    } else {
+        (
+            ((byte * 5 + 2) % 7 + 1) as u8,
+            ((byte * 7 + 3) % 7 + 1) as u8,
+            122 + ((expert * rows + row) * (columns / group_size) + column / group_size) % 4,
+            [1.0, 0.75, 0.5, 0.25][expert],
+        )
+    };
+    let code = if column.is_multiple_of(2) {
+        low
+    } else {
+        high
+    };
+    fixture_e2m1(code) * 2.0f32.powi(exponent as i32 - 127) * outer_scale
+}
+
+fn independent_microfloat_output(token_count: usize) -> Vec<bf16> {
+    let route_weights = {
+        let first = 0.4f32.exp();
+        let second = 0.2f32.exp();
+        let sum = first + second;
+        [bf16::from_f32(first / sum).to_f32(), bf16::from_f32(second / sum).to_f32()]
+    };
+    let input: Vec<f32> = (0..token_count * MODEL_DIM as usize)
+        .map(|index| bf16::from_f32((index % 17) as f32 * 0.03 - 0.2).to_f32())
+        .collect();
+    let mut output = vec![0.0f32; token_count * MODEL_DIM as usize];
+
+    for token in 0..token_count {
+        for (expert, route_weight) in route_weights.into_iter().enumerate() {
+            let mut fused_up = vec![0.0f32; (2 * HIDDEN_DIM) as usize];
+            for row in 0..(2 * HIDDEN_DIM) as usize {
+                let bias =
+                    bf16::from_f32(((expert * (2 * HIDDEN_DIM) as usize + row) % 9) as f32 * 0.005 - 0.02).to_f32();
+                fused_up[row] = (0..MODEL_DIM as usize).fold(bias, |sum, column| {
+                    sum + input[token * MODEL_DIM as usize + column]
+                        * fixture_microfloat_weight(true, expert, row, column)
+                });
+            }
+            let hidden: Vec<f32> = (0..HIDDEN_DIM as usize)
+                .map(|column| {
+                    let value = fused_up[column].clamp(-2.0, 2.5);
+                    let gate = fused_up[HIDDEN_DIM as usize + column].clamp(-1.5, 2.0);
+                    value * gate / (1.0 + (-0.75 * gate).exp())
+                })
+                .collect();
+            for row in 0..MODEL_DIM as usize {
+                let bias = bf16::from_f32(((expert * MODEL_DIM as usize + row) % 7) as f32 * 0.004 - 0.012).to_f32();
+                let down = (0..HIDDEN_DIM as usize).fold(bias, |sum, column| {
+                    sum + hidden[column] * fixture_microfloat_weight(false, expert, row, column)
+                });
+                output[token * MODEL_DIM as usize + row] += route_weight * bf16::from_f32(down).to_f32();
+            }
+        }
+    }
+    output.into_iter().map(bf16::from_f32).collect()
 }
 
 fn microfloat_parameter_file() -> NamedTempFile {
@@ -323,6 +409,32 @@ fn microfloat_experts_cover_decode_and_prefill() {
             assert_eq_float(&expected, &actual, 0.15, "microfloat MoeBlock routes");
         });
     }
+}
+
+#[uzu_test]
+fn microfloat_experts_match_an_independent_scalar_oracle() {
+    let expected = independent_microfloat_output(2);
+    let actual = run::<crate::backends::cpu::Cpu>(2, true);
+    assert_eq_float(&expected, &actual, 0.15, "scalar MXFP4 MoeBlock oracle");
+    for_each_non_cpu_backend!(|B| {
+        let actual = run::<B>(2, true);
+        assert_eq_float(&expected, &actual, 0.15, "scalar MXFP4 MoeBlock oracle");
+    });
+}
+
+#[uzu_test]
+fn microfloat_weights_are_rejected_outside_expert_banks() {
+    let context = <crate::backends::cpu::Cpu as Backend>::Context::new().expect("create context");
+    let file = microfloat_parameter_file();
+    let loader = ParameterLoader::<crate::backends::cpu::Cpu>::new(file.as_file(), context.as_ref())
+        .expect("load microfloat parameters");
+    let tree = loader.tree().subtree("experts").subtree("up_projection").subtree("weights");
+    let spec = tree.metadata::<AnyWeightMatrixSpec>("spec").expect("microfloat spec");
+    let error = WeightMatrix::load(&tree, spec, Layout::OutputInput, 2 * HIDDEN_DIM, MODEL_DIM, DataType::BF16);
+    let Err(error) = error else {
+        panic!("unbanked microfloat matrix was accepted");
+    };
+    assert!(error.to_string().contains("only for expert matrix banks"), "{error}");
 }
 
 #[uzu_test]

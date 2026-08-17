@@ -2,7 +2,7 @@ use super::{
     d_ops::MatmulDOps,
     matmul_a::MatmulA,
     matmul_b::MatmulB,
-    routing::{ExpertInput, ExpertRoutes},
+    routing::{ExpertInput, MatmulRouting},
 };
 use crate::{
     backends::common::{Allocation, Backend, BufferArg},
@@ -16,8 +16,7 @@ pub struct MatmulArguments<'a, 'b, 'd, B: Backend, TB: BufferArg<'b, B> = &'b Al
     pub b_transpose: bool,
     pub d: &'d mut Allocation<B>,
     pub d_transform: MatmulDOps<'d, B>,
-    pub gather_indices: Option<&'a Allocation<B>>,
-    pub expert_routes: Option<ExpertRoutes<'a, B>>,
+    pub routing: MatmulRouting<'a, B>,
     pub m: u32,
     pub n: u32,
     pub k: u32,
@@ -45,7 +44,7 @@ pub(crate) fn validate_matmul_storage<'a, 'b, 'd, B: Backend, TB: BufferArg<'b, 
                 reason: "full-precision byte offset is not aligned to the input data type",
             });
         }
-        let input_rows = match arguments.expert_routes {
+        let input_rows = match arguments.routing.expert_routes() {
             Some(routes) if routes.input == ExpertInput::Tokens => arguments.m / routes.routes_per_token.get(),
             _ => arguments.m,
         };

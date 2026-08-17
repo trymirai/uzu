@@ -8,7 +8,7 @@ use crate::{
             kernel::{
                 AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, AttentionSinglePassKernel,
                 SoftmaxKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulRouting},
             },
         },
         cpu::Cpu,
@@ -145,8 +145,7 @@ fn pipeline_output<B: Backend>(
                         ab_scale: scale,
                         ..MatmulDOps::none()
                     },
-                    gather_indices: None,
-                    expert_routes: None,
+                    routing: MatmulRouting::Dense,
                     m: GQA * SUFFIX,
                     n: SEQ,
                     k: HEAD_DIM,
@@ -184,8 +183,7 @@ fn pipeline_output<B: Backend>(
                     b_transpose: false,
                     d: &mut grp_o,
                     d_transform: MatmulDOps::none(),
-                    gather_indices: None,
-                    expert_routes: None,
+                    routing: MatmulRouting::Dense,
                     m: GQA * SUFFIX,
                     n: HEAD_DIM,
                     k: SEQ,

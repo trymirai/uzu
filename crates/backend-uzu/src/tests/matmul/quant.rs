@@ -15,7 +15,7 @@ use crate::{
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 ActivationTransform, Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulRouting},
             },
         },
         cpu::Cpu,
@@ -293,8 +293,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         b_transpose: true,
         d: y,
         d_transform: MatmulDOps::none(),
-        gather_indices: None,
-        expert_routes: None,
+        routing: MatmulRouting::Dense,
         m: input.m,
         n: input.n,
         k: input.k,

@@ -9,7 +9,11 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, gpu_types::ActivationType, kernel::matmul::routing::MAX_EXPERT_COUNT,
+        Allocation, Backend, Encoder,
+        gpu_types::{
+            ActivationType,
+            moe::{ROUTER_MAX_EXPERTS, ROUTER_MAX_MODEL_DIM, ROUTER_MAX_SELECTED_EXPERTS},
+        },
     },
     config::{
         mlp::mixture_of_experts::MixtureOfExpertsConfig,
@@ -23,22 +27,19 @@ use crate::{
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
-const MAX_MODEL_DIM: u32 = 4096;
-const MAX_ACTIVE_EXPERT_COUNT: u32 = 128;
-
 fn valid_model_dim(model_dim: u32) -> bool {
-    model_dim > 0 && model_dim <= MAX_MODEL_DIM && model_dim.is_multiple_of(4)
+    model_dim > 0 && model_dim <= ROUTER_MAX_MODEL_DIM && model_dim.is_multiple_of(4)
 }
 
 fn valid_routed_expert_count(expert_count: u32) -> bool {
-    (1..=MAX_EXPERT_COUNT).contains(&expert_count)
+    (1..=ROUTER_MAX_EXPERTS).contains(&expert_count)
 }
 
 fn valid_active_expert_count(
     active_expert_count: u32,
     routed_expert_count: u32,
 ) -> bool {
-    (1..=MAX_ACTIVE_EXPERT_COUNT.min(routed_expert_count)).contains(&active_expert_count)
+    (1..=ROUTER_MAX_SELECTED_EXPERTS.min(routed_expert_count)).contains(&active_expert_count)
 }
 
 pub struct MoeBlock<B: Backend> {
@@ -54,12 +55,14 @@ pub enum MoeBlockError<B: Backend> {
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
     #[error("Expert weight loading error: {0}")]
     WeightMatrixError(#[from] WeightMatrixError<B>),
-    #[error("MoE requires 0 < model_dim <= 4096 and model_dim % 4 == 0")]
+    #[error("MoE model_dim must be nonzero, divisible by 4, and within the fused router capacity")]
     InvalidModelDim,
-    #[error("MoE num_routed_experts must be > 0 and <= 512")]
+    #[error("MoE num_routed_experts must be nonzero and within the fused router capacity")]
     InvalidRoutedExpertCount,
-    #[error("MoE num_active_routed_experts must be > 0, <= 128, and <= num_routed_experts")]
+    #[error("MoE num_active_routed_experts must be nonzero, within TopK capacity, and <= num_routed_experts")]
     InvalidActiveExpertCount,
+    #[error("MoE expert_hidden_dim must be > 0 and 2 * expert_hidden_dim must fit in u32")]
+    InvalidExpertHiddenDim,
     #[error("MoE shared experts are not supported")]
     UnsupportedSharedExperts,
     #[error("MoE expert gate is not supported")]
@@ -104,6 +107,11 @@ impl<B: Backend> MoeBlock<B> {
         if !valid_active_expert_count(moe_config.num_active_routed_experts, moe_config.num_routed_experts) {
             return Err(MoeBlockError::InvalidActiveExpertCount);
         }
+        let fused_hidden_dim = moe_config
+            .expert_hidden_dim
+            .checked_mul(2)
+            .filter(|_| moe_config.expert_hidden_dim > 0)
+            .ok_or(MoeBlockError::InvalidExpertHiddenDim)?;
         if moe_config.num_shared_experts != 0 {
             return Err(MoeBlockError::UnsupportedSharedExperts);
         }
@@ -149,12 +157,12 @@ impl<B: Backend> MoeBlock<B> {
                 spec: format!("{up_spec:?}"),
             });
         }
-        let w13 = WeightMatrix::load_bank(
+        let up_projection = WeightMatrix::load_bank(
             &up_weights_tree,
             up_spec,
             Layout::OutputInput,
             moe_config.num_routed_experts,
-            moe_config.expert_hidden_dim * 2,
+            fused_hidden_dim,
             model_dim,
             data_type,
         )?;
@@ -166,7 +174,7 @@ impl<B: Backend> MoeBlock<B> {
                 spec: format!("{down_spec:?}"),
             });
         }
-        let w2 = WeightMatrix::load_bank(
+        let down_projection = WeightMatrix::load_bank(
             &down_weights_tree,
             down_spec,
             Layout::OutputInput,
@@ -177,7 +185,7 @@ impl<B: Backend> MoeBlock<B> {
         )?;
         let up_biases = up_tree
             .leaf("biases")?
-            .validate(&[moe_config.num_routed_experts, moe_config.expert_hidden_dim * 2], data_type)?
+            .validate(&[moe_config.num_routed_experts, fused_hidden_dim], data_type)?
             .read_allocation()?;
         let down_biases = down_tree
             .leaf("biases")?
@@ -200,12 +208,13 @@ impl<B: Backend> MoeBlock<B> {
         .map_err(MoeBlockError::BackendError)?;
         let experts = MoeExperts::new(
             context,
-            w13,
-            w2,
+            up_projection,
+            down_projection,
             up_biases,
             down_biases,
             model_dim,
             moe_config.expert_hidden_dim,
+            fused_hidden_dim,
             moe_config.num_routed_experts,
             moe_config.expert_config.activation.clone(),
             moe_config.expert_config.gate_clipping,

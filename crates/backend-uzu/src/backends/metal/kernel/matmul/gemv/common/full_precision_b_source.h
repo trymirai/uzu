@@ -37,8 +37,14 @@ struct FullPrecisionBSource {
     const device BT* weights = reinterpret_cast<const device BT*>(b);
     weights += base_row * in_vec_size + thread_k;
     thread const device BT* weight_rows[RESULTS_PER_SIMDGROUP];
+    thread bool active_rows[RESULTS_PER_SIMDGROUP];
     METAL_PRAGMA_UNROLL
     for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
+      active_rows[row] = out_row + row < out_vec_size;
+      if (!active_rows[row]) {
+        weight_rows[row] = nullptr;
+        continue;
+      }
       const uint addr_row = gathered ? gather_indices[assignment_idx * out_vec_size + out_row + row] : row;
       weight_rows[row] = weights + addr_row * in_vec_size;
     }
@@ -48,6 +54,9 @@ struct FullPrecisionBSource {
       float4 input_values = static_cast<float4>(*reinterpret_cast<const device I4*>(input));
       METAL_PRAGMA_UNROLL
       for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
+        if (!active_rows[row]) {
+          continue;
+        }
         result[row] += dot(static_cast<float4>(*reinterpret_cast<const device W4*>(weight_rows[row])), input_values);
         weight_rows[row] += k_stride;
       }
@@ -62,6 +71,9 @@ struct FullPrecisionBSource {
       if (remaining > 0) {
         METAL_PRAGMA_UNROLL
         for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
+          if (!active_rows[row]) {
+            continue;
+          }
           for (int index = 0; index < remaining; index++) {
             result[row] += static_cast<U>(weight_rows[row][index]) * static_cast<U>(input[index]);
           }

@@ -14,7 +14,7 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
     Microfloat {
         codes: &'a Allocation<B>,
         scales: &'a Allocation<B>,
-        global_scales: &'a Allocation<B>,
+        outer_scales: &'a Allocation<B>,
         metadata: MicrofloatMetadata,
     },
     ScaleBiasDequant {

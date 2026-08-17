@@ -142,7 +142,7 @@ struct Quantized<B: Backend> {
 
 struct Microfloat<B: Backend> {
     scales: Allocation<B>,
-    global_scales: Allocation<B>,
+    outer_scales: Allocation<B>,
     metadata: MicrofloatMetadata,
 }
 
@@ -199,6 +199,11 @@ impl<B: Backend> WeightMatrix<B> {
         }
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
+        if microfloat.is_some() && !banked {
+            return Err(WeightMatrixError::UnsupportedConfiguration(
+                "microfloat weights are currently supported only for expert matrix banks".into(),
+            ));
+        }
         if let Some(info) = microfloat {
             let runtime_layout = match layout {
                 Layout::OutputInput => MicrofloatLayout::OutputInput,
@@ -222,19 +227,20 @@ impl<B: Backend> WeightMatrix<B> {
                 .leaf("scales")?
                 .validate(&bank_shape(matrix_count, &[rows, columns / info.group_size], banked), DataType::U8)?
                 .read_allocation()?;
-            let global_scale_shape = if banked {
+            let outer_scale_shape = if banked {
                 vec![matrix_count]
             } else {
                 vec![1]
             };
-            let global_scales =
-                tree.leaf("global_scale")?.validate(&global_scale_shape, data_type)?.read_allocation()?;
+            // Preserve the converter-facing `global_scale` tensor name while
+            // describing its runtime role as one outer scale per matrix.
+            let outer_scales = tree.leaf("global_scale")?.validate(&outer_scale_shape, data_type)?.read_allocation()?;
             return Ok(Self {
                 values,
                 quantized: None,
                 microfloat: Some(Microfloat {
                     scales,
-                    global_scales,
+                    outer_scales,
                     metadata,
                 }),
             });
@@ -331,7 +337,7 @@ impl<B: Backend> WeightMatrix<B> {
             return MatmulB::Microfloat {
                 codes: &self.values,
                 scales: &microfloat.scales,
-                global_scales: &microfloat.global_scales,
+                outer_scales: &microfloat.outer_scales,
                 metadata: microfloat.metadata,
             };
         }

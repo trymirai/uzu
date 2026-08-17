@@ -13,7 +13,7 @@ use crate::{
             gpu_types::QuantizationMethod,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulRouting},
             },
         },
         cpu::Cpu,
@@ -88,8 +88,12 @@ fn run_gemv<'a, B: Backend, T: ArrayElement + Float>(
                     soft_cap,
                     ..MatmulDOps::none()
                 },
-                gather_indices,
-                expert_routes: None,
+                routing: match gather_indices {
+                    Some(b_rows) => MatmulRouting::SparseReadout {
+                        b_rows,
+                    },
+                    None => MatmulRouting::Dense,
+                },
                 m: m as u32,
                 n: n_out as u32,
                 k: k as u32,
