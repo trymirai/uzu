@@ -16,6 +16,7 @@ use crate::{
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
 };
 
+pub mod forward;
 pub mod state;
 pub mod stream;
 
