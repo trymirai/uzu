@@ -28,7 +28,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         context: &B::Context,
         data_type: DataType,
         activation: AnyActivation,
-        hidden_dim: usize,
+        hidden_dim: u32,
         input_preparation: Option<LinearInputPreparation<B>>,
     ) -> Result<Self, B::Error> {
         let (hadamard_factors, a8_plan) = input_preparation
@@ -52,7 +52,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         &self,
         encoder: &mut Encoder<B>,
         fused_up: &Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         act_format: ActivationFormat,
     ) -> Result<LinearInput<B>, B::Error> {
         encoder.push_debug_group("gate act mul");
@@ -66,14 +66,14 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             let kernel = self.quantized_kernel.as_ref().expect("INT8 input requires a quantized gate kernel");
             let mut values = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(
-                &[batch_dim, self.hidden_dim.div_ceil(plan.activation_group_size as usize)],
+                &[batch_dim, self.hidden_dim.div_ceil(plan.activation_group_size)],
                 DataType::F32,
             ))?;
             let mut group_sums = plan
                 .sum_group_size
                 .map(|group_size| {
                     encoder.allocate_scratch(size_for_shape(
-                        &[batch_dim, self.hidden_dim.div_ceil(group_size as usize)],
+                        &[batch_dim, self.hidden_dim.div_ceil(group_size)],
                         DataType::I32,
                     ))
                 })
@@ -84,8 +84,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 &mut scales,
                 group_sums.as_mut(),
                 self.hadamard_factors.as_ref().expect("INT8 input requires RHT factors"),
-                self.hidden_dim as u32,
-                batch_dim as u32,
+                self.hidden_dim,
+                batch_dim,
                 self.activation.act_type(),
                 encoder,
             );
@@ -102,8 +102,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 None,
                 &mut hidden,
                 self.hadamard_factors.as_ref(),
-                self.hidden_dim as u32,
-                batch_dim as u32,
+                self.hidden_dim,
+                batch_dim,
                 0,
                 0,
                 self.activation.act_type(),

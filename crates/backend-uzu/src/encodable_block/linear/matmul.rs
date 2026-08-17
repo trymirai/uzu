@@ -2,6 +2,7 @@ use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{
@@ -124,7 +125,8 @@ impl<B: Backend> LinearMatmul<B> {
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut output = encoder.allocate_scratch_for_shape(&[batch_dim, self.output_dim], self.output_data_type)?;
+        let mut output =
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
         self.kernel.lock().encode(
             MatmulArguments {
@@ -147,14 +149,14 @@ impl<B: Backend> LinearMatmul<B> {
 
     fn matmul_shape(
         &self,
-        batch_dim: usize,
+        batch_dim: u32,
         a_full_precision: bool,
     ) -> MatmulShape {
         let b = self.matmul_b();
         MatmulShape {
-            m: batch_dim as u32,
-            n: self.output_dim as u32,
-            k: self.input_dim as u32,
+            m: batch_dim,
+            n: self.output_dim,
+            k: self.input_dim,
             b_transpose: true,
             b_leading_dimension: None,
             b_prologue: b.b_prologue(),
@@ -169,7 +171,7 @@ impl<B: Backend> LinearMatmul<B> {
 
     pub(super) fn select_activation_format(
         &self,
-        batch_dim: usize,
+        batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
         if !self.matmul_b().signed_codes() {
@@ -218,7 +220,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
     fn encode_input(
         &self,
         input: LinearInput<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         match input {
@@ -243,7 +245,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
 
     fn select_activation_format(
         &self,
-        batch_dim: usize,
+        batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
         Self::select_activation_format(self, batch_dim, context)

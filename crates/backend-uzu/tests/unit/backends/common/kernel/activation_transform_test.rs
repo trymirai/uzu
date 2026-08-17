@@ -126,8 +126,8 @@ mod quantize {
         emit_group_sums: bool,
         sum_group_size: Option<u32>,
     ) -> (Vec<i8>, Vec<f32>, Option<Vec<i32>>) {
-        let scale_groups = columns / activation_group_size as usize;
-        let sum_groups = sum_group_size.map_or(0, |group_size| columns / group_size as usize);
+        let scale_groups = columns / activation_group_size;
+        let sum_groups = sum_group_size.map_or(0, |group_size| columns / group_size);
         let context = B::Context::new().expect("context");
         let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), input_data);
         let factors = alloc_allocation_with_data::<B, i32>(context.as_ref(), factors_data);

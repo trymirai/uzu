@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 use crate::{
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
@@ -90,8 +91,8 @@ impl<B: Backend> RHTLinearWrapper<B> {
 
     pub(super) fn try_new_with_input_preparation(
         context: &B::Context,
-        input_dimension: usize,
-        output_dimension: usize,
+        input_dimension: u32,
+        output_dimension: u32,
         has_biases: bool,
         weights_data_type: DataType,
         input_data_type: DataType,
@@ -141,8 +142,8 @@ impl<B: Backend> RHTLinearWrapper<B> {
 
     fn load_inner_with_output_rht(
         context: &B::Context,
-        input_dimension: usize,
-        output_dimension: usize,
+        input_dimension: u32,
+        output_dimension: u32,
         has_biases: bool,
         input_data_type: DataType,
         output_data_type: DataType,
@@ -177,7 +178,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
 
     fn build_self_contained(
         context: &B::Context,
-        input_dimension: usize,
+        input_dimension: u32,
         input_data_type: DataType,
         input_factors: Allocation<B>,
         inner_linear: LinearMatmul<B>,
@@ -224,7 +225,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
     fn encode_input(
         &self,
         input: LinearInput<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("linear (rht)");
@@ -245,14 +246,14 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             && self.inner_linear.select_activation_format(batch_dim, encoder.context()) == ActivationFormat::Int8
         {
             let activation_group_size = quantized.activation_group_size();
-            let scale_groups_per_row = self.input_dimension.div_ceil(activation_group_size as usize);
+            let scale_groups_per_row = self.input_dimension.div_ceil(activation_group_size);
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, scale_groups_per_row], DataType::F32))?;
             let mut group_sums = quantized
                 .sum_group_size()
-                .map(|group_size| self.input_dimension.div_ceil(group_size as usize))
+                .map(|group_size| self.input_dimension.div_ceil(group_size))
                 .map(|groups| encoder.allocate_scratch(size_for_shape(&[batch_dim, groups], DataType::I32)))
                 .transpose()?;
 
@@ -289,13 +290,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 ..
             } => transform,
         };
-        full_precision.encode_fp_in_place(
-            &mut input,
-            &self.input_factors,
-            batch_dim,
-            self.input_dimension,
-            encoder,
-        );
+        full_precision.encode_fp_in_place(&mut input, &self.input_factors, batch_dim, self.input_dimension, encoder);
         let output = self.inner_linear.encode(input, batch_dim, encoder)?;
 
         encoder.pop_debug_group();

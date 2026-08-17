@@ -64,15 +64,13 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         quant_method: QuantizationMethod,
         seed: u64,
     ) -> Self {
-        let num_groups_k = k.div_ceil(group_size) as usize;
-        let (rows, inner, columns) = (m as usize, k as usize, n as usize);
+        let num_groups_k = k.div_ceil(group_size);
         let mut rng = SmallRng::seed_from_u64(seed);
 
-        let w_packed: Vec<u32> =
-            (0..columns * inner * bits as usize / 32).map(|_| rng.random_range(0..u32::MAX)).collect();
+        let w_packed: Vec<u32> = (0..(n * k * bits / 32) as usize).map(|_| rng.random_range(0..u32::MAX)).collect();
         let scales: Vec<T> =
-            (0..columns * num_groups_k).map(|_| T::from(rng.random_range(0.01f32..0.3f32)).unwrap()).collect();
-        let x: Vec<T> = (0..rows * inner).map(|_| T::from(rng.random_range(-0.3f32..0.3f32)).unwrap()).collect();
+            (0..(n * num_groups_k) as usize).map(|_| T::from(rng.random_range(0.01f32..0.3f32)).unwrap()).collect();
+        let x: Vec<T> = (0..(m * k) as usize).map(|_| T::from(rng.random_range(-0.3f32..0.3f32)).unwrap()).collect();
 
         let zp_stride = if bits == 4 {
             num_groups_k.div_ceil(2)
@@ -83,13 +81,13 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             QuantizationMethod::ScaleBias => (
                 None,
                 Some(
-                    (0..columns * num_groups_k)
+                    (0..(n * num_groups_k) as usize)
                         .map(|_| T::from(rng.random_range(-0.03f32..0.03f32)).unwrap())
                         .collect(),
                 ),
             ),
             QuantizationMethod::ScaleZeroPoint => {
-                (Some((0..columns * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
+                (Some((0..(n * zp_stride) as usize).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
             },
             QuantizationMethod::ScaleSymmetric => (None, None),
         };

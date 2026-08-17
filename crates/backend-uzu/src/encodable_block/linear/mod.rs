@@ -32,7 +32,7 @@ pub trait Linear<B: Backend>: Send + Sync {
     fn encode_input(
         &self,
         input: LinearInput<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         match input {
@@ -47,7 +47,7 @@ pub trait Linear<B: Backend>: Send + Sync {
 
     fn select_activation_format(
         &self,
-        _batch_dim: usize,
+        _batch_dim: u32,
         _context: &B::Context,
     ) -> ActivationFormat {
         ActivationFormat::Bf16
@@ -181,8 +181,8 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_with_input_rht_mixed_precision<const N: usize>(
-        input_dimension: usize,
-        output_dimensions: [usize; N],
+        input_dimension: u32,
+        output_dimensions: [u32; N],
         has_biases: bool,
         context: &B::Context,
         weights_data_type: DataType,
@@ -190,7 +190,7 @@ impl<B: Backend> dyn Linear<B> {
         output_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<(Box<dyn Linear<B>>, Option<Allocation<B>>), LinearBlockError<B>> {
-        let output_dimension_sum: usize = output_dimensions.iter().sum();
+        let output_dimension_sum: u32 = output_dimensions.iter().sum();
         if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
             context,
             input_dimension,
@@ -219,14 +219,14 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_for_fused_input<const N: usize>(
-        input_dimension: usize,
-        output_dimensions: [usize; N],
+        input_dimension: u32,
+        output_dimensions: [u32; N],
         has_biases: bool,
         context: &B::Context,
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
-        let output_dimension_sum: usize = output_dimensions.iter().sum();
+        let output_dimension_sum: u32 = output_dimensions.iter().sum();
         if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
             context,
             input_dimension,
@@ -255,8 +255,8 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_with_input_rht<const N: usize>(
-        input_dimension: usize,
-        output_dimensions: [usize; N],
+        input_dimension: u32,
+        output_dimensions: [u32; N],
         has_biases: bool,
         context: &B::Context,
         data_type: DataType,

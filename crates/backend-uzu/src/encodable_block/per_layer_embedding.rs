@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 use crate::{
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{GatedActMul, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
@@ -115,18 +116,18 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let total_rows = batch_dim * self.num_layers;
         let total_elements = batch_dim * total_ple_dim;
 
-        let mut token_ple = encoder.allocate_scratch_for_shape(&[batch_dim, total_ple_dim], self.data_type)?;
+        let mut token_ple = encoder.allocate_scratch(size_for_shape(&[batch_dim, total_ple_dim], self.data_type))?;
         self.token_embedding.encode_lookup(token_ids, &mut token_ple, batch_dim, self.fused_token_scale, encoder);
 
         let mut model_projection_input =
-            encoder.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.model_dim], self.data_type))?;
         encoder.encode_copy(inner_features, .., &mut model_projection_input, ..);
         let model_projected = self.model_projection.encode(model_projection_input, batch_dim, encoder)?;
 
         let model_normed = self.projection_norm.encode(&model_projected, 0, total_rows, None, encoder)?;
 
         let mut per_layer_inputs =
-            encoder.allocate_scratch_for_shape(&[batch_dim, self.num_layers, self.ple_dim], self.data_type)?;
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.num_layers, self.ple_dim], self.data_type))?;
         self.add_scale.encode(
             Some(&token_ple),
             &model_normed,
@@ -233,7 +234,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
 
         self.residual_finalize.encode(None::<&Allocation<B>>, hidden, &mut *outputs, length, length, encoder);
 
-        let mut gate_input = encoder.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
+        let mut gate_input = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.model_dim], self.data_type))?;
         encoder.encode_copy(outputs, .., &mut gate_input, ..);
         let gate_out = self.gate.encode(gate_input, batch_dim, encoder)?;
 
@@ -243,10 +244,10 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             Some(per_layer_input),
             &mut activated,
             None,
-            self.ple_dim as u32,
-            batch_dim as u32,
-            (layer_index * self.ple_dim) as u32,
-            (self.num_layers * self.ple_dim) as u32,
+            self.ple_dim,
+            batch_dim,
+            layer_index * self.ple_dim,
+            self.num_layers * self.ple_dim,
             self.activation.act_type(),
             encoder,
         );
