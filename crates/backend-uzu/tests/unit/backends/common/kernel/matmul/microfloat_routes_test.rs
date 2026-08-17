@@ -14,7 +14,7 @@ use crate::{
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
     },
 };
 
@@ -38,7 +38,7 @@ fn packed_codes() -> Vec<u8> {
     codes
 }
 
-fn run(group_size: u32) -> (Vec<f32>, Vec<f32>) {
+fn run<B: Backend>(group_size: u32) -> (Vec<f32>, Vec<f32>) {
     let input: Vec<f32> = (0..2 * K).map(|index| (index % 11) as f32 * 0.1 - 0.4).collect();
     let codes = packed_codes();
     let scales = vec![127u8; EXPERTS * N * K / group_size as usize];
@@ -56,22 +56,18 @@ fn run(group_size: u32) -> (Vec<f32>, Vec<f32>) {
     )
     .unwrap();
 
-    let context = <Cpu as Backend>::Context::new().expect("create CPU context");
-    let input_alloc = alloc_allocation_with_data::<Cpu, f32>(context.as_ref(), &input);
-    let codes_alloc = alloc_allocation_with_data::<Cpu, u8>(context.as_ref(), &codes);
-    let scales_alloc = alloc_allocation_with_data::<Cpu, u8>(context.as_ref(), &scales);
-    let global_scales_alloc = alloc_allocation_with_data::<Cpu, f32>(context.as_ref(), &global_scales);
-    let biases_alloc = alloc_allocation_with_data::<Cpu, f32>(context.as_ref(), &biases);
-    let ids_alloc = alloc_allocation_with_data::<Cpu, i32>(context.as_ref(), &expert_ids);
-    let mut output = alloc_allocation::<Cpu, f32>(context.as_ref(), ROUTES * N);
-    let mut kernel = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
-        context.as_ref(),
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-    )
-    .unwrap();
-    let mut encoder = Encoder::<Cpu>::new(context.as_ref()).unwrap();
+    let context = B::Context::new().expect("create backend context");
+    let input_alloc = alloc_allocation_with_data::<B, f32>(context.as_ref(), &input);
+    let codes_alloc = alloc_allocation_with_data::<B, u8>(context.as_ref(), &codes);
+    let scales_alloc = alloc_allocation_with_data::<B, u8>(context.as_ref(), &scales);
+    let global_scales_alloc = alloc_allocation_with_data::<B, f32>(context.as_ref(), &global_scales);
+    let biases_alloc = alloc_allocation_with_data::<B, f32>(context.as_ref(), &biases);
+    let ids_alloc = alloc_allocation_with_data::<B, i32>(context.as_ref(), &expert_ids);
+    let mut output = alloc_allocation::<B, f32>(context.as_ref(), ROUTES * N);
+    let mut kernel =
+        <B::Kernels as Kernels>::MatmulKernel::new(context.as_ref(), DataType::F32, DataType::F32, DataType::F32)
+            .unwrap();
+    let mut encoder = Encoder::<B>::new(context.as_ref()).unwrap();
     kernel
         .encode(
             MatmulArguments {
@@ -79,7 +75,7 @@ fn run(group_size: u32) -> (Vec<f32>, Vec<f32>) {
                     values: &input_alloc,
                     offset: 0,
                 },
-                b: MatmulB::<Cpu>::Microfloat {
+                b: MatmulB::<B>::Microfloat {
                     codes: &codes_alloc,
                     scales: &scales_alloc,
                     global_scales: &global_scales_alloc,
@@ -105,7 +101,7 @@ fn run(group_size: u32) -> (Vec<f32>, Vec<f32>) {
         )
         .unwrap();
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-    let actual = allocation_to_vec::<Cpu, f32>(&output);
+    let actual = allocation_to_vec::<B, f32>(&output);
 
     let mut expected = vec![0.0f32; ROUTES * N];
     for route in 0..ROUTES {
@@ -135,7 +131,11 @@ fn run(group_size: u32) -> (Vec<f32>, Vec<f32>) {
 #[uzu_test]
 fn cpu_decodes_group_16_and_32_route_banks() {
     for group_size in [16, 32] {
-        let (actual, expected) = run(group_size);
-        assert_eq_float(&expected, &actual, 1e-5, "CPU MXFP4 expert routes");
+        let (cpu, expected) = run::<Cpu>(group_size);
+        assert_eq_float(&expected, &cpu, 1e-5, "CPU MXFP4 expert routes");
+        for_each_non_cpu_backend!(|B| {
+            let (actual, _) = run::<B>(group_size);
+            assert_eq_float(&cpu, &actual, 1e-4, "Metal MXFP4 expert routes");
+        });
     }
 }

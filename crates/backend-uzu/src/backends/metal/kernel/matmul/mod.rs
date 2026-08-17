@@ -224,6 +224,37 @@ impl MatmulKernel for MatmulMetalKernel {
                 .into());
             }
         }
+        if let crate::backends::common::kernel::matmul::MatmulB::Microfloat {
+            codes,
+            scales,
+            global_scales,
+            metadata,
+        } = &arguments.b
+        {
+            let matrix_count = arguments.expert_routes.map_or(1, |routes| routes.expert_count.get());
+            if arguments.expert_routes.is_none() {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "MetalMatmul",
+                    reason: "microfloat weights require direct expert routes",
+                }
+                .into());
+            }
+            if !arguments.b_transpose
+                || arguments.b_leading_dimension.is_some()
+                || metadata.matrix_count() < matrix_count
+                || metadata.rows() != arguments.n
+                || metadata.columns() != arguments.k
+                || codes.size() < metadata.required_code_bytes()
+                || scales.size() < metadata.required_scale_bytes()
+                || global_scales.size() < metadata.matrix_count() as usize * self.weights_data_type.size_in_bytes()
+            {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "MetalMatmul",
+                    reason: "microfloat storage does not match the requested expert bank",
+                }
+                .into());
+            }
+        }
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = match self.select_dispatch(&shape, encoder.context()) {
             MatmulDispatch::Gemv(gemv) => {

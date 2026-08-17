@@ -39,6 +39,7 @@ pub(crate) struct GemvSpecialization {
     k_split: u32,
     results_per_simdgroup: u32,
     num_simdgroups: u32,
+    microfloat: bool,
     gathered: bool,
     expert_routed: bool,
     expert_bias: bool,
@@ -57,6 +58,7 @@ impl GemvSpecialization {
             return None;
         }
         let is_quant = shape.is_quant();
+        let microfloat = shape.b_microfloat.is_some();
         let bad_leading_dimension = if is_quant {
             shape.b_leading_dimension.is_some()
         } else {
@@ -111,6 +113,7 @@ impl GemvSpecialization {
             k_split: tile.k_split,
             results_per_simdgroup: tile.results_per_simdgroup,
             num_simdgroups: tile.num_simdgroups,
+            microfloat,
             gathered: shape.gathered,
             expert_routed: shape.expert_routed,
             expert_bias: shape.expert_bias,
@@ -168,6 +171,7 @@ impl GemvDispatch {
                     specialization.input_aligned,
                     specialization.results_per_simdgroup,
                     specialization.num_simdgroups,
+                    specialization.microfloat,
                     specialization.output_transform,
                     specialization.gathered,
                     specialization.expert_routed,
@@ -241,6 +245,7 @@ impl GemvDispatch {
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
                     (a, a_offset),
                     &mut *d,
                     output_bias,
@@ -261,12 +266,35 @@ impl GemvDispatch {
                 );
             },
             MatmulB::Microfloat {
+                codes,
+                scales,
+                global_scales,
                 ..
             } => {
-                return Err(MatmulError::UnsupportedRouting {
-                    path: "Gemv",
-                    reason: "microfloat Metal execution is not implemented",
-                });
+                pipeline.encode(
+                    codes,
+                    Some(scales),
+                    None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
+                    Some(global_scales),
+                    (a, a_offset),
+                    &mut *d,
+                    output_bias,
+                    rht_factors,
+                    gather_indices,
+                    expert_ids,
+                    expert_biases,
+                    k,
+                    n,
+                    m,
+                    ab_scale,
+                    group_count_x,
+                    routes_per_token,
+                    expert_count,
+                    route_inputs,
+                    soft_cap,
+                    encoder,
+                );
             },
             quant_b @ (MatmulB::ScaleBiasDequant {
                 ..
@@ -307,6 +335,7 @@ impl GemvDispatch {
                     Some(scales),
                     zero_points,
                     biases,
+                    None::<&Allocation<Metal>>,
                     (a, a_offset),
                     &mut *d,
                     output_bias,
