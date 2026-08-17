@@ -2,13 +2,11 @@ use std::mem::size_of;
 
 pub mod gemm;
 pub mod gemv;
-mod routed;
 
 pub use self::gemm::GemmKernel;
 use self::{
     gemm::{GemmPlan, GemmProblem},
     gemv::{GemvDispatch, GemvSpecialization},
-    routed::RoutedGemm,
 };
 use crate::{
     backends::{
@@ -27,7 +25,6 @@ use crate::{
 
 pub struct MatmulMetalKernel {
     gemv: GemvDispatch,
-    routed_gemm: RoutedGemm,
     pub gemm: GemmKernel,
     weights_data_type: DataType,
     input_data_type: DataType,
@@ -118,11 +115,9 @@ impl MatmulKernel for MatmulMetalKernel {
 
         let gemm = GemmKernel::new(context, weights_data_type, input_data_type, output_data_type)?;
         let gemv = GemvDispatch::new(weights_data_type, input_data_type, output_data_type);
-        let routed_gemm = RoutedGemm::new(context, weights_data_type, input_data_type, output_data_type)?;
 
         Ok(Self {
             gemv,
-            routed_gemm,
             gemm,
             weights_data_type,
             input_data_type,
@@ -334,7 +329,11 @@ impl MatmulKernel for MatmulMetalKernel {
         };
 
         if arguments.expert_routes.is_some() {
-            return self.routed_gemm.encode(arguments, encoder).map_err(MetalError::from);
+            return Err(MatmulError::UnsupportedRouting {
+                path: "MetalMatmul",
+                reason: "direct expert routes require a GEMV-compatible layout and output transform",
+            }
+            .into());
         }
         // TODO: remove after GatherGEMM is supported
         if arguments.gather_indices.is_some() {

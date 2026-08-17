@@ -212,7 +212,7 @@ fn rejection<B: Backend>(
 }
 
 #[uzu_test]
-fn backends_decode_direct_and_grouped_microfloat_routes() {
+fn backends_decode_small_and_large_microfloat_routes() {
     for (route_count, routes_per_token) in [(4, 2), (33, 3)] {
         for group_size in [16, 32] {
             for input_layout in [ExpertInput::Tokens, ExpertInput::Routes] {

@@ -170,10 +170,10 @@ fn backends_reject_oversized_expert_banks() {
 }
 
 #[uzu_test]
-fn metal_rejects_unsupported_grouped_weight_layouts() {
+fn metal_rejects_unsupported_direct_route_layouts() {
     for_each_non_cpu_backend!(|B| {
         let error = rejection::<B>(3 * 2 * 3, 3, false, None);
-        assert!(error.contains("contiguous output-input weights"), "{error}");
+        assert!(error.contains("GEMV-compatible layout"), "{error}");
     });
 }
 
@@ -287,7 +287,7 @@ fn accelerators_match_cpu_for_direct_routes() {
 }
 
 #[uzu_test]
-fn grouped_prefill_routes_remain_route_major() {
+fn large_route_batches_remain_route_major() {
     const ROUTES: usize = 33;
     const ROUTES_PER_TOKEN: u32 = 3;
     const EXPERTS: u32 = 5;
@@ -312,7 +312,7 @@ fn grouped_prefill_routes_remain_route_major() {
         for_each_non_cpu_backend!(|B| {
             let actual =
                 run::<B>(&input, &weights, &expert_ids, &biases, input_layout, ROUTES_PER_TOKEN, EXPERTS, K, N);
-            assert_eq_float(&expected, &actual, 1e-4, "private grouped expert routes");
+            assert_eq_float(&expected, &actual, 1e-4, "large direct expert routes");
         });
     }
 }

@@ -73,7 +73,7 @@ impl GemvSpecialization {
         if shape.d_transform.contains(GemmDTransform::RHT) && !shape.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) {
             return None;
         }
-        if shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > max_gemv_batch_threshold() {
+        if !shape.expert_routed && (shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > max_gemv_batch_threshold()) {
             return None;
         }
         if !is_quant {
