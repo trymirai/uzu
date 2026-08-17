@@ -23,6 +23,7 @@ fn shape(
         signed_codes: false,
         a_full_precision: true,
         gathered: false,
+        expert_routed: false,
         d_transform: GemmDTransform::empty(),
     }
 }

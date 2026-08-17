@@ -12,4 +12,4 @@ pub use error::MatmulError;
 pub use kernel::MatmulKernel;
 pub use matmul_a::MatmulA;
 pub use matmul_b::MatmulB;
-pub use routing::{A8ActivationPlan, ActivationFormat, MatmulShape};
+pub use routing::{A8ActivationPlan, ActivationFormat, ExpertInput, ExpertRoutes, MatmulShape};

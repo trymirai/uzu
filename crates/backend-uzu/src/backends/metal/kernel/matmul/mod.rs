@@ -182,6 +182,13 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        if arguments.expert_routes.is_some() {
+            return Err(MatmulError::UnsupportedRouting {
+                path: "MetalMatmul",
+                reason: "direct expert routes are not implemented",
+            }
+            .into());
+        }
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = match self.select_dispatch(&shape, encoder.context()) {
             MatmulDispatch::Gemv(gemv) => {

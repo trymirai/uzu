@@ -146,6 +146,7 @@ fn pipeline_output<B: Backend>(
                         ..MatmulDOps::none()
                     },
                     gather_indices: None,
+                    expert_routes: None,
                     m: GQA * SUFFIX,
                     n: SEQ,
                     k: HEAD_DIM,
@@ -184,6 +185,7 @@ fn pipeline_output<B: Backend>(
                     d: &mut grp_o,
                     d_transform: MatmulDOps::none(),
                     gather_indices: None,
+                    expert_routes: None,
                     m: GQA * SUFFIX,
                     n: HEAD_DIM,
                     k: SEQ,

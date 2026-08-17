@@ -1,4 +1,4 @@
-use super::{d_ops::MatmulDOps, matmul_a::MatmulA, matmul_b::MatmulB};
+use super::{d_ops::MatmulDOps, matmul_a::MatmulA, matmul_b::MatmulB, routing::ExpertRoutes};
 use crate::backends::common::{Allocation, Backend, BufferArg};
 
 pub struct MatmulArguments<'a, 'b, 'd, B: Backend, TB: BufferArg<'b, B> = &'b Allocation<B>> {
@@ -9,6 +9,7 @@ pub struct MatmulArguments<'a, 'b, 'd, B: Backend, TB: BufferArg<'b, B> = &'b Al
     pub d: &'d mut Allocation<B>,
     pub d_transform: MatmulDOps<'d, B>,
     pub gather_indices: Option<&'a Allocation<B>>,
+    pub expert_routes: Option<ExpertRoutes<'a, B>>,
     pub m: u32,
     pub n: u32,
     pub k: u32,

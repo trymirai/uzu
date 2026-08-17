@@ -89,6 +89,7 @@ fn run_gemv<'a, B: Backend, T: ArrayElement + Float>(
                     ..MatmulDOps::none()
                 },
                 gather_indices,
+                expert_routes: None,
                 m: m as u32,
                 n: n_out as u32,
                 k: k as u32,

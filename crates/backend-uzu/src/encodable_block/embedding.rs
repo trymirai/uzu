@@ -416,6 +416,7 @@ impl<B: Backend> Embedding<B> {
             d: &mut output_allocation,
             d_transform: MatmulDOps::none(),
             gather_indices: None,
+            expert_routes: None,
             m: batch_dim,
             n: self.vocab_size,
             k: self.model_dim,
@@ -515,6 +516,7 @@ impl<B: Backend> Embedding<B> {
                         ..MatmulDOps::none()
                     },
                     gather_indices: Some(token_ids),
+                    expert_routes: None,
                     m: rows,
                     n: ids_per_row,
                     k: self.model_dim,
