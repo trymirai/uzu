@@ -107,12 +107,15 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
     const uint depth = real ? frontier[uint(FrontierIdx::Depth) * frontier_capacity + slot] : 0u;
     const uint cumulative_logprob = real ? frontier[uint(FrontierIdx::PathLogprobBits) * frontier_capacity + slot] : 0u;
     const uint logprob = real ? frontier[uint(FrontierIdx::EdgeLogprobBits) * frontier_capacity + slot] : 0u;
+    const uint dflash_logprob =
+        real ? frontier[uint(FrontierIdx::EdgeDflashLogprobBits) * frontier_capacity + slot] : 0u;
 
     packed_tree[uint(TreeIdx::TokenId) * tree_slot_count + tree_slot] = token;
     packed_tree[uint(TreeIdx::ParentSlot) * tree_slot_count + tree_slot] = parent;
     packed_tree[uint(TreeIdx::Depth) * tree_slot_count + tree_slot] = depth;
     packed_tree[uint(TreeIdx::PathLogprobBits) * tree_slot_count + tree_slot] = cumulative_logprob;
     packed_tree[uint(TreeIdx::EdgeLogprobBits) * tree_slot_count + tree_slot] = logprob;
+    packed_tree[uint(TreeIdx::EdgeDflashLogprobBits) * tree_slot_count + tree_slot] = dflash_logprob;
     packed_tree[uint(TreeIdx::Valid) * tree_slot_count + tree_slot] = real ? 1u : 0u;
 
     if (real) {

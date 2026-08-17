@@ -90,10 +90,12 @@ fn insert_children<B: Backend>() -> Vec<u32> {
     let valid = alloc_allocation_with_data::<B, u32>(&context, &[1, 0, 1]);
     let ids = alloc_allocation_with_data::<B, u32>(&context, &(10..19).collect::<Vec<_>>());
     let scores = alloc_allocation_with_data::<B, f32>(&context, &[-0.1, -0.2, -0.3, 8.0, 8.0, 8.0, 0.1, 0.2, 0.3]);
+    let dflash_scores =
+        alloc_allocation_with_data::<B, f32>(&context, &[-0.4, -0.5, -0.6, 7.0, 7.0, 7.0, 0.4, 0.5, 0.6]);
     let mut frontier = alloc_allocation_with_data::<B, u32>(&context, &[42; FrontierIdx::COUNT * 16]);
     let kernel = <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel::new(&context).unwrap();
     let mut encoder = Encoder::new(context.as_ref()).unwrap();
-    kernel.encode(&tree, &metadata, &valid, &ids, &scores, &mut frontier, 16, 4, 3, 3, &mut encoder);
+    kernel.encode(&tree, &metadata, &valid, &ids, &scores, &dflash_scores, &mut frontier, 16, 4, 3, 3, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec(&frontier)
 }

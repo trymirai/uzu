@@ -6,7 +6,7 @@ mod config;
 mod encodable_block;
 mod parameters;
 mod speculators;
-mod trie;
+pub mod trie;
 mod utils;
 
 pub mod backends;

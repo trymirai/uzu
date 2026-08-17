@@ -17,8 +17,9 @@ enum class FrontierIdx : uint32_t {
   Depth = 2,
   PathLogprobBits = 3,
   EdgeLogprobBits = 4,
-  PathScoreKey = 5,
-  Active = 6,
+  EdgeDflashLogprobBits = 5,
+  PathScoreKey = 6,
+  Active = 7,
 };
 
 enum class TreeIdx : uint32_t {
@@ -27,7 +28,8 @@ enum class TreeIdx : uint32_t {
   Depth = 2,
   PathLogprobBits = 3,
   EdgeLogprobBits = 4,
-  Valid = 5,
+  EdgeDflashLogprobBits = 5,
+  Valid = 6,
 };
 
 enum class MetadataIdx : uint32_t {

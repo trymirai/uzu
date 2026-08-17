@@ -18,7 +18,7 @@ use crate::{
         batch_topology::BatchTopology,
         dflash::{DFlash, DFlashEncodeError, DFlashNewError},
         embedding::Embedding,
-        sampling::{PRng, Sampling, SamplingMethod},
+        sampling::{PRng, Sampling, SamplingMethod, gumbel_float, revidx},
         weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
@@ -186,6 +186,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     token_id: target_output_token,
                     depth: 0,
                     logprob: 0.0,
+                    dflash_logprob: 0.0,
                     child_indices: vec![1],
                 });
                 let dflash_output = self.dflash.encode_draft(
@@ -225,6 +226,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     token_id,
                     depth,
                     logprob: 0.0,
+                    dflash_logprob: 0.0,
                     child_indices: if depth < chain_length {
                         vec![depth as usize + 1]
                     } else {
@@ -263,15 +265,11 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     dflash_depth,
                     &mut encoder,
                 )?;
-                let depth_seeds = (0..weaver.max_depth())
-                    .map(|depth| prng.derive(root_position as u64 + depth as u64))
-                    .collect::<Box<[u64]>>();
                 let tree = weaver.encode_tree(
                     target_output_norm,
                     &dflash_output.draft_hidden,
                     target_embedding,
                     &dflash_output.logits,
-                    &depth_seeds,
                     target_output_token,
                     WeaverTreeShape {
                         tree_budget: shape.tree_budget,
@@ -297,13 +295,21 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             root_position: u32,
             #[cfg(grammar)] mut grammar: Option<&mut Grammar>,
             prng: &PRng,
+            vocab_size: u32,
         ) -> TrieNode {
             let node = &nodes[index];
-            let mut trie_node = TrieNode::new(
-                node.token_id as u64,
-                prng.derive(root_position as u64 + node.depth as u64),
-                node.logprob,
-            );
+            let seed = prng.derive(root_position as u64 + node.depth as u64);
+            // Verification samples a node's successor with the node's own seed, so the gumbel
+            // noise that governs this node's selection is drawn from its parent's depth seed
+            // (the same noise the weaver expanded it with). The root is always kept.
+            let gumbel = if node.depth == 0 {
+                0.0
+            } else {
+                let selection_seed = prng.derive(root_position as u64 + node.depth as u64 - 1);
+                gumbel_float(selection_seed, revidx(node.token_id, vocab_size))
+            };
+            let mut trie_node = TrieNode::new(node.token_id as u64, seed, node.logprob, gumbel);
+            trie_node.dflash_logprob = Some(node.dflash_logprob);
             for &child_index in &node.child_indices {
                 #[cfg(grammar)]
                 if let Some(grammar) = grammar.as_mut()
@@ -319,6 +325,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     #[cfg(grammar)]
                     grammar.as_deref_mut(),
                     prng,
+                    vocab_size,
                 );
 
                 #[cfg(grammar)]
@@ -338,6 +345,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             #[cfg(grammar)]
             grammar,
             prng,
+            self.config.draft_config.vocab_size,
         );
         trie.prune_to_budget(shape.tree_budget as usize);
         Ok(trie)

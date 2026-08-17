@@ -10,9 +10,9 @@ fn verify_sprout(
 
     assert_eq!(flat_trie.len(), 1);
     assert_eq!(flat_trie.index(trie_root), Some(0));
-    assert_eq!(flat_trie.index(&TrieNode::new(1, 0, 0.0)), None);
-    assert_eq!(flat_trie.index(&TrieNode::new(0, 1, 0.0)), None);
-    assert_eq!(flat_trie.index(&TrieNode::new(0, 0, 0.0)), None);
+    assert_eq!(flat_trie.index(&TrieNode::new(1, 0, 0.0, 0.0)), None);
+    assert_eq!(flat_trie.index(&TrieNode::new(0, 1, 0.0, 0.0)), None);
+    assert_eq!(flat_trie.index(&TrieNode::new(0, 0, 0.0, 0.0)), None);
     assert_eq!(flat_trie.token_ids().collect::<Vec<u64>>(), vec![0]);
     assert_eq!(flat_trie.token_subtrie_ranges().map(|node| node.height as usize).collect::<Vec<_>>(), vec![0]);
     assert_eq!(flat_trie.token_seeds().collect::<Vec<u64>>(), vec![expected_seed]);
@@ -20,7 +20,7 @@ fn verify_sprout(
 
 #[uzu_test]
 fn test_trie_manual_sprout() {
-    let trie_root = TrieNode::new(0, 0, 0.0);
+    let trie_root = TrieNode::new(0, 0, 0.0, 0.0);
 
     verify_sprout(&trie_root, 0);
 }
@@ -62,13 +62,13 @@ fn verify_stick(
 fn test_trie_manual_stick() {
     let rng = PRng::new(0);
 
-    let mut trie_stick = TrieNode::new(9, rng.derive(9), 0.0);
+    let mut trie_stick = TrieNode::new(9, rng.derive(9), 0.0, 0.0);
     for i in (1..9u64).rev() {
-        let mut trie_parent = TrieNode::new(i, rng.derive(i), 0.0);
+        let mut trie_parent = TrieNode::new(i, rng.derive(i), 0.0, 0.0);
         trie_parent.add(trie_stick).unwrap();
         trie_stick = trie_parent;
     }
-    let mut trie_root = TrieNode::new(0, rng.derive(0), 0.0);
+    let mut trie_root = TrieNode::new(0, rng.derive(0), 0.0, 0.0);
     trie_root.add(trie_stick).unwrap();
 
     verify_stick(&trie_root, &rng);
@@ -108,14 +108,14 @@ fn verify_bush(
 #[uzu_test]
 fn test_trie_manual_bush() {
     let rng = PRng::new(0);
-    let mut trie_root = TrieNode::new(0, rng.derive(0), 0.0);
+    let mut trie_root = TrieNode::new(0, rng.derive(0), 0.0, 0.0);
 
-    assert!(trie_root.add(TrieNode::new(1, rng.derive(1), 0.0)).is_ok());
-    assert!(trie_root.add(TrieNode::new(1, rng.derive(1), 0.0)).is_err());
-    assert!(trie_root.add(TrieNode::new(1, 10, 0.0)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, rng.derive(1), 0.0, 0.0)).is_ok());
+    assert!(trie_root.add(TrieNode::new(1, rng.derive(1), 0.0, 0.0)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, 10, 0.0, 0.0)).is_err());
 
-    assert!(trie_root.add(TrieNode::new(2, rng.derive(1), 0.0)).is_ok());
-    assert!(trie_root.add(TrieNode::new(3, rng.derive(1), 0.0)).is_ok());
+    assert!(trie_root.add(TrieNode::new(2, rng.derive(1), 0.0, 0.0)).is_ok());
+    assert!(trie_root.add(TrieNode::new(3, rng.derive(1), 0.0, 0.0)).is_ok());
 
     verify_bush(&trie_root, &rng);
 }
@@ -159,18 +159,18 @@ fn verify_tree(
 #[uzu_test]
 fn test_trie_manual_tree() {
     let rng = PRng::new(0);
-    let mut trie_root = TrieNode::new(0, rng.derive(0), 0.0);
+    let mut trie_root = TrieNode::new(0, rng.derive(0), 0.0, 0.0);
 
-    assert!(trie_root.add(TrieNode::new(1, rng.derive(1), 0.0)).is_ok());
-    assert!(trie_root.add(TrieNode::new(1, rng.derive(1), 0.0)).is_err());
-    assert!(trie_root.add(TrieNode::new(1, 10, 0.0)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, rng.derive(1), 0.0, 0.0)).is_ok());
+    assert!(trie_root.add(TrieNode::new(1, rng.derive(1), 0.0, 0.0)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, 10, 0.0, 0.0)).is_err());
 
-    let mut mid_b = TrieNode::new(2, rng.derive(1), 0.0);
-    assert!(mid_b.add(TrieNode::new(10, rng.derive(2), 0.0)).is_ok());
+    let mut mid_b = TrieNode::new(2, rng.derive(1), 0.0, 0.0);
+    assert!(mid_b.add(TrieNode::new(10, rng.derive(2), 0.0, 0.0)).is_ok());
 
-    let mut mid_c = TrieNode::new(3, rng.derive(1), 0.0);
-    assert!(mid_c.add(TrieNode::new(20, rng.derive(2), 0.0)).is_ok());
-    assert!(mid_c.add(TrieNode::new(21, rng.derive(2), 0.0)).is_ok());
+    let mut mid_c = TrieNode::new(3, rng.derive(1), 0.0, 0.0);
+    assert!(mid_c.add(TrieNode::new(20, rng.derive(2), 0.0, 0.0)).is_ok());
+    assert!(mid_c.add(TrieNode::new(21, rng.derive(2), 0.0, 0.0)).is_ok());
 
     assert!(trie_root.add(mid_b).is_ok());
     assert!(trie_root.add(mid_c).is_ok());
@@ -187,14 +187,14 @@ fn verify_pruned(
 }
 
 fn sample_tree() -> TrieNode {
-    let mut root = TrieNode::new(0, 0, 0.0);
-    let mut mid_a = TrieNode::new(1, 1, -0.1);
-    mid_a.add(TrieNode::new(4, 2, -0.4)).unwrap();
-    let mut mid_b = TrieNode::new(2, 1, -0.2);
-    mid_b.add(TrieNode::new(5, 2, -2.8)).unwrap();
+    let mut root = TrieNode::new(0, 0, 0.0, 0.0);
+    let mut mid_a = TrieNode::new(1, 1, -0.1, 0.0);
+    mid_a.add(TrieNode::new(4, 2, -0.4, 0.0)).unwrap();
+    let mut mid_b = TrieNode::new(2, 1, -0.2, 0.0);
+    mid_b.add(TrieNode::new(5, 2, -2.8, 0.0)).unwrap();
     root.add(mid_a).unwrap();
     root.add(mid_b).unwrap();
-    root.add(TrieNode::new(3, 1, -0.3)).unwrap();
+    root.add(TrieNode::new(3, 1, -0.3, 0.0)).unwrap();
     root
 }
 
@@ -222,12 +222,50 @@ fn test_trie_prune_to_budget() {
 
 #[uzu_test]
 fn test_trie_prune_to_budget_tie_keeps_parent() {
-    let mut root = TrieNode::new(0, 0, 0.0);
-    let mut child = TrieNode::new(1, 1, 0.0);
-    child.add(TrieNode::new(2, 2, 0.0)).unwrap();
+    let mut root = TrieNode::new(0, 0, 0.0, 0.0);
+    let mut child = TrieNode::new(1, 1, 0.0, 0.0);
+    child.add(TrieNode::new(2, 2, 0.0, 0.0)).unwrap();
     root.add(child).unwrap();
-    root.add(TrieNode::new(3, 1, 0.0)).unwrap();
+    root.add(TrieNode::new(3, 1, 0.0, 0.0)).unwrap();
 
     root.prune_to_budget(2);
     verify_pruned(&root, &[0, 1]);
+}
+
+#[uzu_test]
+fn test_trie_trace_round_trip() {
+    fn verify_trace_round_trip(node: &TrieNode) {
+        let mut bytes = Vec::new();
+        node.write_trace(&mut bytes).unwrap();
+        let decoded = TrieNode::read_trace(&mut bytes.as_slice()).unwrap();
+
+        assert_eq!(decoded.token, node.token);
+        assert_eq!(decoded.logprob, node.logprob);
+        assert_eq!(decoded.gumbel, node.gumbel);
+        assert_eq!(decoded.dflash_logprob, node.dflash_logprob);
+        assert_eq!(decoded.target_logprob, node.target_logprob);
+        assert_eq!(decoded.sampled_logprob, node.sampled_logprob);
+        assert_eq!(decoded.seed, 0);
+        assert_eq!(decoded.pruned, false);
+        assert_eq!(decoded.next.len(), node.next.len());
+        for (decoded_child, child) in decoded.next.iter().zip(&node.next) {
+            verify_trace_round_trip(child);
+            let mut child_bytes = Vec::new();
+            child.write_trace(&mut child_bytes).unwrap();
+            assert_eq!(TrieNode::read_trace(&mut child_bytes.as_slice()).unwrap().token, decoded_child.token);
+        }
+    }
+
+    let mut root = TrieNode::new(0, 42, 0.0, 0.0);
+    root.target_logprob = Some(0.0);
+    root.sampled_logprob = Some(-0.5);
+    let mut child = TrieNode::new(1, 43, -0.25, 1.5);
+    child.dflash_logprob = Some(-0.25);
+    child.target_logprob = Some(-0.3);
+    child.pruned = true;
+    child.add(TrieNode::new(2, 44, -1.0, -0.5)).unwrap();
+    root.add(child).unwrap();
+    root.add(TrieNode::new(3, 45, -2.0, 0.25)).unwrap();
+
+    verify_trace_round_trip(&root);
 }

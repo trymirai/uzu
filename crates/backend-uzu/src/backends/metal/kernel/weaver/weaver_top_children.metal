@@ -3,28 +3,9 @@
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "../common/top_k.h"
-#include "../rng.h"
 #include "weaver_frontier.h"
 
 using namespace metal;
-
-#define GUMBEL_THREADGROUP_SIZE 1024u
-#define GUMBEL_WORDS_PER_OFFSET 4u
-
-METAL_FUNC uint2 gumbel_revidx(uint logit_idx, uint vocab_size) {
-  const uint thread_idx = logit_idx % GUMBEL_THREADGROUP_SIZE;
-  const uint thread_offset = div_ceil(vocab_size, GUMBEL_THREADGROUP_SIZE * GUMBEL_WORDS_PER_OFFSET) * thread_idx;
-  const uint block_idx = logit_idx / GUMBEL_THREADGROUP_SIZE;
-  return uint2(thread_offset + block_idx / GUMBEL_WORDS_PER_OFFSET, block_idx % GUMBEL_WORDS_PER_OFFSET);
-}
-
-METAL_FUNC float gumbel_noise(uint64_t seed, uint logit_idx, uint vocab_size) {
-  const uint2 offset_word = gumbel_revidx(logit_idx, vocab_size);
-  PhiloxState rng;
-  philox_init(&rng, seed, offset_word.x);
-  const float uniform = float(rng.output[offset_word.y]) * (1.0f / 4294967296.0f);
-  return -log(-log(uniform));
-}
 
 METAL_FUNC bool weaver_better(uint score, uint token, uint index, uint best_score, uint best_token, uint best_index) {
   return score > best_score ||
@@ -35,20 +16,20 @@ PUBLIC KERNEL(WeaverTopChildren)(
     const device bfloat* residual_logits,
     const device float* candidate_logits,
     const device uint* candidate_ids,
-    const device uint64_t* depth_seeds,
-    const device uint* node_metadata,
     device uint* output_token_ids,
     device float* output_model_logprobs,
+    device float* output_dflash_logprobs,
     constant uint& rows,
     constant uint& candidates,
     constant uint& expand_width,
-    constant uint& vocab_size,
     threadgroup float reduce_float[TOP_CHILDREN_SIMDGROUPS],
     threadgroup uint reduce_score[TOP_CHILDREN_SIMDGROUPS],
     threadgroup uint reduce_token[TOP_CHILDREN_SIMDGROUPS],
     threadgroup uint reduce_index[TOP_CHILDREN_SIMDGROUPS],
     threadgroup float& logit_max,
     threadgroup float& log_sum,
+    threadgroup float& dflash_logit_max,
+    threadgroup float& dflash_log_sum,
     threadgroup uint& winner_token,
     threadgroup uint& winner_index,
     const ThreadContext thread_context,
@@ -60,8 +41,6 @@ PUBLIC KERNEL(WeaverTopChildren)(
   }
 
   const uint base = row * candidates;
-  const uint depth = node_metadata[uint(MetadataIdx::Depth) * rows + row];
-  const uint64_t seed = depth_seeds[depth];
   const uint first_index = lid;
   const uint second_index = lid + TOP_CHILDREN_THREADS;
   const bool first_valid = first_index < candidates;
@@ -70,12 +49,12 @@ PUBLIC KERNEL(WeaverTopChildren)(
       first_valid ? candidate_logits[base + first_index] + float(residual_logits[base + first_index]) : -INFINITY;
   const float second_logit =
       second_valid ? candidate_logits[base + second_index] + float(residual_logits[base + second_index]) : -INFINITY;
+  const float first_dflash_logit = first_valid ? candidate_logits[base + first_index] : -INFINITY;
+  const float second_dflash_logit = second_valid ? candidate_logits[base + second_index] : -INFINITY;
   const uint first_token = first_valid ? uint(candidate_ids[base + first_index]) : 0xffffffffu;
   const uint second_token = second_valid ? uint(candidate_ids[base + second_index]) : 0xffffffffu;
-  const uint first_score =
-      first_valid ? top_k_score_key(first_logit + gumbel_noise(seed, first_token, vocab_size)) : 0u;
-  const uint second_score =
-      second_valid ? top_k_score_key(second_logit + gumbel_noise(seed, second_token, vocab_size)) : 0u;
+  const uint first_score = first_valid ? top_k_score_key(first_logit) : 0u;
+  const uint second_score = second_valid ? top_k_score_key(second_logit) : 0u;
   bool first_active = first_valid;
   bool second_active = second_valid;
 
@@ -108,6 +87,40 @@ PUBLIC KERNEL(WeaverTopChildren)(
     const float total = simd_sum(group_value);
     if (thread_context.simd_lane_id == 0) {
       log_sum = log(total) + logit_max;
+    }
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+
+  const float dflash_local_max = fmax(first_dflash_logit, second_dflash_logit);
+  const float dflash_simd_maximum = simd_max(dflash_local_max);
+  if (thread_context.simd_lane_id == 0) {
+    reduce_float[thread_context.simdgroup_index] = dflash_simd_maximum;
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  if (thread_context.simdgroup_index == 0) {
+    const float group_value =
+        thread_context.simd_lane_id < TOP_CHILDREN_SIMDGROUPS ? reduce_float[thread_context.simd_lane_id] : -INFINITY;
+    const float maximum = simd_max(group_value);
+    if (thread_context.simd_lane_id == 0) {
+      dflash_logit_max = maximum;
+    }
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+
+  const float dflash_local_sum =
+      (first_valid ? exp(first_dflash_logit - dflash_logit_max) : 0.0f) +
+      (second_valid ? exp(second_dflash_logit - dflash_logit_max) : 0.0f);
+  const float dflash_simd_total = simd_sum(dflash_local_sum);
+  if (thread_context.simd_lane_id == 0) {
+    reduce_float[thread_context.simdgroup_index] = dflash_simd_total;
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  if (thread_context.simdgroup_index == 0) {
+    const float group_value =
+        thread_context.simd_lane_id < TOP_CHILDREN_SIMDGROUPS ? reduce_float[thread_context.simd_lane_id] : 0.0f;
+    const float total = simd_sum(group_value);
+    if (thread_context.simd_lane_id == 0) {
+      dflash_log_sum = log(total) + dflash_logit_max;
     }
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -161,6 +174,7 @@ PUBLIC KERNEL(WeaverTopChildren)(
       const float winner_logit = candidate_logits[base + winner_index] + float(residual_logits[base + winner_index]);
       output_token_ids[row * expand_width + child] = winner_token;
       output_model_logprobs[row * expand_width + child] = winner_logit - log_sum;
+      output_dflash_logprobs[row * expand_width + child] = candidate_logits[base + winner_index] - dflash_log_sum;
     }
     first_active = first_active && first_index != winner_index;
     second_active = second_active && second_index != winner_index;

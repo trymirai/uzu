@@ -10,6 +10,7 @@ pub enum FrontierIdx {
     Depth,
     PathLogprobBits,
     EdgeLogprobBits,
+    EdgeDflashLogprobBits,
     PathScoreKey,
     Active,
 }
@@ -26,6 +27,7 @@ pub enum TreeIdx {
     Depth,
     PathLogprobBits,
     EdgeLogprobBits,
+    EdgeDflashLogprobBits,
     Valid,
 }
 

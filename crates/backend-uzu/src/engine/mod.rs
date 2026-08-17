@@ -1,20 +1,23 @@
 use std::sync::Arc;
 
+use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
     backends::common::{Backend, Context},
-    engine::capture::CaptureManager,
+    engine::{capture::CaptureManager, recorder::GenerationRecorder},
 };
 
 pub mod classifier_model;
 pub mod language_model;
 
 mod capture;
+mod recorder;
 
 pub struct Engine<B: Backend> {
     context: Arc<B::Context>,
     capture_manager: Option<CaptureManager<B>>,
+    recorder: Mutex<Option<GenerationRecorder>>,
 }
 
 #[derive(Debug, Error)]
@@ -34,6 +37,7 @@ impl<B: Backend> Engine<B> {
         Ok(Arc::new(Self {
             context,
             capture_manager,
+            recorder: Mutex::new(GenerationRecorder::from_env()),
         }))
     }
 

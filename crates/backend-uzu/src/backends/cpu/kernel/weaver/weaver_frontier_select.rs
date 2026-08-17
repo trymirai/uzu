@@ -90,6 +90,7 @@ pub fn weaver_frontier_select(
         let depth = field_value(FrontierIdx::Depth);
         let cumulative_logprob = field_value(FrontierIdx::PathLogprobBits);
         let logprob = field_value(FrontierIdx::EdgeLogprobBits);
+        let dflash_logprob = field_value(FrontierIdx::EdgeDflashLogprobBits);
 
         packed_tree[TreeIdx::TokenId as usize * tree_slot_count + tree_slot] = token;
         packed_tree[TreeIdx::ParentSlot as usize * tree_slot_count + tree_slot] = if real {
@@ -100,6 +101,7 @@ pub fn weaver_frontier_select(
         packed_tree[TreeIdx::Depth as usize * tree_slot_count + tree_slot] = depth;
         packed_tree[TreeIdx::PathLogprobBits as usize * tree_slot_count + tree_slot] = cumulative_logprob;
         packed_tree[TreeIdx::EdgeLogprobBits as usize * tree_slot_count + tree_slot] = logprob;
+        packed_tree[TreeIdx::EdgeDflashLogprobBits as usize * tree_slot_count + tree_slot] = dflash_logprob;
         packed_tree[TreeIdx::Valid as usize * tree_slot_count + tree_slot] = u32::from(real);
 
         if real {

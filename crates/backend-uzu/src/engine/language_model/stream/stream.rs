@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use half::bf16;
 use shoji::traits::backend::chat_token::TokenStreamMetrics;
 
 #[cfg(grammar)]
@@ -25,7 +26,7 @@ use crate::{
         },
     },
     speculators::dflash_tfm::{DFlashTfmTreeConstructionMethod, DFlashTfmTreeShape},
-    trie::TrieNode,
+    trie::{MainStats, TrieNode},
 };
 
 enum ForwardPassChaining<B: Backend> {
@@ -86,6 +87,7 @@ struct DecodingStatePending<B: Backend> {
     hidden_features: Option<Box<[Allocation<B>]>>,
     output_norm: Option<Allocation<B>>,
     output_tokens: Allocation<B>,
+    logits: Option<Allocation<B>>,
 }
 
 enum DecodingState<B: Backend> {
@@ -94,6 +96,7 @@ enum DecodingState<B: Backend> {
     },
     ForwardPassPending(DecodingStatePending<B>),
     Accepting {
+        input_trie: TrieNode,
         full: Box<[(usize, u64, u64)]>,
         num_accepted: usize,
         hidden_features: Option<Box<[Allocation<B>]>>,
@@ -125,6 +128,7 @@ pub struct LanguageModelStream<'a, B: Backend> {
     context_ring: Option<Allocation<B>>,
     decoding_state: DecodingState<B>,
     metrics: TokenStreamMetrics,
+    print_pruned: bool,
 }
 
 impl<'a, B: Backend> LanguageModelStream<'a, B> {
@@ -334,13 +338,14 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             metrics.num_tokens_accepted += 1;
 
             DecodingState::ForwardPassPending(DecodingStatePending {
-                input_trie: TrieNode::new(0, 0, 0.0),
+                input_trie: TrieNode::new(0, 0, 0.0, 0.0),
                 full_accept: true,
                 pending,
                 capture_span,
                 hidden_features: None,
                 output_norm,
                 output_tokens: output_tokens.unwrap(),
+                logits: None,
             })
         } else {
             // TODO: this leaks previous LanguageModelStreamOptions
@@ -357,10 +362,21 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             context_ring,
             decoding_state,
             metrics,
+            print_pruned: std::env::var_os("UZU_PRINT_PRUNED").is_some(),
         })
     }
 
     fn generate(&mut self) -> Result<Option<u64>, LanguageModelStreamError<B>> {
+        let result = self.generate_inner();
+        if let Ok(Some(token)) = &result
+            && let Some(recorder) = self.model.engine.recorder.lock().as_mut()
+        {
+            recorder.record_token(*token);
+        }
+        result
+    }
+
+    fn generate_inner(&mut self) -> Result<Option<u64>, LanguageModelStreamError<B>> {
         let (mut prev_output, mut encoder): (ForwardPassChaining<B>, Option<Encoder<B>>) =
             match replace(&mut self.decoding_state, DecodingState::Invalid) {
                 DecodingState::Seeded {
@@ -380,7 +396,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         None,
                     )
                 },
-                DecodingState::ForwardPassPending(forward_pass_pending) => {
+                DecodingState::ForwardPassPending(mut forward_pass_pending) => {
                     if forward_pass_pending.full_accept {
                         self.metrics.num_tokens_returned += 1;
                         (ForwardPassChaining::InFlight(forward_pass_pending), None)
@@ -400,22 +416,59 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             #[cfg(grammar)]
                             self.options.grammar.as_mut(),
                         )?;
+                        let budget = flat_trie.len();
+                        drop(flat_trie);
+                        if let Some(logits) = &forward_pass_pending.logits {
+                            let vocab_size = self.model.vocab_size;
+                            let logits = logits.copyout::<bf16>();
+                            let rows = sampled_tokens.len();
+                            let mut lse = vec![0.0f32; rows];
+                            for (row_index, row_lse) in lse.iter_mut().enumerate() {
+                                let row = &logits[row_index * vocab_size..(row_index + 1) * vocab_size];
+                                let mut max = f32::NEG_INFINITY;
+                                let mut sum = 0.0f32;
+                                for value in row {
+                                    let value = value.to_f32();
+                                    let new_max = max.max(value);
+                                    sum = sum * (max - new_max).exp() + (value - new_max).exp();
+                                    max = new_max;
+                                }
+                                *row_lse = max + sum.ln();
+                            }
+                            forward_pass_pending.input_trie.annotate_target_logprobs(
+                                &logits,
+                                &lse,
+                                &sampled_tokens,
+                                vocab_size,
+                            );
+                        }
+                        if let Some(recorder) = self.model.engine.recorder.lock().as_mut() {
+                            recorder.record_step(
+                                self.model_state.tokens.len(),
+                                budget,
+                                &forward_pass_pending.input_trie,
+                                &full,
+                                self.model.vocab_size as u32,
+                            );
+                        }
                         let output_norm = forward_pass_pending.output_norm.map(|norm| {
-                            let row_bytes = norm.size() / flat_trie.len();
+                            let row_bytes = norm.size() / budget;
                             (norm, row_bytes)
                         });
                         self.metrics.num_tokens_accepted += full.len();
                         self.decoding_state = DecodingState::Accepting {
+                            input_trie: forward_pass_pending.input_trie,
                             full,
                             num_accepted: 0,
                             hidden_features: forward_pass_pending.hidden_features,
                             output_norm,
                             capture_span: forward_pass_pending.capture_span,
                         };
-                        return self.generate();
+                        return self.generate_inner();
                     }
                 },
                 DecodingState::Accepting {
+                    input_trie,
                     full,
                     num_accepted,
                     hidden_features,
@@ -428,6 +481,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
                     if num_accepted < full.len() - 1 {
                         self.decoding_state = DecodingState::Accepting {
+                            input_trie,
                             full,
                             num_accepted: num_accepted + 1,
                             hidden_features,
@@ -436,6 +490,15 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         };
                         return Ok(Some(output_token_id));
                     } else {
+                        input_trie.pretty_print(
+                            self.model.tokenizer(),
+                            &full.iter().map(|(index, ..)| *index).collect::<Box<[usize]>>(),
+                            full.last().map(|&(.., output_token)| output_token),
+                            self.print_pruned,
+                            Some(MainStats {
+                                vocab_size: self.model.vocab_size as u32,
+                            }),
+                        );
                         let accepted_token_indicies = full.iter().map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
                         let accepted_input_token_ids = full.iter().map(|(_, t, _)| *t).collect::<Box<[u64]>>();
                         let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
@@ -597,7 +660,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 } => (*token, None),
                 ForwardPassChaining::InFlight(pending) => (0, Some(&pending.output_tokens)),
             };
-            (TrieNode::new(token, self.model_state.prng.derive(context_length as u64), 0.0), chain_copy, true)
+            (TrieNode::new(token, self.model_state.prng.derive(context_length as u64), 0.0, 0.0), chain_copy, true)
         };
         let input_flat_trie = input_trie.linearize();
 
@@ -715,7 +778,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         drop(seeds);
         drop(bitmask);
-        drop(logits);
+
+        let logits = (!full_accept).then_some(logits);
 
         if full_accept {
             self.model_state
@@ -768,6 +832,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             },
             output_norm: decoder_output.final_hidden,
             output_tokens,
+            logits,
         });
 
         Ok(Some(
@@ -800,12 +865,47 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
             DecodingState::Seeded {
                 seed_token,
             } => Some(seed_token),
-            DecodingState::ForwardPassPending(in_flight) => {
+            DecodingState::ForwardPassPending(mut in_flight) => {
                 for pending in in_flight.pending {
                     pending.wait_until_completed().unwrap();
                 }
 
                 if !in_flight.full_accept {
+                    let bonus_token = in_flight.output_tokens.as_slice::<u32>()[0] as u64;
+                    if let Some(logits) = &in_flight.logits {
+                        let vocab_size = self.model.vocab_size;
+                        let logits = logits.copyout::<bf16>();
+                        let rows = in_flight.output_tokens.size() / DataType::U32.size_in_bytes();
+                        let mut lse = vec![0.0f32; rows];
+                        for (row_index, row_lse) in lse.iter_mut().enumerate() {
+                            let row = &logits[row_index * vocab_size..(row_index + 1) * vocab_size];
+                            let mut max = f32::NEG_INFINITY;
+                            let mut sum = 0.0f32;
+                            for value in row {
+                                let value = value.to_f32();
+                                let new_max = max.max(value);
+                                sum = sum * (max - new_max).exp() + (value - new_max).exp();
+                                max = new_max;
+                            }
+                            *row_lse = max + sum.ln();
+                        }
+                        let sampled_tokens = in_flight
+                            .output_tokens
+                            .as_slice::<u32>()
+                            .iter()
+                            .map(|x| *x as u64)
+                            .collect::<Box<[u64]>>();
+                        in_flight.input_trie.annotate_target_logprobs(&logits, &lse, &sampled_tokens, vocab_size);
+                    }
+                    in_flight.input_trie.pretty_print(
+                        self.model.tokenizer(),
+                        &[0],
+                        Some(bonus_token),
+                        self.print_pruned,
+                        Some(MainStats {
+                            vocab_size: self.model.vocab_size as u32,
+                        }),
+                    );
                     let mut encoder = Encoder::<B>::new_with_pool_name(
                         &self.model.engine.context,
                         self.allocation_pool.clone(),
@@ -829,6 +929,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                 Some(in_flight.output_tokens.as_slice::<u32>()[0] as u64)
             },
             DecodingState::Accepting {
+                input_trie,
                 full,
                 num_accepted,
                 hidden_features,
@@ -836,6 +937,20 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                 capture_span,
             } => {
                 assert!(num_accepted > 0 && num_accepted < full.len());
+
+                // The accepted path is already fully verified; the last emitted entry's output
+                // token is a real bonus only if the walk could not continue past it. Otherwise
+                // it's just the next accepted token that wasn't emitted yet.
+                let bonus_token = (num_accepted + 1 == full.len()).then(|| full[num_accepted].2);
+                input_trie.pretty_print(
+                    self.model.tokenizer(),
+                    &full.iter().take(num_accepted + 1).map(|(index, ..)| *index).collect::<Box<[usize]>>(),
+                    bonus_token,
+                    self.print_pruned,
+                    Some(MainStats {
+                        vocab_size: self.model.vocab_size as u32,
+                    }),
+                );
 
                 let mut encoder = Encoder::<B>::new_with_pool_name(
                     &self.model.engine.context,

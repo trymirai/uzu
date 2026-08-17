@@ -53,6 +53,7 @@ pub struct ProposalNode {
     pub token_id: u32,
     pub depth: u32,
     pub logprob: f32,
+    pub dflash_logprob: f32,
     pub child_indices: Vec<usize>,
 }
 
@@ -87,6 +88,7 @@ impl<B: Backend> EncodedWeaverTree<B> {
                 token_id: tree_field(TreeIdx::TokenId, slot),
                 depth: tree_field(TreeIdx::Depth, slot),
                 logprob: f32::from_bits(tree_field(TreeIdx::EdgeLogprobBits, slot)),
+                dflash_logprob: f32::from_bits(tree_field(TreeIdx::EdgeDflashLogprobBits, slot)),
                 child_indices: Vec::new(),
             });
         }
@@ -103,6 +105,7 @@ impl<B: Backend> EncodedWeaverTree<B> {
                 token_id: frontier_field(FrontierIdx::TokenId, slot),
                 depth: frontier_field(FrontierIdx::Depth, slot),
                 logprob: f32::from_bits(frontier_field(FrontierIdx::EdgeLogprobBits, slot)),
+                dflash_logprob: f32::from_bits(frontier_field(FrontierIdx::EdgeDflashLogprobBits, slot)),
                 child_indices: Vec::new(),
             });
         }
@@ -376,7 +379,6 @@ impl<B: Backend> Weaver<B> {
         node_valid: &mut Allocation<B>,
         node_candidate_ids: &mut Allocation<B>,
         node_candidate_logits: &mut Allocation<B>,
-        depth_seeds_buffer: &Allocation<B>,
         candidate_ids: &Allocation<B>,
         candidate_logits: &Allocation<B>,
         shape: &WeaverTreeShape,
@@ -489,18 +491,19 @@ impl<B: Backend> Weaver<B> {
         let mut child_logprobs = encoder
             .allocate_scratch(size_for_shape(&[batch_node_count, shape.expand_width], DataType::F32))
             .map_err(WeaverEncodeError::Backend)?;
+        let mut child_dflash_logprobs = encoder
+            .allocate_scratch(size_for_shape(&[batch_node_count, shape.expand_width], DataType::F32))
+            .map_err(WeaverEncodeError::Backend)?;
         self.top_children.encode(
             &logit_residuals,
             batch_candidate_logits,
             batch_candidate_ids,
-            depth_seeds_buffer,
-            &*node_metadata,
             &mut child_token_ids,
             &mut child_logprobs,
+            &mut child_dflash_logprobs,
             batch_node_count,
             self.candidate_pool_size,
             shape.expand_width,
-            target_embedding.vocab_size(),
             encoder,
         );
 
@@ -510,6 +513,7 @@ impl<B: Backend> Weaver<B> {
             &*node_valid,
             &child_token_ids,
             &child_logprobs,
+            &child_dflash_logprobs,
             frontier,
             frontier_capacity,
             tree_slot_count,
@@ -527,7 +531,6 @@ impl<B: Backend> Weaver<B> {
         draft_hidden: &Allocation<B>,
         target_embedding: &Embedding<B>,
         logits: &Allocation<B>,
-        depth_seeds: &[u64],
         root_token_id: u32,
         shape: WeaverTreeShape,
         encoder: &mut Encoder<B>,
@@ -547,7 +550,6 @@ impl<B: Backend> Weaver<B> {
             || shape.expand_width == 0
             || shape.expand_width > self.candidate_pool_size
             || tree_slot_count > FRONTIER_MAX_SLOTS / shape.expand_width
-            || depth_seeds.len() as u32 != self.max_depth
         {
             return Err(WeaverEncodeError::InvalidTreeInput);
         }
@@ -629,9 +631,6 @@ impl<B: Backend> Weaver<B> {
         let mut node_candidate_logits = encoder
             .allocate_constant_from_slice(&vec![0.0f32; (shape.expand_per_round * self.candidate_pool_size) as usize])
             .map_err(WeaverEncodeError::Backend)?;
-        let depth_seeds_buffer =
-            encoder.allocate_constant_from_slice(depth_seeds).map_err(WeaverEncodeError::Backend)?;
-
         let mut batch_start_slot = 0;
         for round in 0..shape.rounds {
             let batch_node_count = if round == 0 {
@@ -654,7 +653,6 @@ impl<B: Backend> Weaver<B> {
                 &mut node_valid,
                 &mut node_candidate_ids,
                 &mut node_candidate_logits,
-                &depth_seeds_buffer,
                 &candidate_ids,
                 &candidate_logits,
                 &shape,

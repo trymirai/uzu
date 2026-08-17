@@ -11,6 +11,7 @@ PUBLIC KERNEL(WeaverFrontierInsertChildren)(
     const device uint* node_valid,
     const device uint* child_ids,
     const device float* child_logprobs,
+    const device float* child_dflash_logprobs,
     device uint* frontier,
     constant uint& frontier_capacity,
     constant uint& tree_slot_count,
@@ -46,6 +47,8 @@ PUBLIC KERNEL(WeaverFrontierInsertChildren)(
       packed_tree[uint(TreeIdx::Depth) * tree_slot_count + parent] + 1u;
   frontier[uint(FrontierIdx::PathLogprobBits) * frontier_capacity + slot] = as_type<uint>(cumulative_logprob);
   frontier[uint(FrontierIdx::EdgeLogprobBits) * frontier_capacity + slot] = as_type<uint>(logprob);
+  frontier[uint(FrontierIdx::EdgeDflashLogprobBits) * frontier_capacity + slot] =
+      as_type<uint>(child_dflash_logprobs[row * expand_width + child]);
   frontier[uint(FrontierIdx::PathScoreKey) * frontier_capacity + slot] = top_k_score_key(cumulative_logprob);
   frontier[uint(FrontierIdx::Active) * frontier_capacity + slot] = 1u;
 }
