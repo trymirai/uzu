@@ -7,9 +7,8 @@ use crate::array::ArrayElement;
 #[kernel(MoeFinalize)]
 #[variants(T, f32, f16, bf16)]
 pub fn moe_finalize<T: ArrayElement + Float>(
-    tok2row: *const i32,
     probs: *const T,
-    y_partial: *const T,
+    route_outputs: *const T,
     y: *mut T,
     t_count: u32,
     d_model: u32,
@@ -25,20 +24,15 @@ pub fn moe_finalize<T: ArrayElement + Float>(
                 let mut acc = 0f32;
                 for kk in 0..k_input {
                     let idx = ti * k_input + kk;
-                    let row = *tok2row.add(idx);
-                    if row >= 0 {
-                        let mut prob = (*probs.add(idx)).to_f32().unwrap();
-                        if !prob.is_finite() {
-                            prob = 0.0;
-                        }
-
-                        let row_u = row as usize;
-                        let mut val = (*y_partial.add(row_u * d_model + f)).to_f32().unwrap();
-                        if !val.is_finite() {
-                            val = 0.0;
-                        }
-                        acc += prob * val;
+                    let mut prob = (*probs.add(idx)).to_f32().unwrap();
+                    if !prob.is_finite() {
+                        prob = 0.0;
                     }
+                    let mut val = (*route_outputs.add(idx * d_model + f)).to_f32().unwrap();
+                    if !val.is_finite() {
+                        val = 0.0;
+                    }
+                    acc += prob * val;
                 }
                 if !acc.is_finite() {
                     acc = 0.0;

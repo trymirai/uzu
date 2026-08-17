@@ -7,10 +7,9 @@
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(MoeFinalize)(
-    device const int* tok2row, // [T*K], -1 if dropped
-    device const T* probs,     // [T*K]
-    device const T* y_partial, // [sum_k, d_model]
-    device T* y,               // [T, d_model]
+    device const T* probs,         // [T*K]
+    device const T* route_outputs, // [T*K, d_model]
+    device T* y,                   // [T, d_model]
     constant uint& t_count,
     constant uint& d_model,
     constant uint& k_input,
@@ -32,19 +31,17 @@ PUBLIC KERNEL(MoeFinalize)(
     float acc = 0.0f;
     const uint base = t * k_input;
     for (uint k = 0; k < k_input; ++k) {
-      const int row = tok2row[base + k];
-      if (row >= 0) {
-        const ulong yidx = (ulong)(uint)row * (ulong)d_model + (ulong)f;
-        float prob = (float)probs[base + k];
-        if (!isfinite(prob)) {
-          prob = 0.0f;
-        }
-        float val = (float)y_partial[yidx];
-        if (!isfinite(val)) {
-          val = 0.0f;
-        }
-        acc = fma(prob, val, acc);
+      const uint route = base + k;
+      const ulong output_index = ulong(route) * ulong(d_model) + ulong(f);
+      float prob = (float)probs[route];
+      if (!isfinite(prob)) {
+        prob = 0.0f;
       }
+      float val = (float)route_outputs[output_index];
+      if (!isfinite(val)) {
+        val = 0.0f;
+      }
+      acc = fma(prob, val, acc);
     }
     if (!isfinite(acc)) {
       acc = 0.0f;
