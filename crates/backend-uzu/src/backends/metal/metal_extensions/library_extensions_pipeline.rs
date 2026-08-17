@@ -30,8 +30,11 @@ impl LibraryPipelineExtensions for ProtocolObject<dyn MTLLibrary> {
 
         let device = self.device();
 
-        device
-            .new_compute_pipeline_state_with_function(&function)
-            .map_err(|nserror| MetalError::CannotCreatePipelineState(nserror.to_string()))
+        device.new_compute_pipeline_state_with_function(&function).map_err(|nserror| {
+            MetalError::CannotCreatePipelineState {
+                function_name: function_name.to_owned(),
+                error: nserror.to_string(),
+            }
+        })
     }
 }
