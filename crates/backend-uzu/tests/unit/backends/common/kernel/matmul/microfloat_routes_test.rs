@@ -166,7 +166,7 @@ fn rejection<B: Backend>(
     )
     .unwrap();
     let context = B::Context::new().expect("create backend context");
-    let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), &vec![1.0; K]);
+    let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), &[1.0; K]);
     let codes = alloc_allocation_with_data::<B, u8>(context.as_ref(), &vec![0x22; metadata.required_code_bytes()]);
     let scales = alloc_allocation_with_data::<B, u8>(context.as_ref(), &vec![127; metadata.required_scale_bytes()]);
     let global_scales = alloc_allocation_with_data::<B, f32>(context.as_ref(), &vec![1.0; matrix_count as usize]);
