@@ -1,6 +1,7 @@
 #[cfg(grammar)]
 use itertools::Itertools;
 use thiserror::Error;
+use tokenizers::Tokenizer;
 
 use crate::{backends::common::gpu_types::trie::TrieNode as GpuTrieNode, encodable_block::sampling::PRng};
 #[cfg(grammar)]
@@ -153,6 +154,199 @@ impl TrieNode {
         }
 
         root
+    }
+
+    pub fn pretty_print(
+        &self,
+        tokenizer: &Tokenizer,
+        highlight: &[usize],
+    ) {
+        const GUTTER: usize = 4;
+        const HIGHLIGHT_START: &str = "\x1b[1;32m";
+        const HIGHLIGHT_END: &str = "\x1b[0m";
+
+        struct DisplayNode {
+            index: usize,
+            token_line: String,
+            prob_line: String,
+            width: usize,
+            height: usize,
+            children: Vec<DisplayNode>,
+        }
+
+        fn build(
+            node: &TrieNode,
+            tokenizer: &Tokenizer,
+            next_index: &mut usize,
+        ) -> DisplayNode {
+            let index = *next_index;
+            *next_index += 1;
+            let token = tokenizer
+                .decode(&[node.token as u32], false)
+                .ok()
+                .filter(|text| !text.is_empty())
+                .or_else(|| tokenizer.id_to_token(node.token as u32))
+                .unwrap_or_else(|| node.token.to_string());
+            let mut token_line = String::new();
+            for ch in token.chars() {
+                if ch.is_control() || (ch.is_whitespace() && ch != ' ') {
+                    token_line.extend(ch.escape_debug());
+                } else {
+                    token_line.push(ch);
+                }
+            }
+            let prob_line = format!("{:.2}%", node.logprob.exp() * 100.0);
+            let width = token_line.chars().count().max(prob_line.chars().count());
+            let children: Vec<DisplayNode> =
+                node.next.iter().map(|child| build(child, tokenizer, next_index)).collect();
+            let height = if children.is_empty() {
+                2
+            } else {
+                children.iter().map(|child| child.height).sum::<usize>() + children.len() - 1
+            };
+            DisplayNode {
+                index,
+                token_line,
+                prob_line,
+                width,
+                height,
+                children,
+            }
+        }
+
+        fn depth_widths(
+            node: &DisplayNode,
+            depth: usize,
+            widths: &mut Vec<usize>,
+        ) {
+            if widths.len() == depth {
+                widths.push(0);
+            }
+            widths[depth] = widths[depth].max(node.width);
+            for child in &node.children {
+                depth_widths(child, depth + 1, widths);
+            }
+        }
+
+        fn write_centered(
+            grid: &mut [Vec<char>],
+            row: usize,
+            col: usize,
+            text: &str,
+            width: usize,
+        ) {
+            let padding = width.saturating_sub(text.chars().count());
+            for (offset, ch) in text.chars().enumerate() {
+                grid[row][col + padding / 2 + offset] = ch;
+            }
+        }
+
+        fn render(
+            node: &DisplayNode,
+            grid: &mut Vec<Vec<char>>,
+            highlight: &[usize],
+            highlights: &mut Vec<(usize, usize, usize)>,
+            start: usize,
+            col: usize,
+            depth: usize,
+            widths: &[usize],
+        ) -> usize {
+            let anchor = start + (node.height - 2) / 2;
+            write_centered(grid, anchor, col, &node.token_line, node.width);
+            write_centered(grid, anchor + 1, col, &node.prob_line, node.width);
+            if highlight.contains(&node.index) {
+                highlights.push((anchor, col, col + node.width));
+            }
+
+            if node.children.is_empty() {
+                return anchor;
+            }
+
+            let child_col = col + widths[depth] + GUTTER;
+            let bar_col = col + widths[depth] + 1;
+            let line_start = col + node.width;
+
+            if node.children.len() == 1 {
+                for c in line_start..(child_col - 1) {
+                    grid[anchor][c] = '─';
+                }
+                grid[anchor][child_col - 1] = '▶';
+                render(&node.children[0], grid, highlight, highlights, start, child_col, depth + 1, widths);
+                return anchor;
+            }
+
+            let mut child_anchors = Vec::with_capacity(node.children.len());
+            let mut child_start = start;
+            for child in &node.children {
+                child_anchors.push(render(
+                    child,
+                    grid,
+                    highlight,
+                    highlights,
+                    child_start,
+                    child_col,
+                    depth + 1,
+                    widths,
+                ));
+                child_start += child.height + 1;
+            }
+
+            let top = child_anchors[0];
+            let bottom = *child_anchors.last().unwrap();
+            for row in top..=bottom {
+                let is_parent = row == anchor;
+                let is_child = child_anchors.contains(&row);
+                grid[row][bar_col] = match (is_parent, is_child) {
+                    (true, true) => '┼',
+                    (true, false) => '┤',
+                    (false, true) if row == top => '┌',
+                    (false, true) if row == bottom => '└',
+                    (false, true) => '├',
+                    (false, false) => '│',
+                };
+                if is_child {
+                    grid[row][bar_col + 1] = '─';
+                    grid[row][bar_col + 2] = '▶';
+                }
+            }
+            for c in line_start..bar_col {
+                grid[anchor][c] = '─';
+            }
+
+            anchor
+        }
+
+        let root = build(self, tokenizer, &mut 0);
+        let mut widths = Vec::new();
+        depth_widths(&root, 0, &mut widths);
+
+        let total_width = widths.iter().sum::<usize>() + GUTTER * widths.len().saturating_sub(1);
+        let mut grid = vec![vec![' '; total_width]; root.height];
+        let mut highlights = Vec::new();
+        render(&root, &mut grid, highlight, &mut highlights, 0, 0, 0, &widths);
+
+        let mut output = String::new();
+        for (row_index, row) in grid.iter().enumerate() {
+            let end = row.iter().rposition(|&ch| ch != ' ').map_or(0, |position| position + 1);
+            let mut spans: Vec<(usize, usize)> = highlights
+                .iter()
+                .filter(|&&(span_row, _, _)| span_row == row_index)
+                .map(|&(_, span_start, span_end)| (span_start, span_end.min(end)))
+                .collect();
+            spans.sort_unstable();
+
+            let mut cursor = 0;
+            for (start, span_end) in spans {
+                output.extend(row[cursor..start].iter());
+                output.push_str(HIGHLIGHT_START);
+                output.extend(row[start..span_end].iter());
+                output.push_str(HIGHLIGHT_END);
+                cursor = span_end;
+            }
+            output.extend(row[cursor..end].iter());
+            output.push('\n');
+        }
+        eprint!("{output}");
     }
 
     pub fn linearize(&self) -> FlatTrie<'_> {

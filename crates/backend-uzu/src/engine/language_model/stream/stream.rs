@@ -94,6 +94,7 @@ enum DecodingState<B: Backend> {
     },
     ForwardPassPending(DecodingStatePending<B>),
     Accepting {
+        input_trie: TrieNode,
         full: Box<[(usize, u64, u64)]>,
         num_accepted: usize,
         hidden_features: Option<Box<[Allocation<B>]>>,
@@ -406,6 +407,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         });
                         self.metrics.num_tokens_accepted += full.len();
                         self.decoding_state = DecodingState::Accepting {
+                            input_trie: forward_pass_pending.input_trie,
                             full,
                             num_accepted: 0,
                             hidden_features: forward_pass_pending.hidden_features,
@@ -416,6 +418,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     }
                 },
                 DecodingState::Accepting {
+                    input_trie,
                     full,
                     num_accepted,
                     hidden_features,
@@ -428,6 +431,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
                     if num_accepted < full.len() - 1 {
                         self.decoding_state = DecodingState::Accepting {
+                            input_trie,
                             full,
                             num_accepted: num_accepted + 1,
                             hidden_features,
@@ -436,6 +440,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         };
                         return Ok(Some(output_token_id));
                     } else {
+                        input_trie.pretty_print(
+                            self.model.tokenizer(),
+                            &full.iter().map(|(index, ..)| *index).collect::<Box<[usize]>>(),
+                        );
                         let accepted_token_indicies = full.iter().map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
                         let accepted_input_token_ids = full.iter().map(|(_, t, _)| *t).collect::<Box<[u64]>>();
                         let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
@@ -806,6 +814,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                 }
 
                 if !in_flight.full_accept {
+                    in_flight.input_trie.pretty_print(self.model.tokenizer(), &[0]);
                     let mut encoder = Encoder::<B>::new_with_pool_name(
                         &self.model.engine.context,
                         self.allocation_pool.clone(),
@@ -829,6 +838,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                 Some(in_flight.output_tokens.as_slice::<u32>()[0] as u64)
             },
             DecodingState::Accepting {
+                input_trie,
                 full,
                 num_accepted,
                 hidden_features,
@@ -836,6 +846,11 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                 capture_span,
             } => {
                 assert!(num_accepted > 0 && num_accepted < full.len());
+
+                input_trie.pretty_print(
+                    self.model.tokenizer(),
+                    &full.iter().take(num_accepted + 1).map(|(index, ..)| *index).collect::<Box<[usize]>>(),
+                );
 
                 let mut encoder = Encoder::<B>::new_with_pool_name(
                     &self.model.engine.context,
