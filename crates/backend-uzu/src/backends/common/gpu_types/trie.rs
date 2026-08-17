@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 
-#[derive(Clone, Copy, Debug, Zeroable, Pod)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Zeroable, Pod)]
 #[repr(C)]
 pub struct TrieNode {
     pub trie_start: u32,
