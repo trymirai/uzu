@@ -108,7 +108,7 @@ KERNEL(Gemv)(
         for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
           const uint column = tile.logical_out_row + row;
           if (column < out_vec_size) {
-            d[batch_idx * out_vec_size + column] = DT(0);
+            d[size_t(batch_idx) * size_t(out_vec_size) + size_t(column)] = DT(0);
           }
         }
       }
@@ -118,7 +118,7 @@ KERNEL(Gemv)(
     a_row = input_is_route_major ? batch_idx : batch_idx / routes_per_token;
   }
 
-  d += batch_idx * out_vec_size + tile.out_row;
+  d += size_t(batch_idx) * size_t(out_vec_size) + size_t(tile.out_row);
 
   BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED, MICROFLOAT>::
       accumulate(
@@ -155,7 +155,7 @@ KERNEL(Gemv)(
       result,
       d,
       output_bias,
-      expert_bias ? expert_biases + matrix_idx * out_vec_size : nullptr,
+      expert_bias ? expert_biases + size_t(matrix_idx) * size_t(out_vec_size) : nullptr,
       hadamard_factors,
       shared_results,
       ab_scale,

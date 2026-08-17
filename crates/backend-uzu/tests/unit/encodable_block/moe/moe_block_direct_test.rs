@@ -26,6 +26,7 @@ const MODEL_DIM: u32 = 32;
 const HIDDEN_DIM: u32 = 64;
 const EXPERTS: u32 = 4;
 const ROUTES_PER_TOKEN: u32 = 2;
+const ROUTER_SLOPES: [f32; EXPERTS as usize] = [-4.0, -3.0, 4.0, 3.0];
 
 fn config() -> MixtureOfExpertsConfig {
     serde_json::from_value(json!({
@@ -177,19 +178,23 @@ fn fixture_microfloat_weight(
 }
 
 fn independent_microfloat_output(token_count: usize) -> Vec<bf16> {
-    let route_weights = {
-        let first = 0.4f32.exp();
-        let second = 0.2f32.exp();
-        let sum = first + second;
-        [bf16::from_f32(first / sum).to_f32(), bf16::from_f32(second / sum).to_f32()]
-    };
     let input: Vec<f32> = (0..token_count * MODEL_DIM as usize)
         .map(|index| bf16::from_f32((index % 17) as f32 * 0.03 - 0.2).to_f32())
         .collect();
     let mut output = vec![0.0f32; token_count * MODEL_DIM as usize];
 
     for token in 0..token_count {
-        for (expert, route_weight) in route_weights.into_iter().enumerate() {
+        let input_first = input[token * MODEL_DIM as usize];
+        let experts = if input_first < 0.0 {
+            [0usize, 1]
+        } else {
+            [2usize, 3]
+        };
+        let logits = experts.map(|expert| input_first * ROUTER_SLOPES[expert]);
+        let denominator = logits[0].exp() + logits[1].exp();
+        let route_weights = logits.map(|logit| bf16::from_f32(logit.exp() / denominator).to_f32());
+
+        for (expert, route_weight) in experts.into_iter().zip(route_weights) {
             let mut fused_up = vec![0.0f32; (2 * HIDDEN_DIM) as usize];
             for row in 0..(2 * HIDDEN_DIM) as usize {
                 let bias =
@@ -250,7 +255,13 @@ fn microfloat_parameter_file() -> NamedTempFile {
         "router.weights.weights",
         vec![EXPERTS, MODEL_DIM],
         DataType::BF16,
-        bf16_bytes(std::iter::repeat_n(0.0, (EXPERTS * MODEL_DIM) as usize)),
+        bf16_bytes((0..EXPERTS as usize * MODEL_DIM as usize).map(|index| {
+            if index.is_multiple_of(MODEL_DIM as usize) {
+                ROUTER_SLOPES[index / MODEL_DIM as usize]
+            } else {
+                0.0
+            }
+        })),
     );
     add_tensor(
         &mut header,
@@ -258,7 +269,7 @@ fn microfloat_parameter_file() -> NamedTempFile {
         "router.biases",
         vec![EXPERTS],
         DataType::BF16,
-        bf16_bytes([0.4, 0.2, 0.0, -0.2]),
+        bf16_bytes([0.0; EXPERTS as usize]),
     );
 
     let up_code_count = (EXPERTS * 2 * HIDDEN_DIM * MODEL_DIM / 2) as usize;

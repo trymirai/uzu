@@ -47,9 +47,9 @@ struct MicrofloatBSource {
         if (out_row + row >= out_vec_size) {
           continue;
         }
-        const uint bank_row = matrix * out_vec_size + out_row + row;
-        const device uint8_t* row_codes = codes + size_t(bank_row) * size_t(code_row_stride);
-        const device uint8_t* row_scales = scales + size_t(bank_row) * size_t(scale_row_stride);
+        const size_t bank_row = size_t(matrix) * size_t(out_vec_size) + size_t(out_row) + size_t(row);
+        const device uint8_t* row_codes = codes + bank_row * size_t(code_row_stride);
+        const device uint8_t* row_scales = scales + bank_row * size_t(scale_row_stride);
         const uint exponent = row_scales[column / GROUP_SIZE];
         METAL_PRAGMA_UNROLL
         for (uint index = 0; index < values_per_thread; index++) {
@@ -73,9 +73,9 @@ struct MicrofloatBSource {
           if (out_row + row >= out_vec_size) {
             continue;
           }
-          const uint bank_row = matrix * out_vec_size + out_row + row;
-          const device uint8_t* row_codes = codes + size_t(bank_row) * size_t(code_row_stride);
-          const device uint8_t* row_scales = scales + size_t(bank_row) * size_t(scale_row_stride);
+          const size_t bank_row = size_t(matrix) * size_t(out_vec_size) + size_t(out_row) + size_t(row);
+          const device uint8_t* row_codes = codes + bank_row * size_t(code_row_stride);
+          const device uint8_t* row_scales = scales + bank_row * size_t(scale_row_stride);
           const uint exponent = row_scales[column / GROUP_SIZE];
           for (int index = 0; index < remaining; index++) {
             const uint inner = column + static_cast<uint>(index);
