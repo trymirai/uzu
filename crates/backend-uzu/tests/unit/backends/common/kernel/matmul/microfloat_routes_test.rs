@@ -150,6 +150,67 @@ fn run<B: Backend>(
     (actual, expected)
 }
 
+fn rejection<B: Backend>(
+    direct_routes: bool,
+    matrix_count: u32,
+    expert_count: u32,
+) -> String {
+    let metadata = MicrofloatMetadata::new(
+        MicrofloatFormat::Mxfp4,
+        4,
+        16,
+        MicrofloatLayout::OutputInput,
+        matrix_count,
+        N as u32,
+        K as u32,
+    )
+    .unwrap();
+    let context = B::Context::new().expect("create backend context");
+    let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), &vec![1.0; K]);
+    let codes = alloc_allocation_with_data::<B, u8>(context.as_ref(), &vec![0x22; metadata.required_code_bytes()]);
+    let scales = alloc_allocation_with_data::<B, u8>(context.as_ref(), &vec![127; metadata.required_scale_bytes()]);
+    let global_scales = alloc_allocation_with_data::<B, f32>(context.as_ref(), &vec![1.0; matrix_count as usize]);
+    let expert_ids = alloc_allocation_with_data::<B, i32>(context.as_ref(), &[0]);
+    let mut output = alloc_allocation::<B, f32>(context.as_ref(), N);
+    let mut kernel =
+        <B::Kernels as Kernels>::MatmulKernel::new(context.as_ref(), DataType::F32, DataType::F32, DataType::F32)
+            .unwrap();
+    let mut encoder = Encoder::<B>::new(context.as_ref()).unwrap();
+    kernel
+        .encode(
+            MatmulArguments {
+                a: MatmulA::FullPrecision {
+                    values: &input,
+                    offset: 0,
+                },
+                b: MatmulB::<B>::Microfloat {
+                    codes: &codes,
+                    scales: &scales,
+                    global_scales: &global_scales,
+                    metadata,
+                },
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut output,
+                d_transform: MatmulDOps::none(),
+                gather_indices: None,
+                expert_routes: direct_routes.then_some(ExpertRoutes {
+                    expert_ids: &expert_ids,
+                    routes_per_token: NonZeroU32::new(1).unwrap(),
+                    expert_count: NonZeroU32::new(expert_count).unwrap(),
+                    input: ExpertInput::Tokens,
+                    expert_biases: None,
+                }),
+                m: 1,
+                n: N as u32,
+                k: K as u32,
+            },
+            &mut encoder,
+        )
+        .expect_err("invalid microfloat routing was accepted")
+        .to_string()
+}
+
 #[uzu_test]
 fn backends_decode_direct_and_grouped_microfloat_routes() {
     for (route_count, routes_per_token) in [(4, 2), (33, 3)] {
@@ -163,5 +224,20 @@ fn backends_decode_direct_and_grouped_microfloat_routes() {
                 });
             }
         }
+    }
+}
+
+#[uzu_test]
+fn backends_reject_incomplete_microfloat_route_contracts() {
+    for (direct_routes, matrix_count, expert_count, expected) in [
+        (false, 1, 1, "microfloat weights require direct expert routes"),
+        (true, 1, 2, "microfloat storage does not match the requested expert bank"),
+    ] {
+        let error = rejection::<Cpu>(direct_routes, matrix_count, expert_count);
+        assert!(error.contains(expected), "{error}");
+        for_each_non_cpu_backend!(|B| {
+            let error = rejection::<B>(direct_routes, matrix_count, expert_count);
+            assert!(error.contains(expected), "{error}");
+        });
     }
 }

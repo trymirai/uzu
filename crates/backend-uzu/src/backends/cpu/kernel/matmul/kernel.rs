@@ -99,19 +99,29 @@ impl MatmulKernel for MatmulCpuKernel {
             global_scales,
             metadata,
         } = &arguments.b
-            && (!arguments.b_transpose
+        {
+            let Some(routes) = arguments.expert_routes else {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "CpuMatmul",
+                    reason: "microfloat weights require direct expert routes",
+                }
+                .into());
+            };
+            if !arguments.b_transpose
                 || arguments.b_leading_dimension.is_some()
+                || metadata.matrix_count() < routes.expert_count.get()
                 || metadata.rows() != arguments.n
                 || metadata.columns() != arguments.k
                 || codes.size() < metadata.required_code_bytes()
                 || scales.size() < metadata.required_scale_bytes()
-                || global_scales.size() < metadata.matrix_count() as usize * self.weights_data_type.size_in_bytes())
-        {
-            return Err(MatmulError::UnsupportedRouting {
-                path: "CpuMatmul",
-                reason: "microfloat storage does not match the requested matrix bank",
+                || global_scales.size() < metadata.matrix_count() as usize * self.weights_data_type.size_in_bytes()
+            {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "CpuMatmul",
+                    reason: "microfloat storage does not match the requested expert bank",
+                }
+                .into());
             }
-            .into());
         }
 
         let output_scale = arguments.d_transform.ab_scale;
@@ -156,7 +166,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 offset,
             } => {
                 let range = values.as_buffer_range_ref();
-                let byte_offset = range.range().start + offset * input_data_type.size_in_bytes();
+                let byte_offset = range.range().start + offset;
                 AData::FullPrecision(SendPtr(unsafe { &*range.buffer().get() }.as_ptr().wrapping_byte_add(byte_offset)))
             },
             MatmulA::Int8Symmetric {
