@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use iocraft::prelude::*;
 use shoji::types::model::Model;
@@ -45,7 +45,7 @@ fn Models(
     props: &mut ModelsProps,
     mut hooks: Hooks,
 ) -> impl Into<AnyElement<'static>> {
-    let on_event = std::mem::take(&mut props.on_event);
+    let on_event = Arc::new(std::mem::take(&mut props.on_event));
     let registry_id = props.registry_id.clone();
     let family_id = props.family_id.clone();
     let state = *hooks.use_context::<State<ApplicationState>>();
@@ -81,15 +81,12 @@ fn Models(
     let columns_padding = state.read().theme().padding_wide();
 
     let list = models_state.read().clone().unwrap_or_default();
+    let download_statuses = model_download_statuses_state.read().clone().unwrap_or_default();
     let loaded = models_state.read().is_some();
     let items: Vec<SelectorItem> = list
         .iter()
         .map(|model| {
-            let download_status = model_download_statuses_state
-                .read()
-                .as_ref()
-                .and_then(|statuses| statuses.get(&model.identifier))
-                .map(|status| status.name());
+            let download_status = download_statuses.get(&model.identifier).map(|status| status.name());
             SelectorItem {
                 title: model.name(),
                 description: download_status,
@@ -98,6 +95,36 @@ fn Models(
         })
         .collect();
     let height = (items.len() as u16).clamp(1, 5);
+
+    let on_pick = hooks.use_async_handler({
+        let engine = state.read().engine.clone();
+        move |model: Model| {
+            let engine = engine.clone();
+            let on_event = on_event.clone();
+            let mut state = state;
+            async move {
+                let download_state =
+                    engine.download_state(&model).await.unwrap_or_else(|| DownloadState::not_downloaded(0));
+                let preferences_result = {
+                    let mut app_state = state.write();
+                    app_state.model_state = Some(ModelState {
+                        model: model.clone(),
+                        download_state,
+                        session_state: None,
+                        capabilities: ModelCapabilities::default(),
+                    });
+                    let mut preferences = app_state.preferences().clone();
+                    preferences.selected_model_id = Some(model.identifier.clone());
+                    app_state.set_preferences(&preferences)
+                };
+                let result = match preferences_result {
+                    Ok(()) => format!("Model: {}", model.name()),
+                    Err(error) => format!("Model: {}, unable to save preference: {}", model.name(), error),
+                };
+                (*on_event)(FlowEvent::finish(result));
+            }
+        }
+    });
 
     element! {
         Loading(loaded: loaded) {
@@ -109,27 +136,8 @@ fn Models(
                 subtitle_color: subtitle_color,
                 columns_padding: columns_padding,
                 on_submit: move |index: usize| {
-                    let mut state = state;
                     if let Some(model) = list.get(index) {
-                        let preferences_result = {
-                            let mut app_state = state.write();
-                            app_state.model_state = Some(ModelState {
-                                model: model.clone(),
-                                download_state: DownloadState::not_downloaded(0),
-                                session_state: None,
-                                capabilities: ModelCapabilities::default(),
-                            });
-                            let mut preferences = app_state.preferences().clone();
-                            preferences.selected_model_id = Some(model.identifier.clone());
-                            app_state.set_preferences(&preferences)
-                        };
-                        let result = match preferences_result {
-                            Ok(()) => format!("Model: {}", model.name()),
-                            Err(error) => {
-                                format!("Model: {}, unable to save preference: {}", model.name(), error)
-                            },
-                        };
-                        on_event(FlowEvent::finish(result));
+                        on_pick(model.clone());
                     }
                 },
             )
