@@ -19,7 +19,7 @@ use crate::{
     data_type::DataType,
 };
 
-const DEFAULT_GEMV_MAX_BATCH: u32 = 8;
+const DEFAULT_GEMV_MAX_BATCH: u32 = 5;
 static GEMV_MAX_BATCH: OnceLock<u32> = OnceLock::new();
 
 fn max_gemv_batch_threshold() -> u32 {
