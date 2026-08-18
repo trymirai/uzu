@@ -73,7 +73,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-You can run any example via `cargo tools example` \<**typescript**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start** | **tool-calls**\>:
+You can run any example via `cargo tools example` \<**typescript**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **quick-start** | **tool-calls**\>:
 
 ### Chat
 
@@ -212,40 +212,6 @@ async function main() {
     let message = reply[0]?.message;
     let countries = structuredResponse(message?.text, CountryListType);
     console.log(countries);
-}
-
-main().catch((error) => {
-    console.error(error);
-});
-```
-
-### Classification
-
-In this example, we will use a classification model to determine whether the user's input is safe from a moderation perspective:
-
-```ts
-import { ClassificationMessage, Engine, EngineConfig } from '@trymirai/uzu';
-
-async function main() {
-    let engineConfig = EngineConfig.create();
-    let engine = await Engine.create(engineConfig);
-
-    let model = await engine.model('trymirai/chat-moderation-router');
-    if (!model) {
-        throw new Error('Model not found');
-    }
-    for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
-    }
-    console.log();
-
-    let messages = [
-        ClassificationMessage.user('Hi')
-    ];
-
-    let session = await engine.classification(model);
-    let output = await session.classify(messages);
-    console.log('Output: ', output.probabilities.values);
 }
 
 main().catch((error) => {

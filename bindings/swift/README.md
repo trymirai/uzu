@@ -72,7 +72,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-You can run any example via `cargo tools example` \<**swift**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start** | **tool-calls**\>:
+You can run any example via `cargo tools example` \<**swift**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **quick-start** | **tool-calls**\>:
 
 ### Chat
 
@@ -192,36 +192,6 @@ public func runChatStructuredOutput() async throws {
         return
     }
     print(countries)
-}
-```
-
-### Classification
-
-In this example, we will use a classification model to determine whether the user's input is safe from a moderation perspective:
-
-```swift
-import Foundation
-import Uzu
-
-public func runClassification() async throws {
-    let engine = try await Engine.create(config: .create())
-    
-    guard let model = try await engine.model(identifier: "trymirai/chat-moderation-router") else {
-        return
-    }
-    for try await update in try await engine.download(model: model).iterator() {
-        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
-        fflush(stdout)
-    }
-    print()
-    
-    let messages = [
-        ClassificationMessage.user(content: "Hi")
-    ]
-    
-    let session = try await engine.classification(model: model)
-    let output = try await session.classify(input: messages)
-    print("Output: \(output.probabilities.values)")
 }
 ```
 
