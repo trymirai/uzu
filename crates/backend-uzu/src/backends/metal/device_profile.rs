@@ -13,7 +13,7 @@ pub enum DeviceGeneration {
     Legacy, // M1 (G13) and A14 or older
     Apple8, // M2, A15/16
     Apple9, // M3/4, A17 Pro, A18
-    M5Plus, // M5 (Appl9 + MXU support)
+    M5Plus, // M5 (Apple9 + MXU support)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +43,7 @@ impl DeviceProfile {
         }
     }
 
-    // TODO: retune based on gpu core conuts
+    // TODO: retune based on gpu core counts
     pub const fn gpu_core_count(self) -> u32 {
         self.gpu_core_count
     }
