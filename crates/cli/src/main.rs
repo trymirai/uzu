@@ -11,7 +11,7 @@ mod storage;
 #[derive(Parser)]
 #[command(name = "cli", bin_name = "cli")]
 struct Cli {
-    /// Identifier of the model to start with (e.g. "Qwen/Qwen3-0.6B").
+    /// Identifier of the model to start with (e.g. "alibaba:qwen3.5:0.8b:mirai:mirai-m:4").
     #[arg(long, value_name = "MODEL")]
     model: Option<String>,
     /// Reasoning effort: disabled, default, low, medium or high.
