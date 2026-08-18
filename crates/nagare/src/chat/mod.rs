@@ -2,12 +2,14 @@
 mod bindings_napi;
 #[cfg(feature = "bindings-pyo3")]
 mod bindings_pyo3;
+mod chat_instance;
 mod error;
 pub mod message;
 pub mod token;
 
 use std::{panic::AssertUnwindSafe, sync::Arc};
 
+pub use chat_instance::{ChatInstance, ChatInstanceKind};
 pub use error::ChatSessionError;
 use futures::{FutureExt, StreamExt};
 use indexmap::IndexMap;
@@ -19,7 +21,7 @@ use shoji::{
     },
     types::{
         basic::{CancelToken, ToolCall, ToolDescription, ToolNamespace, Value},
-        model::{Model, ModelSpecialization},
+        model::Model,
         session::chat::{
             ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatReplyFinishReason,
             ChatReplyPowerStats, ChatReplySpeculatorStats, ChatReplyStats, ChatRole,
@@ -134,19 +136,28 @@ impl ChatSession {
         path: Option<String>,
         telemetry: Telemetry,
     ) -> Result<Self, ChatSessionError> {
-        if !model.specializations.contains(&ModelSpecialization::Chat {}) {
-            return Err(ChatSessionError::UnsupportedModel {});
-        }
-        let model_id = model.identifier.clone();
-        let reference = path.unwrap_or_else(|| model.identifier.clone());
+        let instance = ChatInstance::new(backend, config, model, path).await?;
+        Self::with_instance(&instance, telemetry).await
+    }
 
-        let instance = tokio::spawn(async move {
-            if let Some(token_backend) = backend.as_chat_via_token_capable() {
-                token::Session::new(token_backend, config, reference, &model).await.map(Instance::Token)
-            } else if let Some(message_backend) = backend.as_chat_via_message_capable() {
-                message::Session::new(message_backend, config, reference).await.map(Instance::Message)
-            } else {
-                Err(ChatSessionError::UnsupportedModel {})
+    pub async fn with_instance(
+        instance: &ChatInstance,
+        telemetry: Telemetry,
+    ) -> Result<Self, ChatSessionError> {
+        let model = instance.model();
+        let model_id = model.identifier.clone();
+
+        let instance = tokio::spawn({
+            let instance = instance.clone();
+            async move {
+                match instance.kind() {
+                    ChatInstanceKind::Token(shared) => {
+                        token::Session::with_instance(shared, instance.reference(), &model).await.map(Instance::Token)
+                    },
+                    ChatInstanceKind::Message(shared) => {
+                        message::Session::with_instance(shared).await.map(Instance::Message)
+                    },
+                }
             }
         })
         .await

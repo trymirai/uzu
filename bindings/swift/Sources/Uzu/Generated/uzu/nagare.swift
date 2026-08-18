@@ -506,6 +506,132 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 
+/**
+ * A loaded chat backend instance (model weights, tokenizer, configuration).
+ * Cloning is cheap and shares the underlying instance, so multiple [`ChatSession`]s
+ * can be created from one [`ChatInstance`] without loading the model again.
+ */
+public protocol ChatInstanceProtocol: AnyObject, Sendable {
+    
+    func model()  -> Model
+    
+}
+/**
+ * A loaded chat backend instance (model weights, tokenizer, configuration).
+ * Cloning is cheap and shares the underlying instance, so multiple [`ChatSession`]s
+ * can be created from one [`ChatInstance`] without loading the model again.
+ */
+open class ChatInstance: ChatInstanceProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_nagare_fn_clone_chatinstance(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_nagare_fn_free_chatinstance(handle, $0) }
+    }
+
+    
+
+    
+open func model() -> Model  {
+    return try!  FfiConverterTypeModel_lift(try! rustCall() {
+    uniffi_nagare_fn_method_chatinstance_model(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChatInstance: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ChatInstance
+
+    public static func lift(_ handle: UInt64) throws -> ChatInstance {
+        return ChatInstance(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ChatInstance) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatInstance {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ChatInstance, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatInstance_lift(_ handle: UInt64) throws -> ChatInstance {
+    return try FfiConverterTypeChatInstance.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatInstance_lower(_ value: ChatInstance) -> UInt64 {
+    return FfiConverterTypeChatInstance.lower(value)
+}
+
+
+
+
+
+
 public protocol ChatSessionProtocol: AnyObject, Sendable {
     
     func addForeignTool(tool: ForeignTool) async throws 
@@ -2665,6 +2791,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_chatsessionstream_next() != 38311) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nagare_checksum_method_chatinstance_model() != 52758) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_classificationsession_classify() != 62366) {

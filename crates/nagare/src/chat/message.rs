@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 
 use futures::{Stream, StreamExt};
 use shoji::{
@@ -13,19 +13,23 @@ use tokio_util::sync::CancellationToken;
 use crate::chat::ChatSessionError;
 
 pub struct Session {
-    instance: Box<dyn Instance>,
+    instance: Arc<dyn Instance>,
     state: Box<dyn State>,
 }
 
 impl Session {
-    pub async fn new(
+    pub async fn create_instance(
         backend: &dyn Backend,
         config: ChatConfig,
         reference: String,
-    ) -> Result<Self, ChatSessionError> {
+    ) -> Result<Arc<dyn Instance>, ChatSessionError> {
         let instance = backend.instance(reference, config).await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
+        Ok(Arc::from(instance))
+    }
+
+    pub async fn with_instance(instance: Arc<dyn Instance>) -> Result<Self, ChatSessionError> {
         let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
