@@ -5,7 +5,7 @@ jest.setTimeout(600_000);
 test('chat reply produces text', async () => {
     const engine = await Engine.create(EngineConfig.create());
 
-    const model = await engine.model('Qwen/Qwen3-0.6B');
+    const model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
     expect(model).toBeTruthy();
 
     for await (const update of await engine.download(model!)) {
