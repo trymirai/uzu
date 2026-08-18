@@ -71,7 +71,7 @@ impl MatmulMetalKernel {
             self.weights_data_type,
             self.input_data_type,
             self.output_data_type,
-            context.device_tier(),
+            context.device_profile(),
         );
         let problem = GemmProblem::new(*shape, self.weights_data_type, self.output_data_type, context.supports_mxu());
         let plan = problem.select_plan();

@@ -17,7 +17,7 @@ use crate::{
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulShape},
             },
         },
-        metal::{DeviceTier, GemmEngine, GemvDispatch, GemvSpecialization, Metal, MetalContext},
+        metal::{DeviceProfile, GemmEngine, GemvDispatch, GemvSpecialization, Metal, MetalContext},
     },
     data_type::DataType,
     tests::{
@@ -149,7 +149,7 @@ fn encode_step(
     hadamard: &ActivationTransform<Metal>,
     matmul: &mut MetalMatmul,
     gemv: &mut GemvDispatch,
-    device_tier: DeviceTier,
+    device_profile: DeviceProfile,
     encoder: &mut Encoder<Metal>,
 ) {
     match path {
@@ -204,7 +204,7 @@ fn encode_step(
                 DataType::BF16,
                 DataType::BF16,
                 DataType::BF16,
-                device_tier,
+                device_profile,
             )
             .expect("bf16 gemv specialization");
             gemv.encode(args, spec, encoder).expect("bf16 gemv encode");
@@ -215,7 +215,7 @@ fn encode_step(
 fn bench_bits(
     c: &mut Criterion,
     context: &MetalContext,
-    device_tier: DeviceTier,
+    device_profile: DeviceProfile,
     prepare: &ActivationTransform<Metal>,
     hadamard: &ActivationTransform<Metal>,
     bits: u32,
@@ -248,7 +248,7 @@ fn bench_bits(
             DataType::BF16,
             DataType::BF16,
             DataType::BF16,
-            device_tier,
+            device_profile,
         )
         .is_some();
 
@@ -271,7 +271,7 @@ fn bench_bits(
                         hadamard,
                         &mut matmul,
                         &mut gemv,
-                        device_tier,
+                        device_profile,
                         encoder,
                     );
                 });
@@ -287,12 +287,12 @@ fn bench_a8w(c: &mut Criterion) {
     if !context.supports_mxu() {
         return;
     }
-    let device_tier = context.device_tier();
+    let device_profile = context.device_profile();
 
     let prepare = ActivationTransform::<Metal>::quantize(&context, DataType::BF16, 128, None).expect("prepare kernel");
     let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, true).expect("hadamard kernel");
 
     for bits in [8u32, 4u32] {
-        bench_bits(c, &context, device_tier, &prepare, &hadamard, bits);
+        bench_bits(c, &context, device_profile, &prepare, &hadamard, bits);
     }
 }

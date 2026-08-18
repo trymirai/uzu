@@ -19,7 +19,7 @@ use parking_lot::{Mutex, MutexGuard};
 
 use super::{
     Metal,
-    device_tier::{DeviceTier, device_tier_for_device},
+    device_profile::{DeviceProfile, classify_device},
     error::MetalError,
     metal_extensions::{DeviceExt, LibraryPipelineExtensions},
 };
@@ -42,7 +42,7 @@ pub struct MetalContext {
     library_cache: Mutex<HashMap<usize, Retained<ProtocolObject<dyn MTLLibrary>>>>,
     pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: Mutex<MetalSparseHeapPool>,
-    device_tier: DeviceTier,
+    device_profile: DeviceProfile,
     weak_self: Weak<MetalContext>,
     #[cfg(test)]
     timeline_shared_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
@@ -53,8 +53,8 @@ impl MetalContext {
         self.device.supports_mxu()
     }
 
-    pub(crate) fn device_tier(&self) -> DeviceTier {
-        self.device_tier
+    pub fn device_profile(&self) -> DeviceProfile {
+        self.device_profile
     }
 
     pub(super) fn update_peak_memory_usage(&self) {
@@ -155,7 +155,12 @@ impl Context for MetalContext {
         let command_queue4 = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?;
 
         let gpu_core_count = device.gpu_core_count();
-        let device_tier = device_tier_for_device(gpu_core_count, device.as_ref());
+        let device_profile = classify_device(
+            gpu_core_count,
+            device.supports_family(metal::MTLGPUFamily::Apple8),
+            device.supports_family(metal::MTLGPUFamily::Apple9),
+            device.supports_mxu(),
+        );
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = Metal::ALLOCATION_GRANULARITY;
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
@@ -174,7 +179,7 @@ impl Context for MetalContext {
             library_cache: Mutex::new(HashMap::new()),
             pipeline_cache: Mutex::new(HashMap::new()),
             sparse_heap_pool: Mutex::new(sparse_pool),
-            device_tier,
+            device_profile,
             weak_self: weak_self.clone(),
             #[cfg(test)]
             timeline_shared_event,

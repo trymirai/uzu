@@ -2,21 +2,31 @@ use proc_macros::uzu_test;
 
 use super::*;
 
+const LARGE: DeviceProfile = DeviceProfile::new(DeviceSize::Large, DeviceGeneration::Apple9);
+const SMALL_APPLE9: DeviceProfile = DeviceProfile::new(DeviceSize::Small, DeviceGeneration::Apple9);
+const SMALL_APPLE8: DeviceProfile = DeviceProfile::new(DeviceSize::Small, DeviceGeneration::Apple8);
+const SMALL_LEGACY: DeviceProfile = DeviceProfile::new(DeviceSize::Small, DeviceGeneration::Legacy);
+const SMALL_M5: DeviceProfile = DeviceProfile::new(DeviceSize::Small, DeviceGeneration::M5Plus);
+/// M1 Max/Ultra: Legacy generation on a Large die, so the G13 rules must not fire.
+const LARGE_LEGACY: DeviceProfile = DeviceProfile::new(DeviceSize::Large, DeviceGeneration::Legacy);
+
 #[uzu_test]
 fn fp_policy_cases() {
     #[rustfmt::skip]
     let cases = [
-        (DeviceTier::Large,    1, 12288, 1536, true,  tile(8, 8, 1)),
-        (DeviceTier::Large,    1, 12288, 1536, false, tile(8, 1, 1)),
-        (DeviceTier::Large,    1,  1536,  256, true,  tile(8, 1, 1)),
-        (DeviceTier::SmallApple9, 1, 1536,  256, true,  tile(8, 2, 1)),
-        (DeviceTier::Large,    8, 12288, 1536, true,  tile(8, 1, 4)),
-        (DeviceTier::Large,    1,  1536, 12288, true, tile(8, 8, 4)),
-        (DeviceTier::SmallLegacy, 1, 262144, 1536, true, tile(8, 1, 4)),
+        (LARGE,        1, 12288, 1536, true,  tile(8, 8, 1)),
+        (LARGE,        1, 12288, 1536, false, tile(8, 1, 1)),
+        (LARGE,        1,  1536,  256, true,  tile(8, 1, 1)),
+        (SMALL_APPLE9, 1,  1536,  256, true,  tile(8, 2, 1)),
+        (LARGE,        8, 12288, 1536, true,  tile(8, 1, 4)),
+        (LARGE,        1,  1536, 12288, true, tile(8, 8, 4)),
+        (SMALL_LEGACY, 1, 262144, 1536, true, tile(8, 1, 4)),
+        (LARGE_LEGACY, 1, 262144, 1536, true, tile(8, 8, 1)),
+        (LARGE_LEGACY, 1,   6144, 1536, true, tile(8, 8, 1)),
     ];
 
-    for (tier, m, n, k, aligned, expected) in cases {
-        assert_eq!(fp_tile(m, n, k, aligned, tier), expected, "tier={tier:?} m={m} n={n} k={k}");
+    for (profile, m, n, k, aligned, expected) in cases {
+        assert_eq!(fp_tile(m, n, k, aligned, profile), expected, "profile={profile:?} m={m} n={n} k={k}");
     }
 }
 
@@ -24,18 +34,25 @@ fn fp_policy_cases() {
 fn quant_policy_cases() {
     #[rustfmt::skip]
     let cases = [
-        (DeviceTier::Large,    1,    256, 1536, 4, false, qtile(2, 1)),
-        (DeviceTier::Large,    1, 262144, 1536, 4, false, DEFAULT_TILE),
-        (DeviceTier::SmallApple9, 1, 1536,  256, 4, false, qtile(4, 4)),
-        (DeviceTier::SmallApple8, 1, 2048, 1536, 4, false, qtile(8, 2)),
-        (DeviceTier::SmallLegacy, 1,  256, 1536, 4, false, qtile(8, 2)),
-        (DeviceTier::SmallLegacy, 1, 1536,  256, 4, false, qtile(4, 8)),
-        (DeviceTier::Large,    2,   2048, 1536, 4, false, DEFAULT_TILE),
-        (DeviceTier::Large,    1,   2048, 1536, 8, false, DEFAULT_TILE),
-        (DeviceTier::Large,    1,   2560, 9216, 4, true,  qtile(4, 8)),
+        (LARGE,        1,    256, 1536, 4, false, qtile(2, 1)),
+        (LARGE,        1, 262144, 1536, 4, false, DEFAULT_TILE),
+        (SMALL_APPLE9, 1,   1536,  256, 4, false, qtile(4, 4)),
+        (SMALL_APPLE8, 1,   2048, 1536, 4, false, qtile(8, 2)),
+        (SMALL_LEGACY, 1,    256, 1536, 4, false, qtile(8, 2)),
+        (SMALL_LEGACY, 1,   1536,  256, 4, false, qtile(4, 8)),
+        (LARGE,        2,   2048, 1536, 4, false, DEFAULT_TILE),
+        (LARGE,        1,   2048, 1536, 8, false, DEFAULT_TILE),
+        (LARGE,        1,   2560, 9216, 4, true,  qtile(4, 8)),
+        // Small M5 dies classified as SmallApple9 before the split; keep those rows.
+        (SMALL_M5,     1,   1536,  256, 4, false, qtile(4, 4)),
+        (SMALL_M5,     1,    256, 1536, 4, false, qtile(4, 2)),
     ];
 
-    for (tier, m, n, k, bits, has_rht, expected) in cases {
-        assert_eq!(quant_tile(m, n, k, bits, has_rht, tier), expected, "tier={tier:?} m={m} n={n} k={k} bits={bits}");
+    for (profile, m, n, k, bits, has_rht, expected) in cases {
+        assert_eq!(
+            quant_tile(m, n, k, bits, has_rht, profile),
+            expected,
+            "profile={profile:?} m={m} n={n} k={k} bits={bits}"
+        );
     }
 }
