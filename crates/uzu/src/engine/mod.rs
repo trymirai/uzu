@@ -17,7 +17,7 @@ use indexmap::{IndexMap, IndexSet};
 use kiban::rt::RuntimeHandle;
 use nagare::{
     api::Config as ClientConfig,
-    chat::ChatSession,
+    chat::{ChatInstance, ChatSession},
     classification::ClassificationSession,
     telemetry::{Telemetry, TelemetryContext, TelemetryDevice, TelemetryEvent},
     text_to_speech::TextToSpeechSession,
@@ -494,16 +494,34 @@ impl Engine {
         model: Model,
         config: ChatConfig,
     ) -> Result<ChatSession, EngineError> {
+        let instance = self.chat_instance(model, config).await?;
+        self.chat_with_instance(&instance).await
+    }
+
+    #[bindings::export(Method)]
+    pub async fn chat_instance(
+        &self,
+        model: Model,
+        config: ChatConfig,
+    ) -> Result<ChatInstance, EngineError> {
         let path = self.model_path(&model).await;
         if let Some(backend) = model.backends.first() {
-            let backends = self.backends.lock().await;
-            let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session =
-                ChatSession::new(backend.clone(), config, model, path, self.telemetry.lock().await.clone()).await?;
-            Ok(session)
+            let backend =
+                self.backends.lock().await.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?.clone();
+            let instance = ChatInstance::new(backend, config, model, path).await?;
+            Ok(instance)
         } else {
             Err(EngineError::BackendNotFound {})
         }
+    }
+
+    #[bindings::export(Method)]
+    pub async fn chat_with_instance(
+        &self,
+        instance: &ChatInstance,
+    ) -> Result<ChatSession, EngineError> {
+        let session = ChatSession::with_instance(instance, self.telemetry.lock().await.clone()).await?;
+        Ok(session)
     }
 
     #[bindings::export(Method)]

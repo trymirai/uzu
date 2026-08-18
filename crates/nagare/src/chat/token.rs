@@ -1,6 +1,7 @@
 use std::{
     io,
     pin::Pin,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -37,7 +38,7 @@ use crate::{
 };
 
 pub struct Session {
-    instance: Box<dyn ChatTokenBackendInstance>,
+    instance: Arc<dyn ChatTokenBackendInstance>,
     state: Box<dyn State>,
     encoding: Encoding,
     input_tokens: Vec<u64>,
@@ -46,9 +47,19 @@ pub struct Session {
 }
 
 impl Session {
-    pub async fn new(
+    pub async fn create_instance(
         backend: &dyn Backend,
         config: ChatConfig,
+        reference: String,
+    ) -> Result<Arc<dyn ChatTokenBackendInstance>, ChatSessionError> {
+        let instance = backend.instance(reference, config).await.map_err(|error| ChatSessionError::Backend {
+            message: error.to_string(),
+        })?;
+        Ok(Arc::from(instance))
+    }
+
+    pub async fn with_instance(
+        instance: Arc<dyn ChatTokenBackendInstance>,
         reference: String,
         model: &Model,
     ) -> Result<Self, ChatSessionError> {
@@ -76,14 +87,9 @@ impl Session {
         };
 
         let tokenizer_location = TokenizerLocation::Directory {
-            path: reference.clone(),
+            path: reference,
             name: None,
         };
-
-        let instance =
-            backend.instance(reference.clone(), config).await.map_err(|error| ChatSessionError::Backend {
-                message: error.to_string(),
-            })?;
 
         let encoding = match encoding_config {
             Some(EncodingConfig::Hanashi {
