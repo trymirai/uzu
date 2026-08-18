@@ -1,14 +1,15 @@
 use proc_macros::uzu_test;
 
 use super::*;
+use crate::backends::metal::device_profile::DeviceGeneration;
 
-const LARGE: DeviceProfile = DeviceProfile::new(DeviceSize::Large, DeviceGeneration::Apple9);
-const SMALL_APPLE9: DeviceProfile = DeviceProfile::new(DeviceSize::Small, DeviceGeneration::Apple9);
-const SMALL_APPLE8: DeviceProfile = DeviceProfile::new(DeviceSize::Small, DeviceGeneration::Apple8);
-const SMALL_LEGACY: DeviceProfile = DeviceProfile::new(DeviceSize::Small, DeviceGeneration::Legacy);
-const SMALL_M5: DeviceProfile = DeviceProfile::new(DeviceSize::Small, DeviceGeneration::M5Plus);
-/// M1 Max/Ultra: Legacy generation on a Large die, so the G13 rules must not fire.
-const LARGE_LEGACY: DeviceProfile = DeviceProfile::new(DeviceSize::Large, DeviceGeneration::Legacy);
+const LARGE: DeviceProfile = DeviceProfile::new(40, DeviceGeneration::Apple9);
+const SMALL_APPLE9: DeviceProfile = DeviceProfile::new(10, DeviceGeneration::Apple9);
+const SMALL_APPLE8: DeviceProfile = DeviceProfile::new(10, DeviceGeneration::Apple8);
+const SMALL_LEGACY: DeviceProfile = DeviceProfile::new(8, DeviceGeneration::Legacy);
+const SMALL_M5: DeviceProfile = DeviceProfile::new(10, DeviceGeneration::M5Plus);
+/// 32-core M1 Max: Legacy generation on a Large die, so the G13 rules must not fire.
+const LARGE_LEGACY: DeviceProfile = DeviceProfile::new(32, DeviceGeneration::Legacy);
 
 #[uzu_test]
 fn fp_policy_cases() {

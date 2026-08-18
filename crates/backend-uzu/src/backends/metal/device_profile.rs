@@ -1,3 +1,4 @@
+//TODO: remove after retune with gpu core counts
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceSize {
     /// Below Max/Ultra class: base and Pro dies, plus Max parts binned under
@@ -17,23 +18,34 @@ pub enum DeviceGeneration {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeviceProfile {
-    size: DeviceSize,
+    gpu_core_count: u32,
     generation: DeviceGeneration,
 }
 
+const LARGE_MIN_GPU_CORES: u32 = 30;
+
 impl DeviceProfile {
     pub const fn new(
-        size: DeviceSize,
+        gpu_core_count: u32,
         generation: DeviceGeneration,
     ) -> Self {
         Self {
-            size,
+            gpu_core_count,
             generation,
         }
     }
 
     pub const fn size(self) -> DeviceSize {
-        self.size
+        if self.gpu_core_count >= LARGE_MIN_GPU_CORES {
+            DeviceSize::Large
+        } else {
+            DeviceSize::Small
+        }
+    }
+
+    // TODO: retune based on gpu core conuts
+    pub const fn gpu_core_count(self) -> u32 {
+        self.gpu_core_count
     }
 
     pub const fn generation(self) -> DeviceGeneration {
@@ -47,11 +59,6 @@ pub(super) fn classify_device(
     supports_apple9_family: bool,
     supports_mxu: bool,
 ) -> DeviceProfile {
-    let size = if gpu_core_count >= 30 {
-        DeviceSize::Large
-    } else {
-        DeviceSize::Small
-    };
     // MXU is probed first: M5 also reports Apple9, so a family check alone
     // cannot separate the two generations.
     let generation = if supports_mxu {
@@ -63,7 +70,7 @@ pub(super) fn classify_device(
     } else {
         DeviceGeneration::Legacy
     };
-    DeviceProfile::new(size, generation)
+    DeviceProfile::new(gpu_core_count, generation)
 }
 
 #[cfg(test)]
