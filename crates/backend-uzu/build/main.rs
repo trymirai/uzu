@@ -1,4 +1,4 @@
-use std::{env, fs, path::PathBuf, process::ExitCode};
+use std::{env, fs, path::PathBuf, process::ExitCode, time::Instant};
 
 use anyhow::Context;
 use futures::future::try_join_all;
@@ -11,9 +11,17 @@ mod cpu;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
 
+fn emit_rerun_directives() {
+    for path in
+        ["build", "src/backends/common/gpu_types", "src/backends/cpu/kernel", "src/backends/metal/kernel", "Cargo.toml"]
+    {
+        println!("cargo::rerun-if-changed={path}");
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<ExitCode> {
-    println!("cargo::rerun-if-changed=.");
+    emit_rerun_directives();
     if envs::build_always() {
         println!("cargo::rerun-if-changed=/var/empty/hack_nonexistent_file_to_always_rerun");
     }
@@ -50,8 +58,9 @@ async fn main() -> anyhow::Result<ExitCode> {
         debug_log!("cleaned caches");
     }
 
+    let gpu_types_started = Instant::now();
     let gpu_types = GpuTypes::scan().context("Failed to scan gpu types")?;
-    debug_log!("gpu_types scan done");
+    debug_log!("gpu_types scan done in {}ms", gpu_types_started.elapsed().as_millis());
 
     let enum_paths = EnumPaths::from_gpu_types(&gpu_types).context("Failed to build enum path map")?;
 

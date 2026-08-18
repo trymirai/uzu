@@ -6,7 +6,10 @@ static BUILD_CLEAN: OnceLock<bool> = OnceLock::new();
 
 fn env_flag(name: &str) -> bool {
     println!("cargo::rerun-if-env-changed={name}");
-    std::env::var(name).is_ok()
+    match std::env::var(name) {
+        Ok(value) => matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Err(_) => false,
+    }
 }
 
 pub fn build_debug() -> bool {

@@ -14,9 +14,22 @@ pub fn _debug_log(args: std::fmt::Arguments) {
     }
 }
 
+pub fn _build_warning(args: std::fmt::Arguments) {
+    if envs::build_debug() {
+        println!("cargo::warning=(metal-build) [{}ms] {}", elapsed_ms(), args);
+    }
+}
+
 #[macro_export]
 macro_rules! debug_log {
     ($($arg:tt)*) => {{
         $crate::common::logging::_debug_log(format_args!($($arg)*));
+    }};
+}
+
+#[macro_export]
+macro_rules! build_warning {
+    ($($arg:tt)*) => {{
+        $crate::common::logging::_build_warning(format_args!($($arg)*));
     }};
 }

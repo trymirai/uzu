@@ -4,6 +4,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Stdio,
+    sync::OnceLock,
 };
 
 use anyhow::{Context, bail};
@@ -129,6 +130,69 @@ impl MetalToolchain {
             extra_options,
             include_dirs,
         })
+    }
+
+    pub fn identity_hash(&self) -> anyhow::Result<blake3::Hash> {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(self.sdk.to_str().as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.std.to_str().as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.std.min_os().as_bytes());
+        hasher.update(b"\0");
+        for flag in self.opt_flags.iter() {
+            hasher.update(flag.to_string_lossy().as_bytes());
+            hasher.update(b"\0");
+        }
+        for option in self.extra_options.iter() {
+            hasher.update(option.to_string_lossy().as_bytes());
+            hasher.update(b"\0");
+        }
+        hasher.update(self.compiler_version()?.as_bytes());
+        Ok(hasher.finalize())
+    }
+
+    /// Metal frontend identity used to cache AST and dependency analysis.
+    pub fn analyzer_identity_hash(&self) -> anyhow::Result<blake3::Hash> {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"metal-analyzer\0");
+        hasher.update(self.sdk.to_str().as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.std.to_str().as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.std.min_os().as_bytes());
+        hasher.update(b"\0");
+        for option in self.extra_options.iter() {
+            hasher.update(option.to_string_lossy().as_bytes());
+            hasher.update(b"\0");
+        }
+        hasher.update(self.compiler_version()?.as_bytes());
+        Ok(hasher.finalize())
+    }
+
+    pub fn linker_identity_hash(&self) -> anyhow::Result<blake3::Hash> {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"metallib\0");
+        hasher.update(self.sdk.to_str().as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.compiler_version()?.as_bytes());
+        Ok(hasher.finalize())
+    }
+
+    fn compiler_version(&self) -> anyhow::Result<&'static str> {
+        static VERSION: OnceLock<String> = OnceLock::new();
+        if let Some(version) = VERSION.get() {
+            return Ok(version.as_str());
+        }
+        let output = std::process::Command::new("xcrun")
+            .args(["-sdk", self.sdk.to_str(), "metal", "--version"])
+            .output()
+            .context("cannot execute metal --version")?;
+        if !output.status.success() {
+            anyhow::bail!("metal --version failed: {}", String::from_utf8_lossy(&output.stderr));
+        }
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(VERSION.get_or_init(|| version).as_str())
     }
 
     fn xcrun(&self) -> Command {

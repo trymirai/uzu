@@ -1,6 +1,6 @@
 use anyhow::{Context, bail};
 use quote::quote;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::common::{
     expr_rewrite::rewrite_paths_with,
@@ -121,25 +121,25 @@ fn annotation_from_ast_node(annotation_node: MetalAstNode) -> anyhow::Result<Box
         .collect()
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum MetalBufferAccess {
     Read,
     ReadWrite,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetalConstantType {
     Scalar,
     Array(Option<Box<str>>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetalGroupsType {
     Direct(Box<str>),
     Indirect,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetalArgumentType {
     Buffer(MetalBufferAccess),
     Constant((Box<str>, MetalConstantType)),
@@ -151,7 +151,7 @@ pub enum MetalArgumentType {
     ThreadContext,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetalArgument {
     pub name: ArgumentName,
     pub c_type: Box<str>,
@@ -394,13 +394,13 @@ fn parse_argument_type(
     bail!("cannot parse c type: {}", c_type);
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetalTemplateParameterType {
     Type,
     Value(Box<str>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetalTemplateParameter {
     pub name: Box<str>,
     pub ty: MetalTemplateParameterType,
@@ -419,7 +419,7 @@ impl MetalTemplateParameter {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetalKernelInfo {
     pub public: bool,
     pub name: KernelName,
