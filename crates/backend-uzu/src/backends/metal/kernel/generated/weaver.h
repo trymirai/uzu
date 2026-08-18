@@ -47,4 +47,6 @@ static constant constexpr uint32_t FRONTIER_ENTRIES_PER_THREAD = 8;
 static constant constexpr uint32_t FRONTIER_MAX_SLOTS = 2048;
 
 static constant constexpr uint32_t FRONTIER_MAX_WIDTH = 32;
+
+static constant constexpr uint32_t PADDING_DEPTH = 0;
 } // namespace uzu::weaver

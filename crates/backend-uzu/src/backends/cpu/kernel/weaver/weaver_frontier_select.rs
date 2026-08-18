@@ -1,7 +1,7 @@
 use proc_macros::kernel;
 
 use crate::backends::common::gpu_types::weaver::{
-    FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FRONTIER_NO_WINNER, FrontierIdx, MetadataIdx, TreeIdx,
+    FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FRONTIER_NO_WINNER, FrontierIdx, MetadataIdx, PADDING_DEPTH, TreeIdx,
 };
 
 #[kernel(WeaverFrontierSelect)]
@@ -66,8 +66,11 @@ pub fn weaver_frontier_select(
             if frontier[FrontierIdx::Active as usize * frontier_capacity + slot] == 0 {
                 continue;
             }
+            let score_key = frontier[FrontierIdx::PathScoreKey as usize * frontier_capacity + slot];
+            let expandable =
+                u32::from(frontier[FrontierIdx::Depth as usize * frontier_capacity + slot] < lookahead_count);
             let next = (
-                frontier[FrontierIdx::PathScoreKey as usize * frontier_capacity + slot],
+                (expandable << 31) | (score_key >> 1),
                 frontier[FrontierIdx::ParentSlot as usize * frontier_capacity + slot],
                 frontier[FrontierIdx::TokenId as usize * frontier_capacity + slot],
             );
@@ -121,16 +124,21 @@ pub fn weaver_frontier_select(
         }
 
         node_token_ids[node] = token;
-        node_metadata[MetadataIdx::Depth as usize * node_count + node] = depth.min(max_depth - 1);
+        let expandable = depth < lookahead_count;
+        node_metadata[MetadataIdx::Depth as usize * node_count + node] = if expandable {
+            depth
+        } else {
+            PADDING_DEPTH
+        };
         node_metadata[MetadataIdx::AncestorCount as usize * node_count + node] = depth;
         node_metadata[MetadataIdx::TreeSlot as usize * node_count + node] = tree_slot as u32;
-        node_valid[node] = u32::from(real && depth < lookahead_count);
+        node_valid[node] = u32::from(real && expandable);
 
-        // Every node expands the candidate pool for its own depth.
-        let candidate_depth = (depth as usize).min(candidate_depth_count - 1);
-        let source = candidate_depth * candidates_per_depth..(candidate_depth + 1) * candidates_per_depth;
-        let destination = node * candidates_per_depth..(node + 1) * candidates_per_depth;
-        node_candidate_ids[destination.clone()].copy_from_slice(&candidate_pool_ids[source.clone()]);
-        node_candidate_logits[destination].copy_from_slice(&candidate_pool_logits[source]);
+        if (depth as usize) < candidate_depth_count {
+            let source = depth as usize * candidates_per_depth..(depth as usize + 1) * candidates_per_depth;
+            let destination = node * candidates_per_depth..(node + 1) * candidates_per_depth;
+            node_candidate_ids[destination.clone()].copy_from_slice(&candidate_pool_ids[source.clone()]);
+            node_candidate_logits[destination].copy_from_slice(&candidate_pool_logits[source]);
+        }
     }
 }

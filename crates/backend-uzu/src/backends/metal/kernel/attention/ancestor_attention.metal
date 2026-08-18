@@ -101,7 +101,7 @@ PUBLIC KERNEL(AncestorAttention)(
   // ask it directly instead of reading the buffer a second time.
   static_assert(vectors_per_head == METAL_SIMD_SIZE, "one lane per head vector");
   const uint depth = node_metadata[uint(MetadataIdx::Depth) * rows + row];
-  const uint rope_position = min(depth, max_depth - 1u) + 1u;
+  const uint rope_position = depth + 1u;
   const device float4* cosine_row = (const device float4*)(cosines + rope_position * HEAD_DIM);
   const device float4* sine_row = (const device float4*)(sines + rope_position * HEAD_DIM);
   const float4 cosine = cosine_row[lane];

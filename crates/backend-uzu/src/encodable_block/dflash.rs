@@ -93,13 +93,8 @@ impl<B: Backend> DFlash<B> {
     ) -> Result<Self, DFlashNewError<B>> {
         let mask_token_id = config.mask_token_id as u32;
         assert!(config.block_size <= ATTENTION_SUFFIX_CAPACITY, "DFlash block_size exceeds attention suffix capacity");
-        assert_eq!(
-            config.num_target_layers,
-            config.target_layer_ids.len() as u32,
-            "num_target_layers must match target_layer_ids length"
-        );
         let target_feature_projection = <dyn Linear<B>>::new(
-            config.model_dim * config.num_target_layers,
+            config.model_dim * config.target_layer_ids.len() as u32,
             [config.model_dim],
             false,
             context,
@@ -171,7 +166,7 @@ impl<B: Backend> DFlash<B> {
             max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
             mask_token_id,
-            target_feature_input_dim: config.model_dim * config.num_target_layers,
+            target_feature_input_dim: config.model_dim * config.target_layer_ids.len() as u32,
             data_type,
         })
     }
