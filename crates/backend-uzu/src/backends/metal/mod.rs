@@ -14,7 +14,7 @@ use crate::backends::common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE;
 const METAL_SIMD_SIZE: u32 = 32;
 
 const _: () = {
-    assert!(HADAMARD_TRANSFORM_BLOCK_SIZE == METAL_SIMD_SIZE as usize);
+    assert!(HADAMARD_TRANSFORM_BLOCK_SIZE == METAL_SIMD_SIZE);
 };
 
 pub use backend::Metal;

@@ -38,9 +38,9 @@ pub enum NormalizationNewError<B: Backend> {
 pub struct Normalization<B: Backend> {
     epsilon: f32,
     scale_offset: Option<f32>,
-    scales: Allocation<B>,
+    scales: Option<Allocation<B>>,
     biases: Option<Allocation<B>>,
-    element_count: usize,
+    element_count: u32,
     hadamard_factors: Option<Allocation<B>>,
     post_layer_scalar_value: f32,
     data_type: DataType,
@@ -49,7 +49,7 @@ pub struct Normalization<B: Backend> {
 
 impl<B: Backend> Normalization<B> {
     pub fn new(
-        element_count: usize,
+        element_count: u32,
         hadamard_factors: Option<Allocation<B>>,
         shortcut_mode: ShortcutMode,
         post_layer_scalar: PostLayerScalar,
@@ -64,7 +64,10 @@ impl<B: Backend> Normalization<B> {
             ShortcutMode::Add => (true, true),
         };
 
-        let scales = parameter_tree.leaf("scales")?.validate(&[element_count], DataType::F32)?.read_allocation()?;
+        let scales = config
+            .has_scale
+            .then(|| parameter_tree.leaf("scales")?.validate(&[element_count], DataType::F32)?.read_allocation())
+            .transpose()?;
         let biases = config
             .has_biases
             .then(|| parameter_tree.leaf("biases")?.validate(&[element_count], DataType::F32)?.read_allocation())
@@ -91,6 +94,7 @@ impl<B: Backend> Normalization<B> {
             scale_residual_sum,
             scale_output,
             biases.is_some(),
+            scales.is_some(),
         )
         .map_err(NormalizationNewError::Backend)?;
 
@@ -110,26 +114,26 @@ impl<B: Backend> Normalization<B> {
     pub fn encode(
         &self,
         input: &Allocation<B>,
-        row_offset: usize,
-        row_count: usize,
+        row_offset: u32,
+        row_count: u32,
         shortcut: Option<&mut Allocation<B>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("normalization");
 
-        let row_size = self.element_count * self.data_type.size_in_bytes();
-        let row_offset_bytes = row_offset * row_size;
+        let row_size = size_for_shape(&[self.element_count], self.data_type);
+        let row_offset_bytes = row_offset as usize * row_size;
         let shortcut = shortcut.map(|shortcut| (shortcut, row_offset_bytes));
-        let mut output = encoder.allocate_scratch(size_for_shape(&[row_count, self.element_count], self.data_type))?;
+        let mut output = encoder.allocate_scratch_for_shape(&[row_count, self.element_count], self.data_type)?;
         self.kernel.encode(
             Some((input, row_offset_bytes)),
-            &self.scales,
+            self.scales.as_ref(),
             self.biases.as_ref(),
             &mut output,
             shortcut,
             self.hadamard_factors.as_ref(),
-            row_count as u32,
-            self.element_count as u32,
+            row_count,
+            self.element_count,
             self.epsilon,
             self.scale_offset.unwrap_or(0.0),
             self.post_layer_scalar_value,

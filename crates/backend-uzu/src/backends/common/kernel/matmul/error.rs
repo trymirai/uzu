@@ -10,7 +10,7 @@ pub enum MatmulError<B: Backend> {
     #[error("Unsupported data type: {0:?}")]
     UnsupportedDataType(DataType),
     #[error("Unsupported group size: {0}")]
-    UnsupportedGroupSize(usize),
+    UnsupportedGroupSize(u32),
     #[error("Unsupported D-transform op {bit:?} on path {path}")]
     UnsupportedDOp {
         bit: GemmDTransform,

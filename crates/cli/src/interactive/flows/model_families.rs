@@ -65,9 +65,9 @@ fn ModelFamilies(
         }
     });
 
-    let accent_color = state.read().theme.accent_color;
-    let subtitle_color = state.read().theme.subtitle_color;
-    let columns_padding = state.read().theme.padding_wide();
+    let accent_color = state.read().theme().accent_color;
+    let subtitle_color = state.read().theme().subtitle_color;
+    let columns_padding = state.read().theme().padding_wide();
 
     let list = families.read().clone().unwrap_or_default();
     let loaded = families.read().is_some();

@@ -4,8 +4,6 @@ use std::{
     fs::File,
 };
 
-use half::{bf16, f16};
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use thiserror::Error;
 
 use super::safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata};
@@ -17,7 +15,7 @@ use crate::{
 };
 
 pub struct ParameterMetadata {
-    shape: Box<[usize]>,
+    shape: Box<[u32]>,
     data_type: DataType,
     offset: usize,
     size: usize,
@@ -27,8 +25,6 @@ pub struct ParameterMetadata {
 pub enum ParameterLoaderError<B: Backend> {
     #[error("Array with key \"{0}\" not found.")]
     KeyNotFound(String),
-    #[error("Couldn't find any arrays with prefix \"{0}\".")]
-    SubtreeNotFound(String),
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Failed to read data")]
@@ -37,14 +33,14 @@ pub enum ParameterLoaderError<B: Backend> {
     MetadataDeserializationError(#[from] serde_json::Error),
     #[error("Invalid tensor: got {shape:?} @ {data_type:?}, expected {expected_shape:?} @ {expected_data_type:?}")]
     InvalidTensor {
-        shape: Box<[usize]>,
+        shape: Box<[u32]>,
         data_type: DataType,
-        expected_shape: Box<[usize]>,
+        expected_shape: Box<[u32]>,
         expected_data_type: DataType,
     },
     #[error("Invalid tensor byte size: got {size} bytes for {shape:?} @ {data_type:?}, expected {expected_size} bytes")]
     InvalidTensorSize {
-        shape: Box<[usize]>,
+        shape: Box<[u32]>,
         data_type: DataType,
         size: usize,
         expected_size: usize,
@@ -56,17 +52,12 @@ pub enum ParameterLoaderError<B: Backend> {
     },
 }
 
-enum ParameterBytes<'a> {
-    File(&'a File),
-    Random(u64),
-}
-
 pub struct ParameterLoader<'a, B: Backend> {
     context: &'a B::Context,
     index: HashMap<String, ParameterMetadata>,
     metadata: HashMap<String, String>,
     validated_tensors: RefCell<HashSet<String>>,
-    bytes: ParameterBytes<'a>,
+    file: &'a File,
 }
 
 impl<'a, B: Backend> ParameterLoader<'a, B> {
@@ -74,23 +65,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
         file: &'a File,
         context: &'a B::Context,
     ) -> Result<Self, HeaderLoadingError> {
-        Self::from_header(file, context, ParameterBytes::File(file))
-    }
-
-    pub fn new_random(
-        header_file: &File,
-        context: &'a B::Context,
-        seed: u64,
-    ) -> Result<Self, HeaderLoadingError> {
-        Self::from_header(header_file, context, ParameterBytes::Random(seed))
-    }
-
-    fn from_header(
-        header_file: &File,
-        context: &'a B::Context,
-        bytes: ParameterBytes<'a>,
-    ) -> Result<Self, HeaderLoadingError> {
-        let (global_offset, st_metadata) = read_st_metadata(header_file)?;
+        let (global_offset, st_metadata) = read_st_metadata(file)?;
         let index = st_metadata
             .tensors
             .into_iter()
@@ -123,7 +98,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
             index,
             metadata,
             validated_tensors: RefCell::new(HashSet::new()),
-            bytes,
+            file,
         })
     }
 
@@ -144,7 +119,7 @@ pub struct ParameterLeaf<'a, 'leaf, B: Backend, const VALIDATED: bool> {
 impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, false> {
     pub fn validate(
         self,
-        expected_shape: &[usize],
+        expected_shape: &[u32],
         expected_data_type: DataType,
     ) -> Result<ParameterLeaf<'a, 'leaf, B, true>, ParameterLoaderError<B>> {
         let shape = self.metadata.shape.as_ref();
@@ -180,12 +155,7 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
         let element_count = self.metadata.size / std::mem::size_of::<T>();
         let mut data = vec![T::zeroed(); element_count];
         let destination = bytemuck::cast_slice_mut(&mut data);
-        match &self.loader.bytes {
-            ParameterBytes::File(file) => {
-                file_read_exact_at(file, destination, self.metadata.offset as u64)?;
-            },
-            ParameterBytes::Random(seed) => fill_random(destination, self.metadata.data_type, *seed),
-        }
+        file_read_exact_at(self.loader.file, destination, self.metadata.offset as u64)?;
         Ok(data.into_boxed_slice())
     }
 
@@ -203,57 +173,8 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
                 range.len(),
             )
         };
-        match &self.loader.bytes {
-            ParameterBytes::File(file) => {
-                file_read_exact_at(file, destination, self.metadata.offset as u64)?;
-            },
-            ParameterBytes::Random(seed) => fill_random(destination, self.metadata.data_type, *seed),
-        }
+        file_read_exact_at(self.loader.file, destination, self.metadata.offset as u64)?;
         Ok(allocation)
-    }
-}
-
-fn fill_random(
-    destination: &mut [u8],
-    data_type: DataType,
-    seed: u64,
-) {
-    if destination.is_empty() {
-        return;
-    }
-    let mut rng = SmallRng::seed_from_u64(seed);
-    let head_len = destination.len().min(65536);
-    let (head, tail) = destination.split_at_mut(head_len);
-    match data_type {
-        DataType::BF16 => {
-            for chunk in head.as_chunks_mut::<2>().0 {
-                *chunk = bf16::from_f32(rng.random_range(-0.1f32..0.1f32)).to_le_bytes();
-            }
-        },
-        DataType::F16 => {
-            for chunk in head.as_chunks_mut::<2>().0 {
-                *chunk = f16::from_f32(rng.random_range(-0.1f32..0.1f32)).to_le_bytes();
-            }
-        },
-        DataType::F32 => {
-            for chunk in head.as_chunks_mut::<4>().0 {
-                *chunk = rng.random_range(-0.1f32..0.1f32).to_le_bytes();
-            }
-        },
-        DataType::F64 => {
-            for chunk in head.as_chunks_mut::<8>().0 {
-                *chunk = rng.random_range(-0.1f64..0.1f64).to_le_bytes();
-            }
-        },
-        _ => {
-            for chunk in head.chunks_mut(8) {
-                let bytes = rng.random::<u64>().to_le_bytes();
-                chunk.copy_from_slice(&bytes[..chunk.len()]);
-            }
-        },
-    }
-    for target in tail.chunks_mut(head_len) {
-        target.copy_from_slice(&head[..target.len()]);
     }
 }
 
@@ -273,16 +194,10 @@ impl<'loader, B: Backend> ParameterTree<'loader, B> {
     pub fn subtree(
         &self,
         name: &str,
-    ) -> Result<Self, ParameterLoaderError<B>> {
-        let new_prefix = self.join_prefix(name);
-        let subtree_prefix = format!("{new_prefix}.");
-        if self.loader.index.keys().any(|key| key.starts_with(&subtree_prefix)) {
-            Ok(Self {
-                loader: self.loader,
-                prefix: Some(new_prefix),
-            })
-        } else {
-            Err(ParameterLoaderError::SubtreeNotFound(new_prefix))
+    ) -> Self {
+        Self {
+            loader: self.loader,
+            prefix: Some(self.join_prefix(name)),
         }
     }
 

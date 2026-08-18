@@ -27,8 +27,6 @@ fn rust_to_metal(ty: &str) -> anyhow::Result<&'static str> {
         "u64" => Ok("uint64_t"),
         "f32" => Ok("float"),
         "bool" => Ok("bool"),
-        "usize" => Ok("size_t"),
-        "isize" => Ok("ptrdiff_t"),
         unknown => anyhow::bail!("Unsupported GPU type: {unknown}"),
     }
 }

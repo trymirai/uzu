@@ -9,7 +9,7 @@ use crate::{
 
 fn assert_row_width(element_count: u32) {
     assert!(
-        (element_count as usize).is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE),
+        element_count.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE),
         "activation transform requires element_count ({element_count}) to be a multiple of {HADAMARD_TRANSFORM_BLOCK_SIZE}"
     );
 }
@@ -20,7 +20,7 @@ pub struct ActivationTransform<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationTransformKernel,
     ops: ActivationTransformOp,
     in_place: bool,
-    activation_group_size: usize,
+    activation_group_size: u32,
     sum_group_size: Option<u32>,
 }
 
@@ -30,7 +30,7 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         ops: ActivationTransformOp,
         in_place: bool,
-        activation_group_size: usize,
+        activation_group_size: u32,
         sum_group_size: Option<u32>,
     ) -> Result<Self, B::Error> {
         let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(
@@ -38,8 +38,8 @@ impl<B: Backend> ActivationTransform<B> {
             data_type,
             ops,
             in_place,
-            activation_group_size as u32,
-            sum_group_size.unwrap_or(HADAMARD_TRANSFORM_BLOCK_SIZE as u32),
+            activation_group_size,
+            sum_group_size.unwrap_or(HADAMARD_TRANSFORM_BLOCK_SIZE),
         )?;
         Ok(Self {
             kernel,
@@ -69,7 +69,7 @@ impl<B: Backend> ActivationTransform<B> {
     pub fn quantize(
         context: &B::Context,
         data_type: DataType,
-        activation_group_size: usize,
+        activation_group_size: u32,
         sum_group_size: Option<u32>,
     ) -> Result<Self, B::Error> {
         let ops = if sum_group_size.is_some() {
@@ -149,7 +149,7 @@ impl<B: Backend> ActivationTransform<B> {
         assert!(self.quantizes());
         assert_row_width(element_count);
         assert!(
-            element_count.is_multiple_of(self.activation_group_size as u32),
+            element_count.is_multiple_of(self.activation_group_size),
             "quantized activation row ({element_count}) must be a multiple of scale group ({})",
             self.activation_group_size
         );
@@ -177,7 +177,7 @@ impl<B: Backend> ActivationTransform<B> {
         self.sum_group_size.is_some()
     }
 
-    pub fn activation_group_size(&self) -> usize {
+    pub fn activation_group_size(&self) -> u32 {
         self.activation_group_size
     }
 

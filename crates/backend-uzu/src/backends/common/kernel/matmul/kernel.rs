@@ -3,7 +3,7 @@ use crate::{
         Backend, BufferArg, Encoder, Kernels,
         kernel::matmul::{
             arguments::MatmulArguments,
-            routing::{MatmulPath, MatmulShape},
+            routing::{A8ActivationPlan, ActivationFormat, MatmulShape},
         },
     },
     data_type::DataType,
@@ -25,11 +25,19 @@ pub trait MatmulKernel: Sized + Send + Sync {
         encoder: &mut Encoder<Self::Backend>,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 
-    fn select_path(
+    fn a8_activation_plan(
         &self,
-        _shape: &MatmulShape,
+        _candidate: &MatmulShape,
         _context: &<Self::Backend as Backend>::Context,
-    ) -> MatmulPath {
-        MatmulPath::Gemm
+    ) -> Option<A8ActivationPlan> {
+        None
+    }
+
+    fn select_activation_format(
+        &self,
+        _bf16_shape: &MatmulShape,
+        _context: &<Self::Backend as Backend>::Context,
+    ) -> ActivationFormat {
+        ActivationFormat::Bf16
     }
 }

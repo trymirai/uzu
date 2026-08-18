@@ -1,56 +1,37 @@
-use std::{collections::HashMap, fs::File, path::PathBuf, string::ToString};
+use std::{collections::HashMap, string::ToString, sync::Arc};
 
 use minijinja::{Environment, context};
 use minijinja_contrib::pycompat::unknown_method_callback;
-use serde_json::Value;
-use shoji::types::session::classification::{ClassificationMessage, ClassificationRole};
+use shoji::types::session::classification::{
+    ChatTokenCodecConfig, ClassificationMessage, ClassificationRole, TokenCodecConfig,
+};
 use tokenizers::Tokenizer;
 
-use crate::{
-    chat::{
-        TokenizerLocation,
-        hanashi::{
-            Error,
-            renderer::{
-                RAISE_EXCEPTION_FUNCTION_NAME, STRFTIME_NOW_FUNCTION_NAME, TEMPLATE_NAME, TOJSON_FILTER_NAME,
-                raise_exception, to_json,
-            },
+use crate::chat::{
+    hanashi::{
+        Error,
+        renderer::{
+            RAISE_EXCEPTION_FUNCTION_NAME, STRFTIME_NOW_FUNCTION_NAME, TEMPLATE_NAME, TOJSON_FILTER_NAME,
+            raise_exception, to_json,
         },
-        strftime_now,
     },
-    classification::config::{ChatTokenCodecConfig, TokenCodecConfig},
-    util::tokenizer::load_tokenizer,
+    strftime_now,
 };
 
-const CONFIG_FILE_NAME: &str = "config.json";
-
 pub struct ClassificationEncoding {
-    tokenizer: Tokenizer,
+    tokenizer: Arc<Tokenizer>,
     config: TokenCodecConfig,
 }
 
 impl ClassificationEncoding {
-    pub fn new(model_dir: &str) -> Result<Self, Error> {
-        let model_path = PathBuf::from(model_dir);
-        let config_file = File::open(model_path.join(CONFIG_FILE_NAME))
-            .map_err(|_| Error::ConfigNotFound(CONFIG_FILE_NAME.to_string()))?;
-        let config = serde_json::from_reader::<File, Value>(config_file)
-            .map_err(|_| Error::InvalidConfig(CONFIG_FILE_NAME.to_string()))?;
-        let codec_config =
-            config.get("token_codec_config").ok_or_else(|| Error::InvalidConfig(CONFIG_FILE_NAME.to_string()))?;
-        let config = TokenCodecConfig::from_value(codec_config.clone())
-            .map_err(|_| Error::InvalidConfig(CONFIG_FILE_NAME.to_string()))?;
-
-        let tokenizer_location = TokenizerLocation::Directory {
-            path: model_dir.to_string(),
-            name: None,
-        };
-        let tokenizer = load_tokenizer(&tokenizer_location).map_err(|_| Error::UnableToLoadTokenizer)?;
-
-        Ok(Self {
+    pub fn new(
+        config: TokenCodecConfig,
+        tokenizer: Arc<Tokenizer>,
+    ) -> Self {
+        Self {
             tokenizer,
             config,
-        })
+        }
     }
 
     pub fn encode(

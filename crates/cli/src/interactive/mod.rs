@@ -3,6 +3,7 @@ use comfy_table::{
     modifiers::{UTF8_ROUND_CORNERS, UTF8_SOLID_INNER_BORDERS},
     presets::UTF8_FULL,
 };
+use shoji::types::basic::ReasoningEffort;
 use uzu::engine::{Engine, EngineConfig};
 
 use crate::interactive::{
@@ -16,14 +17,19 @@ mod flows;
 mod helpers;
 mod list;
 mod model;
+mod sampling;
 mod sessions;
+mod util;
 
 const APP_IDENTIFIER: &str = "com.trymirai.cli";
 
-pub async fn run_interactive(model: Option<String>) -> anyhow::Result<()> {
+pub async fn run_interactive(
+    model: Option<String>,
+    reasoning_effort: Option<ReasoningEffort>,
+) -> anyhow::Result<()> {
     let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER.to_string());
     let application = CliApplication::create(engine_config).await?;
-    application.run_with_model(model).await?;
+    application.run_with_model(model, reasoning_effort).await?;
     Ok(())
 }
 

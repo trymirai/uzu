@@ -30,7 +30,7 @@ struct Input<InputT: ArrayElement + Float, ScaleT: ArrayElement + Float, OutputT
     head_count: u32,
     full_layer: bool,
     in_place: bool,
-    scale_free: bool,
+    has_scales: bool,
     _phantom: std::marker::PhantomData<InputT>,
 }
 
@@ -43,7 +43,7 @@ fn get_test_data<
     head_offset: u32,
     head_count: u32,
     full_layer: bool,
-    scale_free: bool,
+    has_scales: bool,
 ) -> (Input<InputT, ScaleT, OutputT>, Vec<OutputT>) {
     let batch_size = 1u32;
     let num_q_heads = 4u32;
@@ -101,7 +101,7 @@ fn get_test_data<
         head_count,
         full_layer,
         in_place: true,
-        scale_free,
+        has_scales,
         _phantom: std::marker::PhantomData,
     };
 
@@ -127,12 +127,12 @@ fn get_output<
         OutputT::data_type(),
         AccumT::data_type(),
         input.in_place,
-        input.scale_free,
+        input.has_scales,
     )
     .expect("Failed to create QKVNormKernel");
 
     let mut qkv = alloc_allocation_with_data::<B, OutputT>(&context, &input.qkv);
-    let scales = (!input.scale_free).then(|| alloc_allocation_with_data::<B, ScaleT>(&context, &input.scales));
+    let scales = input.has_scales.then(|| alloc_allocation_with_data::<B, ScaleT>(&context, &input.scales));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
@@ -176,12 +176,12 @@ fn test_internal<
     for_each_non_cpu_backend!(|B| {
         let output = get_output::<B, InputT, ScaleT, OutputT, AccumT>(input);
         let msg = format!(
-            "QKVNorm kernel test failed with backend={}, head_offset={}, head_count={}, full_layer={}, scale_free={}",
+            "QKVNorm kernel test failed with backend={}, head_offset={}, head_count={}, full_layer={}, has_scales={}",
             std::any::type_name::<B>(),
             input.head_offset,
             input.head_count,
             input.full_layer,
-            input.scale_free,
+            input.has_scales,
         );
         assert_eq_float::<OutputT>(expected, &output, eps, &msg);
     });
@@ -195,7 +195,7 @@ fn test_q_norm<
 >() {
     for full_layer in [true, false] {
         // Normalize Q heads: head_offset=0, head_count=num_q_heads(4)
-        let (input, expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(0, 4, full_layer, false);
+        let (input, expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(0, 4, full_layer, true);
         test_internal::<InputT, ScaleT, OutputT, AccumT>(&input, &expected);
     }
 }
@@ -208,18 +208,18 @@ fn test_k_norm<
 >() {
     for full_layer in [true, false] {
         // Normalize K heads: head_offset=num_q_heads(4), head_count=num_kv_heads(2)
-        let (input, expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(4, 2, full_layer, false);
+        let (input, expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(4, 2, full_layer, true);
         test_internal::<InputT, ScaleT, OutputT, AccumT>(&input, &expected);
     }
 }
 
-fn test_v_norm_scale_free<
+fn test_v_norm_no_scales<
     InputT: ArrayElement + Float,
     ScaleT: ArrayElement + Float,
     OutputT: ArrayElement + Float + Debug + Display,
     AccumT: ArrayElement + Float,
 >() {
-    let (input, expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(6, 2, true, true);
+    let (input, expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(6, 2, true, false);
     test_internal::<InputT, ScaleT, OutputT, AccumT>(&input, &expected);
 }
 
@@ -230,7 +230,7 @@ fn test_addressing<
     AccumT: ArrayElement + Float,
 >() {
     // Test that Q norm only modifies Q heads and leaves K/V untouched
-    let (input, _expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(0, 4, false, false);
+    let (input, _expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(0, 4, false, true);
 
     let num_q_heads = input.num_q_heads as usize;
     let head_dim = input.head_dim as usize;
@@ -274,8 +274,8 @@ fn test_v_addressing<
     OutputT: ArrayElement + Float + Debug + Display,
     AccumT: ArrayElement + Float,
 >() {
-    // Scale-free V norm must modify only V heads and leave Q/K untouched.
-    let (input, _expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(6, 2, true, true);
+    // Weightless V norm must modify only V heads and leave Q/K untouched.
+    let (input, _expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(6, 2, true, false);
 
     let num_q_heads = input.num_q_heads as usize;
     let num_kv_heads = input.num_kv_heads as usize;
@@ -365,18 +365,18 @@ fn test_k_norm_bf16_bf16_bf16_f32() {
 }
 
 #[uzu_test]
-fn test_v_norm_scale_free_f32_f32_f32_f32() {
-    test_v_norm_scale_free::<f32, f32, f32, f32>();
+fn test_v_norm_no_scales_f32_f32_f32_f32() {
+    test_v_norm_no_scales::<f32, f32, f32, f32>();
 }
 
 #[uzu_test]
-fn test_v_norm_scale_free_f16_f16_f16_f32() {
-    test_v_norm_scale_free::<f16, f16, f16, f32>();
+fn test_v_norm_no_scales_f16_f16_f16_f32() {
+    test_v_norm_no_scales::<f16, f16, f16, f32>();
 }
 
 #[uzu_test]
-fn test_v_norm_scale_free_bf16_bf16_bf16_f32() {
-    test_v_norm_scale_free::<bf16, bf16, bf16, f32>();
+fn test_v_norm_no_scales_bf16_bf16_bf16_f32() {
+    test_v_norm_no_scales::<bf16, bf16, bf16, f32>();
 }
 
 // Addressing tests (Q norm should not touch K/V)

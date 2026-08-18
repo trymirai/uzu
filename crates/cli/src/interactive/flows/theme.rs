@@ -44,18 +44,13 @@ fn ThemeFlowView(
             items: items,
             style: SelectorStyle::Plain,
             maximal_height: (themes.len() as u16).min(5),
-            accent_color: state.read().theme.accent_color,
-            subtitle_color: state.read().theme.subtitle_color,
-            columns_padding: state.read().theme.padding_wide(),
+            accent_color: state.read().theme().accent_color,
+            subtitle_color: state.read().theme().subtitle_color,
+            columns_padding: state.read().theme().padding_wide(),
             on_submit: move |index: usize| {
                 let mut state = state;
                 if let Some(theme) = themes.get(index) {
-                    let settings_result = match state.read().settings.as_ref() {
-                        Some(settings) => theme.save(settings),
-                        None => Ok(()),
-                    };
-                    state.write().theme = theme.clone();
-                    let result = match settings_result {
+                    let result = match state.write().set_theme(theme.clone()) {
                         Ok(()) => format!("Theme set to {}", theme.name),
                         Err(error) => format!("Theme set to {}, unable to save preference: {}", theme.name, error),
                     };

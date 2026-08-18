@@ -4,9 +4,9 @@ use super::{activation::AnyActivation, linear::LinearConfig, normalization::Norm
 
 #[uzu_config]
 pub struct PLEModelConfig {
-    pub ple_dim: usize,
-    pub num_layers: usize,
-    pub ple_vocab_size: usize,
+    pub ple_dim: u32,
+    pub num_layers: u32,
+    pub ple_vocab_size: u32,
     pub ple_embed_scale: f32,
     pub model_projection_scale: f32,
     pub input_scale: f32,
@@ -18,6 +18,6 @@ pub struct PLEModelConfig {
 pub struct PLELayerConfig {
     pub linear_config: LinearConfig,
     pub norm_config: NormalizationConfig,
-    pub ple_dim: usize,
+    pub ple_dim: u32,
     pub activation: AnyActivation,
 }

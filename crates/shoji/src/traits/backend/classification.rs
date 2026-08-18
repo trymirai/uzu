@@ -1,6 +1,11 @@
-use std::{collections::HashMap, convert::Infallible, pin::Pin};
+use std::{collections::HashMap, convert::Infallible, pin::Pin, sync::Arc};
 
-use crate::traits::backend::{Error, Instance as InstanceTrait};
+use tokenizers::Tokenizer;
+
+use crate::{
+    traits::backend::{Error, Instance as InstanceTrait},
+    types::session::classification::TokenCodecConfig,
+};
 
 pub struct ClassifierOutput {
     pub logits: Vec<f32>,
@@ -29,14 +34,7 @@ pub trait Instance:
         StreamMetrics = StreamMetrics,
     >
 {
-}
+    fn tokenizer(&self) -> Arc<Tokenizer>;
 
-impl<T> Instance for T where
-    T: InstanceTrait<
-            StreamConfig = StreamConfig,
-            StreamInput = StreamInput,
-            StreamOutput = StreamOutput,
-            StreamMetrics = StreamMetrics,
-        >
-{
+    fn token_codec_config(&self) -> TokenCodecConfig;
 }

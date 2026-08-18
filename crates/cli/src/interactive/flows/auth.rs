@@ -51,9 +51,9 @@ fn AuthProviderFlowView(
             items: items,
             style: SelectorStyle::WithIcon,
             maximal_height: (providers.len() as u16).min(5),
-            accent_color: state.read().theme.accent_color,
-            subtitle_color: state.read().theme.subtitle_color,
-            columns_padding: state.read().theme.padding_wide(),
+            accent_color: state.read().theme().accent_color,
+            subtitle_color: state.read().theme().subtitle_color,
+            columns_padding: state.read().theme().padding_wide(),
             on_submit: move |index: usize| {
                 if let Some(provider) = providers.get(index) {
                     on_event(FlowEvent::transition(provider.title.clone(), Box::new(AuthKeyFlow::new(provider.clone()))));

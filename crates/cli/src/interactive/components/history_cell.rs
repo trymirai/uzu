@@ -53,7 +53,7 @@ pub fn HistoryCell(
     hooks: Hooks,
 ) -> impl Into<AnyElement<'static>> {
     let state = hooks.use_context::<State<ApplicationState>>();
-    let theme = state.read().theme.clone();
+    let theme = state.read().theme().clone();
 
     let view: AnyElement<'static> = match props.r#type.clone() {
         Some(HistoryCellType::Command {
@@ -352,7 +352,7 @@ fn chat_reply_stats_component(
                 color: subtitle_color,
             )
             Text(
-                content: format!("total power: {power}"),
+                content: format!("average power: {power}"),
                 color: subtitle_color,
             )
             Text(

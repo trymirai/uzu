@@ -27,7 +27,7 @@ pub enum TransformerLayerError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Layer {layer_index} sets post_layer_scalar but has no post_mlp_norm")]
     PostLayerScalarWithoutPostMlpNorm {
-        layer_index: usize,
+        layer_index: u32,
     },
     #[error("Transformer layers except the first one if it doesn't have rht in mixer require pre_mixer_norm_config")]
     MissingPreMixerNormConfig,
@@ -36,9 +36,9 @@ pub enum TransformerLayerError<B: Backend> {
 // TODO: saner shortcut
 
 pub struct TransformerLayer<B: Backend> {
-    pub layer_index: usize,
+    pub layer_index: u32,
     pub pre_mixer_norm: Option<Normalization<B>>,
-    pub kv_source_layer_index: Option<usize>,
+    pub kv_source_layer_index: Option<u32>,
     pub mixer: Box<dyn Mixer<B>>,
     pub post_mixer_norm: Option<Normalization<B>>,
     pub pre_mlp_norm: Normalization<B>,
@@ -50,11 +50,11 @@ pub struct TransformerLayer<B: Backend> {
 impl<B: Backend> TransformerLayer<B> {
     pub fn new(
         context: &B::Context,
-        model_dim: usize,
-        hidden_dim: usize,
-        num_layers: usize,
+        model_dim: u32,
+        hidden_dim: u32,
+        num_layers: u32,
         layer_config: &TransformerLayerConfig,
-        layer_index: usize,
+        layer_index: u32,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, TransformerLayerError<B>> {
@@ -88,7 +88,7 @@ impl<B: Backend> TransformerLayer<B> {
             data_type,
             layer_config.rope_config.as_ref(),
             &layer_config.mixer_config,
-            &parameter_tree.subtree("mixer")?,
+            &parameter_tree.subtree("mixer"),
             context,
         )?;
 
@@ -104,7 +104,7 @@ impl<B: Backend> TransformerLayer<B> {
                 PostLayerScalar::None,
                 data_type,
                 pre_mixer_norm_config,
-                &parameter_tree.subtree("pre_mixer_norm")?,
+                &parameter_tree.subtree("pre_mixer_norm"),
                 context,
             )?)
         } else {
@@ -122,7 +122,7 @@ impl<B: Backend> TransformerLayer<B> {
                 PostLayerScalar::None,
                 data_type,
                 norm_config,
-                &parameter_tree.subtree("post_mixer_norm")?,
+                &parameter_tree.subtree("post_mixer_norm"),
                 context,
             )?)
         } else {
@@ -134,7 +134,7 @@ impl<B: Backend> TransformerLayer<B> {
             model_dim,
             layer_config.hidden_dim.unwrap_or(hidden_dim),
             context,
-            &parameter_tree.subtree("mlp")?,
+            &parameter_tree.subtree("mlp"),
             data_type,
         )?;
 
@@ -145,7 +145,7 @@ impl<B: Backend> TransformerLayer<B> {
             residual_sum_scalar,
             data_type,
             &layer_config.pre_mlp_norm_config,
-            &parameter_tree.subtree("pre_mlp_norm")?,
+            &parameter_tree.subtree("pre_mlp_norm"),
             context,
         )?;
 
@@ -157,7 +157,7 @@ impl<B: Backend> TransformerLayer<B> {
                 output_scalar,
                 data_type,
                 norm_config,
-                &parameter_tree.subtree("post_mlp_norm")?,
+                &parameter_tree.subtree("post_mlp_norm"),
                 context,
             )?)
         } else {
@@ -165,7 +165,7 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         let ple_projection = layer_config.ple_config.as_ref().map(|ple_config| {
-            let ple_loader = parameter_tree.subtree("ple").expect("Failed to get ple subtree");
+            let ple_loader = parameter_tree.subtree("ple");
             PerLayerEmbeddingProjection::new(
                 context,
                 ple_config,

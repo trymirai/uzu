@@ -12,15 +12,13 @@ use crate::{
         linear::{Linear, LinearBlockError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
 };
 
 #[derive(Debug, Error)]
 pub enum PredictionHeadError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
-    #[error("Parameter loading error: {0}")]
-    Parameter(#[from] ParameterLoaderError<B>),
     #[error("Linear error: {0}")]
     Linear(#[from] LinearBlockError<B>),
     #[error("Normalization error: {0}")]
@@ -28,7 +26,7 @@ pub enum PredictionHeadError<B: Backend> {
 }
 
 pub struct PredictionHead<B: Backend> {
-    hidden_dim: usize,
+    hidden_dim: u32,
     activation: ActivationType,
     dense_projection: Box<dyn Linear<B>>,
     activation_kernel: <B::Kernels as Kernels>::ActivationKernel,
@@ -38,8 +36,8 @@ pub struct PredictionHead<B: Backend> {
 
 impl<B: Backend> PredictionHead<B> {
     pub fn new(
-        hidden_dim: usize,
-        num_labels: usize,
+        hidden_dim: u32,
+        num_labels: u32,
         data_type: DataType,
         config: &PredictionHeadConfig,
         parameter_tree: &ParameterTree<B>,
@@ -51,7 +49,7 @@ impl<B: Backend> PredictionHead<B> {
             config.use_dense_bias,
             context,
             data_type,
-            &parameter_tree.subtree("dense")?,
+            &parameter_tree.subtree("dense"),
         )?;
 
         let activation = config.activation.act_type();
@@ -65,7 +63,7 @@ impl<B: Backend> PredictionHead<B> {
             PostLayerScalar::None,
             data_type,
             &config.normalization_config,
-            &parameter_tree.subtree("norm")?,
+            &parameter_tree.subtree("norm"),
             context,
         )?;
 
@@ -75,7 +73,7 @@ impl<B: Backend> PredictionHead<B> {
             true,
             context,
             data_type,
-            &parameter_tree.subtree("readout")?,
+            &parameter_tree.subtree("readout"),
         )?;
 
         Ok(Self {
@@ -91,19 +89,13 @@ impl<B: Backend> PredictionHead<B> {
     pub fn encode(
         &self,
         input: Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("prediction head");
 
         let mut hidden = self.dense_projection.encode(input, batch_dim, encoder)?;
-        self.activation_kernel.encode(
-            None::<&Allocation<B>>,
-            &mut hidden,
-            self.hidden_dim as u32,
-            self.activation,
-            encoder,
-        );
+        self.activation_kernel.encode(None::<&Allocation<B>>, &mut hidden, self.hidden_dim, self.activation, encoder);
         let normalized = self.normalization.encode(&hidden, 0, batch_dim, None, encoder)?;
         let logits = self.readout.encode(normalized, batch_dim, encoder)?;
 

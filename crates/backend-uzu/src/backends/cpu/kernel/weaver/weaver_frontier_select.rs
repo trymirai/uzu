@@ -28,9 +28,9 @@ pub fn weaver_frontier_select(
     candidates_per_depth: u32,
 ) {
     if frontier_capacity == 0
-        || frontier_capacity as usize > FRONTIER_MAX_SLOTS
+        || frontier_capacity > FRONTIER_MAX_SLOTS
         || node_count == 0
-        || node_count as usize > FRONTIER_MAX_WIDTH
+        || node_count > FRONTIER_MAX_WIDTH
         || ancestor_stride == 0
         || max_depth == 0
         || tree_slot_count == 0
@@ -122,9 +122,9 @@ pub fn weaver_frontier_select(
 
         node_token_ids[node] = token;
         node_metadata[MetadataIdx::Depth as usize * node_count + node] = depth.min(max_depth - 1);
-        node_metadata[MetadataIdx::AncestorCount as usize * node_count + node] = depth.min(ancestor_stride as u32);
+        node_metadata[MetadataIdx::AncestorCount as usize * node_count + node] = depth;
         node_metadata[MetadataIdx::TreeSlot as usize * node_count + node] = tree_slot as u32;
-        node_valid[node] = u32::from(real && depth < lookahead_count && depth < max_depth);
+        node_valid[node] = u32::from(real && depth < lookahead_count);
 
         // Every node expands the candidate pool for its own depth.
         let candidate_depth = (depth as usize).min(candidate_depth_count - 1);

@@ -291,7 +291,8 @@ export declare class ChatReplyPowerStats {
 
 export declare class ChatReplySpeculatorStats {
   tokensPerForwardPass: number
-  constructor(tokensPerForwardPass: number)
+  numDecodeForwardPasses: number
+  constructor(tokensPerForwardPass: number, numDecodeForwardPasses: number)
 }
 
 export declare class ChatReplyStats {

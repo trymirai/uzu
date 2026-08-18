@@ -10,8 +10,11 @@ use crate::{
     backends::{
         common::{
             BufferArg, Encoder,
-            gpu_types::gemm::GemmTiling,
-            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulPath, MatmulShape},
+            gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
+            kernel::{
+                activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
+                matmul::{A8ActivationPlan, ActivationFormat, MatmulArguments, MatmulError, MatmulKernel, MatmulShape},
+            },
         },
         metal::{Metal, context::MetalContext, error::MetalError},
     },
@@ -120,14 +123,57 @@ impl MatmulKernel for MatmulMetalKernel {
         })
     }
 
-    fn select_path(
+    fn a8_activation_plan(
         &self,
         shape: &MatmulShape,
         context: &MetalContext,
-    ) -> MatmulPath {
-        match self.select_dispatch(shape, context) {
-            MatmulDispatch::Gemv(_) => MatmulPath::Gemv,
-            MatmulDispatch::Gemm(_) => MatmulPath::Gemm,
+    ) -> Option<A8ActivationPlan> {
+        let activation_group_size = ACTIVATION_SCALE_GROUP_SIZE;
+        if !context.supports_mxu()
+            || self.input_data_type != DataType::BF16
+            || self.output_data_type != DataType::BF16
+            || shape.a_full_precision
+            || !shape.is_quant()
+            || !shape.signed_codes
+            || !shape.b_transpose
+            || shape.b_leading_dimension.is_some()
+            || !matches!(shape.b_bits, Some(4 | 8))
+            || !matches!(shape.b_group_size, Some(32 | 64 | 128))
+            || !shape.k.is_multiple_of(activation_group_size)
+            || !shape.k.is_multiple_of(shape.b_group_size.unwrap())
+        {
+            return None;
+        }
+
+        let sum_group_size = match shape.b_prologue {
+            GemmBPrologueKind::ScaleSymmetricDequant => None,
+            GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant => {
+                Some(shape.b_group_size.unwrap().min(activation_group_size))
+            },
+            GemmBPrologueKind::FullPrecision => return None,
+        };
+        Some(A8ActivationPlan {
+            activation_group_size,
+            sum_group_size,
+        })
+    }
+
+    fn select_activation_format(
+        &self,
+        bf16_shape: &MatmulShape,
+        context: &MetalContext,
+    ) -> ActivationFormat {
+        if matches!(self.select_dispatch(bf16_shape, context), MatmulDispatch::Gemv(_)) {
+            return ActivationFormat::Bf16;
+        }
+
+        let a8_shape = MatmulShape {
+            a_full_precision: false,
+            ..*bf16_shape
+        };
+        match self.select_dispatch(&a8_shape, context) {
+            MatmulDispatch::Gemm(plan) if plan.engine == gemm::GemmEngine::Mxu => ActivationFormat::Int8,
+            _ => ActivationFormat::Bf16,
         }
     }
 

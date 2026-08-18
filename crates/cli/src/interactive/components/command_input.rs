@@ -38,10 +38,10 @@ pub fn CommandInput(
         TextInputFocus::Minimal
     };
 
-    let padding = state.read().theme.padding();
-    let accent_color = state.read().theme.accent_color;
-    let subtitle_color = state.read().theme.subtitle_color;
-    let overlay_color = state.read().theme.overlay_color();
+    let padding = state.read().theme().padding();
+    let accent_color = state.read().theme().accent_color;
+    let subtitle_color = state.read().theme().subtitle_color;
+    let overlay_color = state.read().theme().overlay_color();
     let maximal_width = width
         .saturating_sub(UnicodeWidthStr::width(SYMBOL_INPUT) as u16)
         .saturating_sub(padding)
@@ -118,7 +118,7 @@ fn hint_component(
         return element! {
             Text(
                 content: hints.join("\n"),
-                color: state.read().theme.subtitle_color,
+                color: state.read().theme().subtitle_color,
             )
         }
         .into();
@@ -133,9 +133,9 @@ fn hint_component(
         })
         .collect();
     let maximal_height = (items.len() as u16).min(5);
-    let accent_color = state.read().theme.accent_color;
-    let subtitle_color = state.read().theme.subtitle_color;
-    let columns_padding = state.read().theme.padding_wide();
+    let accent_color = state.read().theme().accent_color;
+    let subtitle_color = state.read().theme().subtitle_color;
+    let columns_padding = state.read().theme().padding_wide();
 
     element! {
         Selector(

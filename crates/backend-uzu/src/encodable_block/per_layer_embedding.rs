@@ -4,7 +4,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        kernel::{GatedActMulKernel, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
+        kernel::{GatedActMul, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
     },
     config::{
         activation::AnyActivation,
@@ -16,15 +16,13 @@ use crate::{
         linear::{Linear, LinearBlockError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
 };
 
 #[derive(Debug, Error)]
 pub enum PerLayerEmbeddingError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
-    #[error("Parameter loading error: {0}")]
-    ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Linear error: {0}")]
@@ -38,9 +36,9 @@ pub struct PerLayerEmbedding<B: Backend> {
     model_projection: Box<dyn Linear<B>>,
     projection_norm: Normalization<B>,
     add_scale: <B::Kernels as Kernels>::TensorAddScaleKernel,
-    ple_dim: usize,
-    num_layers: usize,
-    model_dim: usize,
+    ple_dim: u32,
+    num_layers: u32,
+    model_dim: u32,
     fused_token_scale: f32,
     data_type: DataType,
 }
@@ -49,7 +47,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
     pub fn new(
         context: &B::Context,
         config: &PLEModelConfig,
-        model_dim: usize,
+        model_dim: u32,
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
@@ -57,7 +55,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
 
         let token_embedding = EmbeddingTable::load(
             context,
-            &parameter_tree.subtree("token_embedding")?,
+            &parameter_tree.subtree("token_embedding"),
             config.ple_vocab_size,
             total_ple_dim,
             data_type,
@@ -69,7 +67,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             false,
             context,
             data_type,
-            &parameter_tree.subtree("model_projection")?,
+            &parameter_tree.subtree("model_projection"),
         )?;
 
         let scale_squared = config.model_projection_scale * config.model_projection_scale;
@@ -85,7 +83,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             PostLayerScalar::ScaleOutput(config.input_scale),
             data_type,
             &projection_norm_config,
-            &parameter_tree.subtree("projection_norm")?,
+            &parameter_tree.subtree("projection_norm"),
             context,
         )?;
 
@@ -109,7 +107,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         &self,
         token_ids: &Allocation<B>,
         inner_features: &Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("per layer embedding");
@@ -119,13 +117,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let total_elements = batch_dim * total_ple_dim;
 
         let mut token_ple = encoder.allocate_scratch(size_for_shape(&[batch_dim, total_ple_dim], self.data_type))?;
-        self.token_embedding.encode_lookup(
-            token_ids,
-            &mut token_ple,
-            batch_dim as u32,
-            self.fused_token_scale,
-            encoder,
-        );
+        self.token_embedding.encode_lookup(token_ids, &mut token_ple, batch_dim, self.fused_token_scale, encoder);
 
         let mut model_projection_input =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.model_dim], self.data_type))?;
@@ -140,8 +132,8 @@ impl<B: Backend> PerLayerEmbedding<B> {
             Some(&token_ple),
             &model_normed,
             &mut per_layer_inputs,
-            total_elements as u32,
-            total_elements as u32,
+            total_elements,
+            total_elements,
             1.0,
             encoder,
         );
@@ -156,12 +148,12 @@ pub struct PerLayerEmbeddingProjection<B: Backend> {
     gate: Box<dyn Linear<B>>,
     projection: Box<dyn Linear<B>>,
     norm: Normalization<B>,
-    gate_act_mul: <B::Kernels as Kernels>::GatedActMulKernel,
+    gate_act_mul: GatedActMul<B>,
     residual_finalize: <B::Kernels as Kernels>::TensorAddBiasKernel,
     residual_combine: <B::Kernels as Kernels>::TensorAddScaleKernel,
-    model_dim: usize,
-    ple_dim: usize,
-    num_layers: usize,
+    model_dim: u32,
+    ple_dim: u32,
+    num_layers: u32,
     activation: AnyActivation,
     post_layer_scalar: f32,
     data_type: DataType,
@@ -171,8 +163,8 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
     pub fn new(
         context: &B::Context,
         config: &PLELayerConfig,
-        model_dim: usize,
-        num_layers: usize,
+        model_dim: u32,
+        num_layers: u32,
         post_layer_scalar: f32,
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
@@ -183,7 +175,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             false,
             context,
             data_type,
-            &parameter_tree.subtree("gate")?,
+            &parameter_tree.subtree("gate"),
         )?;
         let projection = <dyn Linear<B>>::new(
             config.ple_dim,
@@ -191,7 +183,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             false,
             context,
             data_type,
-            &parameter_tree.subtree("projection")?,
+            &parameter_tree.subtree("projection"),
         )?;
         let norm = Normalization::new(
             model_dim,
@@ -200,11 +192,11 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             PostLayerScalar::None,
             data_type,
             &config.norm_config,
-            &parameter_tree.subtree("norm")?,
+            &parameter_tree.subtree("norm"),
             context,
         )?;
 
-        let gate_act_mul = <B::Kernels as Kernels>::GatedActMulKernel::new(context, data_type, false, false)
+        let gate_act_mul = GatedActMul::full_precision(context, data_type, false, false)
             .map_err(PerLayerEmbeddingError::BackendError)?;
         let residual_finalize = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true)
             .map_err(PerLayerEmbeddingError::BackendError)?;
@@ -229,40 +221,33 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
 
     pub fn encode(
         &self,
-        layer_index: usize,
+        layer_index: u32,
         per_layer_input: &Allocation<B>,
         outputs: &mut Allocation<B>,
         hidden: &Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         encoder.push_debug_group("per layer embedding projection");
 
         let length = batch_dim * self.model_dim;
 
-        self.residual_finalize.encode(
-            None::<&Allocation<B>>,
-            hidden,
-            &mut *outputs,
-            length as u32,
-            length as u32,
-            encoder,
-        );
+        self.residual_finalize.encode(None::<&Allocation<B>>, hidden, &mut *outputs, length, length, encoder);
 
         let mut gate_input = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.model_dim], self.data_type))?;
         encoder.encode_copy(outputs, .., &mut gate_input, ..);
         let gate_out = self.gate.encode(gate_input, batch_dim, encoder)?;
 
         let mut activated = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.ple_dim], self.data_type))?;
-        self.gate_act_mul.encode(
+        self.gate_act_mul.encode_fp(
             &gate_out,
             Some(per_layer_input),
             &mut activated,
-            None::<&Allocation<B>>,
-            self.ple_dim as u32,
-            batch_dim as u32,
-            (layer_index * self.ple_dim) as u32,
-            (self.num_layers * self.ple_dim) as u32,
+            None,
+            self.ple_dim,
+            batch_dim,
+            layer_index * self.ple_dim,
+            self.num_layers * self.ple_dim,
             self.activation.act_type(),
             encoder,
         );
@@ -274,8 +259,8 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             None::<&Allocation<B>>,
             &normed,
             &mut *outputs,
-            length as u32,
-            length as u32,
+            length,
+            length,
             self.post_layer_scalar,
             encoder,
         );

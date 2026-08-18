@@ -1,7 +1,6 @@
 use std::{
     io,
     pin::Pin,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -9,7 +8,6 @@ use futures::{Stream, StreamExt, stream};
 use hanashi::{
     Encoding as EncodingTrait,
     chat::{Encoding, EncodingConfig, TokenizerLocation, hanashi::HanashiEncodingImpl, harmony::HarmonyEncodingImpl},
-    load_tokenizer,
 };
 use shoji::{
     traits::{
@@ -81,15 +79,16 @@ impl Session {
             path: reference.clone(),
             name: None,
         };
-        let tokenizer = load_tokenizer(&tokenizer_location).map_err(|err| ChatSessionError::Loading {
-            message: format!("Failed to initialize tokenizer: {err}"),
-        })?;
-        let tokenizer = Arc::new(tokenizer);
+
+        let instance =
+            backend.instance(reference.clone(), config).await.map_err(|error| ChatSessionError::Backend {
+                message: error.to_string(),
+            })?;
 
         let encoding = match encoding_config {
             Some(EncodingConfig::Hanashi {
                 config,
-            }) => HanashiEncodingImpl::new(config, tokenizer.clone()).map(Encoding::Hanashi).map_err(|err| {
+            }) => HanashiEncodingImpl::new(config, instance.tokenizer()).map(Encoding::Hanashi).map_err(|err| {
                 ChatSessionError::Loading {
                     message: format!("can not create harmony encoding: {err}"),
                 }
@@ -105,12 +104,6 @@ impl Session {
                 message: "can not get encoding config".to_string(),
             }),
         }?;
-
-        let instance = backend.instance(reference.clone(), config, tokenizer).await.map_err(|error| {
-            ChatSessionError::Backend {
-                message: error.to_string(),
-            }
-        })?;
         let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
@@ -379,10 +372,11 @@ impl StreamingState<'_> {
         last_stat: bool,
     ) -> ChatReplyStats {
         let speculator_stats = if let Some(metrics) = self.metrics.as_ref()
-            && metrics.num_forward_passes > 0
+            && metrics.num_decode_forward_passes > 0
         {
             Some(ChatReplySpeculatorStats {
-                tokens_per_forward_pass: metrics.num_tokens_accepted as f64 / metrics.num_forward_passes as f64,
+                tokens_per_forward_pass: metrics.num_tokens_accepted as f64 / metrics.num_decode_forward_passes as f64,
+                num_decode_forward_passes: metrics.num_decode_forward_passes as u32,
             })
         } else {
             None

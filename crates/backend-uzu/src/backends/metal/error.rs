@@ -31,8 +31,11 @@ pub enum MetalError {
     CannotCreateEvent,
     #[error("Cannot create function: {0}")]
     CannotCreateFunction(String),
-    #[error("Cannot create pipeline state: {0}")]
-    CannotCreatePipelineState(String),
+    #[error("Cannot create pipeline state for {function_name}: {error}")]
+    CannotCreatePipelineState {
+        function_name: String,
+        error: String,
+    },
     #[error("Can not allocate buffer with size={0}")]
     SparseBufferAlloc(usize),
     #[error("Can not allocate heap with size={0} and page size={1}")]

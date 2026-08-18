@@ -141,7 +141,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
         alloc_allocation_with_data::<B, T>(context, prefill)
     } else {
         context
-            .create_allocation(m * n * std::mem::size_of::<T>(), AllocationType::Global)
+            .create_allocation(m as usize * n as usize * std::mem::size_of::<T>(), AllocationType::Global)
             .expect("create d allocation")
     };
     let rht_allocation =
@@ -172,9 +172,9 @@ fn run<B: Backend, T: ArrayElement + Float>(
             d: &mut d_allocation,
             d_transform,
             gather_indices: None,
-            m: m as u32,
-            n: n as u32,
-            k: k as u32,
+            m,
+            n,
+            k,
         },
         &mut encoder,
     );
