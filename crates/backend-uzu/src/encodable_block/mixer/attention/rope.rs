@@ -6,13 +6,13 @@ use crate::{
 pub struct PrecalculatedRoPE<B: Backend> {
     pub cosines: Allocation<B>,
     pub sines: Allocation<B>,
-    pub dim: usize,
+    pub dim: u32,
 }
 
 impl<B: Backend> PrecalculatedRoPE<B> {
     pub fn precalculate(
         rope_config: &AnyRoPEConfig,
-        token_positions: &[usize],
+        token_positions: &[u32],
         encoder: &mut Encoder<B>,
     ) -> Result<Self, B::Error> {
         let head_dim = *rope_config.head_dim();
@@ -26,7 +26,8 @@ impl<B: Backend> PrecalculatedRoPE<B> {
             _ => 1.0,
         };
 
-        let element_count = token_positions.len() * head_dim;
+        let element_count = token_positions.len() * head_dim as usize;
+        let half_offset = half_dim as usize;
         let mut sines = vec![0.0; element_count];
         let mut cosines = vec![0.0; element_count];
         for pair_index in 0..half_dim {
@@ -84,7 +85,7 @@ impl<B: Backend> PrecalculatedRoPE<B> {
                     } else {
                         &config.short_factor
                     };
-                    inverse_frequency / factors[pair_index]
+                    inverse_frequency / factors[pair_index as usize]
                 },
             };
 
@@ -92,11 +93,11 @@ impl<B: Backend> PrecalculatedRoPE<B> {
                 let embedding = *token_position as f32 * inverse_frequency;
                 let sine = embedding.sin() * attention_scaling_factor;
                 let cosine = embedding.cos() * attention_scaling_factor;
-                let row_offset = token_index * head_dim;
-                sines[row_offset + pair_index] = sine;
-                sines[row_offset + half_dim + pair_index] = sine;
-                cosines[row_offset + pair_index] = cosine;
-                cosines[row_offset + half_dim + pair_index] = cosine;
+                let pair_offset = token_index * head_dim as usize + pair_index as usize;
+                sines[pair_offset] = sine;
+                sines[pair_offset + half_offset] = sine;
+                cosines[pair_offset] = cosine;
+                cosines[pair_offset + half_offset] = cosine;
             }
         }
 

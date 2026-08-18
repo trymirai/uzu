@@ -7,9 +7,7 @@ use proc_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{
-            Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::GatedActMulKernel,
-        },
+        common::{Allocation, Backend, Context, Encoder, gpu_types::ActivationType, kernel::GatedActMul},
         cpu::Cpu,
     },
     data_type::DataType,
@@ -23,6 +21,7 @@ use crate::{
 
 struct InterleavedInput<T: ArrayElement + Float> {
     fused_up: Box<[T]>,
+    hadamard_factors: Box<[i32]>,
     gated_dim: u32,
     batch_dim: u32,
     act_type: ActivationType,
@@ -38,28 +37,33 @@ fn interleaved_input<T: ArrayElement + Float>(act_type: ActivationType) -> Inter
     }
     InterleavedInput {
         fused_up: fused_up.into_boxed_slice(),
+        hadamard_factors: vec![1; gated_dim as usize].into_boxed_slice(),
         gated_dim,
         batch_dim,
         act_type,
     }
 }
 
-fn run_interleaved<T: ArrayElement + Float, B: Backend>(input: &InterleavedInput<T>) -> Vec<T> {
+fn run_interleaved<T: ArrayElement + Float, B: Backend>(
+    input: &InterleavedInput<T>,
+    use_hadamard: bool,
+) -> Vec<T> {
     let context = B::Context::new().expect("create context");
-    let kernel = <<B as Backend>::Kernels as Kernels>::GatedActMulKernel::new(&context, T::data_type(), true, false)
-        .expect("create GatedActMulKernel");
+    let kernel =
+        GatedActMul::<B>::full_precision(&context, T::data_type(), true, use_hadamard).expect("create GatedActMul");
 
     let fused_length = (input.batch_dim * 2 * input.gated_dim) as usize;
     let output_length = (input.batch_dim * input.gated_dim) as usize;
     let fused_up = alloc_allocation_with_data::<B, T>(&context, &input.fused_up[..fused_length]);
+    let hadamard_factors = alloc_allocation_with_data::<B, i32>(&context, &input.hadamard_factors);
     let mut output = alloc_allocation::<B, T>(&context, output_length);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
-    kernel.encode(
+    kernel.encode_fp(
         &fused_up,
         None::<&Allocation<B>>,
         &mut output,
-        None::<&Allocation<B>>,
+        use_hadamard.then_some(&hadamard_factors),
         input.gated_dim,
         input.batch_dim,
         0,
@@ -79,11 +83,21 @@ fn interleaved_test<T: ArrayElement + Float + Debug + Display>(act_type: Activat
         1e-5
     };
     let input = interleaved_input::<T>(act_type);
-    let expected = run_interleaved::<T, Cpu>(&input);
+    let expected = run_interleaved::<T, Cpu>(&input, false);
     for_each_non_cpu_backend!(|B| {
-        let output = run_interleaved::<T, B>(&input);
+        let output = run_interleaved::<T, B>(&input, false);
         let message = format!("interleaved mismatch for backend {}", std::any::type_name::<B>());
         assert_eq_float::<T>(&expected, &output, eps, &message);
+    });
+}
+
+#[uzu_test]
+fn test_gated_act_mul_interleaved_hadamard_bf16() {
+    let input = interleaved_input::<bf16>(ActivationType::SILU);
+    let expected = run_interleaved::<bf16, Cpu>(&input, true);
+    for_each_non_cpu_backend!(|B| {
+        let actual = run_interleaved::<bf16, B>(&input, true);
+        assert_eq_float::<bf16>(&expected, &actual, 0.02, "Hadamard gated activation mismatch");
     });
 }
 
@@ -147,19 +161,18 @@ fn separate_input<T: ArrayElement + Float>() -> (SeparateInput<T>, Vec<T>) {
 
 fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -> Vec<T> {
     let context = B::Context::new().expect("create context");
-    let kernel = <<B as Backend>::Kernels as Kernels>::GatedActMulKernel::new(&context, T::data_type(), false, false)
-        .expect("create GatedActMulKernel");
+    let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), false, false).expect("create GatedActMul");
 
     let gate_out = alloc_allocation_with_data::<B, T>(&context, &input.gate_out);
     let per_layer_input = alloc_allocation_with_data::<B, T>(&context, &input.per_layer_input);
     let mut output = alloc_allocation::<B, T>(&context, (input.batch_dim * input.gated_dim) as usize);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
-    kernel.encode(
+    kernel.encode_fp(
         &gate_out,
         Some(&per_layer_input),
         &mut output,
-        None::<&Allocation<B>>,
+        None,
         input.gated_dim,
         input.batch_dim,
         input.value_offset,

@@ -155,19 +155,38 @@ pub async fn run_session(
     text: String,
 ) {
     let mut state = state;
-    let preferences = state.read().preferences;
-    let thinking_support =
-        state.read().model_state.as_ref().map(|model_state| model_state.capabilities.thinking).unwrap_or_default();
+    let (thinking_support, thinking_override, thinking) = {
+        let state = state.read();
+        (
+            state.model_state.as_ref().map(|model_state| model_state.capabilities.thinking).unwrap_or_default(),
+            state.reasoning_effort_override(),
+            state.thinking(),
+        )
+    };
 
-    let user_message = ChatMessage::user().with_text(text);
-    let mut messages = vec![user_message];
-    if let Some(reasoning_effort) = thinking_support.with_preference(&preferences.thinking).reasoning_effort()
+    let reasoning_effort = match thinking_override {
+        Some(effort) => match thinking_support.fulfill_requested_effort(effort) {
+            Ok(effort) => effort,
+            Err(error) => {
+                state.write().history.push(HistoryCellType::CommandResult {
+                    result: format!("Invalid --reasoning-effort: {error}"),
+                });
+                return;
+            },
+        },
+        None => thinking_support.with_preference(&thinking).reasoning_effort(),
+    };
+
+    let mut messages = Vec::<ChatMessage>::new();
+    if let Some(reasoning_effort) = reasoning_effort
         && session.messages().await.is_empty()
     {
         let system_message = ChatMessage::system().with_reasoning_effort(reasoning_effort);
-        messages.insert(0, system_message);
+        messages.push(system_message);
     };
-    let reply_config = ChatReplyConfig::default().with_sampling_policy(preferences.sampling_policy());
+    messages.push(ChatMessage::user().with_text(text));
+
+    let reply_config = ChatReplyConfig::default().with_sampling_policy(state.read().preferences().sampling.policy());
     {
         let mut state = state.write();
         if let Some(chat_state) = chat_state_mut(&mut state) {

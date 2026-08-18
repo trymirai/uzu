@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use shoji::types::basic::ReasoningEffort;
 
 mod bench;
 mod common;
@@ -13,6 +14,10 @@ struct Cli {
     /// Identifier of the model to start with (e.g. "Qwen/Qwen3-0.6B").
     #[arg(long, value_name = "MODEL")]
     model: Option<String>,
+    /// Reasoning effort: disabled, default, low, medium or high.
+    /// Overrides the saved preference for this run only; never persisted.
+    #[arg(long, value_name = "EFFORT")]
+    reasoning_effort: Option<ReasoningEffort>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -66,7 +71,7 @@ async fn main() -> Result<()> {
         Some(Commands::Storage {
             download_manager,
         }) => storage::run(download_manager).await?,
-        None => interactive::run_interactive(cli.model).await?,
+        None => interactive::run_interactive(cli.model, cli.reasoning_effort).await?,
     }
 
     Ok(())

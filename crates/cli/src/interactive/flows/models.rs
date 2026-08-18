@@ -76,9 +76,9 @@ fn Models(
         }
     });
 
-    let accent_color = state.read().theme.accent_color;
-    let subtitle_color = state.read().theme.subtitle_color;
-    let columns_padding = state.read().theme.padding_wide();
+    let accent_color = state.read().theme().accent_color;
+    let subtitle_color = state.read().theme().subtitle_color;
+    let columns_padding = state.read().theme().padding_wide();
 
     let list = models_state.read().clone().unwrap_or_default();
     let loaded = models_state.read().is_some();
@@ -111,21 +111,19 @@ fn Models(
                 on_submit: move |index: usize| {
                     let mut state = state;
                     if let Some(model) = list.get(index) {
-                        state.write().model_state = Some(ModelState {
-                            model: model.clone(),
-                            download_state: DownloadState::not_downloaded(0),
-                            session_state: None,
-                            capabilities: ModelCapabilities::default(),
-                        });
-                        state.write().app_settings.selected_model_id = Some(model.identifier.clone());
-                        let settings_result = {
-                            let state = state.read();
-                            match state.settings.as_ref() {
-                                Some(settings) => state.app_settings.save(settings),
-                                None => Ok(()),
-                            }
+                        let preferences_result = {
+                            let mut app_state = state.write();
+                            app_state.model_state = Some(ModelState {
+                                model: model.clone(),
+                                download_state: DownloadState::not_downloaded(0),
+                                session_state: None,
+                                capabilities: ModelCapabilities::default(),
+                            });
+                            let mut preferences = app_state.preferences().clone();
+                            preferences.selected_model_id = Some(model.identifier.clone());
+                            app_state.set_preferences(&preferences)
                         };
-                        let result = match settings_result {
+                        let result = match preferences_result {
                             Ok(()) => format!("Model: {}", model.name()),
                             Err(error) => {
                                 format!("Model: {}, unable to save preference: {}", model.name(), error)

@@ -1,6 +1,7 @@
 use std::{fs::File, io, io::BufReader, path::Path, sync::Arc};
 
 use thiserror::Error;
+use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
@@ -28,6 +29,7 @@ pub struct LanguageModel<B: Backend> {
     sampling: Sampling<B>,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
+    tokenizer: Arc<Tokenizer>,
     #[cfg(grammar)]
     vocab_size: usize,
 }
@@ -48,6 +50,8 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     Decoder(#[from] DecoderError<B>),
     #[error("Speculator error: {0}")]
     Speculator(#[from] DFlashSpeculatorLoadError<B>),
+    #[error("Tokenizer error: {0}")]
+    Tokenizer(#[from] tokenizers::Error),
 }
 
 impl<B: Backend> Engine<B> {
@@ -65,36 +69,14 @@ impl<B: Backend> Engine<B> {
         let speculator_path = model_path.join("speculator");
         let speculator_path = speculator_path.exists().then_some(speculator_path);
 
-        self.build_language_model(config, &weight_loader, speculator_path.as_deref())
-    }
+        let tokenizer = Arc::new(Tokenizer::from_file(model_path.join("tokenizer.json"))?);
 
-    // TODO: better design
-    pub fn load_language_model_random(
-        self: &Arc<Self>,
-        config_path: &Path,
-        header_path: &Path,
-        seed: u64,
-    ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
-        let config: LanguageModelConfig = serde_json::from_reader(BufReader::new(File::open(config_path)?))?;
-
-        let header_file = File::open(header_path)?;
-        let weight_loader = ParameterLoader::new_random(&header_file, &*self.context, seed)?;
-
-        self.build_language_model(config, &weight_loader, None)
-    }
-
-    fn build_language_model(
-        self: &Arc<Self>,
-        config: LanguageModelConfig,
-        weight_loader: &ParameterLoader<B>,
-        speculator_path: Option<&Path>,
-    ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
         let data_type = DataType::BF16;
 
         let decoder = Decoder::new(
             self.context.as_ref(),
             &config.decoder_config,
-            &weight_loader.tree().subtree("decoder")?,
+            &weight_loader.tree().subtree("decoder"),
             data_type,
         )?;
 
@@ -104,6 +86,7 @@ impl<B: Backend> Engine<B> {
         );
 
         let speculator = speculator_path
+            .as_deref()
             .map(|speculator_path| DFlashTfmSpeculator::new(speculator_path, self.context.clone()))
             .transpose()?;
 
@@ -117,7 +100,7 @@ impl<B: Backend> Engine<B> {
         let generation_config = config.generation_config;
 
         #[cfg(grammar)]
-        let vocab_size = config.decoder_config.vocab_size;
+        let vocab_size = config.decoder_config.vocab_size as usize;
 
         Ok(LanguageModel {
             engine: self.clone(),
@@ -126,6 +109,7 @@ impl<B: Backend> Engine<B> {
             sampling,
             context_ring_update,
             generation_config,
+            tokenizer,
             #[cfg(grammar)]
             vocab_size,
         })
@@ -133,11 +117,11 @@ impl<B: Backend> Engine<B> {
 }
 
 impl<B: Backend> LanguageModel<B> {
-    pub fn max_context_length(&self) -> Option<usize> {
+    pub fn max_context_length(&self) -> Option<u32> {
         self.decoder.max_context_length()
     }
 
-    pub fn recommended_context_length(&self) -> Option<usize> {
+    pub fn recommended_context_length(&self) -> Option<u32> {
         let max_context_length = self.max_context_length();
 
         // TODO: This is not the correct way to do it, there should be a real memory model
@@ -157,7 +141,7 @@ impl<B: Backend> LanguageModel<B> {
                 16384
             };
 
-            Some(usize::min(max_context_length, platform_recommended_context_length))
+            Some(u32::min(max_context_length, platform_recommended_context_length))
         } else {
             // We just assume that unlimited context means constant state size on all mixers and is thus free
             None
@@ -181,5 +165,9 @@ impl<B: Backend> LanguageModel<B> {
 
     pub fn generation_config(&self) -> &GenerationConfig {
         &self.generation_config
+    }
+
+    pub fn tokenizer(&self) -> &Arc<Tokenizer> {
+        &self.tokenizer
     }
 }

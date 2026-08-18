@@ -40,8 +40,8 @@ impl<B: Backend> EmbeddingTable<B> {
     pub fn load(
         context: &B::Context,
         tree: &ParameterTree<B>,
-        vocab_size: usize,
-        embedding_dim: usize,
+        vocab_size: u32,
+        embedding_dim: u32,
         data_type: DataType,
     ) -> Result<Self, EmbeddingTableError<B>> {
         let spec = tree.metadata::<AnyWeightMatrixSpec>("spec")?;
@@ -51,8 +51,8 @@ impl<B: Backend> EmbeddingTable<B> {
     pub fn load_with_spec(
         context: &B::Context,
         tree: &ParameterTree<B>,
-        vocab_size: usize,
-        embedding_dim: usize,
+        vocab_size: u32,
+        embedding_dim: u32,
         data_type: DataType,
         spec: AnyWeightMatrixSpec,
         output_hadamard_factors: Option<Allocation<B>>,
@@ -86,8 +86,8 @@ impl<B: Backend> EmbeddingTable<B> {
             matrix,
             lookup,
             output_hadamard_factors,
-            vocab_size: vocab_size as u32,
-            embedding_dim: embedding_dim as u32,
+            vocab_size,
+            embedding_dim,
         })
     }
 

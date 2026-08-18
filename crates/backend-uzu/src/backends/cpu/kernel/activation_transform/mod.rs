@@ -4,6 +4,8 @@ use crate::backends::common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE;
 
 pub const INT8_SYMMETRIC_QUANTIZATION_MAXIMUM: f32 = 127.0;
 
+pub use activation_transform::quantize_transformed_row;
+
 pub fn min_max_symmetric_divisor(values: &[f32]) -> f32 {
     let (min, max) =
         values.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), &value| (min.min(value), max.max(value)));
@@ -22,10 +24,10 @@ pub fn quantize_symmetric_i8(
     (value / divisor).round().clamp(-INT8_SYMMETRIC_QUANTIZATION_MAXIMUM, INT8_SYMMETRIC_QUANTIZATION_MAXIMUM) as i8
 }
 
-pub(crate) fn hadamard_transform(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE]) {
+pub(crate) fn hadamard_transform(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize]) {
     let mut stride = 1;
-    while stride < HADAMARD_TRANSFORM_BLOCK_SIZE {
-        for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
+    while stride < HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
+        for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
             if lane & stride == 0 {
                 let a = values[lane];
                 let b = values[lane | stride];

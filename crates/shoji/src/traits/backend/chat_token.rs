@@ -14,7 +14,8 @@ pub enum TokenStreamOutput {
 
 #[derive(Debug, Clone, Default)]
 pub struct TokenStreamMetrics {
-    pub num_forward_passes: usize,
+    pub num_prefill_forward_passes: usize,
+    pub num_decode_forward_passes: usize,
     pub num_tokens_prefilled: usize,
     pub num_tokens_proposed: usize,
     pub num_tokens_accepted: usize,
@@ -30,7 +31,6 @@ pub trait Backend: Send + Sync {
         &'a self,
         reference: String,
         config: ChatConfig,
-        tokenizer: Arc<Tokenizer>,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn Instance>, Error>> + Send + 'a>>;
 }
 
@@ -42,6 +42,8 @@ pub trait Instance:
         StreamMetrics = StreamMetrics,
     >
 {
+    fn tokenizer(&self) -> Arc<Tokenizer>;
+
     fn max_context_length(&self) -> Option<usize>;
 
     fn stop_token_ids(&self) -> Option<Box<[u64]>>;

@@ -1,12 +1,9 @@
-use std::mem::size_of;
-
 use thiserror::Error;
 
 use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, AllocationType, Backend, Context, Encoder, Kernels,
-        gpu_types::trie::TrieNode,
         kernel::{
             Conv1dPackKernel, ConvTreeScanKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel,
             DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
@@ -32,9 +29,11 @@ use crate::{
 
 pub(crate) mod tree_verify;
 
+const INNER_DATA_TYPE: DataType = DataType::F32;
+
 enum DeltaNetSuffixStatus<B: Backend> {
     Flat {
-        suffix_length: usize,
+        suffix_length: u32,
     },
     Tree {
         conv_states: Allocation<B>,
@@ -56,8 +55,8 @@ pub struct DeltaNetState<B: Backend> {
 impl<B: Backend> MixerState<B> for DeltaNetState<B> {
     fn prepare(
         &mut self,
-        _context_length: usize,
-        _suffix_length: usize,
+        _context_length: u32,
+        _suffix_length: u32,
         _context: &B::Context,
     ) -> Result<(), B::Error> {
         Ok(())
@@ -65,7 +64,7 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
 
     fn encode_accept(
         &mut self,
-        accepted_indices: &[usize],
+        accepted_indices: &[u32],
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let suffix_status = self.suffix_status.take().expect("delta net state has no suffix to accept");
@@ -85,22 +84,20 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                 beta,
                 parents,
             } => {
-                assert!(accepted_indices.iter().all(|&index| index < parents.len()));
-                assert_eq!(parents[accepted_indices[0]], -1);
-                assert!(accepted_indices.windows(2).all(|edge| parents[edge[1]] == edge[0] as i32));
+                assert!(accepted_indices.iter().all(|&index| (index as usize) < parents.len()));
+                assert_eq!(parents[accepted_indices[0] as usize], -1);
+                assert!(accepted_indices.windows(2).all(|edge| parents[edge[1] as usize] == edge[0] as i32));
 
                 let conv_state_size = self.conv_state.size();
+                let accepted_offset = accepted_index as usize * conv_state_size;
                 encoder.encode_copy(
                     &conv_states,
-                    accepted_index * conv_state_size..(accepted_index + 1) * conv_state_size,
+                    accepted_offset..accepted_offset + conv_state_size,
                     &mut self.conv_state,
                     ..,
                 );
 
-                let accepted_indices = accepted_indices.iter().map(|&index| index as u32).collect::<Box<[_]>>();
-                let mut accepted_indices_buffer =
-                    encoder.allocate_constant(accepted_indices.len() * DataType::U32.size_in_bytes())?;
-                accepted_indices_buffer.copyin(&accepted_indices);
+                let accepted_indices_buffer = encoder.allocate_constant_from_slice(accepted_indices)?;
                 self.state_advance.encode(
                     &k,
                     &v,
@@ -118,15 +115,15 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
 }
 
 pub struct DeltaNet<B: Backend> {
-    num_heads: usize,
-    head_dim: usize,
-    num_groups: usize,
-    value_head_dim: usize,
-    key_dim: usize,
-    value_dim: usize,
-    conv_dim: usize,
-    total_proj_dim: usize,
-    kernel_size: usize,
+    num_heads: u32,
+    head_dim: u32,
+    num_groups: u32,
+    value_head_dim: u32,
+    key_dim: u32,
+    value_dim: u32,
+    conv_dim: u32,
+    total_proj_dim: u32,
+    kernel_size: u32,
     outer_data_type: DataType,
     in_projection: Box<dyn Linear<B>>,
     conv_weight: Allocation<B>,
@@ -163,7 +160,7 @@ pub enum DeltaNetNewError<B: Backend> {
 
 impl<B: Backend> DeltaNet<B> {
     pub fn new(
-        hidden_dim: usize,
+        hidden_dim: u32,
         outer_data_type: DataType,
         config: &DeltaNetConfig,
         parameter_tree: &ParameterTree<B>,
@@ -188,15 +185,13 @@ impl<B: Backend> DeltaNet<B> {
             )));
         }
 
-        let inner_data_type = DataType::F32;
-
         let key_dim = config.num_groups * config.head_dim;
         let value_dim = config.num_heads * config.value_head_dim;
         let conv_dim = key_dim * 2 + value_dim;
         let total_proj_dim = conv_dim + value_dim + config.num_heads + config.num_heads;
 
         let (in_projection, in_projection_input_hadamard_factors) =
-            <dyn Linear<B>>::new_extracting_input_hadamard_mixed_precision(
+            <dyn Linear<B>>::new_with_input_rht_mixed_precision(
                 hidden_dim,
                 [total_proj_dim],
                 false,
@@ -204,23 +199,23 @@ impl<B: Backend> DeltaNet<B> {
                 outer_data_type,
                 outer_data_type,
                 outer_data_type,
-                &parameter_tree.subtree("in_proj")?,
+                &parameter_tree.subtree("in_proj"),
             )?;
 
         let conv_config = &config.conv_config;
-        let conv_tree = parameter_tree.subtree("conv")?;
+        let conv_tree = parameter_tree.subtree("conv");
 
         let conv_weight =
-            conv_tree.leaf("weights")?.validate(&[conv_dim, config.kernel_size], inner_data_type)?.read_allocation()?;
+            conv_tree.leaf("weights")?.validate(&[conv_dim, config.kernel_size], INNER_DATA_TYPE)?.read_allocation()?;
         let conv_bias = if conv_config.has_biases {
-            Some(conv_tree.leaf("biases")?.validate(&[conv_dim], inner_data_type)?.read_allocation()?)
+            Some(conv_tree.leaf("biases")?.validate(&[conv_dim], INNER_DATA_TYPE)?.read_allocation()?)
         } else {
             None
         };
         let conv_update =
             <B::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(context, outer_data_type, conv_config.has_biases)
                 .map_err(DeltaNetNewError::Backend)?;
-        let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, inner_data_type, outer_data_type)
+        let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, INNER_DATA_TYPE, outer_data_type)
             .map_err(DeltaNetNewError::Backend)?;
         let conv_scan =
             <B::Kernels as Kernels>::DeltaNetConvScanKernel::new(context, outer_data_type, conv_config.has_biases)
@@ -228,27 +223,27 @@ impl<B: Backend> DeltaNet<B> {
         let conv_tree_scan = <B::Kernels as Kernels>::ConvTreeScanKernel::new(
             context,
             outer_data_type,
-            config.kernel_size as u32,
+            config.kernel_size,
             conv_config.has_biases,
         )
         .map_err(DeltaNetNewError::Backend)?;
 
-        let a_log = parameter_tree.leaf("a_log")?.validate(&[config.num_heads], inner_data_type)?.read_allocation()?;
+        let a_log = parameter_tree.leaf("a_log")?.validate(&[config.num_heads], INNER_DATA_TYPE)?.read_allocation()?;
         let dt_bias =
-            parameter_tree.leaf("dt_bias")?.validate(&[config.num_heads], inner_data_type)?.read_allocation()?;
+            parameter_tree.leaf("dt_bias")?.validate(&[config.num_heads], INNER_DATA_TYPE)?.read_allocation()?;
         let norm_weight = parameter_tree
             .leaf("norm.scales")?
-            .validate(&[config.value_head_dim], inner_data_type)?
+            .validate(&[config.value_head_dim], INNER_DATA_TYPE)?
             .read_allocation()?;
         let norm_epsilon = config.norm_config.epsilon;
         let delta_net_update =
-            <B::Kernels as Kernels>::DeltaNetUpdateKernel::new(context, outer_data_type, config.head_dim as u32)
+            <B::Kernels as Kernels>::DeltaNetUpdateKernel::new(context, outer_data_type, config.head_dim)
                 .map_err(DeltaNetNewError::Backend)?;
         let delta_net_prefill_prep = <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
             context,
             outer_data_type,
-            DataType::F32,
-            config.head_dim as u32,
+            INNER_DATA_TYPE,
+            config.head_dim,
             false,
             false,
         )
@@ -257,13 +252,13 @@ impl<B: Backend> DeltaNet<B> {
             context,
             outer_data_type,
             outer_data_type,
-            config.head_dim as u32,
+            config.head_dim,
             true,
             true,
         )
         .map_err(DeltaNetNewError::Backend)?;
         let delta_net_prefill =
-            <B::Kernels as Kernels>::DeltaNetPrefillKernel::new(context, outer_data_type, config.head_dim as u32)
+            <B::Kernels as Kernels>::DeltaNetPrefillKernel::new(context, outer_data_type, config.head_dim)
                 .map_err(DeltaNetNewError::Backend)?;
         let delta_net_norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, outer_data_type)
             .map_err(DeltaNetNewError::Backend)?;
@@ -286,9 +281,8 @@ impl<B: Backend> DeltaNet<B> {
                 None
             };
 
-        let chunked =
-            <B::Kernels as Kernels>::DeltaNetChunkedPrefill::new(context, outer_data_type, config.head_dim as u32)
-                .map_err(DeltaNetNewError::Backend)?;
+        let chunked = <B::Kernels as Kernels>::DeltaNetChunkedPrefill::new(context, outer_data_type, config.head_dim)
+            .map_err(DeltaNetNewError::Backend)?;
 
         let out_projection = <dyn Linear<B>>::new_mixed_precision(
             value_dim,
@@ -298,7 +292,7 @@ impl<B: Backend> DeltaNet<B> {
             outer_data_type,
             outer_data_type,
             outer_data_type,
-            &parameter_tree.subtree("out_proj")?,
+            &parameter_tree.subtree("out_proj"),
         )?;
 
         Ok((
@@ -346,21 +340,19 @@ impl<B: Backend> DeltaNet<B> {
     ) -> Result<Allocation<B>, B::Error> {
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
         let tree_size = batch_dim.size();
-        let mut parents = encoder.allocate_constant(tree_size * DataType::I32.size_in_bytes())?;
-        parents.copyin(batch_dim.parents());
-        let mut trie = encoder.allocate_constant(tree_size * size_of::<TrieNode>())?;
-        trie.copyin(batch_dim.nodes());
+        let parents = encoder.allocate_constant_from_slice(batch_dim.parents())?;
+        let trie = encoder.allocate_constant_from_slice(batch_dim.nodes())?;
 
-        let mut conv_states = encoder
-            .allocate_scratch(size_for_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], DataType::F32))?;
-        let mut k = encoder.allocate_scratch(size_for_shape(&[tree_size, self.key_dim], self.outer_data_type))?;
-        let mut v = encoder.allocate_scratch(size_for_shape(&[tree_size, self.value_dim], self.outer_data_type))?;
-        let mut beta = encoder.allocate_scratch(size_for_shape(&[tree_size, self.num_heads], DataType::F32))?;
-        let mut log_decay = encoder.allocate_scratch(size_for_shape(&[tree_size, self.num_heads], DataType::F32))?;
+        let mut conv_states =
+            encoder.allocate_scratch_for_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE)?;
+        let mut k = encoder.allocate_scratch_for_shape(&[tree_size, self.key_dim], self.outer_data_type)?;
+        let mut v = encoder.allocate_scratch_for_shape(&[tree_size, self.value_dim], self.outer_data_type)?;
+        let mut beta = encoder.allocate_scratch_for_shape(&[tree_size, self.num_heads], INNER_DATA_TYPE)?;
+        let mut log_decay = encoder.allocate_scratch_for_shape(&[tree_size, self.num_heads], INNER_DATA_TYPE)?;
 
-        let mut scratch = |shape: &[usize], data_type| encoder.allocate_scratch(size_for_shape(shape, data_type));
-        let mut tree_projected = scratch(&[tree_size, self.total_proj_dim], self.outer_data_type)?;
-        let mut q = scratch(&[tree_size, self.key_dim], self.outer_data_type)?;
+        let mut tree_projected =
+            encoder.allocate_scratch_for_shape(&[tree_size, self.total_proj_dim], self.outer_data_type)?;
+        let mut q = encoder.allocate_scratch_for_shape(&[tree_size, self.key_dim], self.outer_data_type)?;
 
         self.conv_tree_scan.encode(
             &in_projected,
@@ -370,9 +362,9 @@ impl<B: Backend> DeltaNet<B> {
             &parents,
             &mut tree_projected,
             &mut conv_states,
-            tree_size as u32,
-            self.total_proj_dim as u32,
-            self.conv_dim as u32,
+            tree_size,
+            self.total_proj_dim,
+            self.conv_dim,
             encoder,
         );
 
@@ -385,11 +377,11 @@ impl<B: Backend> DeltaNet<B> {
             Some(&mut v),
             &mut beta,
             &mut log_decay,
-            self.num_heads as u32,
-            self.num_groups as u32,
-            self.key_dim as u32,
-            self.value_dim as u32,
-            tree_size as u32,
+            self.num_heads,
+            self.num_groups,
+            self.key_dim,
+            self.value_dim,
+            tree_size,
             encoder,
         );
 
@@ -410,13 +402,13 @@ impl<B: Backend> DeltaNet<B> {
             &mut delta_output,
             &tree_projected,
             &self.norm_weight,
-            self.num_heads as u32,
-            self.value_head_dim as u32,
-            self.value_dim as u32,
-            self.conv_dim as u32,
-            self.total_proj_dim as u32,
+            self.num_heads,
+            self.value_head_dim,
+            self.value_dim,
+            self.conv_dim,
+            self.total_proj_dim,
             self.norm_epsilon,
-            tree_size as u32,
+            tree_size,
             encoder,
         );
 
@@ -438,22 +430,22 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         self.tree_verify.is_some()
     }
 
-    fn max_context_length(&self) -> Option<usize> {
+    fn max_context_length(&self) -> Option<u32> {
         None
     }
 
     fn create_empty_state(
         &self,
-        _max_context_length: Option<usize>,
+        _max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
         let mut conv_state = context.create_allocation(
-            size_for_shape(&[self.conv_dim, self.kernel_size - 1], DataType::F32),
+            size_for_shape(&[self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE),
             AllocationType::Global,
         )?;
 
         let mut ssm_state = context.create_allocation(
-            size_for_shape(&[self.num_heads, self.value_head_dim, self.head_dim], DataType::F32),
+            size_for_shape(&[self.num_heads, self.value_head_dim, self.head_dim], INNER_DATA_TYPE),
             AllocationType::Global,
         )?;
 
@@ -465,9 +457,9 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         let state_advance = <B::Kernels as Kernels>::StateAdvanceKernel::new(
             context,
             self.outer_data_type,
-            self.head_dim as u32,
-            self.num_heads as u32,
-            self.num_groups as u32,
+            self.head_dim,
+            self.num_heads,
+            self.num_groups,
         )?;
 
         Ok(Box::new(DeltaNetState {
@@ -509,16 +501,16 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         }
 
         let mut delta_output =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.value_dim], self.outer_data_type))?;
+            encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.value_dim], self.outer_data_type)?;
         if batch_dim.size() == 1 {
             self.conv_update.encode(
                 &self.conv_weight,
                 self.conv_bias.as_ref(),
                 &mut in_projected,
                 &mut state.conv_state,
-                self.kernel_size as u32,
-                self.conv_dim as u32,
-                (self.kernel_size - 1) as u32,
+                self.kernel_size,
+                self.conv_dim,
+                self.kernel_size - 1,
                 encoder,
             );
 
@@ -529,27 +521,27 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 &self.norm_weight,
                 &mut state.ssm_state,
                 &mut delta_output,
-                self.num_heads as u32,
-                self.num_groups as u32,
-                self.value_head_dim as u32,
-                self.key_dim as u32,
-                self.value_dim as u32,
+                self.num_heads,
+                self.num_groups,
+                self.value_head_dim,
+                self.key_dim,
+                self.value_dim,
                 self.norm_epsilon,
                 encoder,
             );
         } else {
-            let mut padded = encoder.allocate_scratch(size_for_shape(
+            let mut padded = encoder.allocate_scratch_for_shape(
                 &[batch_dim.size() + self.kernel_size - 1, self.total_proj_dim],
-                DataType::F32,
-            ))?;
+                INNER_DATA_TYPE,
+            )?;
             self.conv_pack.encode(
                 &state.conv_state,
                 &in_projected,
                 &mut padded,
-                (self.kernel_size - 1) as u32,
-                self.total_proj_dim as u32,
-                batch_dim.size() as u32,
-                self.conv_dim as u32,
+                self.kernel_size - 1,
+                self.total_proj_dim,
+                batch_dim.size(),
+                self.conv_dim,
                 encoder,
             );
             self.conv_scan.encode(
@@ -558,12 +550,12 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.conv_bias.as_ref(),
                 &mut in_projected,
                 &mut state.conv_state,
-                batch_dim.size() as u32,
-                self.kernel_size as u32,
-                self.total_proj_dim as u32,
-                (self.kernel_size - 1) as u32,
-                self.conv_dim as u32,
-                self.total_proj_dim as u32,
+                batch_dim.size(),
+                self.kernel_size,
+                self.total_proj_dim,
+                self.kernel_size - 1,
+                self.conv_dim,
+                self.total_proj_dim,
                 encoder,
             );
             if let Some(chunked) = self.chunked.as_ref().filter(|chunked| chunked.should_use(batch_dim.size())) {
@@ -574,24 +566,24 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                         dt_bias: &self.dt_bias,
                         ssm_state: &mut state.ssm_state,
                         delta_output: &mut delta_output,
-                        num_heads: self.num_heads as u32,
-                        num_groups: self.num_groups as u32,
-                        value_head_dim: self.value_head_dim as u32,
-                        key_dim: self.key_dim as u32,
-                        value_dim: self.value_dim as u32,
+                        num_heads: self.num_heads,
+                        num_groups: self.num_groups,
+                        value_head_dim: self.value_head_dim,
+                        key_dim: self.key_dim,
+                        value_dim: self.value_dim,
                         suffix_len: batch_dim.size(),
                     },
                     encoder,
                 )?;
             } else {
                 let mut prep_q_norm =
-                    encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.key_dim], DataType::F32))?;
+                    encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.key_dim], INNER_DATA_TYPE)?;
                 let mut prep_k_norm =
-                    encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.key_dim], DataType::F32))?;
+                    encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.key_dim], INNER_DATA_TYPE)?;
                 let mut prep_beta =
-                    encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.num_heads], DataType::F32))?;
+                    encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
                 let mut prep_decay =
-                    encoder.allocate_scratch(size_for_shape(&[batch_dim.size(), self.num_heads], DataType::F32))?;
+                    encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
                 self.delta_net_prefill_prep.encode(
                     &in_projected,
                     &self.a_log,
@@ -601,11 +593,11 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                     None::<&mut Allocation<B>>,
                     &mut prep_beta,
                     &mut prep_decay,
-                    self.num_heads as u32,
-                    self.num_groups as u32,
-                    self.key_dim as u32,
-                    self.value_dim as u32,
-                    batch_dim.size() as u32,
+                    self.num_heads,
+                    self.num_groups,
+                    self.key_dim,
+                    self.value_dim,
+                    batch_dim.size(),
                     encoder,
                 );
                 self.delta_net_prefill.encode(
@@ -616,13 +608,13 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                     &in_projected,
                     &mut state.ssm_state,
                     &mut delta_output,
-                    self.num_heads as u32,
-                    self.num_groups as u32,
-                    self.value_head_dim as u32,
-                    self.key_dim as u32,
-                    self.value_dim as u32,
-                    batch_dim.size() as u32,
-                    self.value_head_dim.div_ceil(16) as u32,
+                    self.num_heads,
+                    self.num_groups,
+                    self.value_head_dim,
+                    self.key_dim,
+                    self.value_dim,
+                    batch_dim.size(),
+                    self.value_head_dim.div_ceil(16),
                     encoder,
                 );
             }
@@ -630,13 +622,13 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 &mut delta_output,
                 &in_projected,
                 &self.norm_weight,
-                self.num_heads as u32,
-                self.value_head_dim as u32,
-                self.value_dim as u32,
-                self.conv_dim as u32,
-                self.total_proj_dim as u32,
+                self.num_heads,
+                self.value_head_dim,
+                self.value_dim,
+                self.conv_dim,
+                self.total_proj_dim,
                 self.norm_epsilon,
-                batch_dim.size() as u32,
+                batch_dim.size(),
                 encoder,
             );
         }

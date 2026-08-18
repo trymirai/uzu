@@ -4,6 +4,18 @@ use crate::backends::common::{
     gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivationFormat {
+    Bf16,
+    Int8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct A8ActivationPlan {
+    pub activation_group_size: u32,
+    pub sum_group_size: Option<u32>,
+}
+
 #[derive(Clone, Copy)]
 pub struct MatmulShape {
     pub m: u32,
@@ -43,10 +55,4 @@ impl MatmulShape {
     pub fn is_quant(&self) -> bool {
         self.b_prologue != GemmBPrologueKind::FullPrecision
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MatmulPath {
-    Gemv,
-    Gemm,
 }

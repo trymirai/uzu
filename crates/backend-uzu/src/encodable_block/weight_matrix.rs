@@ -69,7 +69,7 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
             Some(QuantizationInfo {
                 mode,
                 method,
-                group_size: group_size as u32,
+                group_size,
             })
         },
     };
@@ -102,8 +102,8 @@ impl<B: Backend> WeightMatrix<B> {
         tree: &ParameterTree<B>,
         spec: AnyWeightMatrixSpec,
         required_layout: Layout,
-        output_dim: usize,
-        input_dim: usize,
+        output_dim: u32,
+        input_dim: u32,
         data_type: DataType,
     ) -> Result<Self, WeightMatrixError<B>> {
         let ParsedWeightSpec {
@@ -125,7 +125,7 @@ impl<B: Backend> WeightMatrix<B> {
             });
         };
 
-        let group_size = info.group_size as usize;
+        let group_size = info.group_size;
         let packing_divisor = info.mode.packing_divisor();
         let storage_data_type = info.mode.storage_type();
         if !columns.is_multiple_of(packing_divisor) {
@@ -243,9 +243,9 @@ impl<B: Backend> WeightMatrix<B> {
 
 fn physical_shape(
     layout: &Layout,
-    output_dim: usize,
-    input_dim: usize,
-) -> (usize, usize) {
+    output_dim: u32,
+    input_dim: u32,
+) -> (u32, u32) {
     match layout {
         Layout::OutputInput => (output_dim, input_dim),
         Layout::InputOutput => (input_dim, output_dim),

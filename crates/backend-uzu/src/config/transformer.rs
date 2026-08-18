@@ -6,6 +6,6 @@ use crate::config::{normalization::NormalizationConfig, transformer_layer::Trans
 pub struct TransformerConfig {
     pub layer_configs: Box<[TransformerLayerConfig]>,
     pub output_norm_config: NormalizationConfig,
-    pub model_dim: usize,
-    pub hidden_dim: usize,
+    pub model_dim: u32,
+    pub hidden_dim: u32,
 }

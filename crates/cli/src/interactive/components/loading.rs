@@ -34,7 +34,7 @@ pub fn Loading<'a>(
         .into()
     } else {
         element! {
-            Text(content: label, color: state.read().theme.subtitle_color)
+            Text(content: label, color: state.read().theme().subtitle_color)
         }
         .into()
     };

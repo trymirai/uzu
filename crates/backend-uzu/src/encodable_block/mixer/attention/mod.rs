@@ -34,12 +34,12 @@ pub(crate) use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, AttentionState
 pub mod rope;
 
 pub struct Attention<B: Backend> {
-    head_dim: usize,
-    num_q_heads: usize,
-    num_kv_heads: Option<usize>,
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: Option<u32>,
     is_causal: bool,
-    sliding_window_size: Option<usize>,
-    max_rope_length: Option<usize>,
+    sliding_window_size: Option<u32>,
+    max_rope_length: Option<u32>,
     data_type: DataType,
     qkv: LinearProjection<B>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
@@ -65,7 +65,7 @@ pub enum AttentionNewError<B: Backend> {
 
 impl<B: Backend> Attention<B> {
     pub fn new(
-        hidden_dim: usize,
+        hidden_dim: u32,
         data_type: DataType,
         rope_config: Option<&AnyRoPEConfig>,
         config: &AttentionConfig,
@@ -88,7 +88,7 @@ impl<B: Backend> Attention<B> {
         let has_gate = config.gate_projection_config.is_some();
 
         // TODO: qkv and gate should be fused to be qkvg in lalamo
-        let qkv_projection_tree = parameter_tree.subtree("qkv_projection")?;
+        let qkv_projection_tree = parameter_tree.subtree("qkv_projection");
         let qkv_projection_output_dimension = if let Some(num_kv_heads) = num_kv_heads {
             let kv_dim = num_kv_heads * head_dim;
             q_dim + kv_dim + kv_dim
@@ -96,7 +96,7 @@ impl<B: Backend> Attention<B> {
             q_dim
         };
         let (qkv_projection, in_projection_input_hadamard_factors) = if !has_gate {
-            <dyn Linear<B>>::new_extracting_input_hadamard(
+            <dyn Linear<B>>::new_with_input_rht(
                 hidden_dim,
                 [qkv_projection_output_dimension],
                 config.has_qkv_biases,
@@ -126,7 +126,7 @@ impl<B: Backend> Attention<B> {
                     false,
                     context,
                     data_type,
-                    &parameter_tree.subtree("gate_projection")?,
+                    &parameter_tree.subtree("gate_projection"),
                 )
             })
             .transpose()?;
@@ -211,7 +211,7 @@ impl<B: Backend> Attention<B> {
             config.has_out_biases,
             context,
             data_type,
-            &parameter_tree.subtree("out_projection")?,
+            &parameter_tree.subtree("out_projection"),
         )?;
 
         Ok((
@@ -245,13 +245,13 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         true
     }
 
-    fn max_context_length(&self) -> Option<usize> {
+    fn max_context_length(&self) -> Option<u32> {
         self.max_rope_length
     }
 
     fn create_empty_state(
         &self,
-        max_context_length: Option<usize>,
+        max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
         Ok(Box::new(AttentionState::create_empty(self, max_context_length, context)?))

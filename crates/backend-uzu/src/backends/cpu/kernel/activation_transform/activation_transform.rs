@@ -72,9 +72,9 @@ pub fn activation_transform<T: ArrayElement + Float>(
     let mut transformed = vec![0.0f32; columns];
     for row in 0..rows {
         let row_offset = row * columns;
-        for stripe_start in (0..columns).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE) {
-            let mut stripe = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE];
-            for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
+        for stripe_start in (0..columns).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE as usize) {
+            let mut stripe = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize];
+            for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
                 let index = stripe_start + lane;
                 let value: f32 = NumCast::from(unsafe { *input.add(row_offset + index) }).unwrap();
                 let factor = unsafe { *rht_factors.add(index) } as f32;
@@ -87,7 +87,7 @@ pub fn activation_transform<T: ArrayElement + Float>(
 
             hadamard_transform(&mut stripe);
 
-            for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE {
+            for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
                 let index = stripe_start + lane;
                 let factor = unsafe { *rht_factors.add(index) } as f32;
                 transformed[index] = if input_rht {

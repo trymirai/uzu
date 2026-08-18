@@ -2,12 +2,11 @@ use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
-            ActivationTransform, LogitSoftCapKernel,
+            ActivationTransform, LogitTransformKernel,
             matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel},
         },
     },
@@ -66,14 +65,16 @@ pub struct Embedding<B: Backend> {
     tying: EmbeddingTying<B>,
     input_scale: f32,
     data_type: DataType,
-    logit_soft_cap: Option<LogitSoftCap<B>>,
+    logit_transform: Option<LogitTransform<B>>,
     vocab_size: u32,
     model_dim: u32,
 }
 
-struct LogitSoftCap<B: Backend> {
-    value: f32,
-    kernel: <B::Kernels as Kernels>::LogitSoftCapKernel,
+struct LogitTransform<B: Backend> {
+    scale: f32,
+    soft_cap: Option<f32>,
+    kernel: <B::Kernels as Kernels>::LogitTransformKernel,
+    widened_kernel: Option<<B::Kernels as Kernels>::LogitTransformKernel>,
 }
 
 impl<B: Backend> Embedding<B> {
@@ -81,12 +82,12 @@ impl<B: Backend> Embedding<B> {
         self.data_type
     }
 
-    pub(crate) fn vocab_size(&self) -> usize {
-        self.vocab_size as usize
+    pub(crate) fn vocab_size(&self) -> u32 {
+        self.vocab_size
     }
 
-    pub(crate) fn model_dim(&self) -> usize {
-        self.model_dim as usize
+    pub(crate) fn model_dim(&self) -> u32 {
+        self.model_dim
     }
 
     fn readout_input_hadamard(&self) -> Option<&InputHadamard<B>> {
@@ -124,7 +125,7 @@ impl<B: Backend> Embedding<B> {
     ) -> Result<(Self, Option<Allocation<B>>), EmbeddingError<B>> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
-                let embedding_tree = parameter_tree.subtree("embedding")?;
+                let embedding_tree = parameter_tree.subtree("embedding");
                 let embedding_spec = embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
                 let (tying, readout_input_hadamard_factors) = match embedding_spec {
@@ -134,8 +135,8 @@ impl<B: Backend> Embedding<B> {
                         let table = EmbeddingTable::load_with_spec(
                             context,
                             &embedding_tree,
-                            vocab_size as usize,
-                            model_dim as usize,
+                            vocab_size,
+                            model_dim,
                             data_type,
                             spec,
                             None,
@@ -152,29 +153,29 @@ impl<B: Backend> Embedding<B> {
                     AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                         quantization_spec,
                         adapter_spec: None,
-                        incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+                        incoherence_block_size: Some(block_size),
                         incoherence_processing_mode: IncoherenceProcessingMode::Output,
                         ..
-                    }) => {
-                        let incoherence_signs_tree = embedding_tree.subtree("incoherence_signs")?;
+                    }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => {
+                        let incoherence_signs_tree = embedding_tree.subtree("incoherence_signs");
                         let output_hadamard_factors = Some(
                             incoherence_signs_tree
                                 .leaf("output_signs")?
-                                .validate(&[model_dim as usize], DataType::I32)?
+                                .validate(&[model_dim], DataType::I32)?
                                 .read_allocation()?,
                         );
                         let readout_input_hadamard_factors = Some(
                             incoherence_signs_tree
                                 .leaf("output_signs")?
-                                .validate(&[model_dim as usize], DataType::I32)?
+                                .validate(&[model_dim], DataType::I32)?
                                 .read_allocation()?,
                         );
 
                         let table = EmbeddingTable::load_with_spec(
                             context,
-                            &embedding_tree.subtree("quantized")?,
-                            vocab_size as usize,
-                            model_dim as usize,
+                            &embedding_tree.subtree("quantized"),
+                            vocab_size,
+                            model_dim,
                             data_type,
                             *quantization_spec,
                             output_hadamard_factors,
@@ -193,29 +194,29 @@ impl<B: Backend> Embedding<B> {
                 (tying, readout_input_hadamard_factors)
             },
             AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
-                let input_embedding_tree = parameter_tree.subtree("input_embedding")?;
+                let input_embedding_tree = parameter_tree.subtree("input_embedding");
                 let input_embedding_spec = input_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
                 let input_table = match input_embedding_spec {
                     AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                         quantization_spec,
                         adapter_spec: None,
-                        incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+                        incoherence_block_size: Some(block_size),
                         incoherence_processing_mode: IncoherenceProcessingMode::Output,
                         ..
-                    }) => {
+                    }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => {
                         let output_hadamard_factors = Some(
                             input_embedding_tree
-                                .subtree("incoherence_signs")?
+                                .subtree("incoherence_signs")
                                 .leaf("output_signs")?
-                                .validate(&[model_dim as usize], DataType::I32)?
+                                .validate(&[model_dim], DataType::I32)?
                                 .read_allocation()?,
                         );
                         EmbeddingTable::load_with_spec(
                             context,
-                            &input_embedding_tree.subtree("quantized")?,
-                            vocab_size as usize,
-                            model_dim as usize,
+                            &input_embedding_tree.subtree("quantized"),
+                            vocab_size,
+                            model_dim,
                             data_type,
                             *quantization_spec,
                             output_hadamard_factors,
@@ -224,31 +225,31 @@ impl<B: Backend> Embedding<B> {
                     spec => EmbeddingTable::load_with_spec(
                         context,
                         &input_embedding_tree,
-                        vocab_size as usize,
-                        model_dim as usize,
+                        vocab_size,
+                        model_dim,
                         data_type,
                         spec,
                         None,
                     )?,
                 };
 
-                let output_embedding_tree = parameter_tree.subtree("output_embedding")?;
+                let output_embedding_tree = parameter_tree.subtree("output_embedding");
                 let output_embedding_spec = output_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
                 let output = match output_embedding_spec {
                     AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                         quantization_spec,
                         adapter_spec: None,
-                        incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+                        incoherence_block_size: Some(block_size),
                         incoherence_processing_mode: IncoherenceProcessingMode::Input,
                         ..
-                    }) => {
+                    }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => {
                         let matrix = WeightMatrix::load(
-                            &output_embedding_tree.subtree("quantized")?,
+                            &output_embedding_tree.subtree("quantized"),
                             *quantization_spec,
                             Layout::OutputInput,
-                            vocab_size as usize,
-                            model_dim as usize,
+                            vocab_size,
+                            model_dim,
                             data_type,
                         )?;
 
@@ -256,9 +257,9 @@ impl<B: Backend> Embedding<B> {
                         // input: the shared hidden state must stay untransformed
                         // (e.g. for the speculator).
                         let factors = output_embedding_tree
-                            .subtree("incoherence_signs")?
+                            .subtree("incoherence_signs")
                             .leaf("input_signs")?
-                            .validate(&[model_dim as usize], DataType::I32)?
+                            .validate(&[model_dim], DataType::I32)?
                             .read_allocation()?;
                         let kernel = ActivationTransform::input_rht(context, data_type, false)
                             .map_err(EmbeddingError::BackendError)?;
@@ -277,8 +278,8 @@ impl<B: Backend> Embedding<B> {
                             &output_embedding_tree,
                             spec,
                             Layout::OutputInput,
-                            vocab_size as usize,
-                            model_dim as usize,
+                            vocab_size,
+                            model_dim,
                             data_type,
                         )?;
                         UntiedReadout {
@@ -300,12 +301,29 @@ impl<B: Backend> Embedding<B> {
         };
 
         let input_scale = config.input_scale().unwrap_or(1.0);
-        let logit_soft_cap = if let Some(value) = *config.logit_soft_cap() {
-            let kernel = <B::Kernels as Kernels>::LogitSoftCapKernel::new(context, data_type)
-                .map_err(EmbeddingError::BackendError)?;
-            Some(LogitSoftCap {
-                value,
+        let logit_scale = config.logit_scale().unwrap_or(1.0);
+        let logit_soft_cap = *config.logit_soft_cap();
+        let logit_transform = if logit_scale != 1.0 || logit_soft_cap.is_some() {
+            let kernel =
+                <B::Kernels as Kernels>::LogitTransformKernel::new(context, data_type, logit_soft_cap.is_some())
+                    .map_err(EmbeddingError::BackendError)?;
+            let widened_kernel = if data_type != DataType::F32 {
+                Some(
+                    <B::Kernels as Kernels>::LogitTransformKernel::new(
+                        context,
+                        DataType::F32,
+                        logit_soft_cap.is_some(),
+                    )
+                    .map_err(EmbeddingError::BackendError)?,
+                )
+            } else {
+                None
+            };
+            Some(LogitTransform {
+                scale: logit_scale,
+                soft_cap: logit_soft_cap,
                 kernel,
+                widened_kernel,
             })
         } else {
             None
@@ -316,7 +334,7 @@ impl<B: Backend> Embedding<B> {
                 tying,
                 input_scale,
                 data_type,
-                logit_soft_cap,
+                logit_transform,
                 vocab_size,
                 model_dim,
             },
@@ -327,15 +345,14 @@ impl<B: Backend> Embedding<B> {
     pub fn encode_lookup(
         &self,
         token_ids: &Allocation<B>,
-        batch_dim: usize,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
         encoder.push_debug_group("embedding lookup");
 
         let mut output = encoder
-            .allocate_scratch(size_for_shape(&[batch_dim, self.model_dim as usize], self.data_type))
+            .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
             .map_err(EmbeddingError::BackendError)?;
-        let batch_dim = batch_dim as u32;
 
         let table = match &self.tying {
             EmbeddingTying::Tied {
@@ -356,7 +373,7 @@ impl<B: Backend> Embedding<B> {
 
     pub fn encode_readout(
         &self,
-        batch_dim: usize,
+        batch_dim: u32,
         input_allocation: &Allocation<B>,
         output_data_type: DataType,
         encoder: &mut Encoder<B>,
@@ -367,7 +384,7 @@ impl<B: Backend> Embedding<B> {
         let native_output = output_data_type == self.data_type;
         let input_hadamard = self.readout_input_hadamard();
         let mut output_allocation = encoder
-            .allocate_scratch(size_for_shape(&[batch_dim, self.vocab_size as usize], output_data_type))
+            .allocate_scratch_for_shape(&[batch_dim, self.vocab_size], output_data_type)
             .map_err(EmbeddingError::BackendError)?;
 
         let (matrix, readout) = self.readout_operands();
@@ -380,7 +397,7 @@ impl<B: Backend> Embedding<B> {
                     input_allocation,
                     &mut transformed,
                     &input_hadamard.factors,
-                    batch_dim as u32,
+                    batch_dim,
                     self.model_dim,
                     encoder,
                 );
@@ -399,7 +416,7 @@ impl<B: Backend> Embedding<B> {
             d: &mut output_allocation,
             d_transform: MatmulDOps::none(),
             gather_indices: None,
-            m: batch_dim as u32,
+            m: batch_dim,
             n: self.vocab_size,
             k: self.model_dim,
         };
@@ -416,15 +433,21 @@ impl<B: Backend> Embedding<B> {
             widened.encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
         }
 
-        if let Some(logit_soft_cap) = &self.logit_soft_cap {
-            let length = (batch_dim * self.vocab_size as usize) as u32;
-            if native_output {
-                logit_soft_cap.kernel.encode(&mut output_allocation, length, logit_soft_cap.value, encoder);
+        if let Some(logit_transform) = &self.logit_transform {
+            let length = batch_dim * self.vocab_size;
+            let kernel = if native_output {
+                &logit_transform.kernel
             } else {
-                let kernel = <B::Kernels as Kernels>::LogitSoftCapKernel::new(encoder.context(), output_data_type)
-                    .map_err(EmbeddingError::BackendError)?;
-                kernel.encode(&mut output_allocation, length, logit_soft_cap.value, encoder);
-            }
+                assert_eq!(output_data_type, DataType::F32, "unsupported readout output data type");
+                logit_transform.widened_kernel.as_ref().expect("widened logit transform kernel is missing")
+            };
+            kernel.encode(
+                &mut output_allocation,
+                length,
+                logit_transform.scale,
+                logit_transform.soft_cap.unwrap_or(0.0),
+                encoder,
+            );
         }
 
         encoder.pop_debug_group();
@@ -438,8 +461,8 @@ impl<B: Backend> Embedding<B> {
         &self,
         input: &Allocation<B>,
         token_ids: &Allocation<B>,
-        rows: usize,
-        ids_per_row: usize,
+        rows: u32,
+        ids_per_row: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
         encoder.push_debug_group("embedding readout (sparse)");
@@ -450,7 +473,7 @@ impl<B: Backend> Embedding<B> {
         let b = matrix.matmul_b();
 
         let mut output = encoder
-            .allocate_scratch(size_for_shape(&[rows, ids_per_row], self.data_type))
+            .allocate_scratch_for_shape(&[rows, ids_per_row], self.data_type)
             .map_err(EmbeddingError::BackendError)?;
 
         let mut rht_input: Option<Allocation<B>> = None;
@@ -461,7 +484,7 @@ impl<B: Backend> Embedding<B> {
                     input,
                     &mut transformed,
                     &input_hadamard.factors,
-                    rows as u32,
+                    rows,
                     self.model_dim,
                     encoder,
                 );
@@ -470,7 +493,11 @@ impl<B: Backend> Embedding<B> {
             None => input,
         };
 
-        let soft_cap = self.logit_soft_cap.as_ref().map(|cap| cap.value);
+        let fuse_soft_cap = match &self.logit_transform {
+            Some(logit_transform) if logit_transform.scale != 1.0 => None,
+            Some(logit_transform) => logit_transform.soft_cap,
+            None => None,
+        };
         readout
             .lock()
             .encode(
@@ -484,17 +511,30 @@ impl<B: Backend> Embedding<B> {
                     b_transpose: true,
                     d: &mut output,
                     d_transform: MatmulDOps {
-                        soft_cap,
+                        soft_cap: fuse_soft_cap,
                         ..MatmulDOps::none()
                     },
                     gather_indices: Some(token_ids),
-                    m: rows as u32,
-                    n: ids_per_row as u32,
+                    m: rows,
+                    n: ids_per_row,
                     k: self.model_dim,
                 },
                 encoder,
             )
             .map_err(EmbeddingError::BackendError)?;
+
+        if let Some(logit_transform) = &self.logit_transform
+            && logit_transform.scale != 1.0
+        {
+            let length = rows * ids_per_row;
+            logit_transform.kernel.encode(
+                &mut output,
+                length,
+                logit_transform.scale,
+                logit_transform.soft_cap.unwrap_or(0.0),
+                encoder,
+            );
+        }
 
         encoder.pop_debug_group();
 

@@ -16,7 +16,7 @@ pub struct DeltaNetChunkedPrefillArgs<'a, B: Backend> {
     pub value_head_dim: u32,
     pub key_dim: u32,
     pub value_dim: u32,
-    pub suffix_len: usize,
+    pub suffix_len: u32,
 }
 
 pub trait DeltaNetChunkedPrefill<B: Backend>: Sized + Send + Sync {
@@ -28,7 +28,7 @@ pub trait DeltaNetChunkedPrefill<B: Backend>: Sized + Send + Sync {
 
     fn should_use(
         &self,
-        suffix_len: usize,
+        suffix_len: u32,
     ) -> bool;
 
     fn encode(
@@ -49,7 +49,7 @@ impl<B: Backend> DeltaNetChunkedPrefill<B> for Infallible {
 
     fn should_use(
         &self,
-        _suffix_len: usize,
+        _suffix_len: u32,
     ) -> bool {
         match *self {}
     }

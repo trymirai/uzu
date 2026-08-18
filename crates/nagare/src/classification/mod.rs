@@ -63,10 +63,7 @@ impl ClassificationSession {
             let instance_state = instance.state().await.map_err(|error| ClassificationSessionError::Backend {
                 message: error.to_string(),
             })?;
-            let encoding =
-                ClassificationEncoding::new(reference.as_str()).map_err(|err| ClassificationSessionError::Backend {
-                    message: err.to_string(),
-                })?;
+            let encoding = ClassificationEncoding::new(instance.token_codec_config(), instance.tokenizer());
 
             Ok(InstanceHolder {
                 instance,

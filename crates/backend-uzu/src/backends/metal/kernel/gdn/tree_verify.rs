@@ -1,5 +1,4 @@
 use crate::{
-    array::size_for_shape,
     backends::{
         common::{
             Allocation, Encoder, Kernels,
@@ -14,20 +13,21 @@ use crate::{
     encodable_block::mixer::delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
 };
 
-const TOKEN_BLOCK: usize = 16;
-const BLOCK_PAIR_WIDTH: usize = 2 * TOKEN_BLOCK;
+const TOKEN_BLOCK: u32 = 16;
+const BLOCK_PAIR_WIDTH: u32 = 2 * TOKEN_BLOCK;
+const INNER_DATA_TYPE: DataType = DataType::F32;
 
 struct Layout {
-    tree_size: usize,
-    num_blocks: usize,
-    num_block_pairs: usize,
-    num_v_heads: usize,
-    head_v_dim: usize,
+    tree_size: u32,
+    num_blocks: u32,
+    num_block_pairs: u32,
+    num_v_heads: u32,
+    head_v_dim: u32,
 }
 
 impl Layout {
     const fn new(
-        tree_size: usize,
+        tree_size: u32,
         arguments: &TreeVerifyNewArguments,
     ) -> Self {
         let num_blocks = tree_size.div_ceil(TOKEN_BLOCK);
@@ -40,11 +40,11 @@ impl Layout {
         }
     }
 
-    const fn a_packed_shape(&self) -> [usize; 5] {
+    const fn a_packed_shape(&self) -> [u32; 5] {
         [self.num_v_heads, self.num_blocks, self.num_block_pairs, TOKEN_BLOCK, BLOCK_PAIR_WIDTH]
     }
 
-    const fn a_inverse_shape(&self) -> [usize; 4] {
+    const fn a_inverse_shape(&self) -> [u32; 4] {
         [self.num_v_heads, self.num_blocks, TOKEN_BLOCK, TOKEN_BLOCK]
     }
 }
@@ -93,21 +93,31 @@ impl DeltaNetTreeVerify<Metal> for MetalDeltaNetTreeVerify {
         let layout = Layout::new(arguments.tree_size, &self.arguments);
         let mut h0_indices = encoder.allocate_constant(DataType::I32.size_in_bytes())?;
         h0_indices.copyin(&[0i32]);
-        let mut scratch = |shape: &[usize], data_type| encoder.allocate_scratch(size_for_shape(shape, data_type));
-        let mut prefix = scratch(&[layout.tree_size, layout.num_v_heads], DataType::F32)?;
-        let mut a_packed = scratch(&layout.a_packed_shape(), DataType::F32)?;
-        let mut qkd = scratch(&[layout.num_v_heads, layout.tree_size, layout.tree_size], DataType::F32)?;
-        let mut a_inverse = scratch(&layout.a_inverse_shape(), DataType::F32)?;
-        let mut kh0 = scratch(&[layout.tree_size, layout.num_v_heads, layout.head_v_dim], DataType::F32)?;
-        let mut u = scratch(&[layout.num_v_heads, layout.tree_size, layout.head_v_dim], DataType::F32)?;
-        let mut output = scratch(&[layout.tree_size, layout.num_v_heads, layout.head_v_dim], self.arguments.data_type)?;
-        let tree_size = arguments.tree_size.try_into().expect("tree size exceeds u32");
-        let num_k_heads = self.arguments.num_k_heads.try_into().expect("K head count exceeds u32");
-        let num_v_heads = self.arguments.num_v_heads.try_into().expect("V head count exceeds u32");
-        let head_k_dim = self.arguments.head_k_dim.try_into().expect("K head dimension exceeds u32");
-        let head_v_dim = self.arguments.head_v_dim.try_into().expect("V head dimension exceeds u32");
 
-        self.prefix.encode(arguments.trie, arguments.log_decay, &mut prefix, 1, tree_size, num_v_heads, encoder);
+        let mut prefix =
+            encoder.allocate_scratch_for_shape(&[layout.tree_size, layout.num_v_heads], INNER_DATA_TYPE)?;
+        let mut a_packed = encoder.allocate_scratch_for_shape(&layout.a_packed_shape(), INNER_DATA_TYPE)?;
+        let mut qkd = encoder
+            .allocate_scratch_for_shape(&[layout.num_v_heads, layout.tree_size, layout.tree_size], INNER_DATA_TYPE)?;
+        let mut a_inverse = encoder.allocate_scratch_for_shape(&layout.a_inverse_shape(), INNER_DATA_TYPE)?;
+        let mut kh0 = encoder
+            .allocate_scratch_for_shape(&[layout.tree_size, layout.num_v_heads, layout.head_v_dim], INNER_DATA_TYPE)?;
+        let mut u = encoder
+            .allocate_scratch_for_shape(&[layout.num_v_heads, layout.tree_size, layout.head_v_dim], INNER_DATA_TYPE)?;
+        let mut output = encoder.allocate_scratch_for_shape(
+            &[layout.tree_size, layout.num_v_heads, layout.head_v_dim],
+            self.arguments.data_type,
+        )?;
+
+        self.prefix.encode(
+            arguments.trie,
+            arguments.log_decay,
+            &mut prefix,
+            1,
+            arguments.tree_size,
+            self.arguments.num_v_heads,
+            encoder,
+        );
         self.gram.encode(
             arguments.q,
             arguments.k,
@@ -122,11 +132,11 @@ impl DeltaNetTreeVerify<Metal> for MetalDeltaNetTreeVerify {
             Some(&mut kh0),
             1.0,
             1,
-            tree_size,
-            num_k_heads,
-            num_v_heads,
-            head_k_dim,
-            head_v_dim,
+            arguments.tree_size,
+            self.arguments.num_k_heads,
+            self.arguments.num_v_heads,
+            self.arguments.head_k_dim,
+            self.arguments.head_v_dim,
             encoder,
         );
         self.solve.encode(
@@ -139,9 +149,9 @@ impl DeltaNetTreeVerify<Metal> for MetalDeltaNetTreeVerify {
             Some(&h0_indices),
             &mut u,
             1,
-            tree_size,
-            num_v_heads,
-            head_v_dim,
+            arguments.tree_size,
+            self.arguments.num_v_heads,
+            self.arguments.head_v_dim,
             encoder,
         );
         self.out.encode(
@@ -154,11 +164,11 @@ impl DeltaNetTreeVerify<Metal> for MetalDeltaNetTreeVerify {
             &mut output,
             1.0,
             1,
-            tree_size,
-            num_k_heads,
-            num_v_heads,
-            head_k_dim,
-            head_v_dim,
+            arguments.tree_size,
+            self.arguments.num_k_heads,
+            self.arguments.num_v_heads,
+            self.arguments.head_k_dim,
+            self.arguments.head_v_dim,
             encoder,
         );
         Ok(output)

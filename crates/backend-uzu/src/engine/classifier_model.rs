@@ -10,10 +10,11 @@ use std::{
 use half::bf16;
 use shoji::traits::backend::classification::ClassifierOutput;
 use thiserror::Error;
+use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::{AllocationType, Backend, Context, Encoder},
-    config::model::classifier_model::ClassifierModelConfig,
+    config::{model::classifier_model::ClassifierModelConfig, token_codec::AnyTokenCodecConfig},
     data_type::DataType,
     encodable_block::classifier::{Classifier as ClassifierEncodable, ClassifierError as ClassifierEncodableError},
     engine::Engine,
@@ -25,6 +26,8 @@ pub struct ClassifierModel<B: Backend> {
     classifier: ClassifierEncodable<B>,
     output_labels: Box<[String]>,
     data_type: DataType,
+    tokenizer: Arc<Tokenizer>,
+    token_codec_config: AnyTokenCodecConfig,
 }
 
 #[derive(Debug, Error)]
@@ -39,6 +42,8 @@ pub enum EngineLoadClassifierError<B: Backend> {
     ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Classifier error: {0}")]
     Classifier(#[from] ClassifierEncodableError<B>),
+    #[error("Tokenizer error: {0}")]
+    Tokenizer(#[from] tokenizers::Error),
 }
 
 impl<B: Backend> Engine<B> {
@@ -59,12 +64,12 @@ impl<B: Backend> Engine<B> {
         let classifier = ClassifierEncodable::new(
             context.as_ref(),
             &config.classifier_config,
-            &weight_loader.tree().subtree("classifier")?,
+            &weight_loader.tree().subtree("classifier"),
             data_type,
         )?;
 
         let output_labels = if let Some(output_labels) = config.classifier_config.output_labels {
-            assert!(output_labels.len() == config.classifier_config.num_labels);
+            assert!(output_labels.len() as u32 == config.classifier_config.num_labels);
             output_labels
         } else {
             (0..config.classifier_config.num_labels).map(|index| format!("class_{index}")).collect()
@@ -72,11 +77,16 @@ impl<B: Backend> Engine<B> {
 
         weight_loader.tree().assert_all_tensors_validated()?;
 
+        let tokenizer = Arc::new(Tokenizer::from_file(model_path.join("tokenizer.json"))?);
+        let token_codec_config = config.token_codec_config;
+
         Ok(ClassifierModel {
             context,
             classifier,
             output_labels,
             data_type,
+            tokenizer,
+            token_codec_config,
         })
     }
 }
@@ -94,6 +104,14 @@ pub enum ClassifierModelClassifyError<B: Backend> {
 }
 
 impl<B: Backend> ClassifierModel<B> {
+    pub fn tokenizer(&self) -> &Arc<Tokenizer> {
+        &self.tokenizer
+    }
+
+    pub fn token_codec_config(&self) -> &AnyTokenCodecConfig {
+        &self.token_codec_config
+    }
+
     pub fn classify(
         &self,
         input: &[u64],
@@ -102,7 +120,11 @@ impl<B: Backend> ClassifierModel<B> {
             return Err(ClassifierModelClassifyError::EmptyInput);
         }
 
-        if self.classifier.max_context_length().is_some_and(|max_context_length| input.len() > max_context_length) {
+        if self
+            .classifier
+            .max_context_length()
+            .is_some_and(|max_context_length| input.len() > max_context_length as usize)
+        {
             return Err(ClassifierModelClassifyError::ContextOverflow);
         }
 
@@ -113,7 +135,7 @@ impl<B: Backend> ClassifierModel<B> {
             .map_err(ClassifierModelClassifyError::Backend)?;
         token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 
-        let logits = self.classifier.encode(&token_ids, input.len(), &mut encoder)?;
+        let logits = self.classifier.encode(&token_ids, input.len() as u32, &mut encoder)?;
 
         let mut output_buffer = self
             .context
