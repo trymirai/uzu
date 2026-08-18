@@ -31,7 +31,6 @@ pub trait Backend: Send + Sync {
         &'a self,
         reference: String,
         config: ChatConfig,
-        tokenizer: Arc<Tokenizer>,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn Instance>, Error>> + Send + 'a>>;
 }
 
@@ -43,6 +42,8 @@ pub trait Instance:
         StreamMetrics = StreamMetrics,
     >
 {
+    fn tokenizer(&self) -> Arc<Tokenizer>;
+
     fn max_context_length(&self) -> Option<usize>;
 
     fn stop_token_ids(&self) -> Option<Box<[u64]>>;

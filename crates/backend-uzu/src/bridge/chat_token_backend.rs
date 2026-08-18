@@ -21,7 +21,6 @@ use shoji::{
     },
     types::session::chat::{ChatConfig, ChatReplyConfig},
 };
-#[cfg(grammar)]
 use tokenizers::Tokenizer;
 use tokio_util::sync::CancellationToken;
 
@@ -47,8 +46,6 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     engine: Arc<Engine<B>>,
     model: Arc<LanguageModel<B>>,
     config: ChatConfig,
-    #[cfg(grammar)]
-    tokenizer: Arc<Tokenizer>,
     stop_token_ids: Vec<i32>,
     max_context_length: Option<u32>,
 }
@@ -57,7 +54,6 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
     pub fn new(
         model_path: String,
         config: ChatConfig,
-        #[cfg(grammar)] tokenizer: Arc<Tokenizer>,
     ) -> Result<Self, BackendError> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
@@ -70,8 +66,6 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             engine,
             model: Arc::new(model),
             config,
-            #[cfg(grammar)]
-            tokenizer,
             stop_token_ids,
             max_context_length,
         })
@@ -117,7 +111,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         #[cfg(grammar)]
         let grammar = if let Some(grammar_config) = config.grammar {
-            match get_grammar(grammar_config, self.tokenizer.as_ref(), &self.stop_token_ids) {
+            match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids) {
                 Ok(grammar) => Some(grammar),
                 Err(err) => {
                     return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));
@@ -166,6 +160,10 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 }
 
 impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
+    fn tokenizer(&self) -> Arc<Tokenizer> {
+        self.model.tokenizer().clone()
+    }
+
     fn max_context_length(&self) -> Option<usize> {
         self.max_context_length.map(|max_context_length| max_context_length as usize)
     }
