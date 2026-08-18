@@ -47,7 +47,7 @@ async fn test_engine_chat() {
         println!("-------------------------");
     }
 
-    let model = engine.model("alibaba:qwen3:0.6b".to_string()).await.unwrap().unwrap();
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await.unwrap().unwrap();
     while let Some(update) = engine.download(&model).await.unwrap().next().await {
         println!("Downloading: {}", update.progress());
     }
