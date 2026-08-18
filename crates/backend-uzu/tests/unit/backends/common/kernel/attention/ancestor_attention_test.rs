@@ -84,7 +84,7 @@ impl<B: Backend> Runner<B> {
         }
         let mut node_metadata = vec![0u32; rows * MetadataIdx::COUNT];
         for row in 0..rows {
-            node_metadata[MetadataIdx::Depth as usize * rows + row] = (row as u32 * 3) % (MAX_DEPTH + 2);
+            node_metadata[MetadataIdx::Depth as usize * rows + row] = (row as u32 * 3) % MAX_DEPTH;
         }
 
         let context = create_context::<B>();

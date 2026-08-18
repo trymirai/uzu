@@ -854,6 +854,10 @@ public protocol EngineProtocol: AnyObject, Sendable {
     
     func chat(model: Model, config: ChatConfig) async throws  -> ChatSession
     
+    func chatInstance(model: Model, config: ChatConfig) async throws  -> ChatInstance
+    
+    func chatWithInstance(instance: ChatInstance) async throws  -> ChatSession
+    
     func classification(model: Model) async throws  -> ClassificationSession
     
     func download(model: Model) async throws  -> DownloaderStream
@@ -973,6 +977,40 @@ open func chat(model: Model, config: ChatConfig)async throws  -> ChatSession  {
                 uniffi_uzu_fn_method_engine_chat(
                     self.uniffiCloneHandle(),
                     FfiConverterTypeModel_lower(model),FfiConverterTypeChatConfig_lower(config)
+                )
+            },
+            pollFunc: ffi_uzu_rust_future_poll_u64,
+            completeFunc: ffi_uzu_rust_future_complete_u64,
+            freeFunc: ffi_uzu_rust_future_free_u64,
+            liftFunc: FfiConverterTypeChatSession_lift,
+            errorHandler: FfiConverterTypeEngineError_lift
+        )
+}
+    
+open func chatInstance(model: Model, config: ChatConfig)async throws  -> ChatInstance  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_uzu_fn_method_engine_chat_instance(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeModel_lower(model),FfiConverterTypeChatConfig_lower(config)
+                )
+            },
+            pollFunc: ffi_uzu_rust_future_poll_u64,
+            completeFunc: ffi_uzu_rust_future_complete_u64,
+            freeFunc: ffi_uzu_rust_future_free_u64,
+            liftFunc: FfiConverterTypeChatInstance_lift,
+            errorHandler: FfiConverterTypeEngineError_lift
+        )
+}
+    
+open func chatWithInstance(instance: ChatInstance)async throws  -> ChatSession  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_uzu_fn_method_engine_chat_with_instance(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeChatInstance_lower(instance)
                 )
             },
             pollFunc: ffi_uzu_rust_future_poll_u64,
@@ -3687,6 +3725,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_chat() != 2862) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_uzu_checksum_method_engine_chat_instance() != 25064) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_uzu_checksum_method_engine_chat_with_instance() != 46821) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_classification() != 6465) {

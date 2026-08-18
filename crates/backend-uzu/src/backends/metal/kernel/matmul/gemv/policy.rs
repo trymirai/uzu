@@ -1,4 +1,4 @@
-use crate::backends::metal::device_tier::DeviceTier;
+use crate::backends::metal::device_profile::{DeviceGeneration, DeviceProfile, DeviceSize};
 
 // Full-precision GEMV accumulates four K values per SIMD lane, so one full
 // vectorized K block is 4 * 32 lanes.
@@ -124,13 +124,15 @@ pub(crate) fn fp_tile(
     n: u32,
     k: u32,
     input_aligned: bool,
-    tier: DeviceTier,
+    profile: DeviceProfile,
 ) -> GemvTile {
+    let size = profile.size();
+    let is_small_g13 = size == DeviceSize::Small && profile.generation() == DeviceGeneration::Legacy;
     // FP sweeps covered SG2/SG4/SG8; SG changes did not produce portable
     // confirmed wins, so shipped FP policy keeps SG8 and tunes KS/R only.
     let should_disable_k_split = !input_aligned
-        || (m == 1 && tier == DeviceTier::Large && k < FP_LARGE_SPLIT_K_MIN_DEPTH)
-        || (m == 1 && tier == DeviceTier::SmallLegacy && n >= SMALL_G13_HUGE_N);
+        || (m == 1 && size == DeviceSize::Large && k < FP_LARGE_SPLIT_K_MIN_DEPTH)
+        || (m == 1 && is_small_g13 && n >= SMALL_G13_HUGE_N);
 
     let k_split = if should_disable_k_split {
         1
@@ -140,9 +142,9 @@ pub(crate) fn fp_tile(
 
     // R1 won most single-row FP sweeps; Large devices only switch back to R4
     // for deep-K rows, while legacy wide rows keep R4.
-    let results_per_simdgroup = if tier == DeviceTier::SmallLegacy && m == 1 && n >= SMALL_G13_WIDE_ROW_N {
+    let results_per_simdgroup = if is_small_g13 && m == 1 && n >= SMALL_G13_WIDE_ROW_N {
         DEFAULT_RESULTS_PER_SIMDGROUP
-    } else if m == 1 && (k <= DEEP_K || tier != DeviceTier::Large) {
+    } else if m == 1 && (k <= DEEP_K || size != DeviceSize::Large) {
         1
     } else {
         DEFAULT_RESULTS_PER_SIMDGROUP
@@ -159,8 +161,10 @@ pub(crate) fn quant_tile(
     k: u32,
     bits: u32,
     has_rht: bool,
-    tier: DeviceTier,
+    profile: DeviceProfile,
 ) -> GemvTile {
+    let size = profile.size();
+    let generation = profile.generation();
     // These tables are fitted for batch-1 Q4 only; Q8/future widths keep the
     // deterministic default until they have their own cold sweep.
     if m != 1 || bits != 4 {
@@ -169,7 +173,7 @@ pub(crate) fn quant_tile(
     if has_rht {
         // This special case mirrors quant bucket edges: n in (2048, 4096]
         // and k at or above the 2048 boundary.
-        return if tier == DeviceTier::Large
+        return if size == DeviceSize::Large
             && n > QUANT_RHT_TUNED_N_MIN_EXCLUSIVE
             && n <= QUANT_RHT_TUNED_N_MAX
             && k >= QUANT_RHT_TUNED_K_MIN
@@ -184,29 +188,31 @@ pub(crate) fn quant_tile(
     let n_bucket = table_bucket_index(n, &QUANT_N_BUCKET_MAXES);
     // Q4 BF16 decode choices from June 2026 gemv_fine_tune sweeps; omitted
     // cells keep SG8_KS1_R4. Other quant widths keep DEFAULT_TILE until swept.
-    let selected = match (tier, k_bucket, n_bucket) {
-        (DeviceTier::Large, 0, 1) => Q42,
-        (DeviceTier::Large, 1, 0) => Q21,
-        (DeviceTier::Large, 1, 1..=3) => Q22,
-        (DeviceTier::Large, 1, 4) => Q21,
-        (DeviceTier::Large, 1, 5) => Q24,
-        (DeviceTier::Large, 2, 1) => Q42,
-        (DeviceTier::Large, 3, 1) => Q22,
+    let selected = match (size, generation, k_bucket, n_bucket) {
+        (DeviceSize::Large, _, 0, 1) => Q42,
+        (DeviceSize::Large, _, 1, 0) => Q21,
+        (DeviceSize::Large, _, 1, 1..=3) => Q22,
+        (DeviceSize::Large, _, 1, 4) => Q21,
+        (DeviceSize::Large, _, 1, 5) => Q24,
+        (DeviceSize::Large, _, 2, 1) => Q42,
+        (DeviceSize::Large, _, 3, 1) => Q22,
 
-        (DeviceTier::SmallApple9, 0, 1) => Q44,
-        (DeviceTier::SmallApple9, 1, 0) => Q42,
-        (DeviceTier::SmallApple9, 1, 1) => Q22,
-        (DeviceTier::SmallApple9, 1, 2) => Q42,
-        (DeviceTier::SmallApple9, 1, 4) => Q22,
-        (DeviceTier::SmallApple9, 1, 5) => Q42,
-        (DeviceTier::SmallApple9, 2, 1) => Q42,
-        (DeviceTier::SmallApple9, 3, 1) => Q22,
+        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 0, 1) => Q44,
+        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 1, 0) => Q42,
+        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 1, 1) => Q22,
+        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 1, 2) => Q42,
+        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 1, 4) => Q22,
+        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 1, 5) => Q42,
+        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 2, 1) => Q42,
+        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 3, 1) => Q22,
 
-        (DeviceTier::SmallApple8, 0, 1) => Q44,
-        (DeviceTier::SmallApple8, 1, _) | (DeviceTier::SmallApple8, 2, 1) => Q82,
+        (DeviceSize::Small, DeviceGeneration::Apple8, 0, 1) => Q44,
+        (DeviceSize::Small, DeviceGeneration::Apple8, 1, _) | (DeviceSize::Small, DeviceGeneration::Apple8, 2, 1) => {
+            Q82
+        },
 
-        (DeviceTier::SmallLegacy, 0, 1) => Q48,
-        (DeviceTier::SmallLegacy, 1, 0..=3) => Q82,
+        (DeviceSize::Small, DeviceGeneration::Legacy, 0, 1) => Q48,
+        (DeviceSize::Small, DeviceGeneration::Legacy, 1, 0..=3) => Q82,
 
         _ => DEFAULT_TILE,
     };

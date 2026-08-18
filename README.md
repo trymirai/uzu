@@ -241,7 +241,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **quick-start** | **tool-calls**\>:
+You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-shared-instance** | **chat-structured-output** | **quick-start** | **tool-calls**\>:
 
 ### Chat
 
@@ -595,6 +595,222 @@ async function main() {
     if (message) {
         console.log('Reasoning: ', message.reasoning);
         console.log('Text: ', message.text);
+    }
+}
+
+main().catch((error) => {
+    console.error(error);
+});
+```
+
+</details>
+
+
+### Chat with shared instance
+
+This example shows how to reuse chat instance without reloading model into memory:
+
+<details>
+<summary>Rust</summary>
+
+```rust
+use std::io::{self, Write};
+
+use uzu::{
+    engine::{Engine, EngineConfig},
+    types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let engine_config = EngineConfig::default();
+    let engine = Engine::new(engine_config).await?;
+
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
+    let downloader = engine.download(&model).await?;
+    while let Some(update) = downloader.next().await {
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
+        io::stdout().flush()?;
+    }
+    println!();
+
+    // The chat_instance owns the loaded model and can be shared between sessions
+    let chat_instance = engine.chat_instance(model, ChatConfig::default()).await?;
+
+    let first_session = engine.chat_with_instance(&chat_instance).await?;
+    let replies = first_session
+        .reply(
+            vec![ChatMessage::user().with_text("Tell me a short, funny story about a robot".to_string())],
+            ChatReplyConfig::default(),
+        )
+        .await?;
+    if let Some(reply) = replies.last() {
+        println!("First session reasoning: {}", reply.message.reasoning().unwrap_or_default());
+        println!("First session text: {}", reply.message.text().unwrap_or_default());
+    }
+
+    // The second session reuses the already-loaded weights instead of loading the model again
+    let second_session = engine.chat_with_instance(&chat_instance).await?;
+    let replies = second_session
+        .reply(
+            vec![ChatMessage::user().with_text("What is the capital of France?".to_string())],
+            ChatReplyConfig::default(),
+        )
+        .await?;
+    if let Some(reply) = replies.last() {
+        println!("\nSecond session reasoning: {}", reply.message.reasoning().unwrap_or_default());
+        println!("Second session text: {}", reply.message.text().unwrap_or_default());
+    }
+
+    Ok(())
+}
+```
+
+</details>
+
+<details>
+<summary>Python</summary>
+
+```python
+import asyncio
+
+from uzu import ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig
+
+
+async def main() -> None:
+    engine_config = EngineConfig.create()
+    engine = await Engine.create(engine_config)
+
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        raise RuntimeError("Model not found")
+
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
+
+    # The chat_instance owns the loaded model and can be shared between sessions.
+    chat_instance = await engine.chat_instance(model, ChatConfig.create())
+
+    first_session = await engine.chat_with_instance(chat_instance)
+    replies = await first_session.reply(
+        [ChatMessage.user().with_text("Tell me a short, funny story about a robot")],
+        ChatReplyConfig.create(),
+    )
+    if replies:
+        message = replies[-1].message
+        print(f"First session reasoning: {message.reasoning}")
+        print(f"First session text: {message.text}")
+
+    # The second session reuses the already-loaded weights instead of loading the model again.
+    second_session = await engine.chat_with_instance(chat_instance)
+    replies = await second_session.reply(
+        [ChatMessage.user().with_text("What is the capital of France?")],
+        ChatReplyConfig.create(),
+    )
+    if replies:
+        message = replies[-1].message
+        print(f"\nSecond session reasoning: {message.reasoning}")
+        print(f"Second session text: {message.text}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+</details>
+
+<details>
+<summary>Swift</summary>
+
+```swift
+import Foundation
+import Uzu
+
+public func runChatSharedInstance() async throws {
+    let engineConfig = EngineConfig.create()
+    let engine = try await Engine.create(config: engineConfig)
+
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
+        return
+    }
+    for try await update in try await engine.download(model: model).iterator() {
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
+    }
+    print()
+
+    // The chatInstance owns the loaded model and can be shared between sessions.
+    let chatInstance = try await engine.chatInstance(model: model, config: .create())
+
+    let firstSession = try await engine.chatWithInstance(instance: chatInstance)
+    let replies = try await firstSession.reply(
+        input: [ChatMessage.user().withText(text: "Tell me a short, funny story about a robot")],
+        config: .create()
+    )
+    if let message = replies.last?.message {
+        print("First session reasoning: \(message.reasoning() ?? "")")
+        print("First session text: \(message.text() ?? "")")
+    }
+
+    // The second session reuses the already-loaded weights instead of loading the model again.
+    let secondSession = try await engine.chatWithInstance(instance: chatInstance)
+    let secondReplies = try await secondSession.reply(
+        input: [ChatMessage.user().withText(text: "What is the capital of France?")],
+        config: .create()
+    )
+    if let message = secondReplies.last?.message {
+        print("\nSecond session reasoning: \(message.reasoning() ?? "")")
+        print("Second session text: \(message.text() ?? "")")
+    }
+}
+```
+
+</details>
+
+<details>
+<summary>TypeScript</summary>
+
+```ts
+import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig } from '@trymirai/uzu';
+
+async function main() {
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
+
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    console.log();
+
+    // The chat instance owns the loaded model and can be shared between sessions.
+    let chatInstance = await engine.chatInstance(model, ChatConfig.create());
+
+    let firstSession = await engine.chatWithInstance(chatInstance);
+    let replies = await firstSession.reply(
+        [ChatMessage.user().withText('Tell me a short, funny story about a robot')],
+        ChatReplyConfig.create(),
+    );
+    let reply = replies[replies.length - 1];
+    if (reply) {
+        console.log('First session reasoning: ', reply.message.reasoning);
+        console.log('First session text: ', reply.message.text);
+    }
+
+    // The second session reuses the already-loaded weights instead of loading the model again.
+    let secondSession = await engine.chatWithInstance(chatInstance);
+    replies = await secondSession.reply(
+        [ChatMessage.user().withText('What is the capital of France?')],
+        ChatReplyConfig.create(),
+    );
+    reply = replies[replies.length - 1];
+    if (reply) {
+        console.log('\nSecond session reasoning: ', reply.message.reasoning);
+        console.log('Second session text: ', reply.message.text);
     }
 }
 

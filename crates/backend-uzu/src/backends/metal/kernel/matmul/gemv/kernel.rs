@@ -14,7 +14,7 @@ use crate::{
             },
             kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
         },
-        metal::{Metal, context::MetalContext, device_tier::DeviceTier, kernel::GemvMetalKernel},
+        metal::{Metal, context::MetalContext, device_profile::DeviceProfile, kernel::GemvMetalKernel},
     },
     data_type::DataType,
 };
@@ -49,7 +49,7 @@ impl GemvSpecialization {
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
-        device_tier: DeviceTier,
+        device_profile: DeviceProfile,
     ) -> Option<GemvSpecialization> {
         if !shape.b_transpose || !shape.a_full_precision {
             return None;
@@ -92,13 +92,13 @@ impl GemvSpecialization {
         let has_rht = shape.d_transform.contains(GemmDTransform::RHT);
         let bf16_io = input_data_type == DataType::BF16 && output_data_type == DataType::BF16;
         let tile = if is_quant && bf16_io {
-            policy::quant_tile(shape.m, shape.n, shape.k, bits, has_rht, device_tier)
+            policy::quant_tile(shape.m, shape.n, shape.k, bits, has_rht, device_profile)
         } else if is_quant || has_rht {
             // Non-bf16 quant IO and fp+RHT keep the default tile (the only
             // one instantiated for those modes).
             policy::DEFAULT_TILE
         } else {
-            policy::fp_tile(shape.m, shape.n, shape.k, input_aligned, device_tier)
+            policy::fp_tile(shape.m, shape.n, shape.k, input_aligned, device_profile)
         };
         Some(Self {
             b_prologue: shape.b_prologue,

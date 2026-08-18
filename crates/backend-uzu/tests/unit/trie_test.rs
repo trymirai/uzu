@@ -10,9 +10,9 @@ fn verify_sprout(
 
     assert_eq!(flat_trie.len(), 1);
     assert_eq!(flat_trie.index(trie_root), Some(0));
-    assert_eq!(flat_trie.index(&TrieNode::new(1, 0)), None);
-    assert_eq!(flat_trie.index(&TrieNode::new(0, 1)), None);
-    assert_eq!(flat_trie.index(&TrieNode::new(0, 0)), None);
+    assert_eq!(flat_trie.index(&TrieNode::new(1, 0, 0.0)), None);
+    assert_eq!(flat_trie.index(&TrieNode::new(0, 1, 0.0)), None);
+    assert_eq!(flat_trie.index(&TrieNode::new(0, 0, 0.0)), None);
     assert_eq!(flat_trie.token_ids().collect::<Vec<u64>>(), vec![0]);
     assert_eq!(flat_trie.token_subtrie_ranges().map(|node| node.height as usize).collect::<Vec<_>>(), vec![0]);
     assert_eq!(flat_trie.token_seeds().collect::<Vec<u64>>(), vec![expected_seed]);
@@ -20,7 +20,7 @@ fn verify_sprout(
 
 #[uzu_test]
 fn test_trie_manual_sprout() {
-    let trie_root = TrieNode::new(0, 0);
+    let trie_root = TrieNode::new(0, 0, 0.0);
 
     verify_sprout(&trie_root, 0);
 }
@@ -62,13 +62,13 @@ fn verify_stick(
 fn test_trie_manual_stick() {
     let rng = PRng::new(0);
 
-    let mut trie_stick = TrieNode::new(9, rng.derive(9));
+    let mut trie_stick = TrieNode::new(9, rng.derive(9), 0.0);
     for i in (1..9u64).rev() {
-        let mut trie_parent = TrieNode::new(i, rng.derive(i));
+        let mut trie_parent = TrieNode::new(i, rng.derive(i), 0.0);
         trie_parent.add(trie_stick).unwrap();
         trie_stick = trie_parent;
     }
-    let mut trie_root = TrieNode::new(0, rng.derive(0));
+    let mut trie_root = TrieNode::new(0, rng.derive(0), 0.0);
     trie_root.add(trie_stick).unwrap();
 
     verify_stick(&trie_root, &rng);
@@ -108,14 +108,14 @@ fn verify_bush(
 #[uzu_test]
 fn test_trie_manual_bush() {
     let rng = PRng::new(0);
-    let mut trie_root = TrieNode::new(0, rng.derive(0));
+    let mut trie_root = TrieNode::new(0, rng.derive(0), 0.0);
 
-    assert!(trie_root.add(TrieNode::new(1, rng.derive(1))).is_ok());
-    assert!(trie_root.add(TrieNode::new(1, rng.derive(1))).is_err());
-    assert!(trie_root.add(TrieNode::new(1, 10)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, rng.derive(1), 0.0)).is_ok());
+    assert!(trie_root.add(TrieNode::new(1, rng.derive(1), 0.0)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, 10, 0.0)).is_err());
 
-    assert!(trie_root.add(TrieNode::new(2, rng.derive(1))).is_ok());
-    assert!(trie_root.add(TrieNode::new(3, rng.derive(1))).is_ok());
+    assert!(trie_root.add(TrieNode::new(2, rng.derive(1), 0.0)).is_ok());
+    assert!(trie_root.add(TrieNode::new(3, rng.derive(1), 0.0)).is_ok());
 
     verify_bush(&trie_root, &rng);
 }
@@ -159,21 +159,75 @@ fn verify_tree(
 #[uzu_test]
 fn test_trie_manual_tree() {
     let rng = PRng::new(0);
-    let mut trie_root = TrieNode::new(0, rng.derive(0));
+    let mut trie_root = TrieNode::new(0, rng.derive(0), 0.0);
 
-    assert!(trie_root.add(TrieNode::new(1, rng.derive(1))).is_ok());
-    assert!(trie_root.add(TrieNode::new(1, rng.derive(1))).is_err());
-    assert!(trie_root.add(TrieNode::new(1, 10)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, rng.derive(1), 0.0)).is_ok());
+    assert!(trie_root.add(TrieNode::new(1, rng.derive(1), 0.0)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, 10, 0.0)).is_err());
 
-    let mut mid_b = TrieNode::new(2, rng.derive(1));
-    assert!(mid_b.add(TrieNode::new(10, rng.derive(2))).is_ok());
+    let mut mid_b = TrieNode::new(2, rng.derive(1), 0.0);
+    assert!(mid_b.add(TrieNode::new(10, rng.derive(2), 0.0)).is_ok());
 
-    let mut mid_c = TrieNode::new(3, rng.derive(1));
-    assert!(mid_c.add(TrieNode::new(20, rng.derive(2))).is_ok());
-    assert!(mid_c.add(TrieNode::new(21, rng.derive(2))).is_ok());
+    let mut mid_c = TrieNode::new(3, rng.derive(1), 0.0);
+    assert!(mid_c.add(TrieNode::new(20, rng.derive(2), 0.0)).is_ok());
+    assert!(mid_c.add(TrieNode::new(21, rng.derive(2), 0.0)).is_ok());
 
     assert!(trie_root.add(mid_b).is_ok());
     assert!(trie_root.add(mid_c).is_ok());
 
     verify_tree(&trie_root, &rng)
+}
+
+fn verify_pruned(
+    trie_root: &TrieNode,
+    expected_tokens: &[u64],
+) {
+    assert_eq!(trie_root.node_count(), expected_tokens.len());
+    assert_eq!(trie_root.linearize().token_ids().collect::<Vec<u64>>(), expected_tokens);
+}
+
+fn sample_tree() -> TrieNode {
+    let mut root = TrieNode::new(0, 0, 0.0);
+    let mut mid_a = TrieNode::new(1, 1, -0.1);
+    mid_a.add(TrieNode::new(4, 2, -0.4)).unwrap();
+    let mut mid_b = TrieNode::new(2, 1, -0.2);
+    mid_b.add(TrieNode::new(5, 2, -2.8)).unwrap();
+    root.add(mid_a).unwrap();
+    root.add(mid_b).unwrap();
+    root.add(TrieNode::new(3, 1, -0.3)).unwrap();
+    root
+}
+
+#[uzu_test]
+fn test_trie_prune_to_budget() {
+    let mut trie = sample_tree();
+    trie.prune_to_budget(4);
+    verify_pruned(&trie, &[0, 1, 2, 3]);
+    assert_eq!(trie.get(1).unwrap().logprob(), -0.1);
+    assert_eq!(trie.get(2).unwrap().logprob(), -0.2);
+    assert_eq!(trie.get(3).unwrap().logprob(), -0.3);
+
+    let mut trie = sample_tree();
+    trie.prune_to_budget(2);
+    verify_pruned(&trie, &[0, 1]);
+
+    let mut trie = sample_tree();
+    trie.prune_to_budget(6);
+    verify_pruned(&trie, &[0, 1, 4, 2, 5, 3]);
+
+    let mut trie = sample_tree();
+    trie.prune_to_budget(100);
+    verify_pruned(&trie, &[0, 1, 4, 2, 5, 3]);
+}
+
+#[uzu_test]
+fn test_trie_prune_to_budget_tie_keeps_parent() {
+    let mut root = TrieNode::new(0, 0, 0.0);
+    let mut child = TrieNode::new(1, 1, 0.0);
+    child.add(TrieNode::new(2, 2, 0.0)).unwrap();
+    root.add(child).unwrap();
+    root.add(TrieNode::new(3, 1, 0.0)).unwrap();
+
+    root.prune_to_budget(2);
+    verify_pruned(&root, &[0, 1]);
 }

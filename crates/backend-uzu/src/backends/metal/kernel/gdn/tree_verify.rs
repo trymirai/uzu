@@ -7,7 +7,12 @@ use crate::{
                 delta_net_tree_verify::DeltaNetTreeVerify,
             },
         },
-        metal::{Metal, MetalContext, device_tier::DeviceTier, error::MetalError, kernel::MetalKernels},
+        metal::{
+            Metal, MetalContext,
+            device_profile::{DeviceGeneration, DeviceSize},
+            error::MetalError,
+            kernel::MetalKernels,
+        },
     },
     data_type::DataType,
     encodable_block::mixer::delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
@@ -67,8 +72,9 @@ impl DeltaNetTreeVerify<Metal> for MetalDeltaNetTreeVerify {
         arguments: &TreeVerifyNewArguments,
     ) -> Result<Self, MetalError> {
         let use_mxu = arguments.data_type == DataType::BF16 && context.supports_mxu();
-        let transposed_h0 =
-            !use_mxu && matches!(context.device_tier(), DeviceTier::SmallLegacy | DeviceTier::SmallApple8);
+        let transposed_h0 = !use_mxu
+            && context.device_profile().size() == DeviceSize::Small
+            && matches!(context.device_profile().generation(), DeviceGeneration::Legacy | DeviceGeneration::Apple8);
         Ok(Self {
             arguments: *arguments,
             prefix: <MetalKernels as Kernels>::BuildTreePrefixKernel::new(context)?,
