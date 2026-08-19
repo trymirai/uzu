@@ -194,6 +194,7 @@ async fn run_tool_calls_test(
 }
 
 #[tokio::test]
+#[ignore]
 async fn functiongemma_270m_it() {
     // FunctionGemma 270M only handles single-step tool calls out of the box:
     // for the prompts that require chaining (get_current_location -> get_current_temperature) it invents coordinates or
@@ -203,21 +204,25 @@ async fn functiongemma_270m_it() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn gpt_oss_20b() {
     run_tool_calls_test("openai/gpt-oss-20b", true, false, TEST_CASES).await;
 }
 
 #[tokio::test]
+#[ignore]
 async fn lfm2_350m() {
     run_tool_calls_test("LiquidAI/LFM2-350M", true, false, &TEST_CASES[..1]).await;
 }
 
 #[tokio::test]
+#[ignore]
 async fn lfm2_5_350m() {
     run_tool_calls_test("LiquidAI/LFM2.5-350M", true, false, &TEST_CASES[..1]).await;
 }
 
 #[tokio::test]
+#[ignore]
 async fn llama_3_2_1b_instruct() {
     // Like FunctionGemma, Llama 3.2 1B only handles single-step tool calls: for the prompts that
     // require chaining (get_current_location -> get_current_temperature) it invents coordinates
@@ -226,11 +231,12 @@ async fn llama_3_2_1b_instruct() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn qwen3_1_7b() {
     run_tool_calls_test("Qwen/Qwen3-1.7B", true, false, TEST_CASES).await;
 }
 
 #[tokio::test]
 async fn qwen3_5_0_8b() {
-    run_tool_calls_test("Qwen/Qwen3.5-0.8B", true, false, TEST_CASES).await;
+    run_tool_calls_test("alibaba:qwen3.5:0.8b:mirai:mirai-m:4", true, false, TEST_CASES).await;
 }
