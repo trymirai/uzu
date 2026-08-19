@@ -128,6 +128,11 @@ rstest = "0.26"
 wiremock = "0.6"
 proptest = { version = "1.10", default-features = false, features = ["std"] }
 criterion = { version = "0.8.2", default-features = false }
+mlx-rs = { git = "https://github.com/oxideai/mlx-rs", rev = "f4aa309c", default-features = false, features = [
+    "metal",
+    "accelerate",
+] }
+mlx-sys = { git = "https://github.com/oxideai/mlx-rs", rev = "f4aa309c" }
 rustix = "1.1.4"
 indexmap = { version = "2.13.0", features = ["serde"] }
 tracing = "0.1.44"

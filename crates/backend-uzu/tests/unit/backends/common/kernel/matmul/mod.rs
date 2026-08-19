@@ -2,6 +2,8 @@ mod a8w_bench;
 mod dispatch_paths_test;
 mod gemm_bench;
 mod gemv_test;
+#[cfg(feature = "mlx-compare")]
+mod mlx_compare;
 mod quant_dispatch_test;
 mod quant_gemm_bench;
 mod quant_gemv_bench;
