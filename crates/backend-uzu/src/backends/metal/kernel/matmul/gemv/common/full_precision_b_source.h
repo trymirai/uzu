@@ -1,67 +1,75 @@
 #pragma once
 
-#include "../../common/defines.h"
+#include "arguments.h"
+#include "tile.h"
 
 namespace uzu {
 namespace gemm {
 
-template <typename BT, typename AT, typename U, uint RESULTS_PER_SIMDGROUP, uint K_SPLIT, bool INPUT_ALIGNED>
+template <typename Tile, typename AT, typename BT, typename DT, bool INPUT_ALIGNED>
 struct FullPrecisionBSource {
+  using U = float;
+
   static METAL_FUNC void accumulate(
-      thread U (&result)[RESULTS_PER_SIMDGROUP],
-      const device uint32_t* b,
-      const device AT* a,
-      const device uint* gather_indices,
-      bool gathered,
-      uint in_vec_size,
-      uint out_vec_size,
-      uint out_row,
-      uint batch_idx,
-      uint simd_lane,
-      uint k_slice
+      thread U (&result)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
+      const thread GemvOperands<AT, BT, DT>& ops,
+      const thread GemvParams& params,
+      const thread Tile& tile
   ) {
-    constexpr uint values_per_thread = 4;
-    constexpr uint block_size = values_per_thread * METAL_SIMD_SIZE;
-    typedef vec<BT, 4> W4;
-    typedef vec<AT, 4> I4;
+    static_assert(Tile::INPUT_ROWS == 1, "full-precision GEMV uses one input row");
+    constexpr uint VALUES_PER_THREAD = 4;
+    constexpr uint BLOCK_SIZE = VALUES_PER_THREAD * METAL_SIMD_SIZE;
+    using W4 = vec<BT, 4>;
+    using I4 = vec<AT, 4>;
+    const uint k_stride = Tile::K_SPLIT * BLOCK_SIZE;
+    const uint k_start = tile.k_slice * BLOCK_SIZE;
+    const uint thread_k = tile.reduction_lane * VALUES_PER_THREAD + k_start;
+    const uint weights_row_stride = params.in_vec_size;
+    const uint input_row = tile.input_row;
+    const device AT* input = ops.a + input_row * params.in_vec_size + thread_k;
+    thread const device BT* weight_rows[Tile::ROWS_PER_LANE];
+    const uint last_row = params.out_vec_size > 0 ? params.out_vec_size - 1 : 0;
 
-    const uint k_stride = K_SPLIT * block_size;
-    const uint k_start = k_slice * block_size;
-    const uint thread_k = simd_lane * values_per_thread + k_start;
-    const device AT* input = a + batch_idx * in_vec_size + thread_k;
-
-    // One advancing weight pointer per output row; base row = out_row (dense) or gather index.
-    const uint base_row = gathered ? 0u : out_row;
-    const device BT* weights = reinterpret_cast<const device BT*>(b);
-    weights += base_row * in_vec_size + thread_k;
-    thread const device BT* weight_rows[RESULTS_PER_SIMDGROUP];
     METAL_PRAGMA_UNROLL
-    for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-      const uint addr_row = gathered ? gather_indices[batch_idx * out_vec_size + out_row + row] : row;
-      weight_rows[row] = weights + addr_row * in_vec_size;
+    for (uint output_index = 0; output_index < Tile::ROWS_PER_LANE; output_index++) {
+      const uint global_row = tile.row0 + output_index;
+      const uint lookup_row = Tile::FULL_TILE ? global_row : min(global_row, last_row);
+      const uint weight_row =
+          params.gathered ? ops.gather_indices[input_row * params.out_vec_size + lookup_row] : lookup_row;
+      weight_rows[output_index] =
+          reinterpret_cast<const device BT*>(ops.b) + weight_row * weights_row_stride + thread_k;
     }
 
     uint k = k_start;
-    for (; k + block_size <= in_vec_size; k += k_stride) {
-      float4 input_values = static_cast<float4>(*reinterpret_cast<const device I4*>(input));
+    for (; k + BLOCK_SIZE <= params.in_vec_size; k += k_stride) {
+      const float4 input_values = static_cast<float4>(*reinterpret_cast<const device I4*>(input));
       METAL_PRAGMA_UNROLL
-      for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-        result[row] += dot(static_cast<float4>(*reinterpret_cast<const device W4*>(weight_rows[row])), input_values);
-        weight_rows[row] += k_stride;
+      for (uint output_index = 0; output_index < Tile::ROWS_PER_LANE; output_index++) {
+        const uint global_row = tile.row0 + output_index;
+        if (Tile::FULL_TILE || global_row < params.out_vec_size) {
+          result[0][output_index] +=
+              dot(static_cast<float4>(*reinterpret_cast<const device W4*>(weight_rows[output_index])), input_values);
+        }
+        weight_rows[output_index] += k_stride;
       }
       input += k_stride;
     }
 
-    if constexpr (K_SPLIT == 1 && !INPUT_ALIGNED) {
-      const uint thread_offset = simd_lane * values_per_thread;
-      const int remaining = (k + thread_offset < in_vec_size) ? min(static_cast<int>(in_vec_size - k - thread_offset),
-                                                                    static_cast<int>(values_per_thread))
-                                                              : 0;
+    if constexpr (Tile::K_SPLIT == 1 && !INPUT_ALIGNED) {
+      const uint thread_offset = tile.reduction_lane * VALUES_PER_THREAD;
+      const int remaining =
+          k + thread_offset < params.in_vec_size
+              ? min(static_cast<int>(params.in_vec_size - k - thread_offset), static_cast<int>(VALUES_PER_THREAD))
+              : 0;
       if (remaining > 0) {
         METAL_PRAGMA_UNROLL
-        for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-          for (int index = 0; index < remaining; index++) {
-            result[row] += static_cast<U>(weight_rows[row][index]) * static_cast<U>(input[index]);
+        for (uint output_index = 0; output_index < Tile::ROWS_PER_LANE; output_index++) {
+          const uint global_row = tile.row0 + output_index;
+          if (Tile::row_in_range(global_row, params.out_vec_size)) {
+            for (int index = 0; index < remaining; index++) {
+              result[0][output_index] +=
+                  static_cast<U>(weight_rows[output_index][index]) * static_cast<U>(input[index]);
+            }
           }
         }
       }

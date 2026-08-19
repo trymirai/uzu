@@ -1,10 +1,10 @@
 pub mod gemm;
-pub mod gemv;
+mod gemv;
 
 pub use self::gemm::GemmKernel;
 use self::{
     gemm::{GemmPlan, GemmProblem},
-    gemv::{GemvDispatch, GemvSpecialization},
+    gemv::{GemvKernel, GemvSpecialization},
 };
 use crate::{
     backends::{
@@ -22,7 +22,7 @@ use crate::{
 };
 
 pub struct MatmulMetalKernel {
-    gemv: GemvDispatch,
+    gemv: GemvKernel,
     pub gemm: GemmKernel,
     weights_data_type: DataType,
     input_data_type: DataType,
@@ -112,7 +112,7 @@ impl MatmulKernel for MatmulMetalKernel {
         }
 
         let gemm = GemmKernel::new(context, weights_data_type, input_data_type, output_data_type)?;
-        let gemv = GemvDispatch::new(weights_data_type, input_data_type, output_data_type);
+        let gemv = GemvKernel::new(weights_data_type, input_data_type, output_data_type);
 
         Ok(Self {
             gemv,
