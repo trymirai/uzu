@@ -343,6 +343,125 @@ fn microfloat_parameter_file() -> NamedTempFile {
     write_parameter_file(header, &payload)
 }
 
+#[derive(Clone, Copy)]
+enum IntegerExpertSpec {
+    Symmetric,
+    ScaleBias,
+}
+
+fn integer_parameter_file(spec: IntegerExpertSpec) -> NamedTempFile {
+    const GROUP_SIZE: u32 = 32;
+
+    let expert_spec = match spec {
+        IntegerExpertSpec::Symmetric => json!({
+            "type": "IntSpec",
+            "bits": 4,
+            "group_size": GROUP_SIZE,
+            "is_symmetric": true,
+            "layout": "output_input"
+        }),
+        IntegerExpertSpec::ScaleBias => json!({
+            "type": "MLXSpec",
+            "bits": 4,
+            "group_size": GROUP_SIZE,
+            "layout": "output_input"
+        }),
+    };
+    let mut header = Map::new();
+    header.insert(
+        "__metadata__".into(),
+        json!({
+            "router.weights.spec": json!({
+                "type": "FullPrecisionSpec",
+                "layout": "output_input"
+            }).to_string(),
+            "experts.up_projection.weights.spec": expert_spec.to_string(),
+            "experts.down_projection.weights.spec": expert_spec.to_string()
+        }),
+    );
+    let mut payload = Vec::new();
+    add_tensor(
+        &mut header,
+        &mut payload,
+        "router.weights.weights",
+        vec![EXPERTS, MODEL_DIM],
+        DataType::BF16,
+        bf16_bytes((0..EXPERTS as usize * MODEL_DIM as usize).map(|index| {
+            if index.is_multiple_of(MODEL_DIM as usize) {
+                ROUTER_SLOPES[index / MODEL_DIM as usize]
+            } else {
+                0.0
+            }
+        })),
+    );
+    add_tensor(
+        &mut header,
+        &mut payload,
+        "router.biases",
+        vec![EXPERTS],
+        DataType::BF16,
+        bf16_bytes([0.0; EXPERTS as usize]),
+    );
+
+    for (name, rows, columns) in [
+        ("experts.up_projection.weights", 2 * HIDDEN_DIM, MODEL_DIM),
+        ("experts.down_projection.weights", MODEL_DIM, HIDDEN_DIM),
+    ] {
+        let packed_count = (EXPERTS * rows * columns / 2) as usize;
+        add_tensor(
+            &mut header,
+            &mut payload,
+            &format!("{name}.weights"),
+            vec![EXPERTS, rows, columns / 2],
+            DataType::U8,
+            (0..packed_count)
+                .map(|index| {
+                    let low = 6 + index % 5;
+                    let high = 6 + (index * 3 + 1) % 5;
+                    (low | (high << 4)) as u8
+                })
+                .collect(),
+        );
+        let scale_count = (EXPERTS * rows * columns.div_ceil(GROUP_SIZE)) as usize;
+        let scales: Vec<f32> = (0..scale_count).map(|index| 0.01 + (index % 4) as f32 * 0.0025).collect();
+        add_tensor(
+            &mut header,
+            &mut payload,
+            &format!("{name}.scales"),
+            vec![EXPERTS, rows, columns.div_ceil(GROUP_SIZE)],
+            DataType::BF16,
+            bf16_bytes(scales.iter().copied()),
+        );
+        if matches!(spec, IntegerExpertSpec::ScaleBias) {
+            add_tensor(
+                &mut header,
+                &mut payload,
+                &format!("{name}.biases"),
+                vec![EXPERTS, rows, columns.div_ceil(GROUP_SIZE)],
+                DataType::BF16,
+                bf16_bytes(scales.into_iter().map(|scale| -8.0 * scale)),
+            );
+        }
+    }
+    add_tensor(
+        &mut header,
+        &mut payload,
+        "experts.up_projection.biases",
+        vec![EXPERTS, 2 * HIDDEN_DIM],
+        DataType::BF16,
+        bf16_bytes((0..EXPERTS * 2 * HIDDEN_DIM).map(|index| ((index % 9) as f32 - 4.0) * 0.005)),
+    );
+    add_tensor(
+        &mut header,
+        &mut payload,
+        "experts.down_projection.biases",
+        vec![EXPERTS, MODEL_DIM],
+        DataType::BF16,
+        bf16_bytes((0..EXPERTS * MODEL_DIM).map(|index| ((index % 7) as f32 - 3.0) * 0.004)),
+    );
+    write_parameter_file(header, &payload)
+}
+
 fn run<B: Backend>(
     token_count: u32,
     microfloat: bool,
@@ -392,6 +511,30 @@ fn run_f16<B: Backend>(token_count: u32) -> Vec<f16> {
     values
 }
 
+fn run_integer<B: Backend>(
+    token_count: u32,
+    spec: IntegerExpertSpec,
+) -> Vec<bf16> {
+    let context = B::Context::new().expect("create context");
+    let file = integer_parameter_file(spec);
+    let loader = ParameterLoader::<B>::new(file.as_file(), context.as_ref()).expect("load integer parameters");
+    let tree = loader.tree();
+    let block = MoeBlock::<B>::new(context.as_ref(), &config(), MODEL_DIM, DataType::BF16, &tree)
+        .expect("construct integer MoeBlock");
+    tree.assert_all_tensors_validated().expect("validate all integer parameters");
+
+    let input: Vec<bf16> =
+        (0..token_count * MODEL_DIM).map(|index| bf16::from_f32((index % 17) as f32 * 0.03 - 0.2)).collect();
+    let input = alloc_allocation_with_data::<B, bf16>(context.as_ref(), &input);
+    let mut encoder = Encoder::<B>::new(context.as_ref()).expect("create encoder");
+    let output = block.encode(input, token_count, &mut encoder).expect("encode integer MoeBlock");
+    let completed = encoder.end_encoding().submit().wait_until_completed().expect("execute integer MoeBlock");
+    let values = allocation_to_vec::<B, bf16>(&output);
+    drop(output);
+    drop(completed);
+    values
+}
+
 #[uzu_test]
 fn direct_routes_cover_decode_and_prefill() {
     for token_count in [1, 33, 257] {
@@ -423,6 +566,19 @@ fn microfloat_experts_match_an_independent_scalar_oracle() {
         let actual = run::<B>(2, true);
         assert_eq_float(&expected, &actual, 0.15, "scalar MXFP4 MoeBlock oracle");
     });
+}
+
+#[uzu_test]
+fn integer_expert_artifacts_cover_decode_and_prefill() {
+    for spec in [IntegerExpertSpec::Symmetric, IntegerExpertSpec::ScaleBias] {
+        for token_count in [1, 33] {
+            let expected = run_integer::<crate::backends::cpu::Cpu>(token_count, spec);
+            for_each_non_cpu_backend!(|B| {
+                let actual = run_integer::<B>(token_count, spec);
+                assert_eq_float(&expected, &actual, 0.15, "integer MoeBlock routes");
+            });
+        }
+    }
 }
 
 #[uzu_test]

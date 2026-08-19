@@ -203,7 +203,10 @@ impl MatmulKernel for MatmulMetalKernel {
         bf16_shape: &MatmulShape,
         context: &MetalContext,
     ) -> ActivationFormat {
-        if matches!(self.select_dispatch(bf16_shape, 1.0, None, context), MatmulDispatch::Gemv(_) | MatmulDispatch::Mxfp4ExpertDecodeGemv(_)) {
+        if matches!(
+            self.select_dispatch(bf16_shape, 1.0, None, context),
+            MatmulDispatch::Gemv(_) | MatmulDispatch::Mxfp4ExpertDecodeGemv(_)
+        ) {
             return ActivationFormat::Bf16;
         }
 
@@ -254,18 +257,6 @@ impl MatmulKernel for MatmulMetalKernel {
             .into());
         }
         if let Some(routes) = arguments.routing.expert_routes() {
-            if matches!(
-                &arguments.b,
-                crate::backends::common::kernel::matmul::MatmulB::ScaleBiasDequant { .. }
-                    | crate::backends::common::kernel::matmul::MatmulB::ScaleZeroPointDequant { .. }
-                    | crate::backends::common::kernel::matmul::MatmulB::ScaleSymmetricDequant { .. }
-            ) {
-                return Err(MatmulError::UnsupportedRouting {
-                    path: "MetalMatmul",
-                    reason: "quantized weight banks are not supported with direct expert routes",
-                }
-                .into());
-            }
             if arguments.d_transform.per_matrix_bias.is_some()
                 && arguments.d_transform.mask().contains(crate::backends::common::gpu_types::gemm::GemmDTransform::RHT)
             {
@@ -385,7 +376,12 @@ impl MatmulKernel for MatmulMetalKernel {
             .into());
         }
         let shape = MatmulShape::from_arguments(&arguments);
-        let plan = match self.select_dispatch(&shape, arguments.d_transform.ab_scale, arguments.d_transform.gate_act, encoder.context()) {
+        let plan = match self.select_dispatch(
+            &shape,
+            arguments.d_transform.ab_scale,
+            arguments.d_transform.gate_act,
+            encoder.context(),
+        ) {
             MatmulDispatch::Mxfp4ExpertDecodeGemv(spec) => {
                 return self.mxfp4_expert_decode.encode(arguments, spec, encoder).map_err(MetalError::from);
             },

@@ -40,6 +40,7 @@ impl<'a> BufferArg<'a, Metal> for RoutedBufferSlice<'a> {
     }
 }
 
+/// Pipeline identity for dense microfloat and backend-grouped expert GEMM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct RoutedGemmSpecialization {
     output_transform: GemmDTransform,
@@ -48,6 +49,7 @@ struct RoutedGemmSpecialization {
     expert_routed: bool,
 }
 
+/// Row-tiled GEMM arm selected after direct routes cross the GEMV threshold.
 pub(super) struct RoutedGemm {
     count: ExpertRouteCountMetalKernel,
     scatter: ExpertRouteScatterMetalKernel,
@@ -173,12 +175,18 @@ impl RoutedGemm {
             let mut cursors = encoder
                 .allocate_scratch_for_shape(&[expert_count], DataType::U32)
                 .map_err(MatmulError::BackendError)?;
-            let mut grouped_routes = encoder
-                .allocate_scratch_for_shape(&[route_count], DataType::U32)
-                .map_err(MatmulError::BackendError)?;
+            let mut grouped_routes =
+                encoder.allocate_scratch_for_shape(&[route_count], DataType::U32).map_err(MatmulError::BackendError)?;
 
             self.count.encode(routes.expert_ids, &mut offsets, &mut cursors, route_count, expert_count, encoder);
-            self.scatter.encode(routes.expert_ids, &mut cursors, &mut grouped_routes, route_count, expert_count, encoder);
+            self.scatter.encode(
+                routes.expert_ids,
+                &mut cursors,
+                &mut grouped_routes,
+                route_count,
+                expert_count,
+                encoder,
+            );
             (Some(offsets), Some(grouped_routes))
         } else {
             (None, None)

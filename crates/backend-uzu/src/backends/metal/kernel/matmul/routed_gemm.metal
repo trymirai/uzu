@@ -82,6 +82,7 @@ KERNEL(RoutedGemm)(
       valid_rows[row] = route < route_count;
     }
 
+    // Keep four rows live so each decoded expert weight is fetched once per tile.
     for (uint inner = 0; inner < k; ++inner) {
       float weight;
       if constexpr (MICROFLOAT) {

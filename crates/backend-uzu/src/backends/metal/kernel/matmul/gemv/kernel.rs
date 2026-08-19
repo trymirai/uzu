@@ -73,13 +73,17 @@ impl GemvSpecialization {
         if shape.d_transform.contains(GemmDTransform::RHT) && !shape.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) {
             return None;
         }
-        if shape.n < DEFAULT_RESULTS_PER_SIMDGROUP {
+        if !shape.expert_routed && shape.n < DEFAULT_RESULTS_PER_SIMDGROUP {
             return None;
         }
+        // Integer expert banks have no grouped Metal arm yet. Preserve the
+        // independent storage/routing contract with a correct GEMV fallback,
+        // even for prefill-sized M; this is not a claim of prefill parity.
+        let long_integer_expert_bank = shape.expert_routed && is_quant;
         // Sparse MXFP4 readout has no gathered GEMM arm. Keep it on the only
         // implementation that honors its physical B-row map at every M.
         let sparse_microfloat_readout = shape.sparse_readout && microfloat;
-        if shape.m > max_gemv_batch_threshold() && !sparse_microfloat_readout {
+        if shape.m > max_gemv_batch_threshold() && !long_integer_expert_bank && !sparse_microfloat_readout {
             return None;
         }
         if !is_quant {

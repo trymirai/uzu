@@ -199,11 +199,6 @@ impl<B: Backend> WeightMatrix<B> {
         }
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
-        if microfloat.is_some() && !banked {
-            return Err(WeightMatrixError::UnsupportedConfiguration(
-                "microfloat weights are currently supported only for expert matrix banks".into(),
-            ));
-        }
         if let Some(info) = microfloat {
             let runtime_layout = match layout {
                 Layout::OutputInput => MicrofloatLayout::OutputInput,

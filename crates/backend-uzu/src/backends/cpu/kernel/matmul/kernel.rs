@@ -77,18 +77,6 @@ impl MatmulKernel for MatmulCpuKernel {
             .into());
         }
         if let Some(routes) = arguments.routing.expert_routes() {
-            if matches!(
-                &arguments.b,
-                MatmulB::ScaleBiasDequant { .. }
-                    | MatmulB::ScaleZeroPointDequant { .. }
-                    | MatmulB::ScaleSymmetricDequant { .. }
-            ) {
-                return Err(MatmulError::UnsupportedRouting {
-                    path: "CpuMatmul",
-                    reason: "quantized weight banks are not supported with direct expert routes",
-                }
-                .into());
-            }
             if arguments.d_transform.per_matrix_bias.is_some()
                 && arguments.d_transform.mask().contains(crate::backends::common::gpu_types::gemm::GemmDTransform::RHT)
             {
