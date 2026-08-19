@@ -3,8 +3,14 @@ use proc_macros::uzu_test;
 use super::{super::specialization::GemmSpecialization, *};
 use crate::backends::{
     common::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmDTransform},
-    metal::kernel::matmul::MatmulMetalKernel,
+    metal::{
+        device_profile::{DeviceGeneration, DeviceProfile},
+        kernel::matmul::MatmulMetalKernel,
+    },
 };
+
+const LEGACY_PROFILE: DeviceProfile = DeviceProfile::new(8, DeviceGeneration::Legacy);
+const APPLE9_PROFILE: DeviceProfile = DeviceProfile::new(10, DeviceGeneration::Apple9);
 
 fn shape(
     m: u32,
@@ -39,7 +45,7 @@ fn problem(
     shape: MatmulShape,
     output_data_type: DataType,
 ) -> GemmProblem {
-    GemmProblem::new(shape, DataType::BF16, output_data_type, true)
+    GemmProblem::new(shape, DataType::BF16, output_data_type, true, LEGACY_PROFILE)
 }
 
 fn plan(split_k: u32) -> GemmPlan {
@@ -78,11 +84,24 @@ fn policy_boundaries_are_preserved() {
 
     for (m, n, group_size, expected) in [
         (16, 4096, 31, Tile64x64x16_Simdgroups2x2),
-        (31, 4096, 32, Tile8x32x32_Simdgroups1x1),
+        // Full M blocks keep the narrow tile.
+        (4, 4096, 32, Tile8x32x32_Simdgroups1x1),
+        (8, 4096, 32, Tile8x32x32_Simdgroups1x1),
+        (16, 4096, 32, Tile8x32x32_Simdgroups1x1),
+        (24, 4096, 32, Tile8x32x32_Simdgroups1x1),
+        // A partial trailing block takes the wide tile.
+        (9, 4096, 32, Tile32x32x32_Simdgroups2x2),
+        (15, 4096, 32, Tile32x32x32_Simdgroups2x2),
+        (31, 4096, 32, Tile32x32x32_Simdgroups2x2),
         (64, 6143, 32, Tile32x32x32_Simdgroups2x2),
         (64, 6144, 32, Tile64x64x32_Simdgroups2x2),
     ] {
-        assert_eq!(policy::simdgroup_quant_tile(m, n, group_size), expected);
+        assert_eq!(policy::simdgroup_quant_tile(m, n, group_size, LEGACY_PROFILE), expected);
+    }
+
+    // Apple9 and newer keep the narrow tile regardless.
+    for m in [9, 15, 31] {
+        assert_eq!(policy::simdgroup_quant_tile(m, 4096, 32, APPLE9_PROFILE), Tile8x32x32_Simdgroups1x1);
     }
 }
 
@@ -110,7 +129,7 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     let mut biased = quant(shape(16, 4096, 4096));
     biased.a_full_precision = false;
     biased.d_transform = GemmDTransform::BIAS;
-    assert_eq!(GemmProblem::new(biased, DataType::BF16, DataType::F32, true).select_plan().split_k, 1);
+    assert_eq!(GemmProblem::new(biased, DataType::BF16, DataType::F32, true, LEGACY_PROFILE).select_plan().split_k, 1);
 
     let mut zero = quant(shape(0, 1, 1));
     zero.b_prologue = GemmBPrologueKind::ScaleZeroPointDequant;
@@ -122,7 +141,8 @@ fn selection_fallbacks_and_split_k_are_preserved() {
 fn forced_engine_errors_are_preserved() {
     let huge = shape(u32::MAX, u32::MAX, u32::MAX);
     assert_eq!(
-        GemmProblem::new(huge, DataType::BF16, DataType::BF16, false).select_plan_for_engine(GemmEngine::Mxu),
+        GemmProblem::new(huge, DataType::BF16, DataType::BF16, false, LEGACY_PROFILE)
+            .select_plan_for_engine(GemmEngine::Mxu),
         Err(GemmPlanError::MxuUnavailable)
     );
 
@@ -167,7 +187,7 @@ fn gemv_gemm_route_boundaries_are_preserved() {
         (shape(3, 4096, 8192), DataType::BF16, false),
         (shape(5, 4096, 8192), DataType::BF16, false),
     ] {
-        let plan = GemmProblem::new(shape, data_type, data_type, true).select_plan();
+        let plan = GemmProblem::new(shape, data_type, data_type, true, LEGACY_PROFILE).select_plan();
         assert_eq!(MatmulMetalKernel::prefer_gemm_over_gemv(shape, plan, data_type, data_type, data_type), prefer_gemm);
     }
     let mut gathered = shape(4, 4096, 8192);

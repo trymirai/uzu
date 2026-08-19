@@ -4,7 +4,10 @@
 //! features to choices. Eligibility, fallbacks, and legality stay in
 //! `selection.rs`.
 
-use crate::backends::common::gpu_types::gemm::GemmTiling;
+use crate::backends::{
+    common::gpu_types::gemm::GemmTiling,
+    metal::device_profile::{DeviceGeneration, DeviceProfile},
+};
 
 pub(super) const MXU_DEFAULT_TILE: GemmTiling = GemmTiling::Tile64x64x256_Simdgroups2x2;
 
@@ -20,6 +23,7 @@ const MXU_M_BUCKET_MAXES: [u32; 4] = [16, 63, 255, 511];
 const MXU_N_BUCKET_MAXES: [u32; 2] = [63, 127];
 
 const SIMDGROUP_QUANT_SMALL_M_MAX: u32 = 32;
+const SIMDGROUP_QUANT_NARROW_BLOCK_M: u32 = 8;
 const SIMDGROUP_QUANT_LARGE_M_MIN: u32 = 64;
 const SIMDGROUP_QUANT_WIDE_N_MIN: u32 = 6144;
 
@@ -95,15 +99,29 @@ pub(super) fn simdgroup_fp_tile(
     }
 }
 
+/// A partial trailing M block costs a second pass over the weights. Older GPUs are bound by that;
+/// Apple9 and newer would rather keep the narrow tile's parallelism.
+fn prefers_wide_partial_m_tile(profile: DeviceProfile) -> bool {
+    matches!(profile.generation(), DeviceGeneration::Legacy | DeviceGeneration::Apple8)
+}
+
 pub(super) fn simdgroup_quant_tile(
     m: u32,
     n: u32,
     group_size: u32,
+    profile: DeviceProfile,
 ) -> GemmTiling {
     if group_size < 32 {
         GemmTiling::Tile64x64x16_Simdgroups2x2
     } else if m < SIMDGROUP_QUANT_SMALL_M_MAX {
-        GemmTiling::Tile8x32x32_Simdgroups1x1
+        if !prefers_wide_partial_m_tile(profile)
+            || m <= SIMDGROUP_QUANT_NARROW_BLOCK_M
+            || m.is_multiple_of(SIMDGROUP_QUANT_NARROW_BLOCK_M)
+        {
+            GemmTiling::Tile8x32x32_Simdgroups1x1
+        } else {
+            GemmTiling::Tile32x32x32_Simdgroups2x2
+        }
     } else if m >= SIMDGROUP_QUANT_LARGE_M_MIN && n >= SIMDGROUP_QUANT_WIDE_N_MIN && n.is_multiple_of(64) {
         GemmTiling::Tile64x64x32_Simdgroups2x2
     } else {
