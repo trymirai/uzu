@@ -6,12 +6,12 @@ use crate::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{
             MoeFinalizeKernel,
-            matmul::{ExpertInput, ExpertRoutes, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{ExpertInput, ExpertRoutes, MatmulA, MatmulArguments, MatmulDOps, MatmulKernel},
         },
     },
     config::activation::AnyActivation,
     data_type::DataType,
-    encodable_block::mlp::gate_act_mul::MlpGateActMulEncodable,
+    encodable_block::{mlp::gate_act_mul::MlpGateActMulEncodable, weight_matrix::WeightMatrix},
 };
 
 pub struct MoeExperts<B: Backend> {
@@ -19,8 +19,8 @@ pub struct MoeExperts<B: Backend> {
     gate: MlpGateActMulEncodable<B>,
     w2_kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     finalize: <B::Kernels as Kernels>::MoeFinalizeKernel,
-    w13: Allocation<B>,
-    w2: Allocation<B>,
+    w13: WeightMatrix<B>,
+    w2: WeightMatrix<B>,
     up_biases: Allocation<B>,
     down_biases: Allocation<B>,
     model_dim: u32,
@@ -33,8 +33,8 @@ impl<B: Backend> MoeExperts<B> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         context: &B::Context,
-        w13: Allocation<B>,
-        w2: Allocation<B>,
+        w13: WeightMatrix<B>,
+        w2: WeightMatrix<B>,
         up_biases: Allocation<B>,
         down_biases: Allocation<B>,
         model_dim: u32,
@@ -101,9 +101,7 @@ impl<B: Backend> MoeExperts<B> {
                     values: input,
                     offset: 0,
                 },
-                b: MatmulB::FullPrecision {
-                    b: &self.w13,
-                },
+                b: self.w13.matmul_b(),
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut fused_up,
@@ -125,9 +123,7 @@ impl<B: Backend> MoeExperts<B> {
                     values: &hidden,
                     offset: 0,
                 },
-                b: MatmulB::FullPrecision {
-                    b: &self.w2,
-                },
+                b: self.w2.matmul_b(),
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut route_outputs,
