@@ -41,7 +41,8 @@ pub struct Attention<B: Backend> {
     sliding_window_size: Option<u32>,
     max_rope_length: Option<u32>,
     data_type: DataType,
-    qkv: LinearProjection<B>,
+    projection_dim: u32,
+    projection: LinearProjection<B>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     gate_projection: Option<Box<dyn Linear<B>>>,
     sinks: Option<Allocation<B>>,
@@ -85,40 +86,53 @@ impl<B: Backend> Attention<B> {
 
         let q_dim = num_q_heads * head_dim;
 
-        let has_gate = config.gate_projection_config.is_some();
+        // Fresh Lalamo packs fuse the gate into `qkvg_projection` as the trailing
+        // segment; older packs keep a bare `qkv_projection` plus an optional
+        // separate `gate_projection`.
+        let fused_projection = parameter_tree.has_subtree("qkvg_projection");
+        let has_gate = config.has_gate || config.gate_projection_config.is_some();
 
-        // TODO: qkv and gate should be fused to be qkvg in lalamo
-        let qkv_projection_tree = parameter_tree.subtree("qkv_projection");
-        let qkv_projection_output_dimension = if let Some(num_kv_heads) = num_kv_heads {
+        let projection_tree = parameter_tree.subtree(if fused_projection {
+            "qkvg_projection"
+        } else {
+            "qkv_projection"
+        });
+        let qkv_dim = if let Some(num_kv_heads) = num_kv_heads {
             let kv_dim = num_kv_heads * head_dim;
             q_dim + kv_dim + kv_dim
         } else {
             q_dim
         };
-        let (qkv_projection, in_projection_input_hadamard_factors) = if !has_gate {
+        let projection_dim = if fused_projection && has_gate {
+            qkv_dim + q_dim
+        } else {
+            qkv_dim
+        };
+        let (projection, in_projection_input_hadamard_factors) = if fused_projection || !has_gate {
             <dyn Linear<B>>::new_with_input_rht(
                 hidden_dim,
-                [qkv_projection_output_dimension],
-                config.has_qkv_biases,
+                [projection_dim],
+                config.has_qkvg_biases,
                 context,
                 data_type,
-                &qkv_projection_tree,
+                &projection_tree,
             )?
         } else {
+            // A legacy separate gate consumes the same input as the packed
+            // projection, so the input RHT cannot be hoisted and shared.
             (
                 <dyn Linear<B>>::new(
                     hidden_dim,
-                    [qkv_projection_output_dimension],
-                    config.has_qkv_biases,
+                    [projection_dim],
+                    config.has_qkvg_biases,
                     context,
                     data_type,
-                    &qkv_projection_tree,
+                    &projection_tree,
                 )?,
                 None,
             )
         };
-
-        let gate_projection = has_gate
+        let gate_projection = (!fused_projection && has_gate)
             .then(|| {
                 <dyn Linear<B>>::new(
                     hidden_dim,
@@ -146,6 +160,7 @@ impl<B: Backend> Attention<B> {
                     parameter_tree,
                     config.num_heads,
                     num_kv_heads.unwrap_or(0), // TODO: should take option
+                    projection_dim,
                     config.head_dim,
                 )
             })
@@ -223,8 +238,9 @@ impl<B: Backend> Attention<B> {
                 sliding_window_size,
                 max_rope_length,
                 data_type,
-                qkv: LinearProjection {
-                    lin: qkv_projection,
+                projection_dim,
+                projection: LinearProjection {
+                    lin: projection,
                     norm: qkv_norm,
                 },
                 prepare,

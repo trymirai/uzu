@@ -201,6 +201,14 @@ impl<'loader, B: Backend> ParameterTree<'loader, B> {
         }
     }
 
+    pub fn has_subtree(
+        &self,
+        name: &str,
+    ) -> bool {
+        let prefix = format!("{}.", self.join_prefix(name));
+        self.loader.index.keys().any(|key| key.starts_with(&prefix))
+    }
+
     pub fn leaf<'leaf>(
         &'leaf self,
         name: &str,
