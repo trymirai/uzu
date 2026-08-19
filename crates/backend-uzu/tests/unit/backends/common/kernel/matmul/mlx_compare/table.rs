@@ -1,7 +1,8 @@
 use std::io::{IsTerminal, Write, stdout};
 
 use comfy_table::{
-    CellAlignment, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED,
+    Cell as TableCell, CellAlignment, Color, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS,
+    presets::UTF8_FULL_CONDENSED,
 };
 
 use super::Cell;
@@ -20,6 +21,32 @@ impl Slot {
             Slot::Unsupported => "—".to_owned(),
             Slot::Micros(micros) => format!("{micros:.1}"),
         }
+    }
+
+    fn micros(self) -> Option<f64> {
+        match self {
+            Slot::Micros(micros) => Some(micros),
+            _ => None,
+        }
+    }
+}
+
+fn extremes(slots: &[Slot]) -> Option<(f64, f64)> {
+    let mut measured = slots.iter().filter_map(|slot| slot.micros());
+    let first = measured.next()?;
+    let (low, high) = measured.fold((first, first), |(low, high), micros| (low.min(micros), high.max(micros)));
+    (high > low).then_some((low, high))
+}
+
+fn paint(
+    slot: Slot,
+    extremes: Option<(f64, f64)>,
+) -> TableCell {
+    let cell = TableCell::new(slot.render());
+    match (slot.micros(), extremes) {
+        (Some(micros), Some((low, _))) if micros == low => cell.fg(Color::Green),
+        (Some(micros), Some((_, high))) if micros == high => cell.fg(Color::Red),
+        _ => cell,
     }
 }
 
@@ -83,7 +110,7 @@ impl Block {
 
     fn render(&self) -> String {
         let mut table = Table::new();
-        let mut header = vec!["layer".to_owned(), "M".to_owned(), "K".to_owned(), "N".to_owned()];
+        let mut header = vec!["M".to_owned()];
         header.extend(self.columns.iter().map(|column| (*column).to_owned()));
 
         table
@@ -93,12 +120,13 @@ impl Block {
             .set_header(header);
 
         for (cell, slots) in &self.rows {
-            let mut row = vec![cell.layer.to_owned(), cell.m.to_string(), cell.k.to_string(), cell.n.to_string()];
-            row.extend(slots.iter().map(|slot| slot.render()));
+            let extremes = extremes(slots);
+            let mut row = vec![TableCell::new(cell.m)];
+            row.extend(slots.iter().map(|slot| paint(*slot, extremes)));
             table.add_row(row);
         }
 
-        for index in 1..4 + self.columns.len() {
+        for index in 0..=self.columns.len() {
             if let Some(column) = table.column_mut(index) {
                 column.set_cell_alignment(CellAlignment::Right);
             }

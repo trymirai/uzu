@@ -5,7 +5,7 @@ use test_runner::perf::run_perf_with_warmup;
 
 use super::{
     Cell, Matmul,
-    matrix::{QUANTIZATIONS, shapes},
+    matrix::{cases, cells},
     mlx::{MlxMatmul, assert_available},
     summary::{self, Sample},
     table::{Block, Slot},
@@ -15,13 +15,11 @@ use crate::tests::util::shared_metal_context;
 
 const WARMUP: usize = 5;
 const SAMPLES: usize = 15;
-const TARGET_SAMPLE: Duration = Duration::from_millis(10);
-const MAX_DISPATCHES: u64 = 64;
+const DISPATCHES: u64 = 100;
 const RAMP: Duration = Duration::from_millis(500);
 
 fn ramp_gpu_clocks(engine: &mut dyn Matmul) {
     let cell = Cell {
-        layer: "ramp",
         m: 512,
         k: 4096,
         n: 4096,
@@ -39,16 +37,6 @@ fn ramp_gpu_clocks(engine: &mut dyn Matmul) {
     }
 }
 
-fn dispatches_per_sample(engine: &mut dyn Matmul) -> Result<u64, String> {
-    let start = Instant::now();
-    engine.dispatch(1)?;
-    let single = start.elapsed().as_secs_f64();
-    if single <= 0.0 {
-        return Ok(MAX_DISPATCHES);
-    }
-    Ok(((TARGET_SAMPLE.as_secs_f64() / single) as u64).clamp(1, MAX_DISPATCHES))
-}
-
 #[uzu_test]
 #[ignore]
 fn quantized_matmul_benchmark() {
@@ -62,23 +50,24 @@ fn quantized_matmul_benchmark() {
 
     let mut samples: Vec<Sample> = Vec::new();
 
-    for &(bits, group_size) in QUANTIZATIONS {
-        let cells: Vec<Cell> = shapes(bits, group_size).collect();
-        let mut block = Block::new(format!("{bits}-bit, group size {group_size}"), columns.clone(), &cells);
+    for case in cases() {
+        let ladder: Vec<Cell> = cells(case).collect();
+        let title = format!("{}-bit, group size {}, K {}, N {}", case.bits, case.group_size, case.k, case.n);
+        let mut block = Block::new(title, columns.clone(), &ladder);
 
-        for (row, cell) in cells.iter().enumerate() {
+        for (row, cell) in ladder.iter().enumerate() {
             for offset in 0..engines.len() {
                 let column = (offset + row) % engines.len();
                 let engine = &mut engines[column];
                 let name = engine.name();
 
-                let slot = match engine.prepare(*cell).and_then(|()| dispatches_per_sample(&mut **engine)) {
+                let slot = match engine.prepare(*cell) {
                     Err(_) => Slot::Unsupported,
-                    Ok(dispatches) => {
+                    Ok(()) => {
                         let measured = run_perf_with_warmup(name, WARMUP, SAMPLES, || {
-                            engine.dispatch(dispatches).expect("dispatch after successful prepare");
+                            engine.dispatch(DISPATCHES).expect("dispatch after successful prepare");
                         });
-                        Slot::Micros(measured.min_ms * 1000.0 / dispatches as f64)
+                        Slot::Micros(measured.min_ms * 1000.0 / DISPATCHES as f64)
                     },
                 };
 

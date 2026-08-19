@@ -94,7 +94,6 @@ xgrammar = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 
 [dev-dependencies]
-comfy-table.workspace = true
 test-tag.workspace = true
 test-runner = { workspace = true, features = ["nightly-harness"] }
 proptest.workspace = true
@@ -105,5 +104,6 @@ ndarray.workspace = true
 rstest.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+comfy-table = { workspace = true, features = ["tty"] }
 criterion = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }

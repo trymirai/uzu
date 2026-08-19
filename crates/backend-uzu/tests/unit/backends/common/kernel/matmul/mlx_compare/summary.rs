@@ -1,6 +1,6 @@
 use super::{Cell, Engine};
 
-type Key = (&'static str, u32, u32, u32);
+type Key = (u32, u32, u32, u32, u32);
 
 pub struct Sample {
     pub cell: Cell,
@@ -9,7 +9,7 @@ pub struct Sample {
 }
 
 fn key(cell: &Cell) -> Key {
-    (cell.layer, cell.m, cell.bits, cell.group_size)
+    (cell.k, cell.n, cell.m, cell.bits, cell.group_size)
 }
 
 fn fastest(
@@ -24,6 +24,11 @@ fn fastest(
         .reduce(f64::min)
 }
 
+fn geomean(ratios: &[f64]) -> Option<f64> {
+    let logs: Vec<f64> = ratios.iter().filter(|ratio| **ratio > 0.0).map(|ratio| ratio.ln()).collect();
+    (!logs.is_empty()).then(|| (logs.iter().sum::<f64>() / logs.len() as f64).exp())
+}
+
 pub fn mlx_over_uzu(samples: &[Sample]) -> Option<f64> {
     let mut seen: Vec<Key> = Vec::new();
     let mut ratios = Vec::new();
@@ -36,9 +41,9 @@ pub fn mlx_over_uzu(samples: &[Sample]) -> Option<f64> {
         seen.push(cell);
 
         if let (Some(uzu), Some(mlx)) = (fastest(samples, cell, Engine::Uzu), fastest(samples, cell, Engine::Mlx)) {
-            ratios.push((mlx / uzu).ln());
+            ratios.push(mlx / uzu);
         }
     }
 
-    (!ratios.is_empty()).then(|| (ratios.iter().sum::<f64>() / ratios.len() as f64).exp())
+    geomean(&ratios)
 }
