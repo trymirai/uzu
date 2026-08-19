@@ -44,7 +44,7 @@ fn quantized_matmul_benchmark() {
 
     let context = shared_metal_context();
     let mut engines: Vec<Box<dyn Matmul>> = UzuMatmul::all(&context).into_iter().chain(MlxMatmul::all()).collect();
-    let columns: Vec<&'static str> = engines.iter().map(|engine| engine.name()).collect();
+    let columns: Vec<String> = engines.iter().map(|engine| engine.name().to_owned()).collect();
 
     ramp_gpu_clocks(&mut *engines[0]);
 
@@ -59,12 +59,12 @@ fn quantized_matmul_benchmark() {
             for offset in 0..engines.len() {
                 let column = (offset + row) % engines.len();
                 let engine = &mut engines[column];
-                let name = engine.name();
+                let name = engine.name().to_owned();
 
                 let slot = match engine.prepare(*cell) {
                     Err(_) => Slot::Unsupported,
                     Ok(()) => {
-                        let measured = run_perf_with_warmup(name, WARMUP, SAMPLES, || {
+                        let measured = run_perf_with_warmup(&name, WARMUP, SAMPLES, || {
                             engine.dispatch(DISPATCHES).expect("dispatch after successful prepare");
                         });
                         Slot::Micros(measured.min_ms * 1000.0 / DISPATCHES as f64)

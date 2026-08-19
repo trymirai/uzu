@@ -52,7 +52,7 @@ fn paint(
 
 pub struct Block {
     title: String,
-    columns: Vec<&'static str>,
+    columns: Vec<String>,
     rows: Vec<(Cell, Vec<Slot>)>,
     drawn_lines: usize,
     live: bool,
@@ -61,7 +61,7 @@ pub struct Block {
 impl Block {
     pub fn new(
         title: String,
-        columns: Vec<&'static str>,
+        columns: Vec<String>,
         cells: &[Cell],
     ) -> Self {
         let rows = cells.iter().map(|cell| (*cell, vec![Slot::Pending; columns.len()])).collect();
@@ -111,7 +111,7 @@ impl Block {
     fn render(&self) -> String {
         let mut table = Table::new();
         let mut header = vec!["M".to_owned()];
-        header.extend(self.columns.iter().map(|column| (*column).to_owned()));
+        header.extend(self.columns.iter().cloned());
 
         table
             .load_preset(UTF8_FULL_CONDENSED)

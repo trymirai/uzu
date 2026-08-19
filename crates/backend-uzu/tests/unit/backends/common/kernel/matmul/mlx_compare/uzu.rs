@@ -29,27 +29,23 @@ struct Prepared {
 pub struct UzuMatmul {
     context: Arc<MetalContext>,
     method: QuantizationMethod,
-    name: &'static str,
+    name: String,
     prepared: Option<Prepared>,
 }
 
 impl UzuMatmul {
     pub fn all(context: &Arc<MetalContext>) -> Vec<Box<dyn Matmul>> {
-        [
-            (QuantizationMethod::ScaleBias, "uzu affine"),
-            (QuantizationMethod::ScaleZeroPoint, "uzu zeropoint"),
-            (QuantizationMethod::ScaleSymmetric, "uzu symmetric"),
-        ]
-        .into_iter()
-        .map(|(method, name)| {
-            Box::new(Self {
-                context: Arc::clone(context),
-                method,
-                name,
-                prepared: None,
-            }) as Box<dyn Matmul>
-        })
-        .collect()
+        [QuantizationMethod::ScaleBias, QuantizationMethod::ScaleZeroPoint, QuantizationMethod::ScaleSymmetric]
+            .into_iter()
+            .map(|method| {
+                Box::new(Self {
+                    context: Arc::clone(context),
+                    method,
+                    name: format!("uzu {method}"),
+                    prepared: None,
+                }) as Box<dyn Matmul>
+            })
+            .collect()
     }
 }
 
@@ -58,8 +54,8 @@ impl Matmul for UzuMatmul {
         Engine::Uzu
     }
 
-    fn name(&self) -> &'static str {
-        self.name
+    fn name(&self) -> &str {
+        &self.name
     }
 
     fn prepare(

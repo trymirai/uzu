@@ -16,18 +16,18 @@ struct Prepared {
 
 pub struct MlxMatmul {
     mode: &'static CStr,
-    name: &'static str,
+    name: String,
     prepared: Option<Prepared>,
 }
 
 impl MlxMatmul {
     pub fn all() -> Vec<Box<dyn Matmul>> {
-        [(c"affine", "mlx affine"), (c"mxfp4", "mlx mxfp4"), (c"mxfp8", "mlx mxfp8")]
+        [c"affine", c"mxfp4", c"mxfp8"]
             .into_iter()
-            .map(|(mode, name)| {
+            .map(|mode| {
                 Box::new(Self {
                     mode,
-                    name,
+                    name: format!("mlx {}", mode.to_string_lossy()),
                     prepared: None,
                 }) as Box<dyn Matmul>
             })
@@ -119,8 +119,8 @@ impl Matmul for MlxMatmul {
         Engine::Mlx
     }
 
-    fn name(&self) -> &'static str {
-        self.name
+    fn name(&self) -> &str {
+        &self.name
     }
 
     fn prepare(

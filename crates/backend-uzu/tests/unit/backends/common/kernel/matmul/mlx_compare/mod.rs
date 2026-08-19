@@ -18,7 +18,7 @@ pub enum Engine {
 pub trait Matmul {
     fn engine(&self) -> Engine;
 
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &str;
 
     fn prepare(
         &mut self,
