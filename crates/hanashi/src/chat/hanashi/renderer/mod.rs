@@ -8,9 +8,12 @@ pub use functions::{raise_exception, strftime_now, to_json};
 use indexmap::IndexMap;
 use minijinja::Environment;
 use minijinja_contrib::pycompat::unknown_method_callback;
-use shoji::types::{basic::Token, session::chat::ChatMessage};
+use shoji::types::{
+    basic::{ReasoningEffort, Token},
+    session::chat::ChatMessage,
+};
 
-use crate::chat::hanashi::messages::rendered::Message as RenderedMessage;
+use crate::chat::hanashi::messages::rendered::{FieldConfig, Message as RenderedMessage};
 
 pub static TEMPLATE_NAME: &str = "chat_template";
 pub static STRFTIME_NOW_FUNCTION_NAME: &str = "strftime_now";
@@ -64,6 +67,34 @@ impl Renderer {
             }
         }
         insert_into_context(&mut jinja_context, "messages".to_string(), minijinja::Value::from(jinja_messages))?;
+
+        // Context fields driven by an optional control block (e.g. `reasoning_effort`)
+        // fall back to the model's declared default when no message carries the block:
+        // absence must behave exactly like `ReasoningEffort::Default`, never like a
+        // hidden extra state. A `"default"` mapping of `null` means the model's default
+        // is to not pass anything, so nothing is injected in that case.
+        let default_key = ReasoningEffort::Default.to_string();
+        for role_config in self.config.rendering.values() {
+            for (field_name, field) in &role_config.context {
+                if jinja_context.contains_key(field_name) {
+                    continue;
+                }
+                let FieldConfig::Unique {
+                    mapping: Some(mapping),
+                    ..
+                } = &field.config
+                else {
+                    continue;
+                };
+                if let Some(Some(default_value)) = mapping.get(&default_key) {
+                    insert_into_context(
+                        &mut jinja_context,
+                        field_name.clone(),
+                        minijinja::Value::from_serialize(default_value),
+                    )?;
+                }
+            }
+        }
         insert_into_context(
             &mut jinja_context,
             self.config.jinja.preamble_control_key.clone(),
@@ -115,4 +146,69 @@ fn insert_into_context(
     }
     context.insert(key, value);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat::hanashi::config::HanashiConfig;
+
+    fn renderer(config: HanashiConfig) -> Renderer {
+        Renderer::new(config.resolve().unwrap().rendering)
+    }
+
+    fn render(
+        renderer: &Renderer,
+        messages: Vec<ChatMessage>,
+    ) -> String {
+        renderer.render(&messages, true, None, None, None).unwrap()
+    }
+
+    fn user_message() -> ChatMessage {
+        ChatMessage::user().with_text("Hi".to_string())
+    }
+
+    fn system_message_with_effort(effort: ReasoningEffort) -> ChatMessage {
+        ChatMessage::system().with_reasoning_effort(effort)
+    }
+
+    #[test]
+    fn absent_reasoning_effort_renders_like_default() {
+        let renderer = renderer(HanashiConfig::Qwen35);
+
+        let without_block = render(&renderer, vec![user_message()]);
+        let with_default_block =
+            render(&renderer, vec![system_message_with_effort(ReasoningEffort::Default), user_message()]);
+
+        assert_eq!(without_block, with_default_block);
+        assert!(
+            without_block.ends_with("<|im_start|>assistant\n<think>\n"),
+            "expected a thinking-enabled generation prompt, got: {without_block:?}"
+        );
+    }
+
+    #[test]
+    fn disabled_reasoning_effort_still_disables_thinking() {
+        let renderer = renderer(HanashiConfig::Qwen35);
+
+        let prompt = render(&renderer, vec![system_message_with_effort(ReasoningEffort::Disabled), user_message()]);
+
+        assert!(
+            prompt.ends_with("<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            "expected a thinking-disabled generation prompt, got: {prompt:?}"
+        );
+    }
+
+    #[test]
+    fn absent_reasoning_effort_stays_unset_when_default_is_not_mapped() {
+        // gpt-oss maps `"default"` to `null`: its default is to pass nothing, so
+        // absence and an explicit default block must both leave the variable unset.
+        let renderer = renderer(HanashiConfig::GptOss);
+
+        let without_block = render(&renderer, vec![user_message()]);
+        let with_default_block =
+            render(&renderer, vec![system_message_with_effort(ReasoningEffort::Default), user_message()]);
+
+        assert_eq!(without_block, with_default_block);
+    }
 }

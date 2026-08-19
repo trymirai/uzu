@@ -10,7 +10,7 @@ final class EngineTests: XCTestCase {
     func testChatReplyProducesText() async throws {
         let engine = try await Engine.create(config: .create())
 
-        let maybeModel = try await engine.model(identifier: "Qwen/Qwen3-0.6B")
+        let maybeModel = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
         let model = try XCTUnwrap(maybeModel, "Model not found")
 
         for try await update in try await engine.download(model: model).iterator() {
