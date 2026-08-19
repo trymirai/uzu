@@ -61,7 +61,6 @@ shoji.workspace = true
 half.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "time"] }
 monostate.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
@@ -102,6 +101,7 @@ anyhow.workspace = true
 walkdir.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, default-features = true }
