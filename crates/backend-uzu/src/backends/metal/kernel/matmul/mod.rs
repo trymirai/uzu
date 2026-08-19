@@ -76,7 +76,13 @@ impl MatmulMetalKernel {
             self.output_data_type,
             context.device_profile(),
         );
-        let problem = GemmProblem::new(*shape, self.weights_data_type, self.output_data_type, context.supports_mxu());
+        let problem = GemmProblem::new(
+            *shape,
+            self.weights_data_type,
+            self.output_data_type,
+            context.supports_mxu(),
+            context.device_profile(),
+        );
         let plan = problem.select_plan();
         match gemv {
             None => MatmulDispatch::Gemm(plan),
