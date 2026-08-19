@@ -146,6 +146,10 @@ fn test<T: ArrayElement + Float + Debug + Display>(
 #[case::unaligned_n(1, 128, 11)]
 #[case::large(1, 4096, 2048)]
 #[case::small_n(1, 128, 3)]
+// GPT-OSS production decode shapes: K=2880 splits into ragged 128-blocks
+// under KS>1, and these cases pin that the split-K reduction stays exact.
+#[case::gpt_oss_qkvg(1, 2880, 5120)]
+#[case::gpt_oss_attn_out(1, 4096, 2880)]
 fn gemv_bf16(
     #[case] m: usize,
     #[case] k: usize,

@@ -71,7 +71,7 @@ impl<B: Backend> Engine<B> {
 
         let tokenizer = Arc::new(Tokenizer::from_file(model_path.join("tokenizer.json"))?);
 
-        let data_type = DataType::BF16;
+        let data_type = config.data_type.unwrap_or(DataType::BF16);
 
         let decoder = Decoder::new(
             self.context.as_ref(),

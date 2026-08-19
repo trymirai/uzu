@@ -47,10 +47,10 @@ CONSTRAINT(K_SPLIT <= NUM_SIMDGROUPS)
 CONSTRAINT(!MICROFLOAT || NUM_SIMDGROUPS == 8)
 CONSTRAINT(!MICROFLOAT || RESULTS_PER_SIMDGROUP == 1 || RESULTS_PER_SIMDGROUP == 4)
 // Only selector-reachable tiles are instantiated (fleet-tuned tables): fp
-// always runs 8 simdgroups with 1 or 4 rows each; non-default quantized
+// always runs 8 simdgroups with 1, 2, or 4 rows each; non-default quantized
 // tiles exist for bf16 IO only. Widen locally when sweeping new configs.
 CONSTRAINT(BITS != 0 || NUM_SIMDGROUPS == 8)
-CONSTRAINT(BITS != 0 || RESULTS_PER_SIMDGROUP == 1 || RESULTS_PER_SIMDGROUP == 4)
+CONSTRAINT(BITS != 0 || RESULTS_PER_SIMDGROUP == 1 || RESULTS_PER_SIMDGROUP == 2 || RESULTS_PER_SIMDGROUP == 4)
 CONSTRAINT(
     MICROFLOAT || BITS == 0 || (NUM_SIMDGROUPS == 8 && RESULTS_PER_SIMDGROUP == 4) ||
     (AT == "bfloat" && DT == "bfloat"))

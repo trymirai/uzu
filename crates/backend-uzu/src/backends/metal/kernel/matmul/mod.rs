@@ -23,7 +23,7 @@ use crate::{
                 },
             },
         },
-        metal::{Metal, context::MetalContext, error::MetalError},
+        metal::{Metal, context::MetalContext, device_profile::DeviceProfile, error::MetalError},
     },
     data_type::DataType,
 };
@@ -36,6 +36,7 @@ pub struct MatmulMetalKernel {
     weights_data_type: DataType,
     input_data_type: DataType,
     output_data_type: DataType,
+    device_profile: DeviceProfile,
 }
 
 enum MatmulDispatch {
@@ -92,6 +93,7 @@ impl MatmulMetalKernel {
             self.output_data_type,
             ab_scale,
             gate_act,
+            context.device_profile(),
         ) {
             return MatmulDispatch::Mxfp4ExpertDecodeGemv(spec);
         }
@@ -157,6 +159,7 @@ impl MatmulKernel for MatmulMetalKernel {
             weights_data_type,
             input_data_type,
             output_data_type,
+            device_profile: context.device_profile(),
         })
     }
 
@@ -233,6 +236,7 @@ impl MatmulKernel for MatmulMetalKernel {
                 gate_clipping: None,
                 value_clipping: None,
             }),
+            self.device_profile,
         )
         .is_some()
     }

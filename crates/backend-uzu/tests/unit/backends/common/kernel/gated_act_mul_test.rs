@@ -12,7 +12,7 @@ use crate::{
     },
     data_type::DataType,
     tests::{
-        assert::assert_eq_float,
+        assert::{assert_eq_float, assert_eq_float_with_relative},
         helpers::{
             alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend, for_each_non_cpu_backend,
         },
@@ -49,8 +49,8 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(
     use_hadamard: bool,
 ) -> Vec<T> {
     let context = B::Context::new().expect("create context");
-    let kernel =
-        GatedActMul::<B>::full_precision(&context, T::data_type(), true, use_hadamard, false, false, false).expect("create GatedActMul");
+    let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), true, use_hadamard, false, false, false)
+        .expect("create GatedActMul");
 
     let fused_length = (input.batch_dim * 2 * input.gated_dim) as usize;
     let output_length = (input.batch_dim * input.gated_dim) as usize;
@@ -102,7 +102,10 @@ fn test_gated_act_mul_interleaved_hadamard_bf16() {
     let expected = run_interleaved::<bf16, Cpu>(&input, true);
     for_each_non_cpu_backend!(|B| {
         let actual = run_interleaved::<bf16, B>(&input, true);
-        assert_eq_float::<bf16>(&expected, &actual, 0.02, "Hadamard gated activation mismatch");
+        // CPU rounds once in f32; Metal rounds the bf16 product before an
+        // f32 simd RHT. Both are valid; they can land 1 bf16 ULP apart,
+        // which exceeds a fixed absolute eps once outputs exceed ~3.2.
+        assert_eq_float_with_relative(&expected, &actual, 0.02, 0.01, "Hadamard gated activation mismatch");
     });
 }
 
@@ -166,7 +169,8 @@ fn separate_input<T: ArrayElement + Float>() -> (SeparateInput<T>, Vec<T>) {
 
 fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -> Vec<T> {
     let context = B::Context::new().expect("create context");
-    let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), false, false, false, false, false).expect("create GatedActMul");
+    let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), false, false, false, false, false)
+        .expect("create GatedActMul");
 
     let gate_out = alloc_allocation_with_data::<B, T>(&context, &input.gate_out);
     let per_layer_input = alloc_allocation_with_data::<B, T>(&context, &input.per_layer_input);

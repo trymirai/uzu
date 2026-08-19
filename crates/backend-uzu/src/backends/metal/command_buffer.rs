@@ -203,9 +203,11 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         &mut self,
         name: &str,
     ) {
-        if *DEBUG_ENCODER_LABELS {
-            self.ensure_none();
+        if !*DEBUG_ENCODER_LABELS {
+            return;
         }
+
+        self.ensure_none();
 
         self.debug_group_stack.push(name.to_string());
 
@@ -220,9 +222,11 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
     }
 
     fn pop_debug_group(&mut self) {
-        if *DEBUG_ENCODER_LABELS {
-            self.ensure_none();
+        if !*DEBUG_ENCODER_LABELS {
+            return;
         }
+
+        self.ensure_none();
 
         self.debug_group_stack.pop().expect("debug group stack underflow");
 

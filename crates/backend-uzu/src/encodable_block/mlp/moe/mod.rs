@@ -85,7 +85,7 @@ impl<B: Backend> MoeBlock<B> {
         match weights_tree.metadata::<AnyWeightMatrixSpec>("spec") {
             Ok(spec) => Ok(spec),
             Err(ParameterLoaderError::KeyNotFound(_)) => {
-                Ok(serde_json::from_str(r#"{"type":"FullPrecisionSpec","layout":"output_input"}"#)?)
+                Ok(AnyWeightMatrixSpec::FullPrecisionSpec(FullPrecisionSpec::output_input()))
             },
             Err(error) => Err(error),
         }

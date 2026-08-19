@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, hash_map::Entry},
-    sync::OnceLock,
-};
+use std::collections::{HashMap, hash_map::Entry};
 
 use crate::{
     backends::{
@@ -11,7 +8,12 @@ use crate::{
             kernel::matmul::{GateActMulDOps, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
             microfloat::MicrofloatLayout,
         },
-        metal::{Metal, context::MetalContext, kernel::Mxfp4ExpertDecodeGemvMetalKernel},
+        metal::{
+            Metal,
+            context::MetalContext,
+            device_profile::{DeviceGeneration, DeviceProfile},
+            kernel::Mxfp4ExpertDecodeGemvMetalKernel,
+        },
     },
     data_type::DataType,
 };
@@ -20,25 +22,22 @@ use crate::{
 /// kernel; larger route counts stay on the generic path.
 pub(crate) const MXFP4_EXPERT_DECODE_MAX_ROUTES: u32 = 8;
 
-const DEFAULT_DECODE_ROWS_PER_SIMDGROUP: u32 = 4;
-const DEFAULT_DECODE_SIMDGROUPS: u32 = 4;
+/// Measured on M1 Max (perf-20260819, sweep-mxfp4-2/3 over
+/// {2,4} simdgroups x {1,2,4,8} rows): 4 simdgroups x 4 rows wins for both
+/// production projections — fused W13 237.4 us (next-best 272.1 at 2x1) and
+/// routed W2 120.6 us (monotone in rows up to 4; 8 rows regresses to 139.2
+/// from register pressure). W13 and W2 prefer the same tile, so one entry
+/// covers both; split per projection/device only when new measurements say so.
+fn mxfp4_decode_tile(profile: DeviceProfile) -> (u32, u32) {
+    let measured_m1_max =
+        profile.generation() == DeviceGeneration::Legacy && (30..=32).contains(&profile.gpu_core_count());
+    if measured_m1_max {
+        return (4, 4);
+    }
 
-fn decode_geometry() -> (u32, u32) {
-    static GEOMETRY: OnceLock<(u32, u32)> = OnceLock::new();
-    *GEOMETRY.get_or_init(|| {
-        // TODO: remove magic env vars after the geometry sweep settles
-        let rows = std::env::var("UZU_MXFP4_DECODE_ROWS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .filter(|rows| matches!(rows, 1 | 2 | 4))
-            .unwrap_or(DEFAULT_DECODE_ROWS_PER_SIMDGROUP);
-        let simdgroups = std::env::var("UZU_MXFP4_DECODE_SIMDGROUPS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .filter(|simdgroups| matches!(simdgroups, 2 | 4))
-            .unwrap_or(DEFAULT_DECODE_SIMDGROUPS);
-        (rows, simdgroups)
-    })
+    // Keep unmeasured devices on the low-register geometry. The fused W13
+    // path promotes its row count to two because it consumes gate/value pairs.
+    (1, 2)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -61,6 +60,7 @@ impl Mxfp4ExpertDecodeGemvSpec {
         output_data_type: DataType,
         ab_scale: f32,
         gate_act: Option<GateActMulDOps>,
+        profile: DeviceProfile,
     ) -> Option<Self> {
         let metadata = shape.b_microfloat?;
         if !shape.expert_routed
@@ -95,7 +95,7 @@ impl Mxfp4ExpertDecodeGemvSpec {
             if !shape.n.is_multiple_of(2) || input_data_type != DataType::BF16 || output_data_type != DataType::F32 {
                 return None;
             }
-            let (rows_per_simdgroup, num_simdgroups) = decode_geometry();
+            let (rows_per_simdgroup, num_simdgroups) = mxfp4_decode_tile(profile);
             return Some(Self {
                 group_size: metadata.group_size(),
                 rows_per_simdgroup: rows_per_simdgroup.max(2),
@@ -115,7 +115,7 @@ impl Mxfp4ExpertDecodeGemvSpec {
         {
             return None;
         }
-        let (rows_per_simdgroup, num_simdgroups) = decode_geometry();
+        let (rows_per_simdgroup, num_simdgroups) = mxfp4_decode_tile(profile);
         Some(Self {
             group_size: metadata.group_size(),
             rows_per_simdgroup,
@@ -135,6 +135,20 @@ impl Mxfp4ExpertDecodeGemvSpec {
             self.rows_per_simdgroup
         };
         self.num_simdgroups * per_simdgroup
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proc_macros::uzu_test;
+
+    use super::*;
+
+    #[uzu_test]
+    fn tuned_decode_tile_is_scoped_to_the_measured_m1_max_range() {
+        assert_eq!(mxfp4_decode_tile(DeviceProfile::new(32, DeviceGeneration::Legacy)), (4, 4));
+        assert_eq!(mxfp4_decode_tile(DeviceProfile::new(64, DeviceGeneration::Legacy)), (1, 2));
+        assert_eq!(mxfp4_decode_tile(DeviceProfile::new(32, DeviceGeneration::Apple8)), (1, 2));
     }
 }
 

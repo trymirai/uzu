@@ -212,7 +212,7 @@ fn test_router_topk_nan_weight_row_is_never_selected() {
     }
 
     for_each_non_cpu_backend!(|B| {
-        let (ids_ref, probs_ref) =
+        let (ids_ref, _probs_ref) =
             get_output::<Cpu, bf16>(&input, &weight, None, None, None, t, d_model, e, k, false, None, None);
         let (ids_gpu, probs_gpu) =
             get_output::<B, bf16>(&input, &weight, None, None, None, t, d_model, e, k, false, None, None);
@@ -238,7 +238,7 @@ fn test_router_topk_all_nonfinite_input_writes_every_slot() {
 
     for_each_non_cpu_backend!(|B| {
         for renorm in [false, true] {
-            let (ids_ref, probs_ref) =
+            let (ids_ref, _probs_ref) =
                 get_output::<Cpu, bf16>(&input, &weight, None, None, None, t, d_model, e, k, renorm, None, None);
             let (ids_gpu, probs_gpu) =
                 get_output::<B, bf16>(&input, &weight, None, None, None, t, d_model, e, k, renorm, None, None);
