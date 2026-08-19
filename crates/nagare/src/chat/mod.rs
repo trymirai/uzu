@@ -685,6 +685,7 @@ fn aggregate_stats(
         time_to_first_token: stats.iter().find_map(|stats| stats.time_to_first_token),
         prefill_tokens_per_second: stats.iter().find_map(|stats| stats.prefill_tokens_per_second),
         generate_tokens_per_second: aggregate_generate_rate(&stats),
+        backend_generate_tokens_per_second: aggregate_backend_generate_rate(&stats),
         tokens_count_input: sum_optional_u32(&stats, |stats| stats.tokens_count_input),
         tokens_count_output: sum_optional_u32(&stats, |stats| stats.tokens_count_output),
         memory_used_bytes: stats.iter().filter_map(|stats| stats.memory_used_bytes).max(),
@@ -721,6 +722,26 @@ fn aggregate_generate_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
             return Some((token_intervals, duration));
         }
         let generate_rate = stats.generate_tokens_per_second?;
+        if !generate_rate.is_finite() || generate_rate <= 0.0 {
+            return None;
+        }
+        let intervals = u64::from(tokens - 1);
+        Some((token_intervals + intervals, duration + intervals as f64 / generate_rate))
+    })?;
+    (token_intervals > 0 && duration > 0.0).then(|| token_intervals as f64 / duration)
+}
+
+fn aggregate_backend_generate_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
+    if let [stats] = stats {
+        return stats.backend_generate_tokens_per_second;
+    }
+
+    let (token_intervals, duration) = stats.iter().try_fold((0_u64, 0.0), |(token_intervals, duration), stats| {
+        let tokens = stats.tokens_count_output?;
+        if tokens < 2 {
+            return Some((token_intervals, duration));
+        }
+        let generate_rate = stats.backend_generate_tokens_per_second?;
         if !generate_rate.is_finite() || generate_rate <= 0.0 {
             return None;
         }

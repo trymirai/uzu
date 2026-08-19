@@ -20,6 +20,12 @@ pub struct TokenStreamMetrics {
     pub num_tokens_proposed: usize,
     pub num_tokens_accepted: usize,
     pub num_tokens_returned: usize,
+    /// Wall time of the backend token-stream call that produced the first
+    /// token (`next`), i.e. backend prefill as seen by the chat layer.
+    pub prefill_duration: Option<std::time::Duration>,
+    /// Cumulative wall time of backend token-stream calls after the first
+    /// token, i.e. backend decode without parser/render overhead.
+    pub decode_duration: Option<std::time::Duration>,
 }
 
 pub type StreamInput = Vec<u64>;

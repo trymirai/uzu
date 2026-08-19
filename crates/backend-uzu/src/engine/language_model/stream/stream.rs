@@ -1,9 +1,11 @@
 use std::{
     iter::{once, repeat_n},
     mem::replace,
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
+use parking_lot::{ArcMutexGuard, RawMutex};
 use shoji::traits::backend::chat_token::TokenStreamMetrics;
 
 #[cfg(grammar)]
@@ -117,9 +119,52 @@ fn prefill_chunk_parts(
     }
 }
 
+/// Borrowed for the direct API, owned by the bridge's asynchronous stream.
+enum LanguageModelOwner<'a, B: Backend> {
+    Borrowed(&'a LanguageModel<B>),
+    Shared(Arc<LanguageModel<B>>),
+}
+
+impl<B: Backend> Deref for LanguageModelOwner<'_, B> {
+    type Target = LanguageModel<B>;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(model) => model,
+            Self::Shared(model) => model,
+        }
+    }
+}
+
+/// Borrowed for synchronous callers, or held by an owning Arc mutex guard.
+enum LanguageModelStateOwner<'a, B: Backend> {
+    Borrowed(&'a mut LanguageModelState<B>),
+    Locked(ArcMutexGuard<RawMutex, LanguageModelState<B>>),
+}
+
+impl<B: Backend> Deref for LanguageModelStateOwner<'_, B> {
+    type Target = LanguageModelState<B>;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(state) => state,
+            Self::Locked(state) => state,
+        }
+    }
+}
+
+impl<B: Backend> DerefMut for LanguageModelStateOwner<'_, B> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Borrowed(state) => state,
+            Self::Locked(state) => state,
+        }
+    }
+}
+
 pub struct LanguageModelStream<'a, B: Backend> {
-    model: &'a LanguageModel<B>,
-    model_state: &'a mut LanguageModelState<B>,
+    model: LanguageModelOwner<'a, B>,
+    model_state: LanguageModelStateOwner<'a, B>,
     options: LanguageModelStreamOptions,
     allocation_pool: Arc<AllocationPool<B>>,
     context_ring: Option<Allocation<B>>,
@@ -132,6 +177,20 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         model: &'a LanguageModel<B>,
         input: &[u64],
         model_state: &'a mut LanguageModelState<B>,
+        options: LanguageModelStreamOptions,
+    ) -> Result<Self, LanguageModelStreamError<B>> {
+        Self::new_with_owners(
+            LanguageModelOwner::Borrowed(model),
+            input,
+            LanguageModelStateOwner::Borrowed(model_state),
+            options,
+        )
+    }
+
+    fn new_with_owners(
+        model: LanguageModelOwner<'a, B>,
+        input: &[u64],
+        mut model_state: LanguageModelStateOwner<'a, B>,
         options: LanguageModelStreamOptions,
     ) -> Result<Self, LanguageModelStreamError<B>> {
         #[cfg(grammar)]
@@ -193,11 +252,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             // NOTE: this is required for attention correctness (hardcoded suffix 1024). This is really bad design, attention should be rewritten to allow on-demand suffix length
             let max_batch_size = 1024;
             let number_of_batches = input.len().div_ceil(max_batch_size);
+            let context_length = model_state.transformer_state.context_length();
 
             model_state
                 .transformer_state
                 .prepare(
-                    model_state.transformer_state.context_length() + ((number_of_batches - 1) * max_batch_size) as u32,
+                    context_length + ((number_of_batches - 1) * max_batch_size) as u32,
                     usize::min(max_batch_size, input.len()) as u32,
                     &model.engine.context,
                 )
@@ -564,8 +624,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             if let Some(accept_encoder) = encoder.take() {
                 pending.push(accept_encoder.end_encoding().submit());
             }
+            let model_state = &mut *self.model_state;
             let trie = speculator.propose_tree(
-                self.model_state.speculator_state.as_mut().unwrap(),
+                model_state.speculator_state.as_mut().unwrap(),
                 output_norm,
                 root_token as u32,
                 self.model.decoder.embedding(),
@@ -585,7 +646,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 },
                 #[cfg(grammar)]
                 self.options.grammar.as_mut(),
-                &self.model_state.prng,
+                &model_state.prng,
                 self.allocation_pool.clone(),
             )?;
             (trie, None, false)
@@ -624,9 +685,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
         let batch_dim = BatchTopology::new(&input_flat_trie_nodes, full_accept);
 
-        self.model_state
+        let model_state = &mut *self.model_state;
+        let context_length = model_state.transformer_state.context_length();
+        model_state
             .transformer_state
-            .prepare(self.model_state.transformer_state.context_length(), batch_dim.size(), &self.model.engine.context)
+            .prepare(context_length, batch_dim.size(), &self.model.engine.context)
             .map_err(LanguageModelStreamError::Backend)?;
 
         let hidden_feature_layer_indices =
@@ -783,6 +846,23 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
     pub fn metrics(&self) -> &TokenStreamMetrics {
         &self.metrics
+    }
+}
+
+impl<B: Backend + 'static> LanguageModelStream<'static, B> {
+    /// Stream that owns both the model and the locked state it mutates.
+    pub fn new_owned(
+        model: Arc<LanguageModel<B>>,
+        input: &[u64],
+        model_state: ArcMutexGuard<RawMutex, LanguageModelState<B>>,
+        options: LanguageModelStreamOptions,
+    ) -> Result<Self, LanguageModelStreamError<B>> {
+        Self::new_with_owners(
+            LanguageModelOwner::Shared(model),
+            input,
+            LanguageModelStateOwner::Locked(model_state),
+            options,
+        )
     }
 }
 

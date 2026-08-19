@@ -64,7 +64,11 @@ pub struct BenchResult {
     pub time_to_first_token: f64,
     pub prompt_tokens_per_second: f64,
     pub generate_tokens_per_second: Option<f64>,
+    #[serde(default)]
+    pub backend_generate_tokens_per_second: Option<f64>,
     pub power_stats: Option<ChatReplyPowerStats>,
     pub joules_per_token: Option<f64>,
     pub text: String,
+    #[serde(default)]
+    pub reasoning: String,
 }

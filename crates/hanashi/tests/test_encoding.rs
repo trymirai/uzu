@@ -133,6 +133,43 @@ fn run_encoding_test(
     }
 }
 
+fn assert_batch_decode_matches_streaming(config: EncodingConfig) {
+    let registry = load_registry();
+    let model = registry.iter().find(|model| {
+        model.encodings.iter().any(|encoding_value| {
+            serde_json::from_value::<EncodingConfig>(encoding_value.clone()).is_ok_and(|candidate| candidate == config)
+        }) && tokenizer_directory(&model.name()).exists()
+            && response_path(&model.name()).exists()
+    });
+    let Some(model) = model else {
+        return;
+    };
+    let Some(data) = load_response_test_data(&model.name()).into_iter().next() else {
+        return;
+    };
+
+    let tokenizer = load_tokenizer(&model.name());
+    let token_ids = tokenizer.encode(data.result.completion.as_str(), false).unwrap().get_ids().to_vec();
+    let messages = build_messages(&data);
+    let mut batch = build_encoding(config.clone(), &model.name());
+    let mut streaming = build_encoding(config, &model.name());
+    batch.encode(messages.clone()).unwrap();
+    streaming.encode(messages).unwrap();
+
+    batch.decode(token_ids.clone()).unwrap();
+    for token_id in token_ids {
+        streaming.decode_token(token_id).unwrap();
+    }
+
+    assert_eq!(batch.state(), streaming.state());
+}
+
+#[test]
+fn batch_decode_matches_repeated_single_token_decode() {
+    assert_batch_decode_matches_streaming(hanashi(HanashiConfig::GptOss));
+    assert_batch_decode_matches_streaming(harmony(HarmonyConfig::GptOss));
+}
+
 #[test]
 fn test_encoding_gpt_oss() {
     let date_pattern = Some(r"Current date: (\d{4}-\d{2}-\d{2})");

@@ -128,12 +128,12 @@ impl EncodingTrait for HanashiEncodingImpl {
         &mut self,
         token_ids: Self::Output,
     ) -> Result<(), Self::Error> {
-        for token_id in &token_ids {
-            let token = self.resolve_token(*token_id, true)?;
-            self.push_token_to_parser(&token)?;
-            self.state.tokens.push(token);
+        if token_ids.is_empty() {
+            return Ok(());
         }
-
+        for token_id in token_ids {
+            self.process_decoded_token(token_id)?;
+        }
         self.update_messages_from_parser_state()?;
         Ok(())
     }
@@ -148,6 +148,27 @@ impl EncodingTrait for HanashiEncodingImpl {
 }
 
 impl HanashiEncodingImpl {
+    /// Decode one generated token without allocating a one-element vector.
+    pub fn decode_token(
+        &mut self,
+        token_id: TokenId,
+    ) -> Result<(), Error> {
+        self.process_decoded_token(token_id)?;
+        self.update_messages_from_parser_state()?;
+        Ok(())
+    }
+
+    /// Parser and token-state update shared by streaming and batch decoding.
+    fn process_decoded_token(
+        &mut self,
+        token_id: TokenId,
+    ) -> Result<(), Error> {
+        let token = self.resolve_token(token_id, true)?;
+        self.push_token_to_parser(&token)?;
+        self.state.tokens.push(token);
+        Ok(())
+    }
+
     fn push_token_to_parser(
         &mut self,
         token: &Token,

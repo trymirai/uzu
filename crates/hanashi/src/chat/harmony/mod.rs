@@ -156,39 +156,12 @@ impl EncodingTrait for HarmonyEncodingImpl {
         &mut self,
         token_ids: Self::Output,
     ) -> Result<(), Self::Error> {
-        for token_id in token_ids {
-            let token = resolve_token(&self.encoding, token_id)?;
-
-            if self.header_buffer.is_some() {
-                if token_id == self.special_tokens.message {
-                    // header complete: repair it if needed, then release it to the parser
-                    let header_tokens = self.header_buffer.take().unwrap_or_default();
-                    let header_token_ids = repair_header(&self.encoding, &header_tokens, &self.special_tokens)
-                        .unwrap_or_else(|| header_tokens.iter().map(|header_token| header_token.id).collect());
-                    for header_token_id in header_token_ids {
-                        self.process(header_token_id)?;
-                    }
-                    self.process(token_id)?;
-                } else if self.special_tokens.stop.contains(&token_id) {
-                    // message ended without `<|message|>`: replay verbatim and let the parser decide
-                    let header_tokens = self.header_buffer.take().unwrap_or_default();
-                    for header_token in header_tokens {
-                        self.process(header_token.id)?;
-                    }
-                    self.process(token_id)?;
-                } else if let Some(header_tokens) = &mut self.header_buffer {
-                    header_tokens.push(token.clone());
-                }
-            } else {
-                self.process(token_id)?;
-                if token_id == self.special_tokens.start {
-                    self.header_buffer = Some(Vec::new());
-                }
-            }
-
-            self.state.tokens.push(token);
+        if token_ids.is_empty() {
+            return Ok(());
         }
-
+        for token_id in token_ids {
+            self.process_decoded_token(token_id)?;
+        }
         self.update_messages_from_parser_state()?;
         Ok(())
     }
@@ -203,6 +176,54 @@ impl EncodingTrait for HarmonyEncodingImpl {
 }
 
 impl HarmonyEncodingImpl {
+    /// Decode one generated token without allocating a one-element vector.
+    pub fn decode_token(
+        &mut self,
+        token_id: TokenId,
+    ) -> Result<(), Error> {
+        self.process_decoded_token(token_id)?;
+        self.update_messages_from_parser_state()?;
+        Ok(())
+    }
+
+    /// Parser and token-state update shared by streaming and batch decoding.
+    fn process_decoded_token(
+        &mut self,
+        token_id: TokenId,
+    ) -> Result<(), Error> {
+        let token = resolve_token(&self.encoding, token_id)?;
+
+        if self.header_buffer.is_some() {
+            if token_id == self.special_tokens.message {
+                // header complete: repair it if needed, then release it to the parser
+                let header_tokens = self.header_buffer.take().unwrap_or_default();
+                let header_token_ids = repair_header(&self.encoding, &header_tokens, &self.special_tokens)
+                    .unwrap_or_else(|| header_tokens.iter().map(|header_token| header_token.id).collect());
+                for header_token_id in header_token_ids {
+                    self.process(header_token_id)?;
+                }
+                self.process(token_id)?;
+            } else if self.special_tokens.stop.contains(&token_id) {
+                // message ended without `<|message|>`: replay verbatim and let the parser decide
+                let header_tokens = self.header_buffer.take().unwrap_or_default();
+                for header_token in header_tokens {
+                    self.process(header_token.id)?;
+                }
+                self.process(token_id)?;
+            } else if let Some(header_tokens) = &mut self.header_buffer {
+                header_tokens.push(token.clone());
+            }
+        } else {
+            self.process(token_id)?;
+            if token_id == self.special_tokens.start {
+                self.header_buffer = Some(Vec::new());
+            }
+        }
+
+        self.state.tokens.push(token);
+        Ok(())
+    }
+
     fn process(
         &mut self,
         token_id: TokenId,

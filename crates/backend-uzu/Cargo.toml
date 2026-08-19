@@ -74,7 +74,7 @@ rand.workspace = true
 itertools.workspace = true
 rustix.workspace = true
 futures.workspace = true
-parking_lot = { workspace = true, features = ["send_guard"] }
+parking_lot = { workspace = true, features = ["arc_lock", "send_guard"] }
 tokio-util.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]

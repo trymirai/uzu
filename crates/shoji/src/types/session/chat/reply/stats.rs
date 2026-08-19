@@ -26,6 +26,10 @@ pub struct ChatReplyStats {
     pub time_to_first_token: Option<f64>,
     pub prefill_tokens_per_second: Option<f64>,
     pub generate_tokens_per_second: Option<f64>,
+    /// Decode rate measured inside the backend token stream, excluding
+    /// parser/render overhead; compare with `generate_tokens_per_second`
+    /// to surface chat-layer CPU cost.
+    pub backend_generate_tokens_per_second: Option<f64>,
     pub tokens_count_input: Option<u32>,
     pub tokens_count_output: Option<u32>,
     pub memory_used_bytes: Option<i64>,

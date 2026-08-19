@@ -37,6 +37,16 @@ pub enum Encoding {
     Harmony(HarmonyEncodingImpl),
 }
 
+impl Encoding {
+    /// Decode one generated token without allocating a one-element vector.
+    pub fn decode_token(
+        &mut self,
+        token_id: TokenId,
+    ) -> Result<(), Error> {
+        dispatch!(self, decode_token, token_id)
+    }
+}
+
 impl EncodingTrait for Encoding {
     type Config = EncodingConfig;
     type Input = Vec<ChatMessage>;

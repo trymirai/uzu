@@ -267,7 +267,7 @@ impl Session {
                 state.total_tokens_output += 1;
                 state.time_last_token = Some(now);
 
-                if let Err(err) = state.encoding.decode(vec![token as TokenId]) {
+                if let Err(err) = state.encoding.decode_token(token as TokenId) {
                     return Err(ChatSessionError::Backend {
                         message: err.to_string(),
                     });
@@ -405,11 +405,21 @@ impl StreamingState<'_> {
         };
         let generate_tps = calculate_rate(self.total_tokens_output, generate_duration);
 
+        let backend_generate_tps = self.metrics.as_ref().and_then(|metrics| {
+            let decode_duration = metrics.decode_duration?;
+            if metrics.num_tokens_returned > 1 && !decode_duration.is_zero() {
+                Some((metrics.num_tokens_returned - 1) as f64 / decode_duration.as_secs_f64())
+            } else {
+                None
+            }
+        });
+
         ChatReplyStats {
             duration: total_duration.as_secs_f64(),
             time_to_first_token: ttft_duration.map(|time| time.as_secs_f64()),
             prefill_tokens_per_second: prefill_tps,
             generate_tokens_per_second: generate_tps,
+            backend_generate_tokens_per_second: backend_generate_tps,
             tokens_count_input: Some(self.total_tokens_input as u32),
             tokens_count_output: Some(self.total_tokens_output as u32),
             memory_used_bytes: last_stat.then(|| self.memory_usage.map(|bytes| bytes as i64)).flatten(),
