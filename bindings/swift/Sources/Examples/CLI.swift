@@ -10,10 +10,8 @@ struct Example: AsyncParsableCommand {
         version: "1.0.0"
     )
 
-    @Argument(
-        help:
-            "Mode: chat | chat-cloud | chat-shared-instance | chat-structured-output | classification | quick-start | tool-calls",
-        transform: { $0.lowercased() })
+    @Argument(help: "Mode: chat | chat-cloud | chat-shared-instance | chat-structured-output | quick-start | tool-calls",
+    transform: { $0.lowercased() })
     var mode: String = "chat"
 
     mutating func run() async throws {
@@ -28,8 +26,6 @@ struct Example: AsyncParsableCommand {
             try await runChatSharedInstance()
         case "chat-structured-output":
             try await runChatStructuredOutput()
-        case "classification":
-            try await runClassification()
         case "tool-calls":
             try await runToolCalls()
         default:
